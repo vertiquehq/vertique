@@ -43,7 +43,9 @@ and wants a machine-readable OpenAPI document for some of them.
 Three things switch a document on; all three are required:
 
 1. `OpenApiDocsModule` is listed in the component.
-2. The application's declaring interface carries `@ApiDocs(access = ApiDocs.Access.PUBLIC)`.
+2. The application's declaring interface carries `@ApiDocs`: `access = ApiDocs.Access.PUBLIC` for a
+   document any caller may read, or `PROTECTED` with a `securityScheme` (see
+   [Protected Documents](#protected-documents)).
 3. The document has an `info` with a non-blank `title` and `version`, from
    `apidocs.documents.<name>.info` or from `@OpenAPIDefinition(info)` on the declaring interface,
    where `<name>` is the application's `name` (see [Configuration](#configuration)).
@@ -99,19 +101,19 @@ active. A document is enabled exactly when all of these hold:
 Nothing else enables a document: not the module's presence, not another annotation, and not a
 configuration entry alone.
 
-### Access: `PUBLIC` is served, `PROTECTED` is refused
+### Access: `PUBLIC` and `PROTECTED`
 
-`@ApiDocs.access` states who may read the document routes.
+`@ApiDocs.access` states who may read the document routes. Only the annotation on the declaring
+interface decides it; no configuration value changes it.
 
-- `PUBLIC` documents are served to any caller.
-- `PROTECTED` documents are not served. A component with an enabled `PROTECTED` document fails at
-  startup while the docs mount is built, before any document route is registered and before any
-  application mount exists, so a protected document is never exposed without an access check. The
-  failure names the application, its declaring interface, and `@ApiDocs.access`. Before that
-  refusal, startup checks the `securityScheme` of each protected document (see
-  [Startup Checks](#startup-checks)). `rolesAllowed` has no effect on serving yet, because protected documents are
-  refused. The shape check still refuses a blank role and any role on a `PUBLIC` document (see
-  [`@ApiDocs` shape](#apidocs-shape)).
+- `PUBLIC` documents are served to any caller, without authentication.
+- `PROTECTED` documents are served through the security chain of an equally annotated resource
+  method: the authentication handler of `@ApiDocs.securityScheme`, then every registered
+  `OperationHandlerContributor` with the policy `@RolesAllowed(rolesAllowed)`, or any authenticated
+  caller when `rolesAllowed` is empty. See [Protected Documents](#protected-documents).
+
+The shape check refuses a protected document without a `securityScheme`, a blank role, and a
+`securityScheme` or any role on a `PUBLIC` document (see [`@ApiDocs` shape](#apidocs-shape)).
 
 ### Built once, off the event loop, frozen
 
@@ -183,17 +185,25 @@ composition (see [Startup Checks](#startup-checks)).
 ### What the mount answers, and what it passes on
 
 The mount answers `GET` and `HEAD` for exactly `<path>/<name>/openapi.json` and
-`<path>/<name>/openapi.yaml` of each enabled document. The query string is ignored. For everything
-else the mount calls `next()`, and the request continues to the later mounts unchanged:
+`<path>/<name>/openapi.yaml` of each enabled document. The query string is ignored. These requests
+continue to the later mounts unchanged, for every document:
 
 - another HTTP method on a document URL;
-- a trailing-slash variant of a document URL;
 - an unknown document name, or the name of an application without an enabled document;
-- any other URL under the prefix;
+- any other URL under the prefix.
+
+For a public document, the mount also calls `next()` for:
+
+- a trailing-slash variant of a document URL;
 - a document whose bytes are not stored yet.
 
-This mount never answers `404` or `405`. Whatever the later mounts answer, including a catch-all
-mount or the framework's default not-found handling, is the response.
+For a public document, this mount never answers `404` or `405`. Whatever the later mounts answer,
+including a catch-all mount or the framework's default not-found handling, is the response.
+
+A protected document's route never continues to a later mount. Once its security chain has passed,
+a trailing-slash variant ends with `404` and a document that is not stored yet ends with `503`;
+a denial ends with `401` or `403` before that (see
+[Protected Documents](#protected-documents)).
 
 ### Responses
 
@@ -202,6 +212,10 @@ mount or the framework's default not-found handling, is the response.
 | `GET` of a stored document | `200`, `Content-Type: application/json` or `application/yaml`, `Content-Length`, `ETag`, `Cache-Control`, and the document bytes |
 | `HEAD` of a stored document | `200` with the same headers as `GET` and no body |
 | `GET` or `HEAD` with a matching `If-None-Match` | `304` with `ETag` and `Cache-Control` and no body |
+
+A protected document's `200` and `304` also carry `Vary` when its scheme has a credential header
+(see [Caching](#caching)), and its `401`, `403`, `404`, `503`, and `500` answers are problem
+responses (see [Protected Documents](#protected-documents)).
 
 - **Entity tag:** strong, a double quote, the lowercase hexadecimal SHA-256 of that form's bytes, and
   a double quote. The JSON and YAML forms have different tags.
@@ -214,7 +228,10 @@ mount or the framework's default not-found handling, is the response.
 ### Caching
 
 The `Cache-Control` of a document never allows shared caching and is never weaker than the configured
-default. It is computed once at startup from the effective default, which is the value of the last
+default.
+
+**Public documents.** The value is computed once at startup from the effective default, which is
+the value of the last
 `Cache-Control` header, in map order, among the headers that `jaxrs.defaultHeaders` resolves to (the
 framework default is `no-store`; see `dev.vertique:vertique-rest-core`):
 
@@ -225,6 +242,28 @@ framework default is `no-store`; see `dev.vertique:vertique-rest-core`):
 
 Directive names are compared case-insensitively. The value is never `public` and carries no
 `s-maxage`. The mount sets the header itself, replacing the default-headers middleware's value.
+
+**Protected documents.** Every `200` and `304` carries `Cache-Control: private, no-store`, whatever
+the default, and a `Vary` on the request header that carries the scheme's credential, decided at
+startup from the scheme handler's `openApiDescription()`:
+
+| Scheme | `Vary` |
+|---|---|
+| HTTP, OAuth 2, or OpenID Connect | `Authorization` |
+| A handler that returns no description, or a description of any other kind | `Authorization` |
+| API key in a header | the API key's header name |
+| API key in a cookie | `Cookie` |
+| API key in the query, or mutual TLS | none |
+
+The document route adds its `Vary` value to any `Vary` another handler (such as CORS) already set, so
+`Vary: Origin` is kept next to `Vary: Authorization`. The problem responses of a protected document
+carry `Cache-Control: no-store`; the document route adds neither `ETag` nor `Vary` to a problem response (other handlers, such as CORS, may add their
+own headers).
+
+Only `Cache-Control` is replaced. Other caching headers that `jaxrs.defaultHeaders` sets, such as
+`CDN-Cache-Control`, `Surrogate-Control`, `X-Accel-Expires`, or `Expires`, are not removed from a
+protected document response, nor from a problem response, so a CDN or proxy that obeys them could
+store a protected document. Do not configure such headers while a protected document is enabled.
 
 ### Several server instances
 
@@ -268,6 +307,112 @@ shape check of every active application (see [Configuration](#configuration)). W
   at mount '<mount path>' is stored (source: generated)`.
 - DEBUG lines from `dev.vertique.rest.openapi.docs` record each assembly (application, mount, elapsed
   milliseconds; no content) and each comparison between instances.
+- One INFO line per protected document whose `@ApiDocs` lists no `rolesAllowed`, on logger
+  `dev.vertique.rest.openapi.docs.DocumentWarnings`, once per document and component, logged after
+  every document route is installed:
+  `apidocs.documents.<name>: the protected document is readable by any principal the '<scheme>'
+  handler authenticates; @ApiDocs on <interface> lists no rolesAllowed`. The message is one line;
+  it is wrapped here for reading.
+
+---
+
+## Protected Documents
+
+A document whose declaring interface carries
+`@ApiDocs(access = PROTECTED, securityScheme = "<scheme>", rolesAllowed = {...})` is served only to
+callers the security chain admits.
+
+```java
+@ApiDocs(access = ApiDocs.Access.PROTECTED, securityScheme = "bearerAuth",
+        rolesAllowed = {"docs-reader"})
+@RestApplication(name = "management", path = "/api/management",
+        resources = {AdminResource.class})
+public interface ManagementApi {}
+```
+
+### Access comes from the annotation only
+
+- **Declared in code.** `securityScheme` names the scheme that authenticates a reader, and
+  `rolesAllowed` restricts reading to those roles. An empty `rolesAllowed` admits any caller the
+  scheme authenticates, and an INFO line says so at startup (see
+  [Startup log lines](#startup-log-lines)).
+- **No configuration override.** `apidocs.documents.<name>` accepts only `enabled`, `info`, and
+  `serverUrl`, and none of them changes who may read the document.
+- **No required action.** `@ApiDocs` has no attribute for a required action; a protected document
+  cannot require one.
+
+### One synthetic operation per form
+
+Each form, `<apidocs.path>/<name>/openapi.json` and `<apidocs.path>/<name>/openapi.yaml`, is a
+framework synthetic operation, `apidocs:<name>:json` or `apidocs:<name>:yaml`, that answers `GET`
+and `HEAD`. Its descriptor reports the documented application's name from `applicationName()` and
+the annotations of the equally annotated resource method: `@SecurityRequirement(name = "<scheme>")`
+plus `@RolesAllowed(rolesAllowed)`, or plus `@Authorized` when `rolesAllowed` is empty.
+
+The route runs, in order:
+
+1. the completion recorder, which records the synthetic operation as the request's operation (see
+   [Events and metrics](#events-and-metrics));
+2. the authentication handler of the scheme;
+3. every registered `OperationHandlerContributor`, application contributors included, in the order
+   resource routes use (phase, then priority), each given the operation's effective policy and no
+   required action;
+4. the document handler.
+
+The document handler evaluates the entity tag and `If-None-Match` only after the whole chain has
+passed, so a denied caller never learns the entity tag or gets a `304`.
+
+### Answers
+
+| Situation | Response |
+|---|---|
+| The chain admits the caller and the document is stored | `200` or `304` as for a public document (see [Responses](#responses)), with `Cache-Control: private, no-store` and the `Vary` of [Caching](#caching) |
+| The scheme does not authenticate the caller | `401` problem response |
+| A contributor denies the authenticated caller | `403` problem response, or the status the contributor fails the request with |
+| The chain admits the caller on a trailing-slash variant of the URL | `404` problem response |
+| The chain admits the caller and the document is not stored | `503` problem response, logged at ERROR |
+| A failure without an explicit `4xx` or `5xx` status | `500` problem response, logged at ERROR |
+
+A problem response is `application/problem+json`
+`{"type":"about:blank","title":"<reason phrase>","status":<code>}` with `Cache-Control: no-store`
+and no `ETag`. It is written by the document route's own failure handler, which never continues:
+the application's error pipeline, later mounts, their failure handlers, and error interceptors never
+see the request.
+
+### Name disclosure
+
+Authentication runs before any other check, so an unauthenticated request for an enabled
+protected document's name is answered `401`, which discloses that the name exists. A name without an
+enabled document has no route and falls through to the later mounts. Methods other than `GET` and
+`HEAD` on a protected document URL are not answered by the document route: they continue to later
+mounts like a request for an unknown name, without the security chain, and are answered as those
+mounts answer them. No document content is reachable that way.
+
+### Events and metrics
+
+- **Security events.** A document request emits the authorization-decision and
+  credential-rejection events (`AuthorizationDecisionEvent`, `CredentialRejectedEvent` from
+  `vertique-security-core`) an equally annotated resource request emits.
+- **Completion.** Each protected read or denial completes as a `RestRequestCompletedEvent` whose
+  `operation()` is the synthetic descriptor, the same instance the contributors received, carrying
+  the documented application's name. The REST request metrics count it under that operation.
+- **Public reads.** A public document read is claimed by no operation and completes as an
+  `HttpRequestCompletedEvent`.
+
+### Fail-closed startup
+
+A protected document whose chain cannot be built fails startup while the docs mount creates its
+router. The documentation router is left with no route, and the server never listens.
+
+- **Unknown scheme or no enforcement.** `securityScheme` names no registered
+  `SecuritySchemeHandler`, or authentication enforcement is not installed. Checked before any
+  route is registered; each violation starts with
+  `Application '<name>' (declared by <interface>): `, and several violations are listed one per
+  line under `Invalid @ApiDocs values:`.
+- **No authentication handler.** The scheme's handler registered no authentication handler, or a
+  contributor rejects the operation while its route is built. The message starts with
+  `Protected API document of application '<name>' (access policy: @ApiDocs on <interface>)`, and
+  every document route already installed is removed again.
 
 ---
 
@@ -652,9 +797,8 @@ body that the gate does not validate with a schema with `"x-vertique-validation"
 is not validated with a schema or is a named file part, since a file part publishes no schema.
 Under any other strategy no input is marked; the root `enforcement` already qualifies every input.
 
-Protected documents are refused at startup in this release (see
-[Access](#access-public-is-served-protected-is-refused)), so no served document carries these
-protected-only members yet.
+Only readers the security chain admits receive a protected document (see
+[Protected Documents](#protected-documents)), so only they see these members.
 
 ### Swagger annotations
 
@@ -1315,7 +1459,8 @@ interface itself. `vertique-rest-jaxrs` and `vertique-codegen-jaxrs` recognize i
 qualified name, `dev.vertique.rest.openapi.docs.ApiDocs` (also the constant `ApiDocs.ANNOTATION_NAME`),
 and never depend on this module.
 
-Only `PUBLIC` is served; see [Access](#access-public-is-served-protected-is-refused).
+`PUBLIC` documents are served to any caller and `PROTECTED` documents through the security chain;
+see [Access](#access-public-and-protected) and [Protected Documents](#protected-documents).
 
 ### OpenApiDocsModule
 
@@ -1474,9 +1619,11 @@ route:
 - its `securityScheme` must be the scheme name of a registered `SecuritySchemeHandler`; and
 - authentication enforcement must be installed.
 
-Both violations name the application, its declaring interface, and the attribute, and are listed
-together. Public documents are not checked. A protected document that passes is still refused, as
-[Access](#access-public-is-served-protected-is-refused) describes.
+Each violation names the application and its declaring interface, and all are listed together.
+Public documents are not checked. A protected document that passes has its routes installed through
+the security chain; a scheme whose handler registered no authentication handler, or a contributor
+that rejects the operation, then fails startup, and no document route remains (see
+[Fail-closed startup](#fail-closed-startup)).
 
 **Application mount.** Each enabled document is matched to the JAX-RS mount whose application name
 equals the document's name. The match never uses paths: a manually built mount at the application's
@@ -1542,7 +1689,13 @@ that check's violations.
 ## Mount Customizers
 
 Every `MountCustomizer` whose `matches` accepts the docs mount's fixed metadata is applied to the docs
-router, as to any mount. Such a customizer therefore covers the document routes.
+router, as to any mount. Customizers are applied after the documentation router is created, so a route
+a customizer adds without an explicit order runs after the document routes. A protected document's route
+never continues, so such a route never runs for a served protected document, nor for a public document
+that is answered. A customizer route that must run first has to call
+`route().order(Integer.MIN_VALUE)` before it adds its handler, because Vert.x refuses an order
+change once the route has handlers. Such a route runs for every request under the prefix, so its
+handler must pass the request on with `next()` unless it ends the request.
 
 A customizer that matches every mount and adds a handler that ends every request, instead of passing it
 on, also ends every request the docs mount does not answer. Requests under the prefix then stop falling
@@ -1670,8 +1823,8 @@ names are quoted.
 | An enabled document has no `info`, or a blank `title` or `version` | `ConfigurationException` naming the application, its declaring interface's binary name, and `apidocs.documents.<name>.info`, `.info.title`, or `.info.version`; a blank `title` or `version` in `@OpenAPIDefinition(info)` names `@OpenAPIDefinition.info` |
 | An enabled document takes its `info` from `@OpenAPIDefinition` and its `@License` sets both `identifier` and `url` | `ConfigurationException` naming the application, its declaring interface's binary name, `@OpenAPIDefinition.info.license`, and `apidocs.documents.<name>.info`; neither value is echoed |
 | An enabled document has an invalid `serverUrl` | `ConfigurationException` naming the application, its declaring interface, and `apidocs.documents.<name>.serverUrl` |
-| An enabled `PROTECTED` document names a `securityScheme` no registered handler has, or authentication enforcement is not installed | `RestConfigurationException` naming the application, its declaring interface, and `@ApiDocs.securityScheme` or `@ApiDocs.access`; raised before any document route is registered |
-| An enabled document has `@ApiDocs.access` `PROTECTED` and passes the check above | `RestConfigurationException` naming the application, its declaring interface, and `@ApiDocs.access`, stating that protected documents are not served yet; raised before any document route is registered |
+| An enabled `PROTECTED` document names a `securityScheme` no registered handler has, or authentication enforcement is not installed | `RestConfigurationException` whose violations each start `Application '<name>' (declared by <interface>): `, naming `@ApiDocs.securityScheme` and the scheme, or `@ApiDocs.access`; several are listed under `Invalid @ApiDocs values:`; raised before any document route is registered |
+| An enabled `PROTECTED` document's scheme handler registered no authentication handler, or a contributor rejects its operation while the route is built | `RestConfigurationException` starting `Protected API document of application '<name>' (access policy: @ApiDocs on <interface>)`; every document route is removed again, so the documentation router has no route |
 | An enabled document has no JAX-RS mount of its application name, a JAX-RS mount lies at or under `apidocs.path`, or a JAX-RS pattern mount path can reach the prefix | `IllegalStateException` from `HttpVerticle` (`Invalid mount configuration:`) listing every violation, raised before any router is created |
 | The docs mount is hosted by an `HttpVerticle` built without composition validators | `RestConfigurationException` naming the docs mount, the cause, and the remedy (obtain `HttpVerticle` from Dagger) |
 | A JAX-RS operation uses a reserved id `apidocs:<name>:json` or `apidocs:<name>:yaml` | `RestConfigurationException` naming the operation id, its method and template, the mount, and the application |
@@ -1739,6 +1892,10 @@ and its message can quote that value.
 - **Putting credentials or internal hosts in a scheme description.** Descriptions, OAuth2 flow URLs,
   scope names and descriptions, API key names, and the OpenID Connect URL are published exactly as
   the handler supplies them and are not checked.
+- **Setting targeted cache headers by default with a protected document.** Only `Cache-Control` is
+  replaced on a protected document. `CDN-Cache-Control`, `Surrogate-Control`, `X-Accel-Expires`, or
+  `Expires` set through `jaxrs.defaultHeaders` survive, so a CDN or proxy that obeys them could
+  store the document; do not configure them while a protected document is enabled.
 - **Expecting a response for `Response`, `CompletionStage`, or a producer-bound type.** Their content
   is decided at runtime, so they publish `default` only; declare the responses with `@ApiResponse`.
   Return `Future<T>` instead of `CompletionStage<T>` to have `T` inferred.
@@ -1798,10 +1955,17 @@ and its message can quote that value.
   request on stops fall-through under the prefix.
 - **Putting `@ApiDocs` on a superinterface.** Only the `@RestApplication` declaring interface is
   read; the annotation processor rejects it on a superinterface.
-- **Expecting `PROTECTED` to work.** It fails startup, after checking the scheme and enforcement; use
-  `PUBLIC` only where the document may be read by any caller.
-- **Expecting a `404` or `405` from the docs mount.** The mount passes every request it does not
-  answer to the later mounts; a trailing slash, `POST`, or unknown name is answered by them.
+- **Expecting an empty `rolesAllowed` to restrict a protected document.** It admits any caller the
+  scheme authenticates, and an INFO line says so at startup; list the roles that may read it.
+- **Expecting configuration to change a document's access.** Only `@ApiDocs` on the declaring
+  interface decides it; use `PUBLIC` only where the document may be read by any caller.
+- **Expecting the application's error handling on a protected document.** Its `401`, `403`, `404`,
+  `503`, and `500` answers end on the document route's own failure handler; exception mappers,
+  error interceptors, and later mounts never see them.
+- **Expecting a `404` or `405` from the docs mount for a public document.** The mount passes every
+  public-document request it does not answer to the later mounts; a trailing slash, `POST`, or
+  unknown name is answered by them. A protected document's trailing-slash variant ends with `404`
+  once the chain has passed.
 - **Publishing different content from different server instances.** Instances of one component are
   compared, and a difference fails the later instance's startup.
 - **Omitting the module and expecting silence.** An application whose interface carries `@ApiDocs`
@@ -1851,7 +2015,8 @@ and its message can quote that value.
 | `ApiDocsInstalled` | Bound whenever the module is listed, whatever the configuration, so `vertique-rest-jaxrs` does not log that no documentation route is published for `@ApiDocs` applications, even with `apidocs.enabled` `false` |
 
 The module requires `@VertxConfig JsonObject`, `ConfigParser` (from `ConfigParsingModule`),
-`JaxRsConfig` and `RestApplications` (both from `RestModule` in `dev.vertique:vertique-rest-jaxrs`),
+`JaxRsConfig`, `RestApplications`, and `SyntheticOperations` (all bound by `RestModule` in
+`dev.vertique:vertique-rest-jaxrs`),
 and the component's multibound sets of `RequestValidationStrategy`, `SecuritySchemeHandler`,
 `MountCustomizer`, `Middleware`, `RouterLifecycleHook`, and `RequestInterceptor`, plus an optional
 `AuthEnforcementCapability`, the optional `OperationSchemaSource` that `RestModule` declares, the
@@ -1887,8 +2052,18 @@ adds no route beyond the document URLs. It is not part of any starter.
 - Repeat with `If-None-Match` set to the returned `ETag`, to `W/` plus the tag, and to `*`: expect
   `304` with no body.
 - `HEAD` the same URLs: expect the `200` headers with no body.
-- Request `<prefix>/unknown/openapi.json`, a trailing-slash variant, and a `POST`: expect the
-  response of the later mounts, never one from this mount.
+- Request `<prefix>/unknown/openapi.json`, a trailing-slash variant of a public document, and a
+  `POST`: expect the response of the later mounts, never one from this mount.
+- Annotate an application `@ApiDocs(access = PROTECTED, securityScheme = "bearerAuth",
+  rolesAllowed = {"docs-reader"})` with the JWT handler configured as `bearerAuth`: expect `401`
+  without a token and `403` with a token lacking the role, each as a problem response with
+  `Cache-Control: no-store` and no `ETag`; with the role, expect `200` with
+  `Cache-Control: private, no-store` and `Vary: Authorization`, and `304` for a matching
+  `If-None-Match`. With the role, a trailing-slash variant answers `404`.
+- With that protected document, observe one `RestRequestCompletedEvent` per read or denial whose
+  operation id is `apidocs:<name>:json` or `apidocs:<name>:yaml`.
+- Name a `securityScheme` no handler registers: expect startup to fail starting
+  `Application '<name>' (declared by <interface>)` and the server not to listen.
 - Set `apidocs.documents.<name>.enabled` to `false`: expect no document route and no publication.
 - Key an entry by an undeclared name, add `access` to an entry, or set `serverUrl` to `ftp://host`:
   expect startup to fail naming the configuration path.

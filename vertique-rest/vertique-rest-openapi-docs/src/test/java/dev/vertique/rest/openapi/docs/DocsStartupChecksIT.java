@@ -150,7 +150,7 @@ public class DocsStartupChecksIT {
     /** The statement of a refusal of a protected document without authentication enforcement. */
     private static final String NO_ENFORCEMENT = "authentication enforcement is not installed";
 
-    /** The statement of the refusal of a protected document that passed every startup check. */
+    /** The statement of a refusal that a protected document failing a startup check must not make. */
     private static final String NOT_SERVED_YET = "not served yet";
 
     /** The {@code info} the annotated declaration's {@code @OpenAPIDefinition} carries. */
@@ -562,12 +562,7 @@ public class DocsStartupChecksIT {
                         List.of(AUTHENTICATED_MGMT_API, ACCESS_ATTRIBUTE, NO_ENFORCEMENT),
                         List.of(NOT_SERVED_YET)),
                 Arguments.of(
-                        "(e) staging guard: protected documents are not served yet",
-                        Composition.PROTECTED_BEARER_AUTH_WITH_ENFORCEMENT,
-                        List.of(ACCESS_ATTRIBUTE, NOT_SERVED_YET),
-                        List.of()),
-                Arguments.of(
-                        "(f) control: the shared fixture's public document only, no handler, no marker",
+                        "(e) control: the shared fixture's public document only, no handler, no marker",
                         Composition.SHARED,
                         null,
                         List.of()));
@@ -1266,12 +1261,6 @@ public class DocsStartupChecksIT {
         static final Composition AUTHENTICATED_BEARER_AUTH_ONLY = new Composition(
                 "PublicApi and AuthenticatedMgmtApi; bearerAuth handler only",
                 config -> DaggerStartupTestComponents_AuthenticatedBearerAuthOnlyComponent.factory()
-                        .create(config));
-
-        /** {@code ProtectedMgmtApi}; the {@code bearerAuth} handler and the enforcement marker bound. */
-        static final Composition PROTECTED_BEARER_AUTH_WITH_ENFORCEMENT = new Composition(
-                "PublicApi and ProtectedMgmtApi; bearerAuth handler and enforcement marker",
-                config -> DaggerStartupTestComponents_ProtectedBearerAuthWithEnforcementComponent.factory()
                         .create(config));
 
         /**

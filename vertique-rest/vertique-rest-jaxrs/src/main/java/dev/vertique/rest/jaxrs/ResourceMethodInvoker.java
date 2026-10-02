@@ -27,6 +27,7 @@ import jakarta.annotation.Nullable;
 import java.lang.reflect.InvocationTargetException;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 /**
  * Vert.x Handler that bridges a RoutingContext to a JAX-RS resource method invocation.
@@ -200,6 +201,7 @@ public class ResourceMethodInvoker implements Handler<RoutingContext> {
      *                              bodies
      * @param descriptor            the route's operation descriptor, adapted from {@code meta}; must not
      *                              be {@code null}
+     * @throws NullPointerException if {@code descriptor} is {@code null}
      */
     ResourceMethodInvoker(
             ResourceMethodMeta meta,
@@ -240,7 +242,7 @@ public class ResourceMethodInvoker implements Handler<RoutingContext> {
         // The descriptor is built once, so the reflective path can construct a DefaultBoundRequest per
         // request without re-deriving the parameter model, and the same instance is the operation
         // every interceptor sees on its OperationContext.
-        this.descriptor = descriptor;
+        this.descriptor = Objects.requireNonNull(descriptor, "descriptor");
     }
 
     /**

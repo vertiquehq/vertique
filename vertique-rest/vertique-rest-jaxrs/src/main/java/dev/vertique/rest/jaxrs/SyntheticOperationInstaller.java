@@ -4,6 +4,7 @@
 package dev.vertique.rest.jaxrs;
 
 import dev.vertique.rest.core.RestConfigurationException;
+import dev.vertique.rest.core.events.RequestCompletionRecorder;
 import dev.vertique.rest.core.routing.SecurityRequirementSet;
 import dev.vertique.rest.core.security.SecurityPolicy;
 import dev.vertique.rest.core.security.SecurityPolicyViolation;
@@ -52,7 +53,10 @@ import lombok.extern.slf4j.Slf4j;
  * the operation id released, so the router is left exactly as before and a corrected installation of
  * the same id can succeed.
  *
- * <p>The route then carries, in order: the scheme's authentication handler ({@link
+ * <p>The route then carries, in order: the completion recorder (a platform handler recording the
+ * synthetic descriptor as the request's route identity, so a request rejected by authentication or
+ * authorization still completes as a REST operation completion carrying that descriptor), the
+ * scheme's authentication handler ({@link
  * JaxRsRouteRegistrar#applySecurity}), every registered contributor in {@link
  * JaxRsRouterMount.Factory#sortedOperationHandlerContributors() resource order} with the effective
  * policy and no required action ({@link JaxRsRouteRegistrar#contributeOperationHandlers}), the
@@ -168,6 +172,11 @@ final class SyntheticOperationInstaller implements SyntheticOperations {
             for (HttpMethod method : methods) {
                 route.method(method);
             }
+            // The route's first handler records this operation as the request's route identity, ahead
+            // of authentication, so a request rejected by authentication or authorization still
+            // completes as an operation completion carrying this descriptor. It is a platform handler,
+            // the only handler type Vert.x lets precede the authentication handler(s).
+            route.handler(RequestCompletionRecorder.operationRouteHandler(descriptor));
             JaxRsRouteRegistrar.applySecurity(operationId, route, requirementSets, state.securityHandlers());
             JaxRsRouteRegistrar.contributeOperationHandlers(
                     route,

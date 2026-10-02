@@ -315,7 +315,10 @@ is visible in these places:
   identity handler records the same descriptor ahead of authentication.
 - **Framework synthetic operations.** The descriptor of a synthetic operation reports the name of the
   application whose document the operation serves from `applicationName()`. A synthetic route runs the
-  contributor chain but not the operation interceptors, so it has no `OperationContext`.
+  contributor chain but not the operation interceptors, so it has no `OperationContext`. Its first
+  handler is the completion recorder, ahead of authentication, so every request on the matched
+  route, a `401` or `403` rejection included, completes as a `RestRequestCompletedEvent` whose
+  `operation()` is the synthetic descriptor, the same instance its contributors receive.
 
 The name is `null` on the mount metadata, the operation descriptors, and `ctx.operation()` for a mount
 built through `Factory.create` and for the zero-declaration default mount; nothing derives a name from the mount path or the mount id.
@@ -1708,7 +1711,8 @@ contributes the built-in magic-byte `FileContentVerifier`.
 
 `dev.vertique.rest.jaxrs.publication` is an INTERNAL framework seam, outside the maturity promise and
 not a stable application API, with three unrelated purposes. `SyntheticOperations` lets a sibling
-framework module install a framework-owned route through the resource security chain; an installed
+framework module install a framework-owned route through the resource security chain, behind the
+completion recorder, so its requests complete as `RestRequestCompletedEvent`s; an installed
 route deliberately bypasses two things a resource route would normally go through: the API-scoped
 middleware, request interceptor, router-lifecycle-hook, and mount-customizer chains of a JAX-RS mount
 never run for it, and its own failure handler ends every failure itself rather than handing it to the
