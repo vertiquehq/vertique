@@ -260,6 +260,11 @@ The document route adds its `Vary` value to any `Vary` another handler (such as 
 carry `Cache-Control: no-store`; the document route adds neither `ETag` nor `Vary` to a problem response (other handlers, such as CORS, may add their
 own headers).
 
+Only `Cache-Control` is replaced. Other caching headers that `jaxrs.defaultHeaders` sets, such as
+`CDN-Cache-Control`, `Surrogate-Control`, `X-Accel-Expires`, or `Expires`, are not removed from a
+protected document response, nor from a problem response, so a CDN or proxy that obeys them could
+store a protected document. Do not configure such headers while a protected document is enabled.
+
 ### Several server instances
 
 A component may deploy several `HttpVerticle` instances. They share one document per application:
@@ -1687,8 +1692,10 @@ Every `MountCustomizer` whose `matches` accepts the docs mount's fixed metadata 
 router, as to any mount. Customizers are applied after the documentation router is created, so a route
 a customizer adds without an explicit order runs after the document routes. A protected document's route
 never continues, so such a route never runs for a served protected document, nor for a public document
-that is answered. A customizer route that must run first has to be registered with
-`order(Integer.MIN_VALUE)`.
+that is answered. A customizer route that must run first has to call
+`route().order(Integer.MIN_VALUE)` before it adds its handler, because Vert.x refuses an order
+change once the route has handlers. Such a route runs for every request under the prefix, so its
+handler must pass the request on with `next()` unless it ends the request.
 
 A customizer that matches every mount and adds a handler that ends every request, instead of passing it
 on, also ends every request the docs mount does not answer. Requests under the prefix then stop falling
@@ -1885,6 +1892,10 @@ and its message can quote that value.
 - **Putting credentials or internal hosts in a scheme description.** Descriptions, OAuth2 flow URLs,
   scope names and descriptions, API key names, and the OpenID Connect URL are published exactly as
   the handler supplies them and are not checked.
+- **Setting targeted cache headers by default with a protected document.** Only `Cache-Control` is
+  replaced on a protected document. `CDN-Cache-Control`, `Surrogate-Control`, `X-Accel-Expires`, or
+  `Expires` set through `jaxrs.defaultHeaders` survive, so a CDN or proxy that obeys them could
+  store the document; do not configure them while a protected document is enabled.
 - **Expecting a response for `Response`, `CompletionStage`, or a producer-bound type.** Their content
   is decided at runtime, so they publish `default` only; declare the responses with `@ApiResponse`.
   Return `Future<T>` instead of `CompletionStage<T>` to have `T` inferred.
