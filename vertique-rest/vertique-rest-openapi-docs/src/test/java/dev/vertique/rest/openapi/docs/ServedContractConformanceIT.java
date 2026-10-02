@@ -23,6 +23,7 @@ import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
+import io.vertx.ext.web.client.HttpResponse;
 import io.vertx.ext.web.client.WebClient;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.openapi.contract.OpenAPIContract;
@@ -317,12 +318,14 @@ public class ServedContractConformanceIT {
             if (group.strategy() == Strategy.OPENAPI_CONTRACT) {
                 // When: an order without and with sku is posted on every port
                 for (int port : ports) {
-                    int withoutSku = post(client, port, new JsonObject().put("quantity", 1));
-                    int withSku = post(client, port, new JsonObject().put("sku", "ABC-1234"));
+                    PostResult withoutSku = post(client, port, new JsonObject().put("quantity", 1));
+                    PostResult withSku = post(client, port, new JsonObject().put("sku", "ABC-1234"));
                     String label = group.strategy().id + " | " + group.mode() + " | POST " + PARTNER_ORDERS_URI;
-                    // Then: the strategy enforces the served contract, which requires sku
-                    checks.add(() -> assertEquals(400, withoutSku, label + ": the body without sku is refused"));
-                    checks.add(() -> assertEquals(204, withSku, label + ": the body with sku is accepted"));
+                    // Then: the strategy enforces the served contract, which requires sku: the body
+                    // without it is refused as a missing required body field, and the body with it is
+                    // accepted
+                    checks.add(() -> assertMissingRequiredBodyField(label, withoutSku));
+                    checks.add(() -> assertEquals(204, withSku.status(), label + ": the body with sku is accepted"));
                 }
             }
         }
@@ -419,10 +422,40 @@ public class ServedContractConformanceIT {
                 .collect(Collectors.toCollection(TreeSet::new));
     }
 
-    private static int post(WebClient client, int port, JsonObject body) throws Exception {
-        return Deployments.await(
-                        client.post(port, "127.0.0.1", PARTNER_ORDERS_URI).sendJsonObject(body))
-                .statusCode();
+    /**
+     * One answer to a posted order.
+     *
+     * @param status the status code
+     * @param body   the body text, empty when there was none
+     */
+    private record PostResult(int status, String body) {}
+
+    private static PostResult post(WebClient client, int port, JsonObject body) throws Exception {
+        HttpResponse<Buffer> response = Deployments.await(
+                client.post(port, "127.0.0.1", PARTNER_ORDERS_URI).sendJsonObject(body));
+        Buffer answer = response.body();
+        return new PostResult(response.statusCode(), answer == null ? "" : answer.toString(StandardCharsets.UTF_8));
+    }
+
+    /**
+     * Then: the order without {@code sku} is refused with {@code 400} and a problem body whose {@code
+     * errors} hold a body error of type {@code required} with the detail {@code is missing a required
+     * field}. The served contract's request body declares {@code sku} as its only {@code required}
+     * member and the posted body violates nothing else, so this error is the refusal of the missing
+     * {@code sku}. The strategy's error does not name the missing member, so the name itself is not
+     * asserted.
+     */
+    private static void assertMissingRequiredBodyField(String label, PostResult answer) {
+        assertEquals(400, answer.status(), () -> label + ": the body without sku is refused: " + answer.body());
+        JsonArray errors = new JsonObject(answer.body()).getJsonArray("errors", new JsonArray());
+        boolean missingRequired = errors.stream()
+                .filter(JsonObject.class::isInstance)
+                .map(JsonObject.class::cast)
+                .anyMatch(error -> "required".equals(error.getString("type"))
+                        && "is missing a required field".equals(error.getString("detail"))
+                        && "body".equals(error.getString("location")));
+        assertTrue(
+                missingRequired, () -> label + ": the refusal names a missing required body field: " + answer.body());
     }
 
     /** Creates a fresh component for the strategy, with its configuration. */

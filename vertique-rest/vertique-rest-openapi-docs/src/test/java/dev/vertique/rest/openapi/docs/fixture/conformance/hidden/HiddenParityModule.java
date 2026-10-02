@@ -8,10 +8,10 @@ import dagger.Provides;
 import dagger.multibindings.IntoSet;
 import dev.vertique.rest.core.dagger.JaxRsResources;
 import dev.vertique.rest.jaxrs.runtime.GeneratedRestApplicationRegistration;
-import dev.vertique.rest.openapi.docs.fixture.metadata.it.hidden.HiddenClassResource;
-import dev.vertique.rest.openapi.docs.fixture.metadata.it.hidden.HiddenContractResource;
-import dev.vertique.rest.openapi.docs.fixture.metadata.it.hidden.MixedOperationsResource;
-import dev.vertique.rest.openapi.docs.fixture.metadata.it.hidden.PartlyHiddenContractResource;
+import dev.vertique.rest.openapi.docs.fixture.conformance.hidden.scan.HiddenInterfaceResource;
+import dev.vertique.rest.openapi.docs.fixture.conformance.hidden.scan.HiddenTypeResource;
+import dev.vertique.rest.openapi.docs.fixture.conformance.hidden.scan.MixedMethodsResource;
+import dev.vertique.rest.openapi.docs.fixture.conformance.hidden.scan.PartlyHiddenInterfaceResource;
 import java.util.List;
 
 /**
@@ -38,17 +38,17 @@ public final class HiddenParityModule {
                 HiddenParityApi.NAME,
                 HiddenParityApi.PATH,
                 List.of(
-                        MixedOperationsResource.class,
-                        HiddenClassResource.class,
-                        HiddenContractResource.class,
-                        PartlyHiddenContractResource.class),
+                        MixedMethodsResource.class,
+                        HiddenTypeResource.class,
+                        HiddenInterfaceResource.class,
+                        PartlyHiddenInterfaceResource.class),
                 false,
                 "",
                 true);
     }
 
     /**
-     * Contributes {@link MixedOperationsResource}.
+     * Contributes {@link MixedMethodsResource}.
      *
      * @return a new resource instance
      */
@@ -56,11 +56,11 @@ public final class HiddenParityModule {
     @IntoSet
     @JaxRsResources
     static Object mixedResource() {
-        return new MixedOperationsResource();
+        return new MixedMethodsResource();
     }
 
     /**
-     * Contributes {@link HiddenClassResource}.
+     * Contributes {@link HiddenTypeResource}.
      *
      * @return a new resource instance
      */
@@ -68,11 +68,11 @@ public final class HiddenParityModule {
     @IntoSet
     @JaxRsResources
     static Object hiddenClassResource() {
-        return new HiddenClassResource();
+        return new HiddenTypeResource();
     }
 
     /**
-     * Contributes {@link HiddenContractResource}.
+     * Contributes {@link HiddenInterfaceResource}.
      *
      * @return a new resource instance
      */
@@ -80,18 +80,18 @@ public final class HiddenParityModule {
     @IntoSet
     @JaxRsResources
     static Object hiddenContractResource() {
-        return new HiddenContractResource();
+        return new HiddenInterfaceResource();
     }
 
     /**
-     * Contributes {@link PartlyHiddenContractResource}.
+     * Contributes {@link PartlyHiddenInterfaceResource}.
      *
      * @return a new resource instance
      */
     @Provides
     @IntoSet
     @JaxRsResources
-    static Object partlyHiddenContractResource() {
-        return new PartlyHiddenContractResource();
+    static Object partlyHiddenInterfaceResource() {
+        return new PartlyHiddenInterfaceResource();
     }
 }

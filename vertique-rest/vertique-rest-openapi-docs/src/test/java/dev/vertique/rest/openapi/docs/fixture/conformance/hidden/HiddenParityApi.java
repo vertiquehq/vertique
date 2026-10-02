@@ -5,21 +5,23 @@ package dev.vertique.rest.openapi.docs.fixture.conformance.hidden;
 
 import dev.vertique.rest.jaxrs.application.RestApplication;
 import dev.vertique.rest.openapi.docs.ApiDocs;
-import dev.vertique.rest.openapi.docs.fixture.metadata.it.hidden.HiddenClassResource;
-import dev.vertique.rest.openapi.docs.fixture.metadata.it.hidden.HiddenContractResource;
-import dev.vertique.rest.openapi.docs.fixture.metadata.it.hidden.MixedOperationsResource;
-import dev.vertique.rest.openapi.docs.fixture.metadata.it.hidden.PartlyHiddenContractResource;
+import dev.vertique.rest.openapi.docs.fixture.conformance.hidden.scan.HiddenInterfaceResource;
+import dev.vertique.rest.openapi.docs.fixture.conformance.hidden.scan.HiddenTypeResource;
+import dev.vertique.rest.openapi.docs.fixture.conformance.hidden.scan.MixedMethodsResource;
+import dev.vertique.rest.openapi.docs.fixture.conformance.hidden.scan.PartlyHiddenInterfaceResource;
 import io.swagger.v3.oas.annotations.OpenAPIDefinition;
 import io.swagger.v3.oas.annotations.info.Info;
 
 /**
  * The documented application {@value #NAME} at {@value #PATH}, listing one resource of every hiding
- * placement: {@link MixedOperationsResource} (a method hidden by {@code @Hidden}, a method hidden by
- * {@code @Operation(hidden = true)}, and a visible method), {@link HiddenClassResource} (the class
- * hidden by {@code @Hidden}), {@link HiddenContractResource} (implementing an interface hidden by
- * {@code @Hidden}), and {@link PartlyHiddenContractResource} (implementing an interface with one
- * method hidden by {@code @Hidden} and one visible method). Its document is public and generated,
- * with the {@code info} this interface carries.
+ * placement, all from the package {@code fixture.conformance.hidden.scan}, which holds nothing else:
+ * {@link MixedMethodsResource} (methods hidden by {@code @Hidden}, a method hidden by
+ * {@code @Operation(hidden = true)}, and a visible method), {@link HiddenTypeResource} (the class
+ * hidden by {@code @Hidden}), {@link HiddenInterfaceResource} (implementing an interface hidden by
+ * {@code @Hidden}), and {@link PartlyHiddenInterfaceResource} (implementing an interface with one
+ * method hidden by {@code @Hidden} and one visible method). Its document is public and generated, with the
+ * {@code info} this interface carries. This interface stays outside that package, so a scan of the
+ * package never finds its {@code @OpenAPIDefinition}.
  */
 @ApiDocs(access = ApiDocs.Access.PUBLIC)
 @OpenAPIDefinition(info = @Info(title = HiddenParityApi.TITLE, version = HiddenParityApi.VERSION))
@@ -27,10 +29,10 @@ import io.swagger.v3.oas.annotations.info.Info;
         name = HiddenParityApi.NAME,
         path = HiddenParityApi.PATH,
         resources = {
-            MixedOperationsResource.class,
-            HiddenClassResource.class,
-            HiddenContractResource.class,
-            PartlyHiddenContractResource.class
+            MixedMethodsResource.class,
+            HiddenTypeResource.class,
+            HiddenInterfaceResource.class,
+            PartlyHiddenInterfaceResource.class
         })
 public interface HiddenParityApi {
 

@@ -162,6 +162,86 @@ class MavenComparisonNormalizerTest {
     }
 
     @Test
+    @DisplayName("a schema-level required list in one document only is a required difference")
+    void schemaRequiredIsCompared() {
+        JsonNode maven = bodyDocument(
+                "{\"type\":\"object\",\"required\":[\"a\"],\"properties\":{\"a\":{\"type\":\"string\"}}}", "{}");
+        JsonNode runtime = bodyDocument("{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"string\"}}}", "{}");
+
+        assertEquals(
+                List.of("op requestBody application/json # required [a]→[]"),
+                lines(MavenComparisonNormalizer.compare(maven, runtime)));
+    }
+
+    @Test
+    @DisplayName("allOf with one branch against allOf with two branches is a composition arity difference")
+    void compositionArityIsCompared() {
+        JsonNode maven = bodyDocument("{\"allOf\":[{\"type\":\"string\"}]}", "{}");
+        JsonNode runtime = bodyDocument("{\"allOf\":[{\"type\":\"string\"},{\"type\":\"object\"}]}", "{}");
+
+        assertEquals(
+                List.of("op requestBody application/json # composition [allOf[1]]→[allOf[2]]"),
+                lines(MavenComparisonNormalizer.compare(maven, runtime)));
+    }
+
+    @Test
+    @DisplayName("not in one document only is a composition difference")
+    void notPresenceIsCompared() {
+        JsonNode maven = bodyDocument("{\"type\":\"string\",\"not\":{\"type\":\"null\"}}", "{}");
+        JsonNode runtime = bodyDocument("{\"type\":\"string\"}", "{}");
+
+        assertEquals(
+                List.of("op requestBody application/json # composition [not]→[]"),
+                lines(MavenComparisonNormalizer.compare(maven, runtime)));
+    }
+
+    @Test
+    @DisplayName("oneOf in one document and anyOf in the other is a composition difference")
+    void oneOfAndAnyOfPresenceIsCompared() {
+        JsonNode maven = bodyDocument("{\"oneOf\":[{\"type\":\"string\"},{\"type\":\"integer\"}]}", "{}");
+        JsonNode runtime = bodyDocument("{\"anyOf\":[{\"type\":\"string\"},{\"type\":\"integer\"}]}", "{}");
+
+        assertEquals(
+                List.of("op requestBody application/json # composition [oneOf[2]]→[anyOf[2]]"),
+                lines(MavenComparisonNormalizer.compare(maven, runtime)));
+    }
+
+    @Test
+    @DisplayName("readOnly true against an absent readOnly is a readOnly difference")
+    void readOnlyIsCompared() {
+        JsonNode maven = bodyDocument(
+                "{\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"string\",\"readOnly\":true}}}", "{}");
+        JsonNode runtime = bodyDocument("{\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"string\"}}}", "{}");
+
+        assertEquals(
+                List.of("op requestBody application/json #/properties/id readOnly true→false"),
+                lines(MavenComparisonNormalizer.compare(maven, runtime)));
+    }
+
+    @Test
+    @DisplayName("an absent writeOnly against writeOnly true is a writeOnly difference")
+    void writeOnlyIsCompared() {
+        JsonNode maven = bodyDocument("{\"type\":\"object\",\"properties\":{\"secret\":{\"type\":\"string\"}}}", "{}");
+        JsonNode runtime = bodyDocument(
+                "{\"type\":\"object\",\"properties\":{\"secret\":{\"type\":\"string\",\"writeOnly\":true}}}", "{}");
+
+        assertEquals(
+                List.of("op requestBody application/json #/properties/secret writeOnly false→true"),
+                lines(MavenComparisonNormalizer.compare(maven, runtime)));
+    }
+
+    @Test
+    @DisplayName("items in one document only is a presence difference at the items pointer")
+    void itemsPresenceIsCompared() {
+        JsonNode maven = bodyDocument("{\"type\":\"array\",\"items\":{\"type\":\"string\"}}", "{}");
+        JsonNode runtime = bodyDocument("{\"type\":\"array\"}", "{}");
+
+        assertEquals(
+                List.of("op requestBody application/json #/items presence present→absent"),
+                lines(MavenComparisonNormalizer.compare(maven, runtime)));
+    }
+
+    @Test
     @DisplayName("an expected entry that no difference matches is reported as stale")
     void staleEntryIsDetected() {
         List<Difference> observed =

@@ -52,7 +52,8 @@ import java.util.TreeSet;
  * writeOnly}, and {@code recursion}. The comparison descends into {@code properties} present in both
  * schemas, composition branches present in both, {@code items}, and schema-valued {@code
  * additionalProperties}. Nothing else (formats, descriptions, examples, enumerations, request body
- * {@code required}) is compared.
+ * {@code required}, and a schema-valued {@code additionalProperties} present in one schema only) is
+ * compared.
  *
  * <p><b>Output.</b> Each difference names its operation id, a location ({@code operation}, {@code
  * requestBody <media type>}, {@code response <status>}, {@code response <status> <media type>}, or

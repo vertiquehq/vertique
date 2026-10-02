@@ -31,6 +31,10 @@ import org.junit.jupiter.api.extension.RegisterExtension;
  * other integration tests; nothing else from the shipped file is used, so the test never binds a
  * non-loopback address. When the resource or its {@code apidocs} section is missing, the test class
  * fails to initialize with a message naming what is missing.
+ *
+ * <p>The {@code 404} is meaningful only together with {@link ApiDocsMavenComparisonIT}, which gets
+ * {@code 200} on the same path from the same component when the shipped {@code apidocs} section is
+ * replaced by its own configuration.
  */
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
 class ShippedConfigurationIT {

@@ -5,19 +5,19 @@ package dev.vertique.rest.openapi.docs;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 
 import dev.vertique.rest.openapi.docs.HiddenParityTestComponents.ServedComponent;
 import dev.vertique.rest.openapi.docs.fixture.DocsConfigs;
 import dev.vertique.rest.openapi.docs.fixture.conformance.hidden.HiddenParityApi;
+import dev.vertique.rest.openapi.docs.fixture.conformance.hidden.scan.HiddenInterface;
+import dev.vertique.rest.openapi.docs.fixture.conformance.hidden.scan.HiddenTypeResource;
+import dev.vertique.rest.openapi.docs.fixture.conformance.hidden.scan.MixedMethodsResource;
+import dev.vertique.rest.openapi.docs.fixture.conformance.hidden.scan.PartlyHiddenInterface;
 import dev.vertique.rest.openapi.docs.fixture.conformance.support.Deployments;
 import dev.vertique.rest.openapi.docs.fixture.conformance.support.DocumentRequests;
-import dev.vertique.rest.openapi.docs.fixture.metadata.it.hidden.HiddenClassResource;
-import dev.vertique.rest.openapi.docs.fixture.metadata.it.hidden.HiddenContract;
-import dev.vertique.rest.openapi.docs.fixture.metadata.it.hidden.HiddenContractResource;
-import dev.vertique.rest.openapi.docs.fixture.metadata.it.hidden.MixedOperationsResource;
-import dev.vertique.rest.openapi.docs.fixture.metadata.it.hidden.PartlyHiddenContract;
-import dev.vertique.rest.openapi.docs.fixture.metadata.it.hidden.PartlyHiddenContractResource;
 import io.swagger.v3.jaxrs2.Reader;
+import io.swagger.v3.jaxrs2.integration.JaxrsAnnotationScanner;
 import io.swagger.v3.oas.integration.SwaggerConfiguration;
 import io.swagger.v3.oas.models.OpenAPI;
 import io.swagger.v3.oas.models.PathItem;
@@ -31,10 +31,8 @@ import io.vertx.ext.web.client.HttpRequest;
 import io.vertx.ext.web.client.HttpResponse;
 import io.vertx.ext.web.client.WebClient;
 import io.vertx.junit5.VertxExtension;
-import jakarta.annotation.Nullable;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -50,14 +48,26 @@ import org.junit.jupiter.api.function.Executable;
 
 /**
  * Checks that the runtime document of one declared application omits hidden operations exactly as
- * the Swagger JAX-RS reader the build-time Maven plugin runs ({@code io.swagger.v3.jaxrs2.Reader})
- * omits them, and that every hidden operation's route still answers.
+ * the build-time Maven plugin, configured as the services-codegen example configures it, omits them,
+ * and that every hidden operation's route still answers.
  *
  * <p>The application {@code hiddenparity} lists one resource of every hiding placement (see {@link
- * HiddenParityApi}). Its component serves the public document under {@code web-validation} with the
- * canonical schema source over a real, loopback-bound {@code HttpVerticle} on port 0. Operations are
- * compared as {@code METHOD path} strings with the path relative to the application's mount. The
- * expected visible set is a fixed literal; the reader is read on the same four resource classes.
+ * HiddenParityApi}); those resources and the interfaces they implement are the whole content of the
+ * package {@value #SCAN_PACKAGE}. Its component serves the public document under {@code
+ * web-validation} with the canonical schema source over a real, loopback-bound {@code HttpVerticle} on
+ * port 0.
+ *
+ * <p>The plugin side is modelled in the plugin's {@code resourcePackages} discovery mode, the mode the
+ * example's plugin configuration uses: swagger-core's {@code JaxrsAnnotationScanner}, configured with
+ * that package as its only resource package, discovers the {@code @Path}-annotated types, and
+ * swagger-core's JAX-RS {@code Reader} reads exactly those. For resources whose annotations sit on an
+ * interface the scanner finds the interface, not its unannotated implementation; reading the
+ * implementation classes directly, as the plugin's {@code resourceClasses} mode would, keeps the
+ * operations an interface-level placement hides. The discovered set is asserted against a literal
+ * set of types, so the modelled discovery is explicit.
+ *
+ * <p>Operations are compared as {@code METHOD path} strings with the path relative to the
+ * application's mount. The expected visible set is a fixed literal.
  */
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 60, unit = TimeUnit.SECONDS)
@@ -65,7 +75,20 @@ public class HiddenOperationMavenParityIT {
 
     private static final String HOST = "127.0.0.1";
 
-    /** A completed {@code void} resource method answers {@code 204}; every fixture method is {@code void}. */
+    /** The package holding exactly the hidden-placement resources and their interfaces. */
+    static final String SCAN_PACKAGE = "dev.vertique.rest.openapi.docs.fixture.conformance.hidden.scan";
+
+    /**
+     * The types a package scan of {@value #SCAN_PACKAGE} discovers: the {@code @Path}-annotated
+     * classes and interfaces, never the unannotated implementations of the interfaces.
+     */
+    private static final Set<Class<?>> SCANNED_TYPES = Set.of(
+            MixedMethodsResource.class, HiddenTypeResource.class, HiddenInterface.class, PartlyHiddenInterface.class);
+
+    /**
+     * A completed {@code void} resource method answers with no content, status {@code 204}; every
+     * fixture method is {@code void}.
+     */
     private static final int NO_CONTENT = 204;
 
     /** The HTTP method keys a Path Item Object may hold; its other members are not operations. */
@@ -91,8 +114,8 @@ public class HiddenOperationMavenParityIT {
 
     @Test
     @DisplayName(
-            "The runtime document omits operations hidden on a method, a class, an interface, or an interface method exactly as the Swagger reader does, and their routes still answer")
-    void hiddenOperationsMatchSwaggerReader(Vertx vertx) throws Exception {
+            "The runtime document omits operations hidden on a method, a class, an interface, or an interface method exactly as the Maven plugin's package scan and reader do, and their routes still answer")
+    void hiddenOperationsMatchThePluginsPackageScan(Vertx vertx) throws Exception {
         // Given: one documented application listing a resource of every hiding placement.
         ServedComponent component =
                 DaggerHiddenParityTestComponents_ServedComponent.factory().create(vertx, webValidationConfig());
@@ -119,12 +142,13 @@ public class HiddenOperationMavenParityIT {
             Deployments.undeployAll(vertx, deploymentIds);
         }
 
-        // ... and the Swagger reader reads the same resource classes.
-        SortedSet<String> reader = swaggerReaderOperations(new LinkedHashSet<>(List.of(
-                MixedOperationsResource.class,
-                HiddenClassResource.class,
-                HiddenContractResource.class,
-                PartlyHiddenContractResource.class)));
+        // ... and the plugin's discovery scans the package, and the reader reads what it found.
+        Set<Class<?>> scanned = scanResourcePackage(SCAN_PACKAGE);
+        SortedSet<String> reader = swaggerReaderOperations(scanned);
+
+        // Then: the scan discovers exactly the @Path-annotated types.
+        Executable scanDiscovers = () ->
+                assertEquals(SCANNED_TYPES, scanned, "the types the package scan of " + SCAN_PACKAGE + " discovers");
 
         // Then: the runtime document lists exactly the visible operations.
         Executable runtimeVisible = () ->
@@ -154,7 +178,12 @@ public class HiddenOperationMavenParityIT {
         }
         Executable routesAnswer = () -> assertAll("the hidden routes", routeChecks.stream());
 
-        assertAll("hidden operations against the Swagger reader", runtimeVisible, readerAgrees, routesAnswer);
+        assertAll(
+                "hidden operations against the plugin's package scan and reader",
+                scanDiscovers,
+                runtimeVisible,
+                readerAgrees,
+                routesAnswer);
     }
 
     // --- Operation sets ---
@@ -162,11 +191,10 @@ public class HiddenOperationMavenParityIT {
     /**
      * Returns the operations a runtime document lists as {@code METHOD path} strings, sorted.
      *
-     * <p>Normalization: the runtime document carries the application's mount in {@code servers}, so
-     * its {@code paths} keys are already relative to the mount and are taken verbatim; a key that
-     * nevertheless starts with the application path followed by {@code /} has that prefix removed,
-     * so the result is comparable with the reader's resource-relative paths either way. The method
-     * is the upper-cased Path Item key; members that are not HTTP methods are ignored.
+     * <p>The runtime document carries the application's mount in {@code servers}, so its {@code
+     * paths} keys must be relative to the mount; they are taken verbatim, and a key that starts with
+     * the application path fails the check. The method is the upper-cased Path Item key; members that
+     * are not HTTP methods are ignored.
      *
      * @param document        the runtime document
      * @param applicationPath the application's path, for example {@code /api/hiddenparity}
@@ -176,12 +204,13 @@ public class HiddenOperationMavenParityIT {
         SortedSet<String> operations = new TreeSet<>();
         JsonObject paths = document.getJsonObject("paths", new JsonObject());
         for (Map.Entry<String, Object> path : paths) {
-            String relative = path.getKey().startsWith(applicationPath + "/")
-                    ? path.getKey().substring(applicationPath.length())
-                    : path.getKey();
+            assertFalse(
+                    path.getKey().startsWith(applicationPath),
+                    () -> "the runtime document's path key " + path.getKey() + " is not relative to the mount "
+                            + applicationPath);
             for (String key : ((JsonObject) path.getValue()).fieldNames()) {
                 if (OPERATION_KEYS.contains(key)) {
-                    operations.add(key.toUpperCase(Locale.ROOT) + " " + relative);
+                    operations.add(key.toUpperCase(Locale.ROOT) + " " + path.getKey());
                 }
             }
         }
@@ -189,12 +218,32 @@ public class HiddenOperationMavenParityIT {
     }
 
     /**
-     * Reads the resource classes with the Swagger JAX-RS reader the build-time Maven plugin runs and
-     * returns the operations of the document it produces as {@code METHOD path} strings, sorted. The
-     * reader is given an empty base document and no application path, so its paths are relative to
-     * the resources.
+     * Discovers resource types as the Maven plugin does when configured with {@code
+     * resourcePackages}: swagger-core's {@code JaxrsAnnotationScanner}, configured with the package
+     * as its only resource package.
      *
-     * @param resourceClasses the resource classes to read
+     * @param resourcePackage the package to scan
+     * @return the discovered types
+     */
+    private static Set<Class<?>> scanResourcePackage(String resourcePackage) {
+        PackageScanner scanner = new PackageScanner();
+        scanner.setConfiguration(new SwaggerConfiguration().resourcePackages(Set.of(resourcePackage)));
+        return scanner.classes();
+    }
+
+    /**
+     * swagger-core's {@code JaxrsAnnotationScanner} with its self type bound; it overrides nothing, so
+     * it scans exactly as the scanner does.
+     */
+    private static final class PackageScanner extends JaxrsAnnotationScanner<PackageScanner> {}
+
+    /**
+     * Reads the discovered types with swagger-core's JAX-RS {@code Reader}, which the build-time
+     * Maven plugin runs, and returns the operations of the document it produces as {@code METHOD path}
+     * strings, sorted. The reader is given an empty base document and no application path, so its
+     * paths are relative to the resources.
+     *
+     * @param resourceClasses the discovered types to read
      * @return the operations, sorted
      */
     private static SortedSet<String> swaggerReaderOperations(Set<Class<?>> resourceClasses) {
@@ -218,24 +267,19 @@ public class HiddenOperationMavenParityIT {
     // --- Hidden routes ---
 
     /**
-     * Lists the route of every hidden operation, under the application path. The write route is sent
-     * its query binding and a body naming only the body type's published member, so the gate
-     * accepts it; the route whose query binding disagrees with its {@code @Parameter} is sent that
-     * query binding; the other routes are sent nothing.
+     * Lists the route of every hidden operation, under the application path. No route takes input, so
+     * none is sent a query or a body.
      */
     private static List<HiddenRoute> hiddenRoutes() {
         String app = HiddenParityApi.PATH;
-        String mixed = app + MixedOperationsResource.ROUTE;
+        String mixed = app + MixedMethodsResource.ROUTE;
         return List.of(
-                new HiddenRoute(HttpMethod.GET, mixed + "/one", null),
-                new HiddenRoute(
-                        HttpMethod.POST,
-                        mixed + "/two?" + MixedOperationsResource.FLAG + "=v",
-                        new JsonObject().put("name", "n")),
-                new HiddenRoute(HttpMethod.GET, mixed + "/four?" + MixedOperationsResource.MODE + "=m", null),
-                new HiddenRoute(HttpMethod.GET, app + HiddenClassResource.ROUTE, null),
-                new HiddenRoute(HttpMethod.GET, app + HiddenContract.ROUTE, null),
-                new HiddenRoute(HttpMethod.GET, app + PartlyHiddenContract.ROUTE + "/x", null));
+                new HiddenRoute(HttpMethod.GET, mixed + "/one"),
+                new HiddenRoute(HttpMethod.POST, mixed + "/two"),
+                new HiddenRoute(HttpMethod.GET, mixed + "/four"),
+                new HiddenRoute(HttpMethod.GET, app + HiddenTypeResource.ROUTE),
+                new HiddenRoute(HttpMethod.GET, app + HiddenInterface.ROUTE),
+                new HiddenRoute(HttpMethod.GET, app + PartlyHiddenInterface.ROUTE + "/x"));
     }
 
     /** Requests every hidden route once and returns the answers in order. */
@@ -243,8 +287,7 @@ public class HiddenOperationMavenParityIT {
         List<RouteResult> results = new ArrayList<>();
         for (HiddenRoute route : hiddenRoutes()) {
             HttpRequest<Buffer> request = client.request(route.method(), port, HOST, route.uri());
-            HttpResponse<Buffer> response =
-                    Deployments.await(route.body() == null ? request.send() : request.sendJsonObject(route.body()));
+            HttpResponse<Buffer> response = Deployments.await(request.send());
             Buffer body = response.body();
             results.add(new RouteResult(
                     route.toString(),
@@ -258,11 +301,9 @@ public class HiddenOperationMavenParityIT {
      * One hidden route.
      *
      * @param method the request method
-     * @param uri    the request URI, query included
-     * @param body   the JSON body, or {@code null} when none is sent
+     * @param uri    the request URI
      */
-    private record HiddenRoute(
-            HttpMethod method, String uri, @Nullable JsonObject body) {
+    private record HiddenRoute(HttpMethod method, String uri) {
 
         @Override
         public String toString() {
