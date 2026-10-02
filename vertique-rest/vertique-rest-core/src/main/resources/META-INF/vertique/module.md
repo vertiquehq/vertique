@@ -1461,6 +1461,13 @@ whose name collides with a known header wins.
 | `strictTransportSecurity` | `Strict-Transport-Security` | *(not emitted)* |
 | `referrerPolicy` | `Referrer-Policy` | *(not emitted)* |
 
+Custom entries are applied to every response too, including responses of operations that restrict
+callers and their problem responses. A targeted caching header such as `CDN-Cache-Control`,
+`Surrogate-Control`, `X-Accel-Expires`, or `Expires` set here therefore reaches protected responses,
+and a CDN or proxy that obeys it can store them. Do not set such headers here while the application
+serves restricted operations or protected documents (the `vertique-rest-openapi-docs` reference
+covers protected documents).
+
 ### `jaxrs.sse`
 
 | Key | Default | Constraint / notes |
