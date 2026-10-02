@@ -473,7 +473,9 @@ entry may still set `enabled`; a configured `info` or `serverUrl` is refused (se
 - **Format by extension.** The text after the last `.` of the contract location, compared ignoring
   letter case, chooses the parser: `json` for JSON, `yaml` or `yml` for YAML. Any other extension,
   or none, is refused before the location is read. A JSON contract with content after its one JSON
-  value is refused as not valid JSON.
+  value is refused as not valid JSON. A YAML contract holds exactly one document: a second document
+  is refused as not valid YAML. A YAML contract larger than the YAML parser's code-point limit
+  (about 3 MB, the limit the request-validation library applies too) also fails as not valid YAML.
 
 ### Where the contract is read from
 
@@ -527,7 +529,9 @@ is never rewritten, so remove it
   with one contract location; each application serving its own contract as its document needs a
   contract location of its own`. Locations are compared after path normalization, so `./a.yaml`
   and `a.yaml` are one location, while an absolute path and a relative path naming the same file
-  stay distinct.
+  stay distinct. Letter-case variants of one file on a case-insensitive file system, and symbolic
+  links to one file, also stay distinct; the operation binding still refuses a contract that
+  describes another mount's routes.
 - **Unparsable location.** A location that cannot be parsed as a path: `apidocs.documents.<name>:
   application '<name>' (declared by <interface>) serves its own contract as its document, but its
   contract location (<setting>) cannot be parsed as a path`.
@@ -569,7 +573,11 @@ violation found is reported in one `RestConfigurationException`, sorted and join
   wording, each control character rendered as a Java-style Unicode escape. Never a description,
   example, schema, or reference value of the contract.
 - **What names the location.** Only the unsupported-extension refusal, the shadowing warning, and
-  the source INFO line name the contract location or where it resolved.
+  the source INFO line name the contract location or where it resolved, each rendered with every
+  control character escaped.
+- **No location.** An application that serves its own contract but has no contract location fails
+  provisioning with a `ConfigurationException` naming the application, its declaring interface, and
+  `has no contract location`.
 
 ### Operation ids
 
