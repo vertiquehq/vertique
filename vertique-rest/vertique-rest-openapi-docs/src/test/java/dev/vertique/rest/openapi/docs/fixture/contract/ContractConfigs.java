@@ -95,6 +95,17 @@ public final class ContractConfigs {
     }
 
     /**
+     * Returns {@link #sharedUnderOpenApiContract()} plus {@code jaxrs.applications.partner.openapiPath}
+     * {@value ContractFiles#PARTNER_STRATEGY}: {@code partner}'s contract without a {@code servers}
+     * member, because the {@value #OPENAPI_CONTRACT} strategy accepts only absolute server URLs or none.
+     *
+     * @return a fresh configuration
+     */
+    public static JsonObject sharedUnderOpenApiContractWithPartnerStrategyContract() {
+        return withApplicationContract(sharedUnderOpenApiContract(), PartnerApi.NAME, ContractFiles.PARTNER_STRATEGY);
+    }
+
+    /**
      * Returns {@link #shared()} with the {@value #CUSTOM_CONTRACT_TEST} strategy selected.
      *
      * @return a fresh configuration

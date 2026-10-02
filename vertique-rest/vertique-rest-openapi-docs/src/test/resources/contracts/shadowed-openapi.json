@@ -4,11 +4,6 @@
     "title": "classpath",
     "version": "1.0.0"
   },
-  "servers": [
-    {
-      "url": "/api/partner"
-    }
-  ],
   "paths": {
     "/orders": {
       "get": {

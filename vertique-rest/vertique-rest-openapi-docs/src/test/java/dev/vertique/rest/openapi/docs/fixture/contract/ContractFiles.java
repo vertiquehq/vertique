@@ -63,6 +63,12 @@ public final class ContractFiles {
     /** Valid: {@link #PARTNER} without a {@code servers} member. */
     public static final String PARTNER_NO_SERVERS = "contracts/partner-no-servers.yaml";
 
+    /**
+     * Valid: {@link #PARTNER} without a {@code servers} member, otherwise identical, for {@code partner}
+     * under the contract-validation strategy, which accepts only absolute server URLs or none.
+     */
+    public static final String PARTNER_STRATEGY = "contracts/partner-strategy-openapi.yaml";
+
     /** Valid: {@link #PARTNER} with {@code servers[0].url} {@code https://partner.example.com/api/partner}. */
     public static final String PARTNER_ABSOLUTE_SERVER = "contracts/partner-absolute-server.yaml";
 

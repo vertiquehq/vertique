@@ -148,6 +148,7 @@ public class ServedContractIT {
     // --- Contract locations, as the oracles read them ---
 
     private static final String PARTNER_CONTRACT = "contracts/partner-openapi.yaml";
+    private static final String PARTNER_STRATEGY_CONTRACT = "contracts/partner-strategy-openapi.yaml";
     private static final String PARTNER_OVERRIDE_CONTRACT = "contracts/partner-override-openapi.json";
     private static final String ORDERS_CONTRACT = "contracts/orders-openapi.json";
     private static final String GLOBAL_CONTRACT = "contracts/global-openapi.json";
@@ -1041,6 +1042,16 @@ public class ServedContractIT {
     // The contract location resolves as the validation strategy resolves it
     // ---------------------------------------------------------------------------------------------
 
+    /**
+     * A relative contract location resolves to a working-directory file before the classpath resource,
+     * an absolute one to its file, and under {@code openapi-contract} the strategy validates against the
+     * same file the document is served from.
+     *
+     * <p>The shadowed contracts carry no {@code servers} member, because (d) also deploys them under the
+     * contract-validation strategy, which accepts only absolute server URLs or none. Their documents
+     * therefore also log the warning about {@code servers}; the warning checks count only the shadowing
+     * warning.
+     */
     @Test
     @DisplayName(
             "A relative contract location resolves to a working-directory file before the classpath, as the strategy resolves it")
@@ -1362,15 +1373,27 @@ public class ServedContractIT {
     // Under openapi-contract, an own contract is served while the shared global one still fails
     // ---------------------------------------------------------------------------------------------
 
+    /**
+     * Under {@code openapi-contract}, partner's own contract is served and validates its requests, while
+     * catalog's document on the shared global contract still fails startup, under both the built-in and
+     * a custom contract strategy.
+     *
+     * <p>In (a), partner's contract is configured as {@code contracts/partner-strategy-openapi.yaml}, the
+     * declared partner contract without a {@code servers} member: the contract-validation strategy
+     * accepts only absolute server URLs or none, and with the declared relative {@code /api/partner} it
+     * answers every validated request with 500.
+     */
     @Test
     @DisplayName(
             "Under a contract strategy an application's own contract is served, while a document on the shared contract still fails")
     void ownContractServedUnderOpenApiContractWhileSharedGlobalStillFails(Vertx vertx) throws Exception {
         List<Executable> checks = new ArrayList<>();
 
-        // (a) Given: openapi-contract, orders's and catalog's documents disabled
+        // (a) Given: openapi-contract, partner's contract configured without servers (the strategy accepts
+        // only absolute server URLs or none), orders's and catalog's documents disabled
         JsonObject ownOnly = ContractConfigs.withDocumentEnabled(
-                ContractConfigs.withDocumentEnabled(ContractConfigs.sharedUnderOpenApiContract(), ORDERS, false),
+                ContractConfigs.withDocumentEnabled(
+                        ContractConfigs.sharedUnderOpenApiContractWithPartnerStrategyContract(), ORDERS, false),
                 CATALOG,
                 false);
         DocsProvisions served = sharedOpenApiContractComponent(vertx, ownOnly);
@@ -1383,8 +1406,8 @@ public class ServedContractIT {
                     .status();
             int withSku = post(port, PARTNER_ORDERS_URI, new JsonObject().put("sku", "ABC-1234"))
                     .status();
-            checks.add(
-                    () -> assertEquals(fixtureTree(PARTNER_CONTRACT), tree, "(a): partner's tree is its contract's"));
+            checks.add(() -> assertEquals(
+                    fixtureTree(PARTNER_STRATEGY_CONTRACT), tree, "(a): partner's tree is its configured contract's"));
             checks.add(() -> assertEquals(400, withoutSku, "(a): the body without sku is refused by the strategy"));
             checks.add(() -> assertEquals(204, withSku, "(a): the body with sku is accepted"));
         } finally {

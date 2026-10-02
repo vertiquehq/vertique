@@ -9,11 +9,14 @@ package dev.vertique.rest.openapi.docs.fixture.contract;
  * ContractFiles#SHADOWED}, the file written to an absolute location, and the file written after a
  * first, failed deployment at {@value ContractFiles#LATE}.
  *
- * <p>Each is a valid OpenAPI {@code 3.1.0} JSON contract for {@code partner}: {@code servers[0].url}
- * {@code /api/partner}, mount-relative keys, {@code listOrders} and {@code createOrder} described and
- * nothing else, every operation with {@code responses}. They differ only in {@code info.title} and,
- * for {@link #WORKING_DIRECTORY_SHADOWED}, in the request schema of {@code createOrder}, which also
- * requires {@code quantity}.
+ * <p>Each is a valid OpenAPI {@code 3.1.0} JSON contract for {@code partner}: mount-relative keys,
+ * {@code listOrders} and {@code createOrder} described and nothing else, every operation with {@code
+ * responses}. They differ in {@code info.title}; for {@link #WORKING_DIRECTORY_SHADOWED}, in the
+ * request schema of {@code createOrder}, which also requires {@code quantity}; and in {@code servers}.
+ * {@link #WORKING_DIRECTORY_SHADOWED} and {@link #ABSOLUTE} carry no {@code servers} member, because
+ * a test also deploys them under the contract-validation strategy, which accepts only absolute server
+ * URLs or none and answers every validated request with 500 for a relative one. {@link #LATE} keeps
+ * {@code servers[0].url} {@code /api/partner}.
  */
 public final class ContractTexts {
 
@@ -31,23 +34,25 @@ public final class ContractTexts {
 
     /**
      * The working-directory variant of {@value ContractFiles#SHADOWED}: {@code info.title} {@value
-     * #WORKING_DIRECTORY_TITLE}, and {@code createOrder}'s request schema requires both {@code sku}
-     * and {@code quantity}.
+     * #WORKING_DIRECTORY_TITLE}, no {@code servers} member, and {@code createOrder}'s request schema
+     * requires both {@code sku} and {@code quantity}.
      */
-    public static final String WORKING_DIRECTORY_SHADOWED = partner(WORKING_DIRECTORY_TITLE, "\"sku\", \"quantity\"");
+    public static final String WORKING_DIRECTORY_SHADOWED =
+            partner(WORKING_DIRECTORY_TITLE, "\"sku\", \"quantity\"", false);
 
     /**
      * The contract a test writes to an absolute location: {@code info.title} {@value
-     * #ABSOLUTE_TITLE}; {@code createOrder}'s request schema requires {@code sku}.
+     * #ABSOLUTE_TITLE}, no {@code servers} member; {@code createOrder}'s request schema requires
+     * {@code sku}.
      */
-    public static final String ABSOLUTE = partner(ABSOLUTE_TITLE, "\"sku\"");
+    public static final String ABSOLUTE = partner(ABSOLUTE_TITLE, "\"sku\"", false);
 
     /**
      * The contract a test writes at {@value ContractFiles#LATE} after a first deployment failed:
-     * {@code info.title} {@value #LATE_TITLE}; {@code createOrder}'s request schema requires {@code
-     * sku}.
+     * {@code info.title} {@value #LATE_TITLE}, {@code servers[0].url} {@code /api/partner}; {@code
+     * createOrder}'s request schema requires {@code sku}.
      */
-    public static final String LATE = partner(LATE_TITLE, "\"sku\"");
+    public static final String LATE = partner(LATE_TITLE, "\"sku\"", true);
 
     private ContractTexts() {}
 
@@ -56,9 +61,17 @@ public final class ContractTexts {
      *
      * @param title    the {@code info.title}
      * @param required the members of {@code OrderRequest}'s {@code required} array, as JSON
+     * @param servers  whether the contract has the {@code servers} member naming {@code /api/partner}
      * @return the contract text
      */
-    private static String partner(String title, String required) {
+    private static String partner(String title, String required, boolean servers) {
+        String serversMember = servers ? """
+                  "servers": [
+                    {
+                      "url": "/api/partner"
+                    }
+                  ],
+                """ : "";
         return """
                 {
                   "openapi": "3.1.0",
@@ -66,12 +79,7 @@ public final class ContractTexts {
                     "title": "%s",
                     "version": "1.0.0"
                   },
-                  "servers": [
-                    {
-                      "url": "/api/partner"
-                    }
-                  ],
-                  "paths": {
+                %s  "paths": {
                     "/orders": {
                       "get": {
                         "operationId": "listOrders",
@@ -131,6 +139,6 @@ public final class ContractTexts {
                     }
                   }
                 }
-                """.formatted(title, required);
+                """.formatted(title, serversMember, required);
     }
 }
