@@ -476,6 +476,9 @@ entry may still set `enabled`; a configured `info` or `serverUrl` is refused (se
   value is refused as not valid JSON. A YAML contract holds exactly one document: a second document
   is refused as not valid YAML. A YAML contract larger than the YAML parser's code-point limit
   (about 3 MB, the limit the request-validation library applies too) also fails as not valid YAML.
+- **No YAML anchors.** YAML anchors, aliases, and `<<` merge keys are not expanded: an alias is
+  served as its anchor's name, while the validation strategy expands them. Write a served contract
+  without anchors, aliases, and merge keys.
 
 ### Where the contract is read from
 
@@ -550,13 +553,15 @@ Neither names the location. `<setting>` is `@RestApplication.openapiPath on <int
 No cause is attached: neither the message nor a cause carries the file system's or the parser's
 text, or any byte of the file.
 
-**Content.** The parsed contract is then checked against the mount's routed operations. Every
+**Content.** The parsed contract is then checked against the mount's routed operations. A Link Object
+reached through a local `$ref` from a `links` object is checked like an inline one, at the
+resolved Link's own location. Every
 violation found is reported in one `RestConfigurationException`, sorted and joined by `; `:
 `The served contract of application '<name>' is refused: <violations>`.
 
 | Refused | Violation |
 |---|---|
-| The root is not an object, or `openapi` is not a string `3.0.<n>` or `3.1.<n>`; OpenAPI 3.2 is not accepted, nor a version without its patch number | `the document root must be OpenAPI 3.0 or 3.1, and it is not an object`, or `member /openapi must be OpenAPI 3.0 or 3.1, a string of the form 3.0.<n> or 3.1.<n>` |
+| The root is not an object, or `openapi` is not a string `3.0.<n>` or `3.1.<n>`; OpenAPI 3.2 is not accepted, nor a version without its patch number. A file refused here reports that one violation only and is checked no further | `the document root must be OpenAPI 3.0 or 3.1, and it is not an object`, or `member /openapi must be OpenAPI 3.0 or 3.1, a string of the form 3.0.<n> or 3.1.<n>` |
 | A string `$ref` anywhere that does not start with `#/` | `member <pointer> is not a local reference: a reference must start with #/` |
 | A member named `operationRef` or `$id` anywhere | `member <pointer> is not allowed in a served contract` |
 | A local reference the checks follow (Path Items, Callback Objects, parameters, request bodies, form schemas) that does not resolve, or that closes a cycle | `the reference at <pointer> does not resolve within the document`, or `... closes a reference cycle` |
