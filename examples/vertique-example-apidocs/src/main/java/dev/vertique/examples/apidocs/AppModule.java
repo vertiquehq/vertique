@@ -88,7 +88,7 @@ public abstract class AppModule {
 
     /**
      * Reads the HS256 key from the top-level {@code "jwt.hs256Key"} entry or, when that is absent,
-     * from {@code jwt.hs256Key} in the nested {@code jwt} section.
+     * from {@code hs256Key} in the nested {@code jwt} section.
      *
      * @param config the application configuration
      * @return the key, at least {@value #MIN_JWT_KEY_LENGTH} characters

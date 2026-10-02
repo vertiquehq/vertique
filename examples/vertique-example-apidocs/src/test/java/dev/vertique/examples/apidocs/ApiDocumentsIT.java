@@ -24,7 +24,6 @@ import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.auth.jwt.JWTAuth;
 import java.io.IOException;
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
@@ -330,11 +329,11 @@ public class ApiDocumentsIT {
      * @return the tokens, empty when the header is absent
      */
     private static Set<String> headerTokens(Response response, String name) {
-        List<String> tokens = new ArrayList<>();
+        Set<String> headerTokens = new TreeSet<>();
         response.headers().getValues(name).forEach(value -> Arrays.stream(value.split(","))
                 .map(String::trim)
                 .filter(token -> !token.isEmpty())
-                .forEach(tokens::add));
-        return new TreeSet<>(tokens);
+                .forEach(headerTokens::add));
+        return headerTokens;
     }
 }

@@ -19,7 +19,7 @@ import java.nio.charset.StandardCharsets;
 final class TestConfiguration {
 
     /** The classpath location of the shipped configuration. */
-    static final String SHIPPED_CONFIGURATION = "config/application.json";
+    private static final String SHIPPED_CONFIGURATION = "config/application.json";
 
     /** The test-only HS256 key, 40 characters; never part of the shipped configuration. */
     static final String JWT_KEY = "test-only-hs256-key-for-apidocs-example!";
@@ -30,22 +30,13 @@ final class TestConfiguration {
      * Returns the shipped configuration merged with the test-only keys.
      *
      * @return a new configuration object
+     * @throws IllegalStateException when the resource is missing
      */
     static JsonObject forTest() {
         JsonObject testKeys = new JsonObject()
                 .put("http", new JsonObject().put("port", 0).put("host", "127.0.0.1"))
                 .put("jwt", new JsonObject().put("hs256Key", JWT_KEY));
-        return shipped().mergeIn(testKeys, true);
-    }
-
-    /**
-     * Returns the shipped configuration exactly as the classpath holds it.
-     *
-     * @return a new configuration object
-     * @throws IllegalStateException when the resource is missing
-     */
-    static JsonObject shipped() {
-        return new JsonObject(shippedText());
+        return new JsonObject(shippedText()).mergeIn(testKeys, true);
     }
 
     /**

@@ -17,7 +17,7 @@ import java.nio.charset.StandardCharsets;
 final class ShippedTestConfiguration {
 
     /** The classpath location of the shipped configuration. */
-    static final String SHIPPED_CONFIGURATION = "config/application.json";
+    private static final String SHIPPED_CONFIGURATION = "config/application.json";
 
     private ShippedTestConfiguration() {}
 

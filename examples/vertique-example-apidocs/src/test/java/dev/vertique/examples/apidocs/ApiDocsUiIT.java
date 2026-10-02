@@ -61,7 +61,7 @@ public class ApiDocsUiIT {
             "frame-ancestors 'none'");
 
     /** The entry that allows exactly the pinned script. */
-    private static final Set<String> SCRIPT_URL = Set.of("script-src " + EXPECTED_REDOC_URL);
+    private static final Set<String> PINNED_SCRIPT_ENTRY = Set.of("script-src " + EXPECTED_REDOC_URL);
 
     /**
      * The additions Redoc needs outside {@code script-src}, as {@code "<directive> <source>"}
@@ -124,7 +124,7 @@ public class ApiDocsUiIT {
                 "Content-Type");
         Set<String> policy = policyEntries(page.header("Content-Security-Policy"));
         Set<String> expectedPolicy = new HashSet<>(BASE_POLICY);
-        expectedPolicy.addAll(SCRIPT_URL);
+        expectedPolicy.addAll(PINNED_SCRIPT_ENTRY);
         expectedPolicy.addAll(REDOC_ADDITIONS);
         assertEquals(expectedPolicy, policy, "Content-Security-Policy entries");
         assertEquals(
@@ -278,6 +278,8 @@ public class ApiDocsUiIT {
      * Asserts that no policy source is the bare CDN origin, a path prefix, a wildcard, an unsafe
      * keyword, or a host or URL source other than the pinned script in {@code script-src}. Keywords
      * such as {@code 'self'} and scheme sources such as {@code data:} are not origins.
+     *
+     * @param policy the policy entries
      */
     private static void assertPolicyHasNoLooseSource(Set<String> policy) {
         List<String> loose = new ArrayList<>();
