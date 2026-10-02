@@ -3,7 +3,7 @@
 
 package dev.vertique.rest.openapi.docs.fixture.conformance.hidden;
 
-import dev.vertique.rest.jaxrs.application.RestApplication;
+import dev.vertique.rest.core.application.RestApplication;
 import dev.vertique.rest.openapi.docs.ApiDocs;
 import dev.vertique.rest.openapi.docs.fixture.conformance.hidden.scan.HiddenInterfaceResource;
 import dev.vertique.rest.openapi.docs.fixture.conformance.hidden.scan.HiddenTypeResource;

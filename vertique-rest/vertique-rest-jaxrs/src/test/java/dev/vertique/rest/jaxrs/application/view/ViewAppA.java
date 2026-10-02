@@ -3,7 +3,7 @@
 
 package dev.vertique.rest.jaxrs.application.view;
 
-import dev.vertique.rest.jaxrs.application.RestApplication;
+import dev.vertique.rest.core.application.RestApplication;
 
 /**
  * TP-006's application {@code a}: its own annotation-declared {@code openapiPath} {@code "a.yaml"}

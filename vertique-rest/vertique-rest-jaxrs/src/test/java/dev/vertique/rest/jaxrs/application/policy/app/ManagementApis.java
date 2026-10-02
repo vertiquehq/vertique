@@ -3,7 +3,7 @@
 
 package dev.vertique.rest.jaxrs.application.policy.app;
 
-import dev.vertique.rest.jaxrs.application.RestApplication;
+import dev.vertique.rest.core.application.RestApplication;
 import dev.vertique.rest.jaxrs.application.policy.OrderMismatchResource;
 import dev.vertique.rest.jaxrs.application.policy.PermitAllResource;
 import dev.vertique.rest.jaxrs.application.policy.PermitAllScopedResource;

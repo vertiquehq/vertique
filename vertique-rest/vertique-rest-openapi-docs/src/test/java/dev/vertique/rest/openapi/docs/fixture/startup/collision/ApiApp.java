@@ -3,7 +3,7 @@
 
 package dev.vertique.rest.openapi.docs.fixture.startup.collision;
 
-import dev.vertique.rest.jaxrs.application.RestApplication;
+import dev.vertique.rest.core.application.RestApplication;
 
 /**
  * The undocumented application {@code api} at {@code /api}, holding {@link DocsNameResource}. It

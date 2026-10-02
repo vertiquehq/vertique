@@ -3,7 +3,7 @@
 
 package dev.vertique.rest.openapi.docs.fixture.startup.startupit;
 
-import dev.vertique.rest.jaxrs.application.RestApplication;
+import dev.vertique.rest.core.application.RestApplication;
 import dev.vertique.rest.openapi.docs.ApiDocs;
 import dev.vertique.rest.openapi.docs.fixture.CatalogResource;
 import dev.vertique.rest.openapi.docs.fixture.PublicApi;

@@ -120,7 +120,7 @@ class ApiDocsCompileCheckTest {
                 import static dev.vertique.rest.openapi.docs.ApiDocs.Access.PROTECTED;
                 import static dev.vertique.rest.openapi.docs.ApiDocs.Access.PUBLIC;
 
-                import dev.vertique.rest.jaxrs.application.RestApplication;
+                import dev.vertique.rest.core.application.RestApplication;
                 import dev.vertique.rest.openapi.docs.ApiDocs;
 
                 %s

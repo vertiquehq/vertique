@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
 // SPDX-License-Identifier: EUPL-1.2
 
-package dev.vertique.rest.jaxrs.application;
+package dev.vertique.rest.core.application;
 
 import java.lang.annotation.Documented;
 import java.lang.annotation.ElementType;
@@ -33,7 +33,11 @@ import java.lang.annotation.Target;
  *       generated module's package.
  * </ul>
  *
- * @see dev.vertique.rest.jaxrs.runtime.GeneratedRestApplicationRegistration
+ * <p>The runtime registration contract for the emitted registrations and the composition of
+ * declared applications into mounted routers live in {@code vertique-rest-jaxrs}.
+ *
+ * <p>This annotation is Beta and outside the Stable promise of {@code vertique-rest-core}: it may
+ * change in a later release, and only with a migration note.
  */
 @Retention(RetentionPolicy.RUNTIME)
 @Target(ElementType.TYPE)

@@ -3,7 +3,7 @@
 
 package dev.vertique.rest.jaxrs.application.unitb.membership;
 
-import dev.vertique.rest.jaxrs.application.RestApplication;
+import dev.vertique.rest.core.application.RestApplication;
 import dev.vertique.rest.jaxrs.application.manual.MembershipBaseResource;
 import dev.vertique.rest.jaxrs.application.manual.membership.DuplicateManualResource;
 import dev.vertique.rest.jaxrs.application.unita.CatalogResource;

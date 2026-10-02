@@ -3,7 +3,7 @@
 
 package dev.vertique.rest.jaxrs.application.view;
 
-import dev.vertique.rest.jaxrs.application.RestApplication;
+import dev.vertique.rest.core.application.RestApplication;
 
 /**
  * TP-006's application {@code d}, inactive: its {@code jaxrs.applications.d} entry sets

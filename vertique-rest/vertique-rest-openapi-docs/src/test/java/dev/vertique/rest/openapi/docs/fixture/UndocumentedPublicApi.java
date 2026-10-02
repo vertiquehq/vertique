@@ -3,7 +3,7 @@
 
 package dev.vertique.rest.openapi.docs.fixture;
 
-import dev.vertique.rest.jaxrs.application.RestApplication;
+import dev.vertique.rest.core.application.RestApplication;
 
 /**
  * The same declaration as {@link PublicApi} without {@code @ApiDocs}: application {@code public} at

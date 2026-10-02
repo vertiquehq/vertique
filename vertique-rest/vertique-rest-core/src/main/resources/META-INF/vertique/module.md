@@ -566,6 +566,30 @@ processor reaches an application's mount only through the declared applications 
 through this set. With no `Application` declared, this set's content is unchanged: generated and
 hand-wired resources alike contribute into it exactly as before.
 
+### `@RestApplication`
+
+Declares a named REST application on an interface. It is **Beta** and outside this module's Stable
+promise: it may change in a later release, and only with a migration note. Package
+`dev.vertique.rest.core.application`.
+
+```java
+public @interface RestApplication {
+    String name();                       // required
+    String path();                       // required; the application's mount path
+    Class<?>[] resources() default {};   // listed resources, in the order written
+    boolean discover() default false;    // discover resources at startup instead
+    String openapiPath() default "";     // "" = the global jaxrs.openapiPath
+}
+```
+
+It annotates an interface only; the interface is never implemented or instantiated. Exactly one of a
+non-empty `resources` and `discover = true` is set, and `discover = true` is permitted only when it
+is the compilation unit's sole declaration. `name` must match `[a-z0-9][a-z0-9_-]{0,63}` and must
+not be `none` or `null`. `vertique-codegen-jaxrs` validates and registers each declaration at
+compile time, and `vertique-rest-jaxrs` composes and mounts the declared applications at runtime.
+Composition, membership, the `jaxrs.applications.<name>` configuration, and mount conflicts are
+described in the "@RestApplication" section of `dev.vertique:vertique-rest-jaxrs`.
+
 ---
 
 ## Extension Points

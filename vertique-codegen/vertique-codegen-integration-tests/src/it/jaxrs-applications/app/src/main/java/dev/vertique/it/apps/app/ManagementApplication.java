@@ -4,7 +4,7 @@
 package dev.vertique.it.apps.app;
 
 import dev.vertique.it.apps.resources.StatusResource;
-import dev.vertique.rest.jaxrs.application.RestApplication;
+import dev.vertique.rest.core.application.RestApplication;
 
 /**
  * Native application fixture: a declaring interface, never instantiated, the real

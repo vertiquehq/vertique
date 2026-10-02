@@ -41,7 +41,8 @@ API protection: it does not change who may call any operation of the application
 ## When To Use It
 
 Add `dev.vertique.rest.openapi.docs.OpenApiDocsModule` to the Dagger `@Component` of an application
-that declares one or more `@RestApplication` interfaces (see `dev.vertique:vertique-rest-jaxrs`)
+that declares one or more `@RestApplication` interfaces (the annotation comes from
+`dev.vertique:vertique-rest-core`; `dev.vertique:vertique-rest-jaxrs` composes the applications)
 and wants a machine-readable OpenAPI document for some of them.
 
 Three things switch a document on; all three are required:
@@ -2494,7 +2495,7 @@ patterns in a running application.
 ### Declaring named applications
 
 A document belongs to a declared application, so start with `@RestApplication` (from
-`dev.vertique:vertique-rest-jaxrs`) on an interface, as [Getting Started](#getting-started) shows:
+`dev.vertique:vertique-rest-core`) on an interface, as [Getting Started](#getting-started) shows:
 
 - **`name`.** Matches `[a-z0-9][a-z0-9_-]{0,63}` and is neither `none` nor `null`. It names the
   document, its URLs, and its `apidocs.documents.<name>` and `jaxrs.applications.<name>` entries, so

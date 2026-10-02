@@ -3,7 +3,7 @@
 
 package dev.vertique.rest.openapi.docs.fixture.metadata.it.failure;
 
-import dev.vertique.rest.jaxrs.application.RestApplication;
+import dev.vertique.rest.core.application.RestApplication;
 import dev.vertique.rest.openapi.docs.ApiDocs;
 
 /** The documented application {@code search} at {@code /api/search}, listing {@link SearchResource}. */

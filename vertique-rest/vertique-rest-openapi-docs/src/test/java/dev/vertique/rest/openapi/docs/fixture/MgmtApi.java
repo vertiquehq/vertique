@@ -3,7 +3,7 @@
 
 package dev.vertique.rest.openapi.docs.fixture;
 
-import dev.vertique.rest.jaxrs.application.RestApplication;
+import dev.vertique.rest.core.application.RestApplication;
 
 /** The undocumented application {@code mgmt} at {@code /api/mgmt}: its declaring interface carries no {@code @ApiDocs}. */
 @RestApplication(name = MgmtApi.NAME, path = MgmtApi.PATH, resources = ManagementResource.class)

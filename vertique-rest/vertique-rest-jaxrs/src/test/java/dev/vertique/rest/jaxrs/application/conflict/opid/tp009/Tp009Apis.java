@@ -3,7 +3,7 @@
 
 package dev.vertique.rest.jaxrs.application.conflict.opid.tp009;
 
-import dev.vertique.rest.jaxrs.application.RestApplication;
+import dev.vertique.rest.core.application.RestApplication;
 
 /**
  * TP-009's two named registrations (T023 contract): {@code public} and {@code partner}, each
