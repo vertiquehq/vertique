@@ -6,14 +6,18 @@ package dev.vertique.examples.apidocs;
 import dev.vertique.rest.core.router.RouterMount;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
+import io.vertx.core.buffer.Buffer;
+import io.vertx.core.http.HttpMethod;
+import io.vertx.core.http.HttpServerResponse;
 import io.vertx.ext.web.Router;
+import io.vertx.ext.web.RoutingContext;
 import java.io.IOException;
 import java.io.InputStream;
-import java.nio.charset.StandardCharsets;
 
 /**
  * The example's API documentation page: a {@link RouterMount} at {@value #MOUNT_PATH} that answers
  * {@code GET /apidocs/ui/} with a Redoc page rendering the public document, and nothing else.
+ * {@code HEAD /apidocs/ui/} gets the same status and headers with no body.
  *
  * <p>The mount shares the documentation prefix. The documentation mount answers only its exact
  * document URLs and lets every other request under the prefix continue, so this mount, in the
@@ -75,20 +79,37 @@ final class ApiDocsUiMount implements RouterMount {
     public Future<Router> createRouter(Vertx vertx) {
         return vertx.executeBlocking(ApiDocsUiMount::readPage).map(page -> {
             Router router = Router.router(vertx);
-            router.get("/").handler(ctx -> ctx.response()
-                    .putHeader("Content-Type", CONTENT_TYPE)
-                    .putHeader("Content-Security-Policy", CONTENT_SECURITY_POLICY)
-                    .end(page));
+            // One route for both methods, as the documentation mount registers its document routes.
+            router.route("/").method(HttpMethod.GET).method(HttpMethod.HEAD).handler(ctx -> serve(ctx, page));
             return router;
         });
     }
 
-    private static String readPage() throws IOException {
+    /**
+     * Answers a request for the page: the content type, security policy, and length, and the page's
+     * bytes unless the method is {@code HEAD}.
+     *
+     * @param ctx the routing context
+     * @param page the page's UTF-8 bytes
+     */
+    private static void serve(RoutingContext ctx, byte[] page) {
+        HttpServerResponse response = ctx.response()
+                .putHeader("Content-Type", CONTENT_TYPE)
+                .putHeader("Content-Security-Policy", CONTENT_SECURITY_POLICY)
+                .putHeader("Content-Length", Integer.toString(page.length));
+        if (ctx.request().method() == HttpMethod.HEAD) {
+            response.end();
+        } else {
+            response.end(Buffer.buffer(page));
+        }
+    }
+
+    private static byte[] readPage() throws IOException {
         try (InputStream in = ApiDocsUiMount.class.getClassLoader().getResourceAsStream(PAGE_RESOURCE)) {
             if (in == null) {
                 throw new IllegalStateException("the page resource " + PAGE_RESOURCE + " is not on the classpath");
             }
-            return new String(in.readAllBytes(), StandardCharsets.UTF_8);
+            return in.readAllBytes();
         }
     }
 }

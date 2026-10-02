@@ -41,21 +41,33 @@ public abstract class AppModule {
      * none, so a deployment supplies its own, of at least 32 characters. A missing, blank, non-string,
      * or shorter key fails startup with a message that names the setting and never the value.
      *
+     * <p>Generate the key randomly, for example with {@code openssl rand -base64 48}; never use a
+     * passphrase.
+     *
      * <p>A deployment supplies the key in one of these ways:
      * <ul>
-     *   <li>as a system property, {@code -Djwt.hs256Key=<at least 32 characters>}, which the
-     *       configuration's system-property store adds as the top-level key {@code "jwt.hs256Key"};
+     *   <li>recommended: in the operator's own JSON file in a configuration directory listed in
+     *       {@code VERTX_CONFIG_LOCATIONS}, as {@code {"jwt": {"hs256Key": "${JWT_HS256_KEY}"}}},
+     *       where the placeholder takes the value of the {@code JWT_HS256_KEY} environment variable;
      *   <li>as an environment variable named exactly {@code jwt.hs256Key} (as a container
      *       environment entry or through {@code env}; most shells cannot export a dotted name),
-     *       which the environment-variable store adds the same way;
-     *   <li>in the operator's own JSON file in a configuration directory listed in
-     *       {@code VERTX_CONFIG_LOCATIONS}, as {@code {"jwt": {"hs256Key": "${JWT_HS256_KEY}"}}},
-     *       where the placeholder takes the value of the {@code JWT_HS256_KEY} environment variable.
+     *       which the configuration's environment-variable store adds as the top-level key
+     *       {@code "jwt.hs256Key"};
+     *   <li>for local development only, as a system property,
+     *       {@code -Djwt.hs256Key=<at least 32 characters>}, which the system-property store adds the
+     *       same way. System properties are visible in process listings, so never pass a real key
+     *       this way.
      * </ul>
      * An environment variable such as {@code JWT_HS256_KEY} on its own is not read as this setting.
      * When both forms are present, the top-level {@code "jwt.hs256Key"} wins over the nested
      * {@code jwt} section, because the system-property and environment-variable stores outrank
      * configuration files.
+     *
+     * <p>A production deployment should also set {@code jwt.validation.issuer} and
+     * {@code jwt.validation.audience}, so that tokens minted for another service are refused. The
+     * JWT bearer scheme handler reads both from the configuration and rejects a token whose
+     * {@code iss} or {@code aud} does not match with {@code 401}, however this provider was built, so
+     * setting the two keys is enough; this method need not change.
      *
      * <p><b>Warning:</b> a shared symmetric key suits an example. Production applications should
      * verify tokens against the issuer's published keys instead:
@@ -102,8 +114,10 @@ public abstract class AppModule {
         }
         if (!(key instanceof String text) || text.isBlank() || text.length() < MIN_JWT_KEY_LENGTH) {
             throw new IllegalStateException(JWT_KEY_SETTING + " must be configured as a string of at least "
-                    + MIN_JWT_KEY_LENGTH + " characters, for example with -D" + JWT_KEY_SETTING
-                    + "=<key>; the configured value is missing, not a string, blank, or too short");
+                    + MIN_JWT_KEY_LENGTH + " characters; the configured value is missing, not a string, blank,"
+                    + " or too short. Supply it from a configuration file in a directory listed in"
+                    + " VERTX_CONFIG_LOCATIONS with a placeholder, for example"
+                    + " {\"jwt\": {\"hs256Key\": \"${JWT_HS256_KEY}\"}}");
         }
         return text;
     }
