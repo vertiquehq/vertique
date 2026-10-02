@@ -69,7 +69,7 @@ final class OperationRouteIdentityComponents {
     }
 
     /**
-     * The component's support bindings: a {@link ConfigParser} over a private Jackson mapper, the
+     * The component's support bindings: the real lenient {@link ConfigParser}, the
      * unsecured {@link SecurityPolicyValidator} stand-in {@code JaxRsRouterMount.Factory} accepts,
      * {@link OperationRouteIdentityIT.IdentityResource} as the one {@code @JaxRsResources} resource, and
      * the IT's fixtures, each contributed {@code @IntoSet} and writing into the IT's static captures:
