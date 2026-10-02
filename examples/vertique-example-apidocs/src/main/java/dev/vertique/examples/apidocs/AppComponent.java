@@ -13,6 +13,7 @@ import dev.vertique.deploy.DeployerModule;
 import dev.vertique.examples.apidocs.resource.GeneratedJaxRsResourcesModule;
 import dev.vertique.rest.auth.jwt.JwtAuthModule;
 import dev.vertique.rest.jaxrs.RestModule;
+import dev.vertique.rest.openapi.docs.OpenApiDocsModule;
 import dev.vertique.rest.validation.RestValidationModule;
 import jakarta.inject.Singleton;
 
@@ -32,10 +33,13 @@ import jakarta.inject.Singleton;
  *   <li>{@link RestValidationModule} — default {@code web-validation} request-validation strategy</li>
  *   <li>{@link JwtAuthModule} — JWT bearer authentication under the {@code bearerAuth} scheme and
  *       role authorization from the token's {@code roles} claim</li>
+ *   <li>{@link OpenApiDocsModule} — publishes the OpenAPI document of every declared application
+ *       annotated {@code @ApiDocs} under {@code /apidocs}</li>
  *   <li>{@link DeployerModule} — verticle deployment multibinding</li>
  *   <li>{@link CoreLifecycleStepsModule} — framework {@code CONFIGURE}/{@code VALIDATE} lifecycle
  *       steps</li>
- *   <li>{@link AppModule} — the {@code JWTAuth} binding and the HTTP verticle deployment</li>
+ *   <li>{@link AppModule} — the {@code JWTAuth} binding, the HTTP verticle deployment, and the API
+ *       documentation page</li>
  *   <li>{@link GeneratedJaxRsResourcesModule} — generated at compile time: the resource bindings and
  *       the registrations of {@link PublicApi} and {@link ManagementApi}</li>
  * </ul>
@@ -49,6 +53,7 @@ import jakarta.inject.Singleton;
             RestModule.class,
             RestValidationModule.class,
             JwtAuthModule.class,
+            OpenApiDocsModule.class,
             DeployerModule.class,
             CoreLifecycleStepsModule.class,
             AppModule.class,

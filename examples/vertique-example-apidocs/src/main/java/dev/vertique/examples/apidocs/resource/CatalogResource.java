@@ -6,6 +6,7 @@ package dev.vertique.examples.apidocs.resource;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import jakarta.annotation.security.PermitAll;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.NotFoundException;
@@ -21,7 +22,11 @@ import java.util.Locale;
  * The public catalog: anyone may list and read the published items.
  *
  * <p>The catalog is a fixed in-memory list, enough to give the published document real operations.
+ *
+ * <p>The catalog is public on purpose: {@link PermitAll} states that policy explicitly, because the
+ * application has authentication configured.
  */
+@PermitAll
 @Path("/items")
 @Produces(MediaType.APPLICATION_JSON)
 public class CatalogResource {

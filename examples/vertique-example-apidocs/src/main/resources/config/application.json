@@ -1,1 +1,15 @@
-{}
+{
+  "apidocs": {
+    "documents": {
+      "public": {
+        "serverUrl": "https://api.example.com/api/public"
+      },
+      "management": {
+        "info": {
+          "title": "Management API",
+          "version": "1.0"
+        }
+      }
+    }
+  }
+}
