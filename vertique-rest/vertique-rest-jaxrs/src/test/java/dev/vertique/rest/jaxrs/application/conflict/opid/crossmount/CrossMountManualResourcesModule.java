@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
 // SPDX-License-Identifier: EUPL-1.2
 
-package dev.vertique.rest.jaxrs.application.conflict.opid.tp009;
+package dev.vertique.rest.jaxrs.application.conflict.opid.crossmount;
 
 import dagger.Module;
 import dagger.Provides;
@@ -10,14 +10,14 @@ import dev.vertique.rest.core.dagger.JaxRsResources;
 
 /**
  * Contributes {@link PublicListResource} and {@link PartnerListResource} manually, satisfying
- * {@link Tp009Apis.PublicApi}'s and {@link Tp009Apis.PartnerApi}'s membership so each row's
- * composition mounts, rather than failing on an unbound listed class before the operationId
- * collision is ever reached.
+ * {@link CrossMountOperationIdApis.PublicApi}'s and {@link CrossMountOperationIdApis.PartnerApi}'s
+ * membership so each row's composition mounts, rather than failing on an unbound listed class
+ * before the operationId collision is ever reached.
  */
 @Module
-public final class Tp009ManualResourcesModule {
+public final class CrossMountManualResourcesModule {
 
-    private Tp009ManualResourcesModule() {}
+    private CrossMountManualResourcesModule() {}
 
     /**
      * Contributes the Dagger-constructed {@link PublicListResource} into the

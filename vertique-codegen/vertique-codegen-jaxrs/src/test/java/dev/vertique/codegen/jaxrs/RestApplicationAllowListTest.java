@@ -224,73 +224,73 @@ class RestApplicationAllowListTest {
     }
 
     private static Stream<Arguments> allowListCases() {
-        String base = "dev.vertique.test.t028.tp004.";
+        String base = "dev.vertique.test.allowlist.declaration.";
         String rolesImport = "import jakarta.annotation.security.RolesAllowed;";
         String conditionalImport = "import dev.vertique.codegen.ConditionalOnProperty;";
 
-        String r01 = base + "rolesonapi";
-        String r02 = base + "rolesonsuper";
-        String r03 = base + "rolestransitive";
-        String r04 = base + "pathonapi";
-        String r05 = base + "singletononapi";
-        String r06 = base + "applicationpathonapi";
-        String r07 = base + "ownmarkeronsuper";
-        String r08 = base + "apialone";
-        String r09 = base + "apidocspublic";
-        String r10 = base + "openapiinfo";
-        String r11 = base + "deprecated";
-        String r12 = base + "oneconditional";
-        String r13 = base + "twoconditionals";
-        String r14 = base + "deprecatedsuper";
-        String r15 = base + "classretainedsuper";
-        String r16 = base + "namedonapi";
-        String r17 = base + "openapitagsdefault";
-        String r18 = base + "memberannotations";
+        String rolesOnApi = base + "rolesonapi";
+        String rolesOnSuper = base + "rolesonsuper";
+        String rolesTransitive = base + "rolestransitive";
+        String pathOnApi = base + "pathonapi";
+        String singletonOnApi = base + "singletononapi";
+        String applicationPathOnApi = base + "applicationpathonapi";
+        String ownMarkerOnSuper = base + "ownmarkeronsuper";
+        String apiAlone = base + "apialone";
+        String apiDocsPublic = base + "apidocspublic";
+        String openApiInfo = base + "openapiinfo";
+        String deprecatedApi = base + "deprecated";
+        String oneConditional = base + "oneconditional";
+        String twoConditionals = base + "twoconditionals";
+        String deprecatedSuper = base + "deprecatedsuper";
+        String classRetainedSuper = base + "classretainedsuper";
+        String namedOnApi = base + "namedonapi";
+        String openApiTagsDefault = base + "openapitagsdefault";
+        String memberAnnotations = base + "memberannotations";
 
         return Stream.of(
                 rejectedUnregisteredRow(
                         "@RolesAllowed(\"admin\") on Api",
-                        unit(r01, apiFixture(r01, rolesImport, "@RolesAllowed(\"admin\")", "")),
+                        unit(rolesOnApi, apiFixture(rolesOnApi, rolesImport, "@RolesAllowed(\"admin\")", "")),
                         "Api",
                         ROLES_ALLOWED_FQN),
                 rejectedRow(
                         "@RolesAllowed(\"admin\") on a direct superinterface Secured",
                         unit(
-                                r02,
-                                interfaceFixture(r02, "Secured", rolesImport, "@RolesAllowed(\"admin\")", ""),
-                                apiFixture(r02, "", "", " extends Secured")),
+                                rolesOnSuper,
+                                interfaceFixture(rolesOnSuper, "Secured", rolesImport, "@RolesAllowed(\"admin\")", ""),
+                                apiFixture(rolesOnSuper, "", "", " extends Secured")),
                         "Secured",
                         ROLES_ALLOWED_FQN),
                 rejectedRow(
                         "@RolesAllowed(\"admin\") on a superinterface of Secured (transitive)",
                         unit(
-                                r03,
-                                interfaceFixture(r03, "Root", rolesImport, "@RolesAllowed(\"admin\")", ""),
-                                interfaceFixture(r03, "Secured", "", "", " extends Root"),
-                                apiFixture(r03, "", "", " extends Secured")),
+                                rolesTransitive,
+                                interfaceFixture(rolesTransitive, "Root", rolesImport, "@RolesAllowed(\"admin\")", ""),
+                                interfaceFixture(rolesTransitive, "Secured", "", "", " extends Root"),
+                                apiFixture(rolesTransitive, "", "", " extends Secured")),
                         "Root",
                         ROLES_ALLOWED_FQN),
                 rejectedRow(
                         "@Path(\"/x\") on Api",
-                        unit(r04, apiFixture(r04, "import jakarta.ws.rs.Path;", "@Path(\"/x\")", "")),
+                        unit(pathOnApi, apiFixture(pathOnApi, "import jakarta.ws.rs.Path;", "@Path(\"/x\")", "")),
                         "Api",
                         PATH_FQN),
                 rejectedRow(
                         "@jakarta.inject.Singleton on Api (a scope annotation)",
-                        unit(r05, apiFixture(r05, "", "@jakarta.inject.Singleton", "")),
+                        unit(singletonOnApi, apiFixture(singletonOnApi, "", "@jakarta.inject.Singleton", "")),
                         "Api",
                         SINGLETON_FQN),
                 rejectedRow(
                         "@jakarta.inject.Named(\"x\") on Api (a qualifier annotation)",
-                        unit(r16, apiFixture(r16, "", "@jakarta.inject.Named(\"x\")", "")),
+                        unit(namedOnApi, apiFixture(namedOnApi, "", "@jakarta.inject.Named(\"x\")", "")),
                         "Api",
                         NAMED_FQN),
                 rejectedRow(
                         "@ApplicationPath(\"/api\") on Api",
                         unit(
-                                r06,
+                                applicationPathOnApi,
                                 apiFixture(
-                                        r06,
+                                        applicationPathOnApi,
                                         "import jakarta.ws.rs.ApplicationPath;",
                                         "@ApplicationPath(\"/api\")",
                                         "")),
@@ -299,22 +299,24 @@ class RestApplicationAllowListTest {
                 rejectedRow(
                         "a runtime-retained fixture annotation on a superinterface",
                         unit(
-                                r07,
-                                markerAnnotationFixture(r07, "Marker", "RUNTIME"),
-                                interfaceFixture(r07, "Secured", "", "@Marker", ""),
-                                apiFixture(r07, "", "", " extends Secured")),
+                                ownMarkerOnSuper,
+                                markerAnnotationFixture(ownMarkerOnSuper, "Marker", "RUNTIME"),
+                                interfaceFixture(ownMarkerOnSuper, "Secured", "", "@Marker", ""),
+                                apiFixture(ownMarkerOnSuper, "", "", " extends Secured")),
                         "Secured",
-                        r07 + ".Marker"),
-                acceptedRow("Api alone", unit(r08, apiFixture(r08, "", "", ""))),
+                        ownMarkerOnSuper + ".Marker"),
+                acceptedRow("Api alone", unit(apiAlone, apiFixture(apiAlone, "", "", ""))),
                 acceptedRow(
                         "Api with @ApiDocs(access = PUBLIC)",
-                        unit(r09, apiFixture(r09, API_DOCS_IMPORTS, "@ApiDocs(access = PUBLIC)", ""))),
+                        unit(
+                                apiDocsPublic,
+                                apiFixture(apiDocsPublic, API_DOCS_IMPORTS, "@ApiDocs(access = PUBLIC)", ""))),
                 acceptedRow(
                         "Api with @OpenAPIDefinition(info = @Info(title = \"t\", version = \"1\"))",
                         unit(
-                                r10,
+                                openApiInfo,
                                 apiFixture(
-                                        r10,
+                                        openApiInfo,
                                         "import io.swagger.v3.oas.annotations.OpenAPIDefinition;\n"
                                                 + "import io.swagger.v3.oas.annotations.info.Info;",
                                         "@OpenAPIDefinition(info = @Info(title = \"t\", version = \"1\"))",
@@ -323,26 +325,30 @@ class RestApplicationAllowListTest {
                         "Api with @OpenAPIDefinition(info = @Info(title = \"t\", version = \"1\"), tags = {})"
                                 + " (an element at its default counts as unset)",
                         unit(
-                                r17,
+                                openApiTagsDefault,
                                 apiFixture(
-                                        r17,
+                                        openApiTagsDefault,
                                         "import io.swagger.v3.oas.annotations.OpenAPIDefinition;\n"
                                                 + "import io.swagger.v3.oas.annotations.info.Info;",
                                         "@OpenAPIDefinition(info = @Info(title = \"t\", version = \"1\"), tags = {})",
                                         ""))),
-                acceptedRow("Api with @Deprecated", unit(r11, apiFixture(r11, "", "@Deprecated", ""))),
+                acceptedRow(
+                        "Api with @Deprecated", unit(deprecatedApi, apiFixture(deprecatedApi, "", "@Deprecated", ""))),
                 acceptedRow(
                         "Api with one @ConditionalOnProperty",
                         unit(
-                                r12,
+                                oneConditional,
                                 apiFixture(
-                                        r12, conditionalImport, "@ConditionalOnProperty(name = \"a.enabled\")", ""))),
+                                        oneConditional,
+                                        conditionalImport,
+                                        "@ConditionalOnProperty(name = \"a.enabled\")",
+                                        ""))),
                 acceptedRow(
                         "Api with two @ConditionalOnProperty",
                         unit(
-                                r13,
+                                twoConditionals,
                                 apiFixture(
-                                        r13,
+                                        twoConditionals,
                                         conditionalImport,
                                         "@ConditionalOnProperty(name = \"a.enabled\")\n"
                                                 + "@ConditionalOnProperty(name = \"b.enabled\")",
@@ -350,19 +356,19 @@ class RestApplicationAllowListTest {
                 acceptedRow(
                         "a superinterface carrying only @Deprecated",
                         unit(
-                                r14,
-                                interfaceFixture(r14, "Base", "", "@Deprecated", ""),
-                                apiFixture(r14, "", "", " extends Base"))),
+                                deprecatedSuper,
+                                interfaceFixture(deprecatedSuper, "Base", "", "@Deprecated", ""),
+                                apiFixture(deprecatedSuper, "", "", " extends Base"))),
                 acceptedRow(
                         "a superinterface carrying only a CLASS-retained annotation",
                         unit(
-                                r15,
-                                markerAnnotationFixture(r15, "ClassMarker", "CLASS"),
-                                interfaceFixture(r15, "Base", "", "@ClassMarker", ""),
-                                apiFixture(r15, "", "", " extends Base"))),
+                                classRetainedSuper,
+                                markerAnnotationFixture(classRetainedSuper, "ClassMarker", "CLASS"),
+                                interfaceFixture(classRetainedSuper, "Base", "", "@ClassMarker", ""),
+                                apiFixture(classRetainedSuper, "", "", " extends Base"))),
                 acceptedRow(
                         "Api whose constant carries @Named and default method @RolesAllowed (members are not checked)",
-                        unit(r18, apiWithAnnotatedMembersFixture(r18))));
+                        unit(memberAnnotations, apiWithAnnotatedMembersFixture(memberAnnotations))));
     }
 
     @Test
@@ -372,7 +378,7 @@ class RestApplicationAllowListTest {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("allowListCases")
-    @DisplayName("TP-004 — a disallowed runtime annotation on a declaration or superinterface fails compilation")
+    @DisplayName("a disallowed runtime annotation on a declaration or superinterface fails compilation")
     void disallowedAnnotationsFailOnDeclarationOrSuperinterface(
             String label,
             Fixture fixture,
@@ -386,7 +392,7 @@ class RestApplicationAllowListTest {
         var result = assertUnregistered
                 ? ProcessorTestHarness.run(List.<Processor>of(new JaxRsPipelineProcessor(), recorder), sources)
                 : ProcessorTestHarness.run(new JaxRsPipelineProcessor(), sources);
-        logDiagnostics("TP-004 " + label, result);
+        logDiagnostics("declaration annotation " + label, result);
         if (rejected) {
             assertErrorContainingAll(result, fixture.apiBinaryName(), carrier, annotation);
         } else {
@@ -410,89 +416,89 @@ class RestApplicationAllowListTest {
     }
 
     private static Stream<Arguments> declarationOnlyCases() {
-        String base = "dev.vertique.test.t028.tp005.";
-        String r1 = base + "apidocs";
-        String r2 = base + "openapi";
-        String r3 = base + "restapplication";
-        String r4 = base + "conditional";
-        String r5 = base + "noautowire";
-        String r6 = base + "servers";
-        String r7 = base + "conditionalcontainer";
+        String base = "dev.vertique.test.allowlist.superinterface.";
+        String apiDocsOnSuper = base + "apidocs";
+        String openApiOnSuper = base + "openapi";
+        String restApplicationOnSuper = base + "restapplication";
+        String conditionalOnSuper = base + "conditional";
+        String noAutoWireOnSuper = base + "noautowire";
+        String serversOnSuper = base + "servers";
+        String conditionalContainerOnSuper = base + "conditionalcontainer";
         return Stream.of(
                 Arguments.of(
                         "@ApiDocs(access = PUBLIC) on Base",
-                        baseCarrying(r1, API_DOCS_IMPORTS, "@ApiDocs(access = PUBLIC)"),
-                        r1 + ".Base",
+                        baseCarrying(apiDocsOnSuper, API_DOCS_IMPORTS, "@ApiDocs(access = PUBLIC)"),
+                        apiDocsOnSuper + ".Base",
                         API_DOCS_FQN,
                         List.of()),
                 Arguments.of(
                         "@OpenAPIDefinition(info = @Info(title = \"t\", version = \"1\")) on Base",
                         baseCarrying(
-                                r2,
+                                openApiOnSuper,
                                 "import io.swagger.v3.oas.annotations.OpenAPIDefinition;\n"
                                         + "import io.swagger.v3.oas.annotations.info.Info;",
                                 "@OpenAPIDefinition(info = @Info(title = \"t\", version = \"1\"))"),
-                        r2 + ".Base",
+                        openApiOnSuper + ".Base",
                         OPEN_API_DEFINITION_FQN,
                         List.of()),
                 Arguments.of(
                         "@RestApplication(name = \"base\", path = \"/base\", resources = PathResource.class) on Base",
                         baseCarrying(
-                                r3,
+                                restApplicationOnSuper,
                                 "import dev.vertique.rest.core.application.RestApplication;",
                                 "@RestApplication(name = \"base\", path = \"/base\", resources = PathResource.class)"),
-                        r3 + ".Base",
+                        restApplicationOnSuper + ".Base",
                         REST_APPLICATION_FQN,
                         List.of()),
                 Arguments.of(
                         "@ConditionalOnProperty(name = \"x\") on Base",
                         baseCarrying(
-                                r4,
+                                conditionalOnSuper,
                                 "import dev.vertique.codegen.ConditionalOnProperty;",
                                 "@ConditionalOnProperty(name = \"x\")"),
-                        r4 + ".Base",
+                        conditionalOnSuper + ".Base",
                         CONDITIONAL_ON_PROPERTY_FQN,
                         List.of()),
                 Arguments.of(
                         "two @ConditionalOnProperty on Base (the repeatable container @ConditionalOnProperties)",
                         baseCarrying(
-                                r7,
+                                conditionalContainerOnSuper,
                                 "import dev.vertique.codegen.ConditionalOnProperty;",
                                 "@ConditionalOnProperty(name = \"a\")\n@ConditionalOnProperty(name = \"b\")"),
-                        r7 + ".Base",
+                        conditionalContainerOnSuper + ".Base",
                         CONDITIONAL_ON_PROPERTIES_FQN,
                         List.of()),
                 Arguments.of(
                         "@NoAutoWire on Base",
-                        baseCarrying(r5, "import dev.vertique.codegen.NoAutoWire;", "@NoAutoWire"),
-                        r5 + ".Base",
+                        baseCarrying(noAutoWireOnSuper, "import dev.vertique.codegen.NoAutoWire;", "@NoAutoWire"),
+                        noAutoWireOnSuper + ".Base",
                         NO_AUTO_WIRE_FQN,
                         List.of()),
                 Arguments.of(
                         "servers set on Api's @OpenAPIDefinition",
                         unit(
-                                r6,
+                                serversOnSuper,
                                 apiFixture(
-                                        r6,
+                                        serversOnSuper,
                                         "import io.swagger.v3.oas.annotations.OpenAPIDefinition;\n"
                                                 + "import io.swagger.v3.oas.annotations.info.Info;\n"
                                                 + "import io.swagger.v3.oas.annotations.servers.Server;",
                                         "@OpenAPIDefinition(info = @Info(title = \"t\", version = \"1\"),"
                                                 + " servers = @Server(url = \"/\"))",
                                         "")),
-                        r6 + ".Api",
+                        serversOnSuper + ".Api",
                         OPEN_API_DEFINITION_FQN,
                         List.of(INFO_ONLY_PHRASE)));
     }
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("declarationOnlyCases")
-    @DisplayName("TP-005 — declaration-only annotations fail on superinterfaces; @OpenAPIDefinition is info only")
+    @DisplayName("declaration-only annotations fail on superinterfaces; @OpenAPIDefinition is info only")
     void declarationOnlyAnnotationsFailOnSuperinterfaces(
             String label, Fixture fixture, String carrier, String annotation, List<String> phrases) {
         var result = ProcessorTestHarness.run(
                 new JaxRsPipelineProcessor(), fixture.sources().toArray(JavaFileObject[]::new));
-        logDiagnostics("TP-005 " + label, result);
+        logDiagnostics("superinterface annotation " + label, result);
         String[] expected = Stream.concat(Stream.of(fixture.apiBinaryName(), carrier, annotation), phrases.stream())
                 .toArray(String[]::new);
         assertErrorContainingAll(result, expected);
@@ -522,22 +528,22 @@ class RestApplicationAllowListTest {
     }
 
     @TestFactory
-    @DisplayName("TP-007 — opted-out declarations are not checked; autoWire=false still checks them")
+    @DisplayName("opted-out declarations are not checked; autoWire=false still checks them")
     Stream<DynamicTest> optedOutDeclarationsSkipChecksUnlikeAutoWireFalse() {
         return Stream.of(
                 DynamicTest.dynamicTest(
-                        "@NoAutoWire declaration compiles with only the opt-out warning", this::tp007NoAutoWire),
+                        "@NoAutoWire declaration compiles with only the opt-out warning", this::noAutoWireIsUnchecked),
                 DynamicTest.dynamicTest(
                         "autoWire=false declaration fails the allow list and the @ApiDocs check",
-                        this::tp007AutoWireFalse));
+                        this::autoWireFalseIsChecked));
     }
 
-    private void tp007NoAutoWire() {
-        String pkg = "dev.vertique.test.t028.tp007.noautowire";
+    private void noAutoWireIsUnchecked() {
+        String pkg = "dev.vertique.test.allowlist.optout.noautowire";
         String off = pkg + ".Off";
         var result =
                 ProcessorTestHarness.run(new JaxRsPipelineProcessor(), pathResourceFixture(pkg), offFixture(pkg, true));
-        logDiagnostics("TP-007 @NoAutoWire", result);
+        logDiagnostics("@NoAutoWire declaration", result);
         result.assertSuccess();
         List<String> naming = result.compilation().diagnostics().stream()
                 .filter(d -> {
@@ -553,18 +559,18 @@ class RestApplicationAllowListTest {
                 (only.startsWith("[WARNING] ") || only.startsWith("[MANDATORY_WARNING] "))
                         && only.contains("is annotated @NoAutoWire")
                         && only.contains("not registered"),
-                () -> "Expected the one diagnostic naming " + off + " to be T022's opt-out warning, got: " + only);
+                () -> "Expected the one diagnostic naming " + off + " to be the opt-out warning, got: " + only);
     }
 
-    private void tp007AutoWireFalse() {
-        String pkg = "dev.vertique.test.t028.tp007.autowirefalse";
+    private void autoWireFalseIsChecked() {
+        String pkg = "dev.vertique.test.allowlist.optout.autowirefalse";
         String off = pkg + ".Off";
         var result = ProcessorTestHarness.run(
                 new JaxRsPipelineProcessor(),
                 Map.of("vertique.codegen.autoWire", "false"),
                 pathResourceFixture(pkg),
                 offFixture(pkg, false));
-        logDiagnostics("TP-007 autoWire=false", result);
+        logDiagnostics("autoWire=false declaration", result);
         assertErrorContainingAll(result, off, ROLES_ALLOWED_FQN);
         assertErrorContainingAll(result, off, "securityScheme");
     }

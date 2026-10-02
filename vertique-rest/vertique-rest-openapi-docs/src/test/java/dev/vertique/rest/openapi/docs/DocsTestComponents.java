@@ -27,7 +27,6 @@ import dev.vertique.rest.openapi.docs.fixture.RecordingPublicationSink;
 import dev.vertique.rest.openapi.docs.fixture.SchemaSourceModules;
 import dev.vertique.rest.openapi.docs.fixture.SharedRegistrationModule;
 import dev.vertique.rest.openapi.docs.fixture.SharedResourcesModule;
-import dev.vertique.rest.openapi.docs.fixture.StatefulSchemaSource;
 import dev.vertique.rest.openapi.docs.fixture.StubSchemeHandler;
 import dev.vertique.rest.openapi.docs.fixture.UndocumentedRegistrationModule;
 import io.vertx.core.json.JsonObject;
@@ -39,7 +38,7 @@ import java.util.Set;
  * its package-private types.
  *
  * <p>Every component is built from {@code RestModule}, the canonical {@link ConfigParsingModule},
- * {@link DocsTestSupportModule}, a deterministic or stateful counting schema source, and a
+ * {@link DocsTestSupportModule}, a deterministic counting schema source, and a
  * {@link RecordingMountCustomizer}; each takes the application configuration through its factory
  * (see {@code fixture.DocsConfigs}). Unless its name says otherwise a component also lists
  * {@link OpenApiDocsModule}, registers the shared declarations ({@code PublicApi} documented and
@@ -350,35 +349,6 @@ public final class DocsTestComponents {
         /** Factory taking the application configuration. */
         @Component.Factory
         interface ComponentFactory extends Factory<EarlyMarkerComponent> {}
-    }
-
-    /** The shared fixture with the stateful schema source in place of the deterministic one. */
-    @Singleton
-    @Component(
-            modules = {
-                RestModule.class,
-                OpenApiDocsModule.class,
-                ConfigParsingModule.class,
-                DocsTestSupportModule.class,
-                SharedRegistrationModule.class,
-                SharedResourcesModule.class,
-                SchemaSourceModules.Stateful.class,
-                RecordingMountCustomizer.Binding.class,
-                MarkerRouterMount.Last.class
-            })
-    public interface StatefulSourceComponent extends DocsProvisions {
-
-        /**
-         * Resolves the component's stateful schema source, the same instance as
-         * {@link #schemaSource()}.
-         *
-         * @return the stateful source
-         */
-        StatefulSchemaSource statefulSchemaSource();
-
-        /** Factory taking the application configuration. */
-        @Component.Factory
-        interface ComponentFactory extends Factory<StatefulSourceComponent> {}
     }
 
     /**

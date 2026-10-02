@@ -19,8 +19,8 @@ import dev.vertique.rest.openapi.docs.fixture.corpus.CorpusFixtures.CorpusFixtur
 import dev.vertique.rest.openapi.docs.fixture.corpus.CorpusResource;
 import dev.vertique.rest.openapi.docs.fixture.input.GeneratedBodies;
 import dev.vertique.rest.openapi.docs.fixture.input.RecordingSchemaSource;
+import dev.vertique.rest.openapi.docs.fixture.support.Futures;
 import io.vertx.core.DeploymentOptions;
-import io.vertx.core.Future;
 import io.vertx.core.Verticle;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
@@ -36,6 +36,7 @@ import io.vertx.json.schema.OutputFormat;
 import io.vertx.json.schema.SchemaRepository;
 import io.vertx.json.schema.Validator;
 import io.vertx.junit5.VertxExtension;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
@@ -137,14 +138,14 @@ public class EmbeddingEquivalenceIT {
 
         vertx.sharedData().getLocalMap("vertique").clear();
         Supplier<Verticle> verticles = component::httpVerticle;
-        deploymentId = await(vertx.deployVerticle(verticles, new DeploymentOptions()));
+        deploymentId = Futures.await(vertx.deployVerticle(verticles, new DeploymentOptions()), Duration.ofSeconds(15));
         Integer port = (Integer) vertx.sharedData().getLocalMap("vertique").get("http.port");
         if (port == null) {
             throw new IllegalStateException("the deployment did not publish its port");
         }
 
         HttpResponse<Buffer> response =
-                await(client.get(port, HOST, CorpusApi.DOCUMENT_URL).send());
+                Futures.await(client.get(port, HOST, CorpusApi.DOCUMENT_URL).send(), Duration.ofSeconds(15));
         documentStatus = response.statusCode();
         if (documentStatus != 200) {
             return;
@@ -164,7 +165,7 @@ public class EmbeddingEquivalenceIT {
     static void undeployAndCloseTheClient() throws Exception {
         try {
             if (deploymentId != null) {
-                await(vertx.undeploy(deploymentId));
+                Futures.await(vertx.undeploy(deploymentId), Duration.ofSeconds(15));
             }
         } finally {
             vertx.sharedData().getLocalMap("vertique").clear();
@@ -392,9 +393,5 @@ public class EmbeddingEquivalenceIT {
     /** Escapes a JSON Pointer reference token (RFC 6901). */
     private static String pointerEscape(String token) {
         return token.replace("~", "~0").replace("/", "~1");
-    }
-
-    private static <T> T await(Future<T> future) throws Exception {
-        return future.toCompletionStage().toCompletableFuture().get(15, TimeUnit.SECONDS);
     }
 }

@@ -106,7 +106,7 @@ class OperationPublicationSinkTest {
             client.close();
         }
         Future<Void> serverClose = server != null ? server.close() : Future.succeededFuture();
-        serverClose.onComplete(ar -> ctx.completeNow());
+        serverClose.onComplete(ctx.succeedingThenComplete());
     }
 
     // --- TP-002 ---
@@ -197,7 +197,7 @@ class OperationPublicationSinkTest {
     // --- TP-003 ---
 
     @Test
-    @DisplayName("One source resolution feeds both the gate and the snapshot (AC-004.1)")
+    @DisplayName("One source resolution feeds both the gate and the snapshot")
     void oneSourceResolutionFeedsGateAndSnapshot(Vertx vertx, VertxTestContext ctx) {
         JsonMapperProfile defaultProfile = appProfile("profile-default");
         JsonMapperProfile methodProfile = appProfile(ProfiledOperationsResource.METHOD_PROFILE_ID);
@@ -298,7 +298,7 @@ class OperationPublicationSinkTest {
     // --- TP-004 ---
 
     @Test
-    @DisplayName("Captured schemas are detached from the source and the gate (AC-004.2)")
+    @DisplayName("Captured schemas are detached from the source and the gate")
     void capturedSchemasAreDetachedFromSourceAndGate(Vertx vertx) {
         Object sentinelProvenance = new Object();
         CountingSchemaSource source = new CountingSchemaSource((op, call) -> {

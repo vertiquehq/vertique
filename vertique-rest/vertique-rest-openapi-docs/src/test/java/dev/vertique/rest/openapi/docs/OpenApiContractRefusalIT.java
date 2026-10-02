@@ -19,8 +19,9 @@ import dev.vertique.rest.core.RestConfigurationException;
 import dev.vertique.rest.openapi.docs.ContractRefusalTestComponents.DocsProvisions;
 import dev.vertique.rest.openapi.docs.ContractRefusalTestComponents.Provisions;
 import dev.vertique.rest.openapi.docs.fixture.DocsConfigs;
-import dev.vertique.rest.openapi.docs.fixture.startup.StartupDeployments;
-import dev.vertique.rest.openapi.docs.fixture.startup.StartupDeployments.Outcome;
+import dev.vertique.rest.openapi.docs.fixture.support.Futures;
+import dev.vertique.rest.openapi.docs.fixture.support.StartupDeployments;
+import dev.vertique.rest.openapi.docs.fixture.support.StartupDeployments.Outcome;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
@@ -34,7 +35,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BiFunction;
 import java.util.function.Supplier;
@@ -236,28 +236,28 @@ public class OpenApiContractRefusalIT {
         Refusal publicOnSharedContract = new Refusal(PUBLIC_API_BINARY, PUBLIC_MOUNT_PATH, OPENAPI_CONTRACT);
         return Stream.of(
                 new ContractCase(
-                        "(a) the shared fixture under openapi-contract",
+                        "the shared fixture under openapi-contract",
                         (vertx, config) -> DaggerContractRefusalTestComponents_SharedContractComponent.factory()
                                 .create(vertx, config),
                         OpenApiContractRefusalIT::sharedOpenApiContractConfig,
                         PUBLIC,
                         publicOnSharedContract),
                 new ContractCase(
-                        "(b) an empty documented mount under openapi-contract",
+                        "an empty documented mount under openapi-contract",
                         (vertx, config) -> DaggerContractRefusalTestComponents_EmptyContractComponent.factory()
                                 .create(vertx, config),
                         OpenApiContractRefusalIT::emptyConfig,
                         EMPTY,
                         new Refusal(EMPTY_API_BINARY, EMPTY_MOUNT_PATH, OPENAPI_CONTRACT)),
                 new ContractCase(
-                        "(c) a custom strategy that resolves nothing from a contract",
+                        "a custom strategy that resolves nothing from a contract",
                         (vertx, config) -> DaggerContractRefusalTestComponents_DocsTestStrategyComponent.factory()
                                 .create(vertx, config),
                         () -> sharedConfig(CUSTOM_DOCS_TEST),
                         PUBLIC,
                         null),
                 new ContractCase(
-                        "(d) the application declares its own contract",
+                        "the application declares its own contract",
                         (vertx, config) -> DaggerContractRefusalTestComponents_OwnContractComponent.factory()
                                 .create(vertx, config),
                         () -> ownContractConfig(sharedOpenApiContractConfig()),
@@ -265,7 +265,7 @@ public class OpenApiContractRefusalIT {
                         null,
                         OWN_CONTRACT),
                 new ContractCase(
-                        "(e) the application's contract is configured",
+                        "the application's contract is configured",
                         (vertx, config) -> DaggerContractRefusalTestComponents_SharedContractComponent.factory()
                                 .create(vertx, config),
                         () -> withApplicationContract(
@@ -274,7 +274,7 @@ public class OpenApiContractRefusalIT {
                         null,
                         OWN_CONTRACT),
                 new ContractCase(
-                        "(f) a custom strategy that resolves operations from the mount's contract",
+                        "a custom strategy that resolves operations from the mount's contract",
                         (vertx, config) -> DaggerContractRefusalTestComponents_ContractTestStrategyComponent.factory()
                                 .create(vertx, config),
                         () -> sharedConfig(CUSTOM_CONTRACT_TEST),
@@ -521,14 +521,7 @@ public class OpenApiContractRefusalIT {
 
     /** Waits for a response and returns its status, {@code Content-Type}, and body. */
     private static Exchange exchange(Future<HttpResponse<Buffer>> response) throws Exception {
-        HttpResponse<Buffer> received;
-        try {
-            received = response.toCompletionStage()
-                    .toCompletableFuture()
-                    .get(StartupDeployments.BOUND.toMillis(), TimeUnit.MILLISECONDS);
-        } catch (ExecutionException failed) {
-            throw new AssertionError("the request failed", failed.getCause());
-        }
+        HttpResponse<Buffer> received = Futures.await(response, StartupDeployments.BOUND);
         Buffer body = received.body();
         return new Exchange(
                 received.statusCode(), received.getHeader("Content-Type"), body == null ? "" : body.toString());

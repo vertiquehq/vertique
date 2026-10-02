@@ -28,8 +28,9 @@ import dev.vertique.rest.openapi.docs.fixture.metadata.it.hidden.HiddenOperation
 import dev.vertique.rest.openapi.docs.fixture.metadata.it.hidden.MixedOperationsResource;
 import dev.vertique.rest.openapi.docs.fixture.metadata.it.hidden.PartlyHiddenContract;
 import dev.vertique.rest.openapi.docs.fixture.metadata.it.hidden.ProtectedVisibleWriteApi;
-import dev.vertique.rest.openapi.docs.fixture.startup.StartupDeployments;
-import dev.vertique.rest.openapi.docs.fixture.startup.StartupDeployments.Outcome;
+import dev.vertique.rest.openapi.docs.fixture.support.Futures;
+import dev.vertique.rest.openapi.docs.fixture.support.StartupDeployments;
+import dev.vertique.rest.openapi.docs.fixture.support.StartupDeployments.Outcome;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
@@ -41,6 +42,7 @@ import io.vertx.ext.web.client.WebClient;
 import io.vertx.junit5.VertxExtension;
 import jakarta.annotation.Nullable;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -438,8 +440,7 @@ public class HiddenOperationIT {
     }
 
     private static Exchange exchange(Future<HttpResponse<Buffer>> request) throws Exception {
-        HttpResponse<Buffer> response =
-                request.toCompletionStage().toCompletableFuture().get(15, TimeUnit.SECONDS);
+        HttpResponse<Buffer> response = Futures.await(request, Duration.ofSeconds(15));
         Buffer body = response.body();
         return new Exchange(response.statusCode(), body == null ? new byte[0] : body.getBytes());
     }

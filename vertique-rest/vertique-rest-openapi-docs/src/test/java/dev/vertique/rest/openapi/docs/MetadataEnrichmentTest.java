@@ -489,15 +489,15 @@ class MetadataEnrichmentTest {
         return Stream.of(
                 // Failing cases.
                 row(
-                        "(a) an operation id other than the runtime's fails",
+                        "an operation id other than the runtime's fails",
                         list("otherOperationId"),
                         fails(List.of(LIST, "@Operation.operationId"))),
                 row(
-                        "(b) a parameter name other than the binding's fails",
+                        "a parameter name other than the binding's fails",
                         search(AgreementResource.class, "renamedParameter", Requiredness.NOT_REQUIRED, stringSchema()),
                         fails(List.of(SEARCH, "@Parameter.name"), "q")),
                 row(
-                        "(c) a header location on a query parameter fails",
+                        "a header location on a query parameter fails",
                         search(
                                 AgreementResource.class,
                                 "relocatedParameter",
@@ -505,7 +505,7 @@ class MetadataEnrichmentTest {
                                 stringSchema()),
                         fails(List.of(SEARCH, "@Parameter.in"), "q")),
                 row(
-                        "(d) a requirement on a query parameter the runtime does not require fails",
+                        "a requirement on a query parameter the runtime does not require fails",
                         search(
                                 AgreementResource.class,
                                 "requiredOptionalParameter",
@@ -513,23 +513,23 @@ class MetadataEnrichmentTest {
                                 stringSchema()),
                         fails(List.of(SEARCH, "@Parameter.required"), "q")),
                 row(
-                        "(e) a requirement on a body whose schema accepts null fails",
+                        "a requirement on a body whose schema accepts null fails",
                         create("requiredNullableBody", GeneratedBodies.describe(Object.class)),
                         fails(List.of(CREATE, "@RequestBody.required"))),
                 row(
-                        "(f) a body implementation other than the bound type fails",
+                        "a body implementation other than the bound type fails",
                         create("otherBodyImplementation", GeneratedBodies.describe(ItemDto.class)),
                         fails(List.of(CREATE, "@RequestBody.content.schema.implementation"))),
                 row(
-                        "(k) a body media type the operation does not consume fails",
+                        "a body media type the operation does not consume fails",
                         create("unconsumedBodyMediaType", GeneratedBodies.describe(ItemDto.class)),
                         fails(List.of(CREATE, "@RequestBody.content.mediaType"))),
                 row(
-                        "(l) parameter content fails",
+                        "parameter content fails",
                         search(AgreementResource.class, "parameterContent", Requiredness.NOT_REQUIRED, stringSchema()),
                         fails(List.of(SEARCH, "@Parameter.content"), "q")),
                 row(
-                        "(r) an element implementation other than the bound element type fails",
+                        "an element implementation other than the bound element type fails",
                         search(
                                 AgreementResource.class,
                                 "otherElementImplementation",
@@ -544,7 +544,7 @@ class MetadataEnrichmentTest {
                 bodyMinPropertiesIsIgnoredWithAWarning(),
                 // Controls.
                 row(
-                        "(g) the binding's own name and location publish",
+                        "the binding's own name and location publish",
                         search(
                                 AgreementResource.class,
                                 "agreeingNameAndLocation",
@@ -553,19 +553,19 @@ class MetadataEnrichmentTest {
                         publishesWithoutWarning(rendering -> assertEquals(
                                 json("{\"name\": \"q\", \"in\": \"query\", \"schema\": {\"type\": \"string\"}}"),
                                 searchParameter(rendering, "q"),
-                                "(g) the Parameter Object"))),
+                                "the Parameter Object"))),
                 requirementOnAPathParameterPublishes(),
                 row(
-                        "(i) the runtime's own operation id publishes",
+                        "the runtime's own operation id publishes",
                         list("sameOperationId"),
                         publishesWithoutWarning(rendering -> assertEquals(
                                 LIST,
                                 operation(rendering, "/items", "get")
                                         .path("operationId")
                                         .asText(null),
-                                "(i) the operation id"))),
+                                "the operation id"))),
                 row(
-                        "(j) the bound type as the parameter's implementation publishes",
+                        "the bound type as the parameter's implementation publishes",
                         search(
                                 AgreementResource.class,
                                 "sameImplementation",
@@ -574,21 +574,21 @@ class MetadataEnrichmentTest {
                         publishesWithoutWarning(rendering -> assertEquals(
                                 json("{\"name\": \"q\", \"in\": \"query\", \"schema\": {\"type\": \"string\"}}"),
                                 searchParameter(rendering, "q"),
-                                "(j) the Parameter Object"))),
+                                "the Parameter Object"))),
                 schemaDocumentationFillsTheParameterObject(),
                 parameterDescriptionWinsOverTheSchemaDescription(),
                 bodySchemaDocumentationFillsTheRequestBodyAndMediaType(),
                 bodyMediaTypeExamplesWinOverTheSchemaExample(),
                 parameterExamplesWinOverTheSchemaExample(),
                 row(
-                        "(o) a requirement on a body whose schema rejects null publishes as required",
+                        "a requirement on a body whose schema rejects null publishes as required",
                         create("requiredBody", GeneratedBodies.describe(ItemDto.class)),
                         publishesWithoutWarning(rendering -> assertEquals(
                                 json("true"),
                                 createRequestBody(rendering).path("required"),
-                                () -> "(o) the request body: " + createRequestBody(rendering)))),
+                                () -> "the request body: " + createRequestBody(rendering)))),
                 row(
-                        "(p) a requirement on a required query parameter publishes as required",
+                        "a requirement on a required query parameter publishes as required",
                         search(
                                 AgreementResource.class,
                                 "requiredRequiredParameter",
@@ -598,9 +598,9 @@ class MetadataEnrichmentTest {
                                 json("{\"name\": \"q\", \"in\": \"query\", \"required\": true,"
                                         + " \"schema\": {\"type\": \"string\"}}"),
                                 searchParameter(rendering, "q"),
-                                "(p) the Parameter Object"))),
+                                "the Parameter Object"))),
                 row(
-                        "(q) the bound element type as the element implementation publishes",
+                        "the bound element type as the element implementation publishes",
                         search(
                                 AgreementResource.class,
                                 "sameElementImplementation",
@@ -610,7 +610,7 @@ class MetadataEnrichmentTest {
                                 json("{\"name\": \"q\", \"in\": \"query\","
                                         + " \"schema\": {\"type\": \"array\", \"items\": {\"type\": \"string\"}}}"),
                                 searchParameter(rendering, "q"),
-                                "(q) the Parameter Object"))),
+                                "the Parameter Object"))),
                 // Warning scope.
                 ignoredMembersOfTwoOperationsWarnOncePerOperation(),
                 requirementsOfTwoUnknownParametersWarnOncePerParameter(),
@@ -904,26 +904,26 @@ class MetadataEnrichmentTest {
         // Given: q's captured schema has its own maxLength, which the annotation contradicts.
         JsonObject captured = new JsonObject("{\"type\": \"string\", \"maxLength\": 12}");
         return row(
-                "(m) a schema-shaping member of a parameter's schema is ignored with one warning",
+                "a schema-shaping member of a parameter's schema is ignored with one warning",
                 search(AgreementResource.class, "parameterMaxLength", Requiredness.NOT_REQUIRED, captured),
                 publishesWithOneWarning(List.of(SEARCH, "@Parameter.schema.maxLength"), List.of("q"), rendering -> {
                     assertEquals(
                             json(captured),
                             searchParameter(rendering, "q").path("schema"),
-                            "(m) q's published schema, maxLength 12 included");
+                            "q's published schema, maxLength 12 included");
                     assertFalse(
                             rendering.jsonText().replace(" ", "").contains("\"maxLength\":5"),
-                            () -> "(m) maxLength 5 is published: " + rendering.jsonText());
+                            () -> "maxLength 5 is published: " + rendering.jsonText());
                 }));
     }
 
     private static Arguments arrayMinItemsIsIgnoredWithAWarning() {
         JsonObject captured = stringArraySchema();
         return row(
-                "(s) an array member other than its element schema is ignored with one warning",
+                "an array member other than its element schema is ignored with one warning",
                 search(AgreementResource.class, "arrayMinItems", Requiredness.NOT_REQUIRED, captured),
                 publishesWithOneWarning(List.of(SEARCH, "@Parameter.array.minItems"), List.of(), rendering -> {
-                    assertEquals(json(captured), searchParameter(rendering, "q").path("schema"), "(s) q's schema");
+                    assertEquals(json(captured), searchParameter(rendering, "q").path("schema"), "q's schema");
                     assertAbsent(rendering, "minItems");
                 }));
     }
@@ -932,12 +932,12 @@ class MetadataEnrichmentTest {
         // Given: a primitive int query parameter, whose requiredness the runtime leaves unknown.
         JsonObject captured = new JsonObject("{\"type\": \"integer\"}");
         return row(
-                "(t) a requirement on a parameter of unknown requiredness is warned about and not published",
+                "a requirement on a parameter of unknown requiredness is warned about and not published",
                 search(AgreementResource.class, "requiredUnknownParameter", Requiredness.UNKNOWN, captured),
                 publishesWithOneWarning(List.of(SEARCH, "@Parameter.required"), List.of("q"), rendering -> {
                     JsonNode q = searchParameter(rendering, "q");
-                    assertNoMember(q, "required", "(t) the Parameter Object");
-                    assertEquals(json(captured), q.path("schema"), "(t) q's schema");
+                    assertNoMember(q, "required", "the Parameter Object");
+                    assertEquals(json(captured), q.path("schema"), "q's schema");
                 }));
     }
 
@@ -955,7 +955,7 @@ class MetadataEnrichmentTest {
                 .annotate(SEARCH, AgreementResource.class, "twoIgnoredMembers")
                 .build();
         return row(
-                "(u) ignored members of two parameters of one operation share one warning",
+                "ignored members of two parameters of one operation share one warning",
                 publication,
                 publishesWithOneWarning(
                         List.of(SEARCH, "@Parameter.schema.maxLength", "@Parameter.schema.format"),
@@ -964,11 +964,11 @@ class MetadataEnrichmentTest {
                             assertEquals(
                                     json(capturedQ),
                                     searchParameter(rendering, "q").path("schema"),
-                                    "(u) q");
+                                    "q");
                             assertEquals(
                                     json(capturedR),
                                     searchParameter(rendering, "r").path("schema"),
-                                    "(u) r");
+                                    "r");
                             assertAbsent(rendering, "maxLength");
                             assertAbsent(rendering, "format");
                         }));
@@ -978,12 +978,12 @@ class MetadataEnrichmentTest {
         GeneratedBody body = GeneratedBodies.describe(ItemDto.class);
         JsonObject captured = body.schema().copy();
         return row(
-                "(v) a schema-shaping member of the body's schema is ignored with one warning",
+                "a schema-shaping member of the body's schema is ignored with one warning",
                 create("bodyMinProperties", body),
                 publishesWithOneWarning(
                         List.of(CREATE, "@RequestBody.content.schema.minProperties"), List.of(), rendering -> {
                             assertNothingToRedact(body);
-                            assertEquals(json(captured), component(rendering, CREATE_COMPONENT), "(v) the component");
+                            assertEquals(json(captured), component(rendering, CREATE_COMPONENT), "the component");
                             assertAbsent(rendering, "minProperties");
                         }));
     }
@@ -997,25 +997,25 @@ class MetadataEnrichmentTest {
                 .annotate(READ, AgreementResource.class, "requiredPathParameter")
                 .build();
         return row(
-                "(h) a requirement on a path parameter publishes",
+                "a requirement on a path parameter publishes",
                 publication,
                 publishesWithoutWarning(rendering -> assertEquals(
                         json("{\"name\": \"id\", \"in\": \"path\", \"required\": true,"
                                 + " \"schema\": {\"type\": \"string\"}}"),
                         parameter(rendering, "/items/{id}", "get", "id"),
-                        "(h) the Parameter Object")));
+                        "the Parameter Object")));
     }
 
     private static Arguments schemaDocumentationFillsTheParameterObject() {
         JsonObject captured = stringSchema();
         return row(
-                "(n) the parameter schema's description and example fill the Parameter Object, its title is not published",
+                "the parameter schema's description and example fill the Parameter Object, its title is not published",
                 search(AgreementResource.class, "parameterSchemaDocumentation", Requiredness.NOT_REQUIRED, captured),
                 publishesWithoutWarning(rendering -> {
                     JsonNode q = searchParameter(rendering, "q");
-                    assertEquals("dVALUEZX", q.path("description").asText(null), () -> "(n) description: " + q);
-                    assertEquals(json("\"eVALUEZX\""), q.path("example"), () -> "(n) example: " + q);
-                    assertEquals(json(captured), q.path("schema"), "(n) q's schema");
+                    assertEquals("dVALUEZX", q.path("description").asText(null), () -> "description: " + q);
+                    assertEquals(json("\"eVALUEZX\""), q.path("example"), () -> "example: " + q);
+                    assertEquals(json(captured), q.path("schema"), "q's schema");
                     assertAbsent(rendering, "tVALUEZX");
                 }));
     }
@@ -1023,13 +1023,13 @@ class MetadataEnrichmentTest {
     private static Arguments parameterDescriptionWinsOverTheSchemaDescription() {
         JsonObject captured = stringSchema();
         return row(
-                "(w) the parameter's description wins over its schema's, and the schema's deprecation fills the Parameter Object",
+                "the parameter's description wins over its schema's, and the schema's deprecation fills the Parameter Object",
                 search(AgreementResource.class, "parameterDescriptionWins", Requiredness.NOT_REQUIRED, captured),
                 publishesWithoutWarning(rendering -> {
                     JsonNode q = searchParameter(rendering, "q");
-                    assertEquals("pVALUEZX", q.path("description").asText(null), () -> "(w) description: " + q);
-                    assertEquals(json("true"), q.path("deprecated"), () -> "(w) deprecated: " + q);
-                    assertEquals(json(captured), q.path("schema"), "(w) q's schema");
+                    assertEquals("pVALUEZX", q.path("description").asText(null), () -> "description: " + q);
+                    assertEquals(json("true"), q.path("deprecated"), () -> "deprecated: " + q);
+                    assertEquals(json(captured), q.path("schema"), "q's schema");
                     assertAbsent(rendering, "dVALUEZX");
                     assertAbsent(rendering, "xVALUEZX");
                 }));
@@ -1039,7 +1039,7 @@ class MetadataEnrichmentTest {
         GeneratedBody body = GeneratedBodies.describe(ItemDto.class);
         JsonObject captured = body.schema().copy();
         return row(
-                "(x) the body schema's description fills the request body and its example the media type, never a deprecation",
+                "the body schema's description fills the request body and its example the media type, never a deprecation",
                 create("bodySchemaDocumentation", body),
                 publishesWithoutWarning(rendering -> {
                     JsonNode requestBody = createRequestBody(rendering);
@@ -1047,13 +1047,13 @@ class MetadataEnrichmentTest {
                     assertEquals(
                             "bVALUEZX",
                             requestBody.path("description").asText(null),
-                            () -> "(x) description: " + requestBody);
-                    assertEquals(json("\"beVALUEZX\""), mediaType.path("example"), () -> "(x) example: " + mediaType);
-                    assertNoMember(requestBody, "deprecated", "(x) the request body");
-                    assertNoMember(mediaType, "deprecated", "(x) the media type");
-                    assertMembersWithin(requestBody, REQUEST_BODY_MEMBERS, "(x) the request body");
+                            () -> "description: " + requestBody);
+                    assertEquals(json("\"beVALUEZX\""), mediaType.path("example"), () -> "example: " + mediaType);
+                    assertNoMember(requestBody, "deprecated", "the request body");
+                    assertNoMember(mediaType, "deprecated", "the media type");
+                    assertMembersWithin(requestBody, REQUEST_BODY_MEMBERS, "the request body");
                     assertNothingToRedact(body);
-                    assertEquals(json(captured), component(rendering, CREATE_COMPONENT), "(x) the component");
+                    assertEquals(json(captured), component(rendering, CREATE_COMPONENT), "the component");
                     assertAbsent(rendering, "btVALUEZX");
                 }));
     }
@@ -1062,7 +1062,7 @@ class MetadataEnrichmentTest {
         GeneratedBody body = GeneratedBodies.describe(ItemDto.class);
         JsonObject captured = body.schema().copy();
         return row(
-                "(z) a content entry's examples win over its schema's example on the media type",
+                "a content entry's examples win over its schema's example on the media type",
                 create("bodyExamplesWin", body),
                 publishesWithoutWarning(rendering -> {
                     JsonNode requestBody = createRequestBody(rendering);
@@ -1070,11 +1070,11 @@ class MetadataEnrichmentTest {
                     assertEquals(
                             json("{\"b1\": {\"value\": {\"a\": 1}}}"),
                             mediaType.path("examples"),
-                            () -> "(z) examples: " + mediaType);
-                    assertNoMember(mediaType, "example", "(z) the media type");
-                    assertMembersWithin(requestBody, REQUEST_BODY_MEMBERS, "(z) the request body");
+                            () -> "examples: " + mediaType);
+                    assertNoMember(mediaType, "example", "the media type");
+                    assertMembersWithin(requestBody, REQUEST_BODY_MEMBERS, "the request body");
                     assertNothingToRedact(body);
-                    assertEquals(json(captured), component(rendering, CREATE_COMPONENT), "(z) the component");
+                    assertEquals(json(captured), component(rendering, CREATE_COMPONENT), "the component");
                     assertAbsent(rendering, "ezVALUEZX");
                 }));
     }
@@ -1082,13 +1082,13 @@ class MetadataEnrichmentTest {
     private static Arguments parameterExamplesWinOverTheSchemaExample() {
         JsonObject captured = stringSchema();
         return row(
-                "(y) a parameter's examples win over its schema's example",
+                "a parameter's examples win over its schema's example",
                 search(AgreementResource.class, "parameterExamplesWin", Requiredness.NOT_REQUIRED, captured),
                 publishesWithoutWarning(rendering -> {
                     JsonNode q = searchParameter(rendering, "q");
-                    assertEquals(json("{\"e1\": {\"value\": 1}}"), q.path("examples"), () -> "(y) examples: " + q);
-                    assertNoMember(q, "example", "(y) the Parameter Object");
-                    assertEquals(json(captured), q.path("schema"), "(y) q's schema");
+                    assertEquals(json("{\"e1\": {\"value\": 1}}"), q.path("examples"), () -> "examples: " + q);
+                    assertNoMember(q, "example", "the Parameter Object");
+                    assertEquals(json(captured), q.path("schema"), "q's schema");
                     assertAbsent(rendering, "eVALUEZX");
                 }));
     }
@@ -1126,47 +1126,47 @@ class MetadataEnrichmentTest {
     static Stream<Arguments> tagAndExampleCases() {
         return Stream.of(
                 row(
-                        "(a) one tag declared with two different descriptions fails",
+                        "one tag declared with two different descriptions fails",
                         twoTagged("listA", "sharedFirst", "listB", "sharedSecond"),
                         fails(List.of("shared", "listA", "listB"))),
                 row(
-                        "(b) a tag declared once without and once with a description publishes the description",
+                        "a tag declared once without and once with a description publishes the description",
                         twoTagged("listPlain", "plainUndescribed", "listPlainDescribed", "plainDescribed"),
                         publishesWithoutWarning(rendering -> assertEquals(
                                 json("[{\"name\": \"plain\", \"description\": \"Plain tag\"}]"),
                                 rootTags(rendering),
-                                "(b) the root tags"))),
+                                "the root tags"))),
                 row(
-                        "(c) an example text that is JSON publishes as JSON",
+                        "an example text that is JSON publishes as JSON",
                         search(ExampleResource.class, "jsonExample", Requiredness.NOT_REQUIRED, stringSchema()),
                         publishesWithoutWarning(rendering -> assertEquals(
                                 json("{\"a\": 1}"),
                                 searchParameter(rendering, "q").path("example"),
-                                "(c) the example"))),
+                                "the example"))),
                 row(
-                        "(d) an example text that is not JSON publishes as a string",
+                        "an example text that is not JSON publishes as a string",
                         search(ExampleResource.class, "textExample", Requiredness.NOT_REQUIRED, stringSchema()),
                         publishesWithoutWarning(rendering -> assertEquals(
                                 json("\"plain text\""),
                                 searchParameter(rendering, "q").path("example"),
-                                "(d) the example"))),
+                                "the example"))),
                 row(
-                        "(e) named examples win over an example",
+                        "named examples win over an example",
                         search(ExampleResource.class, "exampleAndExamples", Requiredness.NOT_REQUIRED, stringSchema()),
                         publishesWithoutWarning(rendering -> {
                             JsonNode q = searchParameter(rendering, "q");
                             assertEquals(
                                     json("{\"n\": {\"summary\": \"Sum\", \"value\": [1, 2]}}"),
                                     q.path("examples"),
-                                    () -> "(e) examples: " + q);
-                            assertNoMember(q, "example", "(e) the Parameter Object");
+                                    () -> "examples: " + q);
+                            assertNoMember(q, "example", "the Parameter Object");
                         })),
                 row(
-                        "(f) a named example with a blank name fails",
+                        "a named example with a blank name fails",
                         search(ExampleResource.class, "blankExampleName", Requiredness.NOT_REQUIRED, stringSchema()),
                         fails(List.of(SEARCH, "@ExampleObject.name"), "q")),
                 row(
-                        "(g) a named example with both a value and an external value fails",
+                        "a named example with both a value and an external value fails",
                         search(
                                 ExampleResource.class,
                                 "valueAndExternalValue",
@@ -1174,7 +1174,7 @@ class MetadataEnrichmentTest {
                                 stringSchema()),
                         fails(List.of(SEARCH, "@ExampleObject.value", "externalValue"), "q")),
                 row(
-                        "(h) two named examples sharing a name fail",
+                        "two named examples sharing a name fail",
                         search(
                                 ExampleResource.class,
                                 "duplicateExampleNames",
@@ -1278,7 +1278,7 @@ class MetadataEnrichmentTest {
                 .operation("GET", "/items/{id: [a-z]+}", visibleId)
                 .build();
         return pair(
-                "(a) a hidden operation whose path renders like a visible operation's",
+                "a hidden operation whose path renders like a visible operation's",
                 annotated(source, hiddenId, HiddenFirstResource.class, "renderedPathHidden"),
                 rendering -> {
                     assertAbsent(rendering, hiddenId);
@@ -1287,7 +1287,7 @@ class MetadataEnrichmentTest {
                             operation(rendering, "/items/{id}", "get")
                                     .path("operationId")
                                     .asText(null),
-                            "(a) the operation under /items/{id}");
+                            "the operation under /items/{id}");
                 },
                 annotated(source, hiddenId, HiddenFirstResource.class, "renderedPathVisible"),
                 fails(List.of(hiddenId, visibleId, "'/items/{id}'")));
@@ -1305,7 +1305,7 @@ class MetadataEnrichmentTest {
                 .body(GeneratedBodies.describe(ItemDto.class))
                 .build();
         return pair(
-                "(b) a hidden operation whose body component key equals a visible operation's",
+                "a hidden operation whose body component key equals a visible operation's",
                 annotated(source, hiddenId, HiddenFirstResource.class, "componentKeyHidden"),
                 rendering -> {
                     assertOperationAbsent(rendering, hiddenId, "/items/a");
@@ -1314,10 +1314,10 @@ class MetadataEnrichmentTest {
                             operation(rendering, "/items/b", "post")
                                     .path("operationId")
                                     .asText(null),
-                            "(b) the visible operation");
+                            "the visible operation");
                     assertTrue(
                             component(rendering, visibleId + ".request").isObject(),
-                            () -> "(b) the visible operation's component is missing: " + rendering.jsonText());
+                            () -> "the visible operation's component is missing: " + rendering.jsonText());
                 },
                 annotated(source, hiddenId, HiddenFirstResource.class, "componentKeyVisible"),
                 fails(List.of(hiddenId, visibleId)));
@@ -1331,7 +1331,7 @@ class MetadataEnrichmentTest {
                 .bodySchema(GeneratedBodies.describe(ItemDto.class).schema(), null)
                 .build();
         return pair(
-                "(c) a hidden operation whose captured body has no provenance",
+                "a hidden operation whose captured body has no provenance",
                 annotated(source, hiddenId, HiddenFirstResource.class, "unverifiedBodyHidden"),
                 rendering -> assertOperationAbsent(rendering, hiddenId, "/notes"),
                 annotated(source, hiddenId, HiddenFirstResource.class, "unverifiedBodyVisible"),
@@ -1346,7 +1346,7 @@ class MetadataEnrichmentTest {
                 .schema(new JsonObject("{\"type\": \"object\", \"propertyNames\": {\"maxLength\": 3}}"))
                 .build();
         return pair(
-                "(d) a hidden operation whose query parameter's schema holds propertyNames",
+                "a hidden operation whose query parameter's schema holds propertyNames",
                 annotated(source, hiddenId, HiddenFirstResource.class, "propertyNamesHidden"),
                 rendering -> {
                     assertOperationAbsent(rendering, hiddenId, "/filter");
@@ -1364,7 +1364,7 @@ class MetadataEnrichmentTest {
                 .schema(new JsonObject("{\"$ref\": \"https://schemas.example.test/a.json\"}"))
                 .build();
         return pair(
-                "(e) a hidden operation whose query parameter's schema references another document",
+                "a hidden operation whose query parameter's schema references another document",
                 annotated(source, hiddenId, HiddenFirstResource.class, "externalReferenceHidden"),
                 rendering -> {
                     assertOperationAbsent(rendering, hiddenId, "/fetch");
@@ -1390,7 +1390,7 @@ class MetadataEnrichmentTest {
                 .hidden(hiddenId, ParamLocation.PATH, "id")
                 .build();
         return pair(
-                "(f) a hidden operation whose path parameter is flagged hidden",
+                "a hidden operation whose path parameter is flagged hidden",
                 hidden,
                 rendering -> assertOperationAbsent(rendering, hiddenId, "/secret/{id}"),
                 control,
@@ -1403,7 +1403,7 @@ class MetadataEnrichmentTest {
                 .operation("GET", "/reports", hiddenId)
                 .build();
         return pair(
-                "(g) a hidden operation declaring an operation id other than the runtime's",
+                "a hidden operation declaring an operation id other than the runtime's",
                 annotated(source, hiddenId, HiddenFirstResource.class, "otherOperationIdHidden"),
                 rendering -> assertOperationAbsent(rendering, hiddenId, "/reports"),
                 annotated(source, hiddenId, HiddenFirstResource.class, "otherOperationIdVisible"),
@@ -1426,14 +1426,14 @@ class MetadataEnrichmentTest {
                 .annotate(visibleId, HiddenFirstResource.class, "sharedTagOther")
                 .build();
         return pair(
-                "(h) a hidden operation declaring a tag a visible operation declares differently",
+                "a hidden operation declaring a tag a visible operation declares differently",
                 hidden,
                 rendering -> {
                     assertOperationAbsent(rendering, hiddenId, "/tags/hidden");
                     assertEquals(
                             json("[{\"name\": \"shared\", \"description\": \"B\"}]"),
                             rootTags(rendering),
-                            "(h) the root tags carry only the visible declaration");
+                            "the root tags carry only the visible declaration");
                 },
                 control,
                 fails(List.of("shared", hiddenId, visibleId)));
@@ -1453,7 +1453,7 @@ class MetadataEnrichmentTest {
         Supplier<MountPublication> control =
                 annotated(source, operationId, HiddenFirstResource.class, "hiddenInputDisagrees");
         return pair(
-                "(i) a hidden query parameter of a visible operation declaring another name and location",
+                "a hidden query parameter of a visible operation declaring another name and location",
                 hidden,
                 rendering -> {
                     assertEquals(
@@ -1461,7 +1461,7 @@ class MetadataEnrichmentTest {
                             operation(rendering, "/inspect", "get")
                                     .path("operationId")
                                     .asText(null),
-                            "(i) the visible operation");
+                            "the visible operation");
                     assertAbsent(rendering, "debug");
                 },
                 control,
@@ -1476,7 +1476,7 @@ class MetadataEnrichmentTest {
                 .body(GeneratedBodies.describe(AccountHiddenFieldZx.class))
                 .build();
         return pair(
-                "(j) a hidden operation whose body type has a @Hidden member",
+                "a hidden operation whose body type has a @Hidden member",
                 annotated(source, hiddenId, HiddenFirstResource.class, "hiddenMemberHidden"),
                 rendering -> {
                     assertOperationAbsent(rendering, hiddenId, "/accounts");
@@ -1495,7 +1495,7 @@ class MetadataEnrichmentTest {
                 .schema(captured)
                 .build();
         return pair(
-                "(k) a hidden operation whose parameter would be warned about twice",
+                "a hidden operation whose parameter would be warned about twice",
                 annotated(source, hiddenId, HiddenFirstResource.class, "warnedHidden"),
                 rendering -> assertOperationAbsent(rendering, hiddenId, "/count"),
                 annotated(source, hiddenId, HiddenFirstResource.class, "warnedVisible"),
@@ -1505,8 +1505,8 @@ class MetadataEnrichmentTest {
                                 new WarningText(List.of(hiddenId), List.of("q"))),
                         rendering -> {
                             JsonNode q = parameter(rendering, "/count", "get", "q");
-                            assertNoMember(q, "required", "(k) the Parameter Object");
-                            assertEquals(json(captured), q.path("schema"), "(k) q's schema");
+                            assertNoMember(q, "required", "the Parameter Object");
+                            assertEquals(json(captured), q.path("schema"), "q's schema");
                         }));
     }
 

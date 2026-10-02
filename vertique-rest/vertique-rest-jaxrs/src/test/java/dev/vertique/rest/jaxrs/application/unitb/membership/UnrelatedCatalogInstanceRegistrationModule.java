@@ -13,30 +13,31 @@ import io.vertx.core.json.JsonObject;
 import java.util.List;
 
 /**
- * T023 L22 restoration (TP-003 case 22): registers {@link MembershipCaseApis.Case22Api},
+ * T023 L22 restoration (TP-003 case 22): registers {@link MembershipCaseApis.UnrelatedCatalogInstanceApi},
  * unconditionally active. Paired, in its own dedicated Dagger component, with the hand-written
  * (not C-GEN-shaped) {@code Case22HandWrittenEntryModule}, whose catalog entry provider returns an
  * unrelated-type instance for every {@link Case22Resource} catalog resolution in that component —
  * never combined with {@code NullCatalogEntryModule}'s catalog entry for the same type.
  */
 @Module
-public final class Case22RegistrationModule {
+public final class UnrelatedCatalogInstanceRegistrationModule {
 
-    private Case22RegistrationModule() {}
+    private UnrelatedCatalogInstanceRegistrationModule() {}
 
     /**
-     * Registers {@link MembershipCaseApis.Case22Api}, unconditionally active.
+     * Registers {@link MembershipCaseApis.UnrelatedCatalogInstanceApi}, unconditionally active.
      *
      * @param config the application configuration (unused; this fixture is unconditional)
      * @return the registration, always active
      */
     @Provides
     @IntoSet
-    static GeneratedRestApplicationRegistration case22ApplicationRegistration(@VertxConfig JsonObject config) {
+    static GeneratedRestApplicationRegistration unrelatedCatalogInstanceApplicationRegistration(
+            @VertxConfig JsonObject config) {
         return GeneratedRestApplicationRegistration.of(
-                MembershipCaseApis.Case22Api.class,
-                "membership-case22",
-                "/membership/case22",
+                MembershipCaseApis.UnrelatedCatalogInstanceApi.class,
+                "membership-unrelated-catalog-instance",
+                "/membership/unrelated-catalog-instance",
                 List.of(Case22Resource.class),
                 false,
                 "",

@@ -13,6 +13,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.rest.core.RestConfigurationException;
 import dev.vertique.rest.core.router.HttpVerticle;
+import dev.vertique.rest.jaxrs.CleanupFailures;
 import dev.vertique.rest.jaxrs.RouteRegistrationException;
 import dev.vertique.rest.jaxrs.application.unitb.ManagementApi;
 import dev.vertique.rest.jaxrs.application.unitb.PublicApi;
@@ -65,6 +66,7 @@ public class OperationPublicationDeploymentIT {
 
     private static final String LOCAL_MAP_NAME = "vertique";
     private static final String HTTP_PORT_KEY = "http.port";
+    private static final long AWAIT_TIMEOUT_SECONDS = 15;
 
     private static Vertx vertx;
     private static WebClient client;
@@ -83,16 +85,20 @@ public class OperationPublicationDeploymentIT {
     }
 
     /**
-     * Closes the shared {@link WebClient}.
+     * Closes the shared {@link WebClient}, failing the teardown if the close fails. The class-scoped
+     * {@link Vertx} is injected by the extension, which owns and closes it.
      *
-     * @param ctx the test context used to signal teardown completion
+     * @throws Exception the first cleanup failure, carrying later ones as suppressed
      */
     @AfterAll
-    static void tearDownClass(VertxTestContext ctx) {
-        if (client != null) {
-            client.close();
-        }
-        ctx.completeNow();
+    static void tearDownClass() throws Exception {
+        CleanupFailures cleanup = new CleanupFailures();
+        cleanup.attempt(() -> {
+            if (client != null) {
+                client.close();
+            }
+        });
+        cleanup.rethrowIfAny();
     }
 
     /** Clears the {@code vertique} local map's {@code http.port} entry after every test. */
@@ -106,19 +112,19 @@ public class OperationPublicationDeploymentIT {
     @Test
     @DisplayName("Every JAX-RS mount publishes exactly once, naming its application when it has one")
     void everyJaxRsMountPublishesOnce() throws Exception {
-        // Given: composition (a), zero declarations.
-        JsonObject configA = baseConfig();
-        PublicationComponents.ZeroDeclarationEventsComponent componentA = zeroDeclarationEventsComponent(configA);
+        // Given: the zero-declaration composition.
+        JsonObject zeroConfig = baseConfig();
+        PublicationComponents.ZeroDeclarationEventsComponent zeroComponent = zeroDeclarationEventsComponent(zeroConfig);
 
-        // When: composition (a)'s HttpVerticle is deployed.
-        String deploymentIdA = deploy(componentA::httpVerticle, new DeploymentOptions());
-        try {
-            PublicationEventRecordingSink sinkA = componentA.eventRecordingSink();
-            PublicationEventRecorder recorderA = componentA.eventRecorder();
+        // When: the zero-declaration composition's HttpVerticle is deployed.
+        Deployment zeroDeployment = deploy(zeroComponent::httpVerticle, new DeploymentOptions());
+        try (zeroDeployment) {
+            PublicationEventRecordingSink zeroSink = zeroComponent.eventRecordingSink();
+            PublicationEventRecorder zeroRecorder = zeroComponent.eventRecorder();
 
             // Then: the default legacy mount publishes its three operations, applicationName and
             // declaringType both null, strategyId the configured "none".
-            MountPublication defaultMount = sinkA.onlyReceivedFor("/*");
+            MountPublication defaultMount = zeroSink.onlyReceivedFor("/*");
             assertEquals("jaxrs:/*", defaultMount.mountId());
             assertNull(defaultMount.applicationName());
             assertNull(defaultMount.declaringType());
@@ -131,7 +137,7 @@ public class OperationPublicationDeploymentIT {
             // The hand-built /api/mgmt/* mount: also null identity, its own operations, most
             // specific path first.
             MountPublication mgmtMount =
-                    sinkA.onlyReceivedFor(PublicationComponents.HandBuiltMountsModule.MGMT_MOUNT_PATH);
+                    zeroSink.onlyReceivedFor(PublicationComponents.HandBuiltMountsModule.MGMT_MOUNT_PATH);
             assertEquals("jaxrs:/api/mgmt/*", mgmtMount.mountId());
             assertNull(mgmtMount.applicationName());
             assertNull(mgmtMount.declaringType());
@@ -141,7 +147,7 @@ public class OperationPublicationDeploymentIT {
             // The empty mount publishes zero operations with the configured strategyId, and null
             // identity like every non-application mount (S6-007).
             MountPublication emptyMount =
-                    sinkA.onlyReceivedFor(PublicationComponents.HandBuiltMountsModule.EMPTY_MOUNT_PATH);
+                    zeroSink.onlyReceivedFor(PublicationComponents.HandBuiltMountsModule.EMPTY_MOUNT_PATH);
             assertEquals("jaxrs:" + PublicationComponents.HandBuiltMountsModule.EMPTY_MOUNT_PATH, emptyMount.mountId());
             assertNull(emptyMount.applicationName());
             assertNull(emptyMount.declaringType());
@@ -150,43 +156,43 @@ public class OperationPublicationDeploymentIT {
             assertNoDetail(emptyMount);
 
             // The non-JAX-RS mount never publishes.
-            assertTrue(sinkA.received().stream().noneMatch(p -> p.mountPath().equals("/plain/*")));
+            assertTrue(zeroSink.received().stream().noneMatch(p -> p.mountPath().equals("/plain/*")));
 
             // Event order: afterRouterCreated -> mountBuilt -> customize for non-empty mounts,
             // mountBuilt -> customize for the empty mount.
-            assertEquals(List.of("afterRouterCreated", "mountBuilt", "customize"), recorderA.eventsFor("/*"));
+            assertEquals(List.of("afterRouterCreated", "mountBuilt", "customize"), zeroRecorder.eventsFor("/*"));
             assertEquals(
                     List.of("afterRouterCreated", "mountBuilt", "customize"),
-                    recorderA.eventsFor(PublicationComponents.HandBuiltMountsModule.MGMT_MOUNT_PATH));
+                    zeroRecorder.eventsFor(PublicationComponents.HandBuiltMountsModule.MGMT_MOUNT_PATH));
             assertEquals(
                     List.of("mountBuilt", "customize"),
-                    recorderA.eventsFor(PublicationComponents.HandBuiltMountsModule.EMPTY_MOUNT_PATH));
-        } finally {
-            undeploy(deploymentIdA);
+                    zeroRecorder.eventsFor(PublicationComponents.HandBuiltMountsModule.EMPTY_MOUNT_PATH));
         }
 
-        // Given: composition (b), T023's ported unitb declarations, both applications active.
-        JsonObject configB = baseConfig(
+        // Given: the declared-applications composition, T023's ported unitb declarations, both
+        // applications active.
+        JsonObject declaredConfig = baseConfig(
                 "unitb.publicApplication.active", true,
                 "unitb.managementApplication.active", true);
-        PublicationComponents.UnitBApplicationsEventsComponent componentB = unitBApplicationsEventsComponent(configB);
+        PublicationComponents.UnitBApplicationsEventsComponent declaredComponent =
+                unitBApplicationsEventsComponent(declaredConfig);
 
-        // When: composition (b)'s HttpVerticle is deployed. Both compositions deploy, so Dagger
-        // injected the package-private Factory constructor from a component outside its package
-        // (PublicationComponents lives in dev.vertique.rest.jaxrs.application).
-        String deploymentIdB = deploy(componentB::httpVerticle, new DeploymentOptions());
-        try {
-            PublicationEventRecordingSink sinkB = componentB.eventRecordingSink();
-            PublicationEventRecorder recorderB = componentB.eventRecorder();
+        // When: the declared-applications composition's HttpVerticle is deployed. Both compositions
+        // deploy, so Dagger injected the package-private Factory constructor from a component outside
+        // its package (PublicationComponents lives in dev.vertique.rest.jaxrs.application).
+        Deployment declaredDeployment = deploy(declaredComponent::httpVerticle, new DeploymentOptions());
+        try (declaredDeployment) {
+            PublicationEventRecordingSink declaredSink = declaredComponent.eventRecordingSink();
+            PublicationEventRecorder declaredRecorder = declaredComponent.eventRecorder();
 
-            MountPublication publicMount = sinkB.onlyReceivedFor("/api/public/*");
+            MountPublication publicMount = declaredSink.onlyReceivedFor("/api/public/*");
             assertEquals("jaxrs:/api/public/*", publicMount.mountId());
             assertEquals("public", publicMount.applicationName());
             assertEquals(PublicApi.class, publicMount.declaringType());
             assertEquals(List.of("blobLike", "catalog", "scoped"), operationIds(publicMount));
             assertNoDetail(publicMount);
 
-            MountPublication mgmtAppMount = sinkB.onlyReceivedFor("/api/mgmt/*");
+            MountPublication mgmtAppMount = declaredSink.onlyReceivedFor("/api/mgmt/*");
             assertEquals("jaxrs:/api/mgmt/*", mgmtAppMount.mountId());
             assertEquals("mgmt", mgmtAppMount.applicationName());
             assertEquals(ManagementApi.class, mgmtAppMount.declaringType());
@@ -194,10 +200,11 @@ public class OperationPublicationDeploymentIT {
             assertNoDetail(mgmtAppMount);
 
             assertEquals(
-                    List.of("afterRouterCreated", "mountBuilt", "customize"), recorderB.eventsFor("/api/public/*"));
-            assertEquals(List.of("afterRouterCreated", "mountBuilt", "customize"), recorderB.eventsFor("/api/mgmt/*"));
-        } finally {
-            undeploy(deploymentIdB);
+                    List.of("afterRouterCreated", "mountBuilt", "customize"),
+                    declaredRecorder.eventsFor("/api/public/*"));
+            assertEquals(
+                    List.of("afterRouterCreated", "mountBuilt", "customize"),
+                    declaredRecorder.eventsFor("/api/mgmt/*"));
         }
     }
 
@@ -210,14 +217,14 @@ public class OperationPublicationDeploymentIT {
 
         // E12: rows (a), (b), and (c) are evaluated independently.
         assertAll(
-                "TP-006 rows (a), (b), and (c)",
+                "a throwing sink, a duplicate operationId, and a failing-future sink",
                 () -> verifyThrowingSinkRejectsMgmtMount(config),
                 () -> verifyDuplicateOperationIdNeverPublishes(config),
                 () -> verifyFailingFutureRejectsMgmtMount(config));
     }
 
     private void verifyThrowingSinkRejectsMgmtMount(JsonObject config) throws Exception {
-        // Given: composition (a) with a sink whose mountBuilt throws for /api/mgmt/*.
+        // Given: the zero-declaration composition with a sink whose mountBuilt throws for /api/mgmt/*.
         RestConfigurationException thrown = new RestConfigurationException("sink rejected /api/mgmt/*");
         PublicationComponents.ThrowingSinkComponent component = throwingSinkComponent(config, thrown);
 
@@ -247,7 +254,7 @@ public class OperationPublicationDeploymentIT {
     }
 
     private void verifyFailingFutureRejectsMgmtMount(JsonObject config) throws Exception {
-        // Given: composition (a) with a sink whose mountBuilt returns a failed future for
+        // Given: the zero-declaration composition with a sink whose mountBuilt returns a failed future for
         // /api/mgmt/*, and TP-001's counting MountCustomizer.
         RestConfigurationException failure = new RestConfigurationException("sink failed /api/mgmt/*");
         PublicationComponents.FailingFutureSinkComponent component = failingFutureSinkComponent(config, failure);
@@ -287,52 +294,46 @@ public class OperationPublicationDeploymentIT {
             new RequestSpec("mgmt head (HEAD)", HttpMethod.HEAD, "/api/mgmt/echo/head"));
 
     @Test
-    @DisplayName("With no sink or no detail, requests and source calls are unchanged (INV-1)")
+    @DisplayName("With no sink or no detail, requests and source calls are unchanged")
     void noSinkKeepsRoutingAndSourceCalls() throws Exception {
         JsonObject config = baseConfig("jaxrs.validationStrategy", "recording-strategy");
 
         // Build 1: the @Multibinds sink set with no contribution (empty).
         PublicationComponents.NoSinkComponent noSinkComponent = noSinkComponent(config);
-        String deploymentId1 = deploy(noSinkComponent::httpVerticle, new DeploymentOptions());
+        Deployment noSinkDeployment = deploy(noSinkComponent::httpVerticle, new DeploymentOptions());
         List<ResponseTriple> responses1;
         int calls1;
-        try {
+        try (noSinkDeployment) {
             int port = readPort();
             responses1 = sendAll(port);
             CountingSchemaSource source1 = noSinkComponent.countingSchemaSource();
             calls1 = source1.calls();
-        } finally {
-            undeploy(deploymentId1);
         }
         vertx.sharedData().getLocalMap(LOCAL_MAP_NAME).remove(HTTP_PORT_KEY);
 
         // Build 2: a recording sink wanting no detail.
         PublicationComponents.SinkWantsNoDetailComponent noDetailComponent = sinkWantsNoDetailComponent(config);
-        String deploymentId2 = deploy(noDetailComponent::httpVerticle, new DeploymentOptions());
+        Deployment noDetailDeployment = deploy(noDetailComponent::httpVerticle, new DeploymentOptions());
         List<ResponseTriple> responses2;
         int calls2;
-        try {
+        try (noDetailDeployment) {
             int port = readPort();
             responses2 = sendAll(port);
             CountingSchemaSource source2 = noDetailComponent.countingSchemaSource();
             calls2 = source2.calls();
-        } finally {
-            undeploy(deploymentId2);
         }
         vertx.sharedData().getLocalMap(LOCAL_MAP_NAME).remove(HTTP_PORT_KEY);
 
         // Build 3: a recording sink wanting detail for every mount.
         PublicationComponents.SinkWantsAllDetailComponent allDetailComponent = sinkWantsAllDetailComponent(config);
-        String deploymentId3 = deploy(allDetailComponent::httpVerticle, new DeploymentOptions());
+        Deployment allDetailDeployment = deploy(allDetailComponent::httpVerticle, new DeploymentOptions());
         List<ResponseTriple> responses3;
         int calls3;
-        try {
+        try (allDetailDeployment) {
             int port = readPort();
             responses3 = sendAll(port);
             CountingSchemaSource source3 = allDetailComponent.countingSchemaSource();
             calls3 = source3.calls();
-        } finally {
-            undeploy(deploymentId3);
         }
 
         // Then: status, Content-Type, and body are identical across the three builds for every
@@ -462,26 +463,34 @@ public class OperationPublicationDeploymentIT {
     // --- Deployment helpers ---
 
     /**
-     * Deploys {@code supplier} and returns the resolved deployment id, undeploying nothing itself.
+     * Deploys {@code supplier} and returns the resolved deployment, undeploying nothing itself.
      *
      * @param supplier creates a fresh {@link Verticle} instance
      * @param options  the deployment options
-     * @return the deployment id
+     * @return the deployment, undeployed when closed
      * @throws Exception if the deployment fails
      */
-    private static String deploy(Supplier<Verticle> supplier, DeploymentOptions options) throws Exception {
-        return await(deployFuture(supplier, options));
+    private static Deployment deploy(Supplier<Verticle> supplier, DeploymentOptions options) throws Exception {
+        return new Deployment(await(deployFuture(supplier, options)));
     }
 
     /**
-     * Undeploys the given deployment id, when non-{@code null}.
+     * One successful deployment, undeployed when closed. Used as a try-with-resources resource so an
+     * undeploy failure is attached as suppressed to a failure the test body already raised, rather
+     * than replacing it.
      *
-     * @param deploymentId the deployment id to undeploy, or {@code null}
-     * @throws Exception if the undeploy fails
+     * @param id the deployment id
      */
-    private static void undeploy(String deploymentId) throws Exception {
-        if (deploymentId != null) {
-            await(vertx.undeploy(deploymentId));
+    private record Deployment(String id) implements AutoCloseable {
+
+        /**
+         * Undeploys this deployment, bounded by {@code AWAIT_TIMEOUT_SECONDS}.
+         *
+         * @throws Exception if the undeploy fails, times out, or the wait is interrupted
+         */
+        @Override
+        public void close() throws Exception {
+            await(vertx.undeploy(id));
         }
     }
 
@@ -503,15 +512,21 @@ public class OperationPublicationDeploymentIT {
     }
 
     /**
-     * Blocks for {@code future}'s successful result, bounded by the class timeout.
+     * Blocks for {@code future}'s successful result, bounded by {@link #AWAIT_TIMEOUT_SECONDS}.
      *
      * @param future the future to await
      * @param <T>    the future's result type
      * @return the future's result
-     * @throws Exception if the future fails
+     * @throws Exception if the future fails or times out, or the wait is interrupted (the thread's
+     *                   interrupt status is restored first)
      */
     private static <T> T await(Future<T> future) throws Exception {
-        return future.toCompletionStage().toCompletableFuture().get(15, TimeUnit.SECONDS);
+        try {
+            return future.toCompletionStage().toCompletableFuture().get(AWAIT_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw e;
+        }
     }
 
     /**

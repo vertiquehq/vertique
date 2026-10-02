@@ -14,10 +14,11 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import dev.vertique.rest.openapi.docs.ServedConformanceTestComponents.Provisions;
-import dev.vertique.rest.openapi.docs.fixture.conformance.support.Deployments;
-import dev.vertique.rest.openapi.docs.fixture.conformance.support.DocumentRequests;
-import dev.vertique.rest.openapi.docs.fixture.conformance.support.DocumentRequests.Answer;
 import dev.vertique.rest.openapi.docs.fixture.conformance.support.StoreLogCapture;
+import dev.vertique.rest.openapi.docs.fixture.support.Deployments;
+import dev.vertique.rest.openapi.docs.fixture.support.DocumentRequests;
+import dev.vertique.rest.openapi.docs.fixture.support.DocumentRequests.Answer;
+import dev.vertique.rest.openapi.docs.fixture.support.Futures;
 import io.vertx.core.DeploymentOptions;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
@@ -32,6 +33,7 @@ import jakarta.annotation.Nullable;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -83,6 +85,9 @@ import org.junit.jupiter.api.function.Executable;
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 60, unit = TimeUnit.SECONDS)
 public class ServedContractConformanceIT {
+
+    /** The longest one deployment, request, or undeployment is awaited. */
+    private static final Duration WAIT = Duration.ofSeconds(5);
 
     private static final String GLOBAL_CONTRACT = "contracts/conformance-global-openapi.json";
     private static final String PARTNER_CONTRACT = "contracts/conformance-partner-openapi.yaml";
@@ -252,7 +257,7 @@ public class ServedContractConformanceIT {
             assertAll("served-contract conformance", checks.stream());
         } finally {
             client.close();
-            Deployments.undeployAll(vertx, deployments);
+            Deployments.undeployAll(vertx, deployments, WAIT);
         }
     }
 
@@ -276,14 +281,14 @@ public class ServedContractConformanceIT {
             if (group.mode() == Mode.SEQUENTIAL) {
                 Provisions component = component(vertx, group.strategy());
                 ports.add(Deployments.deployAndReadPort(
-                        vertx, component::httpVerticle, new DeploymentOptions(), deployments));
+                        vertx, component::httpVerticle, new DeploymentOptions(), deployments, WAIT));
                 ports.add(Deployments.deployAndReadPort(
-                        vertx, component::httpVerticle, new DeploymentOptions(), deployments));
+                        vertx, component::httpVerticle, new DeploymentOptions(), deployments, WAIT));
                 requestsPerPort = 1;
             } else {
                 Provisions component = component(vertx, group.strategy());
                 ports.add(Deployments.deployAndReadPort(
-                        vertx, component::httpVerticle, new DeploymentOptions().setInstances(2), deployments));
+                        vertx, component::httpVerticle, new DeploymentOptions().setInstances(2), deployments, WAIT));
                 requestsPerPort = REQUESTS_PER_FORM;
             }
 
@@ -294,7 +299,7 @@ public class ServedContractConformanceIT {
                     List<Answer> formAnswers = new ArrayList<>();
                     for (int port : ports) {
                         for (int request = 0; request < requestsPerPort; request++) {
-                            formAnswers.add(DocumentRequests.get(client, port, form.url(row.document()), null));
+                            formAnswers.add(DocumentRequests.get(client, port, form.url(row.document()), null, WAIT));
                         }
                     }
                     answers.put(form, formAnswers);
@@ -416,7 +421,7 @@ public class ServedContractConformanceIT {
      * contract. The argument is never handed to vertx-openapi itself.
      */
     private static Set<String> loadedOperationIds(Vertx vertx, JsonObject document) throws Exception {
-        OpenAPIContract contract = Deployments.await(OpenAPIContract.from(vertx, document.copy()));
+        OpenAPIContract contract = Futures.await(OpenAPIContract.from(vertx, document.copy()), WAIT);
         return contract.operations().stream()
                 .map(Operation::getOperationId)
                 .collect(Collectors.toCollection(TreeSet::new));
@@ -431,8 +436,8 @@ public class ServedContractConformanceIT {
     private record PostResult(int status, String body) {}
 
     private static PostResult post(WebClient client, int port, JsonObject body) throws Exception {
-        HttpResponse<Buffer> response = Deployments.await(
-                client.post(port, "127.0.0.1", PARTNER_ORDERS_URI).sendJsonObject(body));
+        HttpResponse<Buffer> response =
+                Futures.await(client.post(port, "127.0.0.1", PARTNER_ORDERS_URI).sendJsonObject(body), WAIT);
         Buffer answer = response.body();
         return new PostResult(response.statusCode(), answer == null ? "" : answer.toString(StandardCharsets.UTF_8));
     }

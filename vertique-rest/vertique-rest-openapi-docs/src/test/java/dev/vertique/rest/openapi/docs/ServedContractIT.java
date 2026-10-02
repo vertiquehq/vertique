@@ -30,8 +30,12 @@ import dev.vertique.rest.openapi.docs.fixture.contract.ContractTexts;
 import dev.vertique.rest.openapi.docs.fixture.contract.WorkingDirectoryFile;
 import dev.vertique.rest.openapi.docs.fixture.protecteddocs.shared.Observations;
 import dev.vertique.rest.openapi.docs.fixture.protecteddocs.shared.SharedDeployment;
-import dev.vertique.rest.openapi.docs.fixture.startup.StartupDeployments;
-import dev.vertique.rest.openapi.docs.fixture.startup.StartupDeployments.Outcome;
+import dev.vertique.rest.openapi.docs.fixture.support.Cleanup;
+import dev.vertique.rest.openapi.docs.fixture.support.Deployments;
+import dev.vertique.rest.openapi.docs.fixture.support.Futures;
+import dev.vertique.rest.openapi.docs.fixture.support.OwnedWebClient;
+import dev.vertique.rest.openapi.docs.fixture.support.StartupDeployments;
+import dev.vertique.rest.openapi.docs.fixture.support.StartupDeployments.Outcome;
 import io.vertx.core.DeploymentOptions;
 import io.vertx.core.Future;
 import io.vertx.core.MultiMap;
@@ -39,6 +43,7 @@ import io.vertx.core.Vertx;
 import io.vertx.core.VertxOptions;
 import io.vertx.core.WorkerExecutor;
 import io.vertx.core.buffer.Buffer;
+import io.vertx.core.http.HttpClientOptions;
 import io.vertx.core.http.HttpMethod;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.auth.jwt.JWTAuth;
@@ -61,9 +66,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiFunction;
@@ -581,64 +584,64 @@ public class ServedContractIT {
     static Stream<StartupRow> invalidContractsAndMetadataOverrides() {
         return Stream.of(
                 partnerRefused(
-                        "(a) the contract describes deleteOrder, which the mount does not route",
+                        "the contract describes deleteOrder, which the mount does not route",
                         ContractFiles.PARTNER_EXTRA_OPERATION,
                         "deleteOrder",
                         NOT_ROUTED),
                 partnerRefused(
-                        "(b) the contract omits createOrder",
+                        "the contract omits createOrder",
                         ContractFiles.PARTNER_MISSING_OPERATION,
                         "createOrder",
                         NOT_DESCRIBED),
                 partnerRefused(
-                        "(c) the contract references another file",
+                        "the contract references another file",
                         ContractFiles.PARTNER_EXTERNAL_REF,
                         "/paths/~1orders/post/requestBody/content/application~1json/schema/$ref",
                         NOT_LOCAL),
-                partnerRefused("(d) the contract is not valid JSON", ContractFiles.PARTNER_MALFORMED_JSON, NOT_JSON),
-                partnerRefused("(e) the contract is not valid YAML", ContractFiles.PARTNER_MALFORMED_YAML, NOT_YAML),
-                partnerRefused("(f) the contract location does not exist", ContractFiles.ABSENT, UNREADABLE),
+                partnerRefused("the contract is not valid JSON", ContractFiles.PARTNER_MALFORMED_JSON, NOT_JSON),
+                partnerRefused("the contract is not valid YAML", ContractFiles.PARTNER_MALFORMED_YAML, NOT_YAML),
+                partnerRefused("the contract location does not exist", ContractFiles.ABSENT, UNREADABLE),
                 partnerRefused(
-                        "(g) the contract has an unsupported extension",
+                        "the contract has an unsupported extension",
                         ContractFiles.PARTNER_TXT,
                         PARTNER_TXT_CONTRACT,
                         SUPPORTED_EXTENSIONS),
                 new StartupRow(
-                        "(h) apidocs.documents.partner.info is configured",
+                        "apidocs.documents.partner.info is configured",
                         ServedContractIT::sharedComponent,
                         () -> ContractConfigs.withPartnerInfo(ContractConfigs.shared()),
                         withoutPartnerNotices(
                                 row -> assertStartupFailure(row, PARTNER, PARTNER, null, CONFIGURED_INFO_PATH))),
                 new StartupRow(
-                        "(i) the declaring interface also carries @OpenAPIDefinition",
+                        "the declaring interface also carries @OpenAPIDefinition",
                         ServedContractIT::annotatedInfoComponent,
                         ContractConfigs::shared,
                         withoutPartnerNotices(row -> assertStartupFailure(
                                 row, PARTNER, PARTNER, null, OPENAPI_DEFINITION, ANNOTATED_INFO_BINARY))),
                 new StartupRow(
-                        "(j) apidocs.documents.partner.serverUrl is configured",
+                        "apidocs.documents.partner.serverUrl is configured",
                         ServedContractIT::sharedComponent,
                         () -> ContractConfigs.withPartnerServerUrl(ContractConfigs.shared()),
                         withoutPartnerNotices(
                                 row -> assertStartupFailure(row, PARTNER, PARTNER, null, CONFIGURED_SERVER_URL_PATH))),
                 partnerRefused(
-                        "(k) a webhook operation reuses the routed id getOrderInternal",
+                        "a webhook operation reuses the routed id getOrderInternal",
                         ContractFiles.PARTNER_WEBHOOK_REUSE,
                         "/webhooks/orderLookup/post",
                         REUSES_ROUTED_ID),
                 partnerRefused(
-                        "(l) the contract describes listOrders's hidden query parameter debug",
+                        "the contract describes listOrders's hidden query parameter debug",
                         ContractFiles.PARTNER_HIDDEN_PARAM,
                         "listOrders",
                         "/paths/~1orders/get/parameters/1",
                         HIDDEN_INPUT),
                 new StartupRow(
-                        "(m) control: the contract also describes the hidden operation getOrderInternal",
+                        "control: the contract also describes the hidden operation getOrderInternal",
                         ServedContractIT::sharedComponent,
                         () -> ContractConfigs.sharedWithPartnerContract(ContractFiles.PARTNER_WITH_HIDDEN),
                         ServedContractIT::assertServesTheHiddenOperation),
                 new StartupRow(
-                        "(n) control: row (a)'s contract with partner's document disabled",
+                        "control: the contract describing the unrouted deleteOrder, with partner's document disabled",
                         ServedContractIT::sharedComponent,
                         () -> ContractConfigs.withDocumentEnabled(
                                 ContractConfigs.sharedWithPartnerContract(ContractFiles.PARTNER_EXTRA_OPERATION),
@@ -646,11 +649,11 @@ public class ServedContractIT {
                                 false),
                         ServedContractIT::assertDisabledDocumentReadsNothing),
                 partnerRefused(
-                        "(o) the YAML contract holds a second document after a valid first one",
+                        "the YAML contract holds a second document after a valid first one",
                         ContractFiles.PARTNER_MULTI_DOCUMENT,
                         NOT_YAML),
                 new StartupRow(
-                        "(p) the configured contract location holds a line feed and an unsupported extension",
+                        "the configured contract location holds a line feed and an unsupported extension",
                         ServedContractIT::sharedComponent,
                         () -> ContractConfigs.sharedWithPartnerContract(ContractFiles.PARTNER_LINE_FEED_TXT),
                         withoutPartnerNotices(ServedContractIT::assertLineFeedLocationShownEscaped)));
@@ -862,15 +865,15 @@ public class ServedContractIT {
     @DisplayName("A contract whose servers differ from the mount logs one warning and is served unchanged")
     void serversMismatchLogsOneWarningAndServesUnchanged(Vertx vertx) throws Exception {
         List<ServersRow> rows = List.of(
-                new ServersRow("(a) no servers member", ContractFiles.PARTNER_NO_SERVERS, null, 1),
+                new ServersRow("no servers member", ContractFiles.PARTNER_NO_SERVERS, null, 1),
                 new ServersRow(
-                        "(b) an absolute servers[0].url",
+                        "an absolute servers[0].url",
                         ContractFiles.PARTNER_ABSOLUTE_SERVER,
                         "[{\"url\":\"https://partner.example.com/api/partner\"}]",
                         1),
-                new ServersRow("(c) an empty servers array", ContractFiles.PARTNER_EMPTY_SERVERS, "[]", 1),
+                new ServersRow("an empty servers array", ContractFiles.PARTNER_EMPTY_SERVERS, "[]", 1),
                 new ServersRow(
-                        "(d) control: servers[0].url is the mount path",
+                        "control: servers[0].url is the mount path",
                         ContractFiles.PARTNER,
                         "[{\"url\":\"/api/partner\"}]",
                         0));
@@ -933,12 +936,15 @@ public class ServedContractIT {
     void racingCompositionsLoadTheContractOnceOnAWorkerThread() throws Exception {
         // Given: a test-owned Vert.x instance with one event loop.
         Vertx gatedVertx = Vertx.vertx(new VertxOptions().setEventLoopPoolSize(1));
-        WebClient gatedClient = null;
         CountDownLatch gateStarted = new CountDownLatch(1);
         CountDownLatch gateRelease = new CountDownLatch(1);
         AtomicReference<String> gateThread = new AtomicReference<>();
-        String deploymentId = null;
-        try {
+        try (Cleanup cleanup = new Cleanup()) {
+            // Teardown, last registered first: the client is closed, the deployment undone, the gate
+            // released, and the instance closed, each attempted and each failure or timeout reported.
+            cleanup.await("close the test-owned Vert.x instance", gatedVertx::close, GATED_CLOSE_BOUND);
+            cleanup.step("release the gate", gateRelease::countDown);
+
             // Given: partner as the only documented application, with the recording sink beside the docs sink.
             docs.clear();
             GatedProvisions component = DaggerServedContractTestComponents_GatedPartnerComponent.factory()
@@ -977,7 +983,7 @@ public class ServedContractIT {
                         .sharedData()
                         .getLocalMap(StartupDeployments.LOCAL_MAP)
                         .remove(StartupDeployments.PORT_KEY);
-                deployment = deployGated(gatedVertx, component, options);
+                deployment = Deployments.deploy(gatedVertx, component::httpVerticle, options);
                 bothCallsWhileGated = recordingSink.awaitCalls(PARTNER_MOUNT_PATH, COMPOSITIONS, BOTH_CALLS_BOUND);
                 loaderLinesWhileGated = loaderLines(PARTNER).size();
                 storedWhileGated = store.lookup(PARTNER).isPresent();
@@ -992,8 +998,9 @@ public class ServedContractIT {
                             + recordingSink.calls(PARTNER_MOUNT_PATH));
 
             // When: the deployment completes; then the gate's own outcome is observed.
-            deploymentId = awaitBounded(deployment, GATED_DEPLOY_BOUND);
-            assertTrue(awaitBounded(gate, GATED_DEPLOY_BOUND), "the gate was released by its bound, not by the test");
+            String deploymentId = Futures.await(deployment, GATED_DEPLOY_BOUND);
+            cleanup.await("undeploy the gated deployment", () -> gatedVertx.undeploy(deploymentId), GATED_CLOSE_BOUND);
+            assertTrue(Futures.await(gate, GATED_DEPLOY_BOUND), "the gate was released by its bound, not by the test");
             List<LogLine> lines = docs.lines();
             String poolThread = gateThread.get();
 
@@ -1030,8 +1037,11 @@ public class ServedContractIT {
                     .getLocalMap(StartupDeployments.LOCAL_MAP)
                     .get(StartupDeployments.PORT_KEY);
             assertNotNull(port, "the deployment published no http.port");
-            gatedClient = WebClient.create(
-                    gatedVertx, new WebClientOptions().setDefaultHost(HOST).setKeepAlive(false));
+            // The client wraps a raw client so its close is awaited before the owned instance closes.
+            OwnedWebClient owned = OwnedWebClient.create(
+                    gatedVertx, new HttpClientOptions().setDefaultHost(HOST).setKeepAlive(false));
+            cleanup.await("close the gated client", owned::close, GATED_CLOSE_BOUND);
+            WebClient gatedClient = owned.client();
             for (String url : List.of(jsonUrl(PARTNER), yamlUrl(PARTNER))) {
                 Set<String> bodies = new HashSet<>();
                 Set<String> etags = new HashSet<>();
@@ -1046,59 +1056,6 @@ public class ServedContractIT {
                 assertEquals(1, etags.size(), () -> url + ": distinct entity tags: " + etags);
                 assertFalse(etags.contains(null), () -> url + ": a response without an entity tag");
             }
-        } finally {
-            gateRelease.countDown();
-            if (gatedClient != null) {
-                gatedClient.close();
-            }
-            closeGatedVertx(gatedVertx, deploymentId);
-        }
-    }
-
-    /** Deploys the gated component's supplier; a synchronous throw becomes a failed future. */
-    private static Future<String> deployGated(Vertx vertx, GatedProvisions component, DeploymentOptions options) {
-        try {
-            return vertx.deployVerticle(component::httpVerticle, options);
-        } catch (Throwable t) {
-            return Future.failedFuture(t);
-        }
-    }
-
-    /** Waits for a future within a bound; a failure or a timeout fails the test with its cause. */
-    private static <T> T awaitBounded(Future<T> future, Duration bound) throws Exception {
-        try {
-            return future.toCompletionStage().toCompletableFuture().get(bound.toMillis(), TimeUnit.MILLISECONDS);
-        } catch (ExecutionException failed) {
-            throw new AssertionError("the future failed: " + failed.getCause(), failed.getCause());
-        } catch (TimeoutException incomplete) {
-            throw new AssertionError("the future did not complete within " + bound, incomplete);
-        }
-    }
-
-    /**
-     * Undeploys the gated deployment and closes the test-owned Vert.x instance, each within a bound,
-     * so a deadlocked event loop still ends the run.
-     */
-    private static void closeGatedVertx(Vertx vertx, String deploymentId) {
-        try {
-            if (deploymentId != null) {
-                vertx.undeploy(deploymentId)
-                        .toCompletionStage()
-                        .toCompletableFuture()
-                        .get(GATED_CLOSE_BOUND.toMillis(), TimeUnit.MILLISECONDS);
-            }
-        } catch (Exception undeployFailed) {
-            // The close below still runs; the test's own assertions report the failure.
-        }
-        try {
-            vertx.close()
-                    .toCompletionStage()
-                    .toCompletableFuture()
-                    .get(GATED_CLOSE_BOUND.toMillis(), TimeUnit.MILLISECONDS);
-        } catch (InterruptedException interrupted) {
-            Thread.currentThread().interrupt();
-        } catch (ExecutionException | TimeoutException notClosed) {
-            // A deadlocked event loop cannot close; the fork's exit bound ends it.
         }
     }
 
@@ -1128,7 +1085,7 @@ public class ServedContractIT {
                 WorkingDirectoryFile.write(ContractFiles.SHADOWED, ContractTexts.WORKING_DIRECTORY_SHADOWED)) {
             Resolved resolved = deployAndReadPartner(
                     vertx,
-                    "(a) a working-directory file shadows the classpath resource",
+                    "a working-directory file shadows the classpath resource",
                     sharedComponent(vertx, ContractConfigs.sharedWithPartnerContract(ContractFiles.SHADOWED)),
                     null);
             assertAll(
@@ -1143,7 +1100,7 @@ public class ServedContractIT {
         assertFalse(Files.exists(Path.of(SHADOWED_CONTRACT)), "the working-directory file was removed");
         Resolved classpath = deployAndReadPartner(
                 vertx,
-                "(b) only the classpath resource exists",
+                "only the classpath resource exists",
                 sharedComponent(vertx, ContractConfigs.sharedWithPartnerContract(ContractFiles.SHADOWED)),
                 null);
         assertAll(
@@ -1160,7 +1117,7 @@ public class ServedContractIT {
                 Path.of(absoluteLocation).toAbsolutePath().normalize().toString();
         Resolved absolute = deployAndReadPartner(
                 vertx,
-                "(c) an absolute contract location",
+                "an absolute contract location",
                 sharedComponent(vertx, ContractConfigs.sharedWithPartnerContract(absoluteLocation)),
                 null);
         assertAll(
@@ -1179,7 +1136,7 @@ public class ServedContractIT {
                     false);
             Resolved strategy = deployAndReadPartner(
                     vertx,
-                    "(d) the shadowing file under openapi-contract",
+                    "the shadowing file under openapi-contract",
                     sharedOpenApiContractComponent(vertx, config),
                     new JsonObject[] {
                         new JsonObject().put("sku", "ABC-1234"),
@@ -1422,35 +1379,35 @@ public class ServedContractIT {
     static Stream<StartupRow> prefixCollisionAndReservedIdRows() {
         return Stream.of(
                 new StartupRow(
-                        "(a) catalog's GET /{a}/{b}/{c} can answer partner's document URL under /api/catalog/docs",
+                        "catalog's GET /{a}/{b}/{c} can answer partner's document URL under /api/catalog/docs",
                         ServedContractIT::threeSegmentsCatalogComponent,
                         () -> ContractConfigs.withApidocsPath(ContractConfigs.shared(), "/api/catalog/docs"),
                         row -> assertStartupFailure(
                                 row, null, null, null, "GET /{a}/{b}/{c}", "/api/catalog/docs/partner/openapi.json")),
                 new StartupRow(
-                        "(b) a catalog operation uses partner's synthetic id",
+                        "a catalog operation uses partner's synthetic id",
                         ServedContractIT::reservedIdCatalogComponent,
                         ContractConfigs::shared,
                         row -> assertStartupFailure(
                                 row, null, null, null, "apidocs:partner:json", "apidocs.documents.partner")),
                 new StartupRow(
-                        "(c) a hand-built mount lies under the documentation prefix",
+                        "a hand-built mount lies under the documentation prefix",
                         ServedContractIT::extraDocsComponent,
                         ContractConfigs::shared,
                         row -> assertStartupFailure(row, null, null, null, "/apidocs/extra/*", "apidocs.path")),
                 new StartupRow(
-                        "(d) control for (a): every document disabled",
+                        "control for catalog's GET /{a}/{b}/{c}: every document disabled",
                         ServedContractIT::threeSegmentsCatalogComponent,
                         () -> allDocumentsDisabled(
                                 ContractConfigs.withApidocsPath(ContractConfigs.shared(), "/api/catalog/docs")),
                         row -> assertDeployed(row.label(), row.outcome())),
                 new StartupRow(
-                        "(d) control for (b): partner's document disabled",
+                        "control for partner's synthetic id: partner's document disabled",
                         ServedContractIT::reservedIdCatalogComponent,
                         () -> ContractConfigs.withDocumentEnabled(ContractConfigs.shared(), PARTNER, false),
                         row -> assertDeployed(row.label(), row.outcome())),
                 new StartupRow(
-                        "(d) control for (c): every document disabled",
+                        "control for the hand-built mount under the prefix: every document disabled",
                         ServedContractIT::extraDocsComponent,
                         () -> allDocumentsDisabled(ContractConfigs.shared()),
                         row -> assertDeployed(row.label(), row.outcome())));
@@ -1500,17 +1457,17 @@ public class ServedContractIT {
         DocsProvisions served = sharedOpenApiContractComponent(vertx, ownOnly);
         Outcome servedOutcome = StartupDeployments.deploy(vertx, served::httpVerticle);
         try {
-            assertDeployed("(a) partner's own contract under openapi-contract", servedOutcome);
+            assertDeployed("partner's own contract under openapi-contract", servedOutcome);
             int port = servedOutcome.port();
-            JsonNode tree = parseJson("(a)", send(port, HttpMethod.GET, jsonUrl(PARTNER)));
+            JsonNode tree = parseJson("partner's own contract", send(port, HttpMethod.GET, jsonUrl(PARTNER)));
             int withoutSku = post(port, PARTNER_ORDERS_URI, new JsonObject().put("quantity", 1))
                     .status();
             int withSku = post(port, PARTNER_ORDERS_URI, new JsonObject().put("sku", "ABC-1234"))
                     .status();
             checks.add(() -> assertEquals(
-                    fixtureTree(PARTNER_STRATEGY_CONTRACT), tree, "(a): partner's tree is its configured contract's"));
-            checks.add(() -> assertEquals(400, withoutSku, "(a): the body without sku is refused by the strategy"));
-            checks.add(() -> assertEquals(204, withSku, "(a): the body with sku is accepted"));
+                    fixtureTree(PARTNER_STRATEGY_CONTRACT), tree, "partner's tree is its configured contract's"));
+            checks.add(() -> assertEquals(400, withoutSku, "the body without sku is refused by the strategy"));
+            checks.add(() -> assertEquals(204, withSku, "the body with sku is accepted"));
         } finally {
             StartupDeployments.undeploy(vertx, servedOutcome);
         }
@@ -1520,7 +1477,7 @@ public class ServedContractIT {
                 ContractConfigs.withDocumentEnabled(ContractConfigs.sharedUnderOpenApiContract(), ORDERS, false);
         checks.add(sharedContractRefusal(
                 vertx,
-                "(b) catalog on the shared contract under openapi-contract",
+                "catalog on the shared contract under openapi-contract",
                 sharedOpenApiContractComponent(vertx, withCatalog),
                 OPENAPI_CONTRACT));
 
@@ -1531,7 +1488,7 @@ public class ServedContractIT {
                 .create(vertx, custom);
         checks.add(sharedContractRefusal(
                 vertx,
-                "(c) catalog on the shared contract under custom-contract-test",
+                "catalog on the shared contract under custom-contract-test",
                 customComponent,
                 CUSTOM_CONTRACT_TEST));
 
@@ -1926,24 +1883,17 @@ public class ServedContractIT {
             request.putHeader("Authorization", "Bearer " + token);
         }
         headers.forEach(request::putHeader);
-        HttpResponse<Buffer> response = await(request.send());
+        HttpResponse<Buffer> response = Futures.await(request.send(), Duration.ofSeconds(REQUEST_SECONDS));
         Buffer body = response.body() == null ? Buffer.buffer() : response.body();
         List<String> trace = observations == null ? List.of() : observations.trace(key);
         return new Exchange(response.statusCode(), response.headers(), body, trace);
     }
 
     private Exchange post(int port, String uri, JsonObject body) throws Exception {
-        HttpResponse<Buffer> response = await(client.post(port, HOST, uri).sendJsonObject(body.copy()));
+        HttpResponse<Buffer> response = Futures.await(
+                client.post(port, HOST, uri).sendJsonObject(body.copy()), Duration.ofSeconds(REQUEST_SECONDS));
         Buffer received = response.body() == null ? Buffer.buffer() : response.body();
         return new Exchange(response.statusCode(), response.headers(), received, List.of());
-    }
-
-    private static <T> T await(Future<T> future) throws Exception {
-        try {
-            return future.toCompletionStage().toCompletableFuture().get(REQUEST_SECONDS, TimeUnit.SECONDS);
-        } catch (ExecutionException failed) {
-            throw new AssertionError("the request failed", failed.getCause());
-        }
     }
 
     // ---------------------------------------------------------------------------------------------

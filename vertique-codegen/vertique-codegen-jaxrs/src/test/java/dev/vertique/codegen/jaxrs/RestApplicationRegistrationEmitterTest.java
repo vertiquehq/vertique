@@ -49,13 +49,13 @@ class RestApplicationRegistrationEmitterTest {
 
     private static final JsonObject EMPTY_CONFIG = new JsonObject();
     private static final JsonObject MGMT_ENABLED_CONFIG =
-            new JsonObject().put("tp007", new JsonObject().put("mgmt", new JsonObject().put("enabled", "true")));
+            new JsonObject().put("emitter", new JsonObject().put("mgmt", new JsonObject().put("enabled", "true")));
 
     // -----------------------------------------------------------------------------------------
     // Fixture (1) — three declarations sharing a unit with two resources
     // -----------------------------------------------------------------------------------------
 
-    private static final String MIXED_PKG = "dev.vertique.test.tp007.mixed";
+    private static final String MIXED_PKG = "dev.vertique.test.registrationemitter.mixed";
     private static final String MIXED_MODULE = MIXED_PKG + ".GeneratedJaxRsResourcesModule";
 
     private static final JavaFileObject MIXED_PATH_RESOURCE =
@@ -115,7 +115,7 @@ class RestApplicationRegistrationEmitterTest {
             import dev.vertique.codegen.ConditionalOnProperty;
             import dev.vertique.rest.core.application.RestApplication;
 
-            @ConditionalOnProperty(name = "tp007.mgmt.enabled")
+            @ConditionalOnProperty(name = "emitter.mgmt.enabled")
             @RestApplication(name = "mgmt", path = "/api/mgmt", resources = OrderResource.class)
             interface MgmtApi {}
             """.formatted(MIXED_PKG));
@@ -137,7 +137,7 @@ class RestApplicationRegistrationEmitterTest {
     // Fixture (2) — a unit holding only a discover = true declaration
     // -----------------------------------------------------------------------------------------
 
-    private static final String ONLYAPP_PKG = "dev.vertique.test.tp007.onlyapp";
+    private static final String ONLYAPP_PKG = "dev.vertique.test.registrationemitter.onlyapp";
     private static final String ONLYAPP_MODULE = ONLYAPP_PKG + ".GeneratedJaxRsResourcesModule";
 
     private static final JavaFileObject ONLYAPP_ALL_API =
@@ -188,7 +188,7 @@ class RestApplicationRegistrationEmitterTest {
     // name Api
     // -----------------------------------------------------------------------------------------
 
-    private static final String NAMES_PKG = "dev.vertique.test.tp007.names";
+    private static final String NAMES_PKG = "dev.vertique.test.registrationemitter.names";
     private static final String NAMES_MODULE = NAMES_PKG + ".GeneratedJaxRsResourcesModule";
 
     private static final JavaFileObject NAMES_PATH_RESOURCE =
@@ -249,17 +249,17 @@ class RestApplicationRegistrationEmitterTest {
     // -----------------------------------------------------------------------------------------
 
     @Test
-    @DisplayName("TP-007 — one native registration is emitted per declaration, with its evaluated activation")
+    @DisplayName("one native registration is emitted per declaration, with its evaluated activation")
     void emitsOneNativeRegistrationPerDeclaration() {
         assertAll(
-                "TP-007 fixtures",
-                () -> tp007MixedFixture(),
-                () -> tp007DiscoveryOnlyFixture(),
-                () -> tp007PackageStaysWithResourcesFixture(),
-                () -> tp007SharedRegistrationNameCounterFixture());
+                "registration emitter fixtures",
+                () -> mixedFixture(),
+                () -> discoveryOnlyFixture(),
+                () -> packageStaysWithResourcesFixture(),
+                () -> sharedRegistrationNameCounterFixture());
     }
 
-    private void tp007MixedFixture() {
+    private void mixedFixture() {
         var result = ProcessorTestHarness.run(
                 new JaxRsPipelineProcessor(),
                 MIXED_PATH_RESOURCE,
@@ -268,7 +268,7 @@ class RestApplicationRegistrationEmitterTest {
                 MIXED_MGMT_API,
                 MIXED_OUTER);
         result.assertSuccess();
-        logGeneratedSource("TP-007 mixed fixture module", sourceOf(result, MIXED_MODULE));
+        logGeneratedSource("mixed fixture module", sourceOf(result, MIXED_MODULE));
 
         Class<?> module = result.loadGeneratedClass(MIXED_MODULE);
         Class<?> publicApiType = result.loadGeneratedClass(MIXED_PKG + ".PublicApi");
@@ -315,7 +315,7 @@ class RestApplicationRegistrationEmitterTest {
                 registrationsOf(module, MGMT_ENABLED_CONFIG);
         assertTrue(
                 findByName(mgmtEnabledRegistrations, "mgmt").active(),
-                "Expected mgmt's registration to be active once tp007.mgmt.enabled=true");
+                "Expected mgmt's registration to be active once emitter.mgmt.enabled=true");
 
         result.assertGeneratedSourceDoesNotContain(MIXED_MODULE, "PublicApi::new");
         result.assertGeneratedSourceDoesNotContain(MIXED_MODULE, "Provider<PublicApi>");
@@ -325,7 +325,7 @@ class RestApplicationRegistrationEmitterTest {
         assertResourceBindingGatesOnNativeRegistrations(module, "orderResourceBinding");
     }
 
-    private void tp007DiscoveryOnlyFixture() {
+    private void discoveryOnlyFixture() {
         var result = ProcessorTestHarness.run(new JaxRsPipelineProcessor(), ONLYAPP_ALL_API);
         result.assertSuccess();
         assertTrue(
@@ -340,7 +340,7 @@ class RestApplicationRegistrationEmitterTest {
         assertRegistrationEquals(registrations.get(0), allApiType, "all", "/", List.of(), true, "", true);
     }
 
-    private void tp007PackageStaysWithResourcesFixture() {
+    private void packageStaysWithResourcesFixture() {
         var result = ProcessorTestHarness.run(new JaxRsPipelineProcessor(), ARES_ITEM_RESOURCE, ARES_ITEMS_API);
         result.assertSuccess();
         assertTrue(
@@ -357,11 +357,11 @@ class RestApplicationRegistrationEmitterTest {
      * declared method returning any {@code Generated…Registration} type counts, so a registration
      * of the subclass under any type would change the names.
      */
-    private void tp007SharedRegistrationNameCounterFixture() {
+    private void sharedRegistrationNameCounterFixture() {
         var result = ProcessorTestHarness.run(
                 new JaxRsPipelineProcessor(), NAMES_PATH_RESOURCE, NAMES_A_API, NAMES_B_API, NAMES_C_API);
         result.assertSuccess();
-        logGeneratedSource("TP-007 shared name counter module", sourceOf(result, NAMES_MODULE));
+        logGeneratedSource("shared name counter module", sourceOf(result, NAMES_MODULE));
 
         Class<?> module = result.loadGeneratedClass(NAMES_MODULE);
         Class<?> aApiType = result.loadGeneratedClass(NAMES_PKG + ".a.Api");

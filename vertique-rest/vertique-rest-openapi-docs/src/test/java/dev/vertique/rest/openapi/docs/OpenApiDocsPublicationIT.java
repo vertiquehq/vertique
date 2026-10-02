@@ -33,6 +33,7 @@ import dev.vertique.rest.openapi.docs.fixture.ManualMountModule;
 import dev.vertique.rest.openapi.docs.fixture.MarkerRouterMount;
 import dev.vertique.rest.openapi.docs.fixture.MgmtApi;
 import dev.vertique.rest.openapi.docs.fixture.PublicApi;
+import dev.vertique.rest.openapi.docs.fixture.support.Futures;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
@@ -48,6 +49,7 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Member;
 import java.lang.reflect.Modifier;
 import java.lang.reflect.Type;
+import java.time.Duration;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -248,25 +250,25 @@ public class OpenApiDocsPublicationIT {
                 DocsConfigs.withDocumentEnabled(DocsConfigs.shared(), PublicApi.NAME, false), INVALID_APIDOCS_PATH);
         List<Variant> variants = List.of(
                 new Variant(
-                        "(a) undocumented declaration",
+                        "undocumented declaration",
                         DaggerDocsTestComponents_UndocumentedComponent.factory().create(DocsConfigs.shared()),
                         withoutDocsModule(DocsConfigs.shared()),
                         SHARED_OPERATION_COUNT,
                         Set.of(PublicApi.MOUNT_PATH, MgmtApi.MOUNT_PATH)),
                 new Variant(
-                        "(b) apidocs.enabled false with an invalid apidocs.path",
+                        "apidocs.enabled false with an invalid apidocs.path",
                         DaggerDocsTestComponents_SharedComponent.factory().create(disabledGlobally),
                         withoutDocsModule(disabledGlobally.copy()),
                         SHARED_OPERATION_COUNT,
                         Set.of(PublicApi.MOUNT_PATH, MgmtApi.MOUNT_PATH)),
                 new Variant(
-                        "(c) entry enabled false with an invalid apidocs.path",
+                        "entry enabled false with an invalid apidocs.path",
                         DaggerDocsTestComponents_SharedComponent.factory().create(disabledEntry),
                         withoutDocsModule(disabledEntry.copy()),
                         SHARED_OPERATION_COUNT,
                         Set.of(PublicApi.MOUNT_PATH, MgmtApi.MOUNT_PATH)),
                 new Variant(
-                        "(d) documented registration inactive",
+                        "documented registration inactive",
                         DaggerDocsTestComponents_InactivePublicComponent.factory()
                                 .create(DocsConfigs.shared()),
                         DaggerDocsTestComponents_InactivePublicWithoutDocsModuleComponent.factory()
@@ -274,7 +276,7 @@ public class OpenApiDocsPublicationIT {
                         INACTIVE_PUBLIC_OPERATION_COUNT,
                         Set.of(MgmtApi.MOUNT_PATH)),
                 new Variant(
-                        "(e) no registration, legacy default mount",
+                        "no registration, legacy default mount",
                         DaggerDocsTestComponents_LegacyDefaultMountComponent.factory()
                                 .create(DocsConfigs.legacyDefaultMount()),
                         DaggerDocsTestComponents_LegacyDefaultMountWithoutDocsModuleComponent.factory()
@@ -282,7 +284,7 @@ public class OpenApiDocsPublicationIT {
                         LEGACY_OPERATION_COUNT,
                         Set.of(DocsConfigs.LEGACY_BASE_PATH)),
                 new Variant(
-                        "(f) without the documentation module",
+                        "without the documentation module",
                         withoutDocsModule(DocsConfigs.shared()),
                         null,
                         SHARED_OPERATION_COUNT,
@@ -696,13 +698,13 @@ public class OpenApiDocsPublicationIT {
 
     /** Deploys one instance of the component's {@code HttpVerticle} and waits for it to listen. */
     private static Deployment deploy(Vertx vertx, Provisions component) throws Exception {
-        return await(deployment(vertx, component));
+        return Futures.await(deployment(vertx, component), Duration.ofSeconds(15));
     }
 
     /** Undeploys a deployment and clears the local map its port was published in. */
     private static void undeploy(Vertx vertx, Deployment deployment) throws Exception {
         try {
-            await(vertx.undeploy(deployment.id()));
+            Futures.await(vertx.undeploy(deployment.id()), Duration.ofSeconds(15));
         } finally {
             vertx.sharedData().getLocalMap(LOCAL_MAP).clear();
         }
@@ -710,7 +712,7 @@ public class OpenApiDocsPublicationIT {
 
     /** Sends one request without a body to the loopback server and waits for the whole response. */
     private HttpResponse<Buffer> send(HttpMethod method, int port, String path) throws Exception {
-        return await(client.request(method, port, LOOPBACK, path).send());
+        return Futures.await(client.request(method, port, LOOPBACK, path).send(), Duration.ofSeconds(15));
     }
 
     /** Returns the URL path of one form of a document under the default prefix. */
@@ -729,10 +731,5 @@ public class OpenApiDocsPublicationIT {
         assertNull(
                 response.getHeader(MarkerRouterMount.HEADER),
                 label + ": answered by the documentation mount, not a marker");
-    }
-
-    /** Blocks the JUnit thread for a future's result, bounded below the class timeout. */
-    private static <T> T await(Future<T> future) throws Exception {
-        return future.toCompletionStage().toCompletableFuture().get(15, TimeUnit.SECONDS);
     }
 }

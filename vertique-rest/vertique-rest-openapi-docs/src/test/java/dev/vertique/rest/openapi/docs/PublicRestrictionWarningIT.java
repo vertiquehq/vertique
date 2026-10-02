@@ -12,7 +12,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import dev.vertique.rest.openapi.docs.fixture.DocsConfigs;
 import dev.vertique.rest.openapi.docs.fixture.security.catalog.CatalogApi;
 import dev.vertique.rest.openapi.docs.fixture.security.catalog.WarningCapture;
-import dev.vertique.rest.openapi.docs.fixture.startup.StartupDeployments;
+import dev.vertique.rest.openapi.docs.fixture.support.Futures;
+import dev.vertique.rest.openapi.docs.fixture.support.StartupDeployments;
 import io.vertx.core.DeploymentOptions;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
@@ -21,6 +22,7 @@ import io.vertx.ext.web.client.HttpResponse;
 import io.vertx.ext.web.client.WebClient;
 import io.vertx.ext.web.client.WebClientOptions;
 import io.vertx.junit5.VertxExtension;
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -263,11 +265,8 @@ public class PublicRestrictionWarningIT {
     /** Fetches the document's JSON form, asserting a {@code 200} answer. */
     private JsonObject fetchDocument(StartupDeployments.Outcome deployed, String variant) throws Exception {
         assertNotNull(deployed.port(), () -> variant + ": no port was published");
-        HttpResponse<Buffer> response = client.get(deployed.port(), "127.0.0.1", DOCUMENT_URL)
-                .send()
-                .toCompletionStage()
-                .toCompletableFuture()
-                .get(REQUEST_SECONDS, TimeUnit.SECONDS);
+        HttpResponse<Buffer> response = Futures.await(
+                client.get(deployed.port(), "127.0.0.1", DOCUMENT_URL).send(), Duration.ofSeconds(REQUEST_SECONDS));
         assertEquals(200, response.statusCode(), () -> variant + ": " + DOCUMENT_URL + ": status");
         assertNotNull(response.body(), () -> variant + ": " + DOCUMENT_URL + ": empty body");
         return response.bodyAsJsonObject();

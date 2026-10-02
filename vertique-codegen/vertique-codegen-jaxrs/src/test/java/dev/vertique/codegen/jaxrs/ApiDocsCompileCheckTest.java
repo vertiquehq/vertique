@@ -49,7 +49,7 @@ import org.opentest4j.AssertionFailedError;
  */
 class ApiDocsCompileCheckTest {
 
-    private static final String PKG = "dev.vertique.test.t028.tp006";
+    private static final String PKG = "dev.vertique.test.apidocs.compilecheck";
     private static final String API_BINARY_NAME = PKG + ".Api";
     private static final String MODULE_FQN = PKG + ".GeneratedJaxRsResourcesModule";
 
@@ -183,13 +183,13 @@ class ApiDocsCompileCheckTest {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("apiDocsShapes")
-    @DisplayName("TP-006 — @ApiDocs shapes are checked at compile time, naming the interface and attribute")
+    @DisplayName("@ApiDocs shapes are checked at compile time, naming the interface and attribute")
     void apiDocsShapesAreCheckedAtCompileTime(
             String annotation, Outcome expected, String attribute, List<JavaFileObject> extraSources) {
         List<JavaFileObject> sources = new ArrayList<>(List.of(PATH_RESOURCE, apiFixture(annotation)));
         sources.addAll(extraSources);
         var result = ProcessorTestHarness.run(new JaxRsPipelineProcessor(), sources.toArray(JavaFileObject[]::new));
-        logDiagnostics("TP-006 " + annotation, result);
+        logDiagnostics("@ApiDocs shape " + annotation, result);
         switch (expected) {
             case ACCEPTED -> assertEmitsOnlyApiRegistration(result);
             case REJECTED -> assertErrorNamingApiAnd(result, attribute);
@@ -202,7 +202,7 @@ class ApiDocsCompileCheckTest {
     // -----------------------------------------------------------------------------------------
 
     @Test
-    @DisplayName("TP-008 — the processor's @ApiDocs name is one pinned literal")
+    @DisplayName("the processor's @ApiDocs name is one pinned literal")
     void apiDocsAnnotationNameIsPinned() {
         assertEquals("dev.vertique.rest.openapi.docs.ApiDocs", ApplicationAnnotationValidator.API_DOCS_FQN);
         assertEquals(ApiDocs.class.getName(), ApplicationAnnotationValidator.API_DOCS_FQN);

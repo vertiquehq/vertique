@@ -15,9 +15,9 @@ import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import dev.vertique.rest.auth.jwt.JwtAuthFactory;
 import dev.vertique.rest.openapi.docs.fixture.DocsConfigs;
 import dev.vertique.rest.openapi.docs.fixture.protecteddocs.caching.CachingModules;
-import dev.vertique.rest.openapi.docs.fixture.startup.StartupDeployments;
-import dev.vertique.rest.openapi.docs.fixture.startup.StartupDeployments.Outcome;
-import io.vertx.core.Future;
+import dev.vertique.rest.openapi.docs.fixture.support.Futures;
+import dev.vertique.rest.openapi.docs.fixture.support.StartupDeployments;
+import dev.vertique.rest.openapi.docs.fixture.support.StartupDeployments.Outcome;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.json.JsonArray;
@@ -28,6 +28,7 @@ import io.vertx.ext.web.client.HttpResponse;
 import io.vertx.ext.web.client.WebClient;
 import io.vertx.junit5.VertxExtension;
 import java.io.IOException;
+import java.time.Duration;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
@@ -35,10 +36,15 @@ import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 import java.util.function.Function;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Named;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 
 /**
  * Reads every API document of five deployments with {@code GET} and with a matching {@code
@@ -76,10 +82,11 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * adds, and {@code Authorization}, which the document adds: the document's {@code Vary} joins the one
  * already present rather than replacing it.
  *
- * <p>Both forms of every document are read. Each graph gets its own client, which is closed before
- * the graph is undeployed. The class allows 60 seconds rather than 20 because one test deploys five
- * graphs in sequence, each with its JWT provider and up to seven applications, and each deployment
- * and undeployment is separately bounded at ten seconds.
+ * <p>Each of the graphs (a) to (e) is one invocation of a parameterized test, named after the behavior
+ * it isolates, so each passes or fails on its own. Both forms of every document are read. Each graph
+ * gets its own client, which is closed before the graph is undeployed. The class allows 60 seconds
+ * rather than 20 per test because a graph holds a JWT provider and up to seven applications, and each
+ * deployment and undeployment is separately bounded at ten seconds.
  */
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 60, unit = TimeUnit.SECONDS)
@@ -137,17 +144,30 @@ public class DocumentCachingIT {
      */
     private record Graph(String label, String defaultCacheControl, boolean schemeKinds) {}
 
-    private static final List<Graph> GRAPHS = List.of(
-            new Graph("a", "public, max-age=3600", false),
-            new Graph("b", null, false),
-            new Graph("c", "public, max-age=3600", true),
-            new Graph("d", "private, max-age=600", false),
-            new Graph("e", "private, no-store", false));
+    /**
+     * The graphs of the row table, each named after the behavior it isolates, in deployment order.
+     * Each is deployed and reported as its own test invocation.
+     *
+     * @return one named argument per graph
+     */
+    static Stream<Arguments> graphs() {
+        return Stream.of(
+                graph("permissive public default", new Graph("a", "public, max-age=3600", false)),
+                graph("framework default no-store", new Graph("b", null, false)),
+                graph("scheme kinds under permissive default", new Graph("c", "public, max-age=3600", true)),
+                graph("private max-age default", new Graph("d", "private, max-age=600", false)),
+                graph("private no-store default", new Graph("e", "private, no-store", false)));
+    }
 
-    @Test
+    private static Arguments graph(String name, Graph graph) {
+        return Arguments.of(Named.of(name, graph));
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("graphs")
     @DisplayName(
             "Document Cache-Control and Vary are exact for every default and scheme kind, never public, on 200 and 304")
-    void cachingHeadersNeverWeakerThanDefault(Vertx vertx) throws Exception {
+    void cachingHeadersNeverWeakerThanDefault(Graph graph, Vertx vertx) throws Exception {
         // Given: the caller credentials each document accepts; public documents need none
         JWTAuth tokens = JwtAuthFactory.fromSymmetricKey(vertx, "HS256", CachingModules.SIGNING_KEY);
         String adminToken =
@@ -164,40 +184,38 @@ public class DocumentCachingIT {
                 "mutual-tls",
                         request -> request.putHeader("X-Fixture-Client-Certificate", "fixture-client-certificate"));
 
-        for (Graph graph : GRAPHS) {
-            // Given: the graph deployed
-            JsonObject config = config(graph);
-            vertx.sharedData().getLocalMap(StartupDeployments.LOCAL_MAP).clear();
-            Outcome outcome = StartupDeployments.deploy(
-                    vertx,
-                    () -> graph.schemeKinds()
-                            ? DaggerDocumentCachingTestComponents_SchemeKindsComponent.factory()
-                                    .create(vertx, config)
-                                    .httpVerticle()
-                            : DaggerDocumentCachingTestComponents_PublicAndManagementComponent.factory()
-                                    .create(vertx, config)
-                                    .httpVerticle());
-            WebClient client = WebClient.create(vertx);
-            try {
-                assertNull(
-                        outcome.failure(), () -> "(" + graph.label() + ") the deployment failed: " + outcome.failure());
-                assertNotNull(outcome.port(), () -> "(" + graph.label() + ") the deployment published no port");
-                int port = outcome.port();
+        // Given: the graph deployed
+        JsonObject config = config(graph);
+        vertx.sharedData().getLocalMap(StartupDeployments.LOCAL_MAP).clear();
+        Outcome outcome = StartupDeployments.deploy(
+                vertx,
+                () -> graph.schemeKinds()
+                        ? DaggerDocumentCachingTestComponents_SchemeKindsComponent.factory()
+                                .create(vertx, config)
+                                .httpVerticle()
+                        : DaggerDocumentCachingTestComponents_PublicAndManagementComponent.factory()
+                                .create(vertx, config)
+                                .httpVerticle());
+        WebClient client = WebClient.create(vertx);
+        try {
+            assertNull(outcome.failure(), () -> "(" + graph.label() + ") the deployment failed: " + outcome.failure());
+            assertNotNull(outcome.port(), () -> "(" + graph.label() + ") the deployment published no port");
+            int port = outcome.port();
 
-                for (Row row : ROWS) {
-                    if (!row.graph().equals(graph.label())) {
-                        continue;
-                    }
-                    Consumer<HttpRequest<Buffer>> credential = credentials.get(row.document());
-                    // When / Then: each form read with GET, then with its entity tag
-                    readBothResponses(client, port, row, "openapi.json", credential, DocumentCachingIT::jsonTitle);
-                    readBothResponses(client, port, row, "openapi.yaml", credential, DocumentCachingIT::yamlTitle);
-                }
-            } finally {
-                client.close();
-                StartupDeployments.undeploy(vertx, outcome);
-                vertx.sharedData().getLocalMap(StartupDeployments.LOCAL_MAP).clear();
+            List<Row> rows = ROWS.stream()
+                    .filter(row -> row.graph().equals(graph.label()))
+                    .toList();
+            assertFalse(rows.isEmpty(), () -> "(" + graph.label() + ") the row table has no row for this graph");
+            for (Row row : rows) {
+                Consumer<HttpRequest<Buffer>> credential = credentials.get(row.document());
+                // When / Then: each form read with GET, then with its entity tag
+                readBothResponses(client, port, row, "openapi.json", credential, DocumentCachingIT::jsonTitle);
+                readBothResponses(client, port, row, "openapi.yaml", credential, DocumentCachingIT::yamlTitle);
             }
+        } finally {
+            client.close();
+            StartupDeployments.undeploy(vertx, outcome);
+            vertx.sharedData().getLocalMap(StartupDeployments.LOCAL_MAP).clear();
         }
     }
 
@@ -230,27 +248,31 @@ public class DocumentCachingIT {
                         .httpVerticle());
         WebClient client = WebClient.create(vertx);
         try {
-            assertNull(outcome.failure(), () -> "(f) the deployment failed: " + outcome.failure());
-            assertNotNull(outcome.port(), "(f) the deployment published no port");
+            assertNull(outcome.failure(), () -> "the deployment failed: " + outcome.failure());
+            assertNotNull(outcome.port(), "the deployment published no port");
             int port = outcome.port();
 
             for (String form : List.of("openapi.json", "openapi.yaml")) {
                 String uri = "/apidocs/management/" + form;
-                String label = "(f) management " + form;
+                String label = "management " + form;
 
                 // When: alice reads the form from the origin, then revalidates it with its entity tag
-                HttpResponse<Buffer> ok = await(client.get(port, HOST, uri)
-                        .putHeader("Authorization", "Bearer " + adminToken)
-                        .putHeader("Origin", CORS_ORIGIN)
-                        .send());
+                HttpResponse<Buffer> ok = Futures.await(
+                        client.get(port, HOST, uri)
+                                .putHeader("Authorization", "Bearer " + adminToken)
+                                .putHeader("Origin", CORS_ORIGIN)
+                                .send(),
+                        Duration.ofSeconds(REQUEST_SECONDS));
                 assertEquals(200, ok.statusCode(), () -> label + ": GET must answer 200, body: " + ok.bodyAsString());
                 String entityTag = ok.getHeader("ETag");
                 assertNotNull(entityTag, () -> label + ": the 200 must carry an entity tag");
-                HttpResponse<Buffer> notModified = await(client.get(port, HOST, uri)
-                        .putHeader("Authorization", "Bearer " + adminToken)
-                        .putHeader("Origin", CORS_ORIGIN)
-                        .putHeader("If-None-Match", entityTag)
-                        .send());
+                HttpResponse<Buffer> notModified = Futures.await(
+                        client.get(port, HOST, uri)
+                                .putHeader("Authorization", "Bearer " + adminToken)
+                                .putHeader("Origin", CORS_ORIGIN)
+                                .putHeader("If-None-Match", entityTag)
+                                .send(),
+                        Duration.ofSeconds(REQUEST_SECONDS));
                 assertEquals(
                         304,
                         notModified.statusCode(),
@@ -314,7 +336,7 @@ public class DocumentCachingIT {
 
         HttpRequest<Buffer> get = client.get(port, HOST, uri);
         credential.accept(get);
-        HttpResponse<Buffer> ok = await(get.send());
+        HttpResponse<Buffer> ok = Futures.await(get.send(), Duration.ofSeconds(REQUEST_SECONDS));
         assertEquals(200, ok.statusCode(), () -> label + ": GET must answer 200, body: " + ok.bodyAsString());
         byte[] body = ok.body() == null ? new byte[0] : ok.body().getBytes();
         assertTrue(body.length > 0, () -> label + ": the 200 must carry the document");
@@ -328,7 +350,7 @@ public class DocumentCachingIT {
 
         HttpRequest<Buffer> conditional = client.get(port, HOST, uri).putHeader("If-None-Match", entityTag);
         credential.accept(conditional);
-        HttpResponse<Buffer> notModified = await(conditional.send());
+        HttpResponse<Buffer> notModified = Futures.await(conditional.send(), Duration.ofSeconds(REQUEST_SECONDS));
         assertEquals(
                 304,
                 notModified.statusCode(),
@@ -402,9 +424,5 @@ public class DocumentCachingIT {
         } catch (IOException unreadable) {
             throw new AssertionError("the document could not be parsed", unreadable);
         }
-    }
-
-    private static <T> T await(Future<T> future) throws Exception {
-        return future.toCompletionStage().toCompletableFuture().get(REQUEST_SECONDS, TimeUnit.SECONDS);
     }
 }

@@ -101,50 +101,50 @@ class JaxRsApplicationsConfigTest {
 
     private static Stream<Arguments> strictSectionRows() {
         return Stream.of(
-                arguments("(a) the section is a string", """
+                arguments("the section is a string", """
                         "zq7"
                         """, rejected(SECTION_NOT_OBJECT)),
-                arguments("(b) the section is null", """
+                arguments("the section is null", """
                         null
                         """, rejected(SECTION_NOT_OBJECT)),
-                arguments("(c) the section is an array", """
+                arguments("the section is an array", """
                         ["zq7"]
                         """, rejected(SECTION_NOT_OBJECT)),
-                arguments("(d) an entry is a string", """
+                arguments("an entry is a string", """
                         {"api":"zq7"}
                         """, rejected(invalidEntries("'jaxrs.applications.api'"))),
-                arguments("(e) an entry is null", """
+                arguments("an entry is null", """
                         {"api":null}
                         """, rejected(invalidEntries("'jaxrs.applications.api'"))),
                 arguments(
-                        "(f) an unknown key beside openapiPath",
+                        "an unknown key beside openapiPath",
                         """
                         {"api":{"openapiPath":"zq7-secret.yaml","timeoutMs":5}}
                         """,
                         rejected(invalidEntries("'jaxrs.applications.api.timeoutMs'"))),
-                arguments("(g) an explicit name key", """
+                arguments("an explicit name key", """
                         {"api":{"name":"api"}}
                         """, rejected(invalidEntries("'jaxrs.applications.api.name'"))),
                 arguments(
-                        "(h) a case variant of openapiPath",
+                        "a case variant of openapiPath",
                         """
                         {"api":{"OpenapiPath":"zq7.yaml"}}
                         """,
                         rejected(invalidEntries("'jaxrs.applications.api.OpenapiPath'"))),
                 arguments(
-                        "(i) unknown keys in two entries, api before mgmt",
+                        "unknown keys in two entries, api before mgmt",
                         """
                         {"mgmt":{"extra":true},"api":{"bogus":1}}
                         """,
                         rejected(invalidEntries("'jaxrs.applications.api.bogus', 'jaxrs.applications.mgmt.extra'"))),
                 arguments(
-                        "(j) an unknown key beside an undeserializable openapiPath fails the key check first",
+                        "an unknown key beside an undeserializable openapiPath fails the key check first",
                         """
                         {"api":{"openapiPath":{"zq7":1},"bogus":1}}
                         """,
                         rejected(invalidEntries("'jaxrs.applications.api.bogus'"))),
                 arguments(
-                        "(k) a non-object entry and a bad key in another entry aggregate",
+                        "a non-object entry and a bad key in another entry aggregate",
                         """
                         {"mgmt":"zq7","api":{"bogus":1}}
                         """,
@@ -171,18 +171,17 @@ class JaxRsApplicationsConfigTest {
 
     private static Stream<Arguments> blankOpenapiPathRows() {
         return Stream.of(
-                arguments(
-                        "(a) an empty openapiPath", """
+                arguments("an empty openapiPath", """
                         {"api":{"openapiPath":""}}
                         """, rejected(blankValues("'jaxrs.applications.api.openapiPath'"))),
                 arguments(
-                        "(b) a whitespace-only openapiPath",
+                        "a whitespace-only openapiPath",
                         """
                         {"api":{"openapiPath":"   "}}
                         """,
                         rejected(blankValues("'jaxrs.applications.api.openapiPath'"))),
                 arguments(
-                        "(c) blank openapiPath in two entries, api first",
+                        "blank openapiPath in two entries, api first",
                         """
                         {"mgmt":{"openapiPath":" "},"api":{"openapiPath":""}}
                         """,
@@ -224,32 +223,32 @@ class JaxRsApplicationsConfigTest {
 
     private static Stream<Arguments> miscasedApplicationsKeyRows() {
         return Stream.of(
-                arguments("(a) only a capitalized Applications section", """
+                arguments("only a capitalized Applications section", """
                         {"jaxrs":{"Applications":{"orders":{"openapiPath":"/zq7.yaml"}}}}
                         """, rejected(miscasedKeys("'Applications'"))),
-                arguments("(b) only an upper-case APPLICATIONS section", """
+                arguments("only an upper-case APPLICATIONS section", """
                         {"jaxrs":{"APPLICATIONS":{"orders":{"openapiPath":"/zq7.yaml"}}}}
                         """, rejected(miscasedKeys("'APPLICATIONS'"))),
-                arguments("(c) a variant whose value is a string", """
+                arguments("a variant whose value is a string", """
                         {"jaxrs":{"Applications":"zq7"}}
                         """, rejected(miscasedKeys("'Applications'"))),
-                arguments("(d) a variant whose value is null", """
+                arguments("a variant whose value is null", """
                         {"jaxrs":{"Applications":null}}
                         """, rejected(miscasedKeys("'Applications'"))),
                 arguments(
-                        "(e) a variant beside a valid exact applications section",
+                        "a variant beside a valid exact applications section",
                         """
                         {"jaxrs":{"applications":{"api":{"openapiPath":"api.yaml"}},"Applications":{"orders":{"openapiPath":"/zq7.yaml"}}}}
                         """,
                         rejected(miscasedKeys("'Applications'"))),
                 arguments(
-                        "(f) two variants are named in one message, APPLICATIONS before Applications",
+                        "two variants are named in one message, APPLICATIONS before Applications",
                         """
                         {"jaxrs":{"Applications":{},"APPLICATIONS":{"orders":{"openapiPath":"/zq7.yaml"}}}}
                         """,
                         rejected(miscasedKeys("'APPLICATIONS', 'Applications'"))),
                 arguments(
-                        "(g) a variant beside a non-object exact section fails the variant check first",
+                        "a variant beside a non-object exact section fails the variant check first",
                         """
                         {"jaxrs":{"applications":"zq7","Applications":{}}}
                         """,

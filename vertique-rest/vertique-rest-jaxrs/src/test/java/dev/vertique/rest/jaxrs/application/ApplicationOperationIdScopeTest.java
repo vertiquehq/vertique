@@ -46,8 +46,8 @@ import org.junit.jupiter.params.provider.MethodSource;
 class ApplicationOperationIdScopeTest {
 
     /**
-     * The value row (i)/(j) configure, also used directly by row (e) and row (k) on a hand-built
-     * mount, and that must never be echoed by any violation.
+     * The value the unparseable-location rows configure, also used directly on a hand-built mount,
+     * and that must never be echoed by any violation.
      */
     private static final String SENTINEL = "zq7";
 
@@ -95,18 +95,29 @@ class ApplicationOperationIdScopeTest {
 
     static Stream<Row> rows() {
         return Stream.of(
-                rowA(), rowB(), rowC(), rowD(), rowE(), rowF(), rowG(), rowH(), rowI(), rowJ(), rowK(), rowL());
+                sameOwnerUnderTheFlag(),
+                contractIdWithFlagFalse(),
+                customContractIdWithFlagTrue(),
+                applicationMountBesideHandBuiltMount(),
+                onlyHandBuiltMountsKeepTheGateClosed(),
+                twoApplicationMountsWithEmptyView(),
+                flagFalseOverTwoApplicationMounts(),
+                unregisteredStrategyIdOverTwoApplicationMounts(),
+                unparseableLocationUnderTheFlag(),
+                flagFalseSkipsLocationParsing(),
+                nullLocationSkippedAndHandBuiltLocationNamedByPath(),
+                configuredIdWithOnlyAnotherStrategyRegistered());
     }
 
     // --- Rows ---
 
-    private static Row rowA() {
+    private static Row sameOwnerUnderTheFlag() {
         JaxRsRouterMount first =
                 appMount("/api/one/*", "shared.yaml", "appOne", AppOne.class, new SharedOwnerResource());
         JaxRsRouterMount second =
                 appMount("/api/two/*", "shared.yaml", "appTwo", AppTwo.class, new SharedOwnerResource());
         return new Row(
-                "(a) same owner under the flag",
+                "same owner under the flag",
                 configFor("openapi-contract"),
                 Set.of(new OpenApiContractPassThroughStrategy()),
                 emptyView(),
@@ -114,11 +125,11 @@ class ApplicationOperationIdScopeTest {
                 List.of());
     }
 
-    private static Row rowB() {
+    private static Row contractIdWithFlagFalse() {
         JaxRsRouterMount first = appMount("/api/one/*", "shared.yaml", "appOne", AppOne.class, new OwnerAResource());
         JaxRsRouterMount second = appMount("/api/two/*", "shared.yaml", "appTwo", AppTwo.class, new OwnerBResource());
         return new Row(
-                "(b) id 'openapi-contract' but flag false",
+                "id 'openapi-contract' but flag false",
                 configFor("openapi-contract"),
                 Set.of(new OpenApiContractIdFalseFlagStrategy()),
                 emptyView(),
@@ -126,11 +137,11 @@ class ApplicationOperationIdScopeTest {
                 List.of("'list'", "/api/one/*", "/api/two/*"));
     }
 
-    private static Row rowC() {
+    private static Row customContractIdWithFlagTrue() {
         JaxRsRouterMount first = appMount("/api/one/*", "public.yaml", "appOne", AppOne.class, new OwnerAResource());
         JaxRsRouterMount second = appMount("/api/two/*", "partner.yaml", "appTwo", AppTwo.class, new OwnerBResource());
         return new Row(
-                "(c) custom id 'contract-v2' with flag true",
+                "custom id 'contract-v2' with flag true",
                 configFor("contract-v2"),
                 Set.of(new ContractV2Strategy()),
                 emptyView(),
@@ -138,12 +149,12 @@ class ApplicationOperationIdScopeTest {
                 List.of("'list'", "/api/one/*", "/api/two/*"));
     }
 
-    private static Row rowD() {
+    private static Row applicationMountBesideHandBuiltMount() {
         JaxRsRouterMount applicationMount =
                 appMount("/api/one/*", "shared.yaml", "appOne", AppOne.class, new OwnerAResource());
         JaxRsRouterMount handBuilt = handBuiltMount("/api/two/*", "shared.yaml", new OwnerBResource());
         return new Row(
-                "(d) an application mount and a hand-built mount",
+                "an application mount and a hand-built mount",
                 configFor("openapi-contract"),
                 Set.of(new OpenApiContractPassThroughStrategy()),
                 emptyView(),
@@ -151,7 +162,7 @@ class ApplicationOperationIdScopeTest {
                 List.of("'list'", "/api/one/*", "/api/two/*"));
     }
 
-    private static Row rowE() {
+    private static Row onlyHandBuiltMountsKeepTheGateClosed() {
         // R-009: second's location is UNPARSEABLE_LOCATION, under a strategy whose flag is true, so
         // this row proves E6 — the parse runs only when the gate is open, not merely whenever the
         // flag is reported: with no application mount and an empty view, the gate stays closed, and
@@ -159,7 +170,7 @@ class ApplicationOperationIdScopeTest {
         JaxRsRouterMount first = handBuiltMount("/api/one/*", "shared.yaml", new OwnerAResource());
         JaxRsRouterMount second = handBuiltMount("/api/two/*", UNPARSEABLE_LOCATION, new OwnerBResource());
         return new Row(
-                "(e) empty view, only hand-built mounts: the scan's gate stays closed",
+                "empty view, only hand-built mounts: the scan's gate stays closed",
                 configFor("openapi-contract"),
                 Set.of(new OpenApiContractPassThroughStrategy()),
                 emptyView(),
@@ -167,11 +178,11 @@ class ApplicationOperationIdScopeTest {
                 List.of());
     }
 
-    private static Row rowF() {
+    private static Row twoApplicationMountsWithEmptyView() {
         JaxRsRouterMount first = appMount("/api/one/*", "shared.yaml", "appOne", AppOne.class, new OwnerAResource());
         JaxRsRouterMount second = appMount("/api/two/*", "shared.yaml", "appTwo", AppTwo.class, new OwnerBResource());
         return new Row(
-                "(f) empty view, two application mounts (merged compositions)",
+                "empty view, two application mounts (merged compositions)",
                 configFor("openapi-contract"),
                 Set.of(new OpenApiContractPassThroughStrategy()),
                 emptyView(),
@@ -179,11 +190,11 @@ class ApplicationOperationIdScopeTest {
                 List.of("'list'", "/api/one/*", "/api/two/*"));
     }
 
-    private static Row rowG() {
+    private static Row flagFalseOverTwoApplicationMounts() {
         JaxRsRouterMount first = appMount("/api/one/*", "shared.yaml", "appOne", AppOne.class, new OwnerAResource());
         JaxRsRouterMount second = appMount("/api/two/*", "shared.yaml", "appTwo", AppTwo.class, new OwnerBResource());
         return new Row(
-                "(g) flag false, the mounts of (f)",
+                "flag false, two application mounts with an empty view",
                 configFor("web-validation"),
                 Set.of(new WebValidationPassThroughStrategy()),
                 emptyView(),
@@ -191,11 +202,11 @@ class ApplicationOperationIdScopeTest {
                 List.of("'list'", "/api/one/*", "/api/two/*"));
     }
 
-    private static Row rowH() {
+    private static Row unregisteredStrategyIdOverTwoApplicationMounts() {
         JaxRsRouterMount first = appMount("/api/one/*", "shared.yaml", "appOne", AppOne.class, new OwnerAResource());
         JaxRsRouterMount second = appMount("/api/two/*", "shared.yaml", "appTwo", AppTwo.class, new OwnerBResource());
         return new Row(
-                "(h) no registered strategy carries the configured id, the mounts of (f)",
+                "no registered strategy carries the configured id, two application mounts with an empty view",
                 configFor("unregistered-strategy-id"),
                 Set.of(),
                 emptyView(),
@@ -203,13 +214,13 @@ class ApplicationOperationIdScopeTest {
                 List.of("'list'", "/api/one/*", "/api/two/*"));
     }
 
-    private static Row rowI() {
+    private static Row unparseableLocationUnderTheFlag() {
         RestApplications view = viewWithAAndB();
         JaxRsRouterMount unparseable =
                 appMount("/api/a/*", UNPARSEABLE_LOCATION, "a", AppA.class, new DistinctResourceA());
         JaxRsRouterMount parseable = appMount("/api/b/*", "shared.yaml", "b", AppB.class, new DistinctResourceB());
         return new Row(
-                "(i) an unparseable configured location under the flag",
+                "an unparseable configured location under the flag",
                 configFor("openapi-contract"),
                 Set.of(new OpenApiContractPassThroughStrategy()),
                 view,
@@ -217,13 +228,13 @@ class ApplicationOperationIdScopeTest {
                 List.of("'a'", "jaxrs.applications.a.openapiPath"));
     }
 
-    private static Row rowJ() {
+    private static Row flagFalseSkipsLocationParsing() {
         RestApplications view = viewWithAAndB();
         JaxRsRouterMount unparseable =
                 appMount("/api/a/*", UNPARSEABLE_LOCATION, "a", AppA.class, new DistinctResourceA());
         JaxRsRouterMount parseable = appMount("/api/b/*", "shared.yaml", "b", AppB.class, new DistinctResourceB());
         return new Row(
-                "(j) flag false: locations are not parsed at all (PK5-001)",
+                "flag false: locations are not parsed at all",
                 configFor("web-validation"),
                 Set.of(new WebValidationPassThroughStrategy()),
                 view,
@@ -231,14 +242,14 @@ class ApplicationOperationIdScopeTest {
                 List.of());
     }
 
-    private static Row rowK() {
+    private static Row nullLocationSkippedAndHandBuiltLocationNamedByPath() {
         // PIT G1: a null location is skipped without throwing, and a hand-built mount at an
         // unparseable location is named by its mount path, never by the location value — no
         // application mount is validated once a violation is reported.
         JaxRsRouterMount application = appMount("/api/one/*", null, "appOne", AppOne.class, new DistinctResourceA());
         JaxRsRouterMount handBuilt = handBuiltMount("/api/two/*", UNPARSEABLE_LOCATION, new DistinctResourceB(), 500);
         return new Row(
-                "(k) a null location is skipped; a hand-built unparseable location is named by its path",
+                "a null location is skipped; a hand-built unparseable location is named by its path",
                 configFor("openapi-contract"),
                 Set.of(new OpenApiContractPassThroughStrategy()),
                 emptyView(),
@@ -246,17 +257,17 @@ class ApplicationOperationIdScopeTest {
                 List.of("hand-built JAX-RS mount '/api/two/*'"));
     }
 
-    private static Row rowL() {
+    private static Row configuredIdWithOnlyAnotherStrategyRegistered() {
         // PIT G1: no registered strategy carries the configured id ("web-validation"); the only
         // registered strategy ("openapi-contract", flag true) must not be consulted merely because it
-        // is the sole entry in the Set — row (h) cannot show this clause because it registers no
-        // strategy at all and both its locations parse cleanly.
+        // is the sole entry in the Set — unregisteredStrategyIdOverTwoApplicationMounts cannot show this
+        // clause because it registers no strategy at all and both its locations parse cleanly.
         RestApplications view = viewWithAAndB();
         JaxRsRouterMount unparseable =
                 appMount("/api/a/*", UNPARSEABLE_LOCATION, "a", AppA.class, new DistinctResourceA());
         JaxRsRouterMount parseable = appMount("/api/b/*", "shared.yaml", "b", AppB.class, new DistinctResourceB());
         return new Row(
-                "(l) a configured id with only a strategy registered under a different id",
+                "a configured id with only a strategy registered under a different id",
                 configFor("web-validation"),
                 Set.of(new OpenApiContractPassThroughStrategy()),
                 view,
@@ -322,7 +333,7 @@ class ApplicationOperationIdScopeTest {
 
     // --- Resource fixtures ---
 
-    /** Instantiated twice in row (a): two instances of the SAME class share an owner. */
+    /** Instantiated twice in sameOwnerUnderTheFlag: two instances of the SAME class share an owner. */
     @Path("/scope/shared")
     public static class SharedOwnerResource {
 
@@ -370,7 +381,7 @@ class ApplicationOperationIdScopeTest {
         }
     }
 
-    /** Row (i)/(j)'s first resource, an operationId distinct from {@link DistinctResourceB}'s. */
+    /** The unparseable-location rows' first resource, an operationId distinct from {@link DistinctResourceB}'s. */
     @Path("/scope/distinct-a")
     public static class DistinctResourceA {
 
@@ -386,7 +397,7 @@ class ApplicationOperationIdScopeTest {
         }
     }
 
-    /** Row (i)/(j)'s second resource, an operationId distinct from {@link DistinctResourceA}'s. */
+    /** The unparseable-location rows' second resource, an operationId distinct from {@link DistinctResourceA}'s. */
     @Path("/scope/distinct-b")
     public static class DistinctResourceB {
 

@@ -10,9 +10,9 @@ import dev.vertique.rest.openapi.docs.CompleteDocumentTestComponents.RefComponen
 import dev.vertique.rest.openapi.docs.fixture.DocsConfigs;
 import dev.vertique.rest.openapi.docs.fixture.conformance.complete.RefEntriesApi;
 import dev.vertique.rest.openapi.docs.fixture.conformance.determinism.ByteDifferences;
-import dev.vertique.rest.openapi.docs.fixture.conformance.support.Deployments;
-import dev.vertique.rest.openapi.docs.fixture.conformance.support.DocumentRequests;
-import dev.vertique.rest.openapi.docs.fixture.conformance.support.DocumentRequests.Answer;
+import dev.vertique.rest.openapi.docs.fixture.support.Deployments;
+import dev.vertique.rest.openapi.docs.fixture.support.DocumentRequests;
+import dev.vertique.rest.openapi.docs.fixture.support.DocumentRequests.Answer;
 import io.vertx.core.DeploymentOptions;
 import io.vertx.core.Vertx;
 import io.vertx.core.json.JsonObject;
@@ -24,6 +24,7 @@ import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
@@ -57,6 +58,9 @@ import org.junit.jupiter.api.extension.ExtendWith;
 @Timeout(value = 30, unit = TimeUnit.SECONDS)
 public class CompleteDocumentGoldenBytesIT {
 
+    /** The longest one deployment, request, or undeployment is awaited. */
+    private static final Duration WAIT = Duration.ofSeconds(5);
+
     /** The pinned entity tag of the JSON form, quotes included, exactly as served. */
     static final String JSON_ENTITY_TAG = "\"a65375481190ef356feb83799e51182caf382f89355b4095a9e2b3db224971a8\"";
 
@@ -86,7 +90,7 @@ public class CompleteDocumentGoldenBytesIT {
         try {
             client.close();
         } finally {
-            Deployments.undeployAll(vertx, deploymentIds);
+            Deployments.undeployAll(vertx, deploymentIds, WAIT);
             deploymentIds.clear();
         }
     }
@@ -98,12 +102,13 @@ public class CompleteDocumentGoldenBytesIT {
         // web-validation with the canonical schema source and no configured info, one instance
         RefComponent ref =
                 DaggerCompleteDocumentTestComponents_RefComponent.factory().create(vertx, webValidationConfig());
-        int port = Deployments.deployAndReadPort(vertx, ref::httpVerticle, new DeploymentOptions(), deploymentIds);
+        int port =
+                Deployments.deployAndReadPort(vertx, ref::httpVerticle, new DeploymentOptions(), deploymentIds, WAIT);
 
         // When: both forms of its document are fetched
         String base = DocsConfigs.DEFAULT_APIDOCS_PATH + "/" + RefEntriesApi.NAME;
-        Answer json = DocumentRequests.get(client, port, base + "/openapi.json", null);
-        Answer yaml = DocumentRequests.get(client, port, base + "/openapi.yaml", null);
+        Answer json = DocumentRequests.get(client, port, base + "/openapi.json", null, WAIT);
+        Answer yaml = DocumentRequests.get(client, port, base + "/openapi.yaml", null, WAIT);
 
         // Then: both answer 200, and their bytes and entity tags equal the pinned literals
         assertEquals(200, json.status(), "GET " + base + "/openapi.json must answer 200");

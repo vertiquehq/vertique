@@ -18,7 +18,6 @@ import dev.vertique.rest.openapi.docs.CollisionTestComponents.CaseMountComponent
 import dev.vertique.rest.openapi.docs.CollisionTestComponents.DocumentedProvisions;
 import dev.vertique.rest.openapi.docs.fixture.CatalogResource;
 import dev.vertique.rest.openapi.docs.fixture.DocsConfigs;
-import dev.vertique.rest.openapi.docs.fixture.startup.StartupDeployments;
 import dev.vertique.rest.openapi.docs.fixture.startup.collision.CaseMount;
 import dev.vertique.rest.openapi.docs.fixture.startup.collision.CaseResource;
 import dev.vertique.rest.openapi.docs.fixture.startup.collision.CaseResources;
@@ -38,6 +37,8 @@ import dev.vertique.rest.openapi.docs.fixture.startup.collision.GetUpperApidocsR
 import dev.vertique.rest.openapi.docs.fixture.startup.collision.GetXResource;
 import dev.vertique.rest.openapi.docs.fixture.startup.collision.HeadThreeSegmentsResource;
 import dev.vertique.rest.openapi.docs.fixture.startup.collision.PostThreeSegmentsResource;
+import dev.vertique.rest.openapi.docs.fixture.support.Futures;
+import dev.vertique.rest.openapi.docs.fixture.support.StartupDeployments;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.http.HttpMethod;
@@ -46,6 +47,7 @@ import io.vertx.ext.web.client.HttpResponse;
 import io.vertx.ext.web.client.WebClient;
 import io.vertx.junit5.VertxExtension;
 import jakarta.annotation.Nullable;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
@@ -143,7 +145,7 @@ public class DocumentRouteCollisionIT {
     static Stream<CollisionRow> collisionRows() {
         return Stream.of(
                 new CollisionRow(
-                        "(a) GET /{id} and GET /{a}/{b} deploy beside the document",
+                        "GET /{id} and GET /{a}/{b} deploy beside the document",
                         Composition.ROOT_APPLICATION,
                         null,
                         List.of(new GetIdResource(), new GetTwoSegmentsResource()),
@@ -152,7 +154,7 @@ public class DocumentRouteCollisionIT {
                                 ROOT_TITLE,
                                 List.of(new Control(HttpMethod.GET, "/x", 0), new Control(HttpMethod.GET, "/x/y", 1)))),
                 new CollisionRow(
-                        "(b) GET /{a}/{b}/{c} is refused",
+                        "GET /{a}/{b}/{c} is refused",
                         Composition.ROOT_APPLICATION,
                         null,
                         List.of(new GetThreeSegmentsResource()),
@@ -165,7 +167,7 @@ public class DocumentRouteCollisionIT {
                                 List.of("/apidocs/api/openapi.json", "/apidocs/api/openapi.yaml"),
                                 List.of())),
                 new CollisionRow(
-                        "(c) HEAD-only /{a}/{b}/{c} is refused",
+                        "HEAD-only /{a}/{b}/{c} is refused",
                         Composition.ROOT_APPLICATION,
                         null,
                         List.of(new HeadThreeSegmentsResource()),
@@ -178,7 +180,7 @@ public class DocumentRouteCollisionIT {
                                 List.of("/apidocs/api/openapi.json", "/apidocs/api/openapi.yaml"),
                                 List.of())),
                 new CollisionRow(
-                        "(d) POST-only /{a}/{b}/{c} deploys beside the document",
+                        "POST-only /{a}/{b}/{c} deploys beside the document",
                         Composition.ROOT_APPLICATION,
                         null,
                         List.of(new PostThreeSegmentsResource()),
@@ -187,7 +189,7 @@ public class DocumentRouteCollisionIT {
                                 ROOT_TITLE,
                                 List.of(new Control(HttpMethod.POST, "/p/q/r", 0)))),
                 new CollisionRow(
-                        "(e) GET /apidocs/{rest: .+} is refused",
+                        "GET /apidocs/{rest: .+} is refused",
                         Composition.ROOT_APPLICATION,
                         null,
                         List.of(new GetApidocsRestResource()),
@@ -200,7 +202,7 @@ public class DocumentRouteCollisionIT {
                                 List.of("/apidocs/api/openapi.json", "/apidocs/api/openapi.yaml"),
                                 List.of())),
                 new CollisionRow(
-                        "(f) GET /{a}/{b}/{c} deploys with apidocs.path /docs/v1/api",
+                        "GET /{a}/{b}/{c} deploys with apidocs.path /docs/v1/api",
                         Composition.ROOT_APPLICATION,
                         "/docs/v1/api",
                         List.of(new GetThreeSegmentsResource()),
@@ -209,7 +211,7 @@ public class DocumentRouteCollisionIT {
                                 ROOT_TITLE,
                                 List.of(new Control(HttpMethod.GET, "/p/q/r", 0)))),
                 new CollisionRow(
-                        "(g) GET /apidocs/{rest: .+} deploys with apidocs.path /docs",
+                        "GET /apidocs/{rest: .+} deploys with apidocs.path /docs",
                         Composition.ROOT_APPLICATION,
                         "/docs",
                         List.of(new GetApidocsRestResource()),
@@ -218,7 +220,7 @@ public class DocumentRouteCollisionIT {
                                 ROOT_TITLE,
                                 List.of(new Control(HttpMethod.GET, "/apidocs/x", 0)))),
                 new CollisionRow(
-                        "(j) catch-all GET /{path: .*} is refused under the default prefix",
+                        "catch-all GET /{path: .*} is refused under the default prefix",
                         Composition.ROOT_APPLICATION,
                         null,
                         List.of(new CatchAllResource()),
@@ -231,7 +233,7 @@ public class DocumentRouteCollisionIT {
                                 List.of("/apidocs/api/openapi.json", "/apidocs/api/openapi.yaml"),
                                 List.of())),
                 new CollisionRow(
-                        "(k) catch-all GET /{path: .*} is refused with apidocs.path /docs/v1",
+                        "catch-all GET /{path: .*} is refused with apidocs.path /docs/v1",
                         Composition.ROOT_APPLICATION,
                         "/docs/v1",
                         List.of(new CatchAllResource()),
@@ -244,7 +246,7 @@ public class DocumentRouteCollisionIT {
                                 List.of("/docs/v1/api/openapi.json", "/docs/v1/api/openapi.yaml"),
                                 List.of())),
                 new CollisionRow(
-                        "(h) an undocumented mount's GET /docs/{name}/openapi.json is refused",
+                        "an undocumented mount's GET /docs/{name}/openapi.json is refused",
                         Composition.UNDOCUMENTED_NEIGHBOUR,
                         "/api/docs",
                         List.of(new CatalogResource(), new DocsNameResource()),
@@ -793,10 +795,7 @@ public class DocumentRouteCollisionIT {
     // ---------------------------------------------------------------------------------------------
 
     private static HttpResponse<Buffer> send(HttpMethod method, int port, String uri) throws Exception {
-        return client.request(method, port, LOOPBACK, uri)
-                .send()
-                .toCompletionStage()
-                .toCompletableFuture()
-                .get(REQUEST_BOUND_SECONDS, TimeUnit.SECONDS);
+        return Futures.await(
+                client.request(method, port, LOOPBACK, uri).send(), Duration.ofSeconds(REQUEST_BOUND_SECONDS));
     }
 }

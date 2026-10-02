@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
 // SPDX-License-Identifier: EUPL-1.2
 
-package dev.vertique.rest.jaxrs.application.conflict.opid.tp009;
+package dev.vertique.rest.jaxrs.application.conflict.opid.crossmount;
 
 import dagger.Module;
 import dagger.Provides;
@@ -20,25 +20,33 @@ import java.util.List;
  * refusal.
  */
 @Module
-public final class Tp009SharedContractRegistrationModule {
+public final class CrossMountSharedContractRegistrationModule {
 
-    private Tp009SharedContractRegistrationModule() {}
+    private CrossMountSharedContractRegistrationModule() {}
 
     /** The global {@code jaxrs.openapiPath} both registrations fall back to. */
     public static final String SHARED_OPENAPI_PATH = "shared.yaml";
 
     @Provides
     @IntoSet
-    static GeneratedRestApplicationRegistration tp009SharedContractPublicRegistration(@VertxConfig JsonObject config) {
+    static GeneratedRestApplicationRegistration crossMountSharedContractPublicRegistration(
+            @VertxConfig JsonObject config) {
         return GeneratedRestApplicationRegistration.of(
-                Tp009Apis.PublicApi.class, "public", "/api/public", List.of(PublicListResource.class), false, "", true);
+                CrossMountOperationIdApis.PublicApi.class,
+                "public",
+                "/api/public",
+                List.of(PublicListResource.class),
+                false,
+                "",
+                true);
     }
 
     @Provides
     @IntoSet
-    static GeneratedRestApplicationRegistration tp009SharedContractPartnerRegistration(@VertxConfig JsonObject config) {
+    static GeneratedRestApplicationRegistration crossMountSharedContractPartnerRegistration(
+            @VertxConfig JsonObject config) {
         return GeneratedRestApplicationRegistration.of(
-                Tp009Apis.PartnerApi.class,
+                CrossMountOperationIdApis.PartnerApi.class,
                 "partner",
                 "/api/partner",
                 List.of(PartnerListResource.class),

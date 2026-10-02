@@ -25,8 +25,6 @@ import dev.vertique.rest.openapi.docs.StartupTestComponents.VerticleInputsStartu
 import dev.vertique.rest.openapi.docs.StartupTestComponents.ZeroDeclarationStartupComponent;
 import dev.vertique.rest.openapi.docs.fixture.DocsConfigs;
 import dev.vertique.rest.openapi.docs.fixture.MarkerRouterMount;
-import dev.vertique.rest.openapi.docs.fixture.startup.StartupDeployments;
-import dev.vertique.rest.openapi.docs.fixture.startup.StartupDeployments.Outcome;
 import dev.vertique.rest.openapi.docs.fixture.startup.startupit.ApiJsonIdResource;
 import dev.vertique.rest.openapi.docs.fixture.startup.startupit.ContributedResources;
 import dev.vertique.rest.openapi.docs.fixture.startup.startupit.CountingResource;
@@ -38,6 +36,10 @@ import dev.vertique.rest.openapi.docs.fixture.startup.startupit.ReservedMgmtReso
 import dev.vertique.rest.openapi.docs.fixture.startup.startupit.ReservedYamlResource;
 import dev.vertique.rest.openapi.docs.fixture.startup.startupit.TenantProbeResource;
 import dev.vertique.rest.openapi.docs.fixture.startup.startupit.ThreeSegmentsResource;
+import dev.vertique.rest.openapi.docs.fixture.support.Cleanup;
+import dev.vertique.rest.openapi.docs.fixture.support.Futures;
+import dev.vertique.rest.openapi.docs.fixture.support.StartupDeployments;
+import dev.vertique.rest.openapi.docs.fixture.support.StartupDeployments.Outcome;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
@@ -47,6 +49,7 @@ import io.vertx.ext.web.client.HttpResponse;
 import io.vertx.ext.web.client.WebClient;
 import io.vertx.junit5.VertxExtension;
 import jakarta.annotation.Nullable;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -349,43 +352,43 @@ public class DocsStartupChecksIT {
     static Stream<Arguments> configurationFailures() {
         return Stream.of(
                 Arguments.of(
-                        "(a) an entry keyed 'Api' breaks the name grammar",
+                        "an entry keyed 'Api' breaks the name grammar",
                         Composition.SHARED,
                         entryKeyedApi(),
                         null,
                         List.of("apidocs.documents.Api")),
                 Arguments.of(
-                        "(b) an entry keyed 'nosuch' names no declared application",
+                        "an entry keyed 'nosuch' names no declared application",
                         Composition.SHARED,
                         entryKeyedNosuch(),
                         null,
                         List.of("apidocs.documents.nosuch")),
                 Arguments.of(
-                        "(c) documents.public.access is not an entry key",
+                        "documents.public.access is not an entry key",
                         Composition.SHARED,
                         publicEntryWithAccess(),
                         PUBLIC,
                         List.of("apidocs.documents.public.access", PUBLIC_API)),
                 Arguments.of(
-                        "(d) documents.public.mount is not an entry key",
+                        "documents.public.mount is not an entry key",
                         Composition.SHARED,
                         publicEntryWithMount(),
                         PUBLIC,
                         List.of("apidocs.documents.public.mount", PUBLIC_API)),
                 Arguments.of(
-                        "(e) documents.mgmt.enabled true on an interface without @ApiDocs",
+                        "documents.mgmt.enabled true on an interface without @ApiDocs",
                         Composition.SHARED,
                         mgmtEnabledWithoutApiDocs(),
                         MGMT,
                         List.of("apidocs.documents.mgmt.enabled", MGMT_API)),
                 Arguments.of(
-                        "(f) documents.public without info and no interface info",
+                        "documents.public without info and no interface info",
                         Composition.SHARED,
                         publicEntryWithoutInfo(),
                         PUBLIC,
                         List.of("apidocs.documents.public.info", PUBLIC_API)),
                 Arguments.of(
-                        "(g) NoSchemeApi: a protected document naming no security scheme",
+                        "NoSchemeApi: a protected document naming no security scheme",
                         Composition.NO_SCHEME,
                         noSchemeDeclaration(),
                         MGMT,
@@ -542,27 +545,27 @@ public class DocsStartupChecksIT {
     static Stream<Arguments> protectedVariants() {
         return Stream.of(
                 Arguments.of(
-                        "(a) no scheme handler, the enforcement marker bound",
+                        "no scheme handler, the enforcement marker bound",
                         Composition.PROTECTED_ENFORCEMENT_ONLY,
                         List.of(PROTECTED_MGMT_API, SECURITY_SCHEME_ATTRIBUTE, BEARER_AUTH, NO_HANDLER),
                         List.of()),
                 Arguments.of(
-                        "(b) only an otherAuth handler, the enforcement marker bound",
+                        "only an otherAuth handler, the enforcement marker bound",
                         Composition.PROTECTED_OTHER_AUTH,
                         List.of(PROTECTED_MGMT_API, SECURITY_SCHEME_ATTRIBUTE, BEARER_AUTH, NO_HANDLER),
                         List.of()),
                 Arguments.of(
-                        "(c) the bearerAuth handler, no enforcement marker",
+                        "the bearerAuth handler, no enforcement marker",
                         Composition.PROTECTED_BEARER_AUTH_ONLY,
                         List.of(PROTECTED_MGMT_API, ACCESS_ATTRIBUTE, NO_ENFORCEMENT),
                         List.of(NOT_SERVED_YET)),
                 Arguments.of(
-                        "(d) AuthenticatedMgmtApi, the bearerAuth handler, no enforcement marker",
+                        "AuthenticatedMgmtApi, the bearerAuth handler, no enforcement marker",
                         Composition.AUTHENTICATED_BEARER_AUTH_ONLY,
                         List.of(AUTHENTICATED_MGMT_API, ACCESS_ATTRIBUTE, NO_ENFORCEMENT),
                         List.of(NOT_SERVED_YET)),
                 Arguments.of(
-                        "(e) control: the shared fixture's public document only, no handler, no marker",
+                        "control: the shared fixture's public document only, no handler, no marker",
                         Composition.SHARED,
                         null,
                         List.of()));
@@ -633,14 +636,14 @@ public class DocsStartupChecksIT {
     static Stream<Arguments> jaxRsMountsNearThePrefix() {
         return Stream.of(
                 Arguments.of(
-                        "(a) /apidocs/* lies at the prefix: refused",
+                        "/apidocs/* lies at the prefix: refused",
                         "/apidocs/*",
                         markedShared(),
                         List.of("jaxrs:/apidocs/*", "'/apidocs/*'", APIDOCS_PATH_SETTING, QUOTED_DEFAULT_PREFIX),
                         null,
                         null),
                 Arguments.of(
-                        "(b) /apidocs/admin/* lies under the prefix: refused",
+                        "/apidocs/admin/* lies under the prefix: refused",
                         "/apidocs/admin/*",
                         markedShared(),
                         List.of(
@@ -651,14 +654,14 @@ public class DocsStartupChecksIT {
                         null,
                         null),
                 Arguments.of(
-                        "(c) control: /apidocsx/* only shares the prefix's characters: deploys",
+                        "control: /apidocsx/* only shares the prefix's characters: deploys",
                         "/apidocsx/*",
                         DocsConfigs.shared(),
                         null,
                         "/apidocsx/probe",
                         null),
                 Arguments.of(
-                        "(d) control: /apidocs/* with apidocs.path /docs: deploys and serves under /docs",
+                        "control: /apidocs/* with apidocs.path /docs: deploys and serves under /docs",
                         "/apidocs/*",
                         DocsConfigs.withApidocsPath(DocsConfigs.shared(), "/docs"),
                         null,
@@ -711,7 +714,7 @@ public class DocsStartupChecksIT {
     static Stream<Arguments> reservedOperationIds() {
         return Stream.of(
                 Arguments.of(
-                        "(a) apidocs:public:json on the hand-built mount /api/other/*: refused",
+                        "apidocs:public:json on the hand-built mount /api/other/*: refused",
                         ReservedIdPlacement.HAND_BUILT_MOUNT,
                         new ReservedJsonResource(),
                         markedShared(),
@@ -724,7 +727,7 @@ public class DocsStartupChecksIT {
                                 PUBLIC_DOCUMENT_SETTING),
                         "/api/other/x"),
                 Arguments.of(
-                        "(b) apidocs:public:yaml on the hand-built mount /api/other/*: refused",
+                        "apidocs:public:yaml on the hand-built mount /api/other/*: refused",
                         ReservedIdPlacement.HAND_BUILT_MOUNT,
                         new ReservedYamlResource(),
                         markedShared(),
@@ -737,7 +740,7 @@ public class DocsStartupChecksIT {
                                 PUBLIC_DOCUMENT_SETTING),
                         "/api/other/x"),
                 Arguments.of(
-                        "(c) apidocs:public:json listed by the documented application itself: refused",
+                        "apidocs:public:json listed by the documented application itself: refused",
                         ReservedIdPlacement.DOCUMENTED_APPLICATION,
                         new ReservedJsonResource(),
                         markedShared(),
@@ -750,21 +753,21 @@ public class DocsStartupChecksIT {
                                 PUBLIC_DOCUMENT_SETTING),
                         "/api/public/x"),
                 Arguments.of(
-                        "(d) control: apidocs:mgmt:json, mgmt has no document: deploys",
+                        "control: apidocs:mgmt:json, mgmt has no document: deploys",
                         ReservedIdPlacement.HAND_BUILT_MOUNT,
                         new ReservedMgmtResource(),
                         DocsConfigs.shared(),
                         null,
                         "/api/other/x"),
                 Arguments.of(
-                        "(e) control: apidocs:Public:json differs in letter case: deploys",
+                        "control: apidocs:Public:json differs in letter case: deploys",
                         ReservedIdPlacement.HAND_BUILT_MOUNT,
                         new ReservedCaseResource(),
                         DocsConfigs.shared(),
                         null,
                         "/api/other/x"),
                 Arguments.of(
-                        "(f) control: apidocs:public:json with documents.public.enabled false: deploys",
+                        "control: apidocs:public:json with documents.public.enabled false: deploys",
                         ReservedIdPlacement.HAND_BUILT_MOUNT,
                         new ReservedJsonResource(),
                         DocsConfigs.withDocumentEnabled(DocsConfigs.shared(), PUBLIC, false),
@@ -932,15 +935,12 @@ public class DocsStartupChecksIT {
         // Given: the shared fixture exposing what the five-argument constructor receives
         VerticleInputsStartupComponent component = DaggerStartupTestComponents_VerticleInputsStartupComponent.factory()
                 .create(DocsConfigs.shared());
-        Outcome daggerBuilt = null;
-        Outcome fiveArgument = null;
-        Outcome fiveArgumentWithMount = null;
-        try {
+        try (Cleanup cleanup = new Cleanup()) {
             // When (i): the Dagger-built verticle is deployed
-            daggerBuilt = deploy(vertx, component);
+            Outcome first = deploy(vertx, component);
+            cleanup.step("undeploy the Dagger-built verticle", () -> StartupDeployments.undeploy(vertx, first));
 
             // Then (i): it serves the public document
-            Outcome first = daggerBuilt;
             assertTrue(
                     first.deployed(),
                     () -> "(i): the Dagger-built verticle deploys; it failed with " + first.failure());
@@ -954,8 +954,9 @@ public class DocsStartupChecksIT {
             // When (ii): with (i) still deployed, a five-argument verticle from a fresh provision is deployed
             component.routerSpy().reset();
             int hookCallsBeforeSecond = component.lifecycleHook().beforeAuthSetupCalls();
-            fiveArgument =
+            Outcome fiveArgument =
                     StartupDeployments.deploy(vertx, () -> fiveArgumentVerticle(component, component.routerMounts()));
+            cleanup.step("undeploy the five-argument verticle", () -> StartupDeployments.undeploy(vertx, fiveArgument));
 
             // Then (ii): it is refused by the documentation mount before any JAX-RS router
             assertUnvalidatedRefusal(
@@ -967,12 +968,15 @@ public class DocsStartupChecksIT {
             // validator would reject
             component.routerSpy().reset();
             int hookCallsBeforeThird = component.lifecycleHook().beforeAuthSetupCalls();
-            fiveArgumentWithMount = StartupDeployments.deploy(vertx, () -> {
+            Outcome fiveArgumentWithMount = StartupDeployments.deploy(vertx, () -> {
                 Set<RouterMount> mounts = new HashSet<>(component.routerMounts());
                 mounts.add(HandBuiltMounts.Mount.at(MARKED_DOCS_MOUNT_PATH, new PrefixProbeResource())
                         .create(component.jaxRsRouterMountFactory()));
                 return fiveArgumentVerticle(component, mounts);
             });
+            cleanup.step(
+                    "undeploy the five-argument verticle with a hand-built mount",
+                    () -> StartupDeployments.undeploy(vertx, fiveArgumentWithMount));
 
             // Then (iii): the same refusal, never naming the hand-built mount
             assertUnvalidatedRefusal(
@@ -998,10 +1002,6 @@ public class DocsStartupChecksIT {
                     () -> assertNull(returned, "(iv): no router is returned"),
                     () -> assertNotNull(thrown, "(iv): createRouter throws"));
             assertUnvalidatedMessage("(iv) direct createRouter", thrown.getMessage());
-        } finally {
-            StartupDeployments.undeploy(vertx, fiveArgumentWithMount);
-            StartupDeployments.undeploy(vertx, fiveArgument);
-            StartupDeployments.undeploy(vertx, daggerBuilt);
         }
     }
 
@@ -1310,12 +1310,12 @@ public class DocsStartupChecksIT {
 
     /** Sends {@code GET} for the {@code public} document's JSON form and waits for the whole response. */
     private HttpResponse<Buffer> getJsonDocument(int port) throws Exception {
-        return await(client.get(port, LOOPBACK, PUBLIC_JSON_URL).send());
+        return Futures.await(client.get(port, LOOPBACK, PUBLIC_JSON_URL).send(), Duration.ofSeconds(15));
     }
 
     /** Sends {@code GET} for a path and waits for the whole response. */
     private HttpResponse<Buffer> get(int port, String path) throws Exception {
-        return await(client.get(port, LOOPBACK, path).send());
+        return Futures.await(client.get(port, LOOPBACK, path).send(), Duration.ofSeconds(15));
     }
 
     /**
@@ -1398,10 +1398,5 @@ public class DocsStartupChecksIT {
      */
     private static Pattern standingAlone(String word) {
         return Pattern.compile("(?<![\\w./-])" + Pattern.quote(word) + "(?![\\w./-])");
-    }
-
-    /** Blocks the JUnit thread for a future's result, bounded below the class timeout. */
-    private static <T> T await(Future<T> future) throws Exception {
-        return future.toCompletionStage().toCompletableFuture().get(15, TimeUnit.SECONDS);
     }
 }

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
 // SPDX-License-Identifier: EUPL-1.2
 
-package dev.vertique.rest.openapi.docs.fixture.startup;
+package dev.vertique.rest.openapi.docs.fixture.support;
 
 import io.vertx.core.DeploymentOptions;
 import io.vertx.core.Future;
@@ -93,6 +93,9 @@ public final class StartupDeployments {
             failure = failed.getCause();
         } catch (TimeoutException incomplete) {
             throw new AssertionError("the deployment did not complete within " + BOUND, incomplete);
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            throw interrupted;
         }
         Object port = vertx.sharedData().getLocalMap(LOCAL_MAP).get(PORT_KEY);
         return new Outcome(failure, (Integer) port, deploymentId);
@@ -109,13 +112,26 @@ public final class StartupDeployments {
     public static void undeploy(Vertx vertx, Outcome outcome) throws Exception {
         try {
             if (outcome != null && outcome.deploymentId() != null) {
-                vertx.undeploy(outcome.deploymentId())
-                        .toCompletionStage()
-                        .toCompletableFuture()
-                        .get(BOUND.toMillis(), TimeUnit.MILLISECONDS);
+                Futures.await(vertx.undeploy(outcome.deploymentId()), BOUND);
             }
         } finally {
             vertx.sharedData().getLocalMap(LOCAL_MAP).remove(PORT_KEY);
+        }
+    }
+
+    /**
+     * Undeploys a successful deployment, if any, then clears the {@value #LOCAL_MAP} local map, even
+     * when the undeployment fails.
+     *
+     * @param vertx   the Vert.x instance
+     * @param outcome the deployment's outcome; nothing is undeployed when it has no deployment id
+     * @throws Exception when the undeployment fails or does not complete within {@link #BOUND}
+     */
+    public static void undeployAndClear(Vertx vertx, Outcome outcome) throws Exception {
+        try {
+            undeploy(vertx, outcome);
+        } finally {
+            vertx.sharedData().getLocalMap(LOCAL_MAP).clear();
         }
     }
 }

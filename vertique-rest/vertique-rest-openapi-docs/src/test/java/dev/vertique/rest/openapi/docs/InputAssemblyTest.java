@@ -519,23 +519,31 @@ class InputAssemblyTest {
         // Then (a): the failure names the mount, the operation, the input, and its location, and says
         // a document describes one parameter per name and location.
         String queryMessage = queryFailure.getMessage();
-        assertTrue(queryMessage.contains(MOUNT_FRAGMENT), () -> "(a): the mount is not named: " + queryMessage);
-        assertTrue(queryMessage.contains("'searchItems'"), () -> "(a): the operation is not named: " + queryMessage);
-        assertTrue(queryMessage.contains("'q'"), () -> "(a): the input is not named: " + queryMessage);
-        assertTrue(queryMessage.contains("in query"), () -> "(a): the location is not named: " + queryMessage);
-        assertTrue(queryMessage.contains(ONE_PARAMETER_FRAGMENT), () -> "(a): the rule is not stated: " + queryMessage);
+        assertTrue(queryMessage.contains(MOUNT_FRAGMENT), () -> "query twice: the mount is not named: " + queryMessage);
+        assertTrue(
+                queryMessage.contains("'searchItems'"),
+                () -> "query twice: the operation is not named: " + queryMessage);
+        assertTrue(queryMessage.contains("'q'"), () -> "query twice: the input is not named: " + queryMessage);
+        assertTrue(queryMessage.contains("in query"), () -> "query twice: the location is not named: " + queryMessage);
+        assertTrue(
+                queryMessage.contains(ONE_PARAMETER_FRAGMENT),
+                () -> "query twice: the rule is not stated: " + queryMessage);
 
         // Then (b): the failure names the mount, the operation, the form input, and the form location.
         String formMessage = formFailure.getMessage();
-        assertTrue(formMessage.contains(MOUNT_FRAGMENT), () -> "(b): the mount is not named: " + formMessage);
-        assertTrue(formMessage.contains("'submitTitles'"), () -> "(b): the operation is not named: " + formMessage);
-        assertTrue(formMessage.contains("'title'"), () -> "(b): the input is not named: " + formMessage);
-        assertTrue(formMessage.contains("in form"), () -> "(b): the location is not named: " + formMessage);
-        assertTrue(formMessage.contains(ONE_PARAMETER_FRAGMENT), () -> "(b): the rule is not stated: " + formMessage);
+        assertTrue(formMessage.contains(MOUNT_FRAGMENT), () -> "form twice: the mount is not named: " + formMessage);
+        assertTrue(
+                formMessage.contains("'submitTitles'"), () -> "form twice: the operation is not named: " + formMessage);
+        assertTrue(formMessage.contains("'title'"), () -> "form twice: the input is not named: " + formMessage);
+        assertTrue(formMessage.contains("in form"), () -> "form twice: the location is not named: " + formMessage);
+        assertTrue(
+                formMessage.contains(ONE_PARAMETER_FRAGMENT),
+                () -> "form twice: the rule is not stated: " + formMessage);
 
         // Then (c): two Parameter Objects are published, the path 'id' and then the query 'id'.
         JsonArray parameters = operation(controlDocument, "/items/{id}", "get").getJsonArray("parameters");
-        assertNotNull(parameters, () -> "(c) publishes no parameters: " + controlDocument.encode());
+        assertNotNull(
+                parameters, () -> "the path and query id control publishes no parameters: " + controlDocument.encode());
         List<String> published = new ArrayList<>();
         for (int i = 0; i < parameters.size(); i++) {
             JsonObject parameter = parameters.getJsonObject(i);
@@ -790,7 +798,10 @@ class InputAssemblyTest {
         assertNoMemberAnywhere(createdSchemas.getJsonObject("createItem.request"), "$id", "createItem.request");
         JsonObject createdRequestBody = requestBodyOf(createdDoc, "/items", "post");
         assertEquals(contentReferencing("createItem.request", JSON), createdRequestBody.getJsonObject("content"));
-        assertEquals(Boolean.TRUE, createdRequestBody.getValue("required"), () -> "(a): " + createdRequestBody);
+        assertEquals(
+                Boolean.TRUE,
+                createdRequestBody.getValue("required"),
+                () -> "createItem request body: " + createdRequestBody);
 
         // Then (b): the key replaces ':' with '_', and both media types reference the one component.
         JsonObject updatedSchemas = componentSchemas(updatedDoc);
@@ -827,7 +838,9 @@ class InputAssemblyTest {
         assertEquals(expectedOpen, patchedSchemas.getJsonObject("patchItem.request"));
         JsonObject patchedRequestBody = requestBodyOf(patchedDoc, "/items", "patch");
         assertEquals(contentReferencing("patchItem.request", JSON), patchedRequestBody.getJsonObject("content"));
-        assertFalse(patchedRequestBody.containsKey("required"), () -> "(e) carries 'required': " + patchedRequestBody);
+        assertFalse(
+                patchedRequestBody.containsKey("required"),
+                () -> "patchItem request body carries 'required': " + patchedRequestBody);
 
         // Then (f): without a gate the component is still published, and the body is not required.
         JsonObject ungatedSchemas = componentSchemas(ungatedDoc);
@@ -835,7 +848,9 @@ class InputAssemblyTest {
         assertEquals(expectedUngated, ungatedSchemas.getJsonObject("createItem.request"));
         JsonObject ungatedRequestBody = requestBodyOf(ungatedDoc, "/items", "post");
         assertEquals(contentReferencing("createItem.request", JSON), ungatedRequestBody.getJsonObject("content"));
-        assertFalse(ungatedRequestBody.containsKey("required"), () -> "(f) carries 'required': " + ungatedRequestBody);
+        assertFalse(
+                ungatedRequestBody.containsKey("required"),
+                () -> "ungated request body carries 'required': " + ungatedRequestBody);
 
         // Then (g): both media types carry the empty schema, no component is published, and the body is
         // not required.
@@ -845,8 +860,10 @@ class InputAssemblyTest {
                 notedRequestBody.getJsonObject("content"));
         assertFalse(
                 componentKeys(notedDoc).contains("noteItem.request"),
-                () -> "(g) published a component: " + notedDoc.encode());
-        assertFalse(notedRequestBody.containsKey("required"), () -> "(g) carries 'required': " + notedRequestBody);
+                () -> "noteItem published a component: " + notedDoc.encode());
+        assertFalse(
+                notedRequestBody.containsKey("required"),
+                () -> "noteItem request body carries 'required': " + notedRequestBody);
 
         // Then: every captured body still deep-equals its pre-assembly copy.
         createdBefore.assertUnchanged();
@@ -946,31 +963,31 @@ class InputAssemblyTest {
         // before any reference is checked, so (e) names its $anchor, not the reference to it, although
         // the reference is written first.
         List<RefusedSchema> refused = List.of(
-                new RefusedSchema("(a) network reference", """
+                new RefusedSchema("network reference", """
                         {"$ref": "https://schemas.example.test/a.json"}""", "/$ref"),
-                new RefusedSchema("(b) unresolved definition", """
+                new RefusedSchema("unresolved definition", """
                         {"$ref": "#/$defs/Missing"}""", "/$ref"),
-                new RefusedSchema("(c) anchor-name fragment", """
+                new RefusedSchema("anchor-name fragment", """
                         {"$ref": "#missing-anchor"}""", "/$ref"),
-                new RefusedSchema("(e) anchor", """
+                new RefusedSchema("anchor", """
                         {"$ref": "#item", "$anchor": "item"}""", "/$anchor"),
-                new RefusedSchema("(g) identifier inside a definition", """
+                new RefusedSchema("identifier inside a definition", """
                         {"$defs": {"Item": {"$id": "urn:example:item", "type": "string"}},
                          "$ref": "#/$defs/Item"}""", "/$defs/Item/$id"),
-                new RefusedSchema("(h) relative reference", """
+                new RefusedSchema("relative reference", """
                         {"$defs": {"Code": {"type": "string"}}, "$ref": "item.json"}""", "/$ref"),
-                new RefusedSchema("(i) absolute reference with a fragment", """
+                new RefusedSchema("absolute reference with a fragment", """
                         {"$defs": {"Code": {"type": "string"}},
                          "$ref": "urn:vertique:apidocs:public:findItem.query.code#/$defs/Code"}""", "/$ref"),
-                new RefusedSchema("(j) root identifier equal to a component name", """
+                new RefusedSchema("root identifier equal to a component name", """
                         {"$id": "urn:vertique:apidocs:public:findItem.query.code", "type": "string"}""", "/$id"),
-                new RefusedSchema("(k) root network identifier", """
+                new RefusedSchema("root network identifier", """
                         {"$id": "https://example.test/s", "type": "string"}""", "/$id"),
-                new RefusedSchema("(l) dynamic anchor", """
+                new RefusedSchema("dynamic anchor", """
                         {"$dynamicAnchor": "zq7node", "type": "string"}""", "/$dynamicAnchor"),
-                new RefusedSchema("(m) dynamic reference", """
+                new RefusedSchema("dynamic reference", """
                         {"$dynamicRef": "#zq7node"}""", "/$dynamicRef"),
-                new RefusedSchema("(n) definitions below the root", """
+                new RefusedSchema("definitions below the root", """
                         {"allOf": [{"$defs": {"Zq7": {}}}]}""", "/allOf/0/$defs"));
         // (d) a root definition referenced by fragment; (f) "$ref" as data inside enum and default, and
         // an $id member inside const: data is neither a reference nor a resource.
@@ -1016,7 +1033,7 @@ class InputAssemblyTest {
                 findItemParameter(literalDoc));
         assertFalse(
                 componentKeys(literalDoc).contains("findItem.query.code"),
-                () -> "(f) became a component: " + literalDoc.encode());
+                () -> "the literal schema became a component: " + literalDoc.encode());
 
         relocatedBefore.assertUnchanged();
         literalBefore.assertUnchanged();

@@ -15,10 +15,10 @@ import dev.vertique.rest.auth.jwt.JwtAuthFactory;
 import dev.vertique.rest.openapi.docs.ConformanceCorpusTestComponents.Served;
 import dev.vertique.rest.openapi.docs.fixture.DocsConfigs;
 import dev.vertique.rest.openapi.docs.fixture.conformance.corpus.CorpusDocuments;
-import dev.vertique.rest.openapi.docs.fixture.conformance.support.Deployments;
-import dev.vertique.rest.openapi.docs.fixture.conformance.support.DocumentRequests;
-import dev.vertique.rest.openapi.docs.fixture.conformance.support.DocumentRequests.Answer;
 import dev.vertique.rest.openapi.docs.fixture.protecteddocs.caching.CachingModules;
+import dev.vertique.rest.openapi.docs.fixture.support.Deployments;
+import dev.vertique.rest.openapi.docs.fixture.support.DocumentRequests;
+import dev.vertique.rest.openapi.docs.fixture.support.DocumentRequests.Answer;
 import io.vertx.core.DeploymentOptions;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
@@ -34,6 +34,7 @@ import io.vertx.json.schema.Validator;
 import io.vertx.junit5.VertxExtension;
 import jakarta.annotation.Nullable;
 import java.math.BigDecimal;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.LinkedHashMap;
@@ -82,6 +83,9 @@ import org.slf4j.LoggerFactory;
 // the tests, and every row validates its document against the official OpenAPI 3.1 schema.
 @Timeout(value = 60, unit = TimeUnit.SECONDS)
 class OpenApiConformanceCorpusIT {
+
+    /** The longest one deployment, request, or undeployment is awaited. */
+    private static final Duration WAIT = Duration.ofSeconds(5);
 
     private static final Logger LOG = LoggerFactory.getLogger(OpenApiConformanceCorpusIT.class);
 
@@ -253,7 +257,7 @@ class OpenApiConformanceCorpusIT {
                 client.close();
             }
         } finally {
-            Deployments.undeployAll(vertx, DEPLOYMENT_IDS);
+            Deployments.undeployAll(vertx, DEPLOYMENT_IDS, WAIT);
             DEPLOYMENT_IDS.clear();
             PORTS.clear();
         }
@@ -267,7 +271,7 @@ class OpenApiConformanceCorpusIT {
         // Given: the row's application running with its document in the row's mode; a protected
         // document refuses an anonymous caller, so the protected row really reads the guarded route.
         if (row.mode() == Mode.PROTECTED) {
-            Answer anonymous = DocumentRequests.get(client, port(row), documentPath(row, "openapi.json"), null);
+            Answer anonymous = DocumentRequests.get(client, port(row), documentPath(row, "openapi.json"), null, WAIT);
             assertEquals(401, anonymous.status(), () -> row + ": an anonymous read of a protected document");
         }
 
@@ -545,8 +549,8 @@ class OpenApiConformanceCorpusIT {
     }
 
     private static void deploy(Composition composition, Mode mode, Served component) throws Exception {
-        int port =
-                Deployments.deployAndReadPort(vertx, component::httpVerticle, new DeploymentOptions(), DEPLOYMENT_IDS);
+        int port = Deployments.deployAndReadPort(
+                vertx, component::httpVerticle, new DeploymentOptions(), DEPLOYMENT_IDS, WAIT);
         PORTS.computeIfAbsent(composition, unused -> new EnumMap<>(Mode.class)).put(mode, port);
     }
 
@@ -560,7 +564,7 @@ class OpenApiConformanceCorpusIT {
 
     private static byte[] fetch(Row row, String form) throws Exception {
         String token = row.mode() == Mode.PROTECTED ? bearerToken : null;
-        Answer answer = DocumentRequests.get(client, port(row), documentPath(row, form), token);
+        Answer answer = DocumentRequests.get(client, port(row), documentPath(row, form), token, WAIT);
         assertEquals(200, answer.status(), () -> row + ": GET " + form);
         return answer.body();
     }

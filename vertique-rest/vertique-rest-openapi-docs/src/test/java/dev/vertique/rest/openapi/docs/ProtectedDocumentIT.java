@@ -24,11 +24,11 @@ import dev.vertique.rest.openapi.docs.fixture.protecteddocs.shared.Observations;
 import dev.vertique.rest.openapi.docs.fixture.protecteddocs.shared.SharedDeployment;
 import dev.vertique.rest.openapi.docs.fixture.protecteddocs.shared.TraceContributors;
 import dev.vertique.rest.openapi.docs.fixture.protecteddocs.shared.TwinResource;
-import dev.vertique.rest.openapi.docs.fixture.startup.StartupDeployments;
-import dev.vertique.rest.openapi.docs.fixture.startup.StartupDeployments.Outcome;
+import dev.vertique.rest.openapi.docs.fixture.support.Futures;
+import dev.vertique.rest.openapi.docs.fixture.support.StartupDeployments;
+import dev.vertique.rest.openapi.docs.fixture.support.StartupDeployments.Outcome;
 import dev.vertique.security.events.AuthorizationDecisionEvent;
 import dev.vertique.security.events.CredentialRejectedEvent;
-import io.vertx.core.Future;
 import io.vertx.core.MultiMap;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
@@ -42,6 +42,7 @@ import io.vertx.ext.web.client.HttpRequest;
 import io.vertx.ext.web.client.HttpResponse;
 import io.vertx.ext.web.client.WebClient;
 import io.vertx.junit5.VertxExtension;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.EnumMap;
@@ -49,7 +50,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -1059,7 +1059,7 @@ public class ProtectedDocumentIT {
             request.putHeader("Authorization", "Bearer " + token);
         }
         headers.forEach(request::putHeader);
-        HttpResponse<Buffer> response = await(request.send());
+        HttpResponse<Buffer> response = Futures.await(request.send(), Duration.ofSeconds(BOUND_SECONDS));
         try {
             barrier.get(BOUND_SECONDS, TimeUnit.SECONDS);
         } catch (TimeoutException timeout) {
@@ -1074,10 +1074,6 @@ public class ProtectedDocumentIT {
                 body,
                 target.observations().trace(key),
                 target.observations().drain());
-    }
-
-    private static <T> T await(Future<T> future) throws Exception {
-        return future.toCompletionStage().toCompletableFuture().get(BOUND_SECONDS, TimeUnit.SECONDS);
     }
 
     // --- Deployments ---
@@ -1128,7 +1124,7 @@ public class ProtectedDocumentIT {
         }
 
         void close() throws Exception {
-            await(server.close());
+            Futures.await(server.close(), Duration.ofSeconds(BOUND_SECONDS));
         }
     }
 
@@ -1164,8 +1160,8 @@ public class ProtectedDocumentIT {
 
         Router docsRouter;
         try {
-            docsRouter = await(docsMount.createRouter(vertx));
-        } catch (RuntimeException | ExecutionException failure) {
+            docsRouter = Futures.await(docsMount.createRouter(vertx), Duration.ofSeconds(BOUND_SECONDS));
+        } catch (RuntimeException | AssertionError failure) {
             throw new AssertionError(
                     "the store-less documentation mount failed to create its router: " + failure, failure);
         }
@@ -1180,7 +1176,8 @@ public class ProtectedDocumentIT {
             catchAllHits.incrementAndGet();
             ctx.response().setStatusCode(404).end("catch-all");
         });
-        HttpServer server = await(vertx.createHttpServer().requestHandler(root).listen(0, HOST));
+        HttpServer server = Futures.await(
+                vertx.createHttpServer().requestHandler(root).listen(0, HOST), Duration.ofSeconds(BOUND_SECONDS));
         return new StorelessServer(server, component.observations(), catchAllHits);
     }
 }

@@ -41,44 +41,4 @@ public final class SchemaSourceModules {
             return source;
         }
     }
-
-    /** Binds a {@link StatefulSchemaSource}, also exposed as its {@link CountingSchemaSource}. */
-    @Module
-    public static final class Stateful {
-
-        private Stateful() {}
-
-        /**
-         * Provides the component's stateful source.
-         *
-         * @return a new stateful source
-         */
-        @Provides
-        @Singleton
-        static StatefulSchemaSource statefulSchemaSource() {
-            return new StatefulSchemaSource();
-        }
-
-        /**
-         * Exposes the stateful source as the component's counting source.
-         *
-         * @param source the stateful source
-         * @return {@code source}
-         */
-        @Provides
-        static CountingSchemaSource countingSchemaSource(StatefulSchemaSource source) {
-            return source;
-        }
-
-        /**
-         * Binds the stateful source as the schema source.
-         *
-         * @param source the stateful source
-         * @return {@code source}
-         */
-        @Provides
-        static OperationSchemaSource operationSchemaSource(StatefulSchemaSource source) {
-            return source;
-        }
-    }
 }

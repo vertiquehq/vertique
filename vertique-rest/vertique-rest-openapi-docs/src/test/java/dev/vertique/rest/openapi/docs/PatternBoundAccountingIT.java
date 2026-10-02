@@ -11,8 +11,9 @@ import dev.vertique.rest.openapi.docs.PatternBoundTestComponents.BoundComponent;
 import dev.vertique.rest.openapi.docs.fixture.DocsConfigs;
 import dev.vertique.rest.openapi.docs.fixture.conformance.bound.BoundApi;
 import dev.vertique.rest.openapi.docs.fixture.conformance.bound.BoundResource;
-import dev.vertique.rest.openapi.docs.fixture.conformance.support.Deployments;
-import dev.vertique.rest.openapi.docs.fixture.conformance.support.DocumentRequests;
+import dev.vertique.rest.openapi.docs.fixture.support.Deployments;
+import dev.vertique.rest.openapi.docs.fixture.support.DocumentRequests;
+import dev.vertique.rest.openapi.docs.fixture.support.Futures;
 import io.vertx.core.DeploymentOptions;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
@@ -21,6 +22,7 @@ import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.client.HttpResponse;
 import io.vertx.ext.web.client.WebClient;
 import io.vertx.junit5.VertxExtension;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
@@ -60,6 +62,9 @@ import org.junit.jupiter.api.function.Executable;
 @Timeout(value = 30, unit = TimeUnit.SECONDS)
 public class PatternBoundAccountingIT {
 
+    /** The longest one deployment, request, or undeployment is awaited. */
+    private static final Duration WAIT = Duration.ofSeconds(5);
+
     private static final int NO_CONTENT = 204;
     private static final int BAD_REQUEST = 400;
     private static final int KEY_LENGTH = 4_000;
@@ -82,13 +87,14 @@ public class PatternBoundAccountingIT {
         config.getJsonObject("jaxrs").put("validationStrategy", "web-validation");
         BoundComponent component =
                 DaggerPatternBoundTestComponents_BoundComponent.factory().create(vertx, config);
-        port = Deployments.deployAndReadPort(vertx, component::httpVerticle, new DeploymentOptions(), deploymentIds);
+        port = Deployments.deployAndReadPort(
+                vertx, component::httpVerticle, new DeploymentOptions(), deploymentIds, WAIT);
     }
 
     @AfterEach
     void cleanUp() throws Exception {
         try {
-            Deployments.undeployAll(vertx, deploymentIds);
+            Deployments.undeployAll(vertx, deploymentIds, WAIT);
         } finally {
             deploymentIds.clear();
             client.close();
@@ -117,10 +123,11 @@ public class PatternBoundAccountingIT {
             // When: the body is posted.
             JsonObject body = body(row.keys());
             JsonObject sent = BoundResource.NESTED.equals(row.route()) ? new JsonObject().put("inner", body) : body;
-            HttpResponse<Buffer> response =
-                    Deployments.await(client.post(port, "127.0.0.1", BoundApi.PATH + row.route())
+            HttpResponse<Buffer> response = Futures.await(
+                    client.post(port, "127.0.0.1", BoundApi.PATH + row.route())
                             .putHeader("Content-Type", "application/json")
-                            .sendBuffer(sent.toBuffer()));
+                            .sendBuffer(sent.toBuffer()),
+                    WAIT);
             String answer = response.bodyAsString() == null ? "" : response.bodyAsString();
             String label = row.route() + " with " + row.keys() + " keys";
             int status = response.statusCode();

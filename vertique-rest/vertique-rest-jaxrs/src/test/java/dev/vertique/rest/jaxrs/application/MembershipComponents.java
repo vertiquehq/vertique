@@ -25,11 +25,11 @@ import dev.vertique.rest.jaxrs.application.unita.membership.Case22HandWrittenEnt
 import dev.vertique.rest.jaxrs.application.unita.membership.DuplicateCatalogEntryModuleA;
 import dev.vertique.rest.jaxrs.application.unita.membership.DuplicateCatalogEntryModuleB;
 import dev.vertique.rest.jaxrs.application.unita.membership.NullCatalogEntryModule;
-import dev.vertique.rest.jaxrs.application.unitb.membership.Case21RegistrationModule;
-import dev.vertique.rest.jaxrs.application.unitb.membership.Case22RegistrationModule;
 import dev.vertique.rest.jaxrs.application.unitb.membership.DuplicateCatalogRegistrationModule;
 import dev.vertique.rest.jaxrs.application.unitb.membership.MembershipViolationRegistrations;
 import dev.vertique.rest.jaxrs.application.unitb.membership.NullCatalogEntryRegistrationModule;
+import dev.vertique.rest.jaxrs.application.unitb.membership.SubstitutedSubclassBindingRegistrationModule;
+import dev.vertique.rest.jaxrs.application.unitb.membership.UnrelatedCatalogInstanceRegistrationModule;
 import io.vertx.core.json.JsonObject;
 import jakarta.inject.Singleton;
 import java.util.Set;
@@ -392,7 +392,7 @@ public final class MembershipComponents {
     }
 
     /**
-     * T023 L22 restoration (TP-003 case 21): the dedicated {@link Case21RegistrationModule}
+     * T023 L22 restoration (TP-003 case 21): the dedicated {@link SubstitutedSubclassBindingRegistrationModule}
      * registration, plus the substituted {@code Case21Resource} binding and its catalog entry.
      */
     @Singleton
@@ -400,7 +400,7 @@ public final class MembershipComponents {
             modules = {
                 RestModule.class,
                 ApplicationTestSupportModule.class,
-                Case21RegistrationModule.class,
+                SubstitutedSubclassBindingRegistrationModule.class,
                 Case21SubstitutionModule.class,
                 Case21CatalogModule.class
             })
@@ -421,7 +421,7 @@ public final class MembershipComponents {
     }
 
     /**
-     * T023 L22 restoration (TP-003 case 22): the dedicated {@link Case22RegistrationModule}
+     * T023 L22 restoration (TP-003 case 22): the dedicated {@link UnrelatedCatalogInstanceRegistrationModule}
      * registration, plus the hand-written {@code Case22Resource} entry whose provider returns an
      * unrelated instance.
      */
@@ -430,7 +430,7 @@ public final class MembershipComponents {
             modules = {
                 RestModule.class,
                 ApplicationTestSupportModule.class,
-                Case22RegistrationModule.class,
+                UnrelatedCatalogInstanceRegistrationModule.class,
                 Case22HandWrittenEntryModule.class
             })
     public interface HandWrittenEntryComponent extends Provisions {

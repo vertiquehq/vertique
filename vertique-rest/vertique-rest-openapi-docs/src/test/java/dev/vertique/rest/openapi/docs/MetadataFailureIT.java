@@ -15,9 +15,9 @@ import dev.vertique.rest.openapi.docs.fixture.metadata.it.failure.ExamplesApi;
 import dev.vertique.rest.openapi.docs.fixture.metadata.it.failure.ExamplesResource;
 import dev.vertique.rest.openapi.docs.fixture.metadata.it.failure.SearchApi;
 import dev.vertique.rest.openapi.docs.fixture.metadata.it.failure.SearchResource;
-import dev.vertique.rest.openapi.docs.fixture.startup.StartupDeployments;
-import dev.vertique.rest.openapi.docs.fixture.startup.StartupDeployments.Outcome;
-import io.vertx.core.Future;
+import dev.vertique.rest.openapi.docs.fixture.support.Futures;
+import dev.vertique.rest.openapi.docs.fixture.support.StartupDeployments;
+import dev.vertique.rest.openapi.docs.fixture.support.StartupDeployments.Outcome;
 import io.vertx.core.Verticle;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
@@ -26,7 +26,6 @@ import io.vertx.ext.web.client.HttpResponse;
 import io.vertx.ext.web.client.WebClient;
 import io.vertx.junit5.VertxExtension;
 import java.util.List;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 import org.junit.jupiter.api.AfterAll;
@@ -97,11 +96,11 @@ public class MetadataFailureIT {
         Outcome location = deploy(() -> DaggerMetadataFailureTestComponents_SearchComponent.factory()
                 .create(searchEnabled)
                 .httpVerticle());
-        undeploy(location);
+        StartupDeployments.undeployAndClear(vertx, location);
         Outcome reference = deploy(() -> DaggerMetadataFailureTestComponents_ExamplesComponent.factory()
                 .create(examplesEnabled)
                 .httpVerticle());
-        undeploy(reference);
+        StartupDeployments.undeployAndClear(vertx, reference);
         print("location", location);
         print("reference", reference);
 
@@ -114,16 +113,21 @@ public class MetadataFailureIT {
         try {
             if (unpublished.failure() == null && unpublished.port() != null) {
                 int port = unpublished.port();
-                HttpResponse<Buffer> search = await(client.get(
-                                port, HOST, SearchApi.PATH + SearchResource.ROUTE + "?" + SearchResource.QUERY + "=x")
-                        .send());
+                HttpResponse<Buffer> search = Futures.await(
+                        client.get(
+                                        port,
+                                        HOST,
+                                        SearchApi.PATH + SearchResource.ROUTE + "?" + SearchResource.QUERY + "=x")
+                                .send(),
+                        StartupDeployments.BOUND);
                 answered = search.statusCode();
                 echoed = search.bodyAsString();
-                documentStatus =
-                        await(client.get(port, HOST, documentUrl).send()).statusCode();
+                documentStatus = Futures.await(
+                                client.get(port, HOST, documentUrl).send(), StartupDeployments.BOUND)
+                        .statusCode();
             }
         } finally {
-            undeploy(unpublished);
+            StartupDeployments.undeployAndClear(vertx, unpublished);
         }
 
         Integer answeredStatus = answered;
@@ -133,19 +137,19 @@ public class MetadataFailureIT {
         // echoing none of the values
         List<Executable> checks = List.of(
                 () -> assertRefused(
-                        "(a) @Parameter.in", location, SearchApi.PATH, SearchResource.OPERATION_ID, LOCATION_ATTRIBUTE),
+                        "@Parameter.in", location, SearchApi.PATH, SearchResource.OPERATION_ID, LOCATION_ATTRIBUTE),
                 () -> assertRefused(
-                        "(b) @ExampleObject.ref",
+                        "@ExampleObject.ref",
                         reference,
                         ExamplesApi.PATH,
                         ExamplesResource.OPERATION_ID,
                         REFERENCE_ATTRIBUTE),
                 // Then: (c) deploys, answers its success status, and no docs route answers the document URL
-                () -> assertNull(unpublished.failure(), "(c) the composition deploys: " + unpublished.failure()),
-                () -> assertNotNull(unpublished.port(), "(c) a port is published"),
-                () -> assertEquals(200, answeredStatus, "(c) GET /search?q=x answers its success status"),
-                () -> assertEquals("x", echoedBody, "(c) the operation binds the query unchanged"),
-                () -> assertEquals(404, documentRouteStatus, "(c) no docs route answers " + documentUrl));
+                () -> assertNull(unpublished.failure(), "the composition deploys: " + unpublished.failure()),
+                () -> assertNotNull(unpublished.port(), "a port is published"),
+                () -> assertEquals(200, answeredStatus, "GET /search?q=x answers its success status"),
+                () -> assertEquals("x", echoedBody, "the operation binds the query unchanged"),
+                () -> assertEquals(404, documentRouteStatus, "no docs route answers " + documentUrl));
         assertAll("metadata failure compositions", checks);
     }
 
@@ -171,28 +175,9 @@ public class MetadataFailureIT {
         System.out.println("FAILURE " + label + ": " + (failure == null ? null : failure.getMessage()));
     }
 
-    private static <T> T await(Future<T> future) throws Exception {
-        try {
-            return future.toCompletionStage()
-                    .toCompletableFuture()
-                    .get(StartupDeployments.BOUND.toMillis(), TimeUnit.MILLISECONDS);
-        } catch (ExecutionException failed) {
-            throw new AssertionError("the request failed", failed.getCause());
-        }
-    }
-
     /** Clears the {@code vertique} local map and deploys a verticle supplier. */
     private static Outcome deploy(Supplier<Verticle> verticles) throws Exception {
         vertx.sharedData().getLocalMap(StartupDeployments.LOCAL_MAP).clear();
         return StartupDeployments.deploy(vertx, verticles);
-    }
-
-    /** Undeploys a successful deployment, if any, and clears the {@code vertique} local map. */
-    private static void undeploy(Outcome outcome) throws Exception {
-        try {
-            StartupDeployments.undeploy(vertx, outcome);
-        } finally {
-            vertx.sharedData().getLocalMap(StartupDeployments.LOCAL_MAP).clear();
-        }
     }
 }

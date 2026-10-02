@@ -14,8 +14,9 @@ import dev.vertique.rest.openapi.docs.fixture.conformance.hidden.scan.HiddenInte
 import dev.vertique.rest.openapi.docs.fixture.conformance.hidden.scan.HiddenTypeResource;
 import dev.vertique.rest.openapi.docs.fixture.conformance.hidden.scan.MixedMethodsResource;
 import dev.vertique.rest.openapi.docs.fixture.conformance.hidden.scan.PartlyHiddenInterface;
-import dev.vertique.rest.openapi.docs.fixture.conformance.support.Deployments;
-import dev.vertique.rest.openapi.docs.fixture.conformance.support.DocumentRequests;
+import dev.vertique.rest.openapi.docs.fixture.support.Deployments;
+import dev.vertique.rest.openapi.docs.fixture.support.DocumentRequests;
+import dev.vertique.rest.openapi.docs.fixture.support.Futures;
 import io.swagger.v3.jaxrs2.Reader;
 import io.swagger.v3.jaxrs2.integration.JaxrsAnnotationScanner;
 import io.swagger.v3.oas.integration.SwaggerConfiguration;
@@ -32,6 +33,7 @@ import io.vertx.ext.web.client.HttpResponse;
 import io.vertx.ext.web.client.WebClient;
 import io.vertx.junit5.VertxExtension;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -72,6 +74,9 @@ import org.junit.jupiter.api.function.Executable;
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 60, unit = TimeUnit.SECONDS)
 public class HiddenOperationMavenParityIT {
+
+    /** The longest one deployment, request, or undeployment is awaited. */
+    private static final Duration WAIT = Duration.ofSeconds(5);
 
     private static final String HOST = "127.0.0.1";
 
@@ -128,18 +133,19 @@ public class HiddenOperationMavenParityIT {
         List<RouteResult> routeResults;
         try {
             int port = Deployments.deployAndReadPort(
-                    vertx, component::httpVerticle, new DeploymentOptions(), deploymentIds);
+                    vertx, component::httpVerticle, new DeploymentOptions(), deploymentIds, WAIT);
             DocumentRequests.Answer document = DocumentRequests.get(
                     client,
                     port,
                     DocsConfigs.DEFAULT_APIDOCS_PATH + "/" + HiddenParityApi.NAME + "/openapi.json",
-                    null);
+                    null,
+                    WAIT);
             assertEquals(200, document.status(), () -> "the runtime document: " + text(document.body()));
             runtime = runtimeOperations(new JsonObject(Buffer.buffer(document.body())), HiddenParityApi.PATH);
             routeResults = requestHiddenRoutes(client, port);
         } finally {
             client.close();
-            Deployments.undeployAll(vertx, deploymentIds);
+            Deployments.undeployAll(vertx, deploymentIds, WAIT);
         }
 
         // ... and the plugin's discovery scans the package, and the reader reads what it found.
@@ -287,7 +293,7 @@ public class HiddenOperationMavenParityIT {
         List<RouteResult> results = new ArrayList<>();
         for (HiddenRoute route : hiddenRoutes()) {
             HttpRequest<Buffer> request = client.request(route.method(), port, HOST, route.uri());
-            HttpResponse<Buffer> response = Deployments.await(request.send());
+            HttpResponse<Buffer> response = Futures.await(request.send(), WAIT);
             Buffer body = response.body();
             results.add(new RouteResult(
                     route.toString(),

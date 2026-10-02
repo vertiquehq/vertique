@@ -251,40 +251,40 @@ class ResponseAssemblyTest {
 
     static Stream<Arguments> attributeCases() {
         return Stream.of(
-                attributeCase("(h) every honored attribute publishes", AttributeCase.honored("honored")),
+                attributeCase("every honored attribute publishes", AttributeCase.honored("honored")),
                 attributeCase(
-                        "(o1) @ApiResponse.ref is omitted with a warning",
+                        "@ApiResponse.ref is omitted with a warning",
                         AttributeCase.omitted("omittedRef", false, RESPONSE_REF)),
                 attributeCase(
-                        "(o2) @ApiResponse.links is omitted with a warning",
+                        "@ApiResponse.links is omitted with a warning",
                         AttributeCase.omitted("omittedLinks", false, RESPONSE_LINKS)),
                 attributeCase(
-                        "(o3) @Content.encoding is omitted with a warning",
+                        "@Content.encoding is omitted with a warning",
                         AttributeCase.omitted("omittedEncoding", false, CONTENT_ENCODING)),
                 attributeCase(
-                        "(o4) @Schema.maxProperties is omitted with a warning",
+                        "@Schema.maxProperties is omitted with a warning",
                         AttributeCase.omitted("omittedSchemaMaxProperties", false, SCHEMA_MAX_PROPERTIES)),
                 attributeCase(
-                        "(o5) @ArraySchema.minItems is omitted with a warning",
+                        "@ArraySchema.minItems is omitted with a warning",
                         AttributeCase.omitted("omittedArraySchemaMinItems", true, ARRAY_SCHEMA_MIN_ITEMS)),
                 attributeCase(
-                        "(o6) @Header.ref is omitted with a warning",
+                        "@Header.ref is omitted with a warning",
                         AttributeCase.omitted("omittedHeaderRef", false, HEADER_REF)),
                 attributeCase(
-                        "(o7) an extension not named x- is omitted with a warning",
+                        "an extension not named x- is omitted with a warning",
                         AttributeCase.omitted("omittedExtensionName", false, RESPONSE_EXTENSIONS)),
                 attributeCase(
-                        "(o8) all seven omitted attributes share one warning",
+                        "all seven omitted attributes share one warning",
                         AttributeCase.omitted("omittedAll", true, OMITTED_ATTRIBUTES.toArray(String[]::new))),
                 attributeCase(
-                        "(f1) a blank example name fails",
+                        "a blank example name fails",
                         AttributeCase.failing("failingBlankExampleName", "200", "@ExampleObject.name")),
                 attributeCase(
-                        "(f2) useReturnTypeSchema on a Response return fails",
+                        "useReturnTypeSchema on a Response return fails",
                         AttributeCase.failing(
                                 "failingUseReturnTypeSchemaOnResponse", "201", "@ApiResponse.useReturnTypeSchema")),
                 attributeCase(
-                        "(f3) an example reference fails",
+                        "an example reference fails",
                         AttributeCase.failing("failingExampleRef", "200", "@ExampleObject.ref")));
     }
 
@@ -448,16 +448,14 @@ class ResponseAssemblyTest {
         JsonNode distinctDocument = assemble(CLASSES, distinct).rendering().jsonTree();
 
         // Then
+        assertAll("an exact duplicate fails publication", () -> assertDuplicateHeaderFailure(exactFailure, "dupExact"));
         assertAll(
-                "(a) an exact duplicate fails publication",
-                () -> assertDuplicateHeaderFailure(exactFailure, "dupExact"));
-        assertAll(
-                "(b) a name differing only in ASCII case fails publication",
+                "a name differing only in ASCII case fails publication",
                 () -> assertDuplicateHeaderFailure(caseFailure, "dupCase"));
         assertEquals(
                 List.of("X-Rate", "X-Limit"),
                 responseKeys(response(distinctDocument, "distinct", "200").path("headers")),
-                "(c) distinct names publish in declaration order");
+                "distinct names publish in declaration order");
     }
 
     private static void assertDuplicateHeaderFailure(RestConfigurationException failure, String operationId) {
@@ -495,7 +493,7 @@ class ResponseAssemblyTest {
 
         // Then
         assertAll(
-                "(a) the method's 404 wins, the class's 500 joins, the method's 200 keeps the inferred content",
+                "the method's 404 wins, the class's 500 joins, the method's 200 keeps the inferred content",
                 () -> assertEquals(List.of("200", "404", "500"), responseKeys(responses(documentA, "a"))),
                 () -> assertEquals(
                         "Method OK",
@@ -512,7 +510,7 @@ class ResponseAssemblyTest {
                 () -> assertEquals(Set.of("a.response"), componentKeys(documentA)),
                 () -> assertComponentIsGenerated(documentA, "a.response", DEFAULT_PROFILE, Thing.class));
         assertAll(
-                "(b) the class's responses replace the inferred one",
+                "the class's responses replace the inferred one",
                 () -> assertEquals(List.of("404", "500"), responseKeys(responses(documentB, "b"))),
                 () -> assertEquals(
                         "Class missing",
@@ -525,7 +523,7 @@ class ResponseAssemblyTest {
                 () -> assertFalse(hasComponent(documentB, "b.response"), "no b.response component may exist"),
                 () -> assertEquals(Set.of(), componentKeys(documentB)));
         assertAll(
-                "(c) a status declared twice at the class level fails",
+                "a status declared twice at the class level fails",
                 () -> assertTrue(
                         containsWord(duplicate.getMessage(), "readTwice"),
                         () -> "the failure must name the operation: " + duplicate.getMessage()),
@@ -533,12 +531,12 @@ class ResponseAssemblyTest {
                         containsWord(duplicate.getMessage(), "404"),
                         () -> "the failure must name 404: " + duplicate.getMessage()));
         assertAll(
-                "(d) without declared responses the inferred 200 publishes",
+                "without declared responses the inferred 200 publishes",
                 () -> assertEquals(List.of("200"), responseKeys(responses(documentD, "d"))),
                 () -> assertEquals(
                         Map.of(JSON_MEDIA_TYPE, "d.response"), contentRefs(response(documentD, "d", "200"))));
         assertAll(
-                "two assemblies of (a) give identical bytes",
+                "two assemblies of the merged class and method responses give identical bytes",
                 () -> assertArrayEquals(first.json(), second.json(), "the JSON bytes differ"),
                 () -> assertArrayEquals(first.yaml(), second.yaml(), "the YAML bytes differ"));
     }
@@ -778,7 +776,7 @@ class ResponseAssemblyTest {
                     Rendering rendering = assemble(CATALOG, getItem).rendering();
                     JsonNode document = rendering.jsonTree();
                     assertAll(
-                            "(a) a plain entity's 200 keeps the inferred content, its 404 none",
+                            "a plain entity's 200 keeps the inferred content, its 404 none",
                             () -> assertEquals(List.of("200", "404"), responseKeys(responses(document, "getItem"))),
                             () -> assertEquals(
                                     "The catalog item",
@@ -806,7 +804,7 @@ class ResponseAssemblyTest {
                     Rendering rendering = assemble(CATALOG, listItems).rendering();
                     JsonNode document = rendering.jsonTree();
                     assertAll(
-                            "(b) the 2XX range keeps the inferred list content",
+                            "the 2XX range keeps the inferred list content",
                             () -> assertEquals(List.of("2XX"), responseKeys(responses(document, "listItems"))),
                             () -> assertEquals(
                                     "Some items",
@@ -826,7 +824,7 @@ class ResponseAssemblyTest {
                     JsonNode document = rendering.jsonTree();
                     JsonNode ok = response(document, "readNotes", "200");
                     assertAll(
-                            "(c) a String's 200 keeps its raw-text media type without a schema",
+                            "a String's 200 keeps its raw-text media type without a schema",
                             () -> assertEquals(List.of("200"), responseKeys(responses(document, "readNotes"))),
                             () -> assertEquals("Notes", ok.path("description").asText()),
                             () -> assertEquals(List.of("text/plain"), orderedFieldNames(ok.path("content"))),
@@ -841,18 +839,18 @@ class ResponseAssemblyTest {
                         "deleteItem",
                         "200",
                         "Deleted",
-                        "(d) a void return's 200 publishes without content"),
+                        "a void return's 200 publishes without content"),
                 () -> assertDeclaredWithoutContent(
                         assemble(CATALOG, getDynamic).rendering(),
                         "getDynamic",
                         "200",
                         "Dynamic",
-                        "(e) a Response return's 200 publishes without content"),
+                        "a Response return's 200 publishes without content"),
                 () -> {
                     Rendering rendering = assemble(CATALOG, getView).rendering();
                     JsonNode document = rendering.jsonTree();
                     assertAll(
-                            "(f) declared content wins over the inferred content",
+                            "declared content wins over the inferred content",
                             () -> assertEquals(List.of("200"), responseKeys(responses(document, "getView"))),
                             () -> assertEquals(
                                     "A view",
@@ -875,7 +873,7 @@ class ResponseAssemblyTest {
                 () -> {
                     Rendering rendering = assemble(CATALOG, touchItem).rendering();
                     assertDeclaredWithoutContent(
-                            rendering, "touchItem", "204", "Touched", "(g) 204 on an inferable return gets no content");
+                            rendering, "touchItem", "204", "Touched", "204 on an inferable return gets no content");
                     assertFalse(
                             hasComponent(rendering.jsonTree(), "touchItem.response"),
                             "no touchItem.response component may exist");
