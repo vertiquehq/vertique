@@ -8,6 +8,7 @@ import static dev.vertique.rest.openapi.docs.ContractReferences.display;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import dev.vertique.rest.core.RestConfigurationException;
+import dev.vertique.rest.openapi.docs.ContractReferences.Hop;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
@@ -27,7 +28,7 @@ import java.util.stream.Collectors;
  * Checks the parsed contract an application serves as its document against the routes of its mount.
  *
  * <p>The root must be an object whose {@code openapi} member is a string {@code 3.0.<n>} or {@code
- * 3.1.<n>}. A literal walk of the whole tree then refuses every string {@code $ref} that does not
+ * 3.1.<n>}; otherwise that one violation is reported and no other check runs. A literal walk of the whole tree then refuses every string {@code $ref} that does not
  * start with {@code #/} and every member named {@code operationRef} or {@code $id}, and collects
  * every {@code operationId} member with a string value.
  *
@@ -52,7 +53,9 @@ import java.util.stream.Collectors;
  *
  * <p>Every Operation Object needs a non-blank string {@code operationId}, and no two share one. Every
  * other {@code operationId} member must name a routed operation; when it belongs to a Link Object
- * (a member of a {@code links} object), the Link is checked against that operation's hidden inputs.
+ * (a member of a {@code links} object), the Link is checked against that operation's hidden inputs; a
+ * member of a {@code links} object that is a local {@code $ref} is followed, and the Link it resolves
+ * to is checked the same way at its own pointer.
  * Routed ids include hidden operations; every routed operation that is not hidden must have a route
  * operation. Route operations and the other Operation Objects naming a routed operation are checked
  * against its hidden inputs by {@link ServedContractInputs}. Ids are compared exactly.
@@ -92,6 +95,9 @@ final class ServedContractChecks {
     /** The pointers of every unrouted id, by id. */
     private final Map<String, Set<String>> unrouted = new TreeMap<>();
 
+    /** The members of {@code links} objects that are local references, in the order found. */
+    private final List<Hop> linkReferences = new ArrayList<>();
+
     private ServedContractChecks(
             JsonNode root, String mountPath, List<RoutedOperation> routed, Set<String> violations) {
         this.root = root;
@@ -123,8 +129,9 @@ final class ServedContractChecks {
                     || !openapi.isTextual()
                     || !VERSION.matcher(openapi.textValue()).matches()) {
                 violations.add("member /openapi must be OpenAPI 3.0 or 3.1, a string of the form 3.0.<n> or 3.1.<n>");
+            } else {
+                new ServedContractChecks(contract, mountPath, routed, violations).run();
             }
-            new ServedContractChecks(contract, mountPath, routed, violations).run();
         }
         if (!violations.isEmpty()) {
             throw new RestConfigurationException("The served contract of application '" + display(application)
@@ -137,6 +144,7 @@ final class ServedContractChecks {
         List<IdMember> members = literalWalk();
         findPathItems();
         Set<String> operationIdPointers = checkOperations();
+        Set<String> checkedLinks = new HashSet<>();
         for (IdMember member : members) {
             if (operationIdPointers.contains(member.pointer())) {
                 continue;
@@ -145,7 +153,20 @@ final class ServedContractChecks {
             if (twin == null) {
                 recordUnrouted(member.id(), member.pointer());
             } else if (member.inLinks()) {
+                checkedLinks.add(member.ownerPointer());
                 inputs.checkLink(member.ownerPointer(), member.owner(), twin);
+            }
+        }
+        for (Hop reference : linkReferences) {
+            ContractReferences.Chain chain = references.follow(reference.pointer(), reference.node());
+            if (!chain.complete()) {
+                continue;
+            }
+            Hop link = chain.last();
+            JsonNode id = link.node().get("operationId");
+            RoutedOperation twin = id != null && id.isTextual() ? routedById.get(id.textValue()) : null;
+            if (twin != null && checkedLinks.add(link.pointer())) {
+                inputs.checkLink(link.pointer(), link.node(), twin);
             }
         }
         unrouted.forEach((id, pointers) -> violations.add(
@@ -180,6 +201,7 @@ final class ServedContractChecks {
     /** Refuses non-local references, {@code operationRef}, and {@code $id}; collects string operationIds. */
     private List<IdMember> literalWalk() {
         List<IdMember> members = new ArrayList<>();
+        linkReferences.clear();
         Deque<Frame> stack = new ArrayDeque<>();
         stack.push(new Frame("", root, null, false));
         while (!stack.isEmpty()) {
@@ -190,6 +212,12 @@ final class ServedContractChecks {
                     stack.push(new Frame(child(frame.pointer(), Integer.toString(i)), node.get(i), null, false));
                 }
             } else if (node.isObject()) {
+                JsonNode linkRef = frame.inLinks() ? node.get("$ref") : null;
+                if (linkRef != null
+                        && linkRef.isTextual()
+                        && linkRef.textValue().startsWith("#/")) {
+                    linkReferences.add(new Hop(frame.pointer(), node));
+                }
                 boolean linksObject = "links".equals(frame.memberName());
                 for (Map.Entry<String, JsonNode> entry : node.properties()) {
                     String name = entry.getKey();
