@@ -304,7 +304,8 @@ final class DocsRouterMount implements RouterMount {
 
     /**
      * Answers a request with a stored document form: the strong entity tag, the given
-     * {@code Cache-Control} value, and {@code Vary} when present; {@code 304} with no body when
+     * {@code Cache-Control} value, and {@code Vary} when present, added to any {@code Vary} value an earlier
+     * handler already set; {@code 304} with no body when
      * {@code If-None-Match} matches the entity tag; otherwise the content type and length, and the
      * bytes unless the method is {@code HEAD}.
      *
@@ -314,7 +315,7 @@ final class DocsRouterMount implements RouterMount {
      * @param bytes the bytes of the form
      * @param tag the entity tag of the form
      * @param cacheControl the {@code Cache-Control} value of the response
-     * @param vary the {@code Vary} value of the response, empty when it carries none
+     * @param vary the {@code Vary} value to add to the response, empty when it adds none
      */
     static void write(
             RoutingContext ctx,
@@ -327,7 +328,7 @@ final class DocsRouterMount implements RouterMount {
         String entityTag = tag.apply(document);
         HttpServerResponse response =
                 ctx.response().putHeader("ETag", entityTag).putHeader("Cache-Control", cacheControl);
-        vary.ifPresent(value -> response.putHeader("Vary", value));
+        vary.ifPresent(value -> response.headers().add("Vary", value));
         if (matches(ctx.request().headers().getAll("If-None-Match"), entityTag)) {
             response.setStatusCode(304).end();
             return;
