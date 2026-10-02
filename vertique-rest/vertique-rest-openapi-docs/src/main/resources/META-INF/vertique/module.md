@@ -255,8 +255,9 @@ startup from the scheme handler's `openApiDescription()`:
 | API key in a cookie | `Cookie` |
 | API key in the query, or mutual TLS | none |
 
-The problem responses of a protected document carry `Cache-Control: no-store` and neither `ETag` nor
-`Vary`.
+The problem responses of a protected document carry `Cache-Control: no-store`; the document route
+adds neither `ETag` nor `Vary` to a problem response (other handlers, such as CORS, may add their
+own headers).
 
 ### Several server instances
 
@@ -344,11 +345,13 @@ plus `@RolesAllowed(rolesAllowed)`, or plus `@Authorized` when `rolesAllowed` is
 
 The route runs, in order:
 
-1. the authentication handler of the scheme;
-2. every registered `OperationHandlerContributor`, application contributors included, in the order
+1. the completion recorder, which records the synthetic operation as the request's operation (see
+   [Events and metrics](#events-and-metrics));
+2. the authentication handler of the scheme;
+3. every registered `OperationHandlerContributor`, application contributors included, in the order
    resource routes use (phase, then priority), each given the operation's effective policy and no
    required action;
-3. the document handler.
+4. the document handler.
 
 The document handler evaluates the entity tag and `If-None-Match` only after the whole chain has
 passed, so a denied caller never learns the entity tag or gets a `304`.
@@ -374,7 +377,10 @@ see the request.
 
 Authentication runs before any other check, so an unauthenticated request for an enabled
 protected document's name is answered `401`, which discloses that the name exists. A name without an
-enabled document has no route and falls through to the later mounts.
+enabled document has no route and falls through to the later mounts. Methods other than `GET` and
+`HEAD` on a protected document URL are not answered by the document route: they continue to later
+mounts like a request for an unknown name, without the security chain, and are answered as those
+mounts answer them. No document content is reachable that way.
 
 ### Events and metrics
 
@@ -394,7 +400,9 @@ router. The documentation router is left with no route, and the server never lis
 
 - **Unknown scheme or no enforcement.** `securityScheme` names no registered
   `SecuritySchemeHandler`, or authentication enforcement is not installed. Checked before any
-  route is registered; each message starts with `Application '<name>' (declared by <interface>): `.
+  route is registered; each violation starts with
+  `Application '<name>' (declared by <interface>): `, and several violations are listed one per
+  line under `Invalid @ApiDocs values:`.
 - **No authentication handler.** The scheme's handler registered no authentication handler, or a
   contributor rejects the operation while its route is built. The message starts with
   `Protected API document of application '<name>' (access policy: @ApiDocs on <interface>)`, and
@@ -1991,7 +1999,8 @@ and its message can quote that value.
 | `ApiDocsInstalled` | Bound whenever the module is listed, whatever the configuration, so `vertique-rest-jaxrs` does not log that no documentation route is published for `@ApiDocs` applications, even with `apidocs.enabled` `false` |
 
 The module requires `@VertxConfig JsonObject`, `ConfigParser` (from `ConfigParsingModule`),
-`JaxRsConfig` and `RestApplications` (both from `RestModule` in `dev.vertique:vertique-rest-jaxrs`),
+`JaxRsConfig`, `RestApplications`, and `SyntheticOperations` (all bound by `RestModule` in
+`dev.vertique:vertique-rest-jaxrs`),
 and the component's multibound sets of `RequestValidationStrategy`, `SecuritySchemeHandler`,
 `MountCustomizer`, `Middleware`, `RouterLifecycleHook`, and `RequestInterceptor`, plus an optional
 `AuthEnforcementCapability`, the optional `OperationSchemaSource` that `RestModule` declares, the
