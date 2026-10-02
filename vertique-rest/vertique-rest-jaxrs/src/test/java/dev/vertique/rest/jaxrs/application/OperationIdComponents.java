@@ -16,10 +16,10 @@ import dev.vertique.rest.jaxrs.application.conflict.opid.OpidHandBuiltTwoMountMo
 import dev.vertique.rest.jaxrs.application.conflict.opid.OpidInactiveApplicationModule;
 import dev.vertique.rest.jaxrs.application.conflict.opid.OpidResourcesModule;
 import dev.vertique.rest.jaxrs.application.conflict.opid.OpidZeroDeclarationResourcesModule;
-import dev.vertique.rest.jaxrs.application.conflict.opid.tp009.Tp009DistinctContractRegistrationModule;
-import dev.vertique.rest.jaxrs.application.conflict.opid.tp009.Tp009ManualResourcesModule;
-import dev.vertique.rest.jaxrs.application.conflict.opid.tp009.Tp009SharedContractRegistrationModule;
-import dev.vertique.rest.jaxrs.application.conflict.opid.tp009.Tp009WebValidationRegistrationModule;
+import dev.vertique.rest.jaxrs.application.conflict.opid.crossmount.CrossMountDistinctContractRegistrationModule;
+import dev.vertique.rest.jaxrs.application.conflict.opid.crossmount.CrossMountManualResourcesModule;
+import dev.vertique.rest.jaxrs.application.conflict.opid.crossmount.CrossMountSharedContractRegistrationModule;
+import dev.vertique.rest.jaxrs.application.conflict.opid.crossmount.CrossMountWebValidationRegistrationModule;
 import dev.vertique.rest.jaxrs.application.conflict.spy.ConflictSpyModule;
 import dev.vertique.rest.jaxrs.application.strategy.OpenApiContractStrategyModule;
 import dev.vertique.rest.jaxrs.application.strategy.WebValidationStrategyModule;
@@ -250,8 +250,8 @@ public final class OperationIdComponents {
 
     /**
      * TP-009 row (a) (T023 contract): {@code public} and {@code partner}, active, listing
-     * {@link dev.vertique.rest.jaxrs.application.conflict.opid.tp009.PublicListResource} and
-     * {@link dev.vertique.rest.jaxrs.application.conflict.opid.tp009.PartnerListResource}, whose
+     * {@link dev.vertique.rest.jaxrs.application.conflict.opid.crossmount.PublicListResource} and
+     * {@link dev.vertique.rest.jaxrs.application.conflict.opid.crossmount.PartnerListResource}, whose
      * distinct owners' {@code list()} operations collide, under the {@code web-validation}
      * pass-through strategy.
      */
@@ -260,8 +260,8 @@ public final class OperationIdComponents {
             modules = {
                 RestModule.class,
                 ApplicationTestSupportModule.class,
-                Tp009WebValidationRegistrationModule.class,
-                Tp009ManualResourcesModule.class,
+                CrossMountWebValidationRegistrationModule.class,
+                CrossMountManualResourcesModule.class,
                 WebValidationStrategyModule.class,
                 ConflictSpyModule.class
             })
@@ -293,8 +293,8 @@ public final class OperationIdComponents {
             modules = {
                 RestModule.class,
                 ApplicationTestSupportModule.class,
-                Tp009DistinctContractRegistrationModule.class,
-                Tp009ManualResourcesModule.class,
+                CrossMountDistinctContractRegistrationModule.class,
+                CrossMountManualResourcesModule.class,
                 OpenApiContractStrategyModule.class,
                 ConflictSpyModule.class
             })
@@ -326,8 +326,8 @@ public final class OperationIdComponents {
             modules = {
                 RestModule.class,
                 ApplicationTestSupportModule.class,
-                Tp009SharedContractRegistrationModule.class,
-                Tp009ManualResourcesModule.class,
+                CrossMountSharedContractRegistrationModule.class,
+                CrossMountManualResourcesModule.class,
                 OpenApiContractStrategyModule.class,
                 ConflictSpyModule.class
             })

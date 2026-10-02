@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
 // SPDX-License-Identifier: EUPL-1.2
 
-package dev.vertique.rest.jaxrs.application.conflict.opid.tp009;
+package dev.vertique.rest.jaxrs.application.conflict.opid.crossmount;
 
 import dagger.Module;
 import dagger.Provides;
@@ -18,9 +18,9 @@ import java.util.List;
  * CO-4 (CX-007): distinct locations do not exempt the collision from the still-global refusal.
  */
 @Module
-public final class Tp009DistinctContractRegistrationModule {
+public final class CrossMountDistinctContractRegistrationModule {
 
-    private Tp009DistinctContractRegistrationModule() {}
+    private CrossMountDistinctContractRegistrationModule() {}
 
     /** {@code public}'s own contract location, distinct from {@link #PARTNER_OPENAPI_PATH}. */
     public static final String PUBLIC_OPENAPI_PATH = "public.yaml";
@@ -30,10 +30,10 @@ public final class Tp009DistinctContractRegistrationModule {
 
     @Provides
     @IntoSet
-    static GeneratedRestApplicationRegistration tp009DistinctContractPublicRegistration(
+    static GeneratedRestApplicationRegistration crossMountDistinctContractPublicRegistration(
             @VertxConfig JsonObject config) {
         return GeneratedRestApplicationRegistration.of(
-                Tp009Apis.PublicApi.class,
+                CrossMountOperationIdApis.PublicApi.class,
                 "public",
                 "/api/public",
                 List.of(PublicListResource.class),
@@ -44,10 +44,10 @@ public final class Tp009DistinctContractRegistrationModule {
 
     @Provides
     @IntoSet
-    static GeneratedRestApplicationRegistration tp009DistinctContractPartnerRegistration(
+    static GeneratedRestApplicationRegistration crossMountDistinctContractPartnerRegistration(
             @VertxConfig JsonObject config) {
         return GeneratedRestApplicationRegistration.of(
-                Tp009Apis.PartnerApi.class,
+                CrossMountOperationIdApis.PartnerApi.class,
                 "partner",
                 "/api/partner",
                 List.of(PartnerListResource.class),

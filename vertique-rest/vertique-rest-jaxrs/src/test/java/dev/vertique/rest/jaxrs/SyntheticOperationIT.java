@@ -109,10 +109,21 @@ public class SyntheticOperationIT {
         }));
     }
 
+    /**
+     * Closes the client, failing the teardown if the close fails. The injected {@link Vertx} is owned
+     * and closed by the extension.
+     *
+     * @throws Exception the first cleanup failure, carrying later ones as suppressed
+     */
     @AfterAll
-    static void tearDown(VertxTestContext ctx) {
-        client.close();
-        vertx.close().onComplete(v -> ctx.completeNow());
+    static void tearDown() throws Exception {
+        CleanupFailures cleanup = new CleanupFailures();
+        cleanup.attempt(() -> {
+            if (client != null) {
+                client.close();
+            }
+        });
+        cleanup.rethrowIfAny();
     }
 
     // --- Outcome parity with the resource twin ---
@@ -331,6 +342,9 @@ public class SyntheticOperationIT {
     private static <T> T await(Future<T> future) {
         try {
             return future.toCompletionStage().toCompletableFuture().get(15, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new AssertionError("interrupted while waiting: " + e.getMessage(), e);
         } catch (Exception e) {
             throw new AssertionError("request failed: " + e.getMessage(), e);
         }

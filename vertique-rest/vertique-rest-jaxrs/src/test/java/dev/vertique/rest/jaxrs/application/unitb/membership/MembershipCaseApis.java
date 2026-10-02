@@ -18,10 +18,10 @@ import dev.vertique.rest.jaxrs.application.unita.membership.DuplicateCatalogReso
  * TP-003's declaring interfaces, one per row of
  * {@code JaxRsApplicationCompositionTest.membershipViolationsFailNamingApplicationAndClass} and its
  * two accepted-row supporting tests, plus the restored step 1 and catalog-instance rows (T023 L22:
- * {@link DuplicateManualApi}, {@link DuplicateCatalogApi}, {@link Case21Api}, {@link Case22Api},
- * {@link NullCatalogEntryApi}). Every interface is registered by exactly one method of
- * {@link MembershipViolationRegistrations} or, for the restored dedicated-component rows, its own
- * single-purpose registration module named after it. Every property-gated row shares
+ * {@link DuplicateManualApi}, {@link DuplicateCatalogApi}, {@link SubstitutedSubclassBindingApi},
+ * {@link UnrelatedCatalogInstanceApi}, {@link NullCatalogEntryApi}). Every interface is registered
+ * by exactly one method of {@link MembershipViolationRegistrations} or, for the restored
+ * dedicated-component rows, its own single-purpose registration module named after it. Every property-gated row shares
  * {@code MembershipComponents.StandardViolationComponent} so exactly one row's registration is
  * active per test invocation (inactive registrations skip membership evaluation entirely,
  * AC-026.2); the always-active dedicated rows each get their own isolated component instead,
@@ -188,8 +188,11 @@ final class MembershipCaseApis {
      * instance's {@code sameSurface} check. Its own dedicated component: the substituted binding
      * would affect every other row's use of {@link Case21Resource}, so none exists.
      */
-    @RestApplication(name = "membership-case21", path = "/membership/case21", resources = Case21Resource.class)
-    interface Case21Api {}
+    @RestApplication(
+            name = "membership-substituted-subclass-binding",
+            path = "/membership/substituted-subclass-binding",
+            resources = Case21Resource.class)
+    interface SubstitutedSubclassBindingApi {}
 
     /**
      * Row (T023 L22 restoration, case 22): the listed class ({@link Case22Resource}) has a
@@ -197,14 +200,17 @@ final class MembershipCaseApis {
      * unrelated type, tripping the catalog instance's {@code sameSurface} check. Its own dedicated
      * component, isolated from {@link NullCatalogEntryApi}'s reuse of the same resource type.
      */
-    @RestApplication(name = "membership-case22", path = "/membership/case22", resources = Case22Resource.class)
-    interface Case22Api {}
+    @RestApplication(
+            name = "membership-unrelated-catalog-instance",
+            path = "/membership/unrelated-catalog-instance",
+            resources = Case22Resource.class)
+    interface UnrelatedCatalogInstanceApi {}
 
     /**
      * Row (T023 L22 restoration, G-07 (b)): reuses {@link Case22Resource} purely for its type and
      * path; its dedicated component's hand-written catalog entry provider always returns
-     * {@code null}. Never shares a component with {@link Case22Api}: two catalog entries for the
-     * same type would trip the step 1 duplicate-catalog-entry check.
+     * {@code null}. Never shares a component with {@link UnrelatedCatalogInstanceApi}: two catalog
+     * entries for the same type would trip the step 1 duplicate-catalog-entry check.
      */
     @RestApplication(
             name = "membership-null-catalog-entry",

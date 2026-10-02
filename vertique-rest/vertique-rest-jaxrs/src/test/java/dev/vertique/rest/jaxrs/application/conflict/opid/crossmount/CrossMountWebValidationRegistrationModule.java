@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
 // SPDX-License-Identifier: EUPL-1.2
 
-package dev.vertique.rest.jaxrs.application.conflict.opid.tp009;
+package dev.vertique.rest.jaxrs.application.conflict.opid.crossmount;
 
 import dagger.Module;
 import dagger.Provides;
@@ -17,22 +17,30 @@ import java.util.List;
  * {@code resolvesOperationsFromMountContract()}).
  */
 @Module
-public final class Tp009WebValidationRegistrationModule {
+public final class CrossMountWebValidationRegistrationModule {
 
-    private Tp009WebValidationRegistrationModule() {}
+    private CrossMountWebValidationRegistrationModule() {}
 
     @Provides
     @IntoSet
-    static GeneratedRestApplicationRegistration tp009WebValidationPublicRegistration(@VertxConfig JsonObject config) {
+    static GeneratedRestApplicationRegistration crossMountWebValidationPublicRegistration(
+            @VertxConfig JsonObject config) {
         return GeneratedRestApplicationRegistration.of(
-                Tp009Apis.PublicApi.class, "public", "/api/public", List.of(PublicListResource.class), false, "", true);
+                CrossMountOperationIdApis.PublicApi.class,
+                "public",
+                "/api/public",
+                List.of(PublicListResource.class),
+                false,
+                "",
+                true);
     }
 
     @Provides
     @IntoSet
-    static GeneratedRestApplicationRegistration tp009WebValidationPartnerRegistration(@VertxConfig JsonObject config) {
+    static GeneratedRestApplicationRegistration crossMountWebValidationPartnerRegistration(
+            @VertxConfig JsonObject config) {
         return GeneratedRestApplicationRegistration.of(
-                Tp009Apis.PartnerApi.class,
+                CrossMountOperationIdApis.PartnerApi.class,
                 "partner",
                 "/api/partner",
                 List.of(PartnerListResource.class),

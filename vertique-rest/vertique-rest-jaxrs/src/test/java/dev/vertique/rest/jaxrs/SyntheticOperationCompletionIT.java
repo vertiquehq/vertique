@@ -68,6 +68,7 @@ public class SyntheticOperationCompletionIT {
     private static final String ROLES_HEADER = "X-Test-Roles";
 
     private static final long COMPLETION_WAIT_SECONDS = 10;
+    private static final long TEARDOWN_TIMEOUT_SECONDS = 15;
 
     private Vertx vertx;
     private WebClient client;
@@ -96,18 +97,25 @@ public class SyntheticOperationCompletionIT {
         client = WebClient.create(vertx, new WebClientOptions().setFollowRedirects(false));
     }
 
-    /** Closes the client, then undeploys the verticle, which closes the server. */
+    /**
+     * Closes the client, then undeploys the verticle, which closes the server, attempting each even if
+     * the other failed, and fails the teardown when either failed or the bounded undeploy did not
+     * complete in time. The injected {@link Vertx} is owned and closed by the extension.
+     *
+     * @throws Exception the first cleanup failure, carrying later ones as suppressed
+     */
     @AfterEach
-    void tearDown() {
-        try {
+    void tearDown() throws Exception {
+        CleanupFailures cleanup = new CleanupFailures();
+        cleanup.attempt(() -> {
             if (client != null) {
                 client.close();
             }
-        } finally {
-            if (deploymentId != null) {
-                await(vertx.undeploy(deploymentId));
-            }
+        });
+        if (deploymentId != null) {
+            cleanup.await(() -> vertx.undeploy(deploymentId), TEARDOWN_TIMEOUT_SECONDS, TimeUnit.SECONDS);
         }
+        cleanup.rethrowIfAny();
     }
 
     @Test
@@ -189,6 +197,9 @@ public class SyntheticOperationCompletionIT {
     private static <T> T await(Future<T> future) {
         try {
             return future.toCompletionStage().toCompletableFuture().get(15, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new AssertionError("interrupted while waiting: " + e.getMessage(), e);
         } catch (Exception e) {
             throw new AssertionError("asynchronous step failed: " + e.getMessage(), e);
         }

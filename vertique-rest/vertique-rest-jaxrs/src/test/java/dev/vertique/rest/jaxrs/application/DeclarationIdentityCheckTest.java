@@ -54,34 +54,40 @@ class DeclarationIdentityCheckTest {
         MismatchedActiveComponent mismatchedActive =
                 DaggerDeclarationIdentityCheckTest_MismatchedActiveComponent.factory()
                         .create(config);
-        RestConfigurationException exA = assertThrows(
-                RestConfigurationException.class, mismatchedActive::routerMounts, "a: declared name must match");
-        assertTrue(exA.getMessage().contains(MismatchedApi.class.getName()), exA.getMessage());
-        assertTrue(exA.getMessage().contains("api"), exA.getMessage());
-        assertTrue(exA.getMessage().contains("other"), exA.getMessage());
+        RestConfigurationException mismatchedActiveFailure = assertThrows(
+                RestConfigurationException.class, mismatchedActive::routerMounts, "declared name must match");
+        assertTrue(
+                mismatchedActiveFailure.getMessage().contains(MismatchedApi.class.getName()),
+                mismatchedActiveFailure.getMessage());
+        assertTrue(mismatchedActiveFailure.getMessage().contains("api"), mismatchedActiveFailure.getMessage());
+        assertTrue(mismatchedActiveFailure.getMessage().contains("other"), mismatchedActiveFailure.getMessage());
 
         // Row (b): the declaring interface carries no @RestApplication at all.
         NoAnnotationComponent noAnnotation = DaggerDeclarationIdentityCheckTest_NoAnnotationComponent.factory()
                 .create(config);
-        RestConfigurationException exB = assertThrows(
-                RestConfigurationException.class, noAnnotation::routerMounts, "b: a missing annotation must fail");
-        assertTrue(exB.getMessage().contains(NoAnnotationApi.class.getName()), exB.getMessage());
+        RestConfigurationException noAnnotationFailure = assertThrows(
+                RestConfigurationException.class, noAnnotation::routerMounts, "a missing annotation must fail");
+        assertTrue(
+                noAnnotationFailure.getMessage().contains(NoAnnotationApi.class.getName()),
+                noAnnotationFailure.getMessage());
 
         // Row (c): the same mismatch as (a), inactive.
         MismatchedInactiveComponent mismatchedInactive =
                 DaggerDeclarationIdentityCheckTest_MismatchedInactiveComponent.factory()
                         .create(config);
-        RestConfigurationException exC = assertThrows(
+        RestConfigurationException mismatchedInactiveFailure = assertThrows(
                 RestConfigurationException.class,
                 mismatchedInactive::routerMounts,
-                "c: the check must run for an inactive registration too");
-        assertTrue(exC.getMessage().contains(MismatchedApi.class.getName()), exC.getMessage());
-        assertTrue(exC.getMessage().contains("api"), exC.getMessage());
-        assertTrue(exC.getMessage().contains("other"), exC.getMessage());
+                "the check must run for an inactive registration too");
+        assertTrue(
+                mismatchedInactiveFailure.getMessage().contains(MismatchedApi.class.getName()),
+                mismatchedInactiveFailure.getMessage());
+        assertTrue(mismatchedInactiveFailure.getMessage().contains("api"), mismatchedInactiveFailure.getMessage());
+        assertTrue(mismatchedInactiveFailure.getMessage().contains("other"), mismatchedInactiveFailure.getMessage());
 
         // Control: the declaring interface's own @RestApplication matches the registration's name.
-        Control18Component control =
-                DaggerDeclarationIdentityCheckTest_Control18Component.factory().create(config);
+        MatchingNameComponent control = DaggerDeclarationIdentityCheckTest_MatchingNameComponent.factory()
+                .create(config);
         assertDoesNotThrow(control::routerMounts, "the control's declared name matches its registration's name");
     }
 
@@ -114,8 +120,8 @@ class DeclarationIdentityCheckTest {
         assertTrue(exNull.getMessage().contains(NullApi.class.getName()), exNull.getMessage());
 
         // Control: "nonesuch" is not reserved.
-        Control19Component control =
-                DaggerDeclarationIdentityCheckTest_Control19Component.factory().create(config);
+        UnreservedNameComponent control = DaggerDeclarationIdentityCheckTest_UnreservedNameComponent.factory()
+                .create(config);
         assertDoesNotThrow(control::routerMounts, "an unreserved name must compose");
     }
 
@@ -195,9 +201,9 @@ class DeclarationIdentityCheckTest {
     }
 
     @Module
-    static final class Control18RegistrationModule {
+    static final class MatchingNameRegistrationModule {
 
-        private Control18RegistrationModule() {}
+        private MatchingNameRegistrationModule() {}
 
         @Provides
         @IntoSet
@@ -246,14 +252,14 @@ class DeclarationIdentityCheckTest {
     }
 
     @Singleton
-    @Component(modules = {RestModule.class, ApplicationTestSupportModule.class, Control18RegistrationModule.class})
-    interface Control18Component {
+    @Component(modules = {RestModule.class, ApplicationTestSupportModule.class, MatchingNameRegistrationModule.class})
+    interface MatchingNameComponent {
 
         Set<RouterMount> routerMounts();
 
         @Component.Factory
         interface Factory {
-            Control18Component create(@BindsInstance @VertxConfig JsonObject config);
+            MatchingNameComponent create(@BindsInstance @VertxConfig JsonObject config);
         }
     }
 
@@ -289,9 +295,9 @@ class DeclarationIdentityCheckTest {
     }
 
     @Module
-    static final class Control19RegistrationModule {
+    static final class UnreservedNameRegistrationModule {
 
-        private Control19RegistrationModule() {}
+        private UnreservedNameRegistrationModule() {}
 
         @Provides
         @IntoSet
@@ -315,14 +321,14 @@ class DeclarationIdentityCheckTest {
     }
 
     @Singleton
-    @Component(modules = {RestModule.class, ApplicationTestSupportModule.class, Control19RegistrationModule.class})
-    interface Control19Component {
+    @Component(modules = {RestModule.class, ApplicationTestSupportModule.class, UnreservedNameRegistrationModule.class})
+    interface UnreservedNameComponent {
 
         Set<RouterMount> routerMounts();
 
         @Component.Factory
         interface Factory {
-            Control19Component create(@BindsInstance @VertxConfig JsonObject config);
+            UnreservedNameComponent create(@BindsInstance @VertxConfig JsonObject config);
         }
     }
 }

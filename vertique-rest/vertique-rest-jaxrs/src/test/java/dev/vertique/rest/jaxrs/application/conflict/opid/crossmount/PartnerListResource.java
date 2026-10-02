@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
 // SPDX-License-Identifier: EUPL-1.2
 
-package dev.vertique.rest.jaxrs.application.conflict.opid.tp009;
+package dev.vertique.rest.jaxrs.application.conflict.opid.crossmount;
 
 import jakarta.inject.Inject;
 import jakarta.ws.rs.GET;
@@ -15,7 +15,7 @@ import jakarta.ws.rs.core.MediaType;
  * {@link PublicListResource#list()}'s, but the two resource classes are unrelated, so they have no
  * common owner; see {@link PublicListResource}.
  */
-@Path("/tp009-partner-list")
+@Path("/cross-mount-partner-list")
 public class PartnerListResource {
 
     /** Public {@code @Inject} constructor. */
@@ -23,13 +23,13 @@ public class PartnerListResource {
     public PartnerListResource() {}
 
     /**
-     * Handles {@code GET /tp009-partner-list}, whose default operationId is {@code "list"}.
+     * Handles {@code GET /cross-mount-partner-list}, whose default operationId is {@code "list"}.
      *
-     * @return the fixed body {@code "tp009-partner-list"}
+     * @return the fixed body {@code "cross-mount-partner-list"}
      */
     @GET
     @Produces(MediaType.TEXT_PLAIN)
     public String list() {
-        return "tp009-partner-list";
+        return "cross-mount-partner-list";
     }
 }

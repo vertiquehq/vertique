@@ -33,9 +33,9 @@ import dev.vertique.rest.jaxrs.application.conflict.opid.OpidHandBuiltTwoMountMo
 import dev.vertique.rest.jaxrs.application.conflict.opid.OpidHandBuiltTwoResource;
 import dev.vertique.rest.jaxrs.application.conflict.opid.OpidInheritedFirstResource;
 import dev.vertique.rest.jaxrs.application.conflict.opid.OpidInheritedSecondResource;
-import dev.vertique.rest.jaxrs.application.conflict.opid.tp009.PartnerListResource;
-import dev.vertique.rest.jaxrs.application.conflict.opid.tp009.PublicListResource;
-import dev.vertique.rest.jaxrs.application.conflict.opid.tp009.Tp009SharedContractRegistrationModule;
+import dev.vertique.rest.jaxrs.application.conflict.opid.crossmount.CrossMountSharedContractRegistrationModule;
+import dev.vertique.rest.jaxrs.application.conflict.opid.crossmount.PartnerListResource;
+import dev.vertique.rest.jaxrs.application.conflict.opid.crossmount.PublicListResource;
 import dev.vertique.rest.jaxrs.application.conflict.paths.PathConflictApis;
 import dev.vertique.rest.jaxrs.application.conflict.paths.RootResource;
 import dev.vertique.rest.jaxrs.application.conflict.spy.CountingRouterLifecycleHook;
@@ -427,7 +427,7 @@ public class JaxRsApplicationMountConflictIT {
                                 "jaxrs.validationStrategy",
                                 "openapi-contract",
                                 "jaxrs.openapiPath",
-                                Tp009SharedContractRegistrationModule.SHARED_OPENAPI_PATH)),
+                                CrossMountSharedContractRegistrationModule.SHARED_OPENAPI_PATH)),
                         true,
                         List.of(
                                 PublicListResource.class.getName(),

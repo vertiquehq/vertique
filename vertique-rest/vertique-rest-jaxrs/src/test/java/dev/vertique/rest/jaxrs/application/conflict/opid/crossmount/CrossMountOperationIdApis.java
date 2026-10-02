@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
 // SPDX-License-Identifier: EUPL-1.2
 
-package dev.vertique.rest.jaxrs.application.conflict.opid.tp009;
+package dev.vertique.rest.jaxrs.application.conflict.opid.crossmount;
 
 import dev.vertique.rest.core.application.RestApplication;
 
@@ -14,9 +14,9 @@ import dev.vertique.rest.core.application.RestApplication;
  * {@code openapiPath} differs per row without changing the declaring interfaces. Never implemented:
  * native composition reads each interface's registration directly.
  */
-public final class Tp009Apis {
+public final class CrossMountOperationIdApis {
 
-    private Tp009Apis() {}
+    private CrossMountOperationIdApis() {}
 
     /** Lists only {@link PublicListResource}. */
     @RestApplication(name = "public", path = "/api/public", resources = PublicListResource.class)

@@ -13,30 +13,31 @@ import io.vertx.core.json.JsonObject;
 import java.util.List;
 
 /**
- * T023 L22 restoration (TP-003 case 21): registers {@link MembershipCaseApis.Case21Api},
+ * T023 L22 restoration (TP-003 case 21): registers {@link MembershipCaseApis.SubstitutedSubclassBindingApi},
  * unconditionally active. Paired, in its own dedicated Dagger component, with
  * {@code Case21CatalogModule} and {@code Case21SubstitutionModule}, whose substituted binding
  * returns a {@code Case21SubclassResource} instance for every {@code Provider<Case21Resource>}
  * request in that component — a substitution no other row's component may see.
  */
 @Module
-public final class Case21RegistrationModule {
+public final class SubstitutedSubclassBindingRegistrationModule {
 
-    private Case21RegistrationModule() {}
+    private SubstitutedSubclassBindingRegistrationModule() {}
 
     /**
-     * Registers {@link MembershipCaseApis.Case21Api}, unconditionally active.
+     * Registers {@link MembershipCaseApis.SubstitutedSubclassBindingApi}, unconditionally active.
      *
      * @param config the application configuration (unused; this fixture is unconditional)
      * @return the registration, always active
      */
     @Provides
     @IntoSet
-    static GeneratedRestApplicationRegistration case21ApplicationRegistration(@VertxConfig JsonObject config) {
+    static GeneratedRestApplicationRegistration substitutedSubclassBindingApplicationRegistration(
+            @VertxConfig JsonObject config) {
         return GeneratedRestApplicationRegistration.of(
-                MembershipCaseApis.Case21Api.class,
-                "membership-case21",
-                "/membership/case21",
+                MembershipCaseApis.SubstitutedSubclassBindingApi.class,
+                "membership-substituted-subclass-binding",
+                "/membership/substituted-subclass-binding",
                 List.of(Case21Resource.class),
                 false,
                 "",

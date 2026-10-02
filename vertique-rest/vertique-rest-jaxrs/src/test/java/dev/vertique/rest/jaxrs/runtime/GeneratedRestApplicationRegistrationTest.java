@@ -189,7 +189,7 @@ class GeneratedRestApplicationRegistrationTest {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("factoryCases")
-    @DisplayName("TP-009 — the registration factory re-checks name, path, and membership, failing closed")
+    @DisplayName("The registration factory re-checks name, path, and membership, failing closed")
     void factoryRechecksNamePathAndMembership(FactoryCase testCase) {
         testCase.verification().run();
     }
@@ -204,7 +204,7 @@ class GeneratedRestApplicationRegistrationTest {
     };
 
     @Test
-    @DisplayName("TP-011 — the registration factory's signature is pinned for generated code")
+    @DisplayName("The registration factory's signature is pinned for generated code")
     void factorySignatureIsPinnedForGeneratedCode() throws NoSuchMethodException {
         Class<GeneratedRestApplicationRegistration> type = GeneratedRestApplicationRegistration.class;
 

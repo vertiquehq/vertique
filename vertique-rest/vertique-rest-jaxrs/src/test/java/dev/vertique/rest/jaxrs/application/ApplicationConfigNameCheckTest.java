@@ -44,57 +44,68 @@ class ApplicationConfigNameCheckTest {
     @DisplayName("An unknown jaxrs.applications name fails startup naming the configuration path, never the"
             + " configured value, and never before checking known names first")
     void unknownApplicationNameFailsNamingThePath() {
-        // Row (a): every configured name matches a declared registration (public active, mgmt inactive) — composes.
-        JsonObject rowA = config(
+        // Known names only: every configured name matches a declared registration (public active,
+        // mgmt inactive) — composes.
+        JsonObject knownNames = config(
                 "unitb.publicApplication.active", true,
                 "jaxrs.applications.public.openapiPath", "zq7-a.yaml",
                 "jaxrs.applications.mgmt.openapiPath", "zq7-a.yaml");
-        StandardComponent componentA = standardComponent(rowA);
-        assertDoesNotThrow(componentA::routerMounts, "a: every configured name matches a registration");
+        StandardComponent knownNamesComponent = standardComponent(knownNames);
+        assertDoesNotThrow(knownNamesComponent::routerMounts, "every configured name matches a registration");
 
-        // Row (a) legitimately constructs public's resources; reset before rows (b) to (d) assert
-        // that nothing is constructed before an unknown-name failure.
+        // The known-names composition legitimately constructs public's resources; reset before the
+        // unknown-name compositions assert that nothing is constructed before their failure.
         resetCounters();
 
-        // Row (b): adds an unknown "ghost" entry beside (a)'s known ones.
-        JsonObject rowB = config(
+        // One unknown name: adds an unknown "ghost" entry beside the known ones.
+        JsonObject oneUnknownName = config(
                 "unitb.publicApplication.active", true,
                 "jaxrs.applications.public.openapiPath", "zq7-a.yaml",
                 "jaxrs.applications.mgmt.openapiPath", "zq7-a.yaml",
                 "jaxrs.applications.ghost.openapiPath", "zq7-secret.yaml");
-        StandardComponent componentB = standardComponent(rowB);
-        RestConfigurationException exB = assertThrows(
-                RestConfigurationException.class, componentB::routerMounts, "b: 'ghost' matches no registration");
-        assertTrue(exB.getMessage().contains("jaxrs.applications.ghost"), exB.getMessage());
-        assertFalse(exB.getMessage().contains("zq7"), "must never echo a configured value: " + exB.getMessage());
+        StandardComponent oneUnknownNameComponent = standardComponent(oneUnknownName);
+        RestConfigurationException oneUnknownFailure = assertThrows(
+                RestConfigurationException.class,
+                oneUnknownNameComponent::routerMounts,
+                "'ghost' matches no registration");
+        assertTrue(oneUnknownFailure.getMessage().contains("jaxrs.applications.ghost"), oneUnknownFailure.getMessage());
+        assertFalse(
+                oneUnknownFailure.getMessage().contains("zq7"),
+                "must never echo a configured value: " + oneUnknownFailure.getMessage());
         assertNoResourceConstructed();
 
-        // Row (c): two unknown entries, "ghost" and "other", both named in one message.
-        JsonObject rowC = config(
+        // Two unknown names: two unknown entries, "ghost" and "other", both named in one message.
+        JsonObject twoUnknownNames = config(
                 "unitb.publicApplication.active", true,
                 "jaxrs.applications.public.openapiPath", "zq7-a.yaml",
                 "jaxrs.applications.mgmt.openapiPath", "zq7-a.yaml",
                 "jaxrs.applications.ghost.openapiPath", "zq7-secret.yaml",
                 "jaxrs.applications.other.openapiPath", "zq7-other.yaml");
-        StandardComponent componentC = standardComponent(rowC);
-        RestConfigurationException exC = assertThrows(
+        StandardComponent twoUnknownNamesComponent = standardComponent(twoUnknownNames);
+        RestConfigurationException twoUnknownFailure = assertThrows(
                 RestConfigurationException.class,
-                componentC::routerMounts,
-                "c: both 'ghost' and 'other' match nothing");
-        assertTrue(exC.getMessage().contains("jaxrs.applications.ghost"), exC.getMessage());
-        assertTrue(exC.getMessage().contains("jaxrs.applications.other"), exC.getMessage());
-        assertFalse(exC.getMessage().contains("zq7"), "must never echo a configured value: " + exC.getMessage());
+                twoUnknownNamesComponent::routerMounts,
+                "both 'ghost' and 'other' match nothing");
+        assertTrue(twoUnknownFailure.getMessage().contains("jaxrs.applications.ghost"), twoUnknownFailure.getMessage());
+        assertTrue(twoUnknownFailure.getMessage().contains("jaxrs.applications.other"), twoUnknownFailure.getMessage());
+        assertFalse(
+                twoUnknownFailure.getMessage().contains("zq7"),
+                "must never echo a configured value: " + twoUnknownFailure.getMessage());
         assertNoResourceConstructed();
 
-        // Row (d): a zero-registration component; "ghost" still matches nothing.
-        JsonObject rowD = config("jaxrs.applications.ghost.openapiPath", "zq7-secret.yaml");
-        ZeroDeclarationComponent componentD = zeroDeclarationComponent(rowD);
-        RestConfigurationException exD = assertThrows(
+        // Zero registrations: a zero-registration component; "ghost" still matches nothing.
+        JsonObject zeroRegistrations = config("jaxrs.applications.ghost.openapiPath", "zq7-secret.yaml");
+        ZeroDeclarationComponent zeroRegistrationsComponent = zeroDeclarationComponent(zeroRegistrations);
+        RestConfigurationException zeroRegistrationsFailure = assertThrows(
                 RestConfigurationException.class,
-                componentD::routerMounts,
-                "d: a configured name fails even with zero registrations");
-        assertTrue(exD.getMessage().contains("jaxrs.applications.ghost"), exD.getMessage());
-        assertFalse(exD.getMessage().contains("zq7"), "must never echo a configured value: " + exD.getMessage());
+                zeroRegistrationsComponent::routerMounts,
+                "a configured name fails even with zero registrations");
+        assertTrue(
+                zeroRegistrationsFailure.getMessage().contains("jaxrs.applications.ghost"),
+                zeroRegistrationsFailure.getMessage());
+        assertFalse(
+                zeroRegistrationsFailure.getMessage().contains("zq7"),
+                "must never echo a configured value: " + zeroRegistrationsFailure.getMessage());
         assertNoResourceConstructed();
     }
 
