@@ -22,6 +22,9 @@ import dev.vertique.rest.jaxrs.publication.ResponseShape;
 import dev.vertique.rest.openapi.docs.DisclosureDocuments.Rendering;
 import dev.vertique.rest.openapi.docs.MetadataDocuments.Outcome;
 import dev.vertique.rest.openapi.docs.MetadataDocuments.WarningCapture;
+import dev.vertique.rest.openapi.docs.assembly.AssemblyContext;
+import dev.vertique.rest.openapi.docs.diagnostics.DiagnosticsAccess;
+import dev.vertique.rest.openapi.docs.diagnostics.DocumentWarnings;
 import dev.vertique.rest.openapi.docs.fixture.input.Publications;
 import dev.vertique.rest.openapi.docs.fixture.input.UnitDocumentedApi;
 import dev.vertique.rest.openapi.docs.fixture.metadata.unit.MetadataPublications;
@@ -86,16 +89,16 @@ import java.util.Set;
  * <p><b>Warnings.</b> {@link #warningCapture()} returns a capture of the documentation module's
  * warning logger; attach it in {@code @BeforeEach} and detach it in {@code @AfterEach}.
  */
-final class ResponseDocuments {
+public final class ResponseDocuments {
 
     /** The built-in profile id every operation uses unless it names another. */
-    static final String DEFAULT_PROFILE = "vertique";
+    public static final String DEFAULT_PROFILE = "vertique";
 
     /** The built-in profile id that declares a JSON Schema type override for {@code BigDecimal}. */
-    static final String STRICT_PROFILE = "vertique-strict";
+    public static final String STRICT_PROFILE = "vertique-strict";
 
     /** The reference prefix of a component schema. */
-    static final String SCHEMA_REF_PREFIX = "#/components/schemas/";
+    public static final String SCHEMA_REF_PREFIX = "#/components/schemas/";
 
     private static final ObjectMapper JSON = new ObjectMapper();
 
@@ -114,7 +117,7 @@ final class ResponseDocuments {
      * @return the method
      * @throws IllegalStateException if the name does not identify exactly one method
      */
-    static Method method(Class<?> resourceClass, String methodName) {
+    public static Method method(Class<?> resourceClass, String methodName) {
         Objects.requireNonNull(resourceClass, "resourceClass");
         Objects.requireNonNull(methodName, "methodName");
         List<Method> declared = Arrays.stream(resourceClass.getDeclaredMethods())
@@ -140,7 +143,7 @@ final class ResponseDocuments {
      * @param produces the media types the method produces, in declaration order; empty for none
      * @return the response facts
      */
-    static ResponseShape shape(Class<?> resourceClass, String methodName, List<String> produces) {
+    public static ResponseShape shape(Class<?> resourceClass, String methodName, List<String> produces) {
         return shape(resourceClass, methodName, produces, DEFAULT_PROFILE);
     }
 
@@ -153,7 +156,7 @@ final class ResponseDocuments {
      * @param outputProfileId the resolved output profile id
      * @return the response facts
      */
-    static ResponseShape shape(
+    public static ResponseShape shape(
             Class<?> resourceClass, String methodName, List<String> produces, String outputProfileId) {
         return shape(resourceClass, method(resourceClass, methodName), produces, outputProfileId);
     }
@@ -170,7 +173,8 @@ final class ResponseDocuments {
      * @throws IllegalArgumentException if the method's declaring class is not a supertype of the
      *     resource class
      */
-    static ResponseShape shape(Class<?> resourceClass, Method method, List<String> produces, String outputProfileId) {
+    public static ResponseShape shape(
+            Class<?> resourceClass, Method method, List<String> produces, String outputProfileId) {
         Objects.requireNonNull(resourceClass, "resourceClass");
         Objects.requireNonNull(method, "method");
         Objects.requireNonNull(produces, "produces");
@@ -204,7 +208,7 @@ final class ResponseDocuments {
      * @param applicationProfiles the application profiles, for example a snake-case test profile
      * @return the registry
      */
-    static JsonMapperProfileRegistry registry(JsonMapperProfile... applicationProfiles) {
+    public static JsonMapperProfileRegistry registry(JsonMapperProfile... applicationProfiles) {
         return new DefaultJsonMapperProfileRegistry(Set.of(applicationProfiles));
     }
 
@@ -217,7 +221,7 @@ final class ResponseDocuments {
      * @param type the resolved output type
      * @return the parsed canonical schema
      */
-    static JsonNode generatedOutputSchema(JsonMapperProfileRegistry profiles, String profileId, Type type) {
+    public static JsonNode generatedOutputSchema(JsonMapperProfileRegistry profiles, String profileId, Type type) {
         JsonMapperProfile profile = profiles.profile(JsonProfileId.of(profileId));
         return parse(AnnotationJsonSchemaGenerator.forOutputProfile(profile).generateCanonical(type));
     }
@@ -232,7 +236,7 @@ final class ResponseDocuments {
      * @param documentName the document's name, which is also the application's name
      * @return {@code /api/<documentName>/*}
      */
-    static String mountPath(String documentName) {
+    public static String mountPath(String documentName) {
         return "/api/" + Objects.requireNonNull(documentName, "documentName") + "/*";
     }
 
@@ -309,7 +313,7 @@ final class ResponseDocuments {
      * @param warnings the warning guard of the assembly context, standing for one component
      * @return the rendering, or the publication failure
      */
-    static Outcome assemble(
+    public static Outcome assemble(
             String documentName,
             List<ResponseOperation> operations,
             JsonMapperProfileRegistry profiles,
@@ -320,7 +324,8 @@ final class ResponseDocuments {
                 Optional.empty(),
                 Objects.requireNonNull(profiles, "profiles"),
                 Objects.requireNonNull(warnings, "warnings"),
-                Objects.requireNonNull(producerBindings, "producerBindings"));
+                Objects.requireNonNull(producerBindings, "producerBindings"),
+                Set.of());
         return MetadataDocuments.assemble(attached, ApiDocs.Access.PUBLIC, context);
     }
 
@@ -333,8 +338,9 @@ final class ResponseDocuments {
      * @param operations the operations, in publication order
      * @return the rendering, or the publication failure
      */
-    static Outcome assemble(String documentName, JsonMapperProfileRegistry profiles, ResponseOperation... operations) {
-        return assemble(documentName, List.of(operations), profiles, Set.of(), new DocumentWarnings());
+    public static Outcome assemble(
+            String documentName, JsonMapperProfileRegistry profiles, ResponseOperation... operations) {
+        return assemble(documentName, List.of(operations), profiles, Set.of(), DiagnosticsAccess.documentWarnings());
     }
 
     /**
@@ -345,7 +351,7 @@ final class ResponseDocuments {
      * @param operations the operations, in publication order
      * @return the rendering, or the publication failure
      */
-    static Outcome assemble(String documentName, ResponseOperation... operations) {
+    public static Outcome assemble(String documentName, ResponseOperation... operations) {
         return assemble(documentName, registry(), operations);
     }
 
@@ -354,7 +360,7 @@ final class ResponseDocuments {
      *
      * @return the capture
      */
-    static WarningCapture warningCapture() {
+    public static WarningCapture warningCapture() {
         return new WarningCapture();
     }
 
@@ -410,7 +416,7 @@ final class ResponseDocuments {
      * @param method the HTTP method in either case
      * @return the Responses Object
      */
-    static JsonNode responses(JsonNode document, String path, String method) {
+    public static JsonNode responses(JsonNode document, String path, String method) {
         return responsesOf(operation(document, path, method), method + " " + path);
     }
 
@@ -421,7 +427,7 @@ final class ResponseDocuments {
      * @param operationId the operation id
      * @return the Responses Object
      */
-    static JsonNode responses(JsonNode document, String operationId) {
+    public static JsonNode responses(JsonNode document, String operationId) {
         return responsesOf(operation(document, operationId), operationId);
     }
 
@@ -439,7 +445,7 @@ final class ResponseDocuments {
      * @param status the status key, for example {@code "200"}, {@code "2XX"}, or {@code "default"}
      * @return the Response Object
      */
-    static JsonNode response(JsonNode document, String operationId, String status) {
+    public static JsonNode response(JsonNode document, String operationId, String status) {
         JsonNode responses = responses(document, operationId);
         JsonNode response = responses.get(status);
         assertNotNull(response, () -> "operation '" + operationId + "' has no response " + status + ": " + responses);
@@ -452,7 +458,7 @@ final class ResponseDocuments {
      * @param responses the Responses Object
      * @return the status keys
      */
-    static List<String> responseKeys(JsonNode responses) {
+    public static List<String> responseKeys(JsonNode responses) {
         List<String> keys = new ArrayList<>();
         responses.fieldNames().forEachRemaining(keys::add);
         return keys;
@@ -467,7 +473,7 @@ final class ResponseDocuments {
      * @param response the Response Object
      * @return the media types and component names; a value is {@code null} as stated above
      */
-    static Map<String, String> contentRefs(JsonNode response) {
+    public static Map<String, String> contentRefs(JsonNode response) {
         Map<String, String> refs = new LinkedHashMap<>();
         for (Map.Entry<String, JsonNode> entry : response.path("content").properties()) {
             JsonNode ref = entry.getValue().path("schema").get("$ref");
@@ -506,7 +512,7 @@ final class ResponseDocuments {
      * @param name the component name
      * @return the schema
      */
-    static JsonNode component(JsonNode document, String name) {
+    public static JsonNode component(JsonNode document, String name) {
         JsonNode schema = document.path("components").path("schemas").get(name);
         assertNotNull(schema, () -> "the document has no component '" + name + "'; it has " + componentKeys(document));
         return schema;
@@ -519,7 +525,7 @@ final class ResponseDocuments {
      * @param name the component name
      * @return {@code true} when {@code components.schemas} has the name
      */
-    static boolean hasComponent(JsonNode document, String name) {
+    public static boolean hasComponent(JsonNode document, String name) {
         return document.path("components").path("schemas").has(name);
     }
 
@@ -529,7 +535,7 @@ final class ResponseDocuments {
      * @param document the document's tree
      * @return the names; empty when the document has no component schema
      */
-    static Set<String> componentKeys(JsonNode document) {
+    public static Set<String> componentKeys(JsonNode document) {
         Set<String> keys = new LinkedHashSet<>();
         document.path("components").path("schemas").fieldNames().forEachRemaining(keys::add);
         return keys;
@@ -541,7 +547,7 @@ final class ResponseDocuments {
      * @param schema the schema
      * @return the names of its {@code properties}; empty when it has none
      */
-    static Set<String> propertyNames(JsonNode schema) {
+    public static Set<String> propertyNames(JsonNode schema) {
         Set<String> names = new LinkedHashSet<>();
         schema.path("properties").fieldNames().forEachRemaining(names::add);
         return names;
@@ -552,7 +558,7 @@ final class ResponseDocuments {
      *
      * @param rendering the rendering
      */
-    static void assertValidates(Rendering rendering) {
+    public static void assertValidates(Rendering rendering) {
         OpenApi31Toolchain.assertValid(rendering.document());
     }
 
@@ -561,7 +567,7 @@ final class ResponseDocuments {
      *
      * @param document the document's tree
      */
-    static void assertValidates(JsonNode document) {
+    public static void assertValidates(JsonNode document) {
         try {
             OpenApi31Toolchain.assertValid(new JsonObject(JSON.writeValueAsString(document)));
         } catch (JsonProcessingException e) {
@@ -594,7 +600,7 @@ final class ResponseDocuments {
      * @param produces the media types the operation produces, in declaration order; empty for none
      * @param profileId the operation's profile id, for both its request and its response
      */
-    record ResponseOperation(
+    public record ResponseOperation(
             String operationId,
             String httpMethod,
             String template,
@@ -604,7 +610,7 @@ final class ResponseDocuments {
             String profileId) {
 
         /** Copies the produces list; {@code null} components are rejected. */
-        ResponseOperation {
+        public ResponseOperation {
             Objects.requireNonNull(operationId, "operationId");
             Objects.requireNonNull(httpMethod, "httpMethod");
             Objects.requireNonNull(template, "template");
@@ -625,7 +631,7 @@ final class ResponseDocuments {
          * @param methodName the fixture method's name
          * @return the operation
          */
-        static ResponseOperation of(String operationId, Class<?> resourceClass, String methodName) {
+        public static ResponseOperation of(String operationId, Class<?> resourceClass, String methodName) {
             return new ResponseOperation(
                     operationId,
                     "GET",
@@ -642,7 +648,7 @@ final class ResponseDocuments {
          * @param mediaTypes the media types, in declaration order
          * @return the copy
          */
-        ResponseOperation withProduces(String... mediaTypes) {
+        public ResponseOperation withProduces(String... mediaTypes) {
             return new ResponseOperation(
                     operationId, httpMethod, template, resourceClass, methodName, List.of(mediaTypes), profileId);
         }
@@ -653,7 +659,7 @@ final class ResponseDocuments {
          * @param id the profile id, for example {@value ResponseDocuments#STRICT_PROFILE}
          * @return the copy
          */
-        ResponseOperation withProfile(String id) {
+        public ResponseOperation withProfile(String id) {
             return new ResponseOperation(operationId, httpMethod, template, resourceClass, methodName, produces, id);
         }
 

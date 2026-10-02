@@ -27,6 +27,8 @@ import dev.vertique.rest.openapi.docs.fixture.protecteddocs.shared.TwinResource;
 import dev.vertique.rest.openapi.docs.fixture.support.Futures;
 import dev.vertique.rest.openapi.docs.fixture.support.StartupDeployments;
 import dev.vertique.rest.openapi.docs.fixture.support.StartupDeployments.Outcome;
+import dev.vertique.rest.openapi.docs.serving.DocsRouterMount;
+import dev.vertique.rest.openapi.docs.serving.ServingAccess;
 import dev.vertique.security.events.AuthorizationDecisionEvent;
 import dev.vertique.security.events.CredentialRejectedEvent;
 import io.vertx.core.MultiMap;
@@ -1156,7 +1158,7 @@ public class ProtectedDocumentIT {
                 .toList();
         assertEquals(1, docsMounts.size(), "the store-less graph holds one documentation mount");
         DocsRouterMount docsMount = docsMounts.getFirst();
-        assertTrue(docsMount.isValidated(), "the composition validators marked the documentation mount");
+        assertTrue(ServingAccess.isValidated(docsMount), "the composition validators marked the documentation mount");
 
         Router docsRouter;
         try {

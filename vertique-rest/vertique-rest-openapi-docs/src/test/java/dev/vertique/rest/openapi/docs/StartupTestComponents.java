@@ -34,14 +34,15 @@ import dev.vertique.rest.openapi.docs.fixture.startup.startupit.ContributedResou
 import dev.vertique.rest.openapi.docs.fixture.startup.startupit.HandBuiltMounts;
 import dev.vertique.rest.openapi.docs.fixture.startup.startupit.ProtectedOpsRegistrationModule;
 import dev.vertique.rest.openapi.docs.fixture.startup.startupit.PublicReservedRegistrationModule;
+import dev.vertique.rest.openapi.docs.publication.DocumentStore;
 import io.vertx.core.http.HttpServerOptions;
 import io.vertx.core.json.JsonObject;
 import jakarta.inject.Singleton;
 import java.util.Set;
 
 /**
- * The Dagger test components of the startup-check integration tests. They live in the module's
- * package so they can expose its package-private types.
+ * The Dagger test components of the startup-check integration tests. The module types they expose
+ * are public types of the module's internal packages.
  *
  * <p>Every component lists {@link StartupBase}: {@code RestModule}, {@link OpenApiDocsModule}, the
  * canonical {@link ConfigParsingModule}, the test support bindings, a counting schema source, a

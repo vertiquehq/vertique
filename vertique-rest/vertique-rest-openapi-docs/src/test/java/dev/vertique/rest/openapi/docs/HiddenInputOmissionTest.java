@@ -15,6 +15,7 @@ import dev.vertique.rest.jaxrs.publication.InputBinding;
 import dev.vertique.rest.jaxrs.publication.InputBinding.Requiredness;
 import dev.vertique.rest.jaxrs.publication.OperationPublication;
 import dev.vertique.rest.jaxrs.routing.ParamLocation;
+import dev.vertique.rest.openapi.docs.assembly.AssemblyContext;
 import dev.vertique.rest.openapi.docs.fixture.disclosure.dto.AccountFormZx;
 import dev.vertique.rest.openapi.docs.fixture.disclosure.dto.AccountHiddenFieldZx;
 import dev.vertique.rest.openapi.docs.fixture.disclosure.dto.FlatZx;

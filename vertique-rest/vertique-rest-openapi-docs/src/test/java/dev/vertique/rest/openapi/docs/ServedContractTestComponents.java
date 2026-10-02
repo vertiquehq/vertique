@@ -34,6 +34,7 @@ import dev.vertique.rest.openapi.docs.fixture.protecteddocs.shared.GuardedManage
 import dev.vertique.rest.openapi.docs.fixture.protecteddocs.shared.Observations;
 import dev.vertique.rest.openapi.docs.fixture.startup.contract.TestValidationStrategies;
 import dev.vertique.rest.openapi.docs.fixture.startup.startupit.HandBuiltMounts;
+import dev.vertique.rest.openapi.docs.publication.DocumentStore;
 import dev.vertique.rest.openapi.validation.OpenApiContractValidationModule;
 import dev.vertique.rest.validation.RestValidationModule;
 import io.vertx.core.Vertx;
@@ -41,8 +42,8 @@ import io.vertx.core.json.JsonObject;
 import jakarta.inject.Singleton;
 
 /**
- * The Dagger test components of the served-contract integration test. They live in the module's
- * package so they can expose its package-private {@link DocumentStore}.
+ * The Dagger test components of the served-contract integration test. They expose the component's
+ * {@link DocumentStore}, a public type of the module's internal {@code publication} package.
  *
  * <p>Three module sets are used, each copied from an existing proof:
  *

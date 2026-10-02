@@ -12,6 +12,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import dev.vertique.core.exception.ConfigurationException;
 import dev.vertique.rest.openapi.docs.DisclosureDocuments.Rendering;
 import dev.vertique.rest.openapi.docs.MetadataDocuments.WarningCapture;
+import dev.vertique.rest.openapi.docs.config.EnabledDocuments;
+import dev.vertique.rest.openapi.docs.diagnostics.DocumentWarnings;
 import dev.vertique.rest.openapi.docs.fixture.metadata.info.BothLicenseApi;
 import dev.vertique.rest.openapi.docs.fixture.metadata.info.ChildInfoApi;
 import dev.vertique.rest.openapi.docs.fixture.metadata.info.FullInfoWithContactExtensionApi;

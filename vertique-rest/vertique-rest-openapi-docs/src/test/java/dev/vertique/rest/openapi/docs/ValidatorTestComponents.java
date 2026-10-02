@@ -23,14 +23,14 @@ import jakarta.inject.Singleton;
 import java.util.Set;
 
 /**
- * The Dagger test components of the composition-validator unit proofs. They live in the module's
- * package so a test can reach the documentation mount's package-private validated mark.
+ * The Dagger test components of the composition-validator unit proofs, which live in the {@code
+ * serving} package and read the documentation mount's package-private validated mark directly.
  *
  * <p>A component exposes the mounts, the composition validators, and the JAX-RS mount factory
  * without building an {@code HttpVerticle}, so a test hands hand-assembled mount lists to a
  * validator directly. Resolving the mounts creates no router.
  */
-final class ValidatorTestComponents {
+public final class ValidatorTestComponents {
 
     private ValidatorTestComponents() {}
 
@@ -53,7 +53,7 @@ final class ValidatorTestComponents {
                 RecordingMountCustomizer.Binding.class,
                 MarkerRouterMount.Last.class
             })
-    interface DormantBesideSharedComponent {
+    public interface DormantBesideSharedComponent {
 
         /**
          * Resolves the mount multibinding. The documentation mount's provider is unscoped, so every
@@ -79,7 +79,7 @@ final class ValidatorTestComponents {
 
         /** Factory taking the application configuration. */
         @Component.Factory
-        interface ComponentFactory {
+        public interface ComponentFactory {
 
             /**
              * Creates the component.

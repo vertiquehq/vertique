@@ -29,13 +29,14 @@ import dev.vertique.rest.openapi.docs.fixture.SharedRegistrationModule;
 import dev.vertique.rest.openapi.docs.fixture.SharedResourcesModule;
 import dev.vertique.rest.openapi.docs.fixture.StubSchemeHandler;
 import dev.vertique.rest.openapi.docs.fixture.UndocumentedRegistrationModule;
+import dev.vertique.rest.openapi.docs.publication.DocumentStore;
 import io.vertx.core.json.JsonObject;
 import jakarta.inject.Singleton;
 import java.util.Set;
 
 /**
- * The Dagger test components of this module. They live in the module's package so they can expose
- * its package-private types.
+ * The Dagger test components of this module, shared by tests in every package. The module types
+ * they expose, such as {@link DocumentStore}, are public types of the module's internal packages.
  *
  * <p>Every component is built from {@code RestModule}, the canonical {@link ConfigParsingModule},
  * {@link DocsTestSupportModule}, a deterministic counting schema source, and a

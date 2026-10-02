@@ -40,6 +40,10 @@ import dev.vertique.rest.openapi.docs.fixture.support.Cleanup;
 import dev.vertique.rest.openapi.docs.fixture.support.Futures;
 import dev.vertique.rest.openapi.docs.fixture.support.StartupDeployments;
 import dev.vertique.rest.openapi.docs.fixture.support.StartupDeployments.Outcome;
+import dev.vertique.rest.openapi.docs.publication.DocsPublicationSink;
+import dev.vertique.rest.openapi.docs.publication.PublicationAccess;
+import dev.vertique.rest.openapi.docs.serving.DocsCompositionValidator;
+import dev.vertique.rest.openapi.docs.serving.DocsRouterMount;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
@@ -481,7 +485,10 @@ public class DocsStartupChecksIT {
                     label + ": answered by the documentation mount, not the marker mount");
             JsonObject info = new JsonObject(response.bodyAsString()).getJsonObject("info");
             assertEquals(new JsonObject(expectedInfo), info, label + ": the document's info");
-            assertEquals(Set.of(PUBLIC), component.documentStore().names(), label + ": the stored documents");
+            assertEquals(
+                    Set.of(PUBLIC),
+                    PublicationAccess.names(component.documentStore()),
+                    label + ": the stored documents");
         } finally {
             StartupDeployments.undeploy(vertx, outcome);
         }
@@ -704,7 +711,10 @@ public class DocsStartupChecksIT {
             } else {
                 // Then: startup failed before listening, naming the reservation, and no document is stored
                 assertStartupFailure(label, outcome, component, SpyCheck.NONE, null, fragments, List.of());
-                assertEquals(Set.of(), component.documentStore().names(), label + ": no document is stored");
+                assertEquals(
+                        Set.of(),
+                        PublicationAccess.names(component.documentStore()),
+                        label + ": no document is stored");
             }
         } finally {
             StartupDeployments.undeploy(vertx, outcome);

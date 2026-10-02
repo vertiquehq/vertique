@@ -22,9 +22,19 @@ import dev.vertique.rest.jaxrs.publication.MountPublication;
 import dev.vertique.rest.jaxrs.runtime.GeneratedRestApplicationRegistration;
 import dev.vertique.rest.jaxrs.validation.OperationSchemaSource;
 import dev.vertique.rest.openapi.docs.DisclosureDocuments.Rendering;
+import dev.vertique.rest.openapi.docs.assembly.AssemblyContext;
+import dev.vertique.rest.openapi.docs.assembly.DocumentAssembler;
+import dev.vertique.rest.openapi.docs.config.EnabledDocuments;
+import dev.vertique.rest.openapi.docs.config.EnabledDocumentsResolver;
+import dev.vertique.rest.openapi.docs.config.InfoConfig;
+import dev.vertique.rest.openapi.docs.diagnostics.DiagnosticsAccess;
+import dev.vertique.rest.openapi.docs.diagnostics.DocumentWarnings;
+import dev.vertique.rest.openapi.docs.document.PublishedDocument;
 import dev.vertique.rest.openapi.docs.fixture.DocsConfigs;
 import dev.vertique.rest.openapi.docs.fixture.input.Publications;
 import dev.vertique.rest.openapi.docs.fixture.metadata.unit.MetadataPublications;
+import dev.vertique.rest.openapi.docs.metadata.OperationFacts;
+import dev.vertique.rest.openapi.docs.publication.PublicationAccess;
 import io.vertx.core.json.JsonObject;
 import jakarta.annotation.Nullable;
 import java.io.IOException;
@@ -57,12 +67,12 @@ import org.slf4j.LoggerFactory;
  * passes; pass one guard to several assemblies to stand for one component, or a fresh one per
  * assembly. {@link WarningCapture} records what the guard logs.
  *
- * <p><b>Configured {@code info}.</b> {@link #resolve} runs the configuration provider and the
- * enabled-document selection provider over a view holding one hand-written registration, as the
+ * <p><b>Configured {@code info}.</b> {@link #resolve} parses the {@code apidocs} section and runs the
+ * enabled-document selection over a view holding one hand-written registration, as the
  * composition does, and {@link #assembleResolved} assembles a resolved document over a publication
  * without operations.
  */
-final class MetadataDocuments {
+public final class MetadataDocuments {
 
     /** The {@code info} of every document assembled from a synthetic publication. */
     static final InfoConfig INFO = new InfoConfig("Metadata", "1.0", null);
@@ -83,8 +93,8 @@ final class MetadataDocuments {
      *
      * @return the guard
      */
-    static DocumentWarnings warnings() {
-        return new DocumentWarnings();
+    public static DocumentWarnings warnings() {
+        return DiagnosticsAccess.documentWarnings();
     }
 
     /**
@@ -103,7 +113,8 @@ final class MetadataDocuments {
      * @return the context
      */
     static AssemblyContext context(DocumentWarnings warnings) {
-        return new AssemblyContext(Optional.empty(), registry(), Objects.requireNonNull(warnings, "warnings"));
+        return new AssemblyContext(
+                Optional.empty(), registry(), Objects.requireNonNull(warnings, "warnings"), Set.of(), Set.of());
     }
 
     /**
@@ -117,7 +128,9 @@ final class MetadataDocuments {
         return new AssemblyContext(
                 Optional.of(Objects.requireNonNull(source, "source")),
                 registry(),
-                Objects.requireNonNull(warnings, "warnings"));
+                Objects.requireNonNull(warnings, "warnings"),
+                Set.of(),
+                Set.of());
     }
 
     private static DefaultJsonMapperProfileRegistry registry() {
@@ -135,14 +148,16 @@ final class MetadataDocuments {
      * @param access the document's access
      * @return the document, with {@link #INFO} and no configured server URL
      */
-    static EnabledDocuments.EnabledDocument document(MountPublication publication, ApiDocs.Access access) {
+    public static EnabledDocuments.EnabledDocument document(MountPublication publication, ApiDocs.Access access) {
         return new EnabledDocuments.EnabledDocument(
                 Objects.requireNonNull(publication.applicationName(), "applicationName"),
                 Objects.requireNonNull(publication.declaringType(), "declaringType"),
                 Objects.requireNonNull(access, "access"),
                 publication.mountPath(),
                 ContractOrigin.GLOBAL,
-                INFO);
+                INFO,
+                null,
+                null);
     }
 
     /**
@@ -170,8 +185,8 @@ final class MetadataDocuments {
             EnabledDocuments.EnabledDocument document, MountPublication attached, AssemblyContext context) {
         Objects.requireNonNull(document, "document");
         Objects.requireNonNull(context, "context");
-        Map<String, OperationFacts> facts = DocsPublicationSink.operationFacts(attached);
-        MountPublication detached = DocsPublicationSink.detach(attached);
+        Map<String, OperationFacts> facts = PublicationAccess.operationFacts(attached);
+        MountPublication detached = PublicationAccess.detach(attached);
         try {
             PublishedDocument published = DocumentAssembler.assemble(document, detached, facts, context);
             return Outcome.ofRendering(new Rendering(published.json(), published.yaml()));
@@ -221,13 +236,13 @@ final class MetadataDocuments {
     // ---------------------------------------------------------------------------------------------
 
     /**
-     * Runs the configuration provider, then the enabled-document selection provider, for a view
+     * Parses the {@code apidocs} section, then runs the enabled-document selection, for a view
      * holding exactly one registration, over the loopback configuration plus, when given, {@code
      * apidocs.documents.<name>.info}.
      *
      * @param registration the registration, for example {@code InfoRegistrations.childApi(...)}
      * @param configuredInfo the configured {@code info} object, or {@code null} for none
-     * @return the enabled documents, or whatever the providers threw
+     * @return the enabled documents, or whatever parsing or selection threw
      */
     static Resolution resolve(GeneratedRestApplicationRegistration registration, @Nullable JsonObject configuredInfo) {
         Objects.requireNonNull(registration, "registration");
@@ -240,8 +255,7 @@ final class MetadataDocuments {
         RestApplications applications = component.restApplications();
         ConfigParser parser = component.configParser();
         try {
-            ApidocsConfig apidocsConfig = OpenApiDocsModule.apidocsConfig(config, parser);
-            return Resolution.ofDocuments(OpenApiDocsModule.enabledDocuments(config, apidocsConfig, applications));
+            return Resolution.ofDocuments(EnabledDocumentsResolver.resolve(config, parser, () -> applications));
         } catch (RuntimeException failure) {
             return Resolution.ofFailure(failure);
         }
@@ -344,7 +358,8 @@ final class MetadataDocuments {
      * @param published the rendering, or {@code null} when publication failed
      * @param failed the failure, or {@code null} when the document published
      */
-    record Outcome(@Nullable Rendering published, @Nullable RestConfigurationException failed) {
+    public record Outcome(
+            @Nullable Rendering published, @Nullable RestConfigurationException failed) {
 
         static Outcome ofRendering(Rendering rendering) {
             return new Outcome(rendering, null);
@@ -369,7 +384,7 @@ final class MetadataDocuments {
          * @return the rendering
          * @throws AssertionError when publication failed, carrying the failure as its cause
          */
-        Rendering rendering() {
+        public Rendering rendering() {
             if (published == null) {
                 throw new AssertionError("expected the document to publish, but publication failed", failed);
             }
@@ -382,7 +397,7 @@ final class MetadataDocuments {
          * @return the failure
          * @throws AssertionError when the document published
          */
-        RestConfigurationException failure() {
+        public RestConfigurationException failure() {
             if (failed == null) {
                 throw new AssertionError("expected publication to fail, but the document published: "
                         + Objects.requireNonNull(published).jsonText());
@@ -415,7 +430,7 @@ final class MetadataDocuments {
          * @return the document
          * @throws AssertionError when resolution threw or did not enable exactly one document
          */
-        EnabledDocuments.EnabledDocument document() {
+        public EnabledDocuments.EnabledDocument document() {
             if (resolved == null) {
                 throw new AssertionError("expected the document to resolve, but resolution threw", thrown);
             }
@@ -431,7 +446,7 @@ final class MetadataDocuments {
          * @return the exception
          * @throws AssertionError when resolution succeeded
          */
-        RuntimeException failure() {
+        public RuntimeException failure() {
             if (thrown == null) {
                 throw new AssertionError("expected resolution to fail, but it enabled " + resolved);
             }
@@ -448,7 +463,7 @@ final class MetadataDocuments {
      * ListAppender}. Attach it in {@code @BeforeEach} and detach it in {@code @AfterEach}; while
      * attached the logger's level is {@code WARN}, and detaching restores the previous level.
      */
-    static final class WarningCapture {
+    public static final class WarningCapture {
 
         private final Logger logger = (Logger) LoggerFactory.getLogger(WARNINGS_LOGGER);
         private final ListAppender<ILoggingEvent> appender = new ListAppender<>();
@@ -456,7 +471,7 @@ final class MetadataDocuments {
         private boolean attached;
 
         /** Starts capturing. */
-        void attach() {
+        public void attach() {
             if (attached) {
                 throw new IllegalStateException("the capture is already attached");
             }
@@ -469,7 +484,7 @@ final class MetadataDocuments {
         }
 
         /** Stops capturing and restores the logger's previous level; safe to call when not attached. */
-        void detach() {
+        public void detach() {
             if (!attached) {
                 return;
             }
@@ -500,7 +515,7 @@ final class MetadataDocuments {
          *
          * @return the messages
          */
-        List<String> warnings() {
+        public List<String> warnings() {
             return warnEvents().stream().map(ILoggingEvent::getFormattedMessage).toList();
         }
     }

@@ -15,6 +15,7 @@ import dev.vertique.rest.openapi.docs.fixture.conformance.shared.CountingCanonic
 import dev.vertique.rest.openapi.docs.fixture.conformance.shared.OrderBodySwitchingSchemaSource;
 import dev.vertique.rest.openapi.docs.fixture.conformance.shared.SharedApplicationsModule;
 import dev.vertique.rest.openapi.docs.fixture.conformance.shared.SharedSchemaSourceModules;
+import dev.vertique.rest.openapi.docs.publication.DocumentStore;
 import io.vertx.core.Vertx;
 import io.vertx.core.json.JsonObject;
 import jakarta.inject.Singleton;

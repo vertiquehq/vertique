@@ -22,6 +22,7 @@ import dev.vertique.rest.openapi.docs.fixture.DocsConfigs;
 import dev.vertique.rest.openapi.docs.fixture.support.Futures;
 import dev.vertique.rest.openapi.docs.fixture.support.StartupDeployments;
 import dev.vertique.rest.openapi.docs.fixture.support.StartupDeployments.Outcome;
+import dev.vertique.rest.openapi.docs.publication.PublicationAccess;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
@@ -307,7 +308,7 @@ public class OpenApiContractRefusalIT {
     private static void assertRefused(ContractCase contractCase, Outcome outcome, DocsProvisions component) {
         Refusal expected = contractCase.refusal();
         String document = contractCase.document();
-        Set<String> stored = component.documentStore().names();
+        Set<String> stored = PublicationAccess.names(component.documentStore());
         assertAll(
                 contractCase.label() + ": startup is refused",
                 () -> assertNotNull(
