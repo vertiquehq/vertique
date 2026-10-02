@@ -8,7 +8,7 @@ SPDX-License-Identifier: EUPL-1.2
 > **Status:** Beta
 > **Package:** `dev.vertique.codegen.jaxrs`
 > **Artifact:** `vertique-codegen-jaxrs`
-> **Depends on:** `vertique-codegen-core` (compile), `vertique-rest-core` (compile — for `dev.vertique.rest.core.security.Authorized`), `vertique-security-core` (compile), `vertique-input-processing` (compile), `jakarta.annotation-api` (compile), `swagger-annotations-jakarta` (compile), `vertique-rest-jaxrs` (test — the generated sources reference its runtime SPI types, so the consuming application declares it), `jakarta.ws.rs-api` (test)
+> **Depends on:** `vertique-codegen-core` (compile), `vertique-rest-core` (compile — for `dev.vertique.rest.core.security.Authorized` and `dev.vertique.rest.core.application.RestApplication`), `vertique-security-core` (compile), `vertique-input-processing` (compile), `jakarta.annotation-api` (compile), `swagger-annotations-jakarta` (compile), `vertique-rest-jaxrs` (test — the generated sources reference its runtime SPI types, so the consuming application declares it), `jakarta.ws.rs-api` (test)
 
 `vertique-codegen-jaxrs` is a unified annotation processor that owns the entire compile-time JAX-RS pipeline: discovery, effective-contract resolution, validation, Dagger DI binding emission, and runtime performance optimization via generated descriptor, bean-param model, and execution plan companions.
 
@@ -292,7 +292,7 @@ Until the port, the subclass's resources are served at `jaxrs.basePath` when no 
 
 ## REST Application Declarations
 
-`@RestApplication` (Beta, package `dev.vertique.rest.jaxrs.application`, in `vertique-rest-jaxrs`) declares a named REST application on an interface:
+`@RestApplication` (Beta, package `dev.vertique.rest.core.application`, in `vertique-rest-core`) declares a named REST application on an interface:
 
 ```java
 @RestApplication(name = "mgmt", path = "/api/mgmt", resources = OrderResource.class,
@@ -302,7 +302,7 @@ interface MgmtApi {}
 
 Exactly one of `resources` (a non-empty list of concrete `@Path` resource classes, listed in the order written) and `discover = true` (permitted only for a compilation unit's sole declaration) is set. `openapiPath` is carried as written; `""` (the default) means the global `jaxrs.openapiPath`. The declaring interface only carries the declaration — nothing implements or instantiates it.
 
-This processor recognizes `RestApplication`, `jakarta.ws.rs.core.Application`, and `ApiDocs`, and locates `GeneratedRestApplicationRegistration`, by fully qualified name; `vertique-rest-jaxrs` and `jakarta.ws.rs-api` stay test-scope dependencies of this module, so declarations add no compile dependency.
+This processor recognizes `RestApplication`, `jakarta.ws.rs.core.Application`, and `ApiDocs`, and locates `GeneratedRestApplicationRegistration`, by fully qualified name. `vertique-rest-core` is a compile dependency, but `RestApplication` is still matched by name, the same way as `ApiDocs`, whose module is not a dependency; `vertique-rest-jaxrs` and `jakarta.ws.rs-api` stay test-scope dependencies of this module, so declarations add no compile dependency.
 
 ### Declaration Checks
 
@@ -492,7 +492,7 @@ None at runtime. `vertique-codegen-jaxrs` is a compile-time annotation processor
 |----------|-------|---------|
 | `vertique-codegen-core` | compile | `CodegenContext`, `TypeResolver`, `AnnotationMirrors`, `Diagnostics`, `PackageResolver`, `PathPlaceholders`, `JaxRsBeanScanner`, `JaxRsAnnotations`, `@NoAutoWire` |
 | `vertique-rest-jaxrs` | test | Runtime SPI types the generated sources reference by fully qualified name: `GeneratedJaxRsResourceDescriptor`, `ResourceExecutionPlan`, `GeneratedJaxRsBeanParamModel`, `BeanParamFieldMeta`, `GeneratedRestApplicationRegistration`; `ResourceMethodMeta` (for descriptor method signature). The consuming application declares it (see "Adoption"); tests load the generated companions reflectively |
-| `vertique-rest-core` | compile | `dev.vertique.rest.core.security.Authorized`, `RequestPreconditions` |
+| `vertique-rest-core` | compile | `dev.vertique.rest.core.security.Authorized`, `RequestPreconditions`, `dev.vertique.rest.core.application.RestApplication` (matched by name) |
 | `vertique-security-core` | compile | Framework security types, such as `dev.vertique.security.SecurityContext`, a `ContextValue` the `@Context` parameter checks accept |
 | `vertique-input-processing` | compile | `dev.vertique.input.processing.EffectiveInputPolicies` (referenced by generated `ExecutionPlan` constants); `dev.vertique.input.processing.apt.ElementInvocationPolicies` and `InvocationPolicyConflictException`, the shared compile-time derivation of route and parameter policy chains |
 | `jakarta.ws.rs-api` | test | JAX-RS annotation types for resource fixtures; the processor recognizes them by fully qualified name |

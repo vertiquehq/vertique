@@ -1023,6 +1023,8 @@ public class DataResource {
 
 ## @RestApplication
 
+The annotation itself lives in `dev.vertique:vertique-rest-core` (package
+`dev.vertique.rest.core.application`, Beta); this module composes and mounts the declarations.
 `@RestApplication` on an interface groups resources into an independently mounted API, instead of the
 manual multi-API recipe under [`JaxRsRouterMount`](#jaxrsroutermount) above. Composition consumes only
 native `@RestApplication` registrations; a Jakarta `jakarta.ws.rs.core.Application` subclass is never
