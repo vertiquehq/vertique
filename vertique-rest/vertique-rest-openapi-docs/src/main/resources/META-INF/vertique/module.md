@@ -6,7 +6,8 @@ SPDX-License-Identifier: EUPL-1.2
 # REST OpenAPI Docs Module
 
 > **Status:** Alpha
-> **Package:** `dev.vertique.rest.openapi.docs`
+> **Package:** `dev.vertique.rest.openapi.docs` (`ApiDocs` and `OpenApiDocsModule`; its subpackages
+> are internal to the module)
 > **Artifact:** `vertique-rest-openapi-docs`
 > **Depends on:** rest-jaxrs, rest-core, core, json-schema
 
@@ -1885,12 +1886,10 @@ The Dagger module an application lists. It reads the `apidocs` configuration, se
 documents, and contributes the publication sink, the composition validator, and the docs mount when
 at least one document is enabled (see [Module Dagger Bindings](#module-dagger-bindings)).
 
-### InfoConfig
-
-The public record of a document's configured `info` object (`title`, `version`, optional
-`description`; see [Configuration](#configuration)). The rest of the `apidocs` section is parsed
-into internal records, and the parsed section is not a Dagger binding: applications write the
-configuration, not these records.
+The `apidocs` section, including each document's `info`, is parsed into records internal to the
+module, and the parsed section is not a Dagger binding: applications write configuration, not
+records. `ApiDocs` and `OpenApiDocsModule` are the module's only application types; everything in
+the subpackages of `dev.vertique.rest.openapi.docs` is internal.
 
 ---
 
@@ -2465,12 +2464,12 @@ and its message can quote that value.
 
 | Binding | Notes |
 |---|---|
-| The enabled documents | Package-private, `@Singleton`; parses the `apidocs` section through the canonical `ConfigParser` (when `apidocs.enabled` is `false`, without parsing the rest of the subtree), decides which applications have a document, and runs the configuration checks above. The parsed section itself is not bound |
+| The enabled documents | Internal type, `@Singleton`; parses the `apidocs` section through the canonical `ConfigParser` (when `apidocs.enabled` is `false`, without parsing the rest of the subtree), decides which applications have a document, and runs the configuration checks above. The parsed section itself is not bound |
 | `@ElementsIntoSet Set<MountCompositionValidator>` | The composition validator when at least one document is enabled, otherwise an empty set; contributes to the set `HttpVerticle` runs before it creates any router |
 | `@ElementsIntoSet Set<OperationPublicationSink>` | The publication sink when at least one document is enabled, otherwise an empty set; contributes to the set `vertique-rest-jaxrs` declares |
 | `@ElementsIntoSet Set<RouterMount>` | The docs mount when at least one document is enabled, otherwise an empty set; unscoped, so every composition builds its own mount |
-| The documentation warnings | Package-private, `@Singleton`; holds the once-per-component guard of the startup warnings |
-| The document store | `@Singleton`, one per component; holds the documents keyed by application name and is shared by every `HttpVerticle` instance |
+| The documentation warnings | Internal type, `@Singleton`; holds the once-per-component guard of the startup warnings |
+| The document store | Internal type, `@Singleton`, one per component; holds the documents keyed by application name and is shared by every `HttpVerticle` instance |
 | `ApiDocsInstalled` | Bound whenever the module is listed, whatever the configuration, so `vertique-rest-jaxrs` does not log that no documentation route is published for `@ApiDocs` applications, even with `apidocs.enabled` `false` |
 
 The module requires `@VertxConfig JsonObject`, `ConfigParser` (from `ConfigParsingModule`),
