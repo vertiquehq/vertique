@@ -1070,13 +1070,14 @@ public final class RestApplications {
 }
 ```
 
-`dev.vertique.rest.jaxrs.publication.RestApplications` is an INTERNAL, `@Singleton` view built once
+`dev.vertique.rest.jaxrs.application.RestApplications` is an INTERNAL, `@Singleton` view built once
 per component from `Set<GeneratedRestApplicationRegistration>` and the parsed
 [`jaxrs.applications`](#per-application-configuration) configuration — once even with zero
 registrations, since `RestModule.jaxRsRouterMount` requests the view on both its zero-declaration and
-explicit-mode branches. It is public only so sibling framework modules — the composer, the mount
-composition validator, and the OpenAPI documentation module — can read it; it is not an application
-contract and stays outside the maturity promise. `byName` looks an application up by name; `all()`
+explicit-mode branches. It is public only so the composer, the mount composition validator, and
+sibling framework modules — the OpenAPI documentation module and the `openapi-contract` validation
+module's contract-load check — can read it; it is not an application contract and stays outside the
+maturity promise. `byName` looks an application up by name; `all()`
 lists every declared application, active or not, ordered by name so its order never depends on
 registration or configuration order.
 
@@ -1711,28 +1712,34 @@ Beyond what `RestCoreModule` and `JsonRuntimeModule` contribute:
 `dev.vertique.rest.jaxrs.runtime.MagicBytesVerifierModule` is a separate opt-in `@Module` that
 contributes the built-in magic-byte `FileContentVerifier`.
 
-`dev.vertique.rest.jaxrs.publication` is an INTERNAL framework seam, outside the maturity promise and
-not a stable application API, with three unrelated purposes. `SyntheticOperations` lets a sibling
-framework module install a framework-owned route through the resource security chain, behind the
-completion recorder, so its requests complete as `RestRequestCompletedEvent`s; an installed
-route deliberately bypasses two things a resource route would normally go through: the API-scoped
-middleware, request interceptor, router-lifecycle-hook, and mount-customizer chains of a JAX-RS mount
-never run for it, and its own failure handler ends every failure itself rather than handing it to the
-application's error pipeline. `OperationPublicationSink` is bound only through the `@Multibinds`
-`Set<OperationPublicationSink>` multibinding above — empty by default, never an optional binding —
-to which sibling framework modules contribute (the documentation module through `@ElementsIntoSet`,
-the `openapi-contract` validation module's contract-load check through `@IntoSet`); application
-developers must not implement it. Once one or more sinks are bound, every JAX-RS mount hands each sink
-one `MountPublication` at the end of `createRouter`, naming an application mount's `@RestApplication`
-name and declaring interface (`null` for every other mount) and carrying one `OperationPublication` per
-registered operation with the route value exactly as registered and the operation's effective security
-facts; a mount at least one sink wants detail for also carries an `OperationDetail`: deep-copied
-`CapturedSchemas`, keyed by `InputKey`, taken before the validation gate is built, plus the operation's
-flattened input inventory and its response shape. `RestApplications` and
-`ApiDocsInstalled` are unrelated to synthetic operations and to the publication sink: they are the
-composition view and the docs-module marker described under
-[`@RestApplication`](#restapplication) above, public only so the JAX-RS application composer, the
-mount composition validator, and the OpenAPI documentation module can read or bind them.
+Three INTERNAL framework packages back these sibling-module seams. Each is outside the maturity
+promise and not a stable application API.
+
+`dev.vertique.rest.jaxrs.synthetic` holds `SyntheticOperations`, which lets a sibling framework
+module install a framework-owned route through the resource security chain, behind the completion
+recorder, so its requests complete as `RestRequestCompletedEvent`s; an installed route deliberately
+bypasses two things a resource route would normally go through: the API-scoped middleware, request
+interceptor, router-lifecycle-hook, and mount-customizer chains of a JAX-RS mount never run for it,
+and its own failure handler ends every failure itself rather than handing it to the application's
+error pipeline.
+
+`dev.vertique.rest.jaxrs.publication` holds `OperationPublicationSink`, which is bound only through
+the `@Multibinds` `Set<OperationPublicationSink>` multibinding above — empty by default, never an
+optional binding — to which sibling framework modules contribute (the documentation module through
+`@ElementsIntoSet`, the `openapi-contract` validation module's contract-load check through
+`@IntoSet`); application developers must not implement it. Once one or more sinks are bound, every
+JAX-RS mount hands each sink one `MountPublication` at the end of `createRouter`, naming an
+application mount's `@RestApplication` name and declaring interface (`null` for every other mount)
+and carrying one `OperationPublication` per registered operation with the route value exactly as
+registered and the operation's effective security facts; a mount at least one sink wants detail for
+also carries an `OperationDetail`: deep-copied `CapturedSchemas`, keyed by `InputKey`, taken before
+the validation gate is built, plus the operation's flattened input inventory and its response shape.
+
+`dev.vertique.rest.jaxrs.application` holds `RestApplications` and `ApiDocsInstalled`, the
+composition view and the docs-module marker described under [`@RestApplication`](#restapplication)
+above, public only so the JAX-RS application composer, the mount composition validator, the OpenAPI
+documentation module, and the `openapi-contract` validation module's contract-load check can read or
+bind them.
 
 ---
 

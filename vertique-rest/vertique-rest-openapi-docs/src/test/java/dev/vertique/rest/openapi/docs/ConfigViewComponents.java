@@ -12,7 +12,7 @@ import dev.vertique.config.parser.ConfigParsingModule;
 import dev.vertique.core.VertxConfig;
 import dev.vertique.core.config.ConfigParser;
 import dev.vertique.rest.jaxrs.RestModule;
-import dev.vertique.rest.jaxrs.publication.RestApplications;
+import dev.vertique.rest.jaxrs.application.RestApplications;
 import dev.vertique.rest.jaxrs.runtime.GeneratedRestApplicationRegistration;
 import dev.vertique.rest.openapi.docs.fixture.DocsTestSupportModule;
 import io.vertx.core.json.JsonObject;

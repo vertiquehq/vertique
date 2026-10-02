@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
 // SPDX-License-Identifier: EUPL-1.2
 
-package dev.vertique.rest.jaxrs.publication;
+package dev.vertique.rest.jaxrs.application;
 
 /**
  * INTERNAL marker interface signalling that the OpenAPI documentation module is present in this

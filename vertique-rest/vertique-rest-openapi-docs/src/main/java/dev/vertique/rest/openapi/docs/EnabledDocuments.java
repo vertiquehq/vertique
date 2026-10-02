@@ -3,7 +3,7 @@
 
 package dev.vertique.rest.openapi.docs;
 
-import dev.vertique.rest.jaxrs.publication.RestApplications.ContractOrigin;
+import dev.vertique.rest.jaxrs.application.RestApplications.ContractOrigin;
 import jakarta.annotation.Nullable;
 import java.util.List;
 import java.util.Optional;

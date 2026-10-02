@@ -10,8 +10,8 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.core.exception.ConfigurationException;
-import dev.vertique.rest.jaxrs.publication.RestApplications;
-import dev.vertique.rest.jaxrs.publication.RestApplications.ContractOrigin;
+import dev.vertique.rest.jaxrs.application.RestApplications;
+import dev.vertique.rest.jaxrs.application.RestApplications.ContractOrigin;
 import dev.vertique.rest.openapi.docs.fixture.contract.ContractFiles;
 import dev.vertique.rest.openapi.docs.fixture.contract.PartnerApi;
 import io.vertx.core.json.JsonObject;

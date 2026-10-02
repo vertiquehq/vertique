@@ -4,9 +4,9 @@
 package dev.vertique.rest.openapi.validation;
 
 import dev.vertique.rest.core.RestConfigurationException;
+import dev.vertique.rest.jaxrs.application.RestApplications;
 import dev.vertique.rest.jaxrs.publication.MountPublication;
 import dev.vertique.rest.jaxrs.publication.OperationPublicationSink;
-import dev.vertique.rest.jaxrs.publication.RestApplications;
 import io.vertx.core.Context;
 import io.vertx.core.Future;
 import io.vertx.core.Promise;

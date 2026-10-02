@@ -19,7 +19,7 @@ import dev.vertique.rest.core.security.AuthEnforcementCapability;
 import dev.vertique.rest.core.security.SecurityPolicy;
 import dev.vertique.rest.core.security.SecurityPolicyValidator;
 import dev.vertique.rest.core.security.SecuritySchemeHandler;
-import dev.vertique.rest.jaxrs.publication.SyntheticOperations;
+import dev.vertique.rest.jaxrs.synthetic.SyntheticOperations;
 import jakarta.annotation.Nullable;
 import jakarta.inject.Singleton;
 import java.util.Collections;

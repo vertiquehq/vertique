@@ -13,7 +13,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import dev.vertique.core.config.ConfigParser;
 import dev.vertique.core.exception.ConfigurationException;
 import dev.vertique.rest.core.RestConfigurationException;
-import dev.vertique.rest.jaxrs.publication.RestApplications;
+import dev.vertique.rest.jaxrs.application.RestApplications;
 import dev.vertique.rest.jaxrs.runtime.GeneratedRestApplicationRegistration;
 import dev.vertique.rest.openapi.docs.fixture.DocsConfigs;
 import dev.vertique.rest.openapi.docs.fixture.PublicApi;
