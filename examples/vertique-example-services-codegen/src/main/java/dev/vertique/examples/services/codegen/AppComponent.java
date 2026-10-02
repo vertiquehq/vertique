@@ -15,6 +15,7 @@ import dev.vertique.examples.services.codegen.service.GeneratedServicesModule;
 import dev.vertique.examples.services.codegen.service.ShippingService;
 import dev.vertique.management.ManagementModule;
 import dev.vertique.rest.jaxrs.RestModule;
+import dev.vertique.rest.openapi.docs.OpenApiDocsModule;
 import dev.vertique.rest.validation.RestValidationModule;
 import dev.vertique.services.DispatchModule;
 import jakarta.inject.Singleton;
@@ -43,6 +44,8 @@ import jakarta.inject.Singleton;
  *   <li>{@link VertxModule} — Vert.x instance and configuration</li>
  *   <li>{@link RestModule} — JAX-RS annotation-driven routing</li>
  *   <li>{@link RestValidationModule} — default {@code web-validation} request-validation strategy</li>
+ *   <li>{@link OpenApiDocsModule} — application-scoped OpenAPI document publication, driven by
+ *       configuration</li>
  *   <li>{@link DispatchModule} — Event bus service dispatch infrastructure (includes DeployerModule);
  *       also contributes the paired {@code SERVICES}-phase service deploy/undeploy lifecycle steps</li>
  *   <li>{@link ManagementModule} — Health check endpoints on management port</li>
@@ -69,6 +72,7 @@ import jakarta.inject.Singleton;
             ConfigParsingModule.class,
             RestModule.class,
             RestValidationModule.class,
+            OpenApiDocsModule.class,
             DispatchModule.class,
             ManagementModule.class,
             CoreLifecycleStepsModule.class,

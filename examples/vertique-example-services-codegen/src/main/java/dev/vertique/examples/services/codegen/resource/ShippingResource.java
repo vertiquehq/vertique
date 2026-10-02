@@ -80,8 +80,7 @@ public class ShippingResource {
             summary = "Notify shipment dispatch",
             description = "Sends a one-way dispatch notification; no acknowledgement is returned")
     @ApiResponse(responseCode = "204", description = "Notification sent")
-    public Future<Void> notify(
-            @Parameter(description = "The order identifier", required = true) @QueryParam("orderId") String orderId) {
+    public Future<Void> notify(@Parameter(description = "The order identifier") @QueryParam("orderId") String orderId) {
         return shippingService.notifyDispatch(orderId);
     }
 }

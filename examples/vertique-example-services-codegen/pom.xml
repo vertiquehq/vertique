@@ -29,6 +29,10 @@ SPDX-License-Identifier: EUPL-1.2
             <groupId>dev.vertique</groupId>
             <artifactId>vertique-rest-jaxrs</artifactId>
         </dependency>
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-rest-openapi-docs</artifactId>
+        </dependency>
         <!-- Default web-validation strategy provider for JaxRsConfig.validationStrategy="web-validation" -->
         <dependency>
             <groupId>dev.vertique</groupId>
