@@ -130,7 +130,8 @@ document is the only one that generates its response schemas (see
 [Output profile and generation](#output-profile-and-generation)). The document is stored as
 immutable JSON and YAML bytes built from one tree, together with a strong entity tag for each form.
 Nothing is assembled per request, no schema source or schema generator is called per request, and no
-event loop waits for another.
+event loop waits for another. Assembly has no time bound: an assembly that never returns stalls
+startup (see [Loaded once](#loaded-once) for a served contract).
 
 - **JSON:** compact UTF-8 with the root members in a fixed order (see
   [Document Content](#document-content)); `info` holds the configured `title`, `description`, and
@@ -311,8 +312,9 @@ shape check of every active application (see [Configuration](#configuration)). W
 - One INFO line per stored document, naming the application, its mount, and the document's source,
   `generated` or `served contract`: `The document of application '<name>' at mount '<mount path>'
   is stored (source: <source>)`.
-- One INFO line per enabled document, on logger `dev.vertique.rest.openapi.docs.DocumentWarnings`,
-  once per document and component, naming where the document comes from:
+- One INFO line on logger `dev.vertique.rest.openapi.docs.DocumentWarnings`, once per document and
+  component, logged after the document's assembly or contract load succeeds (a failed one logs
+  none), naming where the document comes from:
   `apidocs.documents.<name>: the document of application '<name>' is generated`, or, for a
   [served contract](#served-contracts), `apidocs.documents.<name>: the document of application
   '<name>' is served from <resolved location>`, where the resolved location is an absolute file
@@ -507,6 +509,9 @@ strategy reads it, so both read the same file:
 - **Retry after failure.** A failed load fails every instance waiting on it and is discarded, so a
   later deployment in the same component loads the contract again.
 - **Nothing fetched.** No reference is followed outside the document, and no URL in it is resolved.
+- **No time bound.** The read of a contract has no time bound. A contract path that never returns,
+  such as a named pipe with no writer, stalls startup without a log line, and every other instance
+  waits with it. A contract location must name a regular file or a classpath resource.
 
 ### Startup checks of a served contract
 
@@ -611,7 +616,8 @@ location. Ids are compared exactly.
 ### Hidden inputs of a served contract
 
 A route operation, and any other Operation Object naming a routed operation, is checked against the
-hidden inputs of that routed operation (see [Hidden inputs](#hidden-inputs)):
+hidden inputs of that routed operation (see [Hidden inputs](#hidden-inputs)). The checks read only
+the positions listed here; the positions under [Not checked](#not-checked) are not read.
 
 - **Parameters.** Every Parameter Object of the operation and of the Path Items that hold or
   reference it, local references followed, is refused when its `in` (ASCII case ignored) and `name`
@@ -623,6 +629,31 @@ hidden inputs of that routed operation (see [Hidden inputs](#hidden-inputs)):
   `header.`, or `cookie.` qualifier and refused when it names a hidden input at that location; the
   whole key is also read as an unqualified name, matched at every parameter location. A Link's
   `requestBody` is refused when the operation it names has a hidden form input.
+
+#### Not checked
+
+A served contract is written by the developer, and it can still name a hidden input in the positions
+below. Such a contract starts, and it is served unchanged:
+
+- **Dynamic references and anchors.** A schema reached through `$dynamicRef` or `$recursiveRef`, or
+  named by `$anchor`, `$dynamicAnchor`, or `$recursiveAnchor`. The checks follow none of them, so a
+  schema they name is not checked for hidden form fields.
+- **Form names outside `properties`.** A hidden form input named as a key of a media type's
+  `encoding`, in `required`, or in `dependentRequired`.
+- **Runtime expressions.** A runtime expression such as `$request.header.X-Debug` in a Link
+  parameter value or in a callback key.
+- **`x-` members under `paths`.** A member shaped like a Path Item under an `x-` key of `paths`:
+  only its `operationId` is checked.
+- **Referenced maps.** A `links` map given by `$ref`, or a Link `parameters` map given by `$ref`. A
+  single Link given by `$ref` inside a `links` object is checked.
+- **A hidden request body.** An operation whose entity parameter carries `@Parameter(hidden = true)`
+  may still have its `requestBody` described, and a Link `requestBody` naming that operation is not
+  refused.
+- **Unreferenced parameters.** A `components.parameters` entry that names a hidden input and that no
+  operation references.
+
+A generated document leaves hidden inputs out in every position. Keep hidden inputs out of these
+positions of a served contract.
 
 ### Form request bodies
 
@@ -637,9 +668,9 @@ references followed, must be a plain object schema, whether or not the operation
   that is not an object.
 
 Other keywords, such as `dependencies`, `$dynamicRef`, or `$recursiveRef`, are not refused, and the
-runtime may not enforce them (see [Contract and runtime](#contract-and-runtime)). The checks do not
-follow `$dynamicRef` or `$recursiveRef`, so a schema they name is not checked for hidden form fields;
-do not use them in a form request body.
+runtime may not enforce them (see [Contract and runtime](#contract-and-runtime)). A schema named by
+`$dynamicRef` or `$recursiveRef` is not checked for hidden form fields (see
+[Not checked](#not-checked)); do not use them in a form request body.
 
 ### `externalValue` and other URLs
 
@@ -941,6 +972,12 @@ Each message is one line; it is wrapped here for reading. Neither message echoes
 or schema text. A hidden body is never verified. These checks run only for an application with an
 enabled document: without one, a source that binds no manifest starts and routes unchanged (see
 [Nothing is built without an enabled document](#nothing-is-built-without-an-enabled-document)).
+
+**Decimal numbers.** Every captured schema is copied into the document through a default JSON
+mapper, which reads a decimal number as a double. A custom `OperationSchemaSource` that puts a
+`BigDecimal` into a schema, such as a `multipleOf` or `minimum` with more precision than a double
+holds, therefore publishes it as a double. The framework's source already holds such values as
+doubles, so its schemas publish unchanged.
 
 ### Relocation of local definitions
 

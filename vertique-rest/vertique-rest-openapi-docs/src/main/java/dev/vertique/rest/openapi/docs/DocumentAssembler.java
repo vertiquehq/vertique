@@ -46,18 +46,19 @@ import java.util.SortedMap;
  * body describing a hidden member, or an unresolved redaction; then its annotations are checked
  * against how the runtime binds it ({@link MetadataAgreement}: the operation id, then the request
  * body, the parameters, and the form fields, each input for a contradiction, then for an unresolved
- * reference or a malformed example). Then the tag declarations of every operation are merged in the
- * same order, so a conflicting tag fails before anything is published; then the security schemes the
- * operations reference are resolved from the registered handlers' descriptions and rendered ({@link
- * DocumentSecurityAssembler}), so a referenced scheme with no handler or no description fails before
- * anything is published; then every operation is published, each checked schema once, with its
- * documentation metadata ({@link OperationMetadata}) and, as the Operation Object's last member, its
- * {@code security} when it declares a requirement set. No root {@code security} is written.
- * Inputs the inventory flags hidden are left
- * out before any check reads them, and a {@link DisclosureTally} created for the assembly records
- * whether any was and whether a reserved name was removed from a published request body. The
- * input-direction schema generators that inspect request bodies are likewise created per assembly
- * ({@link InputGenerators}).
+ * reference or a malformed example); then its responses are checked ({@link
+ * ResponseAssembler#check}), still before anything is published. Then the tag declarations of every
+ * operation are merged in the same order, so a conflicting tag fails before anything is published;
+ * then the security schemes the operations reference are resolved from the registered handlers'
+ * descriptions and rendered ({@link DocumentSecurityAssembler}), so a referenced scheme with no
+ * handler or no description fails before anything is published; then every operation is published,
+ * each checked schema once, with its documentation metadata ({@link OperationMetadata}) and, as the
+ * Operation Object's last member, its {@code security} when it declares a requirement set. No root
+ * {@code security} is written. Inputs the inventory flags hidden are left out before any check
+ * reads them, and a {@link DisclosureTally} created for the assembly records whether any was and
+ * whether a reserved name was removed from a published request body. The input-direction schema
+ * generators that inspect request bodies are likewise created per assembly ({@link
+ * InputGenerators}).
  *
  * <p>The warnings of the assembly are collected in document order and logged on the component's
  * {@link DocumentWarnings} only once the document is fully assembled and written, so a document that
