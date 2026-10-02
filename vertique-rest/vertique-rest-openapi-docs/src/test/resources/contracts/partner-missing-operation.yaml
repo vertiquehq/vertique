@@ -1,0 +1,47 @@
+openapi: "3.1.0"
+info:
+  title: Partner orders
+  version: "2.4.0"
+  description: The partner contract without createOrder zq7.
+servers:
+  - url: "/api/partner"
+tags:
+  - name: orders
+    description: Partner orders
+x-partner-extension:
+  owner: partner-integrations
+  tier: gold
+paths:
+  /orders:
+    get:
+      operationId: listOrders
+      tags:
+        - orders
+      description: Lists the partner's orders, one page at a time.
+      parameters:
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        "200":
+          description: The partner orders
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Order"
+components:
+  schemas:
+    Order:
+      type: object
+      required:
+        - sku
+      properties:
+        sku:
+          type: string
+        quantity:
+          type: integer

@@ -1,0 +1,24 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Beta",
+    "version": "1.0.0"
+  },
+  "servers": [
+    {
+      "url": "/api/beta"
+    }
+  ],
+  "paths": {
+    "/b": {
+      "get": {
+        "operationId": "listB",
+        "responses": {
+          "200": {
+            "description": "The beta list"
+          }
+        }
+      }
+    }
+  }
+}
