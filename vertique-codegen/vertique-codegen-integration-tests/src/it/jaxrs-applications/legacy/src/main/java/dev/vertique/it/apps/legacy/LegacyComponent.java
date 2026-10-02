@@ -14,12 +14,12 @@ import jakarta.inject.Singleton;
 import java.util.Set;
 
 /**
- * T003 TP-006 component: lists only {@link RestModule}, the {@code resources} unit's real, processor-
+ * Zero-declaration component: lists only {@link RestModule}, the {@code resources} unit's real, processor-
  * generated {@code dev.vertique.it.apps.resources.GeneratedJaxRsResourcesModule}, and
  * {@link LegacySupportModule} — no application registration, no handwritten mount module. With the
- * generated application registration set empty (C-GEN's {@code applications.isEmpty()} gate), the
+ * generated application registration set empty (the generator's empty-applications gate), the
  * default {@code @JaxRsResources}-driven mount must serve every enabled generated resource, exactly
- * as it did before T003 (I-1).
+ * as it did before application-registration emission existed.
  */
 @Singleton
 @Component(

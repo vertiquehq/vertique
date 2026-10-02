@@ -18,9 +18,9 @@ SPDX-License-Identifier: EUPL-1.2
     <artifactId>codegen-it-jaxrs-applications-app</artifactId>
 
     <!--
-    Applications-only compilation unit (T003 TP-005). At the baseline processor this unit has no
-    DI-eligible resource of its own, so no module is written for it: AppComponent's reference to its
-    own dev.vertique.it.apps.app.GeneratedJaxRsResourcesModule fails to compile, the intended red.
+    Applications-only compilation unit. A processor that does not emit application registrations sees no
+    DI-eligible resource of its own here, so no module is written for it: AppComponent's reference to its
+    own dev.vertique.it.apps.app.GeneratedJaxRsResourcesModule would then fail to compile.
     -->
     <dependencies>
         <dependency>

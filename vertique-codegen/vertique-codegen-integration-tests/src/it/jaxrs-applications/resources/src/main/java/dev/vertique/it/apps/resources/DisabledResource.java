@@ -12,7 +12,7 @@ import jakarta.ws.rs.core.MediaType;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * DI-eligible, conditionally-gated JAX-RS resource fixture (T003 TP-005 and TP-006). No fixture
+ * DI-eligible, conditionally-gated JAX-RS resource fixture. No fixture
  * configuration sets {@code resources.disabledResource.enabled}, so the condition never matches by
  * default: this resource's catalog entry is cataloged but reports {@code enabled = false}, and no
  * default-mount or application binding ever contributes it, so {@link #CONSTRUCTIONS} must stay

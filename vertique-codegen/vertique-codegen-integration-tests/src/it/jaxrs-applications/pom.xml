@@ -21,14 +21,14 @@ SPDX-License-Identifier: EUPL-1.2
     <packaging>pom</packaging>
 
     <!--
-    T003 end-to-end proof: real JaxRsPipelineProcessor output, across two compilation units, serves
+    End-to-end proof: real JaxRsPipelineProcessor output, across two compilation units, serves
     two Application mounts over HTTP with no handwritten registration or mount module, while a
     zero-declaration consumer of the same resources keeps the default mount.
 
-    Module order matters (evidence/T003.md R2): the reactor topologically builds `resources` first
+    Module order matters: the reactor topologically builds `resources` first
     because both `legacy` and `app` depend on it, but `legacy` and `app` are mutually independent, so
-    their relative order here is the tie-break. Listing `legacy` before `app` keeps TP-006 (legacy)
-    observable even when `app` fails to compile at the baseline processor (TP-005's intended red):
+    their relative order here is the tie-break. Listing `legacy` before `app` keeps the `legacy` proof
+    observable even when `app` fails to compile against a processor that emits no application registrations:
     the reactor's default fail-fast stops at the first failing module, after `legacy` has already run.
     -->
     <modules>

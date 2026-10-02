@@ -18,11 +18,10 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * T003 TP-006: a zero-declaration consumer of the real, processor-generated {@code resources} unit.
+ * A zero-declaration consumer of the real, processor-generated {@code resources} unit.
  * Declares no {@code jakarta.ws.rs.core.Application}, so the generated application registration set
  * stays empty and the default {@code @JaxRsResources}-driven mount must keep serving every enabled
- * generated resource, exactly as it did before T003's application-registration emission existed
- * (I-1, AC-001.1).
+ * generated resource, exactly as it did before application-registration emission existed.
  */
 class ZeroApplicationLegacyTest {
 
