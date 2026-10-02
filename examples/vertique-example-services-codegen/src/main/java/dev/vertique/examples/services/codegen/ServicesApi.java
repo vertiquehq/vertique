@@ -12,8 +12,8 @@ import io.swagger.v3.oas.annotations.info.Info;
  * The single REST application of the example-services-codegen application.
  *
  * <p>One application mounted at the root serves every discovered resource at the paths the default
- * mount served. {@link ApiDocs} publishes its OpenAPI document unless configuration disables it; the
- * shipped configuration disables it.
+ * mount served. {@link ApiDocs} publishes its OpenAPI document at
+ * {@code /apidocs/services/openapi.json} and {@code .yaml} unless configuration disables it.
  */
 @RestApplication(name = "services", path = "/", discover = true)
 @ApiDocs(access = ApiDocs.Access.PUBLIC)
