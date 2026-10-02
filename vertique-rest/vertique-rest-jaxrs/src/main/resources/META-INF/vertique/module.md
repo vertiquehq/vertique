@@ -1704,7 +1704,7 @@ Beyond what `RestCoreModule` and `JsonRuntimeModule` contribute:
 | `ComposeValidator` (`JaxRsDefaultProfileValidator`) | `@IntoSet`; fails the `VALIDATE` phase on an unknown `jaxrs.jsonProfile` (`json.systemProfile` is validated earlier, by the `CONFIGURE`-phase install step) |
 | `OperationSchemaSource`, `BeanValidator`, `InputObjectProcessor` (`dev.vertique.input.processing.InputObjectProcessor`), `ActionRegistry`, `Authorizer` | `@BindsOptionalOf`; satisfied by `rest-validation`, `validation`, `sanitization`, and `rest-security` respectively |
 | `SyntheticOperations` | `@Binds` to a package-private implementation; INTERNAL; framework documentation module only |
-| `Set<OperationPublicationSink>` | `@Multibinds`; INTERNAL; empty by default; a framework documentation module contributes through `@ElementsIntoSet` |
+| `Set<OperationPublicationSink>` | `@Multibinds`; INTERNAL; empty by default; sibling framework modules contribute: the documentation module through `@ElementsIntoSet`, the `openapi-contract` validation module's contract-load check through `@IntoSet` |
 
 `dev.vertique.rest.jaxrs.runtime.MagicBytesVerifierModule` is a separate opt-in `@Module` that
 contributes the built-in magic-byte `FileContentVerifier`.
@@ -1718,7 +1718,8 @@ middleware, request interceptor, router-lifecycle-hook, and mount-customizer cha
 never run for it, and its own failure handler ends every failure itself rather than handing it to the
 application's error pipeline. `OperationPublicationSink` is bound only through the `@Multibinds`
 `Set<OperationPublicationSink>` multibinding above — empty by default, never an optional binding —
-which a framework documentation module contributes to through `@ElementsIntoSet`; application
+to which sibling framework modules contribute (the documentation module through `@ElementsIntoSet`,
+the `openapi-contract` validation module's contract-load check through `@IntoSet`); application
 developers must not implement it. Once one or more sinks are bound, every JAX-RS mount hands each sink
 one `MountPublication` at the end of `createRouter`, naming an application mount's `@RestApplication`
 name and declaring interface (`null` for every other mount) and carrying one `OperationPublication` per
