@@ -30,6 +30,12 @@ public final class ContractFiles {
     /** {@code orders}'s own contract, named only by configuration: OpenAPI {@code 3.0.3}. */
     public static final String ORDERS = "contracts/orders-openapi.json";
 
+    /**
+     * Valid: {@link #ORDERS} without a {@code servers} member, otherwise identical, for {@code orders}
+     * under the contract-validation strategy, which accepts only absolute server URLs or none.
+     */
+    public static final String ORDERS_STRATEGY = "contracts/orders-strategy-openapi.json";
+
     /** Failing: {@link #PARTNER} plus {@code deleteOrder}, an operation the mount does not route. */
     public static final String PARTNER_EXTRA_OPERATION = "contracts/partner-extra-operation.json";
 

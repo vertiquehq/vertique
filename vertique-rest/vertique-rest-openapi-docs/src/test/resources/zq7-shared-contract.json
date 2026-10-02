@@ -1,14 +1,13 @@
 {
-  "openapi": "3.1.0",
+  "openapi": "3.0.3",
   "info": {
-    "title": "Catalog",
-    "version": "1.0"
+    "title": "Shared contract of the documentation module's tests",
+    "version": "1.0.0"
   },
   "paths": {
-    "/items": {
+    "/api/public/items": {
       "get": {
         "operationId": "listItems",
-        "summary": "List items",
         "parameters": [
           {
             "name": "limit",
@@ -22,20 +21,12 @@
         ],
         "responses": {
           "200": {
-            "description": "The items",
-            "content": {
-              "text/plain": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
+            "description": "The items"
           }
         }
       },
       "post": {
         "operationId": "createItem",
-        "summary": "Create an item",
         "parameters": [
           {
             "name": "dryRun",
@@ -63,10 +54,9 @@
         }
       }
     },
-    "/items/{id}": {
+    "/api/public/items/{id}": {
       "get": {
         "operationId": "getItem",
-        "summary": "Get an item",
         "parameters": [
           {
             "name": "id",
@@ -79,14 +69,17 @@
         ],
         "responses": {
           "200": {
-            "description": "The item",
-            "content": {
-              "text/plain": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
+            "description": "The item"
+          }
+        }
+      }
+    },
+    "/api/mgmt/status": {
+      "get": {
+        "operationId": "getStatus",
+        "responses": {
+          "200": {
+            "description": "The status"
           }
         }
       }
