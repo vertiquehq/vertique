@@ -4,13 +4,13 @@
 package dev.vertique.rest.openapi.docs.fixture.protecteddocs.caching;
 
 import dev.vertique.rest.core.routing.SecuritySchemeRegistry;
-import dev.vertique.rest.core.security.ApiKey;
-import dev.vertique.rest.core.security.MutualTls;
-import dev.vertique.rest.core.security.OAuth2;
-import dev.vertique.rest.core.security.OAuthFlows;
-import dev.vertique.rest.core.security.OpenIdConnect;
-import dev.vertique.rest.core.security.SecuritySchemeDescription;
 import dev.vertique.rest.core.security.SecuritySchemeHandler;
+import dev.vertique.rest.core.security.scheme.ApiKey;
+import dev.vertique.rest.core.security.scheme.MutualTls;
+import dev.vertique.rest.core.security.scheme.OAuth2;
+import dev.vertique.rest.core.security.scheme.OAuthFlows;
+import dev.vertique.rest.core.security.scheme.OpenIdConnect;
+import dev.vertique.rest.core.security.scheme.SecuritySchemeDescription;
 import dev.vertique.rest.security.RestAuthenticationEvidence;
 import dev.vertique.security.AuthMethod;
 import dev.vertique.security.AuthenticationEvidence;

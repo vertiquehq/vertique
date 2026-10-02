@@ -4,9 +4,9 @@
 package dev.vertique.rest.openapi.docs.fixture.security.unit;
 
 import dev.vertique.rest.core.routing.SecuritySchemeRegistry;
-import dev.vertique.rest.core.security.ApiKey;
-import dev.vertique.rest.core.security.SecuritySchemeDescription;
 import dev.vertique.rest.core.security.SecuritySchemeHandler;
+import dev.vertique.rest.core.security.scheme.ApiKey;
+import dev.vertique.rest.core.security.scheme.SecuritySchemeDescription;
 import java.util.Optional;
 
 /**

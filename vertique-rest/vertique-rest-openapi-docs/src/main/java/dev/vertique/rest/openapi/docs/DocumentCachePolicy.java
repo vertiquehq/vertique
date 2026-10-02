@@ -4,12 +4,12 @@
 package dev.vertique.rest.openapi.docs;
 
 import dev.vertique.rest.core.config.JaxRsConfig;
-import dev.vertique.rest.core.security.ApiKey;
-import dev.vertique.rest.core.security.Http;
-import dev.vertique.rest.core.security.MutualTls;
-import dev.vertique.rest.core.security.OAuth2;
-import dev.vertique.rest.core.security.OpenIdConnect;
-import dev.vertique.rest.core.security.SecuritySchemeDescription;
+import dev.vertique.rest.core.security.scheme.ApiKey;
+import dev.vertique.rest.core.security.scheme.Http;
+import dev.vertique.rest.core.security.scheme.MutualTls;
+import dev.vertique.rest.core.security.scheme.OAuth2;
+import dev.vertique.rest.core.security.scheme.OpenIdConnect;
+import dev.vertique.rest.core.security.scheme.SecuritySchemeDescription;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;

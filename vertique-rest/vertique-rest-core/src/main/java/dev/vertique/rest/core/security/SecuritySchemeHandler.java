@@ -4,6 +4,7 @@
 package dev.vertique.rest.core.security;
 
 import dev.vertique.rest.core.routing.SecuritySchemeRegistry;
+import dev.vertique.rest.core.security.scheme.SecuritySchemeDescription;
 import java.util.Optional;
 
 /**
