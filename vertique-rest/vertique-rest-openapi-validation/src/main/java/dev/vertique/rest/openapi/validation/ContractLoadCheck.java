@@ -7,7 +7,6 @@ import dev.vertique.rest.core.RestConfigurationException;
 import dev.vertique.rest.jaxrs.publication.MountPublication;
 import dev.vertique.rest.jaxrs.publication.OperationPublicationSink;
 import dev.vertique.rest.jaxrs.publication.RestApplications;
-import io.vertx.core.AsyncResult;
 import io.vertx.core.Context;
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
@@ -16,19 +15,24 @@ import io.vertx.core.file.FileSystemException;
 import jakarta.annotation.Nullable;
 import jakarta.inject.Inject;
 import java.net.MalformedURLException;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import java.util.SortedSet;
 
 /**
  * Fails a mount's router creation when the contract the {@code openapi-contract} strategy validates
  * that mount against cannot be loaded, so an unloadable contract fails startup instead of answering
  * HTTP 500 at the first validated request.
  *
- * <p>For a mount published under the {@code openapi-contract} strategy, the check looks up the contract
- * path {@link OpenApiContractValidationStrategy#bindToMount} recorded for the mount and awaits that
- * contract's cached load. A mount published under another strategy, or one the strategy never bound
- * (an empty mount), passes. The location's extension is checked first: it must be {@code json},
- * {@code yaml}, or {@code yml}, compared without regard to case.
+ * <p>For a mount published under the {@code openapi-contract} strategy, the check looks up every contract
+ * path {@link OpenApiContractValidationStrategy#bindToMount} recorded under the mount's id — several when
+ * mounts sharing that id were bound to different contracts — and awaits each contract's cached load. A
+ * mount published under another strategy, or one the strategy never bound (an empty mount), passes.
+ * Every location's extension is checked first: it must be {@code json}, {@code yaml}, or {@code yml},
+ * compared without regard to case. Paths are visited in ascending order, so when several contracts are
+ * at fault the refusal deterministically reports the first.
  *
  * <p>A failure is a {@link RestConfigurationException} without a cause. Its message names the
  * application and the setting its contract location came from — or, for a mount serving no declared
@@ -37,8 +41,8 @@ import java.util.Set;
  * a document that is not a valid OpenAPI contract. It never carries the location, the file's content,
  * or any parser text; the strategy logs the underlying cause at {@code WARN} for the operator.
  *
- * <p>The returned future is already complete when the load has finished. While the load is still
- * pending, it completes on the caller's Vert.x context, never on the context that loads the contract.
+ * <p>The returned future is already complete when every load has finished. While any load is still
+ * pending, it completes on the caller's Vert.x context, never on the context that loads a contract.
  */
 final class ContractLoadCheck implements OperationPublicationSink {
 
@@ -96,55 +100,75 @@ final class ContractLoadCheck implements OperationPublicationSink {
     }
 
     /**
-     * Awaits the load of the contract the mount was bound to under the {@code openapi-contract} strategy.
+     * Awaits the load of every contract bound under the mount's id by the {@code openapi-contract}
+     * strategy.
+     *
+     * <p>The bound paths are visited in ascending order. The first path whose extension is unsupported
+     * fails the check before any load is consulted. Otherwise the check waits until every load has
+     * completed and, when any failed, refuses with the reason of the first failed load in that order.
      *
      * @param publication the mount's publication; not retained past this call
      * @return a succeeded future when the mount is not validated by that strategy, was not bound by it,
-     *     or its contract loaded; otherwise a future failed with a value-free
-     *     {@link RestConfigurationException}
+     *     or every contract bound under its id loaded; otherwise a future failed with a value-free
+     *     {@link RestConfigurationException}, or with an {@link IllegalStateException} naming the mount id
+     *     when a bound path has no cached load
      */
     @Override
     public Future<Void> mountBuilt(MountPublication publication) {
         if (!OpenApiContractValidationStrategy.ID.equals(publication.strategyId())) {
             return Future.succeededFuture();
         }
-        String path = strategy.boundContractPath(publication.mountId());
-        if (path == null) {
+        SortedSet<String> paths = strategy.boundContractPaths(publication.mountId());
+        if (paths.isEmpty()) {
             return Future.succeededFuture();
         }
         String subject = subject(publication.applicationName(), publication.mountPath());
-        if (!SUPPORTED_EXTENSIONS.contains(extension(path))) {
-            return Future.failedFuture(refusal(subject, EXTENSION_REASON));
+        for (String path : paths) {
+            if (!SUPPORTED_EXTENSIONS.contains(extension(path))) {
+                return Future.failedFuture(refusal(subject, EXTENSION_REASON));
+            }
         }
-        Future<?> load = strategy.contractLoad(path);
-        if (load == null) {
-            return Future.succeededFuture();
+        List<Future<?>> loads = new ArrayList<>(paths.size());
+        boolean allComplete = true;
+        for (String path : paths) {
+            Future<?> load = strategy.contractLoad(path);
+            if (load == null) {
+                return Future.failedFuture(new IllegalStateException("openapi-contract: mount '"
+                        + publication.mountId() + "' was bound to a contract with no cached load; bindToMount "
+                        + "must cache a mount's contract load before its router is built."));
+            }
+            loads.add(load);
+            allComplete &= load.isComplete();
         }
-        if (load.isComplete()) {
-            return outcome(load, subject);
+        if (allComplete) {
+            return outcome(loads, subject);
         }
+        Future<?> all = Future.join(loads);
         Context context = Vertx.currentContext();
         if (context == null) {
-            return load.transform(result -> outcome(result, subject));
+            return all.transform(ignored -> outcome(loads, subject));
         }
         Promise<Void> promise = Promise.promise();
-        load.onComplete(result ->
-                context.runOnContext(ignored -> outcome(result, subject).onComplete(promise)));
+        all.onComplete(
+                ignored -> context.runOnContext(none -> outcome(loads, subject).onComplete(promise)));
         return promise.future();
     }
 
     /**
-     * Maps a completed contract load to this check's outcome.
+     * Maps completed contract loads to this check's outcome.
      *
-     * @param result  the completed load
+     * @param loads   the completed loads, in ascending order of their contract paths
      * @param subject the mount's identification for the failure message
-     * @return a succeeded future, or one failed with the value-free refusal
+     * @return a succeeded future when every load succeeded, or one failed with the value-free refusal
+     *     classified from the first failed load
      */
-    private static Future<Void> outcome(AsyncResult<?> result, String subject) {
-        if (result.succeeded()) {
-            return Future.succeededFuture();
+    private static Future<Void> outcome(List<Future<?>> loads, String subject) {
+        for (Future<?> load : loads) {
+            if (load.failed()) {
+                return Future.failedFuture(refusal(subject, reason(load.cause())));
+            }
         }
-        return Future.failedFuture(refusal(subject, reason(result.cause())));
+        return Future.succeededFuture();
     }
 
     /**

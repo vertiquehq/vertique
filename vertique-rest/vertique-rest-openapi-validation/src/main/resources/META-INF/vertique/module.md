@@ -55,8 +55,9 @@ failure for every mount bound to that path.
 
 **Startup contract-load check.** The module also contributes a contract-load check that runs when each
 JAX-RS mount built under `openapi-contract` and bound by the strategy finishes building its router:
-that mount's router creation waits for the mount's cached contract load. A contract `vertx-openapi`
-cannot load fails the mount's router, and so startup — no server listens — with a
+that mount's router creation waits for the cached load of every contract bound under the mount's id —
+more than one when hand-built mounts sharing a mount path were bound to different contracts. A
+contract `vertx-openapi` cannot load fails the mount's router, and so startup — no server listens — with a
 `RestConfigurationException` that has no cause. The message names the application and the setting its
 contract location came from — `jaxrs.applications.<name>.openapiPath`,
 `the @RestApplication annotation's openapiPath`, or `jaxrs.openapiPath`, or a generic phrase when the

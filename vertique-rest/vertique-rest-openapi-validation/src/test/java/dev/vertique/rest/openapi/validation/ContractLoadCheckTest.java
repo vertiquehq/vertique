@@ -312,6 +312,48 @@ class ContractLoadCheckTest {
                 "names the mount path: " + message);
     }
 
+    /**
+     * Two hand-built mounts at the same mount path share a mount id, and with several verticle instances
+     * each binds; every contract bound under that id must load, whichever was bound last.
+     */
+    @ParameterizedTest(name = "unloadable contract bound first: {0}")
+    @ValueSource(booleans = {true, false})
+    @DisplayName("a mount id bound to a loadable and an unloadable contract fails, in either bind order")
+    void mountIdBoundToSeveralContractsFailsWhenAnyCannotBeLoaded(boolean unloadableFirst, Vertx vertx)
+            throws Exception {
+        // Given: two hand-built mounts with the same mount id and path, one bound to a loadable contract
+        // and one to a contract with a relative servers url, bound in the given order
+        Path loadable = write(MARKER + "-contract.json", VALID_CONTRACT);
+        Path unloadable = write(MARKER + "-relative-servers.json", RELATIVE_SERVERS_CONTRACT);
+        MountMeta loadableMount =
+                new MountMeta(HAND_BUILT_MOUNT_ID, HAND_BUILT_MOUNT_PATH, loadable.toString(), Set.of());
+        MountMeta unloadableMount =
+                new MountMeta(HAND_BUILT_MOUNT_ID, HAND_BUILT_MOUNT_PATH, unloadable.toString(), Set.of());
+        OpenApiContractValidationStrategy strategy = strategy(vertx, null);
+        if (unloadableFirst) {
+            strategy.bindToMount(unloadableMount);
+            strategy.bindToMount(loadableMount);
+        } else {
+            strategy.bindToMount(loadableMount);
+            strategy.bindToMount(unloadableMount);
+        }
+        ContractLoadCheck check = new ContractLoadCheck(strategy, new RestApplications(List.of()));
+
+        // When: the mount's router is built
+        Throwable failure = failureOf(vertx, check, handBuiltPublication());
+
+        // Then: the failure names the mount path and the unloadable contract's reason, and echoes neither
+        // location
+        String message = assertValueFreeRefusal(failure, unloadable);
+        assertAll(
+                "unloadable bound first " + unloadableFirst + ": " + message,
+                () -> assertTrue(
+                        message.contains("OpenAPI contract of JAX-RS mount '" + HAND_BUILT_MOUNT_PATH + "'"
+                                + CANNOT_BE_LOADED + SERVERS_REASON),
+                        "names the mount path and the reason"),
+                () -> assertFalse(message.contains(loadable.toString()), "echoes no loadable location"));
+    }
+
     // ---------------------------------------------------------------------------------------------
     // Cases that must not fail
     // ---------------------------------------------------------------------------------------------
@@ -475,19 +517,100 @@ class ContractLoadCheckTest {
         MountPublication publication = applicationPublication(OpenApiContractValidationStrategy.ID);
         assertNull(failureOf(vertx, check, publication), "the first check succeeds");
 
-        // When: the check is called again on a context
-        CompletableFuture<Future<Void>> returned = new CompletableFuture<>();
+        // When: the check is called again on a context, and the returned future's state is read in the
+        // same task, before anything else can run on that context
+        CompletableFuture<Boolean> succeededWhenReturned = new CompletableFuture<>();
         vertx.getOrCreateContext().runOnContext(ignored -> {
             try {
-                returned.complete(check.mountBuilt(publication));
+                Future<Void> result = check.mountBuilt(publication);
+                succeededWhenReturned.complete(result.isComplete() && result.succeeded());
             } catch (Throwable t) {
-                returned.completeExceptionally(t);
+                succeededWhenReturned.completeExceptionally(t);
             }
         });
-        Future<Void> result = returned.get(BOUND_SECONDS, TimeUnit.SECONDS);
 
         // Then: the future it returned had already succeeded
-        assertTrue(result.succeeded(), "the returned future is already succeeded: " + result);
+        assertTrue(
+                succeededWhenReturned.get(BOUND_SECONDS, TimeUnit.SECONDS),
+                "the returned future is already succeeded when mountBuilt returns");
+    }
+
+    /**
+     * Like {@link #pendingLoadCompletesOnTheCallersContext()}, but the pending contract cannot be loaded:
+     * the returned future must then fail with the refusal on the caller's context.
+     */
+    @Test
+    @DisplayName("a check called while an unloadable contract still loads elsewhere fails on the caller's context")
+    void pendingFailingLoadFailsOnTheCallersContext() throws Exception {
+        Vertx loadingVertx = Vertx.vertx();
+        Vertx callerVertx = Vertx.vertx();
+        CountDownLatch release = new CountDownLatch(1);
+        try {
+            // Given: the mount bound on the loading context to a contract with a relative servers url,
+            // whose event loop is then held so the load cannot complete
+            Path location = write(MARKER + "-relative-servers.json", RELATIVE_SERVERS_CONTRACT);
+            Context loadingContext = loadingVertx.getOrCreateContext();
+            CompletableFuture<OpenApiContractValidationStrategy> bound = new CompletableFuture<>();
+            loadingContext.runOnContext(ignored -> {
+                try {
+                    OpenApiContractValidationStrategy strategy = strategy(loadingVertx, null);
+                    strategy.bindToMount(applicationMount(location));
+                    bound.complete(strategy);
+                    release.await(BOUND_SECONDS, TimeUnit.SECONDS);
+                } catch (Throwable t) {
+                    bound.completeExceptionally(t);
+                }
+            });
+            OpenApiContractValidationStrategy strategy = bound.get(BOUND_SECONDS, TimeUnit.SECONDS);
+            ContractLoadCheck check =
+                    new ContractLoadCheck(strategy, applications(location, ContractOrigin.CONFIGURATION));
+
+            // When: the check is called on the caller's context while the load is pending, then the
+            // loading event loop is released
+            Context callerContext = callerVertx.getOrCreateContext();
+            CompletableFuture<Boolean> completeWhenReturned = new CompletableFuture<>();
+            CompletableFuture<Context> failedOn = new CompletableFuture<>();
+            CompletableFuture<Throwable> failure = new CompletableFuture<>();
+            callerContext.runOnContext(ignored -> {
+                try {
+                    Future<Void> result =
+                            check.mountBuilt(applicationPublication(OpenApiContractValidationStrategy.ID));
+                    completeWhenReturned.complete(result.isComplete());
+                    result.onComplete(ar -> {
+                        if (ar.failed()) {
+                            failedOn.complete(Vertx.currentContext());
+                            failure.complete(ar.cause());
+                        } else {
+                            failedOn.completeExceptionally(new AssertionError("the check succeeded"));
+                        }
+                    });
+                } catch (Throwable t) {
+                    completeWhenReturned.completeExceptionally(t);
+                }
+            });
+            boolean wasComplete = completeWhenReturned.get(BOUND_SECONDS, TimeUnit.SECONDS);
+            release.countDown();
+            Context context = failedOn.get(BOUND_SECONDS, TimeUnit.SECONDS);
+
+            // Then: the future was pending when returned, and failed with the value-free refusal on the
+            // caller's context
+            String message = assertValueFreeRefusal(failure.get(BOUND_SECONDS, TimeUnit.SECONDS), location);
+            assertAll(
+                    () -> assertFalse(wasComplete, "the returned future awaits the pending contract load"),
+                    () -> assertSame(callerContext, context, "fails on the caller's context"),
+                    () -> assertNotSame(loadingContext, context, "not on the context that loaded the contract"),
+                    () -> assertTrue(
+                            message.contains("OpenAPI contract of application '" + APPLICATION
+                                    + "' (jaxrs.applications." + APPLICATION + ".openapiPath)" + CANNOT_BE_LOADED
+                                    + SERVERS_REASON),
+                            "names the application, its setting, and the reason: " + message));
+        } finally {
+            release.countDown();
+            Future.join(loadingVertx.close(), callerVertx.close())
+                    .toCompletionStage()
+                    .toCompletableFuture()
+                    .get(BOUND_SECONDS, TimeUnit.SECONDS);
+        }
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -545,6 +668,16 @@ class ContractLoadCheckTest {
     private static MountPublication applicationPublication(String strategyId) {
         return new MountPublication(
                 APPLICATION_MOUNT_PATH, APPLICATION_MOUNT_ID, APPLICATION, OrdersApi.class, strategyId, List.of());
+    }
+
+    private static MountPublication handBuiltPublication() {
+        return new MountPublication(
+                HAND_BUILT_MOUNT_PATH,
+                HAND_BUILT_MOUNT_ID,
+                null,
+                null,
+                OpenApiContractValidationStrategy.ID,
+                List.of());
     }
 
     private static RestApplications applications(Path location, ContractOrigin origin) {

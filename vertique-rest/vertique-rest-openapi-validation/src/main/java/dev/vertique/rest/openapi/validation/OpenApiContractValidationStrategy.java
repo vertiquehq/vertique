@@ -35,9 +35,11 @@ import jakarta.annotation.Nullable;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.SortedSet;
 import java.util.TreeSet;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
@@ -151,11 +153,14 @@ public final class OpenApiContractValidationStrategy implements RequestValidatio
     private final ConcurrentMap<String, Future<Loaded>> contracts = new ConcurrentHashMap<>();
 
     /**
-     * The contract path each bound mount validates against, keyed by {@link MountMeta#mountId()}.
-     * Populated by {@link #bindToMount(MountMeta)} so the module's contract-load check can await the
-     * load of exactly the contract a mount uses. Bounded by the number of mounts (fixed at startup).
+     * Every contract path bound under each {@link MountMeta#mountId()}, keyed by that id. A mount id can
+     * be bound to several paths — hand-built mounts at the same mount path share an id, and each verticle
+     * instance binds its own — so each id keeps the concurrent set of all paths bound under it rather
+     * than the last one. Populated by {@link #bindToMount(MountMeta)} so the module's contract-load check
+     * can await the load of every contract a mount id uses. Bounded by the number of mounts and distinct
+     * contract paths (both fixed at startup).
      */
-    private final ConcurrentMap<String, String> mountContractPaths = new ConcurrentHashMap<>();
+    private final ConcurrentMap<String, Set<String>> mountContractPaths = new ConcurrentHashMap<>();
 
     /**
      * The framework conversion resolver, threaded into the {@link DefaultBoundRequest} this strategy
@@ -281,10 +286,11 @@ public final class OpenApiContractValidationStrategy implements RequestValidatio
      * several instances, so binds for the same mount can race across event loops; {@code synchronized}
      * plus the cache's {@link ConcurrentMap#computeIfAbsent} keep exactly one load per path.
      *
-     * <p>The mount's contract path is remembered under its {@link MountMeta#mountId()}. In a composition
-     * the module's contract-load check awaits that load before the mount's router completes, so a
-     * contract that fails to load fails startup naming the application's contract setting or the mount
-     * path. The failure is also WARN-logged naming the mount id and path, and its failed future is cached
+     * <p>The mount's contract path is added to the set of paths remembered under its
+     * {@link MountMeta#mountId()}; a later bind under the same id with a different path adds to that set
+     * rather than replacing it. In a composition the module's contract-load check awaits every load in
+     * the set before the mount's router completes, so a contract that fails to load fails startup naming
+     * the application's contract setting or the mount path. The failure is also WARN-logged naming the mount id and path, and its failed future is cached
      * and never retried; only for direct use of this strategy without that check does it surface as
      * HTTP 500 on that mount's own operations when a request reaches one of its gates. Other mounts are
      * unaffected.
@@ -305,27 +311,32 @@ public final class OpenApiContractValidationStrategy implements RequestValidatio
                             + "Give the mount an openapiPath, or select a validation strategy that needs no contract.");
         }
         contracts.computeIfAbsent(openapiPath, path -> load(path, mountMeta.mountId()));
-        mountContractPaths.put(mountMeta.mountId(), openapiPath);
+        mountContractPaths
+                .computeIfAbsent(mountMeta.mountId(), id -> ConcurrentHashMap.newKeySet())
+                .add(openapiPath);
     }
 
     /**
-     * Returns the contract path the mount with {@code mountId} was bound to, for the module's
-     * contract-load check.
+     * Returns every contract path bound under {@code mountId}, for the module's contract-load check.
      *
      * @param mountId the mount's {@link MountMeta#mountId()}
-     * @return the contract path, or {@code null} when no mount with that id was bound (for example an
-     *     empty mount)
+     * @return an unmodifiable snapshot of the bound paths in ascending natural order, so a caller that
+     *     reports the first offending path does so deterministically; empty, never {@code null}, when no
+     *     mount with that id was bound (for example an empty mount)
      */
-    @Nullable
-    String boundContractPath(String mountId) {
-        return mountContractPaths.get(mountId);
+    SortedSet<String> boundContractPaths(String mountId) {
+        Set<String> paths = mountContractPaths.get(mountId);
+        if (paths == null) {
+            return Collections.emptySortedSet();
+        }
+        return Collections.unmodifiableSortedSet(new TreeSet<>(paths));
     }
 
     /**
      * Returns the cached, possibly still pending, load of the contract at {@code path}, for the module's
      * contract-load check. Never starts a load.
      *
-     * @param path the contract path, as returned by {@link #boundContractPath(String)}
+     * @param path a contract path, as returned by {@link #boundContractPaths(String)}
      * @return the cached load future, or {@code null} when no load of that path was started
      */
     @Nullable
