@@ -6,7 +6,7 @@ SPDX-License-Identifier: EUPL-1.2
 # REST Core Module
 
 > **Status:** Stable
-> **Package:** `dev.vertique.rest.core` (+ 17 sub-packages)
+> **Package:** `dev.vertique.rest.core` (+ 18 sub-packages)
 > **Artifact:** `vertique-rest-core`
 > **Depends on:** core, context, correlation, logging, security-core
 
@@ -1261,7 +1261,10 @@ nothing here reads it — until a documentation-rendering module turns it into
 `components.securitySchemes`.
 
 `SecuritySchemeDescription` is a closed, sealed interface with five kinds, each an immutable final
-class built only through its static factories, with `with*` copies:
+class built only through its static factories, with `with*` copies. The description types —
+`SecuritySchemeDescription`, its kinds, `OAuthFlows`, and `OAuthFlow` — live in
+`dev.vertique.rest.core.security.scheme`; `SecuritySchemeHandler` stays in
+`dev.vertique.rest.core.security`:
 
 ```java
 public sealed interface SecuritySchemeDescription permits Http, ApiKey, OAuth2, OpenIdConnect, MutualTls {
