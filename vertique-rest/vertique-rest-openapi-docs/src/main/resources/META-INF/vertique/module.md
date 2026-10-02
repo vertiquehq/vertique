@@ -1758,7 +1758,7 @@ Members are written in the Security Scheme Object's field order `type`, `descrip
 `scheme`, `bearerFormat`, `flows`, `openIdConnectUrl`; an empty optional field is left out, and
 `description` is written only when the description sets one.
 
-| Description (`dev.vertique.rest.core.security`) | Security Scheme Object |
+| Description (`dev.vertique.rest.core.security.scheme`) | Security Scheme Object |
 |---|---|
 | `Http.of(scheme)` | `{"type":"http","scheme":"<scheme>"}` |
 | `Http.bearer(format)` | `{"type":"http","scheme":"bearer","bearerFormat":"<format>"}`; no `bearerFormat` when `format` is `null` |
