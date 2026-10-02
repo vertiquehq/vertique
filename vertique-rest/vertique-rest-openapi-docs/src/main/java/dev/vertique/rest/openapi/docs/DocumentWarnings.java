@@ -11,11 +11,12 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * The documentation module's startup warnings. Every warning is logged at {@code WARN} on the logger
- * named after this class, and at most once per warning kind and document within one component, so a
- * second composition or verticle instance of the same component never repeats it.
+ * The documentation module's startup warnings and notices. A warning is logged at {@code WARN} and a
+ * notice at {@code INFO}, both on the logger named after this class, and each at most once per kind
+ * and document within one component, so a second composition or verticle instance of the same
+ * component never repeats it. Warnings and notices share one guard, so their kinds are distinct.
  *
- * <p>A warning message starts with the document's configuration path,
+ * <p>A message starts with the document's configuration path,
  * {@code apidocs.documents.<name>}, and carries no configuration value other than the document
  * name and a mount path. The guard is thread-safe: compositions validated concurrently log each
  * warning once.
@@ -44,6 +45,23 @@ final class DocumentWarnings {
             return false;
         }
         LOG.warn("{}", message);
+        return true;
+    }
+
+    /**
+     * Logs a notice at {@code INFO} unless a message of the same kind was already logged for the same
+     * document.
+     *
+     * @param kind the notice kind, a fixed identifier chosen by the caller
+     * @param documentName the document's application name
+     * @param message the complete notice, starting with the document's configuration path
+     * @return {@code true} when the notice was logged, {@code false} when it had been logged before
+     */
+    boolean infoOnce(String kind, String documentName, String message) {
+        if (!warned.add(kind + '\0' + documentName)) {
+            return false;
+        }
+        LOG.info("{}", message);
         return true;
     }
 }

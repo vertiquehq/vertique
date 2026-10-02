@@ -24,14 +24,13 @@ import dev.vertique.rest.core.security.SecuritySchemeHandler;
 import dev.vertique.rest.jaxrs.publication.ApiDocsInstalled;
 import dev.vertique.rest.jaxrs.publication.OperationPublicationSink;
 import dev.vertique.rest.jaxrs.publication.RestApplications;
+import dev.vertique.rest.jaxrs.publication.SyntheticOperations;
 import dev.vertique.rest.jaxrs.validation.OperationSchemaSource;
 import dev.vertique.rest.jaxrs.validation.RequestValidationStrategy;
 import io.vertx.core.json.JsonObject;
 import jakarta.inject.Singleton;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
-import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
@@ -148,9 +147,11 @@ public abstract class OpenApiDocsModule {
      * @param store the document store of the component
      * @param apidocsConfig the parsed {@code apidocs} section
      * @param jaxRsConfig the JAX-RS routing configuration, whose default headers decide the caching
-     *     header of the documents
+     *     header of the public documents
      * @param securitySchemeHandlers the registered security scheme handlers
      * @param authEnforcement the authentication enforcement capability, empty when not installed
+     * @param syntheticOperations the installer the protected document routes are installed through
+     * @param warnings the documentation module's warnings of the component
      * @return the mount, or an empty set when no document is enabled
      */
     @Provides
@@ -161,7 +162,9 @@ public abstract class OpenApiDocsModule {
             ApidocsConfig apidocsConfig,
             JaxRsConfig jaxRsConfig,
             Set<SecuritySchemeHandler> securitySchemeHandlers,
-            Optional<AuthEnforcementCapability> authEnforcement) {
+            Optional<AuthEnforcementCapability> authEnforcement,
+            SyntheticOperations syntheticOperations,
+            DocumentWarnings warnings) {
         if (documents.isEmpty()) {
             return Set.of();
         }
@@ -169,40 +172,11 @@ public abstract class OpenApiDocsModule {
                 apidocsConfig.path(),
                 documents,
                 store,
-                cacheControl(jaxRsConfig),
+                DocumentCachePolicy.publicCacheControl(jaxRsConfig),
                 securitySchemeHandlers,
-                authEnforcement));
-    }
-
-    /**
-     * Computes the {@code Cache-Control} value of the documents from the effective default: the last
-     * default header named {@code Cache-Control}, in any letter case. The value is {@code no-store}
-     * when that default has a {@code no-store} directive and {@code no-cache} otherwise, preceded by
-     * {@code private, } when the default has a {@code private} directive. It is never public.
-     */
-    private static String cacheControl(JaxRsConfig jaxRsConfig) {
-        String effective = null;
-        if (jaxRsConfig.defaultHeaders() != null) {
-            for (Map.Entry<String, String> header :
-                    jaxRsConfig.defaultHeaders().toHeaderMap().entrySet()) {
-                if ("Cache-Control".equalsIgnoreCase(header.getKey())) {
-                    effective = header.getValue();
-                }
-            }
-        }
-        boolean noStore = false;
-        boolean isPrivate = false;
-        if (effective != null) {
-            for (String directive : effective.split(",")) {
-                int equals = directive.indexOf('=');
-                String name = (equals < 0 ? directive : directive.substring(0, equals))
-                        .trim()
-                        .toLowerCase(Locale.ROOT);
-                noStore |= name.equals("no-store");
-                isPrivate |= name.equals("private");
-            }
-        }
-        return (isPrivate ? "private, " : "") + (noStore ? "no-store" : "no-cache");
+                authEnforcement,
+                syntheticOperations,
+                warnings));
     }
 
     /**
