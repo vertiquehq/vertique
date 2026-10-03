@@ -5,6 +5,7 @@ package dev.vertique.rest.openapi.docs.config;
 
 import dev.vertique.rest.jaxrs.application.RestApplications.ContractOrigin;
 import dev.vertique.rest.openapi.docs.ApiDocs;
+import dev.vertique.rest.openapi.docs.document.DocumentInfo;
 import dev.vertique.rest.openapi.docs.metadata.AnnotatedInfo;
 import jakarta.annotation.Nullable;
 import java.util.List;
@@ -86,7 +87,7 @@ public record EnabledDocuments(List<EnabledDocument> all, String path) {
             ApiDocs.Access access,
             String mountPath,
             ContractOrigin contractOrigin,
-            @Nullable InfoConfig info,
+            @Nullable DocumentInfo info,
             @Nullable String serverUrl,
             @Nullable AnnotatedInfo annotatedInfo) {
 
@@ -107,7 +108,7 @@ public record EnabledDocuments(List<EnabledDocument> all, String path) {
                 ApiDocs.Access access,
                 String mountPath,
                 ContractOrigin contractOrigin,
-                @Nullable InfoConfig info,
+                @Nullable DocumentInfo info,
                 @Nullable String serverUrl) {
             this(name, declaringType, access, mountPath, contractOrigin, info, serverUrl, null);
         }

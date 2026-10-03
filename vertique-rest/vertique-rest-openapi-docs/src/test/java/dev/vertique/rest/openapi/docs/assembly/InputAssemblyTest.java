@@ -18,7 +18,7 @@ import dev.vertique.rest.openapi.docs.ApiDocs;
 import dev.vertique.rest.openapi.docs.OpenApi31Toolchain;
 import dev.vertique.rest.openapi.docs.TestContexts;
 import dev.vertique.rest.openapi.docs.config.EnabledDocuments;
-import dev.vertique.rest.openapi.docs.config.InfoConfig;
+import dev.vertique.rest.openapi.docs.document.DocumentInfo;
 import dev.vertique.rest.openapi.docs.document.PublishedDocument;
 import dev.vertique.rest.openapi.docs.fixture.input.GeneratedBodies;
 import dev.vertique.rest.openapi.docs.fixture.input.Publications;
@@ -66,7 +66,7 @@ class InputAssemblyTest {
     private static final String PUBLIC_MOUNT = "/api/public/*";
 
     /** The {@code info} object of every assembled document. */
-    private static final InfoConfig INFO = new InfoConfig("Input assembly", "1.0", null);
+    private static final DocumentInfo INFO = new DocumentInfo("Input assembly", "1.0", null);
 
     /**
      * The enabled public document of application {@value #PUBLIC} at {@value #PUBLIC_MOUNT}, with

@@ -26,9 +26,9 @@ import dev.vertique.rest.openapi.docs.assembly.AssemblyContext;
 import dev.vertique.rest.openapi.docs.assembly.DocumentAssembler;
 import dev.vertique.rest.openapi.docs.config.EnabledDocuments;
 import dev.vertique.rest.openapi.docs.config.EnabledDocumentsResolver;
-import dev.vertique.rest.openapi.docs.config.InfoConfig;
 import dev.vertique.rest.openapi.docs.diagnostics.DiagnosticsAccess;
 import dev.vertique.rest.openapi.docs.diagnostics.DocumentWarnings;
+import dev.vertique.rest.openapi.docs.document.DocumentInfo;
 import dev.vertique.rest.openapi.docs.document.PublishedDocument;
 import dev.vertique.rest.openapi.docs.fixture.DocsConfigs;
 import dev.vertique.rest.openapi.docs.fixture.input.Publications;
@@ -75,7 +75,7 @@ import org.slf4j.LoggerFactory;
 public final class MetadataDocuments {
 
     /** The {@code info} of every document assembled from a synthetic publication. */
-    static final InfoConfig INFO = new InfoConfig("Metadata", "1.0", null);
+    static final DocumentInfo INFO = new DocumentInfo("Metadata", "1.0", null);
 
     /** The name of the logger the documentation module's warnings are logged on. */
     static final String WARNINGS_LOGGER = "dev.vertique.rest.openapi.docs.DocumentWarnings";
