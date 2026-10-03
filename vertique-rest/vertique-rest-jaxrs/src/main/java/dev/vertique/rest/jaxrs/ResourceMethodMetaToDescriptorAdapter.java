@@ -13,6 +13,7 @@ import dev.vertique.rest.jaxrs.routing.ParamDescriptor;
 import dev.vertique.rest.jaxrs.routing.ParamLocation;
 import io.swagger.v3.oas.annotations.Operation;
 import io.vertx.ext.web.FileUpload;
+import jakarta.annotation.Nullable;
 import jakarta.ws.rs.core.EntityPart;
 import java.lang.annotation.Annotation;
 import java.util.ArrayList;
@@ -27,6 +28,11 @@ import java.util.Optional;
  * non-blank, otherwise the Java method name, and projects the meta's parameter model into
  * {@link ParamDescriptor}s (path/query/header/cookie/form) and {@link BodyDescriptor} (the body
  * parameter, if any), and an additional file-part validation view.
+ *
+ * <p>The adapted descriptor reports the application name the caller passes to {@link
+ * #adapt(ResourceMethodMeta, String)} as {@link JaxRsOperationDescriptor#applicationName()}, and
+ * {@code null} when the caller passes none. The name is not derived from the method or its
+ * resource class.
  */
 final class ResourceMethodMetaToDescriptorAdapter {
 
@@ -40,6 +46,20 @@ final class ResourceMethodMetaToDescriptorAdapter {
      *     body
      */
     static JaxRsOperationDescriptor adapt(ResourceMethodMeta meta) {
+        return adapt(meta, null);
+    }
+
+    /**
+     * Adapts the given {@link ResourceMethodMeta} into a {@link JaxRsOperationDescriptor} that
+     * reports the given application name.
+     *
+     * @param meta            the internal resource-method metadata; must not be {@code null}
+     * @param applicationName the name of the application the operation's mount serves, or {@code null}
+     *                        when the mount serves no named application
+     * @return a descriptor exposing the operation's identity, application name, security,
+     *     annotations, parameters, and body
+     */
+    static JaxRsOperationDescriptor adapt(ResourceMethodMeta meta, @Nullable String applicationName) {
         String operationId = resolveOperationId(meta);
         List<ParamDescriptor> parameters = mapParameters(meta.params());
         List<FilePartDescriptor> fileParts = mapFileParts(meta.params());
@@ -50,7 +70,8 @@ final class ResourceMethodMetaToDescriptorAdapter {
         // both of name/combine) fails startup inside the scanner rather than being silently dropped.
         List<SecurityRequirementSet> securityRequirementSets = SecuritySchemeAnnotationScanner.effectiveRequirements(
                 meta.methodAnnotations(), meta.classAnnotations());
-        return new AdaptedDescriptor(meta, operationId, parameters, fileParts, body, securityRequirementSets);
+        return new AdaptedDescriptor(
+                meta, operationId, parameters, fileParts, body, securityRequirementSets, applicationName);
     }
 
     /**
@@ -218,6 +239,8 @@ final class ResourceMethodMetaToDescriptorAdapter {
      * @param securityRequirementSets the effective annotation-sourced security requirement sets (the
      *                                OR alternatives; each set is single-scheme for a {@code name()}
      *                                requirement or multi-scheme for a {@code combine()} requirement)
+     * @param applicationName         the name of the application the operation's mount serves, or
+     *                                {@code null} when the mount serves no named application
      */
     private record AdaptedDescriptor(
             ResourceMethodMeta meta,
@@ -225,8 +248,14 @@ final class ResourceMethodMetaToDescriptorAdapter {
             List<ParamDescriptor> parameters,
             List<FilePartDescriptor> fileParts,
             Optional<BodyDescriptor> body,
-            List<SecurityRequirementSet> securityRequirementSets)
+            List<SecurityRequirementSet> securityRequirementSets,
+            @Nullable String applicationName)
             implements JaxRsOperationDescriptor {
+
+        @Override
+        public @Nullable String applicationName() {
+            return applicationName;
+        }
 
         @Override
         public String operationId() {

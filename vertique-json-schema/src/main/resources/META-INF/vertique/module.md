@@ -246,10 +246,15 @@ name — never by simple name alone, so an application-defined constraint whose 
 to collide with one of these, or with a plain Jakarta Validation type, is never mistaken for it — and
 never by importing `hibernate-validator`'s constraint classes, so the metadata source stays usable
 with any Jakarta Validation provider). A `@Pattern`'s flags are embedded as an inline Java regex
-modifier group (`(?i:...)`, ...) as a correction — measured against the real `io.vertx.json.schema`
-5.1.6 validator, which compiles the `pattern` keyword with plain `java.util.regex.Pattern` and honors
+modifier group (`(?i:...)`, ...; with `COMMENTS`, a line break precedes the closing parenthesis only
+when a trailing `#` comment would otherwise swallow it) as a correction, after the regexp is first
+compiled with its flags — one `java.util.regex` rejects fails generation with a diagnostic naming the
+property, never echoing the expression — measured against the real
+`io.vertx.json.schema` 5.1.6 validator, which compiles the `pattern` keyword with plain `java.util.regex.Pattern` and honors
 this — except `CANON_EQ`, which has no embeddable modifier character and fails generation with a
-bounded diagnostic naming the property. Two or more `@Pattern` constraints in the default group on one
+bounded diagnostic naming the property. A regexp that compiles with its flags but whose embedded
+group does not — an open `\Q` quote, or comments mode switched on inline, can cause this — fails
+generation with a diagnostic naming the property, never echoing the expression. Two or more `@Pattern` constraints in the default group on one
 member — Jakarta Validation's own `@Pattern.List` repetition — render as an `allOf` of one
 single-`pattern` subschema per constraint, sorted for deterministic output, rather than the second
 silently overwriting the first; a composed constraint's own leaves render the same way as if declared
@@ -524,7 +529,7 @@ Jackson never routes a key to that any-setter, so describing it would reject leg
 
 ### Reserved names beside described extras
 
-Where extra keys are described, the document also carries
+Where extra keys are described on a case-sensitively bound type, the document also carries
 
 ```json
 "propertyNames": {"not": {"enum": ["id", "role"]}}
@@ -555,31 +560,69 @@ Jackson stores a key named after it as an ordinary entry of the map. The publish
 is by member and never by spelling, so a property the document publishes under some other name is
 not reserved. The memberless subtraction fails open for the one shape whose member identity cannot
 be recovered — a `@JsonCreator` parameter renamed away from the field it populates — which therefore
-keeps accepting the traffic it already accepted; constrain that shape with Bean Validation. An
-application-declared `propertyNames` is never displaced: the reserved set is combined with it under
-`allOf`.
+keeps accepting the traffic it already accepted; constrain that shape with Bean Validation. A
+declared `propertyNames` in the document comes only from a profile override fragment, which replaces
+the whole description of its class: it is published exactly as declared, and is never guarded or
+listed — the generator itself never writes a `propertyNames` alongside one already on the node.
+
+**The redaction manifest.** The `propertyNames` rule above, and the case-insensitive reserved-name
+entry described below, are guards `AnnotationJsonSchemaGenerator` marks as it emits them.
+`describe(Type)` returns, beside the canonical document, a `RedactionManifest` whose sorted RFC 6901
+pointers name every such guard in the finished document — including every copy alias expansion or
+folded-copy resolution makes of one — so removing exactly those locations leaves no reserved name in
+any spelling or fold, while every other assertion, including the non-ASCII refusal below, remains. A
+`propertyNames` a profile override fragment declares carries no guard and is never listed. The mark
+is a generator-private keyword, `x-vertique-reserved-name-guard`, removed before the document is
+canonicalized, so no generated document carries it. A profile override fragment that carries it as a
+member of a schema object, at any depth, is refused when the generator is constructed — as one
+carrying the alias-plan keyword is (see "How an alias spelling is described") — because the
+manifest would otherwise list an assertion the generator never emitted; the refusal names the
+keyword and the profile. See "Canonical output" below.
 
 **Case-insensitive binding and Unicode code folding.** A type bound case-insensitively (mapper-wide,
 class-level, or member-level `@JsonFormat`) is described with `patternProperties` — one ASCII
-case-folding pattern per bound name (`name` folds to `^[nN][aA][mM][eE]\z`), since Jackson's own
-case-insensitive lookup measurably uses `String#toLowerCase()`/`toUpperCase()` with no explicit
-`Locale`, which a fold pinned to any one locale could silently drift from. The fold is anchored with
-`\z`, not `$`: `io.vertx.json.schema` 5.1.6 compiles the `pattern` keyword with plain
-`java.util.regex.Pattern`, whose `$` — without `Pattern.MULTILINE` — still matches immediately before
-a single trailing line terminator, not only at the true end of input; a key ending in a newline would
-otherwise wrongly match the fold. Every case-insensitively bound type additionally carries a
-`propertyNames` rule refusing any key containing a non-ASCII code unit, **unconditionally** — where
-extras are also described, folded together with the reserved-name pattern; where they are not, on its
-own. This closes a real gap: a non-ASCII code point can fold to an ASCII letter under Java's
-locale-independent Unicode case mapping regardless of locale (U+212A KELVIN SIGN folds to ASCII `k`),
-so a key spelled with it binds at the *binder* to the same member an ASCII spelling would. Where
-extras are described, the ASCII-only `patternProperties` fold and the reserved-name pattern both miss
-it at the *schema*, so without this rule the key would fall through to `additionalProperties` and
-validate as a permissive extra instead of against the real member's own constraint. A **closed** type
-(no any-setter) at the REST gate has no other closure at all — REST has no hardener, and a closed type
-publishes no `additionalProperties` — so without this rule the key would simply be accepted and bound;
-the rule is emitted unconditionally for exactly this reason, not only where extras are described. A
-closed type still relies on Bean Validation, when one is supplied, as its own backstop after binding.
+case-folding pattern per bound name that has an ASCII letter, since Jackson's
+own case-insensitive lookup measurably uses `String#toLowerCase()`/`toUpperCase()` with no explicit
+`Locale`, which a fold pinned to any one locale could silently drift from. The key matches every
+other ASCII casing of the name and never the exact spelling, which `properties` validates, so a
+value is checked once whatever the casing of its key: a negative lookahead excludes the exact name,
+then the fold follows (`name` gives `^(?!name(?![\s\S]))[nN][aA][mM][eE](?![\s\S])`; `a.b` gives
+`^(?!a\.b(?![\s\S]))[aA]\.[bB](?![\s\S])`). The entry's value is a copy of that member's own
+resolved schema, whatever its type, so a differently cased key carries the same constraints as the
+exact spelling — including a member described through a definition reference (a nested DTO, a
+map, an enum, a polymorphic base, or a list, array, or `Optional` of those). A name with no ASCII
+letter has no other spelling and gets no entry; a name Jackson folds beyond ASCII is still refused
+when the schema is generated. The copy is made by the generator and its private placeholder keyword,
+`x-vertique-folded-copy`, never appears in a generated document; a profile override fragment that
+carries it as a member of a schema object is refused when the generator is constructed, like the
+guard keyword above. A body spelling such a member in a non-exact casing with a value its schema
+rejects is now rejected, as the exact spelling already is (before, that copy was an unresolved,
+near-empty schema and the value was accepted); verdicts for the exact spelling are unchanged. The
+published input schema text of every case-insensitively bound type differs from earlier releases.
+The fold is anchored with
+`(?![\s\S])`, not `$`: `io.vertx.json.schema` 5.1.6 compiles the `pattern` keyword with plain
+`java.util.regex.Pattern`, whose `$` — without `Pattern.MULTILINE` — still matches immediately
+before a single trailing line terminator, not only at the true end of input; a key ending in a
+newline would otherwise wrongly match the fold. `(?![\s\S])` is the ECMA-262 end-of-input form — a
+negative lookahead asserting that no character follows — and under `java.util.regex` it matches
+exactly what `\z` matches, with no exception for a trailing line terminator. Every
+case-insensitively bound type additionally carries a `propertyNames` rule refusing any key
+containing a non-ASCII code unit, **unconditionally** — where extras are also described, paired with
+a second, separate refusal of the reserved names' ASCII case folds as the two entries of one `allOf`
+(the non-ASCII refusal first); where they are not, on its own. Refusing a key matching either pattern
+is exactly refusing a key matching their alternation, so the separated shape accepts the same keys a
+single combined pattern would; only the reserved-name entry (`propertyNames/allOf/1`) is a guard the
+redaction manifest lists, so removing it leaves the non-ASCII refusal in place. This closes a real gap: a
+non-ASCII code point can fold to an ASCII letter under Java's locale-independent Unicode case
+mapping regardless of locale (U+212A KELVIN SIGN folds to ASCII `k`), so a key spelled with it binds
+at the *binder* to the same member an ASCII spelling would. Where extras are described, the
+ASCII-only `patternProperties` fold and the reserved-name pattern both miss it at the *schema*, so
+without this rule the key would fall through to `additionalProperties` and validate as a permissive
+extra instead of against the real member's own constraint. A **closed** type (no any-setter) at the
+REST gate has no other closure at all — REST has no hardener, and a closed type publishes no
+`additionalProperties` — so without this rule the key would simply be accepted and bound; the rule
+is emitted unconditionally for exactly this reason, not only where extras are described. A closed
+type still relies on Bean Validation, when one is supplied, as its own backstop after binding.
 
 **Member-level case-insensitive binding.** A member bound case-insensitively only through its own
 contextual `@JsonFormat(with = ACCEPT_CASE_INSENSITIVE_PROPERTIES)` is described inline at that
@@ -702,6 +745,20 @@ configuration. Equal resolved types, annotations, construction mode, mapper conf
 selected profile direction, and canonical override fragments produce byte-identical documents
 across independent instances and repeated calls. Calls on one instance are safe from multiple
 threads; the complete generation and canonicalization operation is serialized per instance.
+
+`describe(Type)` runs the identical generation and returns a `CanonicalSchema` pairing that exact
+text, as `json()`, with a `RedactionManifest`: the sorted RFC 6901 pointers of every reserved-name
+guard in the finished document (see "Reserved names beside described extras" above), and a digest —
+`"sha-256:"` plus the lowercase hexadecimal SHA-256 of the UTF-8 bytes of the canonical form of the
+parsed document. `matches(text)` recomputes that digest for `text` with a strict reader — one that
+refuses content after the first JSON value, while still accepting trailing whitespace, and refuses an
+object repeating a key — and compares it with the manifest's own, so it holds for `json()` however
+that text is later re-rendered (reordered keys, inserted whitespace), and fails for any difference
+that survives parsing and canonicalization. A difference parsing itself erases — an escaped spelling
+of a character, or another notation of a number that parses to the same value — does not change the
+result. It returns `false` for unparsable or malformed input and never throws for a content reason. `generateCanonical(Type)` is exactly
+`describe(type).json()`; an output-direction generator's manifest, and a `withVictoolsDefaults()`
+generator's, is always empty, since neither emits a guard.
 
 Any failure — an unrepresentable `Type`, an invalid or conflicting profile override declaration,
 a detected structural conflict, or an unexpected Victools failure — is normalized to
@@ -832,10 +889,162 @@ misdescribes the wire:
   boolean isActive` behind `isActive()` and `setActive(...)`, or an `mName` field behind
   `getName()` and `setName(...)`, publishes `active` or `name` as before. So is a rename to the
   member's own property name, or to a name no property carries. Where a field name and its accessor
-  property differ, `@JsonProperty("active")` on the field joins the two for Jackson as well.
+  property differ, `@JsonProperty("active")` on the field joins the two for Jackson as well. A
+  rename that does not fail generation can still publish a member under a name other than the one
+  Jackson serializes — `@Schema(name = ...)` onto a name no property carries is the ordinary case.
+  `AnnotationJsonSchemaGenerator#outputRenames(Type)` reports every such member reachable from
+  `type`'s output document — its root and every nested object, collection element, or shared
+  definition it describes, each member once however often it is reached — as an
+  `OutputRename(declaringType, member, serializedName, schemaName)`, ordered by `declaringType` then
+  `member` (`String.compareTo`); it returns an empty list when no reachable member's published name
+  diverges. The document itself is unchanged: `outputRenames` only detects the divergence, under the
+  same accepted type grammar, bounded `JsonSchemaGenerationException` failure contract, and
+  per-instance lock as `generateCanonical`. When a member carries both `@JsonProperty` and
+  `@Schema(name = ...)`, only a non-empty `@JsonProperty` value naming a name other than the
+  member's own takes precedence: `@JsonProperty("wire") @Schema(name = "label") String code`
+  publishes `wire`, the name Jackson serializes, and is not reported. A bare `@JsonProperty`, or
+  `@JsonProperty("code")` naming the member itself, does not take precedence:
+  `@Schema(name = "label")` still publishes `label` while Jackson serializes `code`, and the member
+  is reported as `(…, code, code, label)`. `outputRenames` answers only for a generator built by
+  `forOutputProfile(JsonMapperProfile)`; calling it on an input-direction generator
+  (`forInputProfile`) or one built by `withVictoolsDefaults()` throws `IllegalStateException`.
+  `dev.vertique:vertique-rest-openapi-docs` refuses to publish an output type for which it reports
+  a member.
 
 `@Schema(type = ...)` has no effect in this module; `implementation` is the supported way for a
 property to contribute a type shape.
+
+**`@Hidden` alone hides nothing.** A member or type marked `@io.swagger.v3.oas.annotations.Hidden`
+without `@Schema(hidden = true)` stays in the document either generator produces. An input member
+stays described, so a gate that validates against the document keeps enforcing its constraints; an
+output member stays published. To keep a member out, use `@Schema(hidden = true)` on the field or
+getter the generator describes it through (the two are read together), except in the cases below;
+`@Hidden` is no substitute.
+
+`@Schema(hidden = true)` does not hide every member or type:
+
+- the input direction still describes a property the profile's mapper binds through its setter,
+  whether the marker sits on the property's field or on its getter; the output direction hides it;
+- neither direction hides the flattened content of a `@JsonUnwrapped` member marked
+  `@Schema(hidden = true)`;
+- the input direction still describes a member bound through the inline nested-bean branch (a nested
+  bean described inline because the member's own `@JsonFormat` makes it case-insensitive or a
+  member-level `@Schema(additionalProperties = FALSE)` closes its extras) and a member bound through a
+  converter (`@JsonDeserialize(converter = ...)`), whichever declaration carries the marker;
+- the input direction still describes a property bound through a builder method, whether the marker
+  sits on the builder method or on the built type's field; the output direction hides it;
+- the input direction still describes a property bound through a static factory creator's parameter,
+  even when its backing field carries the marker; the output direction hides it;
+- the input direction still describes a map member rendered through its value constraints (a value
+  position that carries a constraint), whichever declaration carries the marker;
+- neither direction hides an enum constant marked `@Schema(hidden = true)`;
+- neither direction honors a `@Schema(hidden = true)` a mix-in declares for a member;
+- neither direction honors a `@Schema(hidden = true)` declared on a creator parameter itself: the
+  generators read the property's field or getter, so the property stays described;
+- neither direction honors a `@Schema(hidden = true)` that reaches a field only through a Jackson
+  annotation bundle (an annotation meta-annotated `@JacksonAnnotationsInside`): the property stays
+  described;
+- neither direction honors a `@Schema(hidden = true)` on a setter: the property stays described;
+- neither direction honors a class-level `@Schema(hidden = true)`: the type is still described
+  wherever the document references it.
+
+Such a member or type stays in the document, and the report below lists it.
+
+`AnnotationJsonSchemaGenerator#hiddenMembers(Type)` finds every member and type that `type`'s
+document describes and that carries `@Hidden`, `@Schema(hidden = true)`, or both, in either
+direction. Each entry is a `HiddenMember(declaringType, member, marker, hideableBySchemaHidden)`,
+where `marker` is `HidingMarker.HIDDEN`, `SCHEMA_HIDDEN`, or `BOTH`. A `SCHEMA_HIDDEN` entry is a
+member whose marker the generator ignores at that position (the cases above, or a marker on a
+declaration other than the one it reads); a member whose `@Schema(hidden = true)` the generator
+honors is left out of the document and is not reported. The document's reach is its root and every
+type it describes — a nested object, a collection or array element, an `Optional` payload, a shared
+definition, and, in the input direction, a map value — together with every property described on
+them.
+
+`hideableBySchemaHidden` answers one question: would declaring `@Schema(hidden = true)` on the
+property's own field, or on its getter when the mapper sees no field, make this generator leave the
+property out at the position where the document describes it. It is `true` only when the position is
+described through a field or getter the generator checks for the marker, which includes every
+output-direction property. It is `false` for:
+
+- a type, an enum constant, a `@JsonUnwrapped` member, and an any-setter;
+- in the input direction, a property described through a setter, a builder method, a static factory
+  creator's parameter, or a constructor creator's parameter without a backing field;
+- in the input direction, a map member rendered through its value constraints, a member bound through
+  the inline nested-bean branch, and a member bound through a converter;
+- a position with no schema-library member scope, where the generator checks neither declaration.
+
+A member reached from several positions is reported once, with the conjunction of the flags at each
+position. The flag is provisional: it may change when the generator honors the marker at more
+positions.
+
+Each reported member is a Java member, reported under its own name and the class that declares it:
+
+- a described property's field, getter, or setter carrying a marker, whether the mapper binds the
+  property through one of them, through a record component, or through a creator parameter, so a
+  marker on the getter of a private field `secret` reports `getSecret`, and a marker on a record
+  component reports the component's name once;
+- a creator parameter carrying a marker, named by the creator and the zero-based parameter index:
+  `<init>#0` for a constructor's first parameter, `of#1` for the second parameter of a static factory
+  method `of`, under the class that declares the creator;
+- in the input direction, a builder method carrying a marker, under the builder class, and an
+  any-setter carrying one when the document describes the type's extra keys; the output direction
+  describes neither. An any-setter declared on a creator parameter carrying `@Schema(hidden = true)`
+  is reported like any creator parameter, as `<init>#i` (or `method#i` for a static factory), with
+  `hideableBySchemaHidden` false;
+- a method carrying a marker that a described getter or setter overrides or implements, a generic
+  declaration overridden with concrete parameter types included, named where it is declared;
+- a `@JsonUnwrapped` member carrying a marker, in either direction, when the document describes its
+  flattened content, a getter-only or read-only member included;
+- a constant carrying a marker of an enum the document describes, which the document still lists,
+  reported under the enum's binary name and the constant's name.
+
+A type carrying a marker is reported with a `null` `member` wherever the document describes it: as
+the root, as a member's type, as a collection or array element, inside an `Optional`, as a map value
+in the input direction, and as a polymorphic base that the document describes only through its
+subtypes, reached through a member at any of those positions. A described subtype of a class
+carrying a class-level `@Schema(hidden = true)` is reported for the subtype as a `SCHEMA_HIDDEN` type
+entry, because `@Schema` is `@Inherited`; `@Hidden` is not, so an inherited `@Hidden` never counts.
+The type's own view decides first (a mix-in's `@Schema`, then the declared one, then one reached
+through a bundle), and the inherited `@Schema` is read only when that view holds none. A class that
+declares `@Hidden` directly and inherits a hidden `@Schema` is reported as `BOTH`. The base type,
+when the document describes it as well, keeps its own entry.
+
+Only a `@Schema` declared on a superclass is inherited, and the nearest one wins, as Java's
+`@Inherited` defines it, so an intermediate class declaring `@Schema(hidden = false)` stops a hidden
+`@Schema` above it from reaching its subtypes. A `@Schema` on an interface is never inherited, which
+matches `Class#getAnnotation`; swagger-core reads only the declared annotation. A mix-in registered
+for a superclass is not inherited by a subtype either: the subtype's own mix-in is read through its
+own view. To publish a subtype of a hidden class, declare its own `@Schema` without `hidden`.
+
+A marker counts as the profile's mapper sees it in the generator's direction: declared on the member
+or type directly, through a Jackson annotation bundle (an annotation meta-annotated
+`@JacksonAnnotationsInside`) at any depth, or through a mix-in the mapper registers, that mix-in's
+superclasses included, and, for a method, on a declaration the method overrides or implements. A
+mix-in's marker reports the target class's member or type, never the mix-in. A mix-in registered for
+a superclass reaches the members a subclass inherits and a method of the same signature that only a
+subclass declares. Each declaration is judged by its own markers: the same method declared on
+several classes of a hierarchy is reported under each declaration that carries one, with that
+declaration's own `marker`.
+
+`@Hidden` and `@Schema(hidden = true)` are read on fields, methods, creator parameters, enum constants,
+and types. `@Hidden` targets methods, fields, and types only, so a creator parameter carries it only
+through an application's own bundle annotation with a parameter target; `@Schema(hidden = true)` can
+sit on a creator parameter directly and is read there. A profile whose mapper disables annotation
+processing (`MapperFeature.USE_ANNOTATIONS`) sees no marker at all, so nothing is reported, while the
+generator still honors `@Schema(hidden = true)`.
+
+A member the document does not describe is not reported: one that `@Schema(hidden = true)` hides,
+and one the profile's mapper does not bind (input) or serialize (output), such as a `@JsonIgnore`
+member. Each entry is reported once however often the document reaches it.
+
+The list is ordered by `declaringType`, then `member` (`String.compareTo`), with a type's own entry
+first within its declaring type; it is unmodifiable, and empty when nothing carries a marker. The
+call runs one generation under the same accepted type grammar, bounded
+`JsonSchemaGenerationException` failure contract, per-instance lock, and restore-on-failure
+behavior as `generateCanonical`, and it changes nothing a later call on the instance publishes. A
+generator built by either `forInputProfile` overload or by `forOutputProfile` answers for its own
+direction; one built by `withVictoolsDefaults()` throws `IllegalStateException`.
 
 ### What counts as a schema position
 
@@ -877,7 +1086,16 @@ above still fails generation.
 ### AnnotationJsonSchemaGenerator
 
 The single entry point. Construct with `withVictoolsDefaults()`, `forInputProfile(profile)`, or
-`forOutputProfile(profile)`, then call `generateCanonical(Type)` for each type that needs a schema.
+`forOutputProfile(profile)`, then call `generateCanonical(Type)` for each type that needs a schema,
+or `describe(Type)` for the same document paired with its `RedactionManifest` (see `CanonicalSchema`
+below). An instance built by `forOutputProfile(profile)` also answers `outputRenames(Type)`, the
+list of published members whose schema name diverges from what the profile mapper serializes (see
+`OutputRename` below); every other construction mode throws `IllegalStateException` from that call.
+An instance built by either `forInputProfile` overload or by `forOutputProfile(profile)` answers
+`hiddenMembers(Type)` for its own direction: the members and types its document describes that
+carry `@Hidden`, `@Schema(hidden = true)`, or both (see `HiddenMember` below and "Constraints and
+common mistakes" above); an instance built by `withVictoolsDefaults()` throws
+`IllegalStateException` from that call.
 
 ```java
 AnnotationJsonSchemaGenerator generator = AnnotationJsonSchemaGenerator.withVictoolsDefaults();
@@ -892,6 +1110,73 @@ AnnotationJsonSchemaGenerator inputGenerator =
         AnnotationJsonSchemaGenerator.forInputProfile(resolvedProfile);
 String argumentSchema = inputGenerator.generateCanonical(toolArgumentType);
 ```
+
+### CanonicalSchema
+
+The record `describe(Type)` returns: the canonical document text (`json()`) paired with the
+`RedactionManifest` bound to it (`redactionManifest()`). `json()` equals `generateCanonical(Type)`'s
+output for the same type only for an instance `describe` produced: the record is public and anyone
+can construct one, pairing any text with any manifest, so trust the pairing only when
+`redactionManifest().matches(json())` holds. Both components are required; the compact constructor
+rejects `null`.
+
+```java
+CanonicalSchema described = generator.describe(MyRequestBody.class);
+String schemaJson = described.json();                    // == generator.generateCanonical(MyRequestBody.class)
+RedactionManifest manifest = described.redactionManifest();
+```
+
+### RedactionManifest
+
+The sorted RFC 6901 pointers of every reserved-name guard in one `CanonicalSchema`'s document, bound
+to the SHA-256 digest of that document's canonical bytes. Only this package constructs one — no
+public or protected constructor, and the class is `final` — so a caller cannot forge a manifest.
+`CanonicalSchema`, however, is a plain record anyone can construct, so a consumer trusts the pairing
+only when `redactionManifest().matches(json())` holds; a borrowed manifest fails that check for
+different JSON. `pointers()` is unmodifiable and may be empty; `digest()` is `"sha-256:"` plus 64
+lowercase hexadecimal characters; `matches(schemaJson)` parses, canonicalizes, digests, and
+compares, returning `false` for any unparsable or malformed input — a document repeating a key in
+one object included — and throwing `NullPointerException` for a `null` argument. `toString()` prints the pointers and the digest only — a pointer names a
+schema location, never a reserved name, and no schema content is printed.
+
+### OutputRename
+
+One member `outputRenames(Type)` (on a `forOutputProfile` generator only) reports: `declaringType`
+is the binary class name (`Class#getName()`) declaring the member, `member` is the Java member's own
+name (`java.lang.reflect.Member#getName()`), `serializedName` is the name the profile mapper's
+serialization introspection gives it, and `schemaName` is the property name the output document
+publishes it under. The record carries names only, never a schema fragment. The record is provisional
+and may change before the OpenAPI publication wires it.
+
+```java
+AnnotationJsonSchemaGenerator outputGenerator = AnnotationJsonSchemaGenerator.forOutputProfile(profile);
+List<OutputRename> renames = outputGenerator.outputRenames(MyResponseBody.class);
+// renames is empty unless some published member's schema name differs from its serialized name
+```
+
+### HiddenMember
+
+One entry `hiddenMembers(Type)` reports: `declaringType` is the binary class name
+(`Class#getName()`) of the class declaring the member, or of the type itself; `member` is the Java
+member's own name (`java.lang.reflect.Member#getName()`), the name of a field, a method, or an enum
+constant, a creator parameter's `<init>#i` or `method#i` name, or `null` when the entry reports the
+type itself (the component is annotated `jakarta.annotation.Nullable`); `marker` is the
+`HidingMarker` the declaration carries; `hideableBySchemaHidden` says whether declaring
+`@Schema(hidden = true)` on the property's own field or getter would leave it out (provisional, see
+"Constraints and common mistakes" above). The record carries names and flags only, never a schema
+fragment.
+
+```java
+AnnotationJsonSchemaGenerator inputGenerator =
+        AnnotationJsonSchemaGenerator.forInputProfile(resolvedProfile);
+List<HiddenMember> hidden = inputGenerator.hiddenMembers(MyRequestBody.class);
+// empty unless a described member or type carries @Hidden or @Schema(hidden = true)
+```
+
+### HidingMarker
+
+The enum of a `HiddenMember`'s markers: `HIDDEN` for `@Hidden` alone, `SCHEMA_HIDDEN` for
+`@Schema(hidden = true)` alone, `BOTH` for the two together.
 
 ### JsonSchemaGenerationException
 

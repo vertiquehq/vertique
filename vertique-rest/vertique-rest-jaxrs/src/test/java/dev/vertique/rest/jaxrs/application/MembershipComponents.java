@@ -16,7 +16,6 @@ import dev.vertique.rest.jaxrs.application.manual.MembershipNewInterfaceResource
 import dev.vertique.rest.jaxrs.application.manual.MembershipOwnMethodResourceModule;
 import dev.vertique.rest.jaxrs.application.manual.MembershipParamAnnotationOnlyResourceModule;
 import dev.vertique.rest.jaxrs.application.manual.MembershipRolesAllowedResourceModule;
-import dev.vertique.rest.jaxrs.application.manual.membership.AmbiguousResourceManualModule;
 import dev.vertique.rest.jaxrs.application.manual.membership.DuplicateManualResourceModuleA;
 import dev.vertique.rest.jaxrs.application.manual.membership.DuplicateManualResourceModuleB;
 import dev.vertique.rest.jaxrs.application.unita.membership.AmbiguousResourceCatalogModule;
@@ -26,31 +25,29 @@ import dev.vertique.rest.jaxrs.application.unita.membership.Case22HandWrittenEnt
 import dev.vertique.rest.jaxrs.application.unita.membership.DuplicateCatalogEntryModuleA;
 import dev.vertique.rest.jaxrs.application.unita.membership.DuplicateCatalogEntryModuleB;
 import dev.vertique.rest.jaxrs.application.unita.membership.NullCatalogEntryModule;
-import dev.vertique.rest.jaxrs.application.unitb.membership.MembershipCaseApplicationRegistrationModule;
-import dev.vertique.rest.jaxrs.application.unitb.membership.MembershipDuplicateRegistrationModuleA;
-import dev.vertique.rest.jaxrs.application.unitb.membership.MembershipDuplicateRegistrationModuleB;
-import dev.vertique.rest.jaxrs.application.unitb.membership.MembershipMismatchedFactoryRegistrationModule;
-import dev.vertique.rest.jaxrs.application.unitb.membership.MembershipNullFactoryRegistrationModule;
+import dev.vertique.rest.jaxrs.application.unitb.membership.DuplicateCatalogRegistrationModule;
+import dev.vertique.rest.jaxrs.application.unitb.membership.MembershipViolationRegistrations;
+import dev.vertique.rest.jaxrs.application.unitb.membership.NullCatalogEntryRegistrationModule;
+import dev.vertique.rest.jaxrs.application.unitb.membership.SubstitutedSubclassBindingRegistrationModule;
+import dev.vertique.rest.jaxrs.application.unitb.membership.UnrelatedCatalogInstanceRegistrationModule;
 import io.vertx.core.json.JsonObject;
 import jakarta.inject.Singleton;
 import java.util.Set;
 
 /**
- * Dagger components for {@link JaxRsApplicationCompositionTest}'s TP-005 (membership violations)
- * and TP-018 (AOP-proxy-shaped manual match) cases. Every component's factory takes the application
- * configuration as a {@code @BindsInstance @VertxConfig JsonObject}, matching
- * {@link CompositionComponents}. These fixtures are self-contained: none of L01's or L02's shared
- * {@code unita}, {@code unitb}, or {@code manual} modules are included, so this suite never shares
- * component wiring with {@link JaxRsApplicationCompositionTest}'s other proofs.
+ * Dagger components for {@link JaxRsApplicationCompositionTest}'s TP-003 (membership violations)
+ * cases and its accepted-row supports. Every registration is provided by
+ * {@link MembershipViolationRegistrations}, each gated on its own property so exactly one row is
+ * active per test invocation (or exactly two, for the two-applications row).
  *
- * <p>Twelve of TP-005's 22 cases (1 to 7, 9 to 13) share {@link StandardViolationComponent}: they
- * differ only in {@link dev.vertique.rest.jaxrs.application.unitb.membership.MembershipCaseApplication}'s
- * runtime-configured {@code classesSupplier}/{@code singletonsSupplier}, never in module wiring.
- * Cases 8, 14, 16, 21, and 22, and the five non-matching manual-subclass cases (15, 17 to 20), each
- * need module wiring no other case may see (an extra duplicate registration or catalog entry, or the
- * single non-matching manual candidate required for C-COMPOSE step 6.6's "the only candidate"
- * naming), so each gets its own dedicated component. TP-018 gets its own component for the same
- * reason: it must be the only manual candidate present.
+ * <p>T023 L26 restoration: the seven surface-mismatch rows (each listing
+ * {@code MembershipBaseResource} and gated on its own {@code membership.surface*.active} property)
+ * and the AOP-shaped accepted row each need a manual candidate module no other row may see, so each
+ * gets its own dedicated component ({@link #SurfaceOwnAnnotationComponent} and its seven siblings
+ * below), never {@link StandardViolationComponent}. Wiring every surface candidate into one shared
+ * component would let {@code MembershipAopProxyResourceModule}'s resource, which always satisfies
+ * {@code sameSurface} against {@code MembershipBaseResource}, mask every mismatched-surface row's
+ * intended failure.
  */
 public final class MembershipComponents {
 
@@ -69,19 +66,28 @@ public final class MembershipComponents {
     }
 
     /**
-     * TP-005 cases 1 to 7 and 9 to 13: a single {@code MembershipCaseApplication} registration, plus
-     * case 6's ambiguous catalog-and-manual resource and case 13's twice-manually-contributed
-     * resource. Neither extra fixture affects the other cases: both remain unselected (hence never
-     * constructed, D002) unless a case's {@code classesSupplier} lists them.
+     * TP-003's shared component: every row's registration (each property-gated, only the row under
+     * test active), every unbound "kind check" and "no binding" type, the ambiguous catalog entry
+     * and manual instance, the twice-manually-contributed duplicate-manual resource (case 13), and
+     * {@code unita}'s catalog (for the disabled-catalog accepted row). {@code
+     * DuplicateManualResourceModuleA} and {@code DuplicateManualResourceModuleB} contribute
+     * manual-only instances, never a catalog entry, so their presence is harmless for every other
+     * row: membership for a listed class is only evaluated when some active registration actually
+     * lists it (AC-026.2).
+     *
+     * <p>Never wires any {@code MembershipBaseResource} manual candidate module: the seven
+     * surface-mismatch rows and the AOP-shaped accepted row each need their own dedicated component
+     * below, isolated from one another and from this component (T023 L26).
      */
     @Singleton
     @Component(
             modules = {
                 RestModule.class,
                 ApplicationTestSupportModule.class,
-                MembershipCaseApplicationRegistrationModule.class,
+                MembershipViolationRegistrations.class,
+                dev.vertique.rest.jaxrs.application.unita.GeneratedJaxRsResourcesModule.class,
                 AmbiguousResourceCatalogModule.class,
-                AmbiguousResourceManualModule.class,
+                dev.vertique.rest.jaxrs.application.manual.membership.AmbiguousResourceManualModule.class,
                 DuplicateManualResourceModuleA.class,
                 DuplicateManualResourceModuleB.class
             })
@@ -102,19 +108,23 @@ public final class MembershipComponents {
     }
 
     /**
-     * TP-005 case 8: two separate registration modules for the same
-     * {@code MembershipCaseApplication} class, and nothing else — never combined with
-     * {@link MembershipCaseApplicationRegistrationModule}'s single registration.
+     * TP-003 "surface: own annotation": {@link MembershipViolationRegistrations}'s registrations
+     * (only {@code membership.surfaceOwnAnnotation.active} set), plus the sole manual candidate
+     * {@code MembershipClassPathResource}, which adds a class-level annotation the listed
+     * {@code MembershipBaseResource} does not declare, so {@code sameSurface} fails. Isolated from
+     * every other surface component and from {@link StandardViolationComponent}: no other manual
+     * candidate for {@code MembershipBaseResource} may be present, or it could satisfy {@code
+     * sameSurface} instead and mask this row's intended failure.
      */
     @Singleton
     @Component(
             modules = {
                 RestModule.class,
                 ApplicationTestSupportModule.class,
-                MembershipDuplicateRegistrationModuleA.class,
-                MembershipDuplicateRegistrationModuleB.class
+                MembershipViolationRegistrations.class,
+                MembershipClassPathResourceModule.class
             })
-    public interface DuplicateRegistrationComponent extends Provisions {
+    public interface SurfaceOwnAnnotationComponent extends Provisions {
 
         /** Factory taking the application configuration. */
         @Component.Factory
@@ -126,20 +136,242 @@ public final class MembershipComponents {
              * @param config the application configuration
              * @return the constructed component
              */
-            DuplicateRegistrationComponent create(@BindsInstance @VertxConfig JsonObject config);
+            SurfaceOwnAnnotationComponent create(@BindsInstance @VertxConfig JsonObject config);
         }
     }
 
     /**
-     * TP-005 case 14: the standard single {@code MembershipCaseApplication} registration, plus two
-     * separate catalog-entry modules for the same resource class.
+     * TP-003 "surface: own method": {@link MembershipViolationRegistrations}'s registrations (only
+     * {@code membership.surfaceOwnMethod.active} set), plus the sole manual candidate {@code
+     * MembershipOwnMethodResource}, which declares a new resource method the listed {@code
+     * MembershipBaseResource} does not declare, so {@code sameSurface} fails. Isolated as {@link
+     * #SurfaceOwnAnnotationComponent} is.
      */
     @Singleton
     @Component(
             modules = {
                 RestModule.class,
                 ApplicationTestSupportModule.class,
-                MembershipCaseApplicationRegistrationModule.class,
+                MembershipViolationRegistrations.class,
+                MembershipOwnMethodResourceModule.class
+            })
+    public interface SurfaceOwnMethodComponent extends Provisions {
+
+        /** Factory taking the application configuration. */
+        @Component.Factory
+        interface Factory {
+
+            /**
+             * Creates the component bound to the given configuration.
+             *
+             * @param config the application configuration
+             * @return the constructed component
+             */
+            SurfaceOwnMethodComponent create(@BindsInstance @VertxConfig JsonObject config);
+        }
+    }
+
+    /**
+     * TP-003 "surface: parameter annotation only": {@link MembershipViolationRegistrations}'s
+     * registrations (only {@code membership.surfaceParamAnnotation.active} set), plus the sole
+     * manual candidate {@code MembershipParamAnnotationOnlyResource}, which overrides a base method
+     * and annotates only its parameter, so {@code sameSurface} fails. Isolated as {@link
+     * #SurfaceOwnAnnotationComponent} is.
+     */
+    @Singleton
+    @Component(
+            modules = {
+                RestModule.class,
+                ApplicationTestSupportModule.class,
+                MembershipViolationRegistrations.class,
+                MembershipParamAnnotationOnlyResourceModule.class
+            })
+    public interface SurfaceParamAnnotationComponent extends Provisions {
+
+        /** Factory taking the application configuration. */
+        @Component.Factory
+        interface Factory {
+
+            /**
+             * Creates the component bound to the given configuration.
+             *
+             * @param config the application configuration
+             * @return the constructed component
+             */
+            SurfaceParamAnnotationComponent create(@BindsInstance @VertxConfig JsonObject config);
+        }
+    }
+
+    /**
+     * TP-003 "surface: added interface": {@link MembershipViolationRegistrations}'s registrations
+     * (only {@code membership.surfaceNewInterface.active} set), plus the sole manual candidate
+     * {@code MembershipNewInterfaceResource}, which implements a new interface the listed {@code
+     * MembershipBaseResource} does not implement, so {@code sameSurface} fails. Isolated as {@link
+     * #SurfaceOwnAnnotationComponent} is.
+     */
+    @Singleton
+    @Component(
+            modules = {
+                RestModule.class,
+                ApplicationTestSupportModule.class,
+                MembershipViolationRegistrations.class,
+                MembershipNewInterfaceResourceModule.class
+            })
+    public interface SurfaceNewInterfaceComponent extends Provisions {
+
+        /** Factory taking the application configuration. */
+        @Component.Factory
+        interface Factory {
+
+            /**
+             * Creates the component bound to the given configuration.
+             *
+             * @param config the application configuration
+             * @return the constructed component
+             */
+            SurfaceNewInterfaceComponent create(@BindsInstance @VertxConfig JsonObject config);
+        }
+    }
+
+    /**
+     * TP-003 "surface: grandchild": {@link MembershipViolationRegistrations}'s registrations (only
+     * {@code membership.surfaceGrandchild.active} set), plus the sole manual candidate {@code
+     * MembershipGrandchildResource}, a grandchild of the listed {@code MembershipBaseResource}
+     * rather than a direct subclass, so {@code sameSurface} fails. Isolated as {@link
+     * #SurfaceOwnAnnotationComponent} is.
+     */
+    @Singleton
+    @Component(
+            modules = {
+                RestModule.class,
+                ApplicationTestSupportModule.class,
+                MembershipViolationRegistrations.class,
+                MembershipGrandchildResourceModule.class
+            })
+    public interface SurfaceGrandchildComponent extends Provisions {
+
+        /** Factory taking the application configuration. */
+        @Component.Factory
+        interface Factory {
+
+            /**
+             * Creates the component bound to the given configuration.
+             *
+             * @param config the application configuration
+             * @return the constructed component
+             */
+            SurfaceGrandchildComponent create(@BindsInstance @VertxConfig JsonObject config);
+        }
+    }
+
+    /**
+     * TP-003 "surface: class-level @PermitAll": {@link MembershipViolationRegistrations}'s
+     * registrations (only {@code membership.surfaceClassLevelPermitAll.active} set), plus the sole
+     * manual candidate {@code MembershipClassLevelPermitAllResource}, which carries a class-level
+     * {@code @PermitAll} the listed {@code MembershipBaseResource} does not declare, so {@code
+     * sameSurface} fails. Isolated as {@link #SurfaceOwnAnnotationComponent} is.
+     */
+    @Singleton
+    @Component(
+            modules = {
+                RestModule.class,
+                ApplicationTestSupportModule.class,
+                MembershipViolationRegistrations.class,
+                MembershipClassLevelPermitAllResourceModule.class
+            })
+    public interface SurfaceClassPermitAllComponent extends Provisions {
+
+        /** Factory taking the application configuration. */
+        @Component.Factory
+        interface Factory {
+
+            /**
+             * Creates the component bound to the given configuration.
+             *
+             * @param config the application configuration
+             * @return the constructed component
+             */
+            SurfaceClassPermitAllComponent create(@BindsInstance @VertxConfig JsonObject config);
+        }
+    }
+
+    /**
+     * TP-003 "surface: @RolesAllowed": {@link MembershipViolationRegistrations}'s registrations
+     * (only {@code membership.surfaceRolesAllowed.active} set), plus the sole manual candidate
+     * {@code MembershipRolesAllowedResource}, whose override of the listed {@code
+     * MembershipBaseResource}'s method carries {@code @RolesAllowed}, so {@code sameSurface} fails.
+     * Isolated as {@link #SurfaceOwnAnnotationComponent} is.
+     */
+    @Singleton
+    @Component(
+            modules = {
+                RestModule.class,
+                ApplicationTestSupportModule.class,
+                MembershipViolationRegistrations.class,
+                MembershipRolesAllowedResourceModule.class
+            })
+    public interface SurfaceRolesAllowedComponent extends Provisions {
+
+        /** Factory taking the application configuration. */
+        @Component.Factory
+        interface Factory {
+
+            /**
+             * Creates the component bound to the given configuration.
+             *
+             * @param config the application configuration
+             * @return the constructed component
+             */
+            SurfaceRolesAllowedComponent create(@BindsInstance @VertxConfig JsonObject config);
+        }
+    }
+
+    /**
+     * TP-003's accepted row: {@link MembershipViolationRegistrations}'s registrations (only {@code
+     * membership.aopAccepted.active} set), plus the sole manual candidate {@code
+     * MembershipAopProxyResource}, whose AOP-proxy shape {@code sameSurface} accepts. Isolated from
+     * every surface-mismatch component: were it wired alongside any of them, its resource would
+     * satisfy {@code sameSurface} for their listed {@code MembershipBaseResource} too, and mask
+     * their intended failure.
+     */
+    @Singleton
+    @Component(
+            modules = {
+                RestModule.class,
+                ApplicationTestSupportModule.class,
+                MembershipViolationRegistrations.class,
+                MembershipAopProxyResourceModule.class
+            })
+    public interface AopAcceptedComponent extends Provisions {
+
+        /** Factory taking the application configuration. */
+        @Component.Factory
+        interface Factory {
+
+            /**
+             * Creates the component bound to the given configuration.
+             *
+             * @param config the application configuration
+             * @return the constructed component
+             */
+            AopAcceptedComponent create(@BindsInstance @VertxConfig JsonObject config);
+        }
+    }
+
+    /**
+     * T023 L22 restoration (TP-003 case 14): the dedicated
+     * {@link DuplicateCatalogRegistrationModule} registration, plus two separate catalog-entry
+     * modules for the same resource class, tripping the composer's step 1 duplicate-catalog-entry
+     * check before any manual contribution or catalog entry resolves. Isolated from
+     * {@link StandardViolationComponent}: a step 1 violation would fail every row sharing the
+     * component.
+     */
+    @Singleton
+    @Component(
+            modules = {
+                RestModule.class,
+                ApplicationTestSupportModule.class,
+                DuplicateCatalogRegistrationModule.class,
                 DuplicateCatalogEntryModuleA.class,
                 DuplicateCatalogEntryModuleB.class
             })
@@ -160,42 +392,15 @@ public final class MembershipComponents {
     }
 
     /**
-     * TP-005 case 16: a registration declaring {@code MembershipDeclaredApplication} whose factory
-     * constructs and returns an unrelated {@code MembershipWrongTypeApplication} instance.
+     * T023 L22 restoration (TP-003 case 21): the dedicated {@link SubstitutedSubclassBindingRegistrationModule}
+     * registration, plus the substituted {@code Case21Resource} binding and its catalog entry.
      */
     @Singleton
     @Component(
             modules = {
                 RestModule.class,
                 ApplicationTestSupportModule.class,
-                MembershipMismatchedFactoryRegistrationModule.class
-            })
-    public interface MismatchedFactoryComponent extends Provisions {
-
-        /** Factory taking the application configuration. */
-        @Component.Factory
-        interface Factory {
-
-            /**
-             * Creates the component bound to the given configuration.
-             *
-             * @param config the application configuration
-             * @return the constructed component
-             */
-            MismatchedFactoryComponent create(@BindsInstance @VertxConfig JsonObject config);
-        }
-    }
-
-    /**
-     * TP-005 case 21: the standard single {@code MembershipCaseApplication} registration, plus the
-     * substituted {@code Case21Resource} binding and its catalog entry.
-     */
-    @Singleton
-    @Component(
-            modules = {
-                RestModule.class,
-                ApplicationTestSupportModule.class,
-                MembershipCaseApplicationRegistrationModule.class,
+                SubstitutedSubclassBindingRegistrationModule.class,
                 Case21SubstitutionModule.class,
                 Case21CatalogModule.class
             })
@@ -216,15 +421,16 @@ public final class MembershipComponents {
     }
 
     /**
-     * TP-005 case 22: the standard single {@code MembershipCaseApplication} registration, plus the
-     * hand-written {@code Case22Resource} entry whose provider returns an unrelated instance.
+     * T023 L22 restoration (TP-003 case 22): the dedicated {@link UnrelatedCatalogInstanceRegistrationModule}
+     * registration, plus the hand-written {@code Case22Resource} entry whose provider returns an
+     * unrelated instance.
      */
     @Singleton
     @Component(
             modules = {
                 RestModule.class,
                 ApplicationTestSupportModule.class,
-                MembershipCaseApplicationRegistrationModule.class,
+                UnrelatedCatalogInstanceRegistrationModule.class,
                 Case22HandWrittenEntryModule.class
             })
     public interface HandWrittenEntryComponent extends Provisions {
@@ -244,232 +450,8 @@ public final class MembershipComponents {
     }
 
     /**
-     * TP-005 case 15: the standard single {@code MembershipCaseApplication} registration, plus the
-     * sole manual candidate {@code MembershipOwnMethodResource}.
-     */
-    @Singleton
-    @Component(
-            modules = {
-                RestModule.class,
-                ApplicationTestSupportModule.class,
-                MembershipCaseApplicationRegistrationModule.class,
-                MembershipOwnMethodResourceModule.class
-            })
-    public interface SubclassOwnMethodComponent extends Provisions {
-
-        /** Factory taking the application configuration. */
-        @Component.Factory
-        interface Factory {
-
-            /**
-             * Creates the component bound to the given configuration.
-             *
-             * @param config the application configuration
-             * @return the constructed component
-             */
-            SubclassOwnMethodComponent create(@BindsInstance @VertxConfig JsonObject config);
-        }
-    }
-
-    /**
-     * TP-005 case 17: the standard single {@code MembershipCaseApplication} registration, plus the
-     * sole manual candidate {@code MembershipClassPathResource}.
-     */
-    @Singleton
-    @Component(
-            modules = {
-                RestModule.class,
-                ApplicationTestSupportModule.class,
-                MembershipCaseApplicationRegistrationModule.class,
-                MembershipClassPathResourceModule.class
-            })
-    public interface SubclassClassPathComponent extends Provisions {
-
-        /** Factory taking the application configuration. */
-        @Component.Factory
-        interface Factory {
-
-            /**
-             * Creates the component bound to the given configuration.
-             *
-             * @param config the application configuration
-             * @return the constructed component
-             */
-            SubclassClassPathComponent create(@BindsInstance @VertxConfig JsonObject config);
-        }
-    }
-
-    /**
-     * TP-005 case 18: the standard single {@code MembershipCaseApplication} registration, plus the
-     * sole manual candidate {@code MembershipNewInterfaceResource}.
-     */
-    @Singleton
-    @Component(
-            modules = {
-                RestModule.class,
-                ApplicationTestSupportModule.class,
-                MembershipCaseApplicationRegistrationModule.class,
-                MembershipNewInterfaceResourceModule.class
-            })
-    public interface SubclassNewInterfaceComponent extends Provisions {
-
-        /** Factory taking the application configuration. */
-        @Component.Factory
-        interface Factory {
-
-            /**
-             * Creates the component bound to the given configuration.
-             *
-             * @param config the application configuration
-             * @return the constructed component
-             */
-            SubclassNewInterfaceComponent create(@BindsInstance @VertxConfig JsonObject config);
-        }
-    }
-
-    /**
-     * TP-005 case 19: the standard single {@code MembershipCaseApplication} registration, plus the
-     * sole manual candidate {@code MembershipGrandchildResource}.
-     */
-    @Singleton
-    @Component(
-            modules = {
-                RestModule.class,
-                ApplicationTestSupportModule.class,
-                MembershipCaseApplicationRegistrationModule.class,
-                MembershipGrandchildResourceModule.class
-            })
-    public interface SubclassGrandchildComponent extends Provisions {
-
-        /** Factory taking the application configuration. */
-        @Component.Factory
-        interface Factory {
-
-            /**
-             * Creates the component bound to the given configuration.
-             *
-             * @param config the application configuration
-             * @return the constructed component
-             */
-            SubclassGrandchildComponent create(@BindsInstance @VertxConfig JsonObject config);
-        }
-    }
-
-    /**
-     * TP-005 case 20: the standard single {@code MembershipCaseApplication} registration, plus the
-     * sole manual candidate {@code MembershipRolesAllowedResource}.
-     */
-    @Singleton
-    @Component(
-            modules = {
-                RestModule.class,
-                ApplicationTestSupportModule.class,
-                MembershipCaseApplicationRegistrationModule.class,
-                MembershipRolesAllowedResourceModule.class
-            })
-    public interface SubclassRolesAllowedComponent extends Provisions {
-
-        /** Factory taking the application configuration. */
-        @Component.Factory
-        interface Factory {
-
-            /**
-             * Creates the component bound to the given configuration.
-             *
-             * @param config the application configuration
-             * @return the constructed component
-             */
-            SubclassRolesAllowedComponent create(@BindsInstance @VertxConfig JsonObject config);
-        }
-    }
-
-    /**
-     * TP-018: the standard single {@code MembershipCaseApplication} registration, plus the sole
-     * manual candidate {@code MembershipAopProxyResource}, which C-COMPOSE's {@code sameSurface}
-     * accepts.
-     */
-    @Singleton
-    @Component(
-            modules = {
-                RestModule.class,
-                ApplicationTestSupportModule.class,
-                MembershipCaseApplicationRegistrationModule.class,
-                MembershipAopProxyResourceModule.class
-            })
-    public interface AopProxyMatchComponent extends Provisions {
-
-        /** Factory taking the application configuration. */
-        @Component.Factory
-        interface Factory {
-
-            /**
-             * Creates the component bound to the given configuration.
-             *
-             * @param config the application configuration
-             * @return the constructed component
-             */
-            AopProxyMatchComponent create(@BindsInstance @VertxConfig JsonObject config);
-        }
-    }
-
-    /**
-     * TP-005 case 23 (G-03): the standard single {@code MembershipCaseApplication} registration,
-     * plus the sole manual candidate {@code MembershipClassLevelPermitAllResource}.
-     */
-    @Singleton
-    @Component(
-            modules = {
-                RestModule.class,
-                ApplicationTestSupportModule.class,
-                MembershipCaseApplicationRegistrationModule.class,
-                MembershipClassLevelPermitAllResourceModule.class
-            })
-    public interface SubclassClassLevelPermitAllComponent extends Provisions {
-
-        /** Factory taking the application configuration. */
-        @Component.Factory
-        interface Factory {
-
-            /**
-             * Creates the component bound to the given configuration.
-             *
-             * @param config the application configuration
-             * @return the constructed component
-             */
-            SubclassClassLevelPermitAllComponent create(@BindsInstance @VertxConfig JsonObject config);
-        }
-    }
-
-    /**
-     * TP-005 case 24 (G-03): the standard single {@code MembershipCaseApplication} registration,
-     * plus the sole manual candidate {@code MembershipParamAnnotationOnlyResource}.
-     */
-    @Singleton
-    @Component(
-            modules = {
-                RestModule.class,
-                ApplicationTestSupportModule.class,
-                MembershipCaseApplicationRegistrationModule.class,
-                MembershipParamAnnotationOnlyResourceModule.class
-            })
-    public interface SubclassParamAnnotationOnlyComponent extends Provisions {
-
-        /** Factory taking the application configuration. */
-        @Component.Factory
-        interface Factory {
-
-            /**
-             * Creates the component bound to the given configuration.
-             *
-             * @param config the application configuration
-             * @return the constructed component
-             */
-            SubclassParamAnnotationOnlyComponent create(@BindsInstance @VertxConfig JsonObject config);
-        }
-    }
-
-    /**
-     * G-07 (a): only {@link MembershipNullFactoryRegistrationModule}, whose registration's factory
+     * T023 L22 restoration (G-07 (b)): the dedicated {@link NullCatalogEntryRegistrationModule}
+     * registration, plus {@code NullCatalogEntryModule}, whose hand-written catalog entry's provider
      * always returns {@code null}.
      */
     @Singleton
@@ -477,35 +459,7 @@ public final class MembershipComponents {
             modules = {
                 RestModule.class,
                 ApplicationTestSupportModule.class,
-                MembershipNullFactoryRegistrationModule.class
-            })
-    public interface NullFactoryComponent extends Provisions {
-
-        /** Factory taking the application configuration. */
-        @Component.Factory
-        interface Factory {
-
-            /**
-             * Creates the component bound to the given configuration.
-             *
-             * @param config the application configuration
-             * @return the constructed component
-             */
-            NullFactoryComponent create(@BindsInstance @VertxConfig JsonObject config);
-        }
-    }
-
-    /**
-     * G-07 (b): the standard single {@code MembershipCaseApplication} registration, plus
-     * {@link NullCatalogEntryModule}, whose hand-written catalog entry's provider always returns
-     * {@code null}.
-     */
-    @Singleton
-    @Component(
-            modules = {
-                RestModule.class,
-                ApplicationTestSupportModule.class,
-                MembershipCaseApplicationRegistrationModule.class,
+                NullCatalogEntryRegistrationModule.class,
                 NullCatalogEntryModule.class
             })
     public interface NullCatalogEntryComponent extends Provisions {

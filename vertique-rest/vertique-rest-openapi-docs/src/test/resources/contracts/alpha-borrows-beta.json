@@ -1,0 +1,25 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Alpha",
+    "version": "1.0.0",
+    "description": "Describes another mount's route under a routed id zq7."
+  },
+  "servers": [
+    {
+      "url": "/api/alpha"
+    }
+  ],
+  "paths": {
+    "/admin/users": {
+      "get": {
+        "operationId": "listCatalog",
+        "responses": {
+          "200": {
+            "description": "The users"
+          }
+        }
+      }
+    }
+  }
+}

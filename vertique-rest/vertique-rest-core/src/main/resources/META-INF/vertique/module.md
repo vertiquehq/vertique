@@ -6,7 +6,7 @@ SPDX-License-Identifier: EUPL-1.2
 # REST Core Module
 
 > **Status:** Stable
-> **Package:** `dev.vertique.rest.core` (+ 17 sub-packages)
+> **Package:** `dev.vertique.rest.core` (+ 18 sub-packages)
 > **Artifact:** `vertique-rest-core`
 > **Depends on:** core, context, correlation, logging, security-core
 
@@ -566,6 +566,30 @@ processor reaches an application's mount only through the declared applications 
 through this set. With no `Application` declared, this set's content is unchanged: generated and
 hand-wired resources alike contribute into it exactly as before.
 
+### `@RestApplication`
+
+Declares a named REST application on an interface. It is **Beta** and outside this module's Stable
+promise: it may change in a later release, and only with a migration note. Package
+`dev.vertique.rest.core.application`.
+
+```java
+public @interface RestApplication {
+    String name();                       // required
+    String path();                       // required; the application's mount path
+    Class<?>[] resources() default {};   // listed resources, in the order written
+    boolean discover() default false;    // discover resources at startup instead
+    String openapiPath() default "";     // "" = the global jaxrs.openapiPath
+}
+```
+
+It annotates an interface only; the interface is never implemented or instantiated. Exactly one of a
+non-empty `resources` and `discover = true` is set, and `discover = true` is permitted only when it
+is the compilation unit's sole declaration. `name` must match `[a-z0-9][a-z0-9_-]{0,63}` and must
+not be `none` or `null`. `vertique-codegen-jaxrs` validates and registers each declaration at
+compile time, and `vertique-rest-jaxrs` composes and mounts the declared applications at runtime.
+Composition, membership, the `jaxrs.applications.<name>` configuration, and mount conflicts are
+described in the "@RestApplication" section of `dev.vertique:vertique-rest-jaxrs`.
+
 ---
 
 ## Extension Points
@@ -588,7 +612,15 @@ public interface RouterMount extends OrderedExtension {
 
 `mountPath()` must start with `/` and end with `/*`. `meta()` supplies the identity
 `MountCustomizer`s match on: `MountMeta(String mountId, String mountPath, @Nullable String openapiPath,
-Set<Class<?>> resourceTypes)`. Override it to publish a stable `mountId`.
+Set<Class<?>> resourceTypes, @Nullable String applicationName)`. Override it to publish a stable
+`mountId`. `applicationName` is the name of the application the mount serves and is `null` for a mount
+that belongs to no named application, including the default `meta()` above.
+
+`applicationName` is a nullable component appended after `resourceTypes`. The four-argument
+constructor `MountMeta(mountId, mountPath, openapiPath, resourceTypes)` remains and supplies `null`, so
+code that constructs a `MountMeta` with four arguments keeps compiling. A record pattern that
+deconstructs `MountMeta` into four components no longer compiles against the five-component record;
+read the components through the accessors instead.
 
 ```java
 @Provides
@@ -764,6 +796,28 @@ before the resource method.
 `requiredAction()` (`Optional<ActionRef>`), `operation()` (`RestOperationDescriptor`), and `route()`
 (`RouteRegistration`, whose `addHandler(...)` returns itself for chaining).
 
+`RestOperationDescriptor.applicationName()` is a `@Nullable String` default method that returns
+`null`. It names the application the operation belongs to or serves, which covers an application
+mount's operations and framework synthetic operations; it is `null` for every other operation. It is the
+one descriptor accessor exempt from the rule that the identity accessors are never `null`, and existing
+`RestOperationDescriptor` implementations keep compiling without overriding it. `operationId()` is
+unique within its mount; a contributor or interceptor that keys state per operation and must not
+depend on how a runtime treats ids across mounts includes the application name in the key.
+
+Contributors may also run for framework-owned synthetic operations — routes installed outside normal
+resource-method discovery. A synthetic route runs the same contributor chain, with the same inputs,
+as an equally-secured resource route: the same contributors, in the same order, with the same
+effective security policy. A synthetic operation's id lives in the reserved `apidocs:` namespace, its
+`operation()` descriptor reports a literal route template with no consumed or produced media types,
+and the descriptor's annotations are the synthetic security annotations its effective policy was
+built from — so a contributor that reads annotations sees exactly what an equally annotated resource
+method would show. No signature, default, or behavior of this interface changes for a synthetic
+operation.
+
+A synthetic route renders a failure from its status alone (`ctx.fail(status)` or an
+`HttpException`), without the application's exception mapping or interceptors; a contributor
+rejecting a synthetic operation fails with an explicit 4xx or 5xx status.
+
 ### `RequestInterceptor`, `OperationInterceptor`, `ErrorInterceptor`
 
 Three pipelines with distinct scopes. Every callback has a default, so implement only what you need.
@@ -796,9 +850,46 @@ public interface ErrorInterceptor extends OrderedExtension {
 ```
 
 `OperationContext` is immutable — `operationId()`, `routingContext()`, `methodAnnotations()`,
-`classAnnotations()`, `attributes()`, the typed lookups `methodAnnotation(Class)` /
-`classAnnotation(Class)`, and `withAttribute(String, Object)`, which returns a **new** context.
-Return that new instance from `beforeOperation` or the attribute is lost.
+`classAnnotations()`, `attributes()`, `operation()`, the typed lookups `methodAnnotation(Class)` /
+`classAnnotation(Class)`, and `withAttribute(String, Object)`, which returns a **new** context that
+carries every component, `operation` included. Return that new instance from `beforeOperation` or the
+attribute is lost.
+
+`operation()` is the operation's `RestOperationDescriptor`, the same instance the operation's
+`OperationHandlerContributor`s received as `OperationRegistrationContext.operation()` when the
+JAX-RS adapter registers the route. Read the
+application name from `ctx.operation().applicationName()`. `operation()` is `null` on a context built
+without a descriptor, such as one constructed with the five-argument constructor, so a key that uses it
+should handle `null` when the interceptor can see such contexts. An interceptor that keys state per
+operation includes the application name, so operations of different applications never share an
+entry. On a mount that belongs to no declared application the application name is `null`, so the
+key reads `null:<operationId>`, and the cross-mount operation-id uniqueness check runs only when
+applications are declared:
+
+```java
+public Future<Object> recoverOperation(OperationContext ctx, Throwable cause) {
+    return cache.get(ctx.operation().applicationName() + ":" + ctx.operation().operationId())
+        .<Object>map(cached -> cached)
+        .orElse(Future.failedFuture(cause));
+}
+```
+
+Each interceptor's `beforeOperation` receives the context the previous one returned. The chain
+remembers the `operation()` of the context it starts with. After each `beforeOperation`, when the
+returned context's `operation()` is not that same instance (compared by reference), the chain replaces
+the returned context with a copy that carries the original operation and keeps every other component,
+so every later interceptor and every later hook (`onOperation`, `afterOperation`, `onSuccess`,
+`onError`, `recoverOperation`) observes the registration-time operation. The chain restores only the
+`operation` component; the `operationId()` of a context an interceptor rebuilt is left as returned, so
+read the operation's identity from `ctx.operation()`. A context an interceptor builds with the
+five-argument constructor carries a `null` operation, and the chain puts the operation back.
+
+`OperationContext` gains `operation` as a nullable component appended after `attributes`. The
+five-argument constructor `OperationContext(operationId, routingContext, methodAnnotations,
+classAnnotations, attributes)` remains and supplies `null`, so code that constructs an
+`OperationContext` with five arguments keeps compiling. A record pattern that deconstructs
+`OperationContext` into five components no longer compiles against the six-component record; read the
+components through the accessors instead.
 
 `recoverOperation` defaults to re-failing; returning a succeeded future turns a failure into a
 result. `ORIGINAL_ERROR_KEY` names the routing-context entry that carries the pre-mapping throwable.
@@ -1123,6 +1214,7 @@ implementation throws.
 public interface SecuritySchemeHandler {
     String schemeName();
     void configure(SecuritySchemeRegistry registry);
+    default Optional<SecuritySchemeDescription> openApiDescription() { return Optional.empty(); }
 }
 
 public interface SecuritySchemeRegistry {
@@ -1160,6 +1252,67 @@ credentials through the same verification path as its required handler.
 implemented in `vertique-rest-security`. Bind your own only to replace framework behavior wholesale.
 `SecurityRuntime.bindCurrent(SecurityContext)` returns a `ContextHolder.Scope` that **must** be
 registered with `RequestContextLifecycle.Handle.onClose(...)`.
+
+#### Describing a scheme for OpenAPI
+
+A handler may override `openApiDescription()` to describe its scheme; the default returns
+`Optional.empty()`, so no existing handler need change. The description is dormant in this module —
+nothing here reads it — until a documentation-rendering module turns it into
+`components.securitySchemes`.
+
+`SecuritySchemeDescription` is a closed, sealed interface with five kinds, each an immutable final
+class built only through its static factories, with `with*` copies. The description types —
+`SecuritySchemeDescription`, its kinds, `OAuthFlows`, and `OAuthFlow` — live in
+`dev.vertique.rest.core.security.scheme`; `SecuritySchemeHandler` stays in
+`dev.vertique.rest.core.security`:
+
+```java
+public sealed interface SecuritySchemeDescription permits Http, ApiKey, OAuth2, OpenIdConnect, MutualTls {
+    Optional<String> description();
+}
+
+Http.bearer(@Nullable String bearerFormat)   // type: http, scheme: bearer
+Http.of(String scheme)                       // type: http, any scheme name
+
+ApiKey.header(String name)                   // type: apiKey, in: header
+ApiKey.query(String name)                    // type: apiKey, in: query
+ApiKey.cookie(String name)                   // type: apiKey, in: cookie
+
+OAuth2.of(OAuthFlows flows)                  // type: oauth2, flows built through OAuthFlows.builder()
+
+OpenIdConnect.of(URI openIdConnectUrl)       // type: openIdConnect
+
+MutualTls.of()                               // type: mutualTLS
+```
+
+`OAuthFlows.builder()` sets each of the four flow kinds — `implicit(authorizationUrl, scopes)`,
+`password(tokenUrl, scopes)`, `clientCredentials(tokenUrl, scopes)`, and
+`authorizationCode(authorizationUrl, tokenUrl, scopes)` — with a typed method so a flow carries
+exactly the URLs its type uses, plus `refreshUrl(URI)`, applied to every flow set on the builder
+whether called before or after it; `build()` requires at least one flow to have been set.
+
+A description carries only OpenAPI Security Scheme fields — no extension map, no JSON tree. What a
+handler puts in those fields is its own responsibility; the type itself checks nothing about token
+claims, granted scopes, or any other business meaning.
+
+**Construction rules.** Every factory and `with*` method rejects a `null` argument with
+`NullPointerException` and a blank string or relative URI with `IllegalArgumentException`, each
+naming the argument. `Http.bearer`'s `bearerFormat` is the one nullable argument across every
+factory: `null` yields an empty `bearerFormat()`, while a blank value is rejected. `ApiKey.header`
+and `ApiKey.cookie` names must additionally be RFC 9110 tokens — an ASCII letter, a digit, or one of
+`` !#$%&'*+-.^_`|~ `` — because a header scheme's name can reach a response's `Vary` header;
+`ApiKey.query` names need only be non-blank, since a query parameter reaches no header. Every OAuth
+flow URL and the OpenID Connect discovery URL must be absolute; a scope name must be non-blank
+though its description may be empty; and `OAuthFlows.builder().build()` throws
+`IllegalStateException` when no flow was set.
+
+Each kind implements `equals`, `hashCode`, and a field-only `toString` — equality is by value over
+every field.
+
+**Evolution rule (Stable).** New kinds and new optional fields may arrive in later releases; do not
+switch exhaustively over the permitted kinds. A new optional field arrives as a new accessor plus a
+new `with*` method; a new kind arrives as a new permitted class; every existing factory keeps its
+signature.
 
 ### `ProtocolCorrelationSpec` and `ProtocolCorrelationContributor`
 
@@ -1206,9 +1359,15 @@ the documented request and failure behavior.
 Three top-level sections are parsed by `RestCoreModule` — `http`, `cors`, and `jaxrs` — plus
 `correlation.ingress` by `CorrelationIngressModule`. Every key is optional; omitted keys take the
 default below. Unknown keys are ignored except under `jaxrs.defaultHeaders`, where they become
-custom response headers, and except under `jaxrs.security`. That exception is a deliberate
-narrowing of this Stable module's "unknown keys are ignored" rule, limited to these reserved names:
-a non-object `jaxrs.security` value (including `null`), an unknown key under it, and — at the
+custom response headers, and except under `jaxrs.security` and `jaxrs.applications`. The
+`jaxrs.applications` section is parsed strictly by `vertique-rest-jaxrs`: a case variant of
+`applications` at the `jaxrs` level (such as `Applications`), a non-object section, a non-object
+entry, or an entry key other than `openapiPath` fails startup, as does a blank
+`openapiPath` (empty or whitespace only; an absent or `null` value is accepted). An entry whose name
+matches no declared application also fails startup, reported with the application composition
+violations rather than by the section parse. The `jaxrs.security`
+exception is a deliberate narrowing of this Stable module's "unknown keys are ignored" rule,
+limited to these reserved names: a non-object `jaxrs.security` value (including `null`), an unknown key under it, and — at the
 `jaxrs` level — a case variant of `security` or a misplaced `requireExplicitPolicy` (in any case)
 each fail startup with a `ConfigurationException` naming the offending keys, sorted, never their
 values.
@@ -1279,10 +1438,11 @@ When `enabled` is `false` (the default) no CORS handler is installed and every o
 
 | Key | Default | Constraint / notes |
 |---|---:|---|
-| `jaxrs.basePath` | `"/*"` | mount path of the JAX-RS sub-router; not applied when one or more Jakarta REST `Application` classes are declared — each is mounted at its own `@ApplicationPath` instead |
-| `jaxrs.openapiPath` | `"openapi.json"` | classpath spec; only used by the opt-in `openapi-contract` strategy |
+| `jaxrs.basePath` | `"/*"` | mount path of the JAX-RS sub-router; not applied when one or more `@RestApplication` declarations are present — each is mounted at its own `@RestApplication.path` instead |
+| `jaxrs.openapiPath` | `"openapi.json"` | classpath spec; used by the opt-in `openapi-contract` strategy, and the shared global contract location for every application that sets neither `@RestApplication.openapiPath` nor `jaxrs.applications.<name>.openapiPath`; `vertique-rest-openapi-docs` refuses to document an application whose strategy resolves operations from that shared global contract |
+| `jaxrs.applications` | *(none)* | per-application settings, keyed by application name; parsed strictly by `vertique-rest-jaxrs`; unknown keys fail startup — see that module's reference |
 | `jaxrs.mediaTypeValidation` | `"WARN"` | `WARN`, `STRICT` (fails startup on the first mismatch), or `OFF` |
-| `jaxrs.validationStrategy` | `"web-validation"` | must match a registered strategy id — built-ins are `web-validation`, `none`, `openapi-contract`; an unknown id fails startup |
+| `jaxrs.validationStrategy` | `"web-validation"` | must match a registered strategy id — built-ins are `web-validation`, `none`, `openapi-contract`; an unknown id fails startup when any JAX-RS mount has resources; a mount with no resources never selects a strategy |
 | `jaxrs.validationMode` | `"aggregate"` | `aggregate` or `failFast` |
 | `jaxrs.validationPatternMaxChars` | `4096` | at least `1`, else startup fails; the most UTF-16 code units one string value or object key may have when it reaches a `pattern`, `patternProperties`, or pattern-bearing `propertyNames` position, or an `idn-hostname`, `idn-email`, or `regex` format, under the `web-validation` strategy — a longer one is rejected with 400 before that check runs |
 | `jaxrs.validationPatternMaxTotalChars` | `262144` | at least `1` and no smaller than `jaxrs.validationPatternMaxChars`, else startup fails; the most UTF-16 code units the strings and keys reaching those positions may add up to in one request — the request is rejected with 400 once the total exceeds it |
@@ -1327,6 +1487,13 @@ whose name collides with a known header wins.
 | `frameOptions` | `X-Frame-Options` | `"DENY"` |
 | `strictTransportSecurity` | `Strict-Transport-Security` | *(not emitted)* |
 | `referrerPolicy` | `Referrer-Policy` | *(not emitted)* |
+
+Custom entries are applied to every response too, including responses of operations that restrict
+callers and their problem responses. A targeted caching header such as `CDN-Cache-Control`,
+`Surrogate-Control`, `X-Accel-Expires`, or `Expires` set here therefore reaches protected responses,
+and a CDN or proxy that obeys it can store them. Do not set such headers here while the application
+serves restricted operations or protected documents (the `vertique-rest-openapi-docs` reference
+covers protected documents).
 
 ### `jaxrs.sse`
 
@@ -1441,6 +1608,10 @@ multi-scheme AND requirement, scopes declared on an OR alternative, and scopes d
   above 1100 to sit behind them.
 - **Mutating `OperationContext` in place.** `withAttribute(...)` returns a new instance; the original
   is unchanged.
+- **Keying per-operation state on `operationId()` alone.** The id is unique within one mount; add
+  `ctx.operation().applicationName()` when the interceptor serves several applications.
+- **Destructuring `MountMeta` or `OperationContext` with a record pattern.** Both records gained a
+  trailing component; use the accessors.
 - **Putting sensitive evidence in `RoutingContext.data()`.** That map is keyed by public constants
   and is enumerable and writable by every component sharing the context.
 - **Expecting a completion event for a successful protocol upgrade.** There is none; a *failed*

@@ -15,7 +15,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  * sibling framework modules use: an {@code @Inject}-constructed instance bound one at a time
  * through {@code @Provides @IntoSet @JaxRsResources}, never through a generated module. C-COMPOSE
  * step 6's manual-match rule (and its {@code sameSurface} predicate) resolves this class as a
- * membership candidate against an application's {@code getClasses()} entries.
+ * membership candidate against an application's declared resources.
  */
 @Path("/blob-like")
 public class BlobLikeResource {

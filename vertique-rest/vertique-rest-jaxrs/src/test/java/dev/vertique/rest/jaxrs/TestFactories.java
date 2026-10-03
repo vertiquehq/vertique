@@ -3,21 +3,29 @@
 
 package dev.vertique.rest.jaxrs;
 
+import dev.vertique.core.validation.BeanValidator;
 import dev.vertique.rest.core.config.HttpConfig;
 import dev.vertique.rest.core.config.JaxRsConfig;
 import dev.vertique.rest.core.context.RestContextResolution;
 import dev.vertique.rest.core.convert.ParamConversionResolver;
 import dev.vertique.rest.core.convert.ParamConverterRegistry;
+import dev.vertique.rest.core.interceptor.OperationInterceptor;
 import dev.vertique.rest.core.interceptor.RequestInterceptor;
 import dev.vertique.rest.core.middleware.Middleware;
 import dev.vertique.rest.core.request.RequestBodyDecoder;
 import dev.vertique.rest.core.response.ResponseBodyEncoder;
 import dev.vertique.rest.core.router.OperationHandlerContributor;
+import dev.vertique.rest.core.security.AuthEnforcementCapability;
+import dev.vertique.rest.core.security.SecurityPolicyValidator;
 import dev.vertique.rest.core.security.SecuritySchemeHandler;
+import dev.vertique.rest.jaxrs.publication.MountPublicationHook;
 import dev.vertique.rest.jaxrs.validation.FileContentVerifier;
 import dev.vertique.rest.jaxrs.validation.NoneValidationStrategy;
 import dev.vertique.rest.jaxrs.validation.OperationSchemaSource;
 import dev.vertique.rest.jaxrs.validation.RequestValidationStrategy;
+import dev.vertique.security.authz.ActionRegistry;
+import dev.vertique.security.authz.Authorizer;
+import jakarta.annotation.Nullable;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -52,6 +60,7 @@ final class TestFactories {
         private Set<OperationHandlerContributor> operationHandlerContributors = Set.of();
         private Set<Middleware> middlewares = Set.of();
         private Set<RequestInterceptor> requestInterceptors = Set.of();
+        private Set<OperationInterceptor> operationInterceptors = Set.of();
         private List<RequestBodyDecoder> sortedDecoders = List.of(new JsonRequestBodyDecoder());
         private List<ResponseBodyEncoder> encoders = List.of(new StringBodyEncoder(), new JsonBodyEncoder());
         private JaxRsConfig jaxRsConfig = JaxRsConfig.builder()
@@ -62,6 +71,19 @@ final class TestFactories {
         private ExceptionMapperRegistry exceptionMapperRegistry = null;
         private ParamConversionResolver paramConversionResolver =
                 ParamConversionResolver.of(ParamConverterRegistry.of(Set.of()), Set.of());
+        private SecurityPolicyValidator securityPolicyValidator = null;
+        private Optional<AuthEnforcementCapability> authEnforcementCapability = Optional.empty();
+        private Optional<ActionRegistry> actionRegistry = Optional.empty();
+        private Optional<Authorizer> authorizer = Optional.empty();
+        private Optional<BeanValidator> beanValidator = Optional.empty();
+
+        /**
+         * {@code null} (the default) keeps the retained public {@code Factory} constructor path, with
+         * no hook set threaded through at all. A non-{@code null} value — including an empty set —
+         * selects the package-private {@code @Inject} constructor and is passed as its 29th and last
+         * parameter.
+         */
+        private @Nullable Set<MountPublicationHook> publicationHooks;
 
         /**
          * Sets the registered validation strategies.
@@ -137,6 +159,17 @@ final class TestFactories {
          */
         Builder requestInterceptors(Set<RequestInterceptor> interceptors) {
             this.requestInterceptors = interceptors;
+            return this;
+        }
+
+        /**
+         * Sets the operation interceptors (defaults to none).
+         *
+         * @param interceptors the operation interceptors
+         * @return this builder
+         */
+        Builder operationInterceptors(Set<OperationInterceptor> interceptors) {
+            this.operationInterceptors = interceptors;
             return this;
         }
 
@@ -217,6 +250,82 @@ final class TestFactories {
         }
 
         /**
+         * Sets the optional {@link SecurityPolicyValidator} (defaults to {@code null}, today's
+         * value: no auth module).
+         *
+         * @param validator the security policy validator, or {@code null}
+         * @return this builder
+         */
+        Builder securityPolicyValidator(SecurityPolicyValidator validator) {
+            this.securityPolicyValidator = validator;
+            return this;
+        }
+
+        /**
+         * Sets the optional {@link AuthEnforcementCapability} marker (defaults to {@link
+         * Optional#empty()}, today's value: the auth-enforcement runtime is not installed).
+         *
+         * @param capability the capability marker, present when the auth-enforcement runtime is
+         *                   installed
+         * @return this builder
+         */
+        Builder authEnforcementCapability(Optional<AuthEnforcementCapability> capability) {
+            this.authEnforcementCapability = capability;
+            return this;
+        }
+
+        /**
+         * Sets the optional {@link ActionRegistry} (defaults to {@link Optional#empty()}: the
+         * authorization engine is not installed, so any {@code @RequiresAction} operation fails
+         * startup).
+         *
+         * @param registry the action registry, present when the authorization engine is installed
+         * @return this builder
+         */
+        Builder actionRegistry(Optional<ActionRegistry> registry) {
+            this.actionRegistry = registry;
+            return this;
+        }
+
+        /**
+         * Sets the optional core {@link Authorizer} (defaults to {@link Optional#empty()}: no
+         * authorizer is installed, so any {@code @RequiresAction} operation fails startup).
+         *
+         * @param authorizer the authorizer, present when the authorization engine is installed
+         * @return this builder
+         */
+        Builder authorizer(Optional<Authorizer> authorizer) {
+            this.authorizer = authorizer;
+            return this;
+        }
+
+        /**
+         * Sets the optional {@link BeanValidator} (defaults to {@link Optional#empty()}: no Bean
+         * Validation implementation is bound, so the invoker never checks parameters).
+         *
+         * @param validator the bean validator, present when a Bean Validation implementation is bound
+         * @return this builder
+         */
+        Builder beanValidator(Optional<BeanValidator> validator) {
+            this.beanValidator = validator;
+            return this;
+        }
+
+        /**
+         * Sets the {@code Set<MountPublicationHook>} multibinding. Leaving this unset
+         * (the default, {@code null}) keeps the factory built through the retained public
+         * constructor, exactly today's behavior; passing a set — including {@link Set#of()} — selects
+         * the package-private {@code @Inject} constructor and threads it through as the hook set.
+         *
+         * @param hooks the hook set, or {@code null} to keep the public-constructor path
+         * @return this builder
+         */
+        Builder publicationHooks(@Nullable Set<MountPublicationHook> hooks) {
+            this.publicationHooks = hooks;
+            return this;
+        }
+
+        /**
          * Builds the factory with the accumulated collaborators and inert defaults for the rest.
          *
          * @return a fully constructed factory
@@ -231,9 +340,44 @@ final class TestFactories {
             DefaultResponseSerializer responseSerializer = new DefaultResponseSerializer(List.of(), encoders);
             HttpConfig httpConfig = HttpConfig.builder().build();
 
+            if (publicationHooks == null) {
+                return new JaxRsRouterMount.Factory(
+                        Set.of(), // routerLifecycleHooks
+                        operationInterceptors,
+                        Set.of(), // errorInterceptors
+                        middlewares,
+                        operationHandlerContributors,
+                        securitySchemeHandlers,
+                        requestInterceptors,
+                        restExceptionMapper,
+                        registry,
+                        Set.of(), // responseProducerBindings
+                        responseSerializer,
+                        restContextResolution,
+                        paramConversionResolver,
+                        securityPolicyValidator, // securityPolicyValidator (nullable)
+                        authEnforcementCapability, // authEnforcementCapability
+                        sortedDecoders, // sortedDecoders — needed for body binding
+                        encoders, // sortedEncoders
+                        httpConfig,
+                        jaxRsConfig,
+                        jsonMapperProfileRegistry, // jsonMapperProfileRegistry
+                        dev.vertique.json.JsonConfig
+                                .defaults(), // jsonConfig (json.jsonProfile unset => vertique floor)
+                        beanValidator, // beanValidator
+                        Optional.empty(), // objectProcessor
+                        actionRegistry,
+                        authorizer,
+                        fileContentVerifiers,
+                        validationStrategies,
+                        operationSchemaSource);
+            }
+
+            // A non-null publicationHooks (including an empty set) selects the package-private
+            // 29-parameter @Inject constructor, with the hook set as its last parameter.
             return new JaxRsRouterMount.Factory(
                     Set.of(), // routerLifecycleHooks
-                    Set.of(), // operationInterceptors
+                    operationInterceptors,
                     Set.of(), // errorInterceptors
                     middlewares,
                     operationHandlerContributors,
@@ -245,21 +389,22 @@ final class TestFactories {
                     responseSerializer,
                     restContextResolution,
                     paramConversionResolver,
-                    null, // securityPolicyValidator (nullable)
-                    Optional.empty(), // authEnforcementCapability
+                    securityPolicyValidator, // securityPolicyValidator (nullable)
+                    authEnforcementCapability, // authEnforcementCapability
                     sortedDecoders, // sortedDecoders — needed for body binding
                     encoders, // sortedEncoders
                     httpConfig,
                     jaxRsConfig,
                     jsonMapperProfileRegistry, // jsonMapperProfileRegistry
                     dev.vertique.json.JsonConfig.defaults(), // jsonConfig (json.jsonProfile unset => vertique floor)
-                    Optional.empty(), // beanValidator
+                    beanValidator, // beanValidator
                     Optional.empty(), // objectProcessor
-                    Optional.empty(), // actionRegistry
-                    Optional.empty(), // authorizer
+                    actionRegistry,
+                    authorizer,
                     fileContentVerifiers,
                     validationStrategies,
-                    operationSchemaSource);
+                    operationSchemaSource,
+                    publicationHooks);
         }
     }
 }

@@ -3,15 +3,15 @@
 
 package dev.vertique.rest.jaxrs;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import dagger.BindsInstance;
 import dagger.Component;
 import dagger.Module;
 import dagger.Provides;
 import dagger.multibindings.IntoSet;
+import dev.vertique.config.parser.DefaultConfigMapper;
+import dev.vertique.config.parser.DefaultConfigParser;
 import dev.vertique.core.VertxConfig;
 import dev.vertique.core.config.ConfigParser;
-import dev.vertique.core.exception.ConfigurationException;
 import dev.vertique.rest.core.dagger.JaxRsResources;
 import dev.vertique.rest.core.events.HttpRequestCompletedListener;
 import dev.vertique.rest.core.events.RestRequestCompletedListener;
@@ -23,8 +23,6 @@ import dev.vertique.rest.core.security.SecuritySchemeHandler;
 import io.vertx.core.json.JsonObject;
 import jakarta.annotation.Nullable;
 import jakarta.inject.Singleton;
-import java.util.List;
-import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -71,7 +69,7 @@ final class OperationRouteIdentityComponents {
     }
 
     /**
-     * The component's support bindings: a {@link ConfigParser} over a private Jackson mapper, the
+     * The component's support bindings: the real lenient {@link ConfigParser}, the
      * unsecured {@link SecurityPolicyValidator} stand-in {@code JaxRsRouterMount.Factory} accepts,
      * {@link OperationRouteIdentityIT.IdentityResource} as the one {@code @JaxRsResources} resource, and
      * the IT's fixtures, each contributed {@code @IntoSet} and writing into the IT's static captures:
@@ -106,36 +104,15 @@ final class OperationRouteIdentityComponents {
         }
 
         /**
-         * Provides a minimal {@link ConfigParser} backed by a private, isolated Jackson mapper.
+         * Provides the real {@link DefaultConfigParser} over the lenient default config mapper.
+         * {@code RestApplications}'s provider calls {@link ConfigParser#parseKeyedObject} on every
+         * startup, even with no applications section, so a stub that throws there cannot serve it.
          *
          * @return the config parser
          */
         @Provides
         static ConfigParser configParser() {
-            return new ConfigParser() {
-                private final ObjectMapper mapper = new ObjectMapper();
-
-                @Override
-                public <T> T parse(JsonObject section, Class<T> type) {
-                    JsonObject json = section != null ? section : new JsonObject();
-                    try {
-                        return mapper.readValue(json.encode(), type);
-                    } catch (Exception e) {
-                        throw new ConfigurationException("failed to parse test config into " + type.getName(), e);
-                    }
-                }
-
-                @Override
-                public <T> List<T> parseKeyedObject(JsonObject section, String identityProp, Class<T> elementType) {
-                    throw new UnsupportedOperationException("not needed by this suite");
-                }
-
-                @Override
-                public <T> List<T> parseKeyedObject(
-                        JsonObject section, String identityProp, Class<T> elementType, Map<String, Object> fixedProps) {
-                    throw new UnsupportedOperationException("not needed by this suite");
-                }
-            };
+            return new DefaultConfigParser(DefaultConfigMapper.lenient());
         }
 
         /**

@@ -83,8 +83,9 @@ parameter typed `ID` fails startup with `UNRESOLVABLE_PARAM_CONVERTER`. Declare 
 concrete parameter types. A default route's `operationId` is the same in every class that inherits
 it, and operationIds are unique per mount, so only one resource per mount can inherit a given
 default route; give the others their own route by overriding it with a distinct
-`@Operation(operationId = "…")`. Once any `Application` is declared, operationIds are also unique
-across mounts (see [Startup failures](#startup-failures)), so only one resource class across all
+`@Operation(operationId = "…")`. Once any `@RestApplication` is registered (active or not) or an
+application mount is present, operationIds are unique across mounts too (the same-owner
+exemption kept; see [Startup failures](#startup-failures)), so only one resource class across all
 JAX-RS mounts can inherit it.
 
 `OperationHandlerContributor`s are sorted by the framework `OrderedExtension` comparator (phase →
@@ -248,7 +249,9 @@ scope.
 
 The `RouterMount` implementation, constructed only through its injected inner `Factory`. Default
 priority is `1000`; `meta()` reports `MountMeta("jaxrs:" + mountPath, mountPath, openapiPath,
-resourceTypes)`.
+resourceTypes, applicationName)`. `applicationName` is the declared `@RestApplication` name for a mount
+the framework's application composer created, and `null` for a mount built through `Factory.create` and
+for the zero-declaration default mount.
 
 ```java
 public static class Factory {
@@ -257,12 +260,12 @@ public static class Factory {
 }
 ```
 
-There is no public factory overload for a Jakarta REST application's mount: once one or more
-`jakarta.ws.rs.core.Application` classes are declared, the framework's application composer creates one
+There is no public factory overload for a declared application's mount: once one or more
+`@RestApplication` interfaces are declared, the framework's application composer creates one
 mount per active application instead of any hand-built call above — see
-[Jakarta REST Applications](#jakarta-rest-applications).
+[`@RestApplication`](#restapplication).
 
-With no `Application` declared (zero-declaration mode), `RestModule` contributes a default mount at
+With no `@RestApplication` declared (zero-declaration mode), `RestModule` contributes a default mount at
 `jaxrs.basePath` (default `/*`) with `jaxrs.openapiPath` (default `openapi.json`) via
 `@ElementsIntoSet`. The set is **empty** — no mount at all — when `@JaxRsResources` is empty. For a
 single API, changing the prefix is a config edit:
@@ -293,6 +296,45 @@ static Set<RouterMount> mounts(
 failure, connection close, and stream reset. The file stays readable while the response streams, but
 an application that needs it afterwards must move or copy it **before** the response completes.
 Retaining a `FileUpload` or a file-backed `EntityPart` does not extend the path's lifetime.
+
+### The application name on descriptors and interceptor contexts
+
+An application mount carries its `@RestApplication` name onto every operation it registers. The name
+is visible in these places:
+
+- **`MountMeta.applicationName()`** of the mount's `meta()`, including the `MountMeta` passed to
+  `MountCustomizer`s and to `RequestValidationStrategy.gateFor(op, schemas, mount)`.
+- **`RestOperationDescriptor.applicationName()`** of every operation descriptor of that mount. This is
+  the descriptor an `OperationHandlerContributor` receives as `OperationRegistrationContext.operation()`.
+- **`OperationContext.operation()`** of every `OperationInterceptor` callback for that mount's
+  operations. The route registration builds one descriptor per operation and hands that same instance
+  to the operation-route identity handler, to contributors, and to the operation's invoker, so the
+  descriptor a contributor received and the one `ctx.operation()` returns are the same object.
+- **`RestRequestCompletedEvent.operation()`** of every completion event for that mount's operations,
+  including a request rejected on its matched route (401, 403, 415, or 400): the operation-route
+  identity handler records the same descriptor ahead of authentication.
+- **Framework synthetic operations.** The descriptor of a synthetic operation reports the name of the
+  application whose document the operation serves from `applicationName()`. A synthetic route runs the
+  contributor chain but not the operation interceptors, so it has no `OperationContext`. Its first
+  handler is the completion recorder, ahead of authentication, so every request on the matched
+  route, a `401` or `403` rejection included, completes as a `RestRequestCompletedEvent` whose
+  `operation()` is the synthetic descriptor, the same instance its contributors receive.
+
+The name is `null` on the mount metadata, the operation descriptors, and `ctx.operation()` for a mount
+built through `Factory.create` and for the zero-declaration default mount; nothing derives a name from the mount path or the mount id.
+Requests and configuration cannot set it, and no routing-context key publishes it: the only
+per-request reference is the operation descriptor inside rest-core's framework-owned completion
+state, held under a key private to rest-core.
+
+**Interceptor chain.** After each `beforeOperation` the chain compares the returned context's
+`operation()` with the operation of the context the chain started with, by reference. When they differ,
+whether an interceptor built a five-argument `OperationContext` (which carries `null`) or a context
+carrying another descriptor, the chain replaces the returned context with a copy that carries the
+registration-time descriptor and keeps every other component, `attributes` included. Every later
+`beforeOperation`, `onOperation`, `afterOperation`, `onSuccess`, `onError`, and `recoverOperation`
+therefore observes the registration-time operation. Only the descriptor is restored: the `operationId()`
+of a context an interceptor rebuilt stays as that interceptor returned it, so read identity from
+`ctx.operation()`.
 
 ### `ResourceMethodMeta`
 
@@ -578,9 +620,22 @@ per-mount OpenAPI contract) receives the registering mount's metadata for every 
 
 `OperationSchemaSource.schemasFor` takes the operation's effective `JsonMapperProfile` alongside the
 descriptor — `schemasFor(op, JsonMapperProfile profile)`. `JaxRsRouteRegistrar` resolves that profile
-once per operation at router build and passes it with every call. The one-argument form is removed
-rather than kept as a default overload, so an existing implementor recompiles once against the
-two-argument signature.
+once per operation at router build and passes it with every call.
+
+`OperationSchemas#toBuilder()` is Beta API: a decorating `OperationSchemaSource` uses it to derive a
+modified copy of the schemas its delegate returned. It seeds a new `Builder` with the instance's body,
+its provenance, and every parameter schema.
+
+`OperationSchemas` has two INTERNAL members, public only for cross-module use by framework
+modules, opaque to this module, and outside its maturity promise: the typed accessor
+`<T> Optional<T> bodySchemaProvenance(Class<T> type)`, which returns the body's provenance only when
+it is an instance of `type`; and `Builder#bodySchema(JsonObject, Object)`, which sets the
+body together with its provenance (both arguments required, or a `NullPointerException` naming the
+missing one). The one-argument `Builder#bodySchema(JsonObject)` always leaves provenance
+empty, including when it replaces a body copied by `toBuilder()` — so a decorating
+`OperationSchemaSource` that delegates to another source and then rebuilds the result through
+`toBuilder()` and the one-argument form carries no provenance forward. This module never inspects the
+provenance: it stores the object as given and returns it by reference.
 
 ### `RestExceptionMapperCustomizer`
 
@@ -966,105 +1021,171 @@ public class DataResource {
 
 ---
 
-## Jakarta REST Applications
+## @RestApplication
 
-An application may declare one or more `jakarta.ws.rs.core.Application` subclasses to group resources
-into independently mounted APIs, instead of the manual multi-API recipe under
-[`JaxRsRouterMount`](#jaxrsroutermount) above. With no `Application` declared, `RestModule` keeps the
-default mount described there unchanged.
+The annotation itself lives in `dev.vertique:vertique-rest-core` (package
+`dev.vertique.rest.core.application`, Beta); this module composes and mounts the declarations.
+`@RestApplication` on an interface groups resources into an independently mounted API, instead of the
+manual multi-API recipe under [`JaxRsRouterMount`](#jaxrsroutermount) above. Composition consumes only
+native `@RestApplication` registrations; a Jakarta `jakarta.ws.rs.core.Application` subclass is never
+registered (see [A leftover `Application` subclass](#a-leftover-application-subclass) below). With no
+`@RestApplication` declared, `RestModule` keeps the default mount described there unchanged.
 
 ### Declaring applications
 
 ```java
-@ApplicationPath("/api/public")
-public final class PublicApplication extends Application {
-    @Override
-    public Set<Class<?>> getClasses() {
-        return Set.of(CatalogResource.class, CheckoutResource.class);
-    }
-}
+@RestApplication(name = "public", path = "/api/public", resources = {CatalogResource.class, CheckoutResource.class})
+public interface PublicApi {}
 
-@ApplicationPath("/api/mgmt")
-public final class ManagementApplication extends Application {
-    @Override
-    public Set<Class<?>> getClasses() {
-        return Set.of(ManagementResource.class);
-    }
+@RestApplication(name = "mgmt", path = "/api/mgmt", resources = {ManagementResource.class})
+public interface ManagementApi {}
+```
+
+Declaring these two interfaces mounts `CatalogResource` and `CheckoutResource` under `/api/public/*`,
+and `ManagementResource` under `/api/mgmt/*`; no default mount is created. `@RestApplication` never
+annotates a class, enum, record, or annotation type, and the declaring interface is never
+instantiated. `vertique-codegen-jaxrs`'s annotation processor validates each declaration and emits one
+`GeneratedRestApplicationRegistration` per interface (`name`, `path`, `resources`, `discover`,
+`openapiPath`, and the evaluated `active` flag — see
+[Generated-code contract types](#generated-code-contract-types) below); this reference describes the
+declared behavior the generated registration produces, not the processor itself.
+
+A sole application may discover its membership instead of listing it:
+
+```java
+@RestApplication(name = "api", path = "/api", discover = true)
+public interface DiscoveryApi {}
+```
+
+### The `RestApplications` view
+
+```java
+public final class RestApplications {
+    public Optional<Entry> byName(String name);
+    public List<Entry> all();                             // every declared application, active or not, by name
+    public record Entry(String name, Class<?> declaringType, boolean active,
+                        String mountPath,                 // as registered, with "/*"
+                        @Nullable String effectiveOpenapiPath, ContractOrigin contractOrigin) {}
+    public enum ContractOrigin { CONFIGURATION, ANNOTATION, GLOBAL }
 }
 ```
 
-Declaring these two classes mounts `CatalogResource` and `CheckoutResource` under `/api/public/*`, and
-`ManagementResource` under `/api/mgmt/*`; no default mount is created. Each application's registration
-is produced by the annotation processor from its declaring compilation unit — this reference describes
-the declared behavior the generated registration produces, not the processor itself.
+`dev.vertique.rest.jaxrs.application.RestApplications` is an INTERNAL, `@Singleton` view built once
+per component from `Set<GeneratedRestApplicationRegistration>` and the parsed
+[`jaxrs.applications`](#per-application-configuration) configuration — once even with zero
+registrations, since `RestModule.jaxRsRouterMount` requests the view on both its zero-declaration and
+explicit-mode branches. It is public only so the composer, the mount composition validator, and
+sibling framework modules — the OpenAPI documentation module and the `openapi-contract` validation
+module's contract-load check — can read it; it is not an application contract and stays outside the
+maturity promise. `byName` looks an application up by name; `all()`
+lists every declared application, active or not, ordered by name so its order never depends on
+registration or configuration order.
+
+Building the view runs these checks, before any resource resolves, aggregated into one
+`RestConfigurationException` under `Invalid JAX-RS application composition:`:
+
+- a name declared by more than one registration, active or not, naming the name and every declaring
+  interface;
+- a registration named the reserved `none` or `null` — the factory already refuses these for
+  a generated registration; this defends a hand-built one;
+- a declaring interface whose runtime `@RestApplication.name()` differs from its registration's name,
+  or that carries no `@RestApplication` at runtime, naming both names or the missing annotation;
+- a `discover = true` registration that is not the sole declared registration, whether either
+  registration is active or not, naming every declared registration;
+- a configured `jaxrs.applications.<name>` that matches no declared registration, active or not,
+  naming the configuration path — `jaxrs.applications.<name>` — and never its value.
+  With zero registrations, any configured name fails this way.
+
+### Contract location
+
+Each entry's `effectiveOpenapiPath` and `contractOrigin` resolve by precedence: a configured
+`jaxrs.applications.<name>.openapiPath` when present (`CONFIGURATION`; a blank value already fails
+startup — see [Per-application configuration](#per-application-configuration)); else the
+declaration's own non-empty `@RestApplication.openapiPath` (`ANNOTATION`); else the global
+`jaxrs.openapiPath` (`GLOBAL`, which may itself be `null`). The validation strategy stays the global
+`jaxrs.validationStrategy` regardless of which setting supplied the location.
+
+When the optional `ApiDocsModuleInstalled` marker is absent (the OpenAPI documentation module is not
+included in this component), the view logs one INFO line per active registration whose declaring
+interface carries an annotation named `dev.vertique.rest.openapi.docs.ApiDocs`, naming the application
+and stating that no documentation route is published for it. The annotation is
+found by its fully qualified name, not a compile-time dependency, so rest-jaxrs never depends on the
+docs module; without the docs artifact on the classpath, reflection drops the annotation and nothing
+is logged either way. An inactive registration is never logged.
+
+### Declaration annotations
+
+A declaring interface may carry only `@RestApplication`, the annotation named
+`dev.vertique.rest.openapi.docs.ApiDocs`, `@OpenAPIDefinition` with every element other than `info` at
+its default, and types in `java.lang` or `java.lang.annotation`; the source-retained
+`@ConditionalOnProperty` and `@NoAutoWire` are permitted too but are enforced on a superinterface by
+the compile-time processor only, since reflection cannot see a `SOURCE`-retained annotation. On a
+superinterface, only `java.lang` and `java.lang.annotation` types are allowed — one of the three
+runtime-retained honored-only annotations above (`@RestApplication`, `@ApiDocs`, `@OpenAPIDefinition`)
+found there is refused as "honored only on the declaring interface"; any other disallowed annotation
+is refused the same way a violation on the declaring interface is. This is the same compile-time rule,
+enforced again at startup by reflection over the declaring interface and every interface it extends,
+transitively — so a registration the processor did not produce still fails startup. Each violation
+names the application (its name and declaring interface), the offending annotation, and the type that
+carries it.
 
 ### Membership
 
-Each declared application is classified by reflection into one of two membership modes:
+Each declared application's membership is exactly one of two forms:
 
-- **Explicit membership.** An application that overrides `getClasses()` (or `getSingletons()`) selects
-  exactly the classes `getClasses()` lists, read once. Each listed class must be a concrete resource
-  with an effective `@Path` and must resolve to exactly one generated resource or one manual
-  `@JaxRsResources` instance of that same class; zero or more than one match fails startup, naming the
-  application and the offending type.
-- **Discovery membership.** An application that overrides neither `getClasses()` nor `getSingletons()`
-  selects every enabled generated resource and every manual `@JaxRsResources` instance. Discovery is
-  allowed only when that application is the sole declared application, whether or not any other
-  declared application is currently active; declaring any other application beside it fails startup,
-  naming every declared application.
+- **Discovery membership.** A sole `discover = true` registration selects every enabled generated
+  resource and every manual `@JaxRsResources` instance; allowed only when it is the sole
+  declared registration, whether or not any other declared registration is currently active.
+- **Explicit membership.** `resources()` lists classes, matched one by one against the generated
+  resource catalog and the manual contributions: each listed class must be a concrete resource with an
+  effective `@Path` and must resolve to exactly one generated entry or one manual `@JaxRsResources`
+  instance of that same class; zero or more than one match fails startup, naming
+  the application and the offending class.
 
-For explicit membership, `getClasses()` may be computed from injected configuration, and every
-invocation — computed or fixed — is evaluated at startup. An empty selection fails startup, naming the
-application; it never falls back to discovery. A listed class whose generated resource is currently
-disabled by its `@ConditionalOnProperty` condition is excluded from the mount silently, without being
-instantiated; when every listed class is disabled this way, the application still mounts, with no
-resources and no fallback to the default mount.
-
-A manual `@JaxRsResources` instance matches a listed class when it is exactly that class, or a direct
+A listed class whose generated entry is currently disabled by its `@ConditionalOnProperty` condition
+is excluded from the mount silently, without being instantiated; when every listed class is disabled
+this way, the application still mounts, with no resources and no fallback to the default mount. A
+manual `@JaxRsResources` instance matches a listed class when it is exactly that class, or a direct
 subclass that declares no runtime-retained annotation on itself, its methods, or their parameters, and
 adds no interface beyond what the listed class already implements — the shape the framework's own AOP
-proxy has. Any other subclass instance matches nothing and is reported by name, naming the subclass and
-asking for it to be listed explicitly instead. A resolved generated resource is checked against the
-same rule before it is mounted, so a Dagger-substituted instance that adds routes or annotations fails
-startup the same way.
+proxy has. Any other subclass instance matches nothing and is reported by name, naming the subclass
+and asking for it to be listed explicitly instead. A resolved generated resource is checked against
+the same rule before it is mounted, so a Dagger-substituted instance that adds routes or annotations
+fails startup the same way. Resources within one mount are ordered by fully qualified class name,
+regardless of `resources()`'s own order.
 
-Resources within one mount are ordered by fully qualified class name, regardless of `getClasses()`'s
-own order.
+### Lifecycle and evaluation
 
-### Lifecycle and bounded Jakarta compatibility
+The declaring interface is never constructed: the composer reads the view for identity, activity,
+mount path, and contract location, and the registration for `resources()` and `discover()`. Each
+declared, active application is evaluated once per `HttpVerticle` composition — never once for the
+whole process. Every resolution of `Set<RouterMount>` composes again: a component accessor that
+returns `Set<RouterMount>` re-evaluates every active application and every selected unscoped resource
+and repeats the informational and warning lines each composition logs — do not resolve that set
+outside the verticle. An evaluation failure fails the deployment before the server starts listening,
+naming the application and its declaring interface.
 
-| Concern | Contract |
-| --- | --- |
-| `getClasses()` | Supported; read once per composition. A `null` return means empty. |
-| `getSingletons()` | Not supported: a non-empty return fails startup, naming the application. |
-| `getProperties()` | Never called. |
-| Providers/features | A listed type annotated `@jakarta.ws.rs.ext.Provider`, or assignable to `Feature` or `DynamicFeature`, fails startup as an unsupported resource member. |
-| Evaluation | Each declared, active application is constructed and evaluated once per `HttpVerticle` composition — never once for the whole process. Every resolution of `Set<RouterMount>` composes again: a component accessor that returns `Set<RouterMount>` constructs every active application and every selected unscoped resource again and repeats the informational and warning lines each composition logs — do not resolve that set outside the verticle. |
-| Failure | An evaluation failure fails the deployment before the server starts listening, naming the application class and its `@ApplicationPath`. |
+### Threading and re-entry
 
-### Threading
-
-`Application` constructors and `getClasses()` run during mount composition, possibly on a Vert.x
-event-loop thread, and must not block. No `Application`, manually contributed `@JaxRsResources`
-resource, or generated resource catalog entry may depend on `Set<RouterMount>` of the same
-component — in zero-declaration mode as well as explicit mode. Doing so re-enters that component's
-own mount composition while it is still in progress, and fails startup with a named
-`RestConfigurationException` instead of recursing — naming the application under construction when
-one is in progress, and otherwise stating that a manually contributed resource or catalog entry
-re-entered composition. Composing a *different* component's `Set<RouterMount>` from inside a
-resource or an application is unaffected.
+Composition, including the view's own checks, runs during mount composition, possibly on a Vert.x
+event-loop thread, and must not block. No manually contributed `@JaxRsResources` resource or generated
+resource catalog entry may depend on `Set<RouterMount>` of the same component — in zero-declaration
+mode as well as explicit mode. Doing so re-enters that component's own mount composition while it is
+still in progress, and fails startup with a named `RestConfigurationException` instead of recursing —
+stating that a manually contributed resource or catalog entry re-entered composition. Composing a
+*different* component's `Set<RouterMount>` from inside a resource is unaffected.
 
 ### Framework and library modules never declare an application
 
 A framework or library module contributes resources through `@Provides @IntoSet @JaxRsResources`, the
-same seam a sibling framework module uses, but never declares a `jakarta.ws.rs.core.Application`.
-Declaring one is the deploying application's decision alone, because a single declaration switches the
-whole module into explicit mode for every consumer.
+same seam a sibling framework module uses, but never declares `@RestApplication`. Declaring one is the
+deploying application's decision alone, because a single declaration switches the whole module into
+explicit mode for every consumer.
 
 ### Explicit mode
 
-Once any application is declared — even when every declared application is currently disabled by its
-conditions — explicit mode replaces the default mount for the whole module:
+Once any application is declared — even when every declared application is currently inactive —
+explicit mode replaces the default mount for the whole module:
 
 - No default mount is created at `jaxrs.basePath`, including when every declared application is
   inactive.
@@ -1077,60 +1198,79 @@ conditions — explicit mode replaces the default mount for the whole module:
 - With at least one active application, startup logs one warning — only when the list is non-empty —
   naming every enabled generated resource and manual instance that no active application selected,
   worded "not selected by any Application".
-- Startup also logs one informational line listing every declared application (its class, its path,
-  and whether it is currently active), and one informational line per application mount naming its
-  resource classes in mount order.
+- Startup also logs one informational line listing every declared registration (its name, declaring
+  interface, path, and whether it is currently active), and one informational line per application
+  mount naming its resource classes in mount order.
 - Removing every declared application restores the default mount described under
   [`JaxRsRouterMount`](#jaxrsroutermount) above.
 
 ### Generated-code contract types
 
-`dev.vertique.rest.jaxrs.runtime.GeneratedJaxRsApplicationRegistration` and
-`GeneratedJaxRsResourceEntry` are INTERNAL generated-code contract types the annotation processor
-emits; they are not for hand-written use. `GeneratedJaxRsApplicationRegistration.of(...)` rejects a
-registration path that is not in the application path grammar's normalized form with
-`IllegalArgumentException`, naming the application class and the rejected path — a fail-closed backstop
-for a registration the processor did not produce.
+`dev.vertique.rest.jaxrs.runtime.GeneratedRestApplicationRegistration` is an INTERNAL generated-code
+contract type the annotation processor emits; it is not for hand-written use.
+`GeneratedRestApplicationRegistration.of(...)` re-checks the name grammar and the reserved names, the
+normalized path form, and the exactly-one-of `resources`/`discover` membership form, throwing
+`IllegalArgumentException` naming the declaring interface and the violated rule — a fail-closed
+backstop for a registration the processor did not produce. This type evolves additively: a new
+attribute arrives as a new `of` overload; an existing factory signature stays for at least one further
+minor release line, and the factory's re-checks may only loosen, never tighten, across releases.
 
-At startup, before any application is constructed, every declared registration's class hierarchy — the
-application itself, every superclass strictly below `jakarta.ws.rs.core.Application`, and every
-interface any of them implements, transitively including superinterfaces — is re-checked by reflection
-against the same application annotation allow list the annotation processor enforces at compile time
-(`vertique-codegen-jaxrs`'s `module.md`, "Application Annotation Allow List"), whether or not the
-registration is active and whether it was generated or hand-written. Each violation carries the
-compile-time diagnostic's own message; when one or more are found, startup fails with a
+At startup, before any resource resolves, every declared registration's declaring interface and its
+superinterfaces are re-checked by reflection against the same [declaration annotation
+allow list](#declaration-annotations) the annotation processor enforces at compile time — no
+superclass is walked, because the declaring interface is an interface, never constructed — whether or
+not the registration is active and whether it was generated or hand-written. Each violation applies
+the same rule as the compile-time check, with its own message; when one or more are found, startup fails with a
 `RestConfigurationException` that lists every violation found across all registrations, one per line,
 under `Invalid JAX-RS application composition:`, together with any other composition problem found at
-that point. Like the normalized-form check above, it is a fail-closed backstop for a registration the
-processor did not produce.
+that point.
 
 ### Mount conflicts
 
-Once any application is declared, two independent checks reject overlapping mounts before any route
-installs:
+Once any application is declared, the checks below reject overlapping or colliding mounts before any
+route installs:
 
 - **Between active applications.** Two active applications whose mount paths overlap — their prefixes
   (each mount path without its terminal `*`, so it keeps its trailing `/`) are equal, or one starts
-  with the other — fail startup before either application is constructed, naming both application
-  classes and both paths. An application declared at `@ApplicationPath("/")` therefore conflicts with
-  every other active application, because `/` is a prefix of everything; `/api/public/*` and
-  `/api/publicity/*` do not conflict, because neither prefix starts with the other.
+  with the other — fail startup before any resource resolves, naming both applications (name and
+  declaring interface) and both paths. An application declared at `path = "/"` therefore conflicts
+  with every other active application, because `/` is a prefix of everything.
 - **Between an application and a hand-built JAX-RS mount.** An application mount whose path overlaps a
   hand-built `JaxRsRouterMount`'s path, in either direction, fails startup before any mount router is
-  created, naming the application class and both paths. A hand-built JAX-RS mount whose path is a
-  router pattern — containing `:`, `{`, or `}` — conflicts with every application mount regardless of
-  any literal prefix relation, because the segment it matches is not known until request time. When
-  mounts from separate compositions are merged into one `Set<RouterMount>`, the same check also
-  compares the application mounts with each other.
+  created, naming the application (name and declaring interface) and both paths. A hand-built JAX-RS
+  mount whose path is a router pattern — containing `:`, `{`, or `}` — conflicts with every
+  application mount regardless of any literal prefix relation, because the segment it matches is not
+  known until request time.
+- **Between application mounts merged from more than one composition.** The same path-conflict check
+  also compares every pair of application mounts in a `Set<RouterMount>` merged from more than one
+  `HttpVerticle` composition — a shape no single composition's own resolution ever sees.
+- **Repeated application name across merged mounts.** A non-null application name carried by
+  more than one application mount in the merged list is refused, naming the name and both mount paths.
+  A single composition's own view already refuses a repeated name before any mount is built; this
+  exists only for mounts merged from more than one composition.
 - **Unaffected.** A non-JAX-RS mount, and a pair of JAX-RS mounts that include no application, keep the
   warning-only overlap detection `HttpVerticle` already performs for every mount.
 
 Only the Dagger-built `HttpVerticle` hosts application mounts. Its composition validators run the
-checks above and mark each application mount instance validated only once every check passes for the
-whole composition; an `HttpVerticle` built with the public five-argument constructor, or a subclass
-that runs no composition validator, refuses to create an application mount's router at all, naming the
-application class and stating that `HttpVerticle` must come from Dagger so its composition validators
-run first.
+checks above, the cross-mount operationId refusal and, where it applies, the contract-location parse
+below (see [Startup failures](#startup-failures)), and mark each application mount instance validated
+only once every check passes for the whole composition; an `HttpVerticle` built with the public
+five-argument constructor, or a subclass that runs no composition validator, refuses to create an
+application mount's router at all, naming the application (name and declaring interface) and stating
+that `HttpVerticle` must come from Dagger so its composition validators run first.
+
+**Contract-location parse, under a contract-driven strategy.** `RequestValidationStrategy` gains
+`resolvesOperationsFromMountContract()` (`default false`), documented as "this strategy looks each
+operation up by operationId in the contract of the mount that registers it"; the opt-in
+`openapi-contract` strategy (`vertique-rest-openapi-validation`) reports `true`. When the registered
+strategy selected by `jaxrs.validationStrategy` reports it, the mount composition validator also
+normalizes every JAX-RS mount's non-null contract location (`Path.of(value).normalize()`) and reports
+one it cannot parse as a violation, naming the mount — an application by its name and the setting its
+location came from (`jaxrs.applications.<name>.openapiPath`, the `@RestApplication` annotation's
+`openapiPath`, or `jaxrs.openapiPath`), a hand-built mount by its path — and never the raw,
+unparseable value. This parse runs under the same gate as the operationId refusal below, and never
+when no registered strategy carries the configured `jaxrs.validationStrategy` id (`createRouter`'s own
+fail-fast selection reports that separately).
 
 ### Explicit security policy
 
@@ -1156,11 +1296,11 @@ policy is `PermitAll` (`@PermitAll`). A restricting declaration always takes pre
 policy at all.
 
 **Warning, application mounts only.** An application mount whose registration left one or more
-operations implicit logs exactly one WARN per composition, naming the application class and every
-implicit operation, sorted by full path, then HTTP method, then operation id, in the shape
-`Application <FQN> at '<mount path>' has operations with no explicit security policy: <METHOD>
-<full path> (operationId '<id>'), …`. Each operation's full path is the mount prefix (the mount
-path without its trailing `*`) joined with the operation's own path — for example
+operations implicit logs exactly one WARN per composition, naming the application and every implicit
+operation — sorted by full path, then method, then operation id — in the shape `Application
+'<name>' (<declaring interface>) at '<mount path>' has operations with no explicit security policy:
+<METHOD> <full path> (operationId '<id>'), …`. Each operation's full path is the mount prefix (the
+mount path without its trailing `*`) joined with the operation's own path — for example
 `GET /api/mgmt/status`. A mount with no implicit operation logs nothing, and a hand-built
 (non-application, including the legacy default) `JaxRsRouterMount` never logs this warning, however
 many of its operations are implicit.
@@ -1176,25 +1316,29 @@ warning — the application deploys, and request-time enforcement is unchanged e
 only decides what is warned about or what fails startup at registration; it never changes how a
 matched request is authenticated or authorized.
 
-### Migrating a root application
+### A leftover `Application` subclass
 
-An application declared at `@ApplicationPath("/")` mounts at `/*`, the whole path space. Because every
-other prefix overlaps it, a root application conflicts with every other active application and every
-hand-built JAX-RS mount — both fail startup as described in [Mount conflicts](#mount-conflicts) above.
-A non-JAX-RS mount is unaffected and keeps only the warning-only overlap detection. Adding a first
-application to a deployment that currently serves a legacy API at the root path therefore switches the
-whole module into explicit mode: the root API must move to a non-root path before any other application
-can be declared, and every resource that must stay reachable has to be selected by some declared
-application.
+A `jakarta.ws.rs.core.Application` subclass compiles — with exactly one warning per class, unless the
+class carries `@NoAutoWire` — but is never registered: it has no runtime effect, and no route ever
+answers under its `@ApplicationPath`. The processor's warning states both cases of where the class's
+resources are actually served: with no `@RestApplication` declared in the component, they are served
+on the legacy default mount at `jaxrs.basePath`; otherwise they are served only where a
+`@RestApplication` lists them. To migrate one, declare an `@RestApplication` interface with the same
+path and resource list (or `discover = true`), then delete the subclass or annotate it `@NoAutoWire`
+to silence the warning while migrating incrementally. A migrated root application (`path = "/"`) keeps
+conflicting with every other active application and every hand-built JAX-RS mount, exactly as
+described under [Mount conflicts](#mount-conflicts) above, because every other prefix overlaps `/`.
 
 ---
 
 ## Configuration
 
-This module reads no configuration section of its own; `http` and `jaxrs` are declared and parsed in
-`dev.vertique:vertique-rest-core`. The keys it acts on are `jaxrs.basePath`, `jaxrs.openapiPath`,
-`jaxrs.sse.*`, `jaxrs.validationStrategy`, `jaxrs.security.requireExplicitPolicy` (see
-[Explicit security policy](#explicit-security-policy)), and the JSON profile keys below.
+`http` and `jaxrs` are declared and parsed in `dev.vertique:vertique-rest-core`, with one exception:
+this module parses the `jaxrs.applications` section itself (see
+[Per-application configuration](#per-application-configuration)). The keys it acts on are
+`jaxrs.basePath`, `jaxrs.openapiPath`, `jaxrs.sse.*`, `jaxrs.validationStrategy`,
+`jaxrs.security.requireExplicitPolicy` (see [Explicit security policy](#explicit-security-policy)),
+`jaxrs.applications.<name>.openapiPath`, and the JSON profile keys below.
 
 ### JSON profile selection
 
@@ -1315,6 +1459,50 @@ above collapses to whatever the effective profile does, including enum leniency:
 `vertique-strict`, or a custom profile for a boundary that must reject unknown enum strings without a
 gate.
 
+### Per-application configuration
+
+`jaxrs.applications` is a keyed object: each key is an application's name, and its value is that
+application's settings object. The section sits under `jaxrs`, but this module parses it at startup;
+`vertique-rest-core`'s `jaxrs` parse (`JaxRsConfig`) does not declare it and ignores it.
+
+| Key | Default | Constraint / notes |
+|---|---|---|
+| `jaxrs.applications.<name>.openapiPath` | the declaration's own `@RestApplication.openapiPath`, then `jaxrs.openapiPath` | string; overrides both when set. An absent key or an explicit `null` falls back to that precedence; an empty or whitespace-only value fails startup |
+
+```json
+{
+  "jaxrs": {
+    "applications": {
+      "orders": { "openapiPath": "orders-openapi.yaml" },
+      "admin": {}
+    }
+  }
+}
+```
+
+The section is strict:
+
+- The section name is matched case-sensitively. A `jaxrs` key that equals `applications` ignoring
+  case but is spelled differently — `Applications`, `APPLICATIONS` — fails startup, whatever its
+  value, even when no exact `applications` key is present. A key that is not a case variant, such
+  as the singular `application`, is an unknown `jaxrs` key and stays ignored.
+- An absent `jaxrs.applications` and an empty object `{}` both configure no per-application
+  settings. Any other value that is not a JSON object — a string, number, boolean, array, or
+  `null` — fails startup.
+- Every entry must be a JSON object; `{}` is a valid entry with no settings. An entry whose value is
+  anything else, `null` included, fails startup.
+- `openapiPath` is the only key an entry accepts, matched case-sensitively. Any other key fails
+  startup, including `name` (the entry key already is the name) and case variants such as
+  `OpenapiPath`.
+
+That strictness is a deliberate narrowing of the "unknown keys are ignored" rule
+`vertique-rest-core` applies to `jaxrs`, limited to the reserved name `applications`. Each of those
+failures, and a blank `openapiPath`, raises a `ConfigurationException` naming the offending
+configuration paths (for a miscased section name, the offending `jaxrs` keys), sorted, never their
+values. The section name is checked first, then shapes and keys, all before any `openapiPath`
+value is parsed, so blank values are reported only when no section-name, shape, or key problem
+remains (see [Startup failures](#startup-failures)).
+
 ---
 
 ## Failures, Constraints, and Common Mistakes
@@ -1340,18 +1528,56 @@ gate.
 | `UNRESOLVABLE_PARAM_CONVERTER` | a path/query/header/cookie/form parameter type — or a collection's element type, or a convertible `@BeanParam` field — has no converter resolvable by the `ParamConversionResolver` chain |
 | `NO_EXPLICIT_SECURITY_POLICY` | `jaxrs.security.requireExplicitPolicy` is `true` and the operation is implicit (see [Explicit security policy](#explicit-security-policy)); message `<METHOD> <full path> has no explicit security policy, which jaxrs.security.requireExplicitPolicy requires`; fix by annotating the operation with `@PermitAll` or a restricting declaration |
 
-Once one or more `jakarta.ws.rs.core.Application` registrations are declared — even when none is
-active — the Dagger-built `HttpVerticle`'s composition validator additionally rejects a duplicate
-operationId **across** mounts: two operations on different `JaxRsRouterMount`s that share an
-operationId fail startup unless they are the same operation — the same resource class (an
-annotation-free AOP proxy counts as its base class), method name, and parameter types. This is a
-cross-mount check performed by that composition validator, not a `RouteRegistrationViolation`: it
-throws `IllegalStateException`, naming both methods and both mounts. The per-mount
-`DUPLICATE_OPERATION_ID` row above is unaffected — it keeps comparing only within one mount, and
-with no application declared it remains the only operationId check that runs. An `HttpVerticle`
-built with the public five-argument constructor runs neither this operationId check nor the
-application-versus-hand-built check in [Mount conflicts](#mount-conflicts) above, and refuses to
-create any application mount's router.
+Building the `RestApplications` view (see [The `RestApplications`
+view](#the-restapplications-view) above) and the composer's step-1 and membership checks (see
+[Membership](#membership) above) each throw `RestConfigurationException`, aggregated under
+`Invalid JAX-RS application composition:`, before any resource resolves — the view's checks run once
+per component, even with zero registrations. `RestModule`'s `@Singleton RestApplications` provider
+runs its configuration parse (`parseJaxRsApplications`, see [Per-application
+configuration](#per-application-configuration) below) first, before the view's own checks; that
+parse's `ConfigurationException` propagates unwrapped and alone, never combined into the view's or
+the composer's aggregated `RestConfigurationException`.
+
+Once one or more `@RestApplication` registrations are declared — even when none is active — the
+Dagger-built `HttpVerticle`'s composition validator (`JaxRsApplicationMountValidator`) additionally
+reports these as violation strings, surfaced through `HttpVerticle`'s own aggregated
+`IllegalStateException("Invalid mount configuration: …")` rather than thrown directly by the
+validator:
+
+- a duplicate operationId **across** mounts: two operations on different `JaxRsRouterMount`s that
+  share an operationId fail startup unless they are the same operation — the same resource class (an
+  annotation-free AOP proxy counts as its base class), method name, and parameter types — naming both
+  operations and both mounts; this global, cross-mount refusal is kept until a later change
+  scopes it per mount;
+- a non-null application name carried by more than one application mount in a `Set<RouterMount>`
+  merged from more than one composition, naming the name and both mount paths;
+- under a strategy reporting `resolvesOperationsFromMountContract()`, a JAX-RS mount whose contract
+  location cannot be parsed, naming the mount and the setting its location came from, never the value
+  (see [Mount conflicts](#mount-conflicts) above).
+
+The per-mount `DUPLICATE_OPERATION_ID` row above is unaffected — it keeps comparing only within one
+mount, and with no application declared it remains the only operationId check that runs. An
+`HttpVerticle` built with the public five-argument constructor runs none of this validator's checks
+and refuses to create any application mount's router.
+
+Parsing `jaxrs.applications` (see [Per-application configuration](#per-application-configuration))
+raises `ConfigurationException`. The section-name, shape, key, and blank-value checks use the four
+messages below; `<keys>` lists every offending `jaxrs` key and `<paths>` every offending
+configuration path, each single-quoted, sorted, and comma-separated. An entry that passes those
+checks but cannot be bound — an `openapiPath` that is a JSON object or array, or a blank entry
+key — fails instead with the configuration parser's own
+message, which does not name the full configuration path. No message contains a configured value.
+
+| Condition | Message |
+|---|---|
+| A `jaxrs` key equals `applications` ignoring case but is spelled differently | `Miscased applications keys under 'jaxrs': <keys>; per-application settings belong under 'jaxrs.applications'` |
+| `jaxrs.applications` is present but not a JSON object (`null` included) | `'jaxrs.applications' must be a JSON object` |
+| An entry is not a JSON object (`null` included), or an entry carries a key other than `openapiPath` | `Invalid entries or keys under 'jaxrs.applications': <paths>; each entry must be a JSON object whose only key is 'openapiPath'` |
+| A configured `openapiPath` is empty or only whitespace | `Blank values under 'jaxrs.applications': <paths>; set 'openapiPath' to a non-blank location or omit it` |
+
+In the third message a path is `jaxrs.applications.<name>` for an entry that is not an object and
+`jaxrs.applications.<name>.<key>` for a rejected key; in the fourth it is
+`jaxrs.applications.<name>.openapiPath`.
 
 `SecurityPolicyViolationException` is thrown immediately when a `SecurityPolicyValidator` is bound and
 finds a violation, rather than being collected. `JsonProfileConfigurationException` is thrown at
@@ -1436,6 +1662,21 @@ as proof of a complete body.
   body may still be in flight. Observe the wire-completion channel for the delivery outcome.
 - **Setting `@JsonProfile` on a resource method and expecting the response to keep the class
   profile.** Request and response profiles are symmetric — the method-level override applies to both.
+- **Adding `name`, a case variant such as `OpenapiPath`, or another setting inside a
+  `jaxrs.applications` entry.** The entry key is the application's name, and `openapiPath`, spelled
+  exactly, is the only key an entry accepts; any other key fails startup instead of being ignored.
+- **Spelling the section `jaxrs.Applications` or another case variant.** Only the exact spelling
+  `jaxrs.applications` configures applications. A case variant fails startup with
+  `Miscased applications keys under 'jaxrs': …`, even when no exact `applications` key is present.
+  A key that is not a case variant, such as the singular `application`, is still ignored like any
+  unknown `jaxrs` key.
+- **Hiding an input the method does not bind, once a documentation module is bound.** A method-level
+  hiding entry — `@Parameter(name = ..., in = ..., hidden = true)` on the method, in `@Parameters`, in
+  `@Operation(parameters = ...)`, or carried by a composed annotation — must name an input the method
+  binds. Names match exactly, except header names, which match ignoring ASCII letter case; cookie
+  names in hiding entries still match exactly. Only ASCII letters fold, so a non-ASCII look-alike
+  such as U+212A KELVIN SIGN does not match `k`. An unset `in` matches every location. A hidden entry that names no bound input
+  fails startup with a configuration exception, and only when such a hook is bound.
 
 ---
 
@@ -1457,15 +1698,48 @@ Beyond what `RestCoreModule` and `JsonRuntimeModule` contribute:
 | `Set<RequestValidationStrategy>` | `@Multibinds` plus the built-in `none` strategy, so the set is never empty |
 | `Set<FileContentVerifier>` | `@Multibinds`, empty by default |
 | `Set<RestExceptionMapperCustomizer>` | `@Multibinds`, empty by default |
-| `Set<GeneratedJaxRsApplicationRegistration>` | `@Multibinds`; INTERNAL generated-code contract, populated by the annotation processor with one entry per declared `jakarta.ws.rs.core.Application`; empty by default |
+| `Set<GeneratedRestApplicationRegistration>` | `@Multibinds`; INTERNAL generated-code contract, populated by the annotation processor with one entry per declared `@RestApplication`; empty by default |
+| `ApiDocsModuleInstalled` | `@BindsOptionalOf`; INTERNAL marker; the OpenAPI documentation module binds it when present, so `Optional<ApiDocsModuleInstalled>` is populated only when that module is in the component — see [Contract location](#contract-location) |
+| `RestApplications` | `@Provides @Singleton`; INTERNAL; built once per component from `Set<GeneratedRestApplicationRegistration>`, the parsed `jaxrs.applications`, and `Optional<ApiDocsModuleInstalled>` — see [The `RestApplications` view](#the-restapplications-view) |
 | `Set<GeneratedJaxRsResourceEntry>` | `@Multibinds`; INTERNAL generated-code contract, populated by the annotation processor with one entry per DI-eligible JAX-RS resource; empty by default |
-| `Set<RouterMount>` | `@ElementsIntoSet`: with no `Application` declared, the default `JaxRsRouterMount` at `jaxrs.basePath`, empty when `@JaxRsResources` is empty; once an `Application` is declared, one mount per active application instead — see [Jakarta REST Applications](#jakarta-rest-applications) |
-| `MountCompositionValidator` (`JaxRsApplicationMountValidator`) | `@IntoSet`; INTERNAL; validates application mounts against hand-built JAX-RS mounts and against each other, and cross-mount operationIds — see [Mount conflicts](#mount-conflicts) |
+| `Set<RouterMount>` | `@ElementsIntoSet`: with no `@RestApplication` declared, the default `JaxRsRouterMount` at `jaxrs.basePath`, empty when `@JaxRsResources` is empty; once one or more are declared, one mount per active application instead — see [`@RestApplication`](#restapplication) |
+| `MountCompositionValidator` (`JaxRsApplicationMountValidator`) | `@IntoSet`; INTERNAL; takes the `RestApplications` view, `JaxRsConfig`, and `Set<RequestValidationStrategy>`; validates application mounts against hand-built JAX-RS mounts and against each other, the cross-mount operationId refusal, and, under a contract-driven strategy, the contract-location parse — see [Mount conflicts](#mount-conflicts) |
 | `ComposeValidator` (`JaxRsDefaultProfileValidator`) | `@IntoSet`; fails the `VALIDATE` phase on an unknown `jaxrs.jsonProfile` (`json.systemProfile` is validated earlier, by the `CONFIGURE`-phase install step) |
 | `OperationSchemaSource`, `BeanValidator`, `InputObjectProcessor` (`dev.vertique.input.processing.InputObjectProcessor`), `ActionRegistry`, `Authorizer` | `@BindsOptionalOf`; satisfied by `rest-validation`, `validation`, `sanitization`, and `rest-security` respectively |
+| `SyntheticOperationInstaller` | `@Binds` to a package-private implementation; INTERNAL; framework documentation module only |
+| `Set<MountPublicationHook>` | `@Multibinds`; INTERNAL; empty by default; sibling framework modules contribute: the documentation module through `@ElementsIntoSet`, the `openapi-contract` validation module's contract-load check through `@IntoSet` |
 
 `dev.vertique.rest.jaxrs.runtime.MagicBytesVerifierModule` is a separate opt-in `@Module` that
 contributes the built-in magic-byte `FileContentVerifier`.
+
+Three INTERNAL framework packages back these sibling-module seams. Each is outside the maturity
+promise and not a stable application API.
+
+`dev.vertique.rest.jaxrs.synthetic` holds `SyntheticOperationInstaller`, which lets a sibling framework
+module install a framework-owned route through the resource security chain, behind the completion
+recorder, so its requests complete as `RestRequestCompletedEvent`s; an installed route deliberately
+bypasses two things a resource route would normally go through: the API-scoped middleware, request
+interceptor, router-lifecycle-hook, and mount-customizer chains of a JAX-RS mount never run for it,
+and its own failure handler ends every failure itself rather than handing it to the application's
+error pipeline.
+
+`dev.vertique.rest.jaxrs.publication` holds `MountPublicationHook`, which is bound only through
+the `@Multibinds` `Set<MountPublicationHook>` multibinding above — empty by default, never an
+optional binding — to which sibling framework modules contribute (the documentation module through
+`@ElementsIntoSet`, the `openapi-contract` validation module's contract-load check through
+`@IntoSet`); application developers must not implement it. Once one or more hooks are bound, every
+JAX-RS mount hands each hook one `MountPublication` at the end of `createRouter`, naming an
+application mount's `@RestApplication` name and declaring interface (`null` for every other mount)
+and carrying one `OperationPublication` per registered operation with the route value exactly as
+registered and the operation's effective security facts; a mount at least one hook wants detail for
+also carries an `OperationDetail`: deep-copied `CapturedSchemas`, keyed by `InputKey`, taken before
+the validation gate is built, plus the operation's flattened input inventory and its response shape.
+
+`dev.vertique.rest.jaxrs.application` holds `RestApplications` and `ApiDocsModuleInstalled`, the
+composition view and the docs-module marker described under [`@RestApplication`](#restapplication)
+above, public only so the JAX-RS application composer, the mount composition validator, the OpenAPI
+documentation module, and the `openapi-contract` validation module's contract-load check can read or
+bind them.
 
 ---
 

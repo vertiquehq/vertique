@@ -18,9 +18,9 @@ SPDX-License-Identifier: EUPL-1.2
     <artifactId>codegen-it-jaxrs-applications-legacy</artifactId>
 
     <!--
-    T003 TP-006: a zero-declaration consumer of the `resources` unit. Declares no Application, so the
+    A zero-declaration consumer of the `resources` unit. Declares no Application, so the
     real processor never scans one here; @JaxRsResources must keep serving the default mount, exactly
-    as it did before T003's application-registration emission existed (I-1).
+    as it did before application-registration emission existed.
     -->
     <dependencies>
         <dependency>

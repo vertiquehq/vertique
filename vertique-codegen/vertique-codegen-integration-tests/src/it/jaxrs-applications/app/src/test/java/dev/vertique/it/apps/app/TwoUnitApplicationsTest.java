@@ -25,10 +25,12 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
 /**
- * T003 TP-005: real, processor-generated code, across two compilation units ({@code resources} and
- * {@code app}), serves both {@link PublicApplication}'s and {@link ManagementApplication}'s mounts
- * over HTTP from {@link dev.vertique.rest.core.router.HttpVerticle} instances built by
- * {@link AppComponent}, with no handwritten registration or mount module.
+ * Real, processor-generated code, across two compilation units
+ * ({@code resources} and {@code app}), serves both {@link PublicApplication}'s and
+ * {@link ManagementApplication}'s native application mounts over HTTP from
+ * {@link dev.vertique.rest.core.router.HttpVerticle} instances built by {@link AppComponent}, with no
+ * handwritten registration or mount module, while the leftover {@link LegacyStyleApplication}
+ * subclass stays inert.
  */
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
 class TwoUnitApplicationsTest {
@@ -55,7 +57,8 @@ class TwoUnitApplicationsTest {
     @Test
     @DisplayName(
             "PublicApplication and ManagementApplication mounts serve across the resources and app "
-                    + "compilation units; a path outside both application mounts 404s")
+                    + "compilation units; a path outside both application mounts 404s; the leftover "
+                    + "LegacyStyleApplication subclass stays inert")
     void publicAndManagementMountsServeAcrossUnits() throws Exception {
         JsonObject config =
                 new JsonObject()
@@ -80,6 +83,13 @@ class TwoUnitApplicationsTest {
             HttpResponse<Buffer> rootCatalogResponse = await(client.get(port, "127.0.0.1", "/catalog").send());
             assertEquals(
                     404, rootCatalogResponse.statusCode(), "no default mount exists outside the two application paths");
+
+            HttpResponse<Buffer> legacyCatalogResponse =
+                    await(client.get(port, "127.0.0.1", "/api/legacy/catalog").send());
+            assertEquals(
+                    404,
+                    legacyCatalogResponse.statusCode(),
+                    "the leftover Application subclass stays inert: no mount exists at /api/legacy");
         } finally {
             client.close();
         }

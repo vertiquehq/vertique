@@ -112,6 +112,16 @@ SPDX-License-Identifier: EUPL-1.2
             <artifactId>expressly</artifactId>
             <scope>test</scope>
         </dependency>
+        <!--
+          Test scope only: HiddenMemberReportTest, which tests the hidden-member report, uses swagger-core's
+          model resolver, built on each row profile's mapper, as a differential oracle for the members
+          and types it omits because of @Hidden. Production code never depends on swagger-core.
+        -->
+        <dependency>
+            <groupId>io.swagger.core.v3</groupId>
+            <artifactId>swagger-core-jakarta</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>

@@ -25,6 +25,7 @@ import dev.vertique.rest.core.response.ResponseBodyEncoder;
 import dev.vertique.rest.core.router.MountMeta;
 import dev.vertique.rest.core.router.OperationHandlerContributor;
 import dev.vertique.rest.core.router.OperationRegistrationContext;
+import dev.vertique.rest.core.routing.RestOperationDescriptor;
 import dev.vertique.rest.core.routing.RouteRegistration;
 import dev.vertique.rest.core.routing.SecurityRequirement;
 import dev.vertique.rest.core.routing.SecurityRequirementSet;
@@ -36,6 +37,10 @@ import dev.vertique.rest.core.security.SecurityPolicyViolation;
 import dev.vertique.rest.core.security.SecurityPolicyViolationException;
 import dev.vertique.rest.core.sse.SseEvent;
 import dev.vertique.rest.jaxrs.convert.ConversionContexts;
+import dev.vertique.rest.jaxrs.publication.CapturedSchemas;
+import dev.vertique.rest.jaxrs.publication.InputKey;
+import dev.vertique.rest.jaxrs.publication.OperationDetail;
+import dev.vertique.rest.jaxrs.publication.OperationPublication;
 import dev.vertique.rest.jaxrs.request.BoundRequest;
 import dev.vertique.rest.jaxrs.routing.JaxRsOperationDescriptor;
 import dev.vertique.rest.jaxrs.routing.ParamDescriptor;
@@ -48,6 +53,7 @@ import dev.vertique.security.authz.ActionRef;
 import dev.vertique.security.authz.ActionRegistry;
 import io.vertx.core.Handler;
 import io.vertx.core.http.HttpMethod;
+import io.vertx.core.json.JsonObject;
 import io.vertx.core.streams.ReadStream;
 import io.vertx.ext.web.FileUpload;
 import io.vertx.ext.web.Route;
@@ -56,7 +62,6 @@ import io.vertx.ext.web.RoutingContext;
 import io.vertx.ext.web.handler.AuthenticationHandler;
 import io.vertx.ext.web.handler.ChainAuthHandler;
 import jakarta.annotation.Nullable;
-import jakarta.ws.rs.core.Application;
 import jakarta.ws.rs.core.EntityPart;
 import java.lang.annotation.Annotation;
 import java.lang.reflect.ParameterizedType;
@@ -131,7 +136,8 @@ public class JaxRsRouteRegistrar {
      * <p>Delegates to the package-private overload below with a {@code null} application type and a
      * sink this call discards, so it records no implicit-policy operation — every public caller,
      * including a hand-built {@link JaxRsRouterMount.Factory#create} mount and the zero-declaration
-     * legacy default mount, serves no declared application.
+     * legacy default mount, serves no declared application. It also passes no publication list and
+     * no detail request, so it builds no operation publication and copies no schema.
      *
      * <p>If a {@code securityPolicyValidator} is provided, it is run for every discovered operation.
      * Any violations found cause startup to fail immediately with a {@link
@@ -196,7 +202,7 @@ public class JaxRsRouteRegistrar {
      * @param jsonMapperProfileRegistry registry of named JSON mapper profiles; used to resolve the
      *                                effective request-body {@code ObjectMapper} per resource method
      *                                ({@code @JsonProfile} method/class &rarr; config &rarr; {@code vertx}).
-     *                                Resolving an unknown profile id fails startup (fail-fast, FR-JSON-008)
+     *                                Resolving an unknown profile id fails startup (fail-fast)
      * @param jsonConfig             global JSON configuration; supplies the {@code json.jsonProfile} default
      *                                applied when a resource method and {@code jaxrs.jsonProfile} both select
      *                                no profile of their own
@@ -252,25 +258,40 @@ public class JaxRsRouteRegistrar {
                 jsonMapperProfileRegistry,
                 jsonConfig,
                 null,
-                new ArrayList<>());
+                new ArrayList<>(),
+                null,
+                false);
     }
 
     /**
      * Scans all resource instances and registers handlers on a plain {@link Router}, recording every
-     * implicit-policy operation into {@code implicitOperations} while this call serves
-     * {@code applicationType}.
+     * implicit-policy operation into {@code implicitOperations} while this call serves an
+     * application whose declaring interface is {@code declaringType}.
      *
      * <p>Package-private: the package-private application-mount composition
      * ({@code JaxRsRouterMount#createRouter}) is the sole caller that serves a declared application,
-     * passing its own type and a fresh sink it reads after this call returns; every other caller
-     * uses the public {@link #registerAll(Set, Router, RequestValidationStrategy, MountMeta,
+     * passing its own declaring type and a fresh sink it reads after this call returns; every other
+     * caller uses the public {@link #registerAll(Set, Router, RequestValidationStrategy, MountMeta,
      * Optional, SecuritySchemeHandlerCollector, List, List, ErrorPipeline, ResponsePipeline,
      * RestContextResolution, ParamConversionResolver, SecurityPolicyValidator, boolean, List, List,
      * String, BeanValidator, InputObjectProcessor, ActionRegistry, boolean, JaxRsConfig,
      * JsonMapperProfileRegistry, JsonConfig) overload}, which delegates here with a {@code null}
-     * application type and a sink it discards. This registrar keeps no state of its own between
-     * calls: {@code applicationType} and {@code implicitOperations} are this call's own, never
-     * instance fields.
+     * declaring type, a sink it discards, no publication list, and no detail request. This
+     * registrar keeps no state of its own between calls: {@code declaringType},
+     * {@code implicitOperations}, and {@code publications} are this call's own, never instance
+     * fields.
+     *
+     * <p>When {@code publications} is non-{@code null}, every registered operation appends one
+     * {@link OperationPublication} in registration order, recording the route value and regex flag
+     * the route was registered with, the effective security policy, the security requirement sets,
+     * and whether an action is required. When {@code captureDetail} is also {@code true}, each
+     * publication carries an {@link OperationDetail} whose {@link CapturedSchemas} are deep copies
+     * of the body schema and of every descriptor parameter's schema, taken after the schema source
+     * resolved them and before the strategy's {@code gateFor} receives the same, unmodified
+     * {@link OperationSchemas} instance; the body schema's provenance is carried by reference. The
+     * detail also carries the operation's flattened input inventory and its response shape, built
+     * only then. A {@code null} list builds no publication and copies nothing, whatever {@code
+     * captureDetail} says.
      *
      * @param resources               JAX-RS annotated resource instances
      * @param apiRouter               the plain Vert.x web router to register routes on
@@ -323,19 +344,24 @@ public class JaxRsRouteRegistrar {
      * @param jsonMapperProfileRegistry registry of named JSON mapper profiles; used to resolve the
      *                                effective request-body {@code ObjectMapper} per resource method
      *                                ({@code @JsonProfile} method/class &rarr; config &rarr; {@code vertx}).
-     *                                Resolving an unknown profile id fails startup (fail-fast, FR-JSON-008)
+     *                                Resolving an unknown profile id fails startup (fail-fast)
      * @param jsonConfig             global JSON configuration; supplies the {@code json.jsonProfile} default
      *                                applied when a resource method and {@code jaxrs.jsonProfile} both select
      *                                no profile of their own
-     * @param applicationType         the declared {@code jakarta.ws.rs.core.Application} this call's
-     *                                mount was built for, or {@code null} for a mount not built from a
-     *                                declared application. The only uses of this parameter are the
-     *                                opt-in-off recording condition below; the opt-in failure itself
-     *                                applies regardless of it.
+     * @param declaringType           the declared {@code @RestApplication}'s declaring interface this
+     *                                call's mount was built for, or {@code null} for a mount not built
+     *                                from a declared application. The only uses of this parameter are
+     *                                the opt-in-off recording condition below; the opt-in failure
+     *                                itself applies regardless of it.
      * @param implicitOperations      the sink every implicit-policy operation is recorded into, while
-     *                                {@code applicationType} is non-{@code null} and the {@code
+     *                                {@code declaringType} is non-{@code null} and the {@code
      *                                jaxrs.security.requireExplicitPolicy} opt-in is off; untouched
      *                                otherwise
+     * @param publications            the list every registered operation's publication is appended
+     *                                to, in registration order, or {@code null} to build none
+     * @param captureDetail           whether each publication carries the operation's detail with
+     *                                detached schema copies; ignored when {@code publications} is
+     *                                {@code null}
      */
     void registerAll(
             Set<Object> resources,
@@ -362,8 +388,10 @@ public class JaxRsRouteRegistrar {
             JaxRsConfig jaxRsConfig,
             JsonMapperProfileRegistry jsonMapperProfileRegistry,
             JsonConfig jsonConfig,
-            @Nullable Class<? extends Application> applicationType,
-            List<ImplicitOperation> implicitOperations) {
+            @Nullable Class<?> declaringType,
+            List<ImplicitOperation> implicitOperations,
+            @Nullable List<OperationPublication> publications,
+            boolean captureDetail) {
         List<OperationInterceptor> sortedInterceptors =
                 operationInterceptors != null ? Collections.unmodifiableList(operationInterceptors) : List.of();
         List<OperationHandlerContributor> sortedContributors =
@@ -444,7 +472,10 @@ public class JaxRsRouteRegistrar {
             // validation, schema synthesis, and the operation-handler contributors all consume the
             // same instance. Its securityRequirementSets() are the annotation-sourced effective
             // requirements (an OR of single-scheme sets from annotations).
-            JaxRsOperationDescriptor descriptor = ResourceMethodMetaToDescriptorAdapter.adapt(meta);
+            // The descriptor reports the application name of the mount being registered, or null when
+            // the caller passes no mount. The invoker built below receives this same instance.
+            String applicationName = mount != null ? mount.applicationName() : null;
+            JaxRsOperationDescriptor descriptor = ResourceMethodMetaToDescriptorAdapter.adapt(meta, applicationName);
 
             // PRD-REST-018: fail-fast startup validation. Every declared parameter whose runtime
             // extraction uses string conversion must be resolvable by the FULL conversion chain (native
@@ -491,8 +522,10 @@ public class JaxRsRouteRegistrar {
             SecurityPolicy effectivePolicy = descriptor.effectiveSecurityPolicy();
             effectivePolicies.put(meta.operationId(), effectivePolicy);
 
-            // Create the Vert.x route from the translated JAX-RS path template.
-            Route route = createRoute(apiRouter, meta);
+            // Create the Vert.x route from the translated JAX-RS path template. The template is
+            // translated once, so a publication records exactly the value the route registered with.
+            JaxRsPathTemplate routeTemplate = JaxRsPathTemplate.translate(meta.path());
+            Route route = createRoute(apiRouter, meta, routeTemplate);
 
             // (0) Route identity: the route's FIRST handler records this operation on the request's
             // framework-owned completion state, ahead of authentication, so a request rejected after
@@ -526,7 +559,7 @@ public class JaxRsRouteRegistrar {
                             RouteRegistrationViolation.ViolationType.NO_EXPLICIT_SECURITY_POLICY,
                             meta.httpMethod() + " " + fullPath + " has no explicit security policy, which "
                                     + "jaxrs.security.requireExplicitPolicy requires"));
-                } else if (applicationType != null) {
+                } else if (declaringType != null) {
                     // Recording condition: only when this registrar serves an application mount.
                     // The owning JaxRsRouterMount reads its own implicitOperations sink after this
                     // call returns and logs the warning; a non-application mount never warns.
@@ -559,7 +592,7 @@ public class JaxRsRouteRegistrar {
             // (a-2) Resolved request-body JSON profile. Resolve the effective profile for this method
             // ONCE at router-build time (method @JsonProfile -> class @JsonProfile -> jaxrs.jsonProfile
             // -> json.jsonProfile -> the vertique floor); an unknown configured/annotated id fails
-            // startup here (fail-fast, FR-JSON-008). The resolution carries two things: the profile
+            // startup here (fail-fast). The resolution carries two things: the profile
             // itself, which the schema source at (b) needs so a synthesized body schema describes the
             // wire shape the profile's mapper actually parses, and the process-codec identity verdict,
             // from which the nullable STASH MAPPER is derived once here and threaded unchanged to every
@@ -571,7 +604,7 @@ public class JaxRsRouteRegistrar {
             // under the default web-validation strategy the gate's validateBody binds (and FIRST-PARSES)
             // the body BEFORE the invoker runs, so stashing the mapper only at the invoker would let the
             // gate first-parse through the process codec and silently bypass the profile's strict
-            // parse (FR-JSON-024). Placing the stash ahead of the gate guarantees the profile mapper owns
+            // parse. Placing the stash ahead of the gate guarantees the profile mapper owns
             // the first parse on every body path (gated or not).
             // JsonConfig is threaded as a method parameter to keep the resolver stateless/static; it is the
             // real injected global JsonConfig wired through the Factory, so the json.jsonProfile tier applies.
@@ -593,8 +626,40 @@ public class JaxRsRouteRegistrar {
             OperationSchemas schemas = schemaSource
                     .map(source -> source.schemasFor(descriptor, resolvedProfile.profile()))
                     .orElseGet(OperationSchemas::empty);
+            // Detach the gate's exact inputs before the strategy receives them, so neither an edit the
+            // strategy makes to its schemas nor a later change to the source's objects reaches the
+            // publication, and no decoration of the copy reaches the gate. The gate still receives the
+            // original instance, and the source is not called again.
+            CapturedSchemas capturedSchemas =
+                    publications != null && captureDetail ? captureSchemas(descriptor, schemas) : null;
             Optional<Handler<RoutingContext>> gate = strategy.gateFor(descriptor, schemas, mount);
             gate.ifPresent(route::handler);
+
+            if (publications != null) {
+                // The inventory and the response shape are built only for detail, from the same
+                // metadata, captured schemas, gate result, and resolved profile as the rest of it.
+                String profileId = resolvedProfile.profile().id().value();
+                OperationDetail detail = capturedSchemas != null
+                        ? new OperationDetail(
+                                descriptor,
+                                profileId,
+                                capturedSchemas,
+                                gate.isPresent(),
+                                OperationInventory.inputs(
+                                        meta, capturedSchemas, gate.isPresent(), beanValidator != null),
+                                OperationInventory.response(meta, profileId))
+                        : null;
+                publications.add(new OperationPublication(
+                        meta.operationId(),
+                        meta.httpMethod(),
+                        meta.path(),
+                        routeTemplate.vertxValue(),
+                        routeTemplate.isRegex(),
+                        effectivePolicy,
+                        descriptor.securityRequirementSets(),
+                        requiredAction.isPresent(),
+                        detail));
+            }
 
             // Router-build diagnostic for the profile-aware schema seam: which profile this operation
             // resolved to, whether that profile's mapper is the process codec's (so no stash is
@@ -615,14 +680,8 @@ public class JaxRsRouteRegistrar {
             // (finding C2 / SH-4). A scopeless set leaves the annotation-derived policy unchanged. The
             // shapes the fold cannot handle (multi-scheme, scoped-OR, both-scopes) were already rejected
             // by the always-on gate above, so the fold only ever sees the supported single scoped set.
-            if (!sortedContributors.isEmpty()) {
-                RouteRegistration routeReg = new PlainRouteRegistration(route, descriptor);
-                OperationRegistrationContext ctx = new OperationRegistrationContext(
-                        meta.operationId(), effectivePolicy, requiredAction, descriptor, routeReg);
-                for (OperationHandlerContributor contributor : sortedContributors) {
-                    contributor.contribute(ctx);
-                }
-            }
+            contributeOperationHandlers(
+                    route, meta.operationId(), descriptor, effectivePolicy, requiredAction, sortedContributors);
 
             // (c-1) Wire → Java name projection for this route's object bodies, composed HERE rather
             // than on the request path. InputFieldNameResolver publishes that an implementation never
@@ -662,9 +721,10 @@ public class JaxRsRouteRegistrar {
                     objectProcessor,
                     resolvedBodyMapper,
                     paramConversionResolver,
-                    bodyNameResolver));
+                    bodyNameResolver,
+                    descriptor));
 
-            // (e) Per-route ERROR-body profile decision (FR-JSON-058/058A). This closes the error-path
+            // (e) Per-route ERROR-body profile decision. This closes the error-path
             // profiling asymmetry: a failure that fires BEFORE the request-path stash at (a-2) runs
             // (auth rejection, @Consumes 415) — or a route whose effective profile is the reserved
             // vertx floor under a NON-vertx global default — would otherwise reach the router-level
@@ -1031,14 +1091,36 @@ public class JaxRsRouteRegistrar {
      *
      * @param apiRouter the plain router to register on
      * @param meta      the resource-method metadata (HTTP verb and JAX-RS path)
+     * @param template  the translation of {@code meta.path()} the route registers with
      * @return the created route
      */
-    private static Route createRoute(Router apiRouter, ResourceMethodMeta meta) {
+    private static Route createRoute(Router apiRouter, ResourceMethodMeta meta, JaxRsPathTemplate template) {
         HttpMethod httpMethod = HttpMethod.valueOf(meta.httpMethod());
-        JaxRsPathTemplate template = JaxRsPathTemplate.translate(meta.path());
         return template.isRegex()
                 ? apiRouter.routeWithRegex(httpMethod, template.vertxValue())
                 : apiRouter.route(httpMethod, template.vertxValue());
+    }
+
+    /**
+     * Deep-copies exactly the schemas a gate consumes: the body schema and the schema for every
+     * descriptor parameter key {@code (location, name)} that has one. A schema the source returned
+     * for any other key is not copied. The body schema's provenance is carried by reference and
+     * never inspected.
+     *
+     * @param descriptor the operation descriptor whose parameters key the lookup
+     * @param schemas    the schemas about to be handed to the gate; only read
+     * @return detached copies sharing no JSON container with {@code schemas}
+     */
+    private static CapturedSchemas captureSchemas(JaxRsOperationDescriptor descriptor, OperationSchemas schemas) {
+        Map<InputKey, JsonObject> parameters = new HashMap<>();
+        for (ParamDescriptor param : descriptor.parameters()) {
+            schemas.parameterSchema(param.location(), param.name())
+                    .ifPresent(schema -> parameters.put(new InputKey(param.location(), param.name()), schema.copy()));
+        }
+        return new CapturedSchemas(
+                schemas.bodySchema().map(JsonObject::copy).orElse(null),
+                schemas.bodySchemaProvenance(Object.class).orElse(null),
+                parameters);
     }
 
     /**
@@ -1150,6 +1232,46 @@ public class JaxRsRouteRegistrar {
         // must not record a spurious rejection from an earlier one. Single-scheme routes (above) are
         // left unwrapped, so their rejections still emit immediately.
         route.handler(new DeferredCredentialRejectionAuthHandler(orChain));
+    }
+
+    /**
+     * Calls every {@link OperationHandlerContributor} for one operation's route, in the given order,
+     * so each can append its handlers through a {@link PlainRouteRegistration} over {@code route}.
+     *
+     * <p>All contributors receive one shared {@link OperationRegistrationContext} built from the
+     * arguments; the order of {@code contributors} is the order their handlers are appended, and so
+     * the order they run at request time. An empty {@code contributors} list builds no context and
+     * appends nothing.
+     *
+     * <p>Package-private and static so every route the framework builds through the resource security
+     * chain, a resource method's or a framework-owned synthetic operation's, runs this one contributor
+     * loop: the two can never diverge in order or inputs.
+     *
+     * @param route          the Vert.x route the contributors append their handlers to
+     * @param operationId    the operation's id, handed to the contributors unchanged
+     * @param descriptor     the operation's transport-neutral descriptor, exposed through both the
+     *                       context and the route registration
+     * @param policy         the operation's effective security policy
+     * @param requiredAction the operation's resolved action gate, or {@link Optional#empty()} when it
+     *                       declares none
+     * @param contributors   the contributors, already sorted into the order they must run in
+     */
+    static void contributeOperationHandlers(
+            Route route,
+            String operationId,
+            RestOperationDescriptor descriptor,
+            SecurityPolicy policy,
+            Optional<ActionRef> requiredAction,
+            List<OperationHandlerContributor> contributors) {
+        if (contributors.isEmpty()) {
+            return;
+        }
+        RouteRegistration routeReg = new PlainRouteRegistration(route, descriptor);
+        OperationRegistrationContext ctx =
+                new OperationRegistrationContext(operationId, policy, requiredAction, descriptor, routeReg);
+        for (OperationHandlerContributor contributor : contributors) {
+            contributor.contribute(ctx);
+        }
     }
 
     /**

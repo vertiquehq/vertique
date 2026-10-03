@@ -442,6 +442,7 @@ public class JwtBearerSecuritySchemeHandler implements SecuritySchemeHandler, Ha
 
     @Override public String schemeName();
     @Override public void configure(SecuritySchemeRegistry registry);
+    @Override public Optional<SecuritySchemeDescription> openApiDescription();
     @Override public void handle(RoutingContext ctx);
 
     public Future<User> authenticate(RoutingContext ctx);
@@ -453,6 +454,10 @@ reports the rejection and fails the context. `authenticate` is the composable pa
 returns the `User` **without mutating the routing context**, so the scheme can be one alternative in
 a Vert.x `ChainAuthHandler.any()` OR chain when an operation declares two or more alternative bearer
 requirements. Exactly one of the two paths appends the evidence per request.
+
+`openApiDescription()` returns `Http.bearer("JWT")` — HTTP bearer authentication with bearer format
+`JWT` — whatever this handler's own scheme name; it publishes no issuer, audience, or JWKS location.
+`Http` and `SecuritySchemeDescription` come from `dev.vertique.rest.core.security.scheme`.
 
 On success the handler builds an `AuthenticationEvidence` carrying:
 

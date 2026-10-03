@@ -3,22 +3,33 @@
 
 package dev.vertique.json.schema;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.databind.JsonNode;
 import dev.vertique.core.json.JsonMapperProfile;
 import dev.vertique.core.json.JsonProfileId;
 import dev.vertique.json.DefaultJsonMapperProfileRegistry;
+import io.swagger.v3.oas.annotations.media.Schema;
 import io.vertx.core.json.JsonObject;
 import io.vertx.json.schema.Draft;
 import io.vertx.json.schema.JsonSchema;
 import io.vertx.json.schema.JsonSchemaOptions;
 import io.vertx.json.schema.Validator;
 import jakarta.validation.constraints.Pattern;
+import java.util.List;
 import java.util.Set;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 
 /**
  * The measurement design point 4 requires: whether {@code io.vertx.json.schema} 5.1.6's {@code
@@ -85,6 +96,292 @@ class PatternFlagRenderingTest {
     static final class CanonEqDto {
         @Pattern(regexp = "[a-z]+", flags = Pattern.Flag.CANON_EQ)
         public String value;
+    }
+
+    @Test
+    @DisplayName("a COMMENTS @Pattern whose regexp holds a # comment renders a compilable pattern with the"
+            + " validator's own verdicts")
+    void commentsFlagWithAHashCommentRendersACompilablePattern() {
+        // Given a member constrained by @Pattern(regexp = "^a.b # comment$", flags = {DOTALL, COMMENTS})
+        jakarta.validation.Validator bv = MetadataTestValidators.plain();
+        String regexp = "^a.b # comment$";
+        int flags = java.util.regex.Pattern.DOTALL | java.util.regex.Pattern.COMMENTS;
+        List<String> samples = List.of("a\nb", "axb", "ab", "a b");
+
+        // When the validator-backed generator renders it
+        String rendered = renderedPattern(CommentedDotallDto.class, "value");
+
+        // Then the rendered pattern compiles as plain java.util.regex (as io.vertx.json.schema compiles it)
+        java.util.regex.Pattern published = assertDoesNotThrow(
+                () -> java.util.regex.Pattern.compile(rendered),
+                () -> "the rendered pattern must compile as plain java.util.regex; rendered: " + rendered);
+        java.util.regex.Pattern declared = java.util.regex.Pattern.compile(regexp, flags);
+        Validator gate = stringPatternGate(rendered);
+        for (String sample : samples) {
+            boolean expected = declared.matcher(sample).find();
+            assertEquals(
+                    expected,
+                    published.matcher(sample).find(),
+                    () -> "rendered " + rendered + " must decide " + sample + " as the flagged declaration does");
+            assertEquals(
+                    expected,
+                    gate.validate(new JsonObject().put("value", sample)).getValid(),
+                    () -> "io.vertx.json.schema must decide " + sample + " as the flagged declaration does");
+            assertEquals(
+                    bv.validateValue(CommentedDotallDto.class, "value", sample).isEmpty(),
+                    gate.validate(new JsonObject().put("value", sample)).getValid(),
+                    () -> "io.vertx.json.schema must decide " + sample + " as Hibernate Validator does");
+        }
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("commentsFlagCases")
+    @DisplayName("every COMMENTS @Pattern renders a compilable pattern equal to Pattern.compile(regexp, flags)")
+    void commentsFlagRenderingMatchesTheValidatorFlagSemantics(String member, List<String> samples) throws Exception {
+        // Given a member whose @Pattern declares the COMMENTS flag
+        Pattern annotation = CommentsFlagDto.class.getField(member).getAnnotation(Pattern.class);
+        int flags = 0;
+        for (Pattern.Flag flag : annotation.flags()) {
+            flags |= flag.getValue();
+        }
+        java.util.regex.Pattern declared = java.util.regex.Pattern.compile(annotation.regexp(), flags);
+
+        // When the validator-backed generator renders it
+        String rendered = renderedPattern(CommentsFlagDto.class, member);
+
+        // Then it compiles as plain java.util.regex and decides every sample as the flagged declaration
+        java.util.regex.Pattern published = assertDoesNotThrow(
+                () -> java.util.regex.Pattern.compile(rendered),
+                () -> "the rendered pattern must compile as plain java.util.regex; rendered: " + rendered);
+        Validator gate = stringPatternGate(rendered);
+        for (String sample : samples) {
+            boolean expected = declared.matcher(sample).find();
+            assertEquals(
+                    expected,
+                    published.matcher(sample).find(),
+                    () -> "rendered " + rendered + " must decide " + sample + " as the flagged declaration does");
+            assertEquals(
+                    expected,
+                    gate.validate(new JsonObject().put("value", sample)).getValid(),
+                    () -> "io.vertx.json.schema must decide " + sample + " as the flagged declaration does");
+        }
+    }
+
+    static Stream<Arguments> commentsFlagCases() {
+        return Stream.of(
+                Arguments.of("trailingComment", List.of("a", "ab", "ba", " a")),
+                Arguments.of("escapedHashInsideClass", List.of("#x", "x", "##x", "# x")),
+                Arguments.of("escapedHash", List.of("a#b", "ab", "a #b", "a\\#b")),
+                Arguments.of("trailingBareHash", List.of("ab", "abc", "a b", "xab")),
+                Arguments.of("newlineTerminatedComment", List.of("ab", "a b", "a\nb", "acb")),
+                Arguments.of("caseInsensitiveComment", List.of("ab", "AB", "aB", "abc", "a b")),
+                Arguments.of("commentsTurnedOffInline", List.of("abc", "abc\n")));
+    }
+
+    @Test
+    @DisplayName("a COMMENTS @Pattern whose regexp does not compile in comments mode fails generation without"
+            + " echoing the regexp")
+    void commentsFlagWithARegexpInvalidInCommentsModeIsRefused() {
+        // Given a member constrained by @Pattern(regexp = "zq7sentinel\\", flags = COMMENTS): a trailing
+        // backslash, which Pattern.compile(regexp, COMMENTS) rejects, behind a sentinel no diagnostic
+        // text would otherwise contain
+        String regexp = "zq7sentinel\\";
+        assertThrows(
+                java.util.regex.PatternSyntaxException.class,
+                () -> java.util.regex.Pattern.compile(regexp, java.util.regex.Pattern.COMMENTS),
+                "precondition: the declared regexp must not compile with its flags");
+        jakarta.validation.Validator bv = MetadataTestValidators.plain();
+
+        // When the validator-backed generator describes the type
+        JsonSchemaGenerationException failure =
+                assertThrows(JsonSchemaGenerationException.class, () -> AnnotationJsonSchemaGenerator.forInputProfile(
+                                vertiqueProfile(), bv)
+                        .generateCanonical(TrailingBackslashDto.class));
+
+        // Then the diagnostic names the constrained member and never echoes the regexp
+        String message = failure.getMessage();
+        assertTrue(
+                message.contains("TrailingBackslashDto.value"),
+                () -> "the diagnostic must name the constrained member: " + message);
+        assertFalse(message.contains(regexp), () -> "the diagnostic echoes the regexp: " + message);
+        assertFalse(message.contains("zq7sentinel"), () -> "the diagnostic echoes part of the regexp: " + message);
+    }
+
+    /** A COMMENTS-mode regexp ending in a lone backslash, which comments mode cannot compile. */
+    static final class TrailingBackslashDto {
+        @Pattern(regexp = "zq7sentinel\\", flags = Pattern.Flag.COMMENTS)
+        public String value;
+    }
+
+    @ParameterizedTest(name = "{1}")
+    @MethodSource("unembeddableFlaggedRegexps")
+    @DisplayName("a flagged @Pattern that compiles with its flags but not inside an embedded modifier group fails"
+            + " generation without echoing the regexp")
+    void flaggedRegexpThatCannotBeEmbeddedIsRefused(Class<?> type, String label) throws Exception {
+        // Given a member whose flagged @Pattern compiles with Pattern.compile(regexp, flags), yet whose
+        // regexp swallows the closing parenthesis of an embedded modifier group around it
+        Pattern annotation = type.getField("value").getAnnotation(Pattern.class);
+        int flags = 0;
+        for (Pattern.Flag flag : annotation.flags()) {
+            flags |= flag.getValue();
+        }
+        int declaredFlags = flags;
+        assertDoesNotThrow(
+                () -> java.util.regex.Pattern.compile(annotation.regexp(), declaredFlags),
+                "precondition: the declared regexp must compile with its flags");
+        jakarta.validation.Validator bv = MetadataTestValidators.plain();
+
+        // When the validator-backed generator describes the type
+        JsonSchemaGenerationException failure =
+                assertThrows(JsonSchemaGenerationException.class, () -> AnnotationJsonSchemaGenerator.forInputProfile(
+                                vertiqueProfile(), bv)
+                        .generateCanonical(type));
+
+        // Then the diagnostic names the constrained member and never echoes any part of the regexp
+        String message = failure.getMessage();
+        assertTrue(message.contains(label), () -> "the diagnostic must name the constrained member: " + message);
+        assertFalse(message.contains("zq7"), () -> "the diagnostic echoes part of the regexp: " + message);
+    }
+
+    static Stream<Arguments> unembeddableFlaggedRegexps() {
+        return Stream.of(
+                Arguments.of(InlineCommentsDto.class, "InlineCommentsDto.value"),
+                Arguments.of(OpenQuoteDto.class, "OpenQuoteDto.value"));
+    }
+
+    /** An inline (?x) turns comments mode on, so a # comment runs over whatever follows the regexp. */
+    static final class InlineCommentsDto {
+        @Pattern(regexp = "(?x)zq7a#c", flags = Pattern.Flag.CASE_INSENSITIVE)
+        public String value;
+    }
+
+    /** An unterminated \Q quotes everything that follows the regexp. */
+    static final class OpenQuoteDto {
+        @Pattern(regexp = "zq7a\\Q", flags = Pattern.Flag.CASE_INSENSITIVE)
+        public String value;
+    }
+
+    @Test
+    @DisplayName("a @Schema(pattern) that only ends like an embedded modifier group around the @Pattern regexp"
+            + " composes with it instead of replacing it")
+    void unflaggedGroupEndingInTheRegexpDoesNotReplaceIt() {
+        // Given a creator parameter constrained by @Pattern(regexp = "abc") whose @Schema(pattern) is
+        // "(?:x|y:abc)": it starts with "(?" and ends with ":abc)", yet its group carries no modifier
+        // and it is a different expression ("x" passes it, not "abc")
+        // When the generator renders it
+        String canonical = AnnotationJsonSchemaGenerator.forInputProfile(vertiqueProfile())
+                .generateCanonical(LookalikeGroupDto.class);
+        JsonNode document = SchemaAssertions.assertCanonicalForm(canonical);
+
+        // Then the @Pattern regexp is still enforced in the property's conjunctive closure
+        List<String> patterns =
+                SchemaAssertions.textValues(SchemaAssertions.propertyClosure(document, "code"), "pattern");
+        assertTrue(patterns.contains("abc"), () -> "the @Pattern regexp was dropped; document: " + document);
+
+        // And the real io.vertx.json.schema gate decides as both constraints together do
+        JsonSchemaOptions options =
+                new JsonSchemaOptions().setDraft(Draft.DRAFT202012).setBaseUri("https://vertique.local/lookalike/");
+        Validator gate = Validator.create(JsonSchema.of(new JsonObject(canonical)), options);
+        assertFalse(
+                gate.validate(new JsonObject().put("code", "x")).getValid(),
+                () -> "\"x\" fails @Pattern(regexp = \"abc\") and must fail the gate; document: " + document);
+        assertTrue(
+                gate.validate(new JsonObject().put("code", "y:abc")).getValid(),
+                () -> "\"y:abc\" satisfies both constraints and must pass the gate; document: " + document);
+    }
+
+    /** A creator parameter whose @Schema(pattern) only looks like a flagged rendering of its @Pattern. */
+    static final class LookalikeGroupDto {
+        private final String code;
+
+        @JsonCreator
+        LookalikeGroupDto(@JsonProperty("code") @Pattern(regexp = "abc") @Schema(pattern = "(?:x|y:abc)") String code) {
+            this.code = code;
+        }
+
+        public String getCode() {
+            return code;
+        }
+    }
+
+    @Test
+    @DisplayName("a flagged @Pattern without COMMENTS keeps its embedded-modifier rendering byte for byte")
+    void flagsWithoutCommentsKeepTheEmbeddedModifierRendering() {
+        // Given a member constrained by @Pattern(regexp = "^a.b$", flags = DOTALL)
+        // When the validator-backed generator renders it
+        String rendered = renderedPattern(DotallOnlyDto.class, "value");
+
+        // Then the rendering is the embedded modifier group around the verbatim regexp
+        assertEquals("(?s:^a.b$)", rendered);
+    }
+
+    /** A COMMENTS-mode regexp whose {@code #} comment runs to the end of the expression. */
+    static final class CommentedDotallDto {
+        @Pattern(
+                regexp = "^a.b # comment$",
+                flags = {Pattern.Flag.DOTALL, Pattern.Flag.COMMENTS})
+        public String value;
+    }
+
+    /** COMMENTS-mode regexps covering the places a {@code #} can and cannot start a comment. */
+    static final class CommentsFlagDto {
+        @Pattern(regexp = "^a # trailing comment", flags = Pattern.Flag.COMMENTS)
+        public String trailingComment;
+
+        // java.util.regex starts a COMMENTS-mode comment at a bare # even inside a class, so a
+        // literal # in a class is escaped.
+        @Pattern(regexp = "^[\\#]x$", flags = Pattern.Flag.COMMENTS)
+        public String escapedHashInsideClass;
+
+        @Pattern(regexp = "^a\\#b$", flags = Pattern.Flag.COMMENTS)
+        public String escapedHash;
+
+        @Pattern(regexp = "^ab$ #", flags = Pattern.Flag.COMMENTS)
+        public String trailingBareHash;
+
+        @Pattern(regexp = "^a # c\nb$", flags = Pattern.Flag.COMMENTS)
+        public String newlineTerminatedComment;
+
+        @Pattern(
+                regexp = "^ab$ # mixed case",
+                flags = {Pattern.Flag.COMMENTS, Pattern.Flag.CASE_INSENSITIVE})
+        public String caseInsensitiveComment;
+
+        // An inline (?-x) turns comments mode off for the rest of the regexp, so whatever the
+        // rendering appends after the regexp is no longer ignorable whitespace.
+        @Pattern(regexp = "(?-x)abc", flags = Pattern.Flag.COMMENTS)
+        public String commentsTurnedOffInline;
+    }
+
+    /** A flagged regexp without COMMENTS, whose rendering must stay as it is. */
+    static final class DotallOnlyDto {
+        @Pattern(regexp = "^a.b$", flags = Pattern.Flag.DOTALL)
+        public String value;
+    }
+
+    private static String renderedPattern(Class<?> type, String member) {
+        jakarta.validation.Validator bv = MetadataTestValidators.plain();
+        JsonObject document = new JsonObject(AnnotationJsonSchemaGenerator.forInputProfile(vertiqueProfile(), bv)
+                .generateCanonical(type));
+        String rendered =
+                document.getJsonObject("properties").getJsonObject(member).getString("pattern");
+        assertTrue(rendered != null, () -> "member " + member + " must publish a pattern; document: " + document);
+        return rendered;
+    }
+
+    /** The real io.vertx.json.schema gate over a single string member carrying the given pattern. */
+    private static Validator stringPatternGate(String pattern) {
+        JsonObject schema = new JsonObject()
+                .put("type", "object")
+                .put(
+                        "properties",
+                        new JsonObject()
+                                .put(
+                                        "value",
+                                        new JsonObject().put("type", "string").put("pattern", pattern)));
+        JsonSchemaOptions options =
+                new JsonSchemaOptions().setDraft(Draft.DRAFT202012).setBaseUri("https://vertique.local/pattern-flag/");
+        return Validator.create(JsonSchema.of(schema), options);
     }
 
     private static Validator generatedValidatorFor(Class<?> type) {

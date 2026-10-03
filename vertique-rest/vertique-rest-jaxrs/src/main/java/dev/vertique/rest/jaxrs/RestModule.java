@@ -10,6 +10,10 @@ import dagger.Provides;
 import dagger.multibindings.ElementsIntoSet;
 import dagger.multibindings.IntoSet;
 import dagger.multibindings.Multibinds;
+import dev.vertique.core.VertxConfig;
+import dev.vertique.core.config.ConfigParser;
+import dev.vertique.core.config.JsonConfigPaths;
+import dev.vertique.core.exception.ConfigurationException;
 import dev.vertique.core.exception.ConflictException;
 import dev.vertique.core.exception.TooManyRequestsException;
 import dev.vertique.core.exception.UnavailableException;
@@ -35,21 +39,29 @@ import dev.vertique.rest.core.response.ResponseSerializer;
 import dev.vertique.rest.core.router.MountCompositionValidator;
 import dev.vertique.rest.core.router.RouterMount;
 import dev.vertique.rest.core.sse.SseChannelFactory;
-import dev.vertique.rest.jaxrs.runtime.GeneratedJaxRsApplicationRegistration;
+import dev.vertique.rest.jaxrs.application.ApiDocsModuleInstalled;
+import dev.vertique.rest.jaxrs.application.RestApplications;
+import dev.vertique.rest.jaxrs.publication.MountPublicationHook;
 import dev.vertique.rest.jaxrs.runtime.GeneratedJaxRsResourceEntry;
+import dev.vertique.rest.jaxrs.runtime.GeneratedRestApplicationRegistration;
+import dev.vertique.rest.jaxrs.synthetic.SyntheticOperationInstaller;
 import dev.vertique.rest.jaxrs.validation.FileContentVerifier;
 import dev.vertique.rest.jaxrs.validation.NoneValidationStrategy;
 import dev.vertique.rest.jaxrs.validation.OperationSchemaSource;
 import dev.vertique.rest.jaxrs.validation.RequestValidationStrategy;
 import dev.vertique.security.authz.ActionRegistry;
 import dev.vertique.security.authz.Authorizer;
+import io.vertx.core.json.JsonObject;
 import jakarta.inject.Provider;
 import jakarta.inject.Singleton;
 import jakarta.ws.rs.WebApplicationException;
 import jakarta.ws.rs.core.Response;
 import jakarta.ws.rs.ext.ExceptionMapper;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
+import java.util.TreeSet;
+import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
 
 /**
@@ -104,6 +116,19 @@ public abstract class RestModule {
     abstract Set<RequestValidationStrategy> requestValidationStrategies();
 
     /**
+     * Declares the {@link MountPublicationHook} multibinding set. Empty by default; sibling
+     * framework modules contribute to it — the documentation module through
+     * {@code @ElementsIntoSet}, and the OpenAPI-contract validation module's startup contract-load
+     * check through {@code @IntoSet}. Every JAX-RS mount hands its completed publication to each
+     * hook in this set once its router is built.
+     *
+     * @return the publication hook set (populated by {@code @ElementsIntoSet} and {@code @IntoSet}
+     *     contributions)
+     */
+    @Multibinds
+    abstract Set<MountPublicationHook> mountPublicationHooks();
+
+    /**
      * Declares the empty {@link FileContentVerifier} multibinding set. Applications contribute
      * verifiers via {@code @Provides @IntoSet FileContentVerifier}.
      *
@@ -113,33 +138,80 @@ public abstract class RestModule {
     abstract Set<FileContentVerifier> fileContentVerifiers();
 
     /**
-     * Declares the {@link GeneratedJaxRsApplicationRegistration} multibinding set. A generated
-     * module contributes one registration per eligible {@code jakarta.ws.rs.core.Application} via
-     * {@code @Provides @IntoSet}; the set stays empty in zero-declaration mode.
+     * Declares the {@link GeneratedRestApplicationRegistration} multibinding set. A generated
+     * module contributes one registration per {@code @RestApplication} declaration via
+     * {@code @Provides @IntoSet}; the set stays empty when no declaration is present.
      *
-     * @return the application registration set (populated by {@code @IntoSet} contributions)
+     * @return the native application registration set (populated by {@code @IntoSet} contributions)
      */
     @Multibinds
-    abstract Set<GeneratedJaxRsApplicationRegistration> generatedJaxRsApplicationRegistrations();
+    abstract Set<GeneratedRestApplicationRegistration> generatedRestApplicationRegistrations();
+
+    /**
+     * Declares the {@link ApiDocsModuleInstalled} optional binding: present when the OpenAPI
+     * documentation module is included in this component, absent otherwise. rest-jaxrs never
+     * depends on the docs module, so it can only detect this marker, never bind it.
+     *
+     * @return the optional marker binding, resolved as {@code Optional<ApiDocsModuleInstalled>}
+     */
+    @BindsOptionalOf
+    abstract ApiDocsModuleInstalled apiDocsModuleInstalled();
+
+    /**
+     * Provides the {@link RestApplications} view, built once per component by
+     * {@link RestApplicationsBuilder} from every declared native registration, the parsed
+     * {@code jaxrs.applications} configuration, the global {@code jaxrs.openapiPath} default, and
+     * whether the OpenAPI documentation module is present in this component.
+     *
+     * <p>{@link #parseJaxRsApplications} runs first, before the builder's checks: a raw-key,
+     * parse, or blank-value {@link ConfigurationException} it throws propagates unwrapped and
+     * alone, never wrapped by the builder. No package-private type reaches the Dagger graph: the
+     * parsed {@link RestApplicationConfig} list is a plain method-local value, never bound.
+     *
+     * @param registrations    the declared native application registration set (empty in
+     *                         zero-declaration mode)
+     * @param config           the full application configuration, navigated to {@code jaxrs} and
+     *                         {@code jaxrs.applications} by {@link #parseJaxRsApplications}
+     * @param parser           the injected config parser
+     * @param jaxRsConfig      the JAX-RS routing configuration, supplying the global
+     *                         {@code jaxrs.openapiPath} default
+     * @param apiDocsModuleInstalled present when the OpenAPI documentation module is included in this
+     *                         component
+     * @return the component-scoped view
+     */
+    @Provides
+    @Singleton
+    static RestApplications restApplications(
+            Set<GeneratedRestApplicationRegistration> registrations,
+            @VertxConfig JsonObject config,
+            ConfigParser parser,
+            JaxRsConfig jaxRsConfig,
+            Optional<ApiDocsModuleInstalled> apiDocsModuleInstalled) {
+        List<RestApplicationConfig> configuredApplications = parseJaxRsApplications(config, parser);
+        return RestApplicationsBuilder.build(
+                registrations, configuredApplications, jaxRsConfig, apiDocsModuleInstalled);
+    }
 
     /**
      * Contributes the rest-jaxrs {@link MountCompositionValidator}: it rejects an application mount
      * that conflicts with a hand-built JAX-RS mount or with another application mount in the same
      * mount set (as when compositions are merged), and rejects two operations on any JAX-RS mounts
      * that share an operationId without sharing the same owner, once one or more applications are
-     * declared or any application mount is present. The declared registration set tells it whether
-     * any application is declared, even when none is active.
+     * declared or any application mount is present.
      *
-     * @param registrations the declared application registration set (empty in zero-declaration
-     *                      mode)
+     * @param view       this composition's application view
+     * @param config     the JAX-RS routing configuration, carrying the configured
+     *                   {@code jaxrs.validationStrategy} id
+     * @param strategies the registered request-validation strategies, resolved by id against
+     *                   {@code config}'s configured id
      * @return the rest-jaxrs composition validator, contributed into
      *     {@code Set<MountCompositionValidator>}
      */
     @Provides
     @IntoSet
     static MountCompositionValidator jaxRsApplicationMountValidator(
-            Set<GeneratedJaxRsApplicationRegistration> registrations) {
-        return new JaxRsApplicationMountValidator(registrations);
+            RestApplications view, JaxRsConfig config, Set<RequestValidationStrategy> strategies) {
+        return new JaxRsApplicationMountValidator(view, config, strategies);
     }
 
     /**
@@ -162,6 +234,19 @@ public abstract class RestModule {
     @Binds
     @IntoSet
     abstract RequestValidationStrategy noneValidationStrategy(NoneValidationStrategy strategy);
+
+    /**
+     * Binds the INTERNAL {@link SyntheticOperationInstaller} seam to its package-private implementation.
+     *
+     * <p>Consumed by sibling framework modules (starting with the OpenAPI documentation module) to
+     * install a framework-owned route that runs exactly the chain an equally annotated JAX-RS
+     * resource method gets.
+     *
+     * @param installer the package-private implementation
+     * @return the bound {@link SyntheticOperationInstaller} seam
+     */
+    @Binds
+    abstract SyntheticOperationInstaller syntheticOperationInstaller(DefaultSyntheticOperationInstaller installer);
 
     /**
      * Declares an optional binding for {@link OperationSchemaSource}.
@@ -613,12 +698,13 @@ public abstract class RestModule {
     /**
      * Registers the JAX-RS router mount(s): a default mount built from the {@link JaxRsResources}
      * multibinding set in zero-declaration mode, or one mount per active application, built by
-     * {@link JaxRsApplicationComposer}, when one or more {@code jakarta.ws.rs.core.Application}
-     * registrations are declared.
+     * {@link JaxRsApplicationComposer}, when one or more {@code @RestApplication} registrations are
+     * declared.
      *
-     * <p>Reads {@code applications} before it resolves {@code resources} or {@code catalog}, so
-     * declaration presence is known before any generated resource provider runs. With an empty
-     * {@code applications} set, this provider keeps today's zero-declaration behavior unchanged: a
+     * <p>Requests {@code view} on both branches, so its checks (duplicate, reserved, or mismatched
+     * names, sole discovery, and an unknown {@code jaxrs.applications.<name>}) run even in
+     * zero-declaration mode, before {@code resources} or {@code catalog} resolves. With an empty
+     * {@code registrations} set, this provider keeps today's zero-declaration behavior unchanged: a
      * single default mount is built directly from {@code @JaxRsResources}, at {@code jaxrs.basePath}.
      * For single-API apps, resources are contributed via {@code @Provides @IntoSet @JaxRsResources}
      * in the app's {@code ResourceModule}.
@@ -629,14 +715,13 @@ public abstract class RestModule {
      *
      * <p>With one or more registrations, this provider delegates entirely to
      * {@link JaxRsApplicationComposer#compose}: the routing base path no longer applies to any
-     * mount, and disabling every declared application never falls back to the default mount. In
-     * explicit mode, {@code @JaxRsResources} holds every manual contribution, plus any contributed
-     * by a module built by an older processor; a resource generated by the current processor reaches
-     * an application mount only through the generated resource catalog, never through
-     * {@code @JaxRsResources} directly.
+     * mount, and disabling every declared application never falls back to the default mount.
+     * {@code @JaxRsResources} holds every manual contribution; a resource generated by the current
+     * processor reaches an application mount only through the generated resource catalog, never
+     * through {@code @JaxRsResources} directly.
      *
-     * <p>Guards against re-entry on both branches: a resource, a catalog entry, or an
-     * {@code Application} must not depend on THIS component's own {@code Set<RouterMount>}, since
+     * <p>Guards against re-entry on both branches: a manually contributed resource or a generated
+     * resource catalog entry must not depend on THIS component's own {@code Set<RouterMount>}, since
      * resolving it recurses back into this same provider. Keyed on the identity of this component's
      * own {@code @Singleton JaxRsConfig} instance (never on the thread alone), so
      * {@link JaxRsApplicationComposer#enterComposition(JaxRsConfig)} rejects only re-entry into this
@@ -646,14 +731,16 @@ public abstract class RestModule {
      * runs in {@code finally}, so only a call that actually entered ever clears its own component's
      * guard entry.
      *
-     * @param factory      the JAX-RS router mount factory
-     * @param applications the generated application registration set (empty in zero-declaration
-     *                     mode)
-     * @param resources    the {@code @JaxRsResources} instances, resolved lazily
-     * @param catalog      the generated resource catalog, resolved lazily
-     * @param config       the JAX-RS routing configuration (base path and OpenAPI spec location);
-     *                     also this component's re-entry guard key, since it is
-     *                     {@code @Singleton}-scoped to this component
+     * @param factory       the JAX-RS router mount factory
+     * @param view          this component's {@link RestApplications} view, requested here so its
+     *                      checks run before either branch resolves a resource
+     * @param registrations the declared native application registration set (empty in
+     *                      zero-declaration mode)
+     * @param resources     the {@code @JaxRsResources} instances, resolved lazily
+     * @param catalog       the generated resource catalog, resolved lazily
+     * @param config        the JAX-RS routing configuration (base path and OpenAPI spec location);
+     *                      also this component's re-entry guard key, since it is
+     *                      {@code @Singleton}-scoped to this component
      * @return one mount per active application in explicit mode; otherwise a singleton set with the
      *     default mount, or an empty set when there are no resources
      */
@@ -661,22 +748,150 @@ public abstract class RestModule {
     @ElementsIntoSet
     static Set<RouterMount> jaxRsRouterMount(
             JaxRsRouterMount.Factory factory,
-            Set<GeneratedJaxRsApplicationRegistration> applications,
+            RestApplications view,
+            Set<GeneratedRestApplicationRegistration> registrations,
             @JaxRsResources Provider<Set<Object>> resources,
             Provider<Set<GeneratedJaxRsResourceEntry>> catalog,
             JaxRsConfig config) {
         JaxRsApplicationComposer.enterComposition(config);
         try {
-            if (applications.isEmpty()) {
+            if (registrations.isEmpty()) {
                 Set<Object> resolvedResources = resources.get();
                 if (resolvedResources.isEmpty()) {
                     return Set.of();
                 }
                 return Set.of(factory.create(config.basePath(), config.openapiPath(), resolvedResources));
             }
-            return JaxRsApplicationComposer.compose(factory, applications, resources, catalog, config);
+            return JaxRsApplicationComposer.compose(factory, view, registrations, resources, catalog, config);
         } finally {
             JaxRsApplicationComposer.exitComposition(config);
         }
+    }
+
+    // --- jaxrs.applications configuration ---
+
+    /**
+     * Parses the strict keyed-object {@code jaxrs.applications} section into one
+     * {@link RestApplicationConfig} per entry, in the section's order. Not a Dagger binding.
+     *
+     * <p>The section is checked in three steps. Steps 1 and 3 each fail with one aggregated message
+     * that names every offending configuration path (or, for a miscased section, every offending
+     * {@code jaxrs} key), sorted, and never a configuration value:
+     * <ol>
+     *   <li>A raw-key check, before any parsing: it first rejects any {@code jaxrs} key that equals
+     *       {@code applications} ignoring case but is not spelled exactly {@code applications};
+     *       then {@code jaxrs.applications}, when present, must be a JSON object ({@code null}
+     *       included in the rejection); every entry {@code jaxrs.applications.<name>} must be a
+     *       JSON object; and {@code openapiPath}, compared case-sensitively, is the only key an
+     *       entry may carry.</li>
+     *   <li>A keyed-object parse through {@link ConfigParser#parseKeyedObject(JsonObject, String,
+     *       Class)}, which injects each entry's key into {@link RestApplicationConfig#name()}; an
+     *       entry it cannot deserialize fails with the parser's own message.</li>
+     *   <li>A blank-value check: a configured {@code openapiPath} that is empty or only whitespace
+     *       fails naming {@code jaxrs.applications.<name>.openapiPath}. An absent key or an explicit
+     *       JSON {@code null} binds {@code null} and is accepted.</li>
+     * </ol>
+     *
+     * @param config the full application configuration
+     * @param parser the injected config parser
+     * @return the parsed entries; empty when the section is absent or empty
+     * @throws ConfigurationException when {@code jaxrs} or {@code jaxrs.applications} is present but
+     *     not a JSON object, a {@code jaxrs} key equals {@code applications} ignoring case but is
+     *     not spelled exactly {@code applications}, an entry is not a JSON object, an entry carries
+     *     a key other than {@code openapiPath}, an entry cannot be parsed, or a configured
+     *     {@code openapiPath} is blank
+     */
+    static List<RestApplicationConfig> parseJaxRsApplications(JsonObject config, ConfigParser parser) {
+        JsonObject jaxrs = JsonConfigPaths.navigateObject(config, "jaxrs");
+        checkApplicationKeys(jaxrs);
+        List<RestApplicationConfig> applications = parser.parseKeyedObject(
+                JsonConfigPaths.navigateObject(config, "jaxrs", "applications"), "name", RestApplicationConfig.class);
+        checkBlankOpenapiPaths(applications);
+        return applications;
+    }
+
+    /**
+     * Rejects any {@code jaxrs} key that equals {@code applications} ignoring case but is not
+     * spelled exactly {@code applications}, then a raw {@code jaxrs.applications} section that is
+     * not a JSON object, entries that are not JSON objects, and entry keys other than
+     * {@code openapiPath}. Reads only key names and whether each value is a JSON object; no
+     * configuration value is echoed.
+     *
+     * @param jaxrs the {@code jaxrs} section, already navigated to a {@link JsonObject}
+     * @throws ConfigurationException when a {@code jaxrs} key equals {@code applications} ignoring
+     *     case but is not spelled exactly {@code applications}, when {@code jaxrs.applications} is
+     *     present but not a JSON object, or when any entry is not a JSON object or carries a key
+     *     other than {@code openapiPath}
+     */
+    private static void checkApplicationKeys(JsonObject jaxrs) {
+        Set<String> miscased = new TreeSet<>();
+        for (String key : jaxrs.fieldNames()) {
+            if (key.equalsIgnoreCase("applications") && !key.equals("applications")) {
+                miscased.add(key);
+            }
+        }
+        if (!miscased.isEmpty()) {
+            throw new ConfigurationException("Miscased applications keys under 'jaxrs': "
+                    + quoteJoin(miscased)
+                    + "; per-application settings belong under 'jaxrs.applications'");
+        }
+        if (!jaxrs.containsKey("applications")) {
+            return;
+        }
+        if (!(jaxrs.getValue("applications") instanceof JsonObject applications)) {
+            throw new ConfigurationException("'jaxrs.applications' must be a JSON object");
+        }
+        Set<String> invalid = new TreeSet<>();
+        for (String name : applications.fieldNames()) {
+            String entryPath = "jaxrs.applications." + name;
+            if (!(applications.getValue(name) instanceof JsonObject entry)) {
+                invalid.add(entryPath);
+                continue;
+            }
+            for (String key : entry.fieldNames()) {
+                if (!key.equals("openapiPath")) {
+                    invalid.add(entryPath + "." + key);
+                }
+            }
+        }
+        if (!invalid.isEmpty()) {
+            throw new ConfigurationException("Invalid entries or keys under 'jaxrs.applications': "
+                    + quoteJoin(invalid)
+                    + "; each entry must be a JSON object whose only key is 'openapiPath'");
+        }
+    }
+
+    /**
+     * Rejects every parsed entry whose configured {@code openapiPath} is empty or only whitespace,
+     * naming each such path in one message. An absent or explicit-{@code null} {@code openapiPath}
+     * is not blank.
+     *
+     * @param applications the parsed {@code jaxrs.applications} entries
+     * @throws ConfigurationException when one or more entries carry a blank {@code openapiPath}
+     */
+    private static void checkBlankOpenapiPaths(List<RestApplicationConfig> applications) {
+        Set<String> blank = new TreeSet<>();
+        for (RestApplicationConfig application : applications) {
+            String openapiPath = application.openapiPath();
+            if (openapiPath != null && openapiPath.isBlank()) {
+                blank.add("jaxrs.applications." + application.name() + ".openapiPath");
+            }
+        }
+        if (!blank.isEmpty()) {
+            throw new ConfigurationException("Blank values under 'jaxrs.applications': "
+                    + quoteJoin(blank)
+                    + "; set 'openapiPath' to a non-blank location or omit it");
+        }
+    }
+
+    /**
+     * Formats a sorted path set as single-quoted, comma-separated paths for a
+     * {@link ConfigurationException} message.
+     *
+     * @param paths the sorted configuration paths
+     * @return the formatted, single-quoted, comma-joined path list
+     */
+    private static String quoteJoin(Set<String> paths) {
+        return paths.stream().map(path -> "'" + path + "'").collect(Collectors.joining(", "));
     }
 }

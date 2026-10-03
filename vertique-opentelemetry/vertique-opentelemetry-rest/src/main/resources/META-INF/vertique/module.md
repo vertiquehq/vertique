@@ -43,14 +43,16 @@ WARN and swallows.
 **Vert.x creates the HTTP server span; this module enriches it.** The Vert.x OTel tracing
 integration (from `io.vertx:vertx-opentelemetry`) creates a server span for every incoming HTTP
 request. This module renames that span to `"METHOD /route/template"` and adds the
-`http.route` and `vertique.operation.id` attributes once the OpenAPI route is known.
+`http.route` and `vertique.operation.id` attributes once the OpenAPI route is known, plus
+`vertique.application.name` (only for operations of a named application).
 
 **Band 300+ runs post-dispatch, post-auth.** `ServerSpanEnrichmentContributor` runs at priority 360
-— after the auth handlers and the authorization contributors. It captures the operation id and route
-template once, at registration, so it does not depend on any other contributor running first.
-Requests rejected before operation dispatch (auth failure, 404 routing miss) never reach this
-contributor. Those requests keep the default Vert.x-assigned span name and do not receive the
-`http.route` or `vertique.operation.id` attributes. Their span is still captured —
+— after the auth handlers and the authorization contributors. It captures the operation id, route
+template, and application name once, at registration, so it does not depend on any other
+contributor running first. Requests rejected before operation dispatch (auth failure, 404 routing
+miss) never reach this contributor. Those requests keep the default Vert.x-assigned span name and
+do not receive the `http.route`, `vertique.operation.id`, or `vertique.application.name`
+attributes. Their span is still captured —
 `ServerSpanOutcomeInterceptor` stashes it on the way in, at the API-router mount — so outcome
 recording and exemplar attachment still work for them.
 
@@ -86,9 +88,10 @@ dependency.
 the route's auth handlers and the authorization contributors. It does not depend on any other
 contributor running first.
 
-The contributor's `contribute(OperationRegistrationContext)` method captures the `operationId` and
-`routeTemplate` (from `context.operation().routeTemplate()`) at registration
-time and closes over them in the handler lambda. At request time the handler:
+The contributor's `contribute(OperationRegistrationContext)` method captures the `operationId`, the
+`routeTemplate` (from `context.operation().routeTemplate()`), and the application name (from
+`context.operation().applicationName()`) at registration time and closes over them in the handler
+lambda. At request time the handler:
 
 1. Resolves `Span.current()` and guards on `span.getSpanContext().isValid()`.
 2. If the span context is valid: stores the span in the routing context under
@@ -96,9 +99,19 @@ time and closes over them in the handler lambda. At request time the handler:
    interceptors.
 3. If the span `isRecording()`: renames it to `rc.request().method().name() + " " + routeTemplate`
    (e.g. `"GET /orders/{id}"`), sets `HttpAttributes.HTTP_ROUTE` to the OpenAPI path template, and
-   sets `RestSpanKeys.VERTIQUE_OPERATION_ID` (`"vertique.operation.id"`) to the operationId.
-   Attribute writes are conditional on the values being non-null.
+   sets `RestSpanKeys.VERTIQUE_OPERATION_ID` (`"vertique.operation.id"`) to the operationId. When
+   the operation belongs to a named REST application, it also sets
+   `RestSpanKeys.VERTIQUE_APPLICATION_NAME` (`"vertique.application.name"`) to that application's
+   name. Attribute writes are conditional on the values being non-null.
 4. Always calls `rc.next()` — enrichment failure never breaks the pipeline.
+
+The handler runs after the route's authentication handlers, and the attributes are set only for
+operations that reach it. A request rejected before this handler runs ends there and its span carries
+none of this contributor's attributes: no `vertique.application.name`, no `vertique.operation.id`,
+and no `http.route` from this contributor. The rejections that end a request before the contributor
+(priority 360) runs are authentication (401), authorization (403), the `@Consumes` check (415), and
+the validation gate (400). The registrar cannot currently add an authentication handler after a user
+handler on the same route.
 
 ```java
 @Component(modules = {
@@ -234,6 +247,7 @@ Re-establishes the HTTP server span as the current OTel span for the duration of
 | Span name | — | `"METHOD /route/template"`, e.g. `"GET /orders/{id}"` | Set by `ServerSpanEnrichmentContributor`; overwrites Vert.x default |
 | `http.route` | `HttpAttributes.HTTP_ROUTE` | OpenAPI path template from `AbsoluteOpenAPIPath` | Not set when template is null |
 | `vertique.operation.id` | `AttributeKey.stringKey("vertique.operation.id")` | OpenAPI operationId | Not set when operationId is null |
+| `vertique.application.name` | `AttributeKey.stringKey("vertique.application.name")` | The operation's application name (`RestOperationDescriptor.applicationName()`) | Set only for operations of a named REST application; absent otherwise. Distinct from the resource attribute `service.name` |
 | `error.type` | `ErrorAttributes.ERROR_TYPE` | Exception simple class name | Set on error-pipeline entry, and on any 4xx or 5xx response carrying `RequestInterceptor.ORIGINAL_ERROR_KEY` |
 
 ---

@@ -100,6 +100,7 @@ SPDX-License-Identifier: EUPL-1.2
         <module>examples/vertique-example-events</module>
         <module>examples/vertique-example-localization</module>
         <module>examples/vertique-example-workflow-order-fulfillment</module>
+        <module>examples/vertique-example-apidocs</module>
         <!-- Last on purpose: depends on every code-bearing module, so the JaCoCo
              aggregate report is always the reactor's final act. -->
         <module>vertique-coverage-report</module>
@@ -407,6 +408,11 @@ SPDX-License-Identifier: EUPL-1.2
             <dependency>
                 <groupId>dev.vertique</groupId>
                 <artifactId>vertique-rest-validation</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-rest-openapi-docs</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>

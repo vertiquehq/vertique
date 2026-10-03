@@ -106,7 +106,8 @@ interface AppComponent { /* ... */ }
 ### RestServerRequestMetricsListener
 
 `@Singleton` `RestRequestCompletedListener`. Records one timer sample per
-`RestRequestCompletedEvent`, so JAX-RS operations only. The `route` tag is the operation's route
+`RestRequestCompletedEvent`: JAX-RS operations and framework synthetic operations, such as
+protected API document reads. The `route` tag is the operation's route
 template and the `operation` tag its operationId, both read from `event.operation()`; neither falls
 back to `UNKNOWN`. Meter name: `vertique.rest.server.requests`. When `MetricsConfig.enabled()` is
 `false` (i.e., `metrics.enabled=false` in config), returns immediately without recording.
@@ -142,7 +143,8 @@ On `onRequest`:
 
 ### `vertique.rest.server.requests` — Timer
 
-Per-request timer. One sample is recorded per `RestRequestCompletedEvent`, JAX-RS operations only.
+Per-request timer. One sample is recorded per `RestRequestCompletedEvent`: JAX-RS operations and
+framework synthetic operations (see **API document reads** below).
 
 | Tag | Values | Notes |
 |-----|--------|-------|
@@ -153,9 +155,23 @@ Per-request timer. One sample is recorded per `RestRequestCompletedEvent`, JAX-R
 | `outcome` | Low-cardinality bucket: `INFORMATIONAL`, `SUCCESS`, `REDIRECTION`, `CLIENT_ERROR`, `SERVER_ERROR`, `UNKNOWN` | Derived by integer division of the status code by 100; status 0 or outside 100–599 → `UNKNOWN` |
 | `error.type` | `failureCode`, else `wireFailureCode`, else `none` | Simple class name of the pipeline-mapped failure (e.g. `IllegalStateException`); when absent, falls back to the post-handoff wire-failure classification on `RestRequestCompletedEvent` (e.g. `ConnectionClosed`) |
 
-All tags above are part of `vertique-micrometer-core`'s frozen cardinality-guarded tag-key set —
+All tags above are part of `vertique-micrometer-core`'s growth-only cardinality-guarded tag-key set (it only grows; entries are never removed or reordered) —
 each key is capped at `metrics.cardinality.maxTagValuesPerKey` distinct values (default `200`)
 across the composite. See `vertique-micrometer-core`'s module reference for the guard mechanism.
+
+**API document reads.** A read of a protected API document, and its `401` or `403` denial,
+completes as a REST operation completion whose operation is a framework synthetic operation. It is
+timed in `vertique.rest.server.requests` with `operation` `apidocs:<name>:json` or
+`apidocs:<name>:yaml` and `route` `/<name>/openapi.json` or `/<name>/openapi.yaml`: the descriptor's
+route template, the document path relative to the documentation prefix (`apidocs.path`), which it
+does not include. `method` is the request's method, so a `HEAD` read is tagged `HEAD`. A public
+document read is claimed by no operation route, completes as an `HttpRequestCompletedEvent`, and is
+not timed there. Vert.x's native HTTP server metrics count document reads with every other request.
+
+**No application tag yet.** The timer does not carry the application name (`rest.application`).
+When one resource is mounted by more than one application with the same operationId and route, both
+mounts produce identical tags and their series merge until the meter adds the `rest.application`
+tag.
 
 **`error.type` on a 200-status series.** Because `error.type` falls back to `wireFailureCode`, a
 timer sample tagged `status=200` MAY carry a non-`none` `error.type` — that combination (`status`

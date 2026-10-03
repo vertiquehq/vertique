@@ -1,0 +1,37 @@
+// SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
+// SPDX-License-Identifier: EUPL-1.2
+
+package dev.vertique.rest.openapi.docs;
+
+import dev.vertique.json.DefaultJsonMapperProfileRegistry;
+import dev.vertique.rest.jaxrs.validation.OperationSchemaSource;
+import dev.vertique.rest.openapi.docs.assembly.AssemblyContext;
+import dev.vertique.rest.openapi.docs.diagnostics.DiagnosticsAccess;
+import java.util.Optional;
+import java.util.Set;
+
+/** Builds {@link AssemblyContext} values for tests, backed by a real profile registry. */
+public final class TestContexts {
+
+    private TestContexts() {}
+
+    /** Returns a context with no bound schema source. */
+    public static AssemblyContext noSource() {
+        return new AssemblyContext(
+                Optional.empty(),
+                new DefaultJsonMapperProfileRegistry(Set.of()),
+                DiagnosticsAccess.documentWarnings(),
+                Set.of(),
+                Set.of());
+    }
+
+    /** Returns a context with the given bound schema source. */
+    public static AssemblyContext withSource(OperationSchemaSource source) {
+        return new AssemblyContext(
+                Optional.of(source),
+                new DefaultJsonMapperProfileRegistry(Set.of()),
+                DiagnosticsAccess.documentWarnings(),
+                Set.of(),
+                Set.of());
+    }
+}

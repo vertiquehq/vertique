@@ -168,7 +168,7 @@ public interface OperationSchemaSource {
 
 Default `OperationSchemaSource` that synthesizes JSON Schema from JAX-RS and Bean Validation annotations. Body types are handed to the shared `AnnotationJsonSchemaGenerator` (`dev.vertique:vertique-json-schema`) built with `forInputProfile(profile)` for the effective profile the registrar resolved for the operation, which translates Java types, profile input overrides, and constraint annotations into canonically ordered JSON Schema 2020-12. Every body schema is generated this way; no route uses a profile-agnostic generator. Parameter schemas are assembled by this class from each parameter's declared type, collection component type, and constraint annotations, and are not profiled.
 
-The protected `generateBodySchema(Type, JsonMapperProfile)` seam is the only generation path and is invoked exactly once per body synthesis; its default implementation parses the generator's canonical document into a fresh `JsonNode`, and a subclass may substitute its own node. The one-argument `generateBodySchema(Type)` seam no longer exists. **This seam is INTERNAL**: it is a substitution point for framework and test code — counting or replacing generation invocations — and not an application contract. It sits outside this module's compatibility promise and may change or be removed in any release; application code should contribute an `OperationSchemaSource` instead of overriding it.
+The protected `generateBodySchema(Type, JsonMapperProfile)` seam is the only generation path and is invoked exactly once per body synthesis; its default implementation returns the profile's generator's `CanonicalSchema`, and a subclass may substitute its own. The caller builds the body `JsonObject` from `CanonicalSchema#json()`, strips the swagger sentinel, and attaches `CanonicalSchema#redactionManifest()` to the schema as its opaque body provenance (`OperationSchemas#bodySchemaProvenance(Class)`), unchecked: a manifest that no longer matches the body it travels with — because an override substituted the document, or the body was later edited or replaced — is never a failure here or at the validation gate; it surfaces only where a consumer checks the pairing (`RedactionManifest#matches`). **This seam is INTERNAL**: it is a substitution point for framework and test code — counting or replacing generation invocations — and not an application contract. It sits outside this module's compatibility promise and may change or be removed in any release; application code should contribute an `OperationSchemaSource` instead of overriding it.
 
 **One generator per profile instance.** The source builds at most one `AnnotationJsonSchemaGenerator` per distinct `JsonMapperProfile` instance, keyed by reference identity, on first use, and retains it for the source's lifetime — at most one even when parallel router builds call `schemasFor` concurrently. Retention is bounded by the number of distinct profile instances the profile registry hands out; the built-in registry and profiles contributed through `RestTestContributions.jsonMapperProfiles` hand out stable instances, so that bound is the profile count. A registry implementation that returns a **fresh profile instance per call** defeats the bound and grows the retained set without limit; that is a misconfiguration, not a supported mode. No generated schema is cached by operation id, Java type, or mapper identity.
 
@@ -487,24 +487,28 @@ What the limits leave open:
 - A key of a case-insensitively bound body type (for example one annotated
   `@JsonFormat(with = JsonFormat.Feature.ACCEPT_CASE_INSENSITIVE_PROPERTIES)`) is counted once at
   each position that checks it — the reserved-name guard, the folded `patternProperties` key, and
-  the non-ASCII-key refusal — three positions at one nesting level, so an unnested key counts three
-  times toward the total. A case-insensitive type also publishes every member's schema twice, once
-  under `properties` and once under its folded `patternProperties` key, so each additional nested
-  case-insensitive level doubles both the number of keys counted and the number of pattern-bearing
-  member values counted beneath it: a key at nesting depth `d` counts `3 × 2^d` times (a probe
-  measured 6× at depth 1 and 12× at depth 2). Operators sizing
-  `jaxrs.validationPatternMaxTotalChars` should budget for that compounding, not only for the flat
-  per-key count.
-- On a case-insensitive type, the validator checks a member's whole subtree twice at every nesting
-  level — once reached through `properties`, once through its folded `patternProperties` key — so
-  a value nested `d` case-insensitive levels deep is checked `2^(d+1)` times. The seven reused
-  formats (`uri`, `uri-reference`, `url`, `uri-template`, `json-pointer`, `relative-json-pointer`,
-  and `json-pointer-uri-fragment`), every other format, and every length and type check are
-  bounded only per check, never toward `jaxrs.validationPatternMaxTotalChars`, so nothing caps how
-  many times this doubling repeats within one request: at the default limits, a 2 MB `uri` value
-  nine levels deep took about 7 seconds to validate and was still accepted. Keep case-insensitive
-  DTO trees shallow, or bound the request body size, where this matters; this is a documented
-  limit, not a change this module commits to making.
+  the non-ASCII-key refusal — so it counts up to three times toward the total per validation of its
+  object, and once per `anyOf` branch for a polymorphic type: the three-count applies to a key of a
+  type that carries a reserved-name guard (hidden or ignored names described through an any-setter),
+  at any nesting depth; a key of a case-insensitive type with no reserved names has no guard and
+  counts twice. Outside `anyOf` branches, nesting does not multiply the count. A polymorphic type is
+  checked once per branch at each polymorphic level, so nested polymorphic types still multiply the
+  count and the reused-format checks. The folded `patternProperties` key excludes the exact
+  spelling, which `properties` validates, so each key is validated at most once per
+  case-insensitive level. Operators sizing `jaxrs.validationPatternMaxTotalChars` should budget
+  the per-object count times the number of objects, not a count that grows with depth; keep
+  polymorphic trees shallow and bound the body size.
+- Outside `anyOf` branches, a member's value is checked once per case-insensitive level, whatever
+  the casing of its key, so a value nested `d` case-insensitive levels deep is checked once, not
+  repeatedly. The seven reused formats (`uri`, `uri-reference`, `url`, `uri-template`,
+  `json-pointer`, `relative-json-pointer`, and `json-pointer-uri-fragment`) therefore run once per
+  nested value, and once per branch at each polymorphic level. Every other format, and
+  every length and type check, remains bounded only per check, never toward
+  `jaxrs.validationPatternMaxTotalChars`. The folded key's copy is the member's resolved schema,
+  so a non-exact casing of a member described through a definition reference — a nested DTO, a
+  map, an enum, a polymorphic base, or a list or optional of those — is validated against that
+  schema and is rejected when the exact spelling would be; verdicts for exact spellings are
+  unchanged, and `failFast` lists change only where such a casing lies on the violating path.
 - The limits bound the length of the input, not the cost of a pattern. An application-authored
   pattern whose matching time is super-linear — quadratic or exponential backtracking — can still
   be slow on input within the limits; an exponential one can take seconds on a few dozen

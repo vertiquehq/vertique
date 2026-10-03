@@ -8,23 +8,14 @@ import dagger.Provides;
 import dagger.multibindings.IntoSet;
 import dev.vertique.core.VertxConfig;
 import dev.vertique.core.config.PropertyCondition;
-import dev.vertique.rest.jaxrs.runtime.GeneratedJaxRsApplicationRegistration;
-import dev.vertique.rest.jaxrs.runtime.GeneratedJaxRsResourceEntry;
+import dev.vertique.rest.jaxrs.runtime.GeneratedRestApplicationRegistration;
 import io.vertx.core.json.JsonObject;
-import jakarta.inject.Provider;
+import java.util.List;
 
 /**
- * Hand-written module in the exact C-GEN shape for TP-005's (T004) {@code conflict.opid}
- * compilation unit: cases (a), (b), and (d) share this one module, each application and its
- * catalog entry gated by its own {@code @ConditionalOnProperty}-equivalent activation flag,
- * mirroring {@code conflict.paths.GeneratedJaxRsResourcesModule} (TP-003). Case (a)'s
- * {@link OpidAlphaApplication} and {@link OpidBetaApplication} list two unrelated resource
- * classes that each declare {@code list()}; case (b)'s {@link OpidShareOneApplication} and
- * {@link OpidShareTwoApplication} both list the same {@link OpidSharedListResource}; case (d)'s
- * {@link OpidInheritedFirstApplication} and {@link OpidInheritedSecondApplication} each list a
- * distinct concrete subclass of {@link OpidInheritedBaseResource} that inherits {@code list()}
- * without overriding it. Cases (c), (e), and (f) use their own dedicated modules instead, so this
- * module's registrations never appear in those cases' {@code Set<GeneratedJaxRsApplicationRegistration>}.
+ * Hand-written registration module for the {@code conflict.opid} compilation unit's cases (a), (b),
+ * and (d), each application and its own activation flag gating it exactly as
+ * {@link OpidApis} declares it.
  */
 @Module
 public final class GeneratedJaxRsResourcesModule {
@@ -47,182 +38,83 @@ public final class GeneratedJaxRsResourcesModule {
     private static final PropertyCondition[] INHERITED_SECOND_CONDITIONS =
             new PropertyCondition[] {new PropertyCondition("conflict.opid.inheritedSecond.active", "true", false)};
 
-    /**
-     * Registers {@link OpidAlphaApplication}, active only when
-     * {@code conflict.opid.alpha.active=true}.
-     *
-     * @param config the application configuration the condition is evaluated against
-     * @return the registration, active per {@link #ALPHA_CONDITIONS}
-     */
     @Provides
     @IntoSet
-    static GeneratedJaxRsApplicationRegistration opidAlphaApplicationRegistration(@VertxConfig JsonObject config) {
-        return GeneratedJaxRsApplicationRegistration.of(
-                OpidAlphaApplication.class,
-                OpidAlphaApplication.PATH,
-                PropertyCondition.matchesAll(config, ALPHA_CONDITIONS),
-                OpidAlphaApplication::new);
+    static GeneratedRestApplicationRegistration opidAlphaApplicationRegistration(@VertxConfig JsonObject config) {
+        return GeneratedRestApplicationRegistration.of(
+                OpidApis.OpidAlphaApi.class,
+                "opid-alpha",
+                "/opid/alpha",
+                List.of(OpidAlphaListResource.class),
+                false,
+                "",
+                PropertyCondition.matchesAll(config, ALPHA_CONDITIONS));
     }
 
-    /**
-     * Catalogs {@link OpidAlphaListResource} for {@link OpidAlphaApplication}'s explicit-mode
-     * selection.
-     *
-     * @param config   the application configuration (unused; unconditionally enabled)
-     * @param provider lazily constructs {@link OpidAlphaListResource}
-     * @return the catalog entry, always enabled
-     */
     @Provides
     @IntoSet
-    static GeneratedJaxRsResourceEntry opidAlphaListResourceEntry(
-            @VertxConfig JsonObject config, Provider<OpidAlphaListResource> provider) {
-        return GeneratedJaxRsResourceEntry.of(OpidAlphaListResource.class, true, provider);
+    static GeneratedRestApplicationRegistration opidBetaApplicationRegistration(@VertxConfig JsonObject config) {
+        return GeneratedRestApplicationRegistration.of(
+                OpidApis.OpidBetaApi.class,
+                "opid-beta",
+                "/opid/beta",
+                List.of(OpidBetaListResource.class),
+                false,
+                "",
+                PropertyCondition.matchesAll(config, BETA_CONDITIONS));
     }
 
-    /**
-     * Registers {@link OpidBetaApplication}, active only when
-     * {@code conflict.opid.beta.active=true}.
-     *
-     * @param config the application configuration the condition is evaluated against
-     * @return the registration, active per {@link #BETA_CONDITIONS}
-     */
     @Provides
     @IntoSet
-    static GeneratedJaxRsApplicationRegistration opidBetaApplicationRegistration(@VertxConfig JsonObject config) {
-        return GeneratedJaxRsApplicationRegistration.of(
-                OpidBetaApplication.class,
-                OpidBetaApplication.PATH,
-                PropertyCondition.matchesAll(config, BETA_CONDITIONS),
-                OpidBetaApplication::new);
+    static GeneratedRestApplicationRegistration opidShareOneApplicationRegistration(@VertxConfig JsonObject config) {
+        return GeneratedRestApplicationRegistration.of(
+                OpidApis.OpidShareOneApi.class,
+                "opid-share-one",
+                "/opid/share-one",
+                List.of(OpidSharedListResource.class),
+                false,
+                "",
+                PropertyCondition.matchesAll(config, SHARE_ONE_CONDITIONS));
     }
 
-    /**
-     * Catalogs {@link OpidBetaListResource} for {@link OpidBetaApplication}'s explicit-mode
-     * selection.
-     *
-     * @param config   the application configuration (unused; unconditionally enabled)
-     * @param provider lazily constructs {@link OpidBetaListResource}
-     * @return the catalog entry, always enabled
-     */
     @Provides
     @IntoSet
-    static GeneratedJaxRsResourceEntry opidBetaListResourceEntry(
-            @VertxConfig JsonObject config, Provider<OpidBetaListResource> provider) {
-        return GeneratedJaxRsResourceEntry.of(OpidBetaListResource.class, true, provider);
+    static GeneratedRestApplicationRegistration opidShareTwoApplicationRegistration(@VertxConfig JsonObject config) {
+        return GeneratedRestApplicationRegistration.of(
+                OpidApis.OpidShareTwoApi.class,
+                "opid-share-two",
+                "/opid/share-two",
+                List.of(OpidSharedListResource.class),
+                false,
+                "",
+                PropertyCondition.matchesAll(config, SHARE_TWO_CONDITIONS));
     }
 
-    /**
-     * Registers {@link OpidShareOneApplication}, active only when
-     * {@code conflict.opid.shareOne.active=true}.
-     *
-     * @param config the application configuration the condition is evaluated against
-     * @return the registration, active per {@link #SHARE_ONE_CONDITIONS}
-     */
     @Provides
     @IntoSet
-    static GeneratedJaxRsApplicationRegistration opidShareOneApplicationRegistration(@VertxConfig JsonObject config) {
-        return GeneratedJaxRsApplicationRegistration.of(
-                OpidShareOneApplication.class,
-                OpidShareOneApplication.PATH,
-                PropertyCondition.matchesAll(config, SHARE_ONE_CONDITIONS),
-                OpidShareOneApplication::new);
-    }
-
-    /**
-     * Registers {@link OpidShareTwoApplication}, active only when
-     * {@code conflict.opid.shareTwo.active=true}.
-     *
-     * @param config the application configuration the condition is evaluated against
-     * @return the registration, active per {@link #SHARE_TWO_CONDITIONS}
-     */
-    @Provides
-    @IntoSet
-    static GeneratedJaxRsApplicationRegistration opidShareTwoApplicationRegistration(@VertxConfig JsonObject config) {
-        return GeneratedJaxRsApplicationRegistration.of(
-                OpidShareTwoApplication.class,
-                OpidShareTwoApplication.PATH,
-                PropertyCondition.matchesAll(config, SHARE_TWO_CONDITIONS),
-                OpidShareTwoApplication::new);
-    }
-
-    /**
-     * Catalogs {@link OpidSharedListResource}, selectable by both {@link OpidShareOneApplication}
-     * and {@link OpidShareTwoApplication}.
-     *
-     * @param config   the application configuration (unused; unconditionally enabled)
-     * @param provider lazily constructs {@link OpidSharedListResource}
-     * @return the catalog entry, always enabled
-     */
-    @Provides
-    @IntoSet
-    static GeneratedJaxRsResourceEntry opidSharedListResourceEntry(
-            @VertxConfig JsonObject config, Provider<OpidSharedListResource> provider) {
-        return GeneratedJaxRsResourceEntry.of(OpidSharedListResource.class, true, provider);
-    }
-
-    /**
-     * Registers {@link OpidInheritedFirstApplication}, active only when
-     * {@code conflict.opid.inheritedFirst.active=true}.
-     *
-     * @param config the application configuration the condition is evaluated against
-     * @return the registration, active per {@link #INHERITED_FIRST_CONDITIONS}
-     */
-    @Provides
-    @IntoSet
-    static GeneratedJaxRsApplicationRegistration opidInheritedFirstApplicationRegistration(
+    static GeneratedRestApplicationRegistration opidInheritedFirstApplicationRegistration(
             @VertxConfig JsonObject config) {
-        return GeneratedJaxRsApplicationRegistration.of(
-                OpidInheritedFirstApplication.class,
-                OpidInheritedFirstApplication.PATH,
-                PropertyCondition.matchesAll(config, INHERITED_FIRST_CONDITIONS),
-                OpidInheritedFirstApplication::new);
+        return GeneratedRestApplicationRegistration.of(
+                OpidApis.OpidInheritedFirstApi.class,
+                "opid-inherited-first",
+                "/opid/inherited-first",
+                List.of(OpidInheritedFirstResource.class),
+                false,
+                "",
+                PropertyCondition.matchesAll(config, INHERITED_FIRST_CONDITIONS));
     }
 
-    /**
-     * Catalogs {@link OpidInheritedFirstResource} for {@link OpidInheritedFirstApplication}'s
-     * explicit-mode selection.
-     *
-     * @param config   the application configuration (unused; unconditionally enabled)
-     * @param provider lazily constructs {@link OpidInheritedFirstResource}
-     * @return the catalog entry, always enabled
-     */
     @Provides
     @IntoSet
-    static GeneratedJaxRsResourceEntry opidInheritedFirstResourceEntry(
-            @VertxConfig JsonObject config, Provider<OpidInheritedFirstResource> provider) {
-        return GeneratedJaxRsResourceEntry.of(OpidInheritedFirstResource.class, true, provider);
-    }
-
-    /**
-     * Registers {@link OpidInheritedSecondApplication}, active only when
-     * {@code conflict.opid.inheritedSecond.active=true}.
-     *
-     * @param config the application configuration the condition is evaluated against
-     * @return the registration, active per {@link #INHERITED_SECOND_CONDITIONS}
-     */
-    @Provides
-    @IntoSet
-    static GeneratedJaxRsApplicationRegistration opidInheritedSecondApplicationRegistration(
+    static GeneratedRestApplicationRegistration opidInheritedSecondApplicationRegistration(
             @VertxConfig JsonObject config) {
-        return GeneratedJaxRsApplicationRegistration.of(
-                OpidInheritedSecondApplication.class,
-                OpidInheritedSecondApplication.PATH,
-                PropertyCondition.matchesAll(config, INHERITED_SECOND_CONDITIONS),
-                OpidInheritedSecondApplication::new);
-    }
-
-    /**
-     * Catalogs {@link OpidInheritedSecondResource} for {@link OpidInheritedSecondApplication}'s
-     * explicit-mode selection.
-     *
-     * @param config   the application configuration (unused; unconditionally enabled)
-     * @param provider lazily constructs {@link OpidInheritedSecondResource}
-     * @return the catalog entry, always enabled
-     */
-    @Provides
-    @IntoSet
-    static GeneratedJaxRsResourceEntry opidInheritedSecondResourceEntry(
-            @VertxConfig JsonObject config, Provider<OpidInheritedSecondResource> provider) {
-        return GeneratedJaxRsResourceEntry.of(OpidInheritedSecondResource.class, true, provider);
+        return GeneratedRestApplicationRegistration.of(
+                OpidApis.OpidInheritedSecondApi.class,
+                "opid-inherited-second",
+                "/opid/inherited-second",
+                List.of(OpidInheritedSecondResource.class),
+                false,
+                "",
+                PropertyCondition.matchesAll(config, INHERITED_SECOND_CONDITIONS));
     }
 }

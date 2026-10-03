@@ -106,6 +106,9 @@ public interface OperationInterceptor extends OrderedExtension {
      * it with tracing spans, authorization data, or other per-operation metadata.
      *
      * <p>Each interceptor in the chain receives the context returned by the previous interceptor.
+     * When a returned context carries an {@link OperationContext#operation()} other than the
+     * registration-time one, the chain puts the registration-time operation back before the next
+     * interceptor runs, so read the operation's identity from {@code ctx.operation()}.
      * A failed {@link Future} short-circuits the operation and routes to the error pipeline.
      *
      * @param ctx the current operation context (immutable, copy-on-write)
@@ -148,7 +151,7 @@ public interface OperationInterceptor extends OrderedExtension {
      * <p>Example — return a cached value on failure:
      * <pre>{@code
      * public Future<Object> recoverOperation(OperationContext ctx, Throwable cause) {
-     *     return cache.get(ctx.operationId())
+     *     return cache.get(ctx.operation().applicationName() + ":" + ctx.operation().operationId())
      *         .<Object>map(cached -> cached)
      *         .orElse(Future.failedFuture(cause));
      * }

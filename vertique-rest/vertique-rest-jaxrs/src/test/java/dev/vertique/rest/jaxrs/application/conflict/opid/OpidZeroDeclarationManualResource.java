@@ -13,7 +13,7 @@ import jakarta.ws.rs.core.MediaType;
  * TP-005 (T004) case (c) fixture: contributed manually via {@link OpidZeroDeclarationResourcesModule}
  * into {@code @JaxRsResources}, so it becomes the default mount's sole resource at
  * {@code jaxrs.basePath} ({@code /api/*}) in this case's zero-declaration composition (no
- * {@code GeneratedJaxRsApplicationRegistration} module is included at all). Its {@link #list()}
+ * {@code GeneratedRestApplicationRegistration} module is included at all). Its {@link #list()}
  * method's default operationId ({@code "list"}) collides, cross-mount, with
  * {@link OpidZeroDeclarationOtherResource#list()}'s, but with no registration declared, only the
  * existing per-mount rule applies — the collision must not fail deployment.

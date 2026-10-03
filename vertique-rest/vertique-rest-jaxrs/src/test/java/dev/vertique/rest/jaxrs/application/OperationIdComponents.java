@@ -14,16 +14,26 @@ import dev.vertique.rest.jaxrs.application.conflict.opid.OpidAopProxyResourceMod
 import dev.vertique.rest.jaxrs.application.conflict.opid.OpidHandBuiltOneMountModule;
 import dev.vertique.rest.jaxrs.application.conflict.opid.OpidHandBuiltTwoMountModule;
 import dev.vertique.rest.jaxrs.application.conflict.opid.OpidInactiveApplicationModule;
+import dev.vertique.rest.jaxrs.application.conflict.opid.OpidResourcesModule;
 import dev.vertique.rest.jaxrs.application.conflict.opid.OpidZeroDeclarationResourcesModule;
+import dev.vertique.rest.jaxrs.application.conflict.opid.crossmount.CrossMountDistinctContractRegistrationModule;
+import dev.vertique.rest.jaxrs.application.conflict.opid.crossmount.CrossMountManualResourcesModule;
+import dev.vertique.rest.jaxrs.application.conflict.opid.crossmount.CrossMountSharedContractRegistrationModule;
+import dev.vertique.rest.jaxrs.application.conflict.opid.crossmount.CrossMountWebValidationRegistrationModule;
 import dev.vertique.rest.jaxrs.application.conflict.spy.ConflictSpyModule;
+import dev.vertique.rest.jaxrs.application.strategy.OpenApiContractStrategyModule;
+import dev.vertique.rest.jaxrs.application.strategy.WebValidationStrategyModule;
 import io.vertx.core.json.JsonObject;
 import jakarta.inject.Singleton;
 
 /**
- * Dagger components for {@link JaxRsApplicationMountConflictIT} (TP-005): six named nested
- * compositions, one per lettered case (a) to (f), proving the rest-jaxrs validator's cross-mount
- * operationId owner rule (FR-014). Every component's factory takes the deployment configuration as
- * a {@code @BindsInstance @VertxConfig JsonObject}, matching {@link ConflictDeploymentComponents}.
+ * Dagger components for {@link JaxRsApplicationMountConflictIT} (T023's TP-009, rest-024's ported
+ * FR-014 test): six named nested compositions, one per lettered case (a) to (f), proving the
+ * rest-jaxrs validator's cross-mount operationId owner rule (FR-014), plus three more (TP-009's own
+ * rows (a) to (c)) proving the refusal still holds, unrelaxed, under the {@code web-validation} and
+ * {@code openapi-contract} strategies and their distinct or shared contract locations (CX-007).
+ * Every component's factory takes the deployment configuration as a
+ * {@code @BindsInstance @VertxConfig JsonObject}, matching {@link ConflictDeploymentComponents}.
  * {@link ConflictSpyModule}'s two counting spies are included in every composition, so a failing
  * case can prove no router — JAX-RS or not — was ever created.
  */
@@ -44,8 +54,8 @@ public final class OperationIdComponents {
     }
 
     /**
-     * Case (a): two applications at non-conflicting paths ({@code OpidAlphaApplication},
-     * {@code OpidBetaApplication}), each listing a different resource class that declares a method
+     * Case (a): two applications at non-conflicting paths ({@code OpidApis.OpidAlphaApi},
+     * {@code OpidApis.OpidBetaApi}), each listing a different resource class that declares a method
      * with operationId {@code "list"}. The two operations have no common owner, so the collision
      * must fail deployment.
      */
@@ -55,6 +65,7 @@ public final class OperationIdComponents {
                 RestModule.class,
                 ApplicationTestSupportModule.class,
                 dev.vertique.rest.jaxrs.application.conflict.opid.GeneratedJaxRsResourcesModule.class,
+                OpidResourcesModule.class,
                 ConflictSpyModule.class
             })
     public interface OneApplicationEachListResourceComponent extends Provisions {
@@ -75,7 +86,7 @@ public final class OperationIdComponents {
 
     /**
      * Case (b), a control: one resource ({@code OpidSharedListResource}) declaring {@code "list"},
-     * listed by both {@code OpidShareOneApplication} and {@code OpidShareTwoApplication}. Both
+     * listed by both {@code OpidApis.OpidShareOneApi} and {@code OpidApis.OpidShareTwoApi}. Both
      * operations share the same owner (the same resource instance), so this deploys.
      */
     @Singleton
@@ -84,6 +95,7 @@ public final class OperationIdComponents {
                 RestModule.class,
                 ApplicationTestSupportModule.class,
                 dev.vertique.rest.jaxrs.application.conflict.opid.GeneratedJaxRsResourcesModule.class,
+                OpidResourcesModule.class,
                 ConflictSpyModule.class
             })
     public interface SharedListResourceComponent extends Provisions {
@@ -104,8 +116,8 @@ public final class OperationIdComponents {
 
     /**
      * Case (c), a control: zero declarations. This component includes no
-     * {@code GeneratedJaxRsApplicationRegistration} module at all, so
-     * {@code Set<GeneratedJaxRsApplicationRegistration>} is empty. The default mount at
+     * {@code GeneratedRestApplicationRegistration} module at all, so
+     * {@code Set<GeneratedRestApplicationRegistration>} is empty. The default mount at
      * {@code jaxrs.basePath} ({@code /api/*}) holds one manually contributed resource declaring
      * {@code "list"}, and a hand-built {@code /other/*} mount holds another. With no registration
      * declared, only the existing per-mount rule applies, so this deploys.
@@ -135,8 +147,8 @@ public final class OperationIdComponents {
     }
 
     /**
-     * Case (d): two applications at non-conflicting paths ({@code OpidInheritedFirstApplication},
-     * {@code OpidInheritedSecondApplication}), each listing a different concrete subclass of one
+     * Case (d): two applications at non-conflicting paths ({@code OpidApis.OpidInheritedFirstApi},
+     * {@code OpidApis.OpidInheritedSecondApi}), each listing a different concrete subclass of one
      * base class that declares {@code list()}; neither subclass overrides it. The two operations
      * share the inherited method's name and parameter types but have different normalized owner
      * classes (each subclass's own {@code @Path} defeats {@code sameSurface}), so the collision
@@ -148,6 +160,7 @@ public final class OperationIdComponents {
                 RestModule.class,
                 ApplicationTestSupportModule.class,
                 dev.vertique.rest.jaxrs.application.conflict.opid.GeneratedJaxRsResourcesModule.class,
+                OpidResourcesModule.class,
                 ConflictSpyModule.class
             })
     public interface InheritedListMethodComponent extends Provisions {
@@ -167,9 +180,9 @@ public final class OperationIdComponents {
     }
 
     /**
-     * Case (e): exactly one registration ({@code OpidInactiveApplication}'s, via
+     * Case (e): exactly one registration ({@code OpidApis.OpidInactiveApi}'s, via
      * {@link OpidInactiveApplicationModule}, the sole module in this component contributing to
-     * {@code Set<GeneratedJaxRsApplicationRegistration>}), whose condition does not match (no
+     * {@code Set<GeneratedRestApplicationRegistration>}), whose condition does not match (no
      * active application), plus two hand-built JAX-RS mounts at non-conflicting paths whose
      * resources each declare a method with operationId {@code "list"}. An application is declared
      * even though none is active (AC-014.1), so the collision must fail deployment.
@@ -201,7 +214,7 @@ public final class OperationIdComponents {
     }
 
     /**
-     * Case (f), a control: {@code OpidAopApplication} lists a manual base resource
+     * Case (f), a control: {@code OpidApis.OpidAopApi} lists a manual base resource
      * ({@code OpidAopBaseResource}) whose only {@code @JaxRsResources} instance is
      * {@code OpidAopProxyResource}, an AOP-shaped subclass that overrides {@code list()} marked
      * only with {@code @Override}, beside a hand-built mount at a non-conflicting path holding an
@@ -232,6 +245,105 @@ public final class OperationIdComponents {
              * @return the constructed component
              */
             AopProxyOverrideComponent create(@BindsInstance @VertxConfig JsonObject config);
+        }
+    }
+
+    /**
+     * TP-009 row (a) (T023 contract): {@code public} and {@code partner}, active, listing
+     * {@link dev.vertique.rest.jaxrs.application.conflict.opid.crossmount.PublicListResource} and
+     * {@link dev.vertique.rest.jaxrs.application.conflict.opid.crossmount.PartnerListResource}, whose
+     * distinct owners' {@code list()} operations collide, under the {@code web-validation}
+     * pass-through strategy.
+     */
+    @Singleton
+    @Component(
+            modules = {
+                RestModule.class,
+                ApplicationTestSupportModule.class,
+                CrossMountWebValidationRegistrationModule.class,
+                CrossMountManualResourcesModule.class,
+                WebValidationStrategyModule.class,
+                ConflictSpyModule.class
+            })
+    public interface PublicPartnerWebValidationComponent extends Provisions {
+
+        /** Factory taking the deployment configuration. */
+        @Component.Factory
+        interface Factory {
+
+            /**
+             * Creates the component bound to the given configuration.
+             *
+             * @param config the deployment configuration
+             * @return the constructed component
+             */
+            PublicPartnerWebValidationComponent create(@BindsInstance @VertxConfig JsonObject config);
+        }
+    }
+
+    /**
+     * TP-009 row (b) (T023 contract): {@code public} and {@code partner}, active, at their own
+     * distinct contract locations ({@code public.yaml}, {@code partner.yaml}), under the
+     * {@code openapi-contract} pass-through strategy, whose flag gates the validator's location
+     * parse. FR-027's per-mount relaxation stays staged to CO-4 (CX-007): distinct locations do not
+     * exempt this collision.
+     */
+    @Singleton
+    @Component(
+            modules = {
+                RestModule.class,
+                ApplicationTestSupportModule.class,
+                CrossMountDistinctContractRegistrationModule.class,
+                CrossMountManualResourcesModule.class,
+                OpenApiContractStrategyModule.class,
+                ConflictSpyModule.class
+            })
+    public interface PublicPartnerDistinctContractLocationsComponent extends Provisions {
+
+        /** Factory taking the deployment configuration. */
+        @Component.Factory
+        interface Factory {
+
+            /**
+             * Creates the component bound to the given configuration.
+             *
+             * @param config the deployment configuration
+             * @return the constructed component
+             */
+            PublicPartnerDistinctContractLocationsComponent create(@BindsInstance @VertxConfig JsonObject config);
+        }
+    }
+
+    /**
+     * TP-009 row (c) (T023 contract): {@code public} and {@code partner}, active, both with an
+     * empty own contract location, falling back to the deployment configuration's global
+     * {@code jaxrs.openapiPath} ({@code shared.yaml}), under the {@code openapi-contract}
+     * pass-through strategy. FR-027's shared-contract-location clause stays staged to CO-4
+     * (CX-007): the two mounts sharing one location do not exempt this collision.
+     */
+    @Singleton
+    @Component(
+            modules = {
+                RestModule.class,
+                ApplicationTestSupportModule.class,
+                CrossMountSharedContractRegistrationModule.class,
+                CrossMountManualResourcesModule.class,
+                OpenApiContractStrategyModule.class,
+                ConflictSpyModule.class
+            })
+    public interface PublicPartnerSharedContractLocationComponent extends Provisions {
+
+        /** Factory taking the deployment configuration. */
+        @Component.Factory
+        interface Factory {
+
+            /**
+             * Creates the component bound to the given configuration.
+             *
+             * @param config the deployment configuration
+             * @return the constructed component
+             */
+            PublicPartnerSharedContractLocationComponent create(@BindsInstance @VertxConfig JsonObject config);
         }
     }
 }

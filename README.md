@@ -158,4 +158,4 @@ answers stay version-matched to your build rather than to whichever documentatio
 
 The `examples/` directory contains standalone applications for REST, services,
 database access, REST clients, webhooks, server-sent events, WebSockets, events,
-localization, AOP, code generation, and workflows.
+localization, AOP, code generation, workflows, and API documentation.

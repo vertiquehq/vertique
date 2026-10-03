@@ -8,21 +8,20 @@ import dagger.Provides;
 import dagger.multibindings.IntoSet;
 import dev.vertique.core.VertxConfig;
 import dev.vertique.core.config.PropertyCondition;
-import dev.vertique.rest.jaxrs.runtime.GeneratedJaxRsApplicationRegistration;
+import dev.vertique.rest.jaxrs.application.manual.BlobLikeResource;
+import dev.vertique.rest.jaxrs.application.unita.CatalogResource;
+import dev.vertique.rest.jaxrs.application.unita.ExtraResource;
+import dev.vertique.rest.jaxrs.application.unita.scoped.ScopedResource;
+import dev.vertique.rest.jaxrs.runtime.GeneratedRestApplicationRegistration;
 import io.vertx.core.json.JsonObject;
-import jakarta.inject.Provider;
+import java.util.List;
 
 /**
- * Hand-written module in the exact C-GEN shape for compilation unit {@code unitb}: an
- * applications-only unit, so (per C-GEN's package-resolution rule) it keeps the same simple name,
- * {@code GeneratedJaxRsResourcesModule}, as {@code unita}'s resources-only module, in this unit's
- * own package. It registers {@link PublicApplication} (an {@code @Inject}-constructed application,
- * so its registration method takes a {@code Provider}) and {@link ManagementApplication} (a
- * no-arg-constructed application, so its registration method uses the {@code A::new} factory
- * argument instead). Both applications conceptually carry a
- * {@code @ConditionalOnProperty}-equivalent activation gate — see each registration method's
- * condition constant — mirrored the same way {@code unita}'s {@code DisabledResource} is, since
- * {@code vertique-codegen-core} is not a test dependency of this module.
+ * Hand-written module in the exact shape the annotation processor would emit for compilation unit
+ * {@code unitb}: an applications-only unit registering {@link PublicApi} and {@link ManagementApi},
+ * each gated on its own {@code active} flag exactly as {@code GeneratedRestApplicationRegistration}
+ * mirrors {@code @ConditionalOnProperty} (E17). {@code name}, {@code path}, and {@code resources}
+ * match each interface's own {@code @RestApplication} declaration.
  */
 @Module
 public final class GeneratedJaxRsResourcesModule {
@@ -34,26 +33,26 @@ public final class GeneratedJaxRsResourcesModule {
             new PropertyCondition[] {new PropertyCondition("unitb.managementApplication.active", "true", false)};
 
     /**
-     * Registers {@link PublicApplication}, active only when
-     * {@code unitb.publicApplication.active=true}.
+     * Registers {@link PublicApi}, active only when {@code unitb.publicApplication.active=true}.
      *
-     * @param config   the application configuration the condition is evaluated against
-     * @param provider constructs {@link PublicApplication} through its {@code @Inject} constructor
+     * @param config the application configuration the condition is evaluated against
      * @return the registration, active per {@link #PUBLIC_APPLICATION_REGISTRATION_CONDITIONS}
      */
     @Provides
     @IntoSet
-    static GeneratedJaxRsApplicationRegistration publicApplicationRegistration(
-            @VertxConfig JsonObject config, Provider<PublicApplication> provider) {
-        return GeneratedJaxRsApplicationRegistration.of(
-                PublicApplication.class,
+    static GeneratedRestApplicationRegistration publicApplicationRegistration(@VertxConfig JsonObject config) {
+        return GeneratedRestApplicationRegistration.of(
+                PublicApi.class,
+                "public",
                 "/api/public",
-                PropertyCondition.matchesAll(config, PUBLIC_APPLICATION_REGISTRATION_CONDITIONS),
-                provider);
+                List.of(ScopedResource.class, CatalogResource.class, BlobLikeResource.class),
+                false,
+                "",
+                PropertyCondition.matchesAll(config, PUBLIC_APPLICATION_REGISTRATION_CONDITIONS));
     }
 
     /**
-     * Registers {@link ManagementApplication}, active only when
+     * Registers {@link ManagementApi}, active only when
      * {@code unitb.managementApplication.active=true}.
      *
      * @param config the application configuration the condition is evaluated against
@@ -61,11 +60,14 @@ public final class GeneratedJaxRsResourcesModule {
      */
     @Provides
     @IntoSet
-    static GeneratedJaxRsApplicationRegistration managementApplicationRegistration(@VertxConfig JsonObject config) {
-        return GeneratedJaxRsApplicationRegistration.of(
-                ManagementApplication.class,
+    static GeneratedRestApplicationRegistration managementApplicationRegistration(@VertxConfig JsonObject config) {
+        return GeneratedRestApplicationRegistration.of(
+                ManagementApi.class,
+                "mgmt",
                 "/api/mgmt",
-                PropertyCondition.matchesAll(config, MANAGEMENT_APPLICATION_REGISTRATION_CONDITIONS),
-                ManagementApplication::new);
+                List.of(ExtraResource.class),
+                false,
+                "",
+                PropertyCondition.matchesAll(config, MANAGEMENT_APPLICATION_REGISTRATION_CONDITIONS));
     }
 }

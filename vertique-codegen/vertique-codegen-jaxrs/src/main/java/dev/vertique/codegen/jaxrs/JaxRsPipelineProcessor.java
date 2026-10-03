@@ -34,35 +34,37 @@ import javax.lang.model.type.TypeMirror;
 import javax.lang.model.util.Elements;
 
 /**
- * Unified JAX-RS compile-time pipeline processor (CG-010).
+ * Unified JAX-RS compile-time pipeline processor: this module's only annotation processor, which
+ * validates JAX-RS resources, emits their compile-time companions, and owns the Dagger binding of
+ * {@code @Path} resources ({@code vertique-codegen-dagger} binds none).
  *
- * <p>Replaces the CG-009 {@code JaxRsResourceProcessor} and absorbs the {@code @Path}-resource
- * binding work previously owned by {@code vertique-codegen-dagger}'s {@code PathResourceCollector}.
- * Registered via {@code META-INF/services/javax.annotation.processing.Processor}; consumers add
- * {@code vertique-codegen-jaxrs} to {@code annotationProcessorPaths} (already required by
- * CG-009).
+ * <p>Registered via {@code META-INF/services/javax.annotation.processing.Processor}; consumers add
+ * {@code vertique-codegen-jaxrs} to {@code annotationProcessorPaths}.
  *
  * <p>The processor runs in four logical steps per build:
  * <ol>
  *   <li><strong>Discover</strong> — {@link JaxRsCandidateScanner} walks
  *       {@link RoundEnvironment#getRootElements()} and collects concrete classes with an
  *       effective {@code @Path} (direct or via a transitively implemented interface).
- *       {@link JaxRsApplicationScanner} separately walks the same root elements for concrete
- *       {@code jakarta.ws.rs.core.Application} subtypes, top-level or static nested at any
- *       depth.</li>
+ *       {@link RestApplicationScanner} walks the same root elements for {@code @RestApplication}
+ *       declarations, top-level or nested at any depth, and {@link JaxRsApplicationScanner} walks
+ *       them for concrete {@code jakarta.ws.rs.core.Application} subclasses, which are never
+ *       registered and each get one warning naming them.</li>
  *   <li><strong>Resolve</strong> — {@link EffectiveJaxRsContractResolver} builds the
  *       {@link EffectiveResourceContract} for each candidate using the precedence rule:
  *       direct annotations → superclass chain → BFS interfaces.</li>
  *   <li><strong>Validate</strong> — five validators run against each resource contract;
- *       {@link ApplicationAnnotationValidator} checks every eligible application's annotation scope
- *       against its allow list right after {@link JaxRsApplicationScanner#scan}; then
- *       {@link JaxRsApplicationScanner#validate} checks every eligible application's construction,
- *       accessibility, and required {@code @ApplicationPath} (via {@link ApplicationPathGrammar}).
- *       Both application checks run regardless of the auto-wire setting.</li>
+ *       {@link ApplicationAnnotationValidator} checks every {@code @RestApplication} declaration's
+ *       annotations, and its superinterfaces', against the declaration allow list, and its
+ *       {@code @ApiDocs} against the documentation access rules; and
+ *       {@link RestApplicationScanner#validate} checks every declaration's name, path, membership,
+ *       listed resources, and accessibility, and the compilation unit's unique names and sole
+ *       discovery declaration. All declaration checks run regardless of the auto-wire setting.</li>
  *   <li><strong>Emit</strong> — four emitters fire per build:
  *       {@link dev.vertique.codegen.jaxrs.processor.emit.GeneratedJaxRsResourcesModuleEmitter} writes the
  *       Dagger DI module — the presence-gated resource bindings, the lazy resource catalog, and the
- *       validated application registrations — only when auto-wiring is enabled;
+ *       native registrations of the valid {@code @RestApplication} declarations — only when
+ *       auto-wiring is enabled;
  *       {@link dev.vertique.codegen.jaxrs.processor.emit.JaxRsDescriptorEmitter} writes a per-resource
  *       {@code _JaxRsDescriptor};
  *       {@link dev.vertique.codegen.jaxrs.processor.emit.BeanParamModelEmitter} writes a per-bean
@@ -79,23 +81,27 @@ import javax.lang.model.util.Elements;
  * are not annotated {@link dev.vertique.codegen.NoAutoWire}).
  *
  * <p><strong>Module-writing condition and package resolution.</strong> The generated module is
- * written when the unit has at least one DI-eligible resource or at least one eligible,
- * successfully validated application. Its package is resolved from the resources when the unit has
- * any, and from the applications only in an applications-only unit, so adding an
- * {@code Application} never moves an existing module.
+ * written when the unit has at least one DI-eligible resource or at least one valid
+ * {@code @RestApplication} declaration. Its package is resolved from the resources when the unit
+ * has any, and otherwise from the declarations, so adding a declaration never moves an existing
+ * module. An {@code Application} subclass never counts toward either.
  *
  * <p><strong>Single-shot emission:</strong> an {@code emitted} flag prevents re-emission on later
  * Dagger-triggered rounds. This mirrors {@code AutoWireProcessor}'s multi-round guard.
  *
  * <p><strong>Auto-wire kill switch:</strong> passing {@code -Avertique.codegen.autoWire=false}
- * suppresses DI module emission; validation still runs, including every eligible application's
- * annotation allow list, construction, accessibility, and required {@code @ApplicationPath}. One
- * warning per eligible, non-{@code @NoAutoWire} application then names it and states that the
- * default {@code @JaxRsResources} mount is used instead. Because no module is written in this mode, an
- * unresolvable package (origins spanning disjoint packages with no common prefix) is never a
- * compile error here, unlike when auto-wiring is enabled; validation still runs against every
- * eligible application, treating the candidate, its enclosing types, and its constructor as
- * reachable only if {@code public} when no package could be determined.
+ * suppresses DI module emission; validation still runs, including every {@code @RestApplication}
+ * declaration's checks, and one warning per non-{@code @NoAutoWire} declaration names it and
+ * states that it is not registered. The {@code Application} subclass warning is the same in this
+ * mode. Because no module is written in this mode, an unresolvable package (origins spanning
+ * disjoint packages with no common prefix) is never a compile error here, unlike when auto-wiring
+ * is enabled; validation still runs against every declaration, treating each checked type and its
+ * enclosing types as reachable only if {@code public} when no package could be determined.
+ *
+ * <p><strong>{@code @NoAutoWire}:</strong> a {@code @RestApplication} declaration annotated
+ * {@code @NoAutoWire} is inert: it gets one warning naming it and is neither registered nor
+ * validated, and it does not count toward the compilation unit's name and discovery checks. An
+ * {@code Application} subclass annotated {@code @NoAutoWire} gets no diagnostic.
  *
  * <p>{@code @SupportedAnnotationTypes("*")} is required for the dep-JAR-interface case where
  * {@code @Path} lives on an interface in a dependency JAR and never appears in the current round's
@@ -153,8 +159,7 @@ public final class JaxRsPipelineProcessor extends AbstractProcessor {
      * {@link EffectiveJaxRsContractResolver}, all five resource-contract validators (including
      * {@link dev.vertique.codegen.jaxrs.processor.validate.ContextParamValidator}), the
      * {@link ApplicationAnnotationValidator}, the {@link GeneratedJaxRsResourcesModuleEmitter}, the
-     * {@link PackageResolver} it shares with {@link JaxRsApplicationScanner}'s validation, the
-     * {@link JaxRsDescriptorEmitter}, the {@link BeanParamModelEmitter}, the
+     * {@link PackageResolver}, the {@link JaxRsDescriptorEmitter}, the {@link BeanParamModelEmitter}, the
      * {@link ExecutionPlanEmitter}, and reads the {@code vertique.codegen.autoWire} processor
      * option.
      *
@@ -199,16 +204,17 @@ public final class JaxRsPipelineProcessor extends AbstractProcessor {
      * so validation errors are always reported. Step 4d runs before 4b so that the descriptor can
      * reference the emitted plan class names in its {@code describe()} body.
      *
-     * <p>Within step 4a, {@link JaxRsApplicationScanner#scan} runs first and returns the eligible
-     * applications (already excluding any {@code @NoAutoWire} class, which gets only its warning);
-     * {@link ApplicationAnnotationValidator} then checks every eligible application's annotation
-     * scope against its allow list, without filtering the list; and
-     * {@link JaxRsApplicationScanner#validate} checks the same list's construction, accessibility,
-     * and required {@code @ApplicationPath}. Every eligible application's diagnostics (the
-     * registration note, the {@code autoWire=false} warning, the allow-list errors, and the
-     * construction, accessibility, and required-annotation errors) are reported regardless of the
-     * auto-wire setting; only the module write itself is skipped when
-     * {@code -Avertique.codegen.autoWire=false} is set.
+     * <p>Within step 4a, {@link JaxRsApplicationScanner#scan} first reports the warning for every
+     * concrete {@code Application} subclass not annotated {@code @NoAutoWire}.
+     * {@link RestApplicationScanner#scan} then returns the {@code @RestApplication} declarations
+     * (excluding any {@code @NoAutoWire} declaration, which gets only its warning, and reporting
+     * any annotated type that is not an interface); {@link ApplicationAnnotationValidator} checks
+     * their annotations and {@code @ApiDocs}, and returns the declarations that failed; and
+     * {@link RestApplicationScanner#validate} checks every declaration once the module package is
+     * resolved. A declaration failing either set of checks is not registered. Every diagnostic (the
+     * subclass warnings, the {@code autoWire=false} warnings, the allow-list and {@code @ApiDocs}
+     * errors, and the declaration errors) is reported regardless of the auto-wire setting; only the
+     * module write itself is skipped when {@code -Avertique.codegen.autoWire=false} is set.
      *
      * @param annotations the annotation types present in the round (not used; this processor
      *                    uses {@code @SupportedAnnotationTypes("*")} and scans root elements)
@@ -333,9 +339,10 @@ public final class JaxRsPipelineProcessor extends AbstractProcessor {
 
         // --- Step 4a: DI module emission ---
         Set<TypeElement> diCandidates = JaxRsCandidateScanner.filterDiCandidates(semanticCandidates, elements);
-        List<TypeElement> eligibleApplications = JaxRsApplicationScanner.scan(roundEnv, ctx);
-        applicationAnnotations.validate(eligibleApplications);
-        emitModule(diCandidates, eligibleApplications);
+        JaxRsApplicationScanner.scan(roundEnv, ctx);
+        List<TypeElement> declarations = RestApplicationScanner.scan(roundEnv, ctx);
+        Set<TypeElement> rejectedDeclarations = applicationAnnotations.validate(declarations);
+        emitModule(diCandidates, declarations, rejectedDeclarations);
 
         emitted = true;
         return false;
@@ -343,27 +350,39 @@ public final class JaxRsPipelineProcessor extends AbstractProcessor {
 
     /**
      * Resolves the generated module's package and writes it when the unit has at least one
-     * DI-eligible resource or at least one eligible application to register.
+     * DI-eligible resource or valid {@code @RestApplication} declaration to register.
      *
-     * <p>Validating every eligible application's construction, accessibility, and required
-     * {@code @ApplicationPath} happens here too, regardless of {@code autoWireDisabled} — only the
-     * module WRITE itself is skipped when {@code -Avertique.codegen.autoWire=false} is set,
-     * mirroring the pre-existing resource-binding behaviour.
+     * <p>Every declaration's own checks happen here too, regardless of {@code autoWireDisabled} —
+     * only the module WRITE itself is skipped when {@code -Avertique.codegen.autoWire=false} is set,
+     * mirroring the resource-binding behaviour. A declaration in {@code rejectedDeclarations}, which
+     * failed the annotation checks, is validated like any other but never registered.
      *
-     * <p>When auto-wiring is enabled, the package is resolved through {@link PackageResolver}
-     * exactly as before: disjoint origin packages with no common prefix and no override are a
-     * compile error, because a module must be written. When auto-wiring is disabled, no module is
-     * written, so the package is resolved without that failure mode instead (see
-     * {@link #resolvePackageWithoutFailing(List)}); validation still runs against whatever package
-     * (possibly none) that resolves to.
+     * <p>The package origins are the DI-eligible resources when the unit has any, and otherwise the
+     * declarations.
+     *
+     * <p>When auto-wiring is enabled, the package is resolved through {@link PackageResolver}:
+     * disjoint origin packages with no common prefix and no override are a compile error, because
+     * a module must be written. When auto-wiring is disabled, no module is written, so the package is
+     * resolved without that failure mode instead (see {@link #resolvePackageWithoutFailing(List)});
+     * validation still runs against whatever package (possibly none) that resolves to.
+     *
+     * @param diCandidates         the DI-eligible resources
+     * @param declarations         every {@code @RestApplication} declaration the scan returned
+     * @param rejectedDeclarations the declarations that failed the annotation checks
      */
-    private void emitModule(Set<TypeElement> diCandidates, List<TypeElement> eligibleApplications) {
-        boolean needsModulePackage = !eligibleApplications.isEmpty() || (!autoWireDisabled && !diCandidates.isEmpty());
+    private void emitModule(
+            Set<TypeElement> diCandidates, List<TypeElement> declarations, Set<TypeElement> rejectedDeclarations) {
+        boolean needsModulePackage = !declarations.isEmpty() || (!autoWireDisabled && !diCandidates.isEmpty());
         if (!needsModulePackage) {
             return;
         }
 
-        List<TypeElement> packageOrigins = diCandidates.isEmpty() ? eligibleApplications : List.copyOf(diCandidates);
+        List<TypeElement> packageOrigins = new ArrayList<>();
+        if (diCandidates.isEmpty()) {
+            packageOrigins.addAll(declarations);
+        } else {
+            packageOrigins.addAll(diCandidates);
+        }
         String modulePackage;
         if (autoWireDisabled) {
             modulePackage = resolvePackageWithoutFailing(packageOrigins);
@@ -374,11 +393,13 @@ public final class JaxRsPipelineProcessor extends AbstractProcessor {
             }
         }
 
-        List<JaxRsApplicationScanner.Registration> registrations = eligibleApplications.isEmpty()
+        List<RestApplicationScanner.Registration> declared = declarations.isEmpty()
                 ? List.of()
-                : JaxRsApplicationScanner.validate(eligibleApplications, modulePackage, autoWireDisabled, ctx);
-        if (!autoWireDisabled && (!diCandidates.isEmpty() || !registrations.isEmpty())) {
-            moduleEmitter.emit(modulePackage, diCandidates, registrations);
+                : RestApplicationScanner.validate(declarations, modulePackage, autoWireDisabled, resolver, ctx).stream()
+                        .filter(registration -> !rejectedDeclarations.contains(registration.type()))
+                        .toList();
+        if (!autoWireDisabled && (!diCandidates.isEmpty() || !declared.isEmpty())) {
+            moduleEmitter.emit(modulePackage, diCandidates, declared);
         }
     }
 
@@ -389,8 +410,8 @@ public final class JaxRsPipelineProcessor extends AbstractProcessor {
      * override when set; otherwise the origins' longest common package prefix, computed locally,
      * when they share one; otherwise {@code null}.
      *
-     * @param origins the DI-eligible resources, or (in an applications-only unit) the eligible
-     *                applications; must not be {@code null}
+     * @param origins the DI-eligible resources, or (in a unit without them) the
+     *                {@code @RestApplication} declarations; must not be {@code null}
      * @return the resolved package, or {@code null} when none could be determined
      */
     private String resolvePackageWithoutFailing(List<TypeElement> origins) {

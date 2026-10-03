@@ -384,12 +384,15 @@ class CreatorAndCaseInsensitivityDescriptionTest {
     @DisplayName("A reserved name on a case-insensitive type is excluded by a folded pattern, not an enum")
     void reservedNameOnCaseInsensitiveTypeUsesAFoldedPattern() {
         JsonNode document = inputDocument(CI2WithReservedName.class);
+        // The reserved-name refusal is the second entry of propertyNames' allOf, beside the non-ASCII
+        // refusal in the first.
+        JsonNode reservedNameRefusal =
+                document.path("propertyNames").path("allOf").path(1);
 
         assertFalse(
-                document.path("propertyNames").path("not").has("enum"),
+                reservedNameRefusal.path("not").has("enum"),
                 "a case-insensitive type must reserve by pattern, not enum; document: " + document);
-        String pattern =
-                document.path("propertyNames").path("not").path("pattern").asText(null);
+        String pattern = reservedNameRefusal.path("not").path("pattern").asText(null);
         assertNotNull(pattern, "document: " + document);
         assertTrue(
                 Pattern.compile(pattern).matcher("SECRETKEY").matches(),
@@ -453,7 +456,7 @@ class CreatorAndCaseInsensitivityDescriptionTest {
             Pattern pattern = Pattern.compile(entry.getKey());
             if (pattern.matcher(canonicalName.toUpperCase(java.util.Locale.ROOT))
                             .matches()
-                    && pattern.matcher(canonicalName).matches()) {
+                    && !pattern.matcher(canonicalName).matches()) {
                 assertEquals(
                         expectedSchemaText,
                         entry.getValue().toString(),
@@ -463,7 +466,8 @@ class CreatorAndCaseInsensitivityDescriptionTest {
         }
         assertTrue(
                 found,
-                "no patternProperties entry matched every casing of \"" + canonicalName + "\"; document: " + document);
+                "no patternProperties entry matched the upper-case spelling but not the exact spelling of \""
+                        + canonicalName + "\"; document: " + document);
     }
 
     // --- Fixtures: Change 1 ---

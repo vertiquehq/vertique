@@ -13,7 +13,7 @@ import com.palantir.javapoet.ParameterizedTypeName;
 import dev.vertique.codegen.CodegenContext;
 import dev.vertique.codegen.Conditions;
 import dev.vertique.codegen.dagger.DaggerModuleWriter;
-import dev.vertique.codegen.jaxrs.JaxRsApplicationScanner;
+import dev.vertique.codegen.jaxrs.RestApplicationScanner;
 import java.beans.Introspector;
 import java.io.IOException;
 import java.util.ArrayList;
@@ -27,20 +27,21 @@ import javax.lang.model.element.TypeElement;
 /**
  * Emitter that writes each compilation unit's {@code GeneratedJaxRsResourcesModule}: the
  * presence-gated legacy {@code @JaxRsResources} binding and the lazy catalog entry for every
- * DI-eligible JAX-RS resource, and the application registration for every eligible
- * {@code jakarta.ws.rs.core.Application} subtype.
+ * DI-eligible JAX-RS resource, and the native registration for every registered
+ * {@code @RestApplication} declaration.
  *
  * <p>For each DI-eligible resource {@code R}, two bindings are produced, both feeding the
  * multibinding sets declared by {@code RestModule}:
  *
  * <ul>
- *   <li><strong>Presence-gated legacy binding</strong> — the existing
- *       {@code @Provides @ElementsIntoSet @JaxRsResources} method also takes the generated
- *       application-registration set and contributes {@code R} only when that set is empty (no
- *       declared applications — zero-declaration mode) and {@code R}'s conditions match: <pre>{@code
+ *   <li><strong>Presence-gated legacy binding</strong> — the
+ *       {@code @Provides @ElementsIntoSet @JaxRsResources} method also takes the
+ *       {@code @RestApplication} registration set and contributes {@code R} only when that set is
+ *       empty (no declared applications — zero-declaration mode) and {@code R}'s conditions match:
+ *       <pre>{@code
  *     @Provides @ElementsIntoSet @JaxRsResources
  *     static Set<Object> userResourceBinding(@VertxConfig JsonObject config,
- *             Set<GeneratedJaxRsApplicationRegistration> applications, Provider<UserResource> provider) {
+ *             Set<GeneratedRestApplicationRegistration> applications, Provider<UserResource> provider) {
  *         return applications.isEmpty() ? Set.of(provider.get()) : Set.of();
  *     }
  *     }</pre></li>
@@ -64,33 +65,40 @@ import javax.lang.model.element.TypeElement;
  *
  *     @Provides @ElementsIntoSet @JaxRsResources
  *     static Set<Object> adminResourceBinding(@VertxConfig JsonObject config,
- *             Set<GeneratedJaxRsApplicationRegistration> applications, Provider<AdminResource> provider) {
+ *             Set<GeneratedRestApplicationRegistration> applications, Provider<AdminResource> provider) {
  *         return applications.isEmpty() && PropertyCondition.matchesAll(config, ADMIN_RESOURCE_BINDING_CONDITIONS)
  *                 ? Set.of(provider.get()) : Set.of();
  *     }
  * }</pre>
  *
- * <p>For each eligible application {@code A} (discovered and validated by
- * {@link JaxRsApplicationScanner}), one {@code @Provides @IntoSet GeneratedJaxRsApplicationRegistration}
- * method is emitted. It takes a {@code Provider<A>} when {@code A} is constructed through its
- * {@code @Inject} constructor, or no {@code Provider} parameter (using {@code A::new} as the
- * factory) otherwise:
+ * <p>For each registered {@code @RestApplication} declaration {@code D} (discovered and validated
+ * by {@link RestApplicationScanner}), one {@code @Provides @IntoSet
+ * GeneratedRestApplicationRegistration} method is emitted. It takes only the
+ * {@code @VertxConfig JsonObject}, never a {@code Provider}, and never constructs {@code D}: the
+ * declaring interface is named by its class literal only. The listed resources appear in the order
+ * written (an empty list for a discovery declaration), the path is the normalized one, and
+ * {@code openapiPath} is carried as written. The activation argument is {@code true}, or
+ * {@code PropertyCondition.matchesAll(config, X_REGISTRATION_CONDITIONS)} when {@code D} carries
+ * {@code @ConditionalOnProperty} (single or repeated):
  * <pre>{@code
+ *     private static final PropertyCondition[] MGMT_API_REGISTRATION_CONDITIONS =
+ *             new PropertyCondition[] { new PropertyCondition("mgmt.enabled", "true", false) };
+ *
  *     @Provides @IntoSet
- *     static GeneratedJaxRsApplicationRegistration publicApplicationRegistration(
- *             @VertxConfig JsonObject config, Provider<PublicApplication> provider) {
- *         return GeneratedJaxRsApplicationRegistration.of(
- *                 PublicApplication.class, "/api/public", true, provider);
+ *     static GeneratedRestApplicationRegistration mgmtApiRegistration(@VertxConfig JsonObject config) {
+ *         return GeneratedRestApplicationRegistration.of(MgmtApi.class, "mgmt", "/api/mgmt",
+ *                 List.of(OrderResource.class), false, "",
+ *                 PropertyCondition.matchesAll(config, MGMT_API_REGISTRATION_CONDITIONS));
  *     }
  * }</pre>
  *
  * <p><strong>Method names.</strong> Every method is named by the decapitalized simple name of its
- * resource or application, plus {@code Binding}, {@code Entry}, or {@code Registration}. When two
- * eligible applications in one unit share a simple name, {@code _2}, {@code _3}, and so on are
- * appended, in the fully-qualified-name order {@link JaxRsApplicationScanner} already sorted them
- * in.
+ * resource or declaring interface, plus {@code Binding}, {@code Entry}, or {@code Registration}.
+ * The registration methods share one name counter per unit, named in the fully-qualified-name
+ * order {@link RestApplicationScanner} sorted the declarations in; a base name already used by an
+ * earlier registration method gets {@code _2}, {@code _3}, and so on.
  *
- * <p>When both {@code diCandidates} and {@code registrations} are empty, no module is written.
+ * <p>When {@code diCandidates} and {@code declarations} are both empty, no module is written.
  */
 public final class GeneratedJaxRsResourcesModuleEmitter {
 
@@ -107,8 +115,9 @@ public final class GeneratedJaxRsResourcesModuleEmitter {
     private static final ClassName VERTX_CONFIG = ClassName.get("dev.vertique.core", "VertxConfig");
     private static final ClassName JSON_OBJECT = ClassName.get("io.vertx.core.json", "JsonObject");
     private static final ClassName PROVIDER = ClassName.get("jakarta.inject", "Provider");
-    private static final ClassName APPLICATION_REGISTRATION =
-            ClassName.get("dev.vertique.rest.jaxrs.runtime", "GeneratedJaxRsApplicationRegistration");
+    private static final ClassName REST_APPLICATION_REGISTRATION =
+            ClassName.get("dev.vertique.rest.jaxrs.runtime", "GeneratedRestApplicationRegistration");
+    private static final ClassName LIST = ClassName.get("java.util", "List");
     private static final ClassName RESOURCE_ENTRY =
             ClassName.get("dev.vertique.rest.jaxrs.runtime", "GeneratedJaxRsResourceEntry");
 
@@ -131,25 +140,23 @@ public final class GeneratedJaxRsResourcesModuleEmitter {
 
     /**
      * Writes {@code GeneratedJaxRsResourcesModule} in {@code packageName} for the given
-     * DI-eligible resources and validated application registrations.
+     * DI-eligible resources and registered {@code @RestApplication} declarations.
      *
      * <p>The caller (the {@code JaxRsPipelineProcessor} pipeline) resolves {@code packageName}
-     * from the resources when the unit has any, and from the applications only in an
-     * applications-only unit, so adding an {@code Application} never moves an existing module.
-     * When both {@code diCandidates} and {@code registrations} are empty, this method returns
-     * immediately without writing anything.
+     * from the resources when the unit has any, and otherwise from the declarations, so adding a
+     * declaration never moves an existing module. When {@code diCandidates} and
+     * {@code declarations} are both empty, this method returns immediately without writing
+     * anything.
      *
-     * @param packageName   the generated module's resolved package; must not be {@code null} when
-     *                      either list is non-empty
-     * @param diCandidates  the set of DI-eligible resource type elements; must not be {@code null}
-     * @param registrations the validated application registrations, in fully-qualified-name
-     *                      order; must not be {@code null}
+     * @param packageName  the generated module's resolved package; must not be {@code null} when
+     *                     either collection is non-empty
+     * @param diCandidates the set of DI-eligible resource type elements; must not be {@code null}
+     * @param declarations the registered {@code @RestApplication} declarations, in
+     *                     fully-qualified-name order; must not be {@code null}
      */
     public void emit(
-            String packageName,
-            Set<TypeElement> diCandidates,
-            List<JaxRsApplicationScanner.Registration> registrations) {
-        if (diCandidates.isEmpty() && registrations.isEmpty()) {
+            String packageName, Set<TypeElement> diCandidates, List<RestApplicationScanner.Registration> declarations) {
+        if (diCandidates.isEmpty() && declarations.isEmpty()) {
             return;
         }
 
@@ -161,7 +168,7 @@ public final class GeneratedJaxRsResourcesModuleEmitter {
                 .addAnnotation(AnnotationSpec.builder(VERTX_CONFIG).build())
                 .build();
         ParameterSpec applicationsParam = ParameterSpec.builder(
-                        ParameterizedTypeName.get(SET, APPLICATION_REGISTRATION), "applications")
+                        ParameterizedTypeName.get(SET, REST_APPLICATION_REGISTRATION), "applications")
                 .build();
 
         for (TypeElement candidate : diCandidates) {
@@ -169,8 +176,8 @@ public final class GeneratedJaxRsResourcesModuleEmitter {
         }
 
         Map<String, Integer> usedRegistrationNames = new HashMap<>();
-        for (JaxRsApplicationScanner.Registration registration : registrations) {
-            emitApplicationRegistration(writer, conditions, configParam, registration, usedRegistrationNames);
+        for (RestApplicationScanner.Registration declaration : declarations) {
+            emitRestApplicationRegistration(writer, conditions, configParam, declaration, usedRegistrationNames);
         }
 
         JavaFile file = writer.build();
@@ -246,47 +253,52 @@ public final class GeneratedJaxRsResourcesModuleEmitter {
     }
 
     /**
-     * Emits one {@code @Provides @IntoSet GeneratedJaxRsApplicationRegistration} method for a
-     * validated application registration, appending {@code _2}, {@code _3}, and so on when its
-     * base method name collides with an earlier one in this unit.
+     * Emits one {@code @Provides @IntoSet GeneratedRestApplicationRegistration} method for a
+     * registered {@code @RestApplication} declaration, appending {@code _2}, {@code _3}, and so on
+     * when its base method name collides with an earlier registration method in this unit. The
+     * method takes only the {@code @VertxConfig JsonObject} and names the declaring interface by its
+     * class literal only.
      */
-    private void emitApplicationRegistration(
+    private void emitRestApplicationRegistration(
             DaggerModuleWriter writer,
             Conditions conditions,
             ParameterSpec configParam,
-            JaxRsApplicationScanner.Registration registration,
+            RestApplicationScanner.Registration declaration,
             Map<String, Integer> usedRegistrationNames) {
-        TypeElement applicationType = registration.type();
-        String methodName =
-                registrationMethodName(applicationType.getSimpleName().toString(), usedRegistrationNames);
-        ClassName appType = ClassName.get(applicationType);
-        List<Conditions.ConditionData> conditionData = conditions.read(applicationType);
+        TypeElement declaringType = declaration.type();
+        String methodName = registrationMethodName(declaringType.getSimpleName().toString(), usedRegistrationNames);
+        List<Conditions.ConditionData> conditionData = conditions.read(declaringType);
 
-        List<ParameterSpec> params = new ArrayList<>();
-        params.add(configParam);
+        List<CodeBlock> resourceLiterals = new ArrayList<>();
+        for (TypeElement resource : declaration.resources()) {
+            resourceLiterals.add(CodeBlock.of("$T.class", ClassName.get(resource)));
+        }
 
-        CodeBlock.Builder body = CodeBlock.builder();
-        body.add("return $T.of($T.class, $S, ", APPLICATION_REGISTRATION, appType, registration.normalizedPath());
+        CodeBlock active;
         if (conditionData.isEmpty()) {
-            body.add("true, ");
+            active = CodeBlock.of("true");
         } else {
             String constantName = Conditions.constantName(methodName);
             writer.addStaticFinalField(
                     constantName,
                     ArrayTypeName.of(Conditions.PROPERTY_CONDITION),
                     Conditions.arrayInitializer(conditionData));
-            body.add("$T.matchesAll(config, $L), ", Conditions.PROPERTY_CONDITION, constantName);
-        }
-        if (registration.constructedByProvider()) {
-            params.add(ParameterSpec.builder(ParameterizedTypeName.get(PROVIDER, appType), "provider")
-                    .build());
-            body.add("provider);\n");
-        } else {
-            body.add("$T::new);\n", appType);
+            active = CodeBlock.of("$T.matchesAll(config, $L)", Conditions.PROPERTY_CONDITION, constantName);
         }
 
-        writer.addIntoSetProvidesWithBody(
-                APPLICATION_REGISTRATION, methodName, body.build(), params.toArray(new ParameterSpec[0]));
+        CodeBlock body = CodeBlock.of(
+                "return $T.of($T.class, $S, $S, $T.of($L), $L, $S, $L);\n",
+                REST_APPLICATION_REGISTRATION,
+                ClassName.get(declaringType),
+                declaration.name(),
+                declaration.normalizedPath(),
+                LIST,
+                CodeBlock.join(resourceLiterals, ", "),
+                declaration.discover(),
+                declaration.openapiPath(),
+                active);
+
+        writer.addIntoSetProvidesWithBody(REST_APPLICATION_REGISTRATION, methodName, body, configParam);
     }
 
     /**
@@ -300,7 +312,7 @@ public final class GeneratedJaxRsResourcesModuleEmitter {
     }
 
     /**
-     * Derives a camelCase method name from a resource or application type's simple class name by
+     * Derives a camelCase method name from a resource or declaring interface's simple class name by
      * decapitalizing it and appending {@code suffix}. Acronym-leading names keep their casing;
      * reserved words are suffixed with {@code _}.
      */
@@ -310,9 +322,9 @@ public final class GeneratedJaxRsResourcesModuleEmitter {
     }
 
     /**
-     * Derives the {@code Registration}-suffixed method name for an application's simple class
+     * Derives the {@code Registration}-suffixed method name for a declaring interface's simple class
      * name, appending {@code _2}, {@code _3}, and so on when {@code usedBaseNames} shows the base
-     * name was already used by an earlier application in this unit.
+     * name was already used by an earlier registration method in this unit.
      */
     private static String registrationMethodName(String simpleName, Map<String, Integer> usedBaseNames) {
         String base = suffixedMethodName(simpleName, "Registration");

@@ -17,7 +17,7 @@ import java.util.Map;
 /**
  * Support bindings {@link LegacyComponent} needs: a {@link ConfigParser} that deserializes each
  * config section through a private Jackson mapper, and the unsecured {@link SecurityPolicyValidator}
- * stand-in {@code JaxRsRouterMount.Factory} requires. Mirrors T002's
+ * stand-in {@code JaxRsRouterMount.Factory} requires. Mirrors the
  * {@code application.ApplicationTestSupportModule}, the reference shape for a bare component.
  */
 @Module
@@ -59,6 +59,9 @@ final class LegacySupportModule {
 
             @Override
             public <T> List<T> parseKeyedObject(JsonObject section, String identityProp, Class<T> elementType) {
+                if (section == null || section.isEmpty()) {
+                    return List.of();
+                }
                 throw new UnsupportedOperationException("not needed by this fixture");
             }
 

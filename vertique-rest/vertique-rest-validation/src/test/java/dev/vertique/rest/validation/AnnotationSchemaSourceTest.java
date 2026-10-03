@@ -20,6 +20,7 @@ import dev.vertique.core.json.JsonProfileId;
 import dev.vertique.core.json.JsonSchemaTypeOverride;
 import dev.vertique.json.DefaultJsonMapperProfileRegistry;
 import dev.vertique.json.JsonMapperProfiles;
+import dev.vertique.json.schema.CanonicalSchema;
 import dev.vertique.json.schema.JsonSchemaGenerationException;
 import dev.vertique.rest.core.RestConfigurationException;
 import dev.vertique.rest.jaxrs.routing.BodyDescriptor;
@@ -429,7 +430,7 @@ class AnnotationSchemaSourceTest {
         // per-call counting this proof has always asserted is unchanged.
         AnnotationSchemaSource source = new AnnotationSchemaSource() {
             @Override
-            protected JsonNode generateBodySchema(Type type, JsonMapperProfile profile) {
+            protected CanonicalSchema generateBodySchema(Type type, JsonMapperProfile profile) {
                 generateCalls.incrementAndGet();
                 return super.generateBodySchema(type, profile);
             }
@@ -583,7 +584,7 @@ class AnnotationSchemaSourceTest {
         }
 
         @Override
-        protected JsonNode generateBodySchema(Type type, JsonMapperProfile profile) {
+        protected CanonicalSchema generateBodySchema(Type type, JsonMapperProfile profile) {
             throw failure;
         }
     }
@@ -598,7 +599,7 @@ class AnnotationSchemaSourceTest {
         }
 
         @Override
-        protected JsonNode generateBodySchema(Type type, JsonMapperProfile profile) {
+        protected CanonicalSchema generateBodySchema(Type type, JsonMapperProfile profile) {
             throw failure;
         }
     }
@@ -748,18 +749,23 @@ class AnnotationSchemaSourceTest {
     }
 
     /**
-     * Captures the node the protected two-argument seam produced for the most recent body synthesis,
-     * so a proof can assert on the seam's own document rather than on the vertx-json bridge's
-     * re-rendering of it.
+     * Captures the node parsed from the canonical document the protected two-argument seam produced
+     * for the most recent body synthesis, so a proof can assert on the seam's own document rather than
+     * on the vertx-json bridge's re-rendering of it.
      */
     private static final class CapturingSource extends AnnotationSchemaSource {
 
         private JsonNode lastDocument;
 
         @Override
-        protected JsonNode generateBodySchema(Type type, JsonMapperProfile profile) {
-            lastDocument = super.generateBodySchema(type, profile);
-            return lastDocument;
+        protected CanonicalSchema generateBodySchema(Type type, JsonMapperProfile profile) {
+            CanonicalSchema generated = super.generateBodySchema(type, profile);
+            try {
+                lastDocument = DOCUMENT_READER.readTree(generated.json());
+            } catch (JsonProcessingException unreadable) {
+                throw new IllegalStateException("the seam's canonical document is not readable JSON", unreadable);
+            }
+            return generated;
         }
 
         /** Synthesizes {@code fixture} under {@code profile} and returns the document the seam produced. */
@@ -777,7 +783,7 @@ class AnnotationSchemaSourceTest {
         private final AtomicInteger generateCalls = new AtomicInteger();
 
         @Override
-        protected JsonNode generateBodySchema(Type type, JsonMapperProfile profile) {
+        protected CanonicalSchema generateBodySchema(Type type, JsonMapperProfile profile) {
             generateCalls.incrementAndGet();
             return super.generateBodySchema(type, profile);
         }

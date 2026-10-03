@@ -3,12 +3,11 @@
 
 package dev.vertique.rest.validation;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.vertique.core.json.JsonMapperProfile;
 import dev.vertique.json.schema.AnnotationJsonSchemaGenerator;
+import dev.vertique.json.schema.CanonicalSchema;
 import dev.vertique.json.schema.JsonSchemaGenerationException;
+import dev.vertique.json.schema.RedactionManifest;
 import dev.vertique.rest.core.RestConfigurationException;
 import dev.vertique.rest.jaxrs.routing.BodyDescriptor;
 import dev.vertique.rest.jaxrs.routing.JaxRsOperationDescriptor;
@@ -48,8 +47,10 @@ import java.util.concurrent.atomic.AtomicInteger;
  *       profile</em> with {@link AnnotationJsonSchemaGenerator#forInputProfile(JsonMapperProfile)
  *       forInputProfile}, which produces a complete object schema (nested objects, required fields,
  *       constraints) with canonically ordered object keys and the swagger sentinel already removed.
- *       The canonical document is bridged to vertx-json-schema JSON via {@link JsonObject}. There is
- *       no profile-agnostic path and no profile-selection rule in this module: the profile arrives
+ *       The canonical document is bridged to vertx-json-schema JSON via {@link JsonObject}, and the
+ *       {@link RedactionManifest} the generator bound to that document is attached to the body
+ *       schema as its opaque provenance ({@link OperationSchemas#bodySchemaProvenance(Class)}). There
+ *       is no profile-agnostic path and no profile-selection rule in this module: the profile arrives
  *       as an argument, already resolved by the registrar.
  *   <li><strong>Parameters</strong> — the generator introspects types and fields, not loose method
  *       parameters, so each {@link ParamDescriptor} is mapped to a small {@link JsonObject} from its
@@ -60,6 +61,12 @@ import java.util.concurrent.atomic.AtomicInteger;
  *
  * <p>The swagger-2 module emits a {@code "default": "##default"} sentinel for unset annotation
  * defaults; that sentinel is stripped recursively from every produced schema.
+ *
+ * <p>Parameter schemas carry no provenance. This source attaches the manifest without checking it
+ * and never fails because of it: a manifest that no longer matches the body it travels with —
+ * because an overriding subclass substituted the document, or the body was later edited or
+ * replaced — surfaces only where a consumer checks the pairing with
+ * {@link RedactionManifest#matches(String)}, never here and never at the validation gate.
  *
  * <p>Schemas are synthesized at route registration, so a profile the generator cannot be built for,
  * or a body type it cannot represent, fails router construction with a
@@ -93,9 +100,6 @@ public class AnnotationSchemaSource implements OperationSchemaSource {
 
     /** Swagger-2 sentinel emitted for an unset {@code @Schema} default value. */
     private static final String DEFAULT_SENTINEL = "##default";
-
-    /** Reads the generator's canonical document back into a {@link JsonNode} for the protected seam. */
-    private static final ObjectMapper CANONICAL_READER = new ObjectMapper();
 
     /** The longest operation identity this class embeds in a diagnostic, in UTF-16 code units. */
     private static final int MAX_OPERATION_IDENTITY_LENGTH = 256;
@@ -185,7 +189,7 @@ public class AnnotationSchemaSource implements OperationSchemaSource {
     private OperationSchemas synthesize(JaxRsOperationDescriptor op, JsonMapperProfile profile) {
         OperationSchemas.Builder schemas = OperationSchemas.builder();
 
-        op.body().ifPresent(body -> schemas.bodySchema(synthesizeBody(op.operationId(), body, profile)));
+        op.body().ifPresent(body -> synthesizeBody(op.operationId(), body, profile, schemas));
 
         for (ParamDescriptor param : op.parameters()) {
             schemas.parameterSchema(param.location(), param.name(), synthesizeParam(param));
@@ -197,7 +201,8 @@ public class AnnotationSchemaSource implements OperationSchemaSource {
     // --- Body path (profiled generator) ---
 
     /**
-     * Generates the body schema through the profile's generator and strips the swagger-2 sentinel. The
+     * Generates the body schema through the profile's generator, strips the swagger-2 sentinel, and
+     * sets it on {@code schemas} with the generator's {@link RedactionManifest} as its provenance. The
      * full generic type is passed when present (e.g. {@code List<MyDto>}) so the element type is
      * resolved and an array-of-{@code MyDto} schema is produced rather than a raw-{@code List}
      * schema; otherwise the raw class is used.
@@ -209,19 +214,20 @@ public class AnnotationSchemaSource implements OperationSchemaSource {
      * @param operationId the operation whose body is being synthesized, named in a failure
      * @param body        the body descriptor whose type (generic when available) drives generation
      * @param profile     the operation's effective JSON profile
-     * @return the body schema as vertx-json-schema JSON
+     * @param schemas     the builder receiving the body schema and its manifest
      * @throws RestConfigurationException if the profile's generator cannot be built, or the body type
      *     cannot be represented, or generation fails
      */
-    private JsonObject synthesizeBody(String operationId, BodyDescriptor body, JsonMapperProfile profile) {
+    private void synthesizeBody(
+            String operationId, BodyDescriptor body, JsonMapperProfile profile, OperationSchemas.Builder schemas) {
         Type type = body.genericType() != null ? body.genericType() : body.type();
         try {
-            JsonNode node = generateBodySchema(type, profile);
-            JsonObject schema = new JsonObject(node.toString());
+            CanonicalSchema generated = generateBodySchema(type, profile);
+            JsonObject schema = new JsonObject(generated.json());
             // Idempotent for the shared generator (which already removes the sentinel); retained because a
-            // subclass may override the seam and supply a node the generator never canonicalized.
+            // subclass may override the seam and supply a document the generator never canonicalized.
             stripDefaultSentinel(schema);
-            return schema;
+            schemas.bodySchema(schema, generated.redactionManifest());
         } catch (RestConfigurationException alreadyNamed) {
             throw alreadyNamed;
         } catch (RuntimeException failed) {
@@ -235,25 +241,24 @@ public class AnnotationSchemaSource implements OperationSchemaSource {
      * Protected and overridable so tests and subclasses can count or substitute generation
      * invocations; it is the single generation path and is invoked exactly once per body synthesis.
      *
-     * <p><strong>INTERNAL.</strong> This seam replaces the former {@code generateBodySchema(Type)} and
-     * sits outside this module's compatibility promise: it may change or disappear without notice.
-     * Applications contribute an {@link OperationSchemaSource} instead of subclassing this class.
+     * <p>The caller builds the body schema from {@link CanonicalSchema#json()}, strips the swagger-2
+     * sentinel from it, and attaches {@link CanonicalSchema#redactionManifest()} as the body's
+     * provenance without checking it. An override that returns a document other than the one its
+     * manifest was bound to therefore yields a body whose manifest no longer matches it; that is never
+     * a failure of this source.
+     *
+     * <p><strong>INTERNAL.</strong> This seam sits outside this module's compatibility promise: it may
+     * change or disappear without notice. Applications contribute an {@link OperationSchemaSource}
+     * instead of subclassing this class.
      *
      * @param type    the body type to generate a schema for
      * @param profile the operation's effective JSON profile, whose input-direction generator is used
-     * @return the generated schema node, parsed from the generator's canonical document
+     * @return the generator's canonical document and the redaction manifest it bound to that document
      * @throws JsonSchemaGenerationException if the profile yields no generator, the body type cannot
      *     be represented, or generation fails
      */
-    protected JsonNode generateBodySchema(Type type, JsonMapperProfile profile) {
-        String canonical = generatorFor(profile).generateCanonical(type);
-        try {
-            return CANONICAL_READER.readTree(canonical);
-        } catch (JsonProcessingException unreadable) {
-            // The generator guarantees a valid canonical JSON document, so this is unreachable short
-            // of a programming error; the message stays value-free.
-            throw new IllegalStateException("the generated canonical JSON Schema document is unreadable", unreadable);
-        }
+    protected CanonicalSchema generateBodySchema(Type type, JsonMapperProfile profile) {
+        return generatorFor(profile).describe(type);
     }
 
     // --- Per-profile generator cache ---

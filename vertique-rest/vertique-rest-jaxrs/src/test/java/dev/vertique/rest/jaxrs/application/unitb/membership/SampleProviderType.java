@@ -7,8 +7,9 @@ import jakarta.ws.rs.ext.Provider;
 
 /**
  * TP-005 case 2's listed-only type: a class annotated {@code @jakarta.ws.rs.ext.Provider}. Listed
- * in {@link MembershipCaseApplication#classesSupplier} but never Dagger-bound; C-COMPOSE step 6.2
- * rejects it as an unsupported provider before any catalog or manual match is attempted.
+ * by {@link MembershipViolationRegistrations#providerCaseRegistration} but never Dagger-bound;
+ * C-COMPOSE step 6.2 rejects it as an unsupported provider before any catalog or manual match is
+ * attempted.
  */
 @Provider
 public class SampleProviderType {

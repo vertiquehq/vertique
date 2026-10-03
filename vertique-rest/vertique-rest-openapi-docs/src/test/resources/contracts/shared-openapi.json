@@ -1,0 +1,30 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Shared alpha and beta contract",
+    "version": "1.0.0",
+    "description": "One contract for two applications zq7."
+  },
+  "paths": {
+    "/api/alpha/a": {
+      "get": {
+        "operationId": "listA",
+        "responses": {
+          "200": {
+            "description": "The alpha list"
+          }
+        }
+      }
+    },
+    "/api/beta/b": {
+      "get": {
+        "operationId": "listB",
+        "responses": {
+          "200": {
+            "description": "The beta list"
+          }
+        }
+      }
+    }
+  }
+}

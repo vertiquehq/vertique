@@ -3,8 +3,8 @@
 
 import groovy.xml.XmlSlurper
 
-// T003 TP-005 and TP-006: proves the nested reactor build succeeded by reading each nested module's
-// own surefire report. A missing report — for example, `app`'s report when the baseline processor
+// Proves the nested reactor build succeeded by reading each nested module's
+// own surefire report. A missing report — for example, `app`'s report when a processor that emits no application registrations
 // never writes `app`'s own generated module and the unit fails to compile — fails this hook, which is
 // exactly how a skipped nested suite (or a nested module that never reaches `test`) fails the fixture.
 
@@ -41,12 +41,12 @@ def assertNestedReport(String moduleDir, String testClassName) {
     return [tests: tests, failures: failures, errors: errors, skipped: skipped]
 }
 
-// `legacy` (TP-006) must always pass: it declares no application, so it never depends on the
+// `legacy` must always pass: it declares no application, so it never depends on the
 // application-registration emission this task adds.
 assertNestedReport("legacy", "ZeroApplicationLegacyTest")
 
-// `app` (TP-005) proves the end-to-end generated shape; at the baseline processor its report is
-// missing entirely because the module never compiles (see AppComponent's Javadoc).
+// `app` proves the end-to-end generated shape; against a processor that emits no application
+// registrations its report is missing entirely because the module never compiles (see AppComponent's Javadoc).
 assertNestedReport("app", "TwoUnitApplicationsTest")
 
 return true

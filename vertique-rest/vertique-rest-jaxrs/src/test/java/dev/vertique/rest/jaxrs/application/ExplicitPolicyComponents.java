@@ -51,10 +51,11 @@ public final class ExplicitPolicyComponents {
 
     /**
      * The application-mount composition (TP-002): {@code policy}'s resources unit,
-     * {@code policy.app}'s {@code ManagementApplication} registration, and
-     * {@code PolicySecurityModule}. Exactly one application mount ({@code /api/mgmt/*}) is
-     * produced; which resource variant it hosts is selected by configuration (the enabled
-     * {@code policy.<variant>.enabled} gate and {@code policy.app.classes}).
+     * {@code policy.app}'s six variant registrations (one per {@code ManagementApis} declaring
+     * interface, T023 L22), and {@code PolicySecurityModule}. Exactly one application mount
+     * ({@code /api/mgmt/*}) is produced; which resource variant it hosts is selected purely by
+     * which single {@code policy.<variant>.enabled} gate a test enables, since that property gates
+     * both the variant's registration and its catalog entry.
      */
     @Singleton
     @Component(
@@ -84,7 +85,7 @@ public final class ExplicitPolicyComponents {
     /**
      * The zero-declaration, legacy-default-mount composition (TP-004): {@code policy}'s resources
      * unit and {@code PolicySecurityModule} only — no application registration module at all, so
-     * {@code Set<GeneratedJaxRsApplicationRegistration>} resolves empty and the sole resource
+     * {@code Set<GeneratedRestApplicationRegistration>} resolves empty and the sole resource
      * variant a test enables reaches the zero-declaration default mount ({@code /*}) instead.
      */
     @Singleton

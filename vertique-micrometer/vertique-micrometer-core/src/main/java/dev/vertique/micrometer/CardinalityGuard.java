@@ -37,8 +37,8 @@ import org.slf4j.LoggerFactory;
  * whole meter population, not against the {@code vertique.*} subset.
  *
  * <p><b>Adding a new tag key to any {@code vertique.*} meter requires extending
- * {@link #GUARDED_TAG_KEYS}.</b> This is a review-enforced constraint: the list is frozen
- * to cover all current and planned vertique adapter phases (§7.1 of the telemetry PRD).
+ * {@link #GUARDED_TAG_KEYS}.</b> This is a review-enforced constraint. The list only grows: entries
+ * are never removed or reordered.
  *
  * @see MetricsConfig.CardinalityConfig
  * @see MicrometerAssembly
@@ -48,9 +48,10 @@ final class CardinalityGuard {
     private static final Logger log = LoggerFactory.getLogger(CardinalityGuard.class);
 
     /**
-     * Frozen union of all {@code vertique.*} tag keys from PRD §7.1 — future adapter phases
-     * are pre-covered. Adding a NEW tag key to any {@code vertique.*} meter requires extending
-     * this list (review-enforced).
+     * Union of every tag key a {@code vertique.*} meter emits or is reserved to emit. The list only
+     * grows: entries are never removed or reordered. Adding a new tag key to any {@code vertique.*}
+     * meter requires extending this list (review-enforced). Its entries are also the keys
+     * {@code metrics.tags.extra} rejects (see {@link TagPolicyValidator}).
      */
     static final List<String> GUARDED_TAG_KEYS = List.of(
             "method",
@@ -88,7 +89,10 @@ final class CardinalityGuard {
             // The rate-limit metrics observer emits two derived keys this list must admit: the
             // operator-declared policy name and the bounded backend-failure code.
             "policy",
-            "code");
+            "code",
+            // The REST server request meters will carry the application name under this key; it is
+            // guarded ahead of its emitter so its values are capped and metrics.tags.extra cannot claim it.
+            "rest.application");
 
     /** Prevent instantiation — this class is a static factory only. */
     private CardinalityGuard() {}

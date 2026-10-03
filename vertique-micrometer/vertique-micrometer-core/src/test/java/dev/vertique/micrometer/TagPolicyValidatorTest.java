@@ -188,6 +188,26 @@ class TagPolicyValidatorTest {
                     ConfigurationException.class,
                     () -> TagPolicyValidator.validate(tagsConfig(Map.of("route", "/api/v1"))));
         }
+
+        @Test
+        @DisplayName("key 'rest.application' -> throws naming the key, never its value; 'application' is accepted")
+        void restApplicationKeyThrows() {
+            // Given / When: the framework-managed application key is configured as an extra tag
+            ConfigurationException ex = assertThrows(
+                    ConfigurationException.class,
+                    () -> TagPolicyValidator.validate(tagsConfig(Map.of("rest.application", "zq7"))));
+
+            // Then: the message names the key as guarded and never echoes the configured value
+            String message = ex.getMessage();
+            assertTrue(message.contains("rest.application"), "message must name the key; got: " + message);
+            assertTrue(
+                    message.contains("framework-managed cardinality-guarded"),
+                    "message must state the key is framework-managed and guarded; got: " + message);
+            assertFalse(message.contains("zq7"), "message must not contain the configured value");
+
+            // And: a plain 'application' key is not caught by a substring or suffix match
+            assertDoesNotThrow(() -> TagPolicyValidator.validate(tagsConfig(Map.of("application", "shop"))));
+        }
     }
 
     // --- Rule 4: segment-based secret-like key rejection ---

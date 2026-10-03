@@ -19,8 +19,8 @@ import lombok.extern.slf4j.Slf4j;
  * <p>Contributed to the {@link OperationHandlerContributor} multibinding by
  * {@link OpenTelemetryRestModule}. Runs at priority {@value #PRIORITY}, in the post-context band,
  * after the route's authentication handlers and the authorization contributors. It captures the
- * operationId and route template once, at registration, so it does not depend on any other
- * contributor running first.
+ * operationId, route template, and application name once, at registration, so it does not depend
+ * on any other contributor running first.
  *
  * <p>For each incoming request, the contributed handler:
  * <ol>
@@ -29,9 +29,14 @@ import lombok.extern.slf4j.Slf4j;
  *       downstream interceptors</li>
  *   <li>If the span is recording: renames it to {@code "METHOD /route/template"} (e.g.
  *       {@code "GET /orders/{id}"}), sets {@code http.route} to the OpenAPI path template,
- *       and sets {@code vertique.operation.id} to the operationId</li>
+ *       sets {@code vertique.operation.id} to the operationId, and, when the operation belongs to an
+ *       application, sets {@code vertique.application.name} to the operation's application name</li>
  *   <li>Always calls {@code rc.next()} — enrichment failure never breaks the pipeline</li>
  * </ol>
+ *
+ * <p>The handler runs after the route's authentication handlers. A request rejected before it runs
+ * (authentication 401, authorization 403, the {@code @Consumes} check 415, or the validation gate
+ * 400) never reaches it and its span carries none of these attributes.
  *
  * <p>This component uses the OpenTelemetry API only — no SDK dependency. When no SDK is installed,
  * all span operations are no-ops and no span is stored on the context.
@@ -69,12 +74,14 @@ public final class ServerSpanEnrichmentContributor implements OperationHandlerCo
      * Adds a routing handler that enriches the active OpenTelemetry span with HTTP and operation
      * attributes for the current request.
      *
-     * <p>The route template and operationId are captured once at registration time from the context
-     * and closed over in the handler lambda. At request time the handler:
+     * <p>The route template, operationId, and application name are captured once at registration time
+     * from the context and closed over in the handler lambda. At request time the handler:
      * <ol>
      *   <li>Resolves {@link Span#current()} and guards on {@link io.opentelemetry.api.trace.SpanContext#isValid()}</li>
      *   <li>Stores the span in the routing context under {@link RestSpanKeys#SPAN_KEY}</li>
-     *   <li>If the span {@link Span#isRecording()}: renames it and sets attributes</li>
+     *   <li>If the span {@link Span#isRecording()}: renames it and sets attributes, including
+     *       {@code vertique.application.name} set to the operation's application name when the
+     *       operation belongs to an application</li>
      *   <li>Always calls {@code rc.next()} outside the try-block so enrichment failure never
      *       breaks the pipeline</li>
      * </ol>
@@ -85,6 +92,7 @@ public final class ServerSpanEnrichmentContributor implements OperationHandlerCo
     public void contribute(OperationRegistrationContext context) {
         String operationId = context.operationId();
         String routeTemplate = context.operation().routeTemplate();
+        String applicationName = context.operation().applicationName();
 
         context.route().addHandler(rc -> {
             try {
@@ -98,6 +106,9 @@ public final class ServerSpanEnrichmentContributor implements OperationHandlerCo
                         }
                         if (operationId != null) {
                             span.setAttribute(RestSpanKeys.VERTIQUE_OPERATION_ID, operationId);
+                        }
+                        if (applicationName != null) {
+                            span.setAttribute(RestSpanKeys.VERTIQUE_APPLICATION_NAME, applicationName);
                         }
                     }
                 }

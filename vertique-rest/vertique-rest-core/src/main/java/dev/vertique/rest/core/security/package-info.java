@@ -18,5 +18,9 @@
  * {@link dev.vertique.rest.core.security.SecurityPolicyViolationException} (wrapping a
  * {@link dev.vertique.rest.core.security.SecurityPolicyViolation} record) when access
  * is denied.
+ *
+ * <p>The OpenAPI Security Scheme descriptions a {@code SecuritySchemeHandler} returns from
+ * {@link dev.vertique.rest.core.security.SecuritySchemeHandler#openApiDescription()} live in
+ * {@link dev.vertique.rest.core.security.scheme}.
  */
 package dev.vertique.rest.core.security;

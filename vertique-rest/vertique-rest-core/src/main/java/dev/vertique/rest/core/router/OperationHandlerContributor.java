@@ -26,6 +26,20 @@ import dev.vertique.core.extension.OrderedExtension;
  * <p>This replaces ad-hoc handler insertion in {@code RouterLifecycleHook.afterAuthSetup()}
  * and provides a first-class extension mechanism for operation-chain handler composition.
  *
+ * <p>Contributors may also run for framework-owned <em>synthetic</em> operations: routes installed
+ * outside normal resource-method discovery. A synthetic route runs the same contributor chain, with
+ * the same inputs, as an equally-secured resource route: the same contributors, in the same order,
+ * with the same effective security policy. A synthetic operation's id lives in the reserved {@code
+ * apidocs:} namespace, its {@link OperationRegistrationContext#operation() descriptor} reports a
+ * literal route template with no consumed or produced media types, and the descriptor's annotations
+ * are the synthetic security annotations its effective policy was built from — so a contributor that
+ * reads annotations sees exactly what an equally annotated resource method would show. No signature,
+ * default, or behavior of this interface changes for a synthetic operation.
+ *
+ * <p>A synthetic route renders a failure from its status alone ({@code ctx.fail(status)} or an
+ * {@code HttpException}), without the application's exception mapping or interceptors; a contributor
+ * rejecting a synthetic operation fails with an explicit 4xx or 5xx status.
+ *
  * @see OperationRegistrationContext
  * @see dev.vertique.rest.core.lifecycle.RouterLifecycleHook
  * @see OrderedExtension

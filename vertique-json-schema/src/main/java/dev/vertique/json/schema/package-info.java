@@ -16,6 +16,26 @@
  * {@link dev.vertique.json.schema.JsonSchemaGenerationException} is the one bounded failure type
  * this package throws; no Victools type is ever exposed through a public signature.
  *
+ * <p>Five result types carry what the generator reports beyond the schema text:
+ *
+ * <ul>
+ *   <li>{@link dev.vertique.json.schema.CanonicalSchema} pairs a canonical document with the {@link
+ *       dev.vertique.json.schema.RedactionManifest} the generator bound to it. It is a plain record
+ *       anyone can construct, so a consumer trusts the pairing only when {@code
+ *       redactionManifest().matches(json())} holds against the document actually encoded.
+ *   <li>{@link dev.vertique.json.schema.RedactionManifest} lists the JSON Pointer of every
+ *       reserved-name assertion in that document and carries the digest of its canonical bytes; only
+ *       this package constructs it.
+ *   <li>{@link dev.vertique.json.schema.OutputRename} names a member an output-direction schema
+ *       publishes under a property name other than the one Jackson serializes it under. The report
+ *       is provisional.
+ *   <li>{@link dev.vertique.json.schema.HiddenMember} names a member or type that the document still
+ *       describes while it carries a hiding marker; {@code hiddenMembers} reports these entries.
+ *   <li>{@link dev.vertique.json.schema.HidingMarker} names which marker a {@code HiddenMember}
+ *       carries: {@code io.swagger.v3.oas.annotations.Hidden}, {@code @Schema(hidden = true)}, or
+ *       both.
+ * </ul>
+ *
  * @see dev.vertique.json.schema.AnnotationJsonSchemaGenerator
  * @see dev.vertique.json.schema.JsonSchemaGenerationException
  */

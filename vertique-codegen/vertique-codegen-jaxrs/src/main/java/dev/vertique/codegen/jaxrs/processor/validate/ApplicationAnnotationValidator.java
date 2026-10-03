@@ -7,13 +7,14 @@ import dev.vertique.codegen.CodegenContext;
 import dev.vertique.codegen.jaxrs.JaxRsHierarchy;
 import java.lang.annotation.Retention;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import javax.lang.model.element.AnnotationMirror;
 import javax.lang.model.element.AnnotationValue;
-import javax.lang.model.element.ElementKind;
 import javax.lang.model.element.ExecutableElement;
 import javax.lang.model.element.Name;
 import javax.lang.model.element.TypeElement;
@@ -21,79 +22,95 @@ import javax.lang.model.element.VariableElement;
 import javax.lang.model.type.TypeMirror;
 
 /**
- * The compile-time half of the {@code Application} annotation allow list: every {@code RUNTIME}
- * -retained type-declaration annotation anywhere in an eligible application's scope must be one of
- * a small allow list, or compilation fails naming the application, the declaring type, and the
- * annotation.
+ * The compile-time annotation checks of {@code @RestApplication} declarations: the declaration
+ * annotation allow list and the {@code @ApiDocs} shape rules. Every violation is a compile error
+ * attributed to the declaring interface, and a declaration with any violation is not registered.
  *
- * <p>The checked scope is the application itself, every superclass strictly below {@code
- * jakarta.ws.rs.core.Application}, nearest first, and every interface any of them implements,
- * transitively including superinterfaces, in {@link JaxRsHierarchy#allInterfaces} discovery order.
- * Only annotations on the type declarations in that scope are checked; annotations on members, such
- * as the {@code @Inject} constructor or an overriding method, have no effect on an application and
- * are not inspected.
- *
- * <p>Every type-level annotation mirror in scope whose type is {@code RUNTIME}-retained must be one
- * of:
+ * <p><strong>Allow list.</strong> The checked scope is the declaring interface and every
+ * superinterface, transitively, in {@link JaxRsHierarchy#allInterfaces} discovery order. Only
+ * annotations directly present on those type declarations are read ({@link
+ * TypeElement#getAnnotationMirrors()}, never the inherited-annotation variant, and never member
+ * annotations). Allowed are:
  *
  * <ul>
- *   <li>{@code jakarta.ws.rs.ApplicationPath}, but not on an interface;
- *   <li>a type meta-annotated with {@code jakarta.inject.Scope}, {@code jakarta.inject.Qualifier},
- *       {@code javax.inject.Scope}, or {@code javax.inject.Qualifier} (matched by fully qualified
- *       name, since {@code javax.inject} is not on this module's classpath);
- *   <li>a type in package {@code java.lang};
- *   <li>{@code io.swagger.v3.oas.annotations.OpenAPIDefinition} in which every element other than
- *       {@code info} equals its declared default, compared structurally against {@link
- *       ExecutableElement#getDefaultValue()}.
+ *   <li>on the declaring interface only: {@code @RestApplication}, {@code @ApiDocs}, {@code
+ *       io.swagger.v3.oas.annotations.OpenAPIDefinition} in which every element other than {@code
+ *       info} equals its declared default (compared structurally against {@link
+ *       ExecutableElement#getDefaultValue()}), and the {@code SOURCE}-retained
+ *       {@code @ConditionalOnProperty} (single or container form) and {@code @NoAutoWire};
+ *   <li>anywhere in scope: annotation types in the packages {@code java.lang} and {@code
+ *       java.lang.annotation}.
  * </ul>
  *
- * <p>A repeatable container annotation (for example the compiler-synthesized {@code
- * ConditionalOnProperties} when two or more {@code @ConditionalOnProperty} annotations appear on
- * one type) is checked as an annotation in its own right; {@link TypeElement#getAnnotationMirrors()}
- * already returns the container, not its repeated elements, so no further unwrapping is needed.
+ * <p>Any other {@code RUNTIME}-retained annotation in scope fails compilation, and so does any of
+ * the declaration-only annotations above on a superinterface. A repeatable container annotation
+ * (such as the compiler-synthesized {@code ConditionalOnProperties}) is checked as an annotation in
+ * its own right; {@link TypeElement#getAnnotationMirrors()} already returns the container, not its
+ * repeated elements. Every other {@code SOURCE}- or {@code CLASS}-retained annotation, including one
+ * with no {@code @Retention} at all (which defaults to {@code CLASS}), is unchecked; a {@code
+ * SOURCE}-retained annotation is visible only on types compiled in the same build. Every message
+ * names the declaration, the annotation, and the type carrying it, each by binary name.
  *
- * <p>{@code @ConditionalOnProperty}, {@code @ConditionalOnProperties}, and {@code @NoAutoWire}
- * (package {@code dev.vertique.codegen}) are {@code SOURCE}-retained and honored only on the
- * application itself; on any supertype compiled in the same build they are a compile error, because
- * the processor would otherwise ignore them silently. Every other {@code SOURCE}- or {@code
- * CLASS}-retained annotation, including one with no {@code @Retention} at all (which defaults to
- * {@code CLASS}), is unchecked.
+ * <p><strong>{@code @ApiDocs}.</strong> The documentation access annotation is recognized by the
+ * fully qualified name {@link #API_DOCS_FQN}, so this module needs no dependency on the
+ * documentation module, and its elements are read by name, on the declaring interface only:
  *
- * <p>Only {@link TypeElement#getAnnotationMirrors()} is read, never the inherited-annotation
- * variant, so an {@code @Inherited} meta-annotated annotation (such as {@code @OpenAPIDefinition})
- * is checked only where it is directly present.
+ * <ul>
+ *   <li>{@code access = PROTECTED} needs a non-blank {@code securityScheme}, and every {@code
+ *       rolesAllowed} entry must be non-blank (an empty {@code rolesAllowed} means any authenticated
+ *       caller);
+ *   <li>{@code access = PUBLIC} takes neither a {@code securityScheme} nor any {@code
+ *       rolesAllowed} entry.
+ * </ul>
  *
- * <p>A class annotated {@code @NoAutoWire} is never passed to this validator: {@code
- * JaxRsApplicationScanner#scan} excludes it before this validator runs, so it is neither registered
- * nor validated.
+ * <p>Element values are judged as read, so an explicit value equal to the default counts as unset.
+ * An {@code @ApiDocs} without {@code access} is javac's missing-element error and gets no further
+ * check here. Each violation's message names the declaration and the offending element.
+ *
+ * <p>A declaration annotated {@code @NoAutoWire} is never passed to this validator: the
+ * declaration scan excludes it first, so it is inert. The checks do not depend on the auto-wire
+ * setting.
  */
 public final class ApplicationAnnotationValidator {
 
-    /** FQN of {@code jakarta.ws.rs.core.Application}, the scope's upper bound. */
-    private static final String APPLICATION_FQN = "jakarta.ws.rs.core.Application";
+    /**
+     * The fully qualified name of the documentation module's {@code @ApiDocs}, held as a literal so
+     * this module gains no dependency on the documentation module; the only copy of the name in the
+     * processor, pinned by a test.
+     */
+    public static final String API_DOCS_FQN = "dev.vertique.rest.openapi.docs.ApiDocs";
 
-    /** FQN of {@code jakarta.ws.rs.ApplicationPath}. */
-    private static final String APPLICATION_PATH_FQN = "jakarta.ws.rs.ApplicationPath";
+    /** FQN of {@code dev.vertique.rest.core.application.RestApplication}. */
+    private static final String REST_APPLICATION_FQN = "dev.vertique.rest.core.application.RestApplication";
 
     /** FQN of {@code io.swagger.v3.oas.annotations.OpenAPIDefinition}. */
     private static final String OPEN_API_DEFINITION_FQN = "io.swagger.v3.oas.annotations.OpenAPIDefinition";
 
     /**
-     * The fully qualified names of the {@code SOURCE}-retained annotations honored only on the
-     * application itself; on any other type in scope they are a compile error.
+     * The fully qualified names of the {@code RUNTIME}-retained annotations allowed on the declaring
+     * interface only; on a superinterface each is a compile error. {@code @OpenAPIDefinition} is
+     * additionally limited to its {@code info} element.
      */
-    private static final Set<String> SOURCE_RETAINED_CHECKED = Set.of(
+    private static final Set<String> RUNTIME_DECLARATION_ONLY =
+            Set.of(REST_APPLICATION_FQN, API_DOCS_FQN, OPEN_API_DEFINITION_FQN);
+
+    /**
+     * The fully qualified names of the {@code SOURCE}-retained annotations honored only on the
+     * declaring interface; on a superinterface each is a compile error.
+     */
+    private static final Set<String> SOURCE_DECLARATION_ONLY = Set.of(
             "dev.vertique.codegen.ConditionalOnProperty",
             "dev.vertique.codegen.ConditionalOnProperties",
             "dev.vertique.codegen.NoAutoWire");
 
-    /**
-     * The fully qualified names of the scope and qualifier meta-annotations that exempt an
-     * annotation type from the allow list, matched by name because {@code javax.inject} is not on
-     * this module's classpath.
-     */
-    private static final Set<String> SCOPE_OR_QUALIFIER_META_ANNOTATIONS =
-            Set.of("jakarta.inject.Scope", "jakarta.inject.Qualifier", "javax.inject.Scope", "javax.inject.Qualifier");
+    /** The packages whose annotation types are allowed anywhere in scope. */
+    private static final Set<String> ALLOWED_PACKAGES = Set.of("java.lang", "java.lang.annotation");
+
+    /** The {@code @ApiDocs} access level that requires a security scheme. */
+    private static final String PROTECTED = "PROTECTED";
+
+    /** The {@code @ApiDocs} access level that takes no security scheme or roles. */
+    private static final String PUBLIC = "PUBLIC";
 
     private final CodegenContext ctx;
 
@@ -107,151 +124,112 @@ public final class ApplicationAnnotationValidator {
     }
 
     /**
-     * Validates every application in {@code applications} against the {@code Application} annotation
-     * allow list.
+     * Checks every declaration in {@code declarations} against the allow list and the
+     * {@code @ApiDocs} rules, reporting one compile error per violation.
      *
-     * @param applications the eligible applications to validate; must not be {@code null}
+     * @param declarations the {@code @RestApplication} declaring interfaces to check, none of them
+     *                     annotated {@code @NoAutoWire}; must not be {@code null}
+     * @return the declarations with at least one violation, which must not be registered; never
+     *     {@code null}
      */
-    public void validate(List<TypeElement> applications) {
-        for (TypeElement application : applications) {
-            validateApplication(application);
-        }
-    }
-
-    /**
-     * Validates one application's scope against the allow list, reporting one compile error per
-     * offending (declaring type, annotation) pair, anchored on {@code application}'s own element.
-     *
-     * @param application the eligible application to validate
-     */
-    private void validateApplication(TypeElement application) {
-        for (TypeElement declaringType : scope(application)) {
-            for (AnnotationMirror mirror : declaringType.getAnnotationMirrors()) {
-                checkAnnotation(application, declaringType, mirror);
+    public Set<TypeElement> validate(List<TypeElement> declarations) {
+        Set<TypeElement> rejected = new LinkedHashSet<>();
+        for (TypeElement declaration : declarations) {
+            boolean allowListPassed = checkAllowList(declaration);
+            boolean apiDocsPassed = checkApiDocs(declaration);
+            if (!allowListPassed || !apiDocsPassed) {
+                rejected.add(declaration);
             }
         }
+        return rejected;
+    }
+
+    // --- Allow list ---
+
+    /**
+     * Checks every annotation directly present on {@code declaration} and its superinterfaces,
+     * reporting one compile error per offending (carrying type, annotation) pair.
+     *
+     * @param declaration the declaring interface
+     * @return {@code true} when no annotation in scope violates the allow list
+     */
+    private boolean checkAllowList(TypeElement declaration) {
+        boolean passed = true;
+        for (TypeElement carrier : scope(declaration)) {
+            for (AnnotationMirror mirror : carrier.getAnnotationMirrors()) {
+                if (!checkAnnotation(declaration, carrier, mirror)) {
+                    passed = false;
+                }
+            }
+        }
+        return passed;
     }
 
     /**
-     * Returns {@code application}'s annotation-check scope: the application itself, then every
-     * superclass strictly below {@link #APPLICATION_FQN}, nearest first, then every interface any of
-     * them implements, transitively including superinterfaces, in {@link
-     * JaxRsHierarchy#allInterfaces} discovery order.
+     * Returns {@code declaration}'s annotation-check scope: the declaring interface itself, then
+     * every superinterface, transitively, in {@link JaxRsHierarchy#allInterfaces} discovery order.
      *
-     * @param application the eligible application
+     * @param declaration the declaring interface
      * @return the ordered scope
      */
-    private List<TypeElement> scope(TypeElement application) {
+    private List<TypeElement> scope(TypeElement declaration) {
         List<TypeElement> scope = new ArrayList<>();
-        scope.add(application);
-        TypeElement current = JaxRsHierarchy.superClass(ctx, application);
-        while (current != null
-                && !APPLICATION_FQN.equals(current.getQualifiedName().toString())) {
-            scope.add(current);
-            current = JaxRsHierarchy.superClass(ctx, current);
-        }
-        scope.addAll(JaxRsHierarchy.allInterfaces(ctx, application));
+        scope.add(declaration);
+        scope.addAll(JaxRsHierarchy.allInterfaces(ctx, declaration));
         return scope;
     }
 
     /**
-     * Checks one annotation directly present on one type in {@code application}'s scope, reporting a
-     * compile error when it is a source-retained annotation honored only on {@code application}
-     * itself but found on a supertype, or when it is a {@code RUNTIME}-retained annotation outside
-     * the allow list. A {@code CLASS}-retained annotation, or one with no {@code @Retention} at all,
-     * is unchecked.
+     * Checks one annotation directly present on one type in {@code declaration}'s scope, reporting a
+     * compile error when it is a declaration-only annotation found on a superinterface, a
+     * {@code RUNTIME}-retained annotation outside the allow list, or an {@code @OpenAPIDefinition}
+     * setting an element other than {@code info}. A {@code CLASS}-retained annotation, one with no
+     * retention meta-annotation at all, and any other {@code SOURCE}-retained annotation are
+     * unchecked.
      *
-     * @param application   the application under validation, for the diagnostic
-     * @param declaringType the type in scope that directly carries {@code mirror}
-     * @param mirror        the annotation mirror to check
+     * @param declaration the declaring interface, for the diagnostic
+     * @param carrier     the type in scope that directly carries {@code mirror}
+     * @param mirror      the annotation mirror to check
+     * @return {@code true} when the annotation is allowed where it appears
      */
-    private void checkAnnotation(TypeElement application, TypeElement declaringType, AnnotationMirror mirror) {
+    private boolean checkAnnotation(TypeElement declaration, TypeElement carrier, AnnotationMirror mirror) {
         TypeElement annotationType = asTypeElement(mirror.getAnnotationType());
         if (annotationType == null) {
-            return;
+            return true;
         }
         String annotationFqn = annotationType.getQualifiedName().toString();
         String retention = retentionPolicy(annotationType);
+        boolean onDeclaration = carrier.equals(declaration);
 
         if ("SOURCE".equals(retention)) {
-            if (!SOURCE_RETAINED_CHECKED.contains(annotationFqn) || declaringType.equals(application)) {
-                return;
+            if (onDeclaration || !SOURCE_DECLARATION_ONLY.contains(annotationFqn)) {
+                return true;
             }
-            ctx.diagnostics()
-                    .error(
-                            application,
-                            sourceRetainedOnSupertypeMessage(
-                                    binaryName(application), binaryName(annotationType), binaryName(declaringType)));
-            return;
+            reportError(declaration, declarationOnlyMessage(declaration, annotationType, carrier));
+            return false;
         }
-
         if (!"RUNTIME".equals(retention)) {
-            return;
-        }
-        checkAllowList(application, declaringType, mirror, annotationType, annotationFqn);
-    }
-
-    /**
-     * Checks one {@code RUNTIME}-retained annotation against the allow list, reporting a compile
-     * error when it is not on the list.
-     *
-     * @param application    the application under validation, for the diagnostic
-     * @param declaringType  the type in scope that directly carries {@code mirror}
-     * @param mirror         the annotation mirror to check
-     * @param annotationType the annotation's type element
-     * @param annotationFqn  the annotation's fully qualified name
-     */
-    private void checkAllowList(
-            TypeElement application,
-            TypeElement declaringType,
-            AnnotationMirror mirror,
-            TypeElement annotationType,
-            String annotationFqn) {
-        if (APPLICATION_PATH_FQN.equals(annotationFqn)) {
-            if (declaringType.getKind() == ElementKind.INTERFACE) {
-                reportAllowListViolation(application, declaringType, annotationType, false);
-            }
-            return;
+            return true;
         }
 
         String annotationPackage =
                 ctx.elements().getPackageOf(annotationType).getQualifiedName().toString();
-        if ("java.lang".equals(annotationPackage)) {
-            return;
+        if (ALLOWED_PACKAGES.contains(annotationPackage)) {
+            return true;
         }
-
-        if (isScopeOrQualifier(annotationType)) {
-            return;
+        if (!RUNTIME_DECLARATION_ONLY.contains(annotationFqn)) {
+            reportError(declaration, notAllowedMessage(declaration, annotationType, carrier));
+            return false;
         }
-
-        if (OPEN_API_DEFINITION_FQN.equals(annotationFqn)) {
-            if (isDefaultOpenApiDefinition(mirror)) {
-                return;
-            }
-            reportAllowListViolation(application, declaringType, annotationType, true);
-            return;
+        if (!onDeclaration) {
+            reportError(declaration, declarationOnlyMessage(declaration, annotationType, carrier));
+            return false;
         }
-
-        reportAllowListViolation(application, declaringType, annotationType, false);
-    }
-
-    /**
-     * Returns whether {@code annotationType} is meta-annotated with one of the scope or qualifier
-     * annotations in {@link #SCOPE_OR_QUALIFIER_META_ANNOTATIONS}, matched by fully qualified name.
-     *
-     * @param annotationType the annotation type to inspect
-     * @return {@code true} when {@code annotationType} is a scope or qualifier annotation
-     */
-    private boolean isScopeOrQualifier(TypeElement annotationType) {
-        for (AnnotationMirror meta : annotationType.getAnnotationMirrors()) {
-            TypeElement metaType = asTypeElement(meta.getAnnotationType());
-            if (metaType != null
-                    && SCOPE_OR_QUALIFIER_META_ANNOTATIONS.contains(
-                            metaType.getQualifiedName().toString())) {
-                return true;
-            }
+        if (OPEN_API_DEFINITION_FQN.equals(annotationFqn) && !isInfoOnlyOpenApiDefinition(mirror)) {
+            reportError(declaration, infoOnlyMessage(declaration, annotationType));
+            return false;
         }
-        return false;
+        return true;
     }
 
     /**
@@ -263,7 +241,7 @@ public final class ApplicationAnnotationValidator {
      * @return {@code true} when every explicitly set element other than {@code info} is at its
      *     declared default
      */
-    private boolean isDefaultOpenApiDefinition(AnnotationMirror mirror) {
+    private boolean isInfoOnlyOpenApiDefinition(AnnotationMirror mirror) {
         for (Map.Entry<? extends ExecutableElement, ? extends AnnotationValue> entry :
                 mirror.getElementValues().entrySet()) {
             if ("info".contentEquals(entry.getKey().getSimpleName())) {
@@ -342,61 +320,162 @@ public final class ApplicationAnnotationValidator {
         return null;
     }
 
+    // --- @ApiDocs ---
+
     /**
-     * Reports one allow-list violation, anchored on {@code application}'s own element.
+     * Checks the {@code @ApiDocs} directly present on {@code declaration}, if any, against the
+     * access rules, reporting one compile error per violation. An {@code @ApiDocs} without {@code
+     * access} is left to javac's missing-element error.
      *
-     * @param application    the application under validation
-     * @param declaringType  the type carrying the offending annotation
+     * @param declaration the declaring interface
+     * @return {@code true} when {@code declaration} carries no {@code @ApiDocs}, or one that
+     *     violates no rule
+     */
+    private boolean checkApiDocs(TypeElement declaration) {
+        Optional<AnnotationMirror> apiDocs = findDirect(declaration, API_DOCS_FQN);
+        if (apiDocs.isEmpty()) {
+            return true;
+        }
+        AnnotationMirror mirror = apiDocs.get();
+        Optional<String> access = ctx.annotations()
+                .attribute(mirror, "access", VariableElement.class)
+                .map(constant -> constant.getSimpleName().toString());
+        if (access.isEmpty()) {
+            return true;
+        }
+        String securityScheme = ctx.annotations()
+                .attribute(mirror, "securityScheme", String.class)
+                .orElse("");
+        List<String> rolesAllowed = new ArrayList<>();
+        for (AnnotationValue entry : ctx.annotations().attributeArray(mirror, "rolesAllowed")) {
+            rolesAllowed.add(entry.getValue() instanceof String role ? role : "");
+        }
+
+        boolean passed = true;
+        if (PROTECTED.equals(access.get())) {
+            if (securityScheme.isBlank()) {
+                reportError(
+                        declaration,
+                        ("%s declares @ApiDocs(access = PROTECTED) without a non-blank securityScheme;"
+                                        + " protected documentation needs securityScheme to name the security scheme"
+                                        + " that authenticates its readers")
+                                .formatted(binaryName(declaration)));
+                passed = false;
+            }
+            if (rolesAllowed.stream().anyMatch(String::isBlank)) {
+                reportError(
+                        declaration,
+                        ("%s declares @ApiDocs(access = PROTECTED) with a blank rolesAllowed entry; every"
+                                        + " rolesAllowed entry must name a role (leave rolesAllowed empty to admit any"
+                                        + " authenticated caller)")
+                                .formatted(binaryName(declaration)));
+                passed = false;
+            }
+        } else if (PUBLIC.equals(access.get())) {
+            if (!securityScheme.isEmpty()) {
+                reportError(
+                        declaration,
+                        ("%s declares @ApiDocs(access = PUBLIC) with a securityScheme; securityScheme is"
+                                        + " set only when access is PROTECTED")
+                                .formatted(binaryName(declaration)));
+                passed = false;
+            }
+            if (!rolesAllowed.isEmpty()) {
+                reportError(
+                        declaration,
+                        ("%s declares @ApiDocs(access = PUBLIC) with rolesAllowed; rolesAllowed is set"
+                                        + " only when access is PROTECTED")
+                                .formatted(binaryName(declaration)));
+                passed = false;
+            }
+        }
+        return passed;
+    }
+
+    /**
+     * Returns the annotation of type {@code annotationFqn} directly present on {@code type}.
+     *
+     * @param type          the type to inspect
+     * @param annotationFqn the annotation type's fully qualified name
+     * @return the annotation mirror, or empty when it is not directly present
+     */
+    private Optional<AnnotationMirror> findDirect(TypeElement type, String annotationFqn) {
+        for (AnnotationMirror mirror : type.getAnnotationMirrors()) {
+            TypeElement annotationType = asTypeElement(mirror.getAnnotationType());
+            if (annotationType != null && annotationFqn.contentEquals(annotationType.getQualifiedName())) {
+                return Optional.of(mirror);
+            }
+        }
+        return Optional.empty();
+    }
+
+    // --- Diagnostics ---
+
+    /**
+     * Reports {@code message} as a compile error anchored on {@code declaration}. The message is
+     * complete as passed, with no format arguments, so it is printed verbatim.
+     *
+     * @param declaration the declaring interface
+     * @param message     the complete message
+     */
+    private void reportError(TypeElement declaration, String message) {
+        ctx.diagnostics().error(declaration, message);
+    }
+
+    /**
+     * Builds the message for a {@code RUNTIME}-retained annotation outside the allow list, naming
+     * the declaration, the annotation, and, when it is not the declaration itself, the
+     * superinterface carrying it, each by binary name.
+     *
+     * @param declaration    the declaring interface
      * @param annotationType the offending annotation's type
-     * @param openApiSuffix  whether to append the {@code @OpenAPIDefinition}-only suffix
+     * @param carrier        the type carrying the annotation
+     * @return the violation message
      */
-    private void reportAllowListViolation(
-            TypeElement application, TypeElement declaringType, TypeElement annotationType, boolean openApiSuffix) {
-        ctx.diagnostics()
-                .error(
-                        application,
-                        allowListViolationMessage(
-                                binaryName(application),
-                                binaryName(annotationType),
-                                binaryName(declaringType),
-                                openApiSuffix));
+    private String notAllowedMessage(TypeElement declaration, TypeElement annotationType, TypeElement carrier) {
+        if (carrier.equals(declaration)) {
+            return ("%s carries @%s, which a @RestApplication declaration may not carry: a declaration has no"
+                            + " resource semantics and may carry only @RestApplication, @ApiDocs,"
+                            + " @OpenAPIDefinition with only info set, @ConditionalOnProperty, @NoAutoWire, and"
+                            + " java.lang and java.lang.annotation annotations")
+                    .formatted(binaryName(declaration), binaryName(annotationType));
+        }
+        return ("%s carries @%s on its superinterface %s, which a @RestApplication declaration's"
+                        + " superinterface may not carry: a superinterface of a declaration may carry only"
+                        + " java.lang and java.lang.annotation annotations")
+                .formatted(binaryName(declaration), binaryName(annotationType), binaryName(carrier));
     }
 
     /**
-     * Builds the allow-list violation message naming the application, the offending annotation, and
-     * the declaring type, every name as a binary name so the text equals {@code Class.getName()}.
+     * Builds the message for a declaration-only annotation found on a superinterface, naming the
+     * declaration, the annotation, and the superinterface by binary name.
      *
-     * @param applicationBinaryName    the application's binary name
-     * @param annotationBinaryName     the offending annotation's binary name
-     * @param declaringTypeBinaryName  the declaring type's binary name
-     * @param openApiSuffix            whether to append the {@code @OpenAPIDefinition}-only suffix
+     * @param declaration    the declaring interface
+     * @param annotationType the offending annotation's type
+     * @param carrier        the superinterface carrying the annotation
      * @return the violation message
      */
-    private static String allowListViolationMessage(
-            String applicationBinaryName,
-            String annotationBinaryName,
-            String declaringTypeBinaryName,
-            boolean openApiSuffix) {
-        String base = ("Application %s carries @%s on %s, which is not allowed: application classes carry no"
-                        + " resource semantics")
-                .formatted(applicationBinaryName, annotationBinaryName, declaringTypeBinaryName);
-        return openApiSuffix ? base + "; only its info element may be set" : base;
+    private String declarationOnlyMessage(TypeElement declaration, TypeElement annotationType, TypeElement carrier) {
+        return ("%s carries @%s on its superinterface %s, which is not allowed: that annotation is honored"
+                        + " only on the @RestApplication declaring interface itself")
+                .formatted(binaryName(declaration), binaryName(annotationType), binaryName(carrier));
     }
 
     /**
-     * Builds the source-retained-on-supertype violation message, every name as a binary name so the
-     * text equals {@code Class.getName()}.
+     * Builds the message for an {@code @OpenAPIDefinition} on the declaration that sets an element
+     * other than {@code info}, naming the declaration and the annotation by binary name.
      *
-     * @param applicationBinaryName   the application's binary name
-     * @param annotationBinaryName    the offending annotation's binary name
-     * @param declaringTypeBinaryName the supertype's binary name
+     * @param declaration    the declaring interface
+     * @param annotationType the {@code @OpenAPIDefinition} annotation type
      * @return the violation message
      */
-    private static String sourceRetainedOnSupertypeMessage(
-            String applicationBinaryName, String annotationBinaryName, String declaringTypeBinaryName) {
-        return "Application %s carries @%s on supertype %s, which is honored only on the application class itself"
-                .formatted(applicationBinaryName, annotationBinaryName, declaringTypeBinaryName);
+    private String infoOnlyMessage(TypeElement declaration, TypeElement annotationType) {
+        return ("%s carries @%s with an element other than info set, which is not allowed on a"
+                        + " @RestApplication declaration: only its info element may be set")
+                .formatted(binaryName(declaration), binaryName(annotationType));
     }
+
+    // --- Internal helpers ---
 
     /**
      * Returns {@code type}'s binary name, e.g. {@code Outer$Inner} for a nested type, so diagnostic
