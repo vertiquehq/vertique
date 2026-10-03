@@ -7,7 +7,7 @@ import dagger.Module;
 import dagger.Provides;
 import dagger.multibindings.IntoSet;
 import dev.vertique.rest.jaxrs.publication.MountPublication;
-import dev.vertique.rest.jaxrs.publication.OperationPublicationSink;
+import dev.vertique.rest.jaxrs.publication.MountPublicationHook;
 import io.vertx.core.Future;
 import jakarta.annotation.Nullable;
 import jakarta.inject.Singleton;
@@ -15,16 +15,16 @@ import java.util.HashMap;
 import java.util.Map;
 
 /**
- * An {@link OperationPublicationSink} that never wants detail and retains the latest publication of
+ * An {@link MountPublicationHook} that never wants detail and retains the latest publication of
  * each mount path, so a test can hand a recorded operation to the route matcher. It returns an
  * already succeeded future.
  */
-public final class PublicationRetainingSink implements OperationPublicationSink {
+public final class PublicationRetainingHook implements MountPublicationHook {
 
     private final Map<String, MountPublication> byMountPath = new HashMap<>();
 
-    /** Creates a sink with no retained publication. */
-    public PublicationRetainingSink() {}
+    /** Creates a hook with no retained publication. */
+    public PublicationRetainingHook() {}
 
     @Override
     public boolean wantsDetail(@Nullable String applicationName) {
@@ -47,33 +47,33 @@ public final class PublicationRetainingSink implements OperationPublicationSink 
         return byMountPath.get(mountPath);
     }
 
-    /** Binds one component-scoped {@link PublicationRetainingSink} into {@code Set<OperationPublicationSink>}. */
+    /** Binds one component-scoped {@link PublicationRetainingHook} into {@code Set<MountPublicationHook>}. */
     @Module
     public static final class Binding {
 
         private Binding() {}
 
         /**
-         * Provides the component's retaining sink.
+         * Provides the component's retaining hook.
          *
-         * @return a new sink
+         * @return a new hook
          */
         @Provides
         @Singleton
-        static PublicationRetainingSink publicationRetainingSink() {
-            return new PublicationRetainingSink();
+        static PublicationRetainingHook publicationRetainingHook() {
+            return new PublicationRetainingHook();
         }
 
         /**
-         * Contributes the retaining sink.
+         * Contributes the retaining hook.
          *
-         * @param sink the component's retaining sink
-         * @return {@code sink}
+         * @param hook the component's retaining hook
+         * @return {@code hook}
          */
         @Provides
         @IntoSet
-        static OperationPublicationSink asSink(PublicationRetainingSink sink) {
-            return sink;
+        static MountPublicationHook asHook(PublicationRetainingHook hook) {
+            return hook;
         }
     }
 }

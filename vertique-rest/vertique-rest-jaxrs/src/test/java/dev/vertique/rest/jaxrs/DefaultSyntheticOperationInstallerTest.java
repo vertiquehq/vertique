@@ -56,14 +56,14 @@ import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.Mockito;
 
 /**
- * Unit proofs for the package-private {@link SyntheticOperationInstaller}: every condition a
+ * Unit proofs for the package-private {@link DefaultSyntheticOperationInstaller}: every condition a
  * resource route would fail on rejects a synthetic operation before any route exists, a duplicate
  * operation id is rejected per router only, a failure while the route is built removes the route and
  * releases its operation id, scheme handlers are configured exactly once per router, and the
  * registered contributors receive the same effective policy, requirement sets, and
  * descriptor annotations an equally annotated resource method's contributors receive.
  */
-class SyntheticOperationInstallerTest {
+class DefaultSyntheticOperationInstallerTest {
 
     private static final String ORIGIN = "@ApiDocs on application 'management'";
     private static final String SCHEME = "bearerAuth";
@@ -152,7 +152,7 @@ class SyntheticOperationInstallerTest {
     private void assertFailsBeforeAnyRoute(
             JaxRsRouterMount.Factory factory, SyntheticOperation operation, List<String> expectedFragments) {
         Router spyRouter = Mockito.spy(Router.router(vertx));
-        SyntheticOperationInstaller installer = new SyntheticOperationInstaller(factory);
+        DefaultSyntheticOperationInstaller installer = new DefaultSyntheticOperationInstaller(factory);
 
         RestConfigurationException thrown = assertThrows(
                 RestConfigurationException.class,
@@ -187,7 +187,7 @@ class SyntheticOperationInstallerTest {
                 .securitySchemeHandlers(Set.of(new StubSchemeHandler(SCHEME, true)))
                 .authEnforcementCapability(Optional.of(AuthEnforcementCapability.INSTANCE))
                 .build();
-        SyntheticOperationInstaller installer = new SyntheticOperationInstaller(factory);
+        DefaultSyntheticOperationInstaller installer = new DefaultSyntheticOperationInstaller(factory);
 
         Router routerA = Mockito.spy(Router.router(vertx));
         Router routerB = Router.router(vertx);
@@ -237,7 +237,7 @@ class SyntheticOperationInstallerTest {
                 .authEnforcementCapability(Optional.of(AuthEnforcementCapability.INSTANCE))
                 .operationHandlerContributors(Set.of(contributor))
                 .build();
-        SyntheticOperationInstaller installer = new SyntheticOperationInstaller(factory);
+        DefaultSyntheticOperationInstaller installer = new DefaultSyntheticOperationInstaller(factory);
 
         Router router = Router.router(vertx);
         String path = "/management/openapi.json";
@@ -277,7 +277,7 @@ class SyntheticOperationInstallerTest {
                 .securitySchemeHandlers(Set.of(bearerAuth))
                 .authEnforcementCapability(Optional.of(AuthEnforcementCapability.INSTANCE))
                 .build();
-        SyntheticOperationInstaller installer = new SyntheticOperationInstaller(factory);
+        DefaultSyntheticOperationInstaller installer = new DefaultSyntheticOperationInstaller(factory);
 
         Router routerA = Router.router(vertx);
         Router routerB = Router.router(vertx);
@@ -333,7 +333,7 @@ class SyntheticOperationInstallerTest {
                 .authEnforcementCapability(Optional.of(AuthEnforcementCapability.INSTANCE))
                 .operationHandlerContributors(contributors)
                 .build();
-        SyntheticOperationInstaller installer = new SyntheticOperationInstaller(factory);
+        DefaultSyntheticOperationInstaller installer = new DefaultSyntheticOperationInstaller(factory);
 
         SyntheticOperation managementOp =
                 SyntheticOperation.withRoles(ORIGIN, "apidocs:management:json", SCHEME, APPLICATION, List.of("admin"));
@@ -415,7 +415,7 @@ class SyntheticOperationInstallerTest {
                 .authEnforcementCapability(Optional.of(AuthEnforcementCapability.INSTANCE))
                 .operationHandlerContributors(Set.of(contributor))
                 .build();
-        SyntheticOperationInstaller installer = new SyntheticOperationInstaller(factory);
+        DefaultSyntheticOperationInstaller installer = new DefaultSyntheticOperationInstaller(factory);
 
         SyntheticOperation managementOp =
                 SyntheticOperation.withRoles(ORIGIN, "apidocs:management:json", SCHEME, APPLICATION, List.of("admin"));

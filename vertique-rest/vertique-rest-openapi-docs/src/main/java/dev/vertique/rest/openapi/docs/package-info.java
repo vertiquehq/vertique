@@ -16,7 +16,7 @@
  *   <li>{@code metadata}: the annotations and descriptor facts of an operation;
  *   <li>{@code diagnostics}: the warning logger and the warnings an assembly holds;
  *   <li>{@code schema}: generating, embedding, refusing, relocating, and naming schemas;
- *   <li>{@code document}: the serialized document, its entity tags, and its snapshot;
+ *   <li>{@code document}: the serialized document, its entity tags, and its fingerprint;
  *   <li>{@code assembly}: building one application's document from its operations;
  *   <li>{@code contract}: serving an application's own OpenAPI contract;
  *   <li>{@code publication}: receiving publications and storing one document per application;

@@ -687,7 +687,7 @@ public class DocumentRouteCollisionIT {
         try {
             assertTrue(outcome.deployed(), () -> "the case mount deploys; it failed with: " + outcome.failure());
             assertNotNull(outcome.port(), "a port is published");
-            MountPublication publication = component.publicationSink().publication(matcherCase.mountPath());
+            MountPublication publication = component.publicationHook().publication(matcherCase.mountPath());
             assertNotNull(publication, "the case mount's publication is recorded");
             assertEquals(1, publication.operations().size(), () -> "one operation: " + publication.operations());
             OperationPublication operation = publication.operations().get(0);

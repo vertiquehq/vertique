@@ -169,7 +169,7 @@ public class InputAssemblyIT {
         JsonArray parameters = operation.getJsonArray("parameters");
         assertNotNull(parameters, () -> label + ": the operation must publish its parameters");
 
-        List<InputProjection> inventory = component.recordingSink().inventory(application, operationId);
+        List<InputProjection> inventory = component.recordingHook().inventory(application, operationId);
         System.out.println(label + " inventory projection: " + inventory);
         System.out.println(label + " published parameters: " + parameters.encode());
 

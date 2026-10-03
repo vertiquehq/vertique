@@ -6,7 +6,7 @@ package dev.vertique.rest.openapi.docs.serving;
 import dev.vertique.rest.core.RestConfigurationException;
 import dev.vertique.rest.core.security.SecuritySchemeHandler;
 import dev.vertique.rest.jaxrs.synthetic.SyntheticOperation;
-import dev.vertique.rest.jaxrs.synthetic.SyntheticOperations;
+import dev.vertique.rest.jaxrs.synthetic.SyntheticOperationInstaller;
 import dev.vertique.rest.openapi.docs.ApiDocs;
 import dev.vertique.rest.openapi.docs.config.EnabledDocuments;
 import dev.vertique.rest.openapi.docs.document.PublishedDocument;
@@ -44,7 +44,7 @@ final class ProtectedDocumentRoutes {
 
     private final String prefix;
     private final DocumentStore store;
-    private final SyntheticOperations syntheticOperations;
+    private final SyntheticOperationInstaller syntheticOperationInstaller;
     private final Set<SecuritySchemeHandler> securitySchemeHandlers;
 
     /**
@@ -52,18 +52,18 @@ final class ProtectedDocumentRoutes {
      *
      * @param prefix the configured documentation prefix, without a trailing slash
      * @param store the store the documents are read from
-     * @param syntheticOperations the installer of the synthetic operations
+     * @param syntheticOperationInstaller the installer of the synthetic operations
      * @param securitySchemeHandlers the registered security scheme handlers, whose descriptions decide
      *     the {@code Vary} header
      */
     ProtectedDocumentRoutes(
             String prefix,
             DocumentStore store,
-            SyntheticOperations syntheticOperations,
+            SyntheticOperationInstaller syntheticOperationInstaller,
             Set<SecuritySchemeHandler> securitySchemeHandlers) {
         this.prefix = prefix;
         this.store = store;
-        this.syntheticOperations = syntheticOperations;
+        this.syntheticOperationInstaller = syntheticOperationInstaller;
         this.securitySchemeHandlers = securitySchemeHandlers;
     }
 
@@ -132,7 +132,7 @@ final class ProtectedDocumentRoutes {
                 : SyntheticOperation.withRoles(origin, operationId, scheme, name, List.of(rolesAllowed));
         String relativePath = "/" + name + "/openapi." + form;
         String exactPath = prefix + relativePath;
-        syntheticOperations.install(
+        syntheticOperationInstaller.install(
                 router,
                 relativePath,
                 List.of(HttpMethod.GET, HttpMethod.HEAD),

@@ -39,7 +39,7 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
- * Integration proofs for {@code SyntheticOperationInstaller} over real HTTP: a synthetic document's
+ * Integration proofs for {@code DefaultSyntheticOperationInstaller} over real HTTP: a synthetic document's
  * outcomes match its equally annotated resource twin, contributors run in resource order with the
  * same application-layer rejection, a denial ends on the synthetic route without falling through to
  * a later mount, and every failure ends with the standard problem body and {@code Cache-Control:

@@ -7,7 +7,7 @@ import dagger.Module;
 import dagger.Provides;
 import dagger.multibindings.IntoSet;
 import dev.vertique.rest.jaxrs.publication.MountPublication;
-import dev.vertique.rest.jaxrs.publication.OperationPublicationSink;
+import dev.vertique.rest.jaxrs.publication.MountPublicationHook;
 import io.vertx.core.Future;
 import jakarta.annotation.Nullable;
 import jakarta.inject.Singleton;
@@ -15,12 +15,12 @@ import java.util.HashMap;
 import java.util.Map;
 
 /**
- * An {@link OperationPublicationSink} that wants detail for every mount serving a declared
+ * An {@link MountPublicationHook} that wants detail for every mount serving a declared
  * application and retains the latest publication of each such application, descriptors included,
  * so a test can hand a real mount build's publication to the document assembler. It returns an
  * already succeeded future and never fails a mount. Thread-safe.
  */
-public final class PublicationCapture implements OperationPublicationSink {
+public final class PublicationCapture implements MountPublicationHook {
 
     private final Map<String, MountPublication> byApplication = new HashMap<>();
 
@@ -63,7 +63,7 @@ public final class PublicationCapture implements OperationPublicationSink {
         return byApplication.get(applicationName);
     }
 
-    /** Binds one component-scoped {@link PublicationCapture} into {@code Set<OperationPublicationSink>}. */
+    /** Binds one component-scoped {@link PublicationCapture} into {@code Set<MountPublicationHook>}. */
     @Module
     public static final class Binding {
 
@@ -81,14 +81,14 @@ public final class PublicationCapture implements OperationPublicationSink {
         }
 
         /**
-         * Contributes the capture as a publication sink.
+         * Contributes the capture as a publication hook.
          *
          * @param capture the component's capture
          * @return {@code capture}
          */
         @Provides
         @IntoSet
-        static OperationPublicationSink asSink(PublicationCapture capture) {
+        static MountPublicationHook asHook(PublicationCapture capture) {
             return capture;
         }
     }

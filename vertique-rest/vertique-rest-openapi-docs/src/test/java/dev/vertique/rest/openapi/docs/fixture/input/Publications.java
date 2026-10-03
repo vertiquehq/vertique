@@ -29,7 +29,7 @@ import java.util.Objects;
 
 /**
  * A fluent builder for synthetic, already detached application-mount publications, the shape the
- * documentation sink hands to the document assembler.
+ * documentation hook hands to the document assembler.
  *
  * <pre>{@code
  * Publications.Built built = Publications.mount("/api/public/*")
@@ -50,7 +50,7 @@ import java.util.Objects;
  * installed and a schema is captured under its location and name; the body exactly when the gate is
  * installed and a body schema is captured; a composite field never, even with a captured schema.
  *
- * <p>The built publication is detached as the documentation sink detaches it: every operation has
+ * <p>The built publication is detached as the documentation hook detaches it: every operation has
  * detail, the detail's descriptor is {@code null}, and the response shape is kept (here a
  * {@code void} method with no produced media type). The consumed media types and named file parts
  * the sink takes from the descriptor before detaching are returned beside the publication, per
@@ -149,7 +149,7 @@ public final class Publications {
     }
 
     /**
-     * A built synthetic publication with the facts the documentation sink takes from each operation's
+     * A built synthetic publication with the facts the documentation hook takes from each operation's
      * descriptor before detaching it.
      *
      * @param publication    the detached mount publication

@@ -36,8 +36,8 @@ import dev.vertique.rest.jaxrs.publication.fixture.EchoResource;
 import dev.vertique.rest.jaxrs.publication.fixture.GateMutatingValidationStrategy;
 import dev.vertique.rest.jaxrs.publication.fixture.ItemsResource;
 import dev.vertique.rest.jaxrs.publication.fixture.ProfiledOperationsResource;
-import dev.vertique.rest.jaxrs.publication.fixture.PromiseControlledSink;
-import dev.vertique.rest.jaxrs.publication.fixture.RecordingSink;
+import dev.vertique.rest.jaxrs.publication.fixture.PromiseControlledPublicationHook;
+import dev.vertique.rest.jaxrs.publication.fixture.RecordingPublicationHook;
 import dev.vertique.rest.jaxrs.publication.fixture.RecordingValidationStrategy;
 import dev.vertique.rest.jaxrs.routing.ParamLocation;
 import dev.vertique.rest.jaxrs.validation.OperationSchemas;
@@ -80,7 +80,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 /**
  * Unit proofs for T006's internal publication seam: {@code JaxRsRouterMount.createRouter} building
  * exactly one {@code MountPublication} per non-empty mount and handing it to every bound
- * {@code OperationPublicationSink}, entirely through a bare {@code TestFactories}-built
+ * {@code MountPublicationHook}, entirely through a bare {@code TestFactories}-built
  * {@code Factory} — no Dagger composition and no running {@code HttpVerticle}.
  *
  * <p>TP-002 and TP-003 additionally bind a loopback {@code HttpServer} to prove, respectively, that a
@@ -91,7 +91,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
  */
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
-class OperationPublicationSinkTest {
+class MountPublicationHookTest {
 
     private static final String ID_ROUTE_VALUE = "/items/:id";
     private static final String DETAIL_PATH_TEMPLATE = "/items/{id: [0-9]+}/detail";
@@ -114,7 +114,7 @@ class OperationPublicationSinkTest {
     @Test
     @DisplayName("Publications record route values as registered and the effective security facts")
     void publicationRecordsRegisteredRouteValuesAndSecurity(Vertx vertx, VertxTestContext ctx) {
-        RecordingSink sink = new RecordingSink();
+        RecordingPublicationHook hook = new RecordingPublicationHook();
         ActionRef adminViewAction = ActionRef.parse(ItemsResource.ADMIN_VIEW_ACTION);
 
         JaxRsRouterMount.Factory factory = TestFactories.builder()
@@ -122,14 +122,14 @@ class OperationPublicationSinkTest {
                 .authEnforcementCapability(Optional.of(AuthEnforcementCapability.INSTANCE))
                 .actionRegistry(Optional.of(new StubActionRegistry(adminViewAction)))
                 .authorizer(Optional.of(new PresenceOnlyAuthorizer()))
-                .publicationSinks(new LinkedHashSet<>(List.of(sink)))
+                .publicationHooks(new LinkedHashSet<>(List.of(hook)))
                 .build();
 
         JaxRsRouterMount mount = factory.create("/*", "openapi.json", Set.of(new ItemsResource()));
 
         mount.createRouter(vertx).onComplete(ctx.succeeding(apiRouter -> {
             ctx.verify(() -> {
-                MountPublication publication = sink.onlyReceived();
+                MountPublication publication = hook.onlyReceived();
                 Map<String, OperationPublication> byId = publication.operations().stream()
                         .collect(Collectors.toMap(OperationPublication::operationId, op -> op));
 
@@ -213,7 +213,7 @@ class OperationPublicationSinkTest {
                 .build());
 
         RecordingValidationStrategy strategy = new RecordingValidationStrategy();
-        RecordingSink sink = new RecordingSink(applicationName -> true);
+        RecordingPublicationHook hook = new RecordingPublicationHook(applicationName -> true);
 
         JaxRsRouterMount.Factory factory = TestFactories.builder()
                 .validationStrategies(Set.of(strategy))
@@ -223,7 +223,7 @@ class OperationPublicationSinkTest {
                         .validationStrategy(RecordingValidationStrategy.ID)
                         .jsonProfile("profile-default")
                         .build())
-                .publicationSinks(new LinkedHashSet<>(List.of(sink)))
+                .publicationHooks(new LinkedHashSet<>(List.of(hook)))
                 .build();
 
         JaxRsRouterMount mount = factory.create("/*", "openapi.json", Set.of(new ProfiledOperationsResource()));
@@ -246,7 +246,7 @@ class OperationPublicationSinkTest {
                                     ctx.verify(() -> {
                                         assertEquals(2, source.calls());
 
-                                        MountPublication publication = sink.onlyReceived();
+                                        MountPublication publication = hook.onlyReceived();
                                         Map<String, OperationPublication> byId = publication.operations().stream()
                                                 .collect(Collectors.toMap(OperationPublication::operationId, op -> op));
 
@@ -319,7 +319,7 @@ class OperationPublicationSinkTest {
         });
 
         GateMutatingValidationStrategy strategy = new GateMutatingValidationStrategy();
-        RecordingSink sink = new RecordingSink(applicationName -> true);
+        RecordingPublicationHook hook = new RecordingPublicationHook(applicationName -> true);
 
         JaxRsRouterMount.Factory factory = TestFactories.builder()
                 .validationStrategies(Set.of(strategy))
@@ -327,13 +327,13 @@ class OperationPublicationSinkTest {
                         .validationStrategy(GateMutatingValidationStrategy.ID)
                         .build())
                 .operationSchemaSource(Optional.of(source))
-                .publicationSinks(new LinkedHashSet<>(List.of(sink)))
+                .publicationHooks(new LinkedHashSet<>(List.of(hook)))
                 .build();
 
         JaxRsRouterMount mount = factory.create("/*", "openapi.json", Set.of(new DualOperationResource()));
         mount.createRouter(vertx);
 
-        MountPublication publication = sink.onlyReceived();
+        MountPublication publication = hook.onlyReceived();
         Map<String, OperationPublication> byId = publication.operations().stream()
                 .collect(Collectors.toMap(OperationPublication::operationId, op -> op));
         OperationPublication withParams = byId.get("withParams");
@@ -424,9 +424,9 @@ class OperationPublicationSinkTest {
 
     @Test
     @DisplayName("Detail is captured only for mounts a sink wants")
-    void detailOnlyForMountsTheSinkWants(Vertx vertx) {
-        RecordingSink sink =
-                new RecordingSink(applicationName -> "a".equals(applicationName) || "c".equals(applicationName));
+    void detailOnlyForMountsTheHookWants(Vertx vertx) {
+        RecordingPublicationHook hook = new RecordingPublicationHook(
+                applicationName -> "a".equals(applicationName) || "c".equals(applicationName));
         RecordingValidationStrategy strategy = new RecordingValidationStrategy();
 
         JaxRsRouterMount.Factory factory1 = TestFactories.builder()
@@ -434,7 +434,7 @@ class OperationPublicationSinkTest {
                 .jaxRsConfig(JaxRsConfig.builder()
                         .validationStrategy(RecordingValidationStrategy.ID)
                         .build())
-                .publicationSinks(new LinkedHashSet<>(List.of(sink)))
+                .publicationHooks(new LinkedHashSet<>(List.of(hook)))
                 .build();
 
         JaxRsRouterMount mountA = factory1.createApplicationMount(
@@ -446,7 +446,7 @@ class OperationPublicationSinkTest {
         JaxRsRouterMount manualMount = factory1.create("/*", "openapi.json", Set.of(new EchoResource()));
 
         JaxRsRouterMount.Factory factory2 = TestFactories.builder()
-                .publicationSinks(new LinkedHashSet<>(List.of(sink)))
+                .publicationHooks(new LinkedHashSet<>(List.of(hook)))
                 .build();
         JaxRsRouterMount mountC = factory2.createApplicationMount(
                 "/api/c/*", "openapi.json", Set.of(new EchoResource()), "c", ApplicationC.class);
@@ -457,12 +457,12 @@ class OperationPublicationSinkTest {
         manualMount.createRouter(vertx);
         mountC.createRouter(vertx);
 
-        assertEquals(Arrays.asList("a", "b", null, "c"), sink.wantsDetailArgs());
+        assertEquals(Arrays.asList("a", "b", null, "c"), hook.wantsDetailArgs());
 
-        MountPublication pubA = sink.onlyReceivedFor("/api/a/*");
-        MountPublication pubB = sink.onlyReceivedFor("/api/b/*");
-        MountPublication pubManual = sink.onlyReceivedFor("/*");
-        MountPublication pubC = sink.onlyReceivedFor("/api/c/*");
+        MountPublication pubA = hook.onlyReceivedFor("/api/a/*");
+        MountPublication pubB = hook.onlyReceivedFor("/api/b/*");
+        MountPublication pubManual = hook.onlyReceivedFor("/*");
+        MountPublication pubC = hook.onlyReceivedFor("/api/c/*");
 
         // S6-007: a non-empty check plus a per-element assertion, not allMatch over a list that
         // could vacuously be empty.
@@ -471,9 +471,10 @@ class OperationPublicationSinkTest {
         assertNoOperationHasDetail(pubManual);
         assertEveryOperationHasDetail(pubC, false);
 
-        // Disagreeing-sinks row: two sinks in a fixed iteration order, only the second wants "d".
-        RecordingSink sinkWantsNothing = new RecordingSink(applicationName -> false);
-        RecordingSink sinkWantsD = new RecordingSink(applicationName -> "d".equals(applicationName));
+        // Disagreeing-hooks row: two hooks in a fixed iteration order, only the second wants "d".
+        RecordingPublicationHook hookWantsNothing = new RecordingPublicationHook(applicationName -> false);
+        RecordingPublicationHook hookWantsD =
+                new RecordingPublicationHook(applicationName -> "d".equals(applicationName));
         RecordingValidationStrategy strategy2 = new RecordingValidationStrategy();
 
         JaxRsRouterMount.Factory factory3 = TestFactories.builder()
@@ -481,7 +482,7 @@ class OperationPublicationSinkTest {
                 .jaxRsConfig(JaxRsConfig.builder()
                         .validationStrategy(RecordingValidationStrategy.ID)
                         .build())
-                .publicationSinks(new LinkedHashSet<>(List.of(sinkWantsNothing, sinkWantsD)))
+                .publicationHooks(new LinkedHashSet<>(List.of(hookWantsNothing, hookWantsD)))
                 .build();
 
         JaxRsRouterMount mountD = factory3.createApplicationMount(
@@ -494,18 +495,19 @@ class OperationPublicationSinkTest {
         mountD.createRouter(vertx);
         mountE.createRouter(vertx);
 
-        MountPublication dViaSinkWantsNothing = sinkWantsNothing.onlyReceivedFor("/api/d/*");
-        MountPublication dViaSinkWantsD = sinkWantsD.onlyReceivedFor("/api/d/*");
-        assertSame(dViaSinkWantsNothing, dViaSinkWantsD, "every sink must receive the same publication instance");
-        assertEveryOperationHasDetail(dViaSinkWantsNothing);
+        MountPublication dViaHookWantsNothing = hookWantsNothing.onlyReceivedFor("/api/d/*");
+        MountPublication dViaHookWantsD = hookWantsD.onlyReceivedFor("/api/d/*");
+        assertSame(dViaHookWantsNothing, dViaHookWantsD, "every sink must receive the same publication instance");
+        assertEveryOperationHasDetail(dViaHookWantsNothing);
 
-        MountPublication eViaSinkWantsNothing = sinkWantsNothing.onlyReceivedFor("/api/e/*");
-        assertNoOperationHasDetail(eViaSinkWantsNothing);
+        MountPublication eViaHookWantsNothing = hookWantsNothing.onlyReceivedFor("/api/e/*");
+        assertNoOperationHasDetail(eViaHookWantsNothing);
 
-        // S6-003: a row where the sink that wants detail comes FIRST, proving every sink is still
-        // asked wantsDetail (no short-circuit) once an earlier sink already wants detail.
-        RecordingSink sinkWantsDFirst = new RecordingSink(applicationName -> "d".equals(applicationName));
-        RecordingSink sinkWantsNothingSecond = new RecordingSink(applicationName -> false);
+        // S6-003: a row where the hook that wants detail comes FIRST, proving every hook is still
+        // asked wantsDetail (no short-circuit) once an earlier hook already wants detail.
+        RecordingPublicationHook hookWantsDFirst =
+                new RecordingPublicationHook(applicationName -> "d".equals(applicationName));
+        RecordingPublicationHook hookWantsNothingSecond = new RecordingPublicationHook(applicationName -> false);
         RecordingValidationStrategy strategy3 = new RecordingValidationStrategy();
 
         JaxRsRouterMount.Factory factory4 = TestFactories.builder()
@@ -513,7 +515,7 @@ class OperationPublicationSinkTest {
                 .jaxRsConfig(JaxRsConfig.builder()
                         .validationStrategy(RecordingValidationStrategy.ID)
                         .build())
-                .publicationSinks(new LinkedHashSet<>(List.of(sinkWantsDFirst, sinkWantsNothingSecond)))
+                .publicationHooks(new LinkedHashSet<>(List.of(hookWantsDFirst, hookWantsNothingSecond)))
                 .build();
 
         JaxRsRouterMount mountDReordered = factory4.createApplicationMount(
@@ -522,13 +524,13 @@ class OperationPublicationSinkTest {
 
         mountDReordered.createRouter(vertx);
 
-        assertEquals(List.of("d"), sinkWantsDFirst.wantsDetailArgs());
+        assertEquals(List.of("d"), hookWantsDFirst.wantsDetailArgs());
         assertEquals(
                 List.of("d"),
-                sinkWantsNothingSecond.wantsDetailArgs(),
+                hookWantsNothingSecond.wantsDetailArgs(),
                 "every sink must be asked wantsDetail even when an earlier sink already wants detail");
-        MountPublication dReorderedViaFirst = sinkWantsDFirst.onlyReceivedFor("/api/d/*");
-        MountPublication dReorderedViaSecond = sinkWantsNothingSecond.onlyReceivedFor("/api/d/*");
+        MountPublication dReorderedViaFirst = hookWantsDFirst.onlyReceivedFor("/api/d/*");
+        MountPublication dReorderedViaSecond = hookWantsNothingSecond.onlyReceivedFor("/api/d/*");
         assertSame(dReorderedViaFirst, dReorderedViaSecond, "every sink must receive the same publication instance");
         assertEveryOperationHasDetail(dReorderedViaFirst);
     }
@@ -593,7 +595,7 @@ class OperationPublicationSinkTest {
 
     @Test
     @DisplayName("createRouter completes only when every sink's future has")
-    void createRouterAwaitsEverySinkFuture(Vertx vertx) {
+    void createRouterAwaitsEveryHookFuture(Vertx vertx) {
         verifySuccessScenario(vertx, "/api/one/*", Set.of(new EchoResource()));
         verifySuccessScenario(vertx, "/api/none/*", Set.of());
         verifyFailureScenario(vertx, "/api/one/*", Set.of(new EchoResource()));
@@ -601,43 +603,43 @@ class OperationPublicationSinkTest {
     }
 
     private static void verifySuccessScenario(Vertx vertx, String mountPath, Set<Object> resources) {
-        PromiseControlledSink sink1 = new PromiseControlledSink();
-        PromiseControlledSink sink2 = new PromiseControlledSink();
+        PromiseControlledPublicationHook hook1 = new PromiseControlledPublicationHook();
+        PromiseControlledPublicationHook hook2 = new PromiseControlledPublicationHook();
         JaxRsRouterMount.Factory factory = TestFactories.builder()
-                .publicationSinks(new LinkedHashSet<>(List.of(sink1, sink2)))
+                .publicationHooks(new LinkedHashSet<>(List.of(hook1, hook2)))
                 .build();
         JaxRsRouterMount mount = factory.create(mountPath, "openapi.json", resources);
 
         Future<Router> future = mount.createRouter(vertx);
 
-        assertEquals(1, sink1.received().size(), "both sinks must be called before any promise completes");
-        assertEquals(1, sink2.received().size(), "both sinks must be called before any promise completes");
-        assertSame(sink1.received().get(0), sink2.received().get(0));
+        assertEquals(1, hook1.received().size(), "both sinks must be called before any promise completes");
+        assertEquals(1, hook2.received().size(), "both sinks must be called before any promise completes");
+        assertSame(hook1.received().get(0), hook2.received().get(0));
         assertFalse(future.isComplete(), "the router future must not complete before any sink future does");
 
-        sink1.latestPromise().complete();
+        hook1.latestPromise().complete();
         assertFalse(future.isComplete(), "the router future must stay incomplete after only the first sink completes");
 
-        sink2.latestPromise().complete();
+        hook2.latestPromise().complete();
         assertTrue(future.succeeded(), "the router future must succeed once every sink future has");
     }
 
     private static void verifyFailureScenario(Vertx vertx, String mountPath, Set<Object> resources) {
-        PromiseControlledSink sink1 = new PromiseControlledSink();
-        PromiseControlledSink sink2 = new PromiseControlledSink();
+        PromiseControlledPublicationHook hook1 = new PromiseControlledPublicationHook();
+        PromiseControlledPublicationHook hook2 = new PromiseControlledPublicationHook();
         RuntimeException sentinel = new RuntimeException("sentinel failure for " + mountPath);
         JaxRsRouterMount.Factory factory = TestFactories.builder()
-                .publicationSinks(new LinkedHashSet<>(List.of(sink1, sink2)))
+                .publicationHooks(new LinkedHashSet<>(List.of(hook1, hook2)))
                 .build();
         JaxRsRouterMount mount = factory.create(mountPath, "openapi.json", resources);
 
         Future<Router> future = mount.createRouter(vertx);
 
-        assertEquals(1, sink1.received().size(), "both sinks must be called before the promise is failed");
-        assertEquals(1, sink2.received().size(), "both sinks must be called before the promise is failed");
+        assertEquals(1, hook1.received().size(), "both sinks must be called before the promise is failed");
+        assertEquals(1, hook2.received().size(), "both sinks must be called before the promise is failed");
         assertFalse(future.isComplete());
 
-        sink1.latestPromise().fail(sentinel);
+        hook1.latestPromise().fail(sentinel);
 
         assertTrue(future.failed(), "a failed sink future must fail the router future");
         assertSame(sentinel, future.cause());

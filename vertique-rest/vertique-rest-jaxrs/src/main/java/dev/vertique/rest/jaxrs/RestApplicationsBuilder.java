@@ -6,7 +6,7 @@ package dev.vertique.rest.jaxrs;
 import dev.vertique.rest.core.RestConfigurationException;
 import dev.vertique.rest.core.application.RestApplication;
 import dev.vertique.rest.core.config.JaxRsConfig;
-import dev.vertique.rest.jaxrs.application.ApiDocsInstalled;
+import dev.vertique.rest.jaxrs.application.ApiDocsModuleInstalled;
 import dev.vertique.rest.jaxrs.application.RestApplications;
 import dev.vertique.rest.jaxrs.application.RestApplications.ContractOrigin;
 import dev.vertique.rest.jaxrs.application.RestApplications.Entry;
@@ -48,7 +48,7 @@ final class RestApplicationsBuilder {
      *                                configuration section's order
      * @param config                 the JAX-RS routing configuration, supplying the global
      *                                {@code jaxrs.openapiPath} default
-     * @param apiDocsInstalled       present when the OpenAPI documentation module is included in
+     * @param apiDocsModuleInstalled       present when the OpenAPI documentation module is included in
      *                                this component
      * @return the built view
      * @throws RestConfigurationException when a name is duplicated across registrations, a name is
@@ -61,7 +61,7 @@ final class RestApplicationsBuilder {
             Set<GeneratedRestApplicationRegistration> registrations,
             List<RestApplicationConfig> configuredApplications,
             JaxRsConfig config,
-            Optional<ApiDocsInstalled> apiDocsInstalled) {
+            Optional<ApiDocsModuleInstalled> apiDocsModuleInstalled) {
         List<GeneratedRestApplicationRegistration> sorted = registrations.stream()
                 .sorted(Comparator.comparing(GeneratedRestApplicationRegistration::name))
                 .toList();
@@ -86,7 +86,7 @@ final class RestApplicationsBuilder {
                 .map(registration -> toEntry(registration, configByName.get(registration.name()), config))
                 .toList();
 
-        logApiDocsNotInstalled(sorted, apiDocsInstalled);
+        logApiDocsNotInstalled(sorted, apiDocsModuleInstalled);
 
         return new RestApplications(entries);
     }
@@ -236,13 +236,14 @@ final class RestApplicationsBuilder {
 
     /**
      * Logs one INFO line per active registration whose declaring interface carries an annotation
-     * named {@link ApiDocsInstalled#ANNOTATION_NAME}, only when {@code apiDocsInstalled} is empty.
+     * named {@link ApiDocsModuleInstalled#ANNOTATION_NAME}, only when {@code apiDocsModuleInstalled} is empty.
      * Runs once per component, since this builder runs once per {@code @Singleton RestApplications}
      * resolution.
      */
     private static void logApiDocsNotInstalled(
-            List<GeneratedRestApplicationRegistration> sorted, Optional<ApiDocsInstalled> apiDocsInstalled) {
-        if (apiDocsInstalled.isPresent()) {
+            List<GeneratedRestApplicationRegistration> sorted,
+            Optional<ApiDocsModuleInstalled> apiDocsModuleInstalled) {
+        if (apiDocsModuleInstalled.isPresent()) {
             return;
         }
         for (GeneratedRestApplicationRegistration registration : sorted) {
@@ -261,12 +262,12 @@ final class RestApplicationsBuilder {
 
     /**
      * Returns whether {@code declaringType} carries a runtime-visible annotation whose type name
-     * equals {@link ApiDocsInstalled#ANNOTATION_NAME}, read by name so this module never depends on
+     * equals {@link ApiDocsModuleInstalled#ANNOTATION_NAME}, read by name so this module never depends on
      * the docs module that declares the real annotation.
      */
     private static boolean carriesApiDocsAnnotation(Class<?> declaringType) {
         for (Annotation annotation : declaringType.getDeclaredAnnotations()) {
-            if (annotation.annotationType().getName().equals(ApiDocsInstalled.ANNOTATION_NAME)) {
+            if (annotation.annotationType().getName().equals(ApiDocsModuleInstalled.ANNOTATION_NAME)) {
                 return true;
             }
         }

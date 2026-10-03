@@ -137,7 +137,7 @@ final class SyntheticFixtureModule {
 
     @Provides
     @IntoSet
-    static RouterMount syntheticDocsMount(SyntheticOperations operations, TraceRecorder trace) {
+    static RouterMount syntheticDocsMount(SyntheticOperationInstaller operations, TraceRecorder trace) {
         return new SyntheticDocsMount(operations, trace);
     }
 

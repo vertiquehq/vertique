@@ -7,7 +7,7 @@ import dagger.Module;
 import dagger.Provides;
 import dagger.multibindings.IntoSet;
 import dev.vertique.rest.jaxrs.publication.MountPublication;
-import dev.vertique.rest.jaxrs.publication.OperationPublicationSink;
+import dev.vertique.rest.jaxrs.publication.MountPublicationHook;
 import io.vertx.core.Future;
 import jakarta.annotation.Nullable;
 import jakarta.inject.Singleton;
@@ -15,17 +15,17 @@ import java.util.HashMap;
 import java.util.Map;
 
 /**
- * An {@link OperationPublicationSink} that wants detail for every mount and keeps the latest attached
+ * An {@link MountPublicationHook} that wants detail for every mount and keeps the latest attached
  * publication of each declared application, operation descriptors included, so a test can assemble a
- * real mount build's publication as the documentation sink would. It returns an already succeeded
+ * real mount build's publication as the documentation hook would. It returns an already succeeded
  * future and never fails a mount. Thread-safe.
  */
-public final class DetailCapturingSink implements OperationPublicationSink {
+public final class DetailCapturingPublicationHook implements MountPublicationHook {
 
     private final Map<String, MountPublication> byApplication = new HashMap<>();
 
-    /** Creates a sink with no kept publication. */
-    public DetailCapturingSink() {}
+    /** Creates a hook with no kept publication. */
+    public DetailCapturingPublicationHook() {}
 
     /**
      * Wants detail for every mount.
@@ -63,33 +63,33 @@ public final class DetailCapturingSink implements OperationPublicationSink {
         return byApplication.get(applicationName);
     }
 
-    /** Binds one component-scoped {@link DetailCapturingSink} into {@code Set<OperationPublicationSink>}. */
+    /** Binds one component-scoped {@link DetailCapturingPublicationHook} into {@code Set<MountPublicationHook>}. */
     @Module
     public static final class Binding {
 
         private Binding() {}
 
         /**
-         * Provides the component's sink.
+         * Provides the component's hook.
          *
-         * @return a new sink
+         * @return a new hook
          */
         @Provides
         @Singleton
-        static DetailCapturingSink detailCapturingSink() {
-            return new DetailCapturingSink();
+        static DetailCapturingPublicationHook detailCapturingHook() {
+            return new DetailCapturingPublicationHook();
         }
 
         /**
-         * Contributes the sink beside every other sink.
+         * Contributes the hook beside every other hook.
          *
-         * @param sink the component's sink
-         * @return {@code sink}
+         * @param hook the component's hook
+         * @return {@code hook}
          */
         @Provides
         @IntoSet
-        static OperationPublicationSink asSink(DetailCapturingSink sink) {
-            return sink;
+        static MountPublicationHook asHook(DetailCapturingPublicationHook hook) {
+            return hook;
         }
     }
 }

@@ -18,7 +18,7 @@ import dev.vertique.rest.openapi.docs.fixture.responses.shapes.Item;
 import dev.vertique.rest.openapi.docs.fixture.responses.shapes.ItemResource;
 import dev.vertique.rest.openapi.docs.fixture.responses.shapes.ShapeResource;
 import dev.vertique.rest.openapi.docs.metadata.ResponseInference.Inference;
-import dev.vertique.rest.openapi.docs.metadata.ResponseInference.Row;
+import dev.vertique.rest.openapi.docs.metadata.ResponseInference.ResponseKind;
 import java.lang.reflect.Type;
 import java.util.List;
 import java.util.Set;
@@ -54,22 +54,22 @@ class ResponseInferenceTest {
     private static final List<Item> LIST_OF_ITEM = null;
 
     /** The expected classification of one row. */
-    private record Expected(Row row, String status, List<String> mediaTypes, Type outputType) {}
+    private record Expected(ResponseKind kind, String status, List<String> mediaTypes, Type outputType) {}
 
     private static Expected noContent() {
-        return new Expected(Row.NO_CONTENT, "204", List.of(), null);
+        return new Expected(ResponseKind.NO_CONTENT, "204", List.of(), null);
     }
 
     private static Expected json(List<String> mediaTypes, Type outputType) {
-        return new Expected(Row.JSON_ENTITY, "200", mediaTypes, outputType);
+        return new Expected(ResponseKind.JSON_ENTITY, "200", mediaTypes, outputType);
     }
 
     private static Expected rawText(List<String> mediaTypes) {
-        return new Expected(Row.RAW_TEXT, "200", mediaTypes, null);
+        return new Expected(ResponseKind.RAW_TEXT, "200", mediaTypes, null);
     }
 
     private static Expected runtime() {
-        return new Expected(Row.RUNTIME, "default", List.of(), null);
+        return new Expected(ResponseKind.RUNTIME, "default", List.of(), null);
     }
 
     private static Type fieldType(String name) {
@@ -183,7 +183,7 @@ class ResponseInferenceTest {
         Inference inference = ResponseInference.classify(shape, bindings);
 
         // Then the row, status, media types, and type to describe the body from are exactly expected
-        assertEquals(expected.row(), inference.row(), label + ": row");
+        assertEquals(expected.kind(), inference.kind(), label + ": row");
         assertEquals(expected.status(), inference.status(), label + ": status");
         assertEquals(expected.mediaTypes(), inference.mediaTypes(), label + ": media types");
         if (expected.outputType() == null) {

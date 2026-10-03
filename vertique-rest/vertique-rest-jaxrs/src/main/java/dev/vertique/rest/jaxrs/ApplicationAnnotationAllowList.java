@@ -5,7 +5,7 @@ package dev.vertique.rest.jaxrs;
 
 import dev.vertique.core.util.TypeResolver;
 import dev.vertique.rest.core.application.RestApplication;
-import dev.vertique.rest.jaxrs.application.ApiDocsInstalled;
+import dev.vertique.rest.jaxrs.application.ApiDocsModuleInstalled;
 import io.swagger.v3.oas.annotations.OpenAPIDefinition;
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Method;
@@ -23,7 +23,7 @@ import java.util.Objects;
  * <p>{@link Class#getDeclaredAnnotations()} already returns runtime-retained annotations only, so
  * no separate retention check is needed. Every {@code RUNTIME}-retained annotation directly present
  * on the declaring interface must be one of {@code @RestApplication}, the annotation whose type name
- * equals {@link ApiDocsInstalled#ANNOTATION_NAME} (read by name so this module never depends on the
+ * equals {@link ApiDocsModuleInstalled#ANNOTATION_NAME} (read by name so this module never depends on the
  * docs module that declares the real annotation), {@link OpenAPIDefinition} with every element other
  * than {@code info} at its declared default (compared with {@link Method#getDefaultValue()} via
  * {@link Objects#deepEquals}), or a type in package {@code java.lang} or
@@ -99,7 +99,7 @@ final class ApplicationAnnotationAllowList {
         }
 
         boolean isRestApplication = annotationType == RestApplication.class;
-        boolean isApiDocs = ApiDocsInstalled.ANNOTATION_NAME.equals(annotationType.getName());
+        boolean isApiDocs = ApiDocsModuleInstalled.ANNOTATION_NAME.equals(annotationType.getName());
         boolean isOpenApiDefinition = annotationType == OpenAPIDefinition.class;
         boolean honoredOnly = isRestApplication || isApiDocs || isOpenApiDefinition;
 

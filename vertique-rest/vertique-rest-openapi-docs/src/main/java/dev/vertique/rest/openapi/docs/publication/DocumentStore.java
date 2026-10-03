@@ -4,8 +4,8 @@
 package dev.vertique.rest.openapi.docs.publication;
 
 import dev.vertique.rest.core.RestConfigurationException;
+import dev.vertique.rest.openapi.docs.document.PublicationFingerprint;
 import dev.vertique.rest.openapi.docs.document.PublishedDocument;
-import dev.vertique.rest.openapi.docs.document.Snapshot;
 import io.vertx.core.Context;
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
@@ -26,7 +26,7 @@ import org.slf4j.LoggerFactory;
  *
  * <p>The first composition to publish an application installs a promise in the map and assembles the
  * document on a worker thread of its own context. Every later composition joins that promise
- * without blocking: once it completes, the later composition renders its own snapshot on a worker
+ * without blocking: once it completes, the later composition calculates its own fingerprint on a worker
  * thread of its own context and compares it with the stored one. A failed assembly removes its
  * promise before it fails the joined compositions, so a later publication assembles again.
  * Every future returned by {@link #publish} completes on the context that called it.
@@ -109,30 +109,33 @@ public final class DocumentStore {
     }
 
     /**
-     * Publishes the document of an application, or compares a later composition's snapshot with
+     * Publishes the document of an application, or compares a later composition's fingerprint with
      * the stored one.
      *
      * <p>The first caller for a name assembles the document with {@code assemble} on a worker thread
      * of {@code caller} and stores it. Every other caller waits for that document without blocking,
-     * then renders its own snapshot with {@code ownSnapshot} on a worker thread of {@code caller} and
-     * compares it with the stored snapshot. When the assembly fails, every caller fails with the
+     * then calculates its own fingerprint with {@code ownFingerprint} on a worker thread of {@code caller} and
+     * compares it with the stored fingerprint. When the assembly fails, every caller fails with the
      * failure of the assembly itself, and the next call for the name assembles again.
      *
      * @param name the application name
      * @param caller the context that called, on which the returned future completes
      * @param assemble assembles the document
-     * @param ownSnapshot renders the caller's own snapshot
-     * @return a future completing when the document is stored and the snapshot matches; it fails
-     *     with a {@link RestConfigurationException} when the snapshot differs
+     * @param ownFingerprint calculates the caller's own fingerprint
+     * @return a future completing when the document is stored and the fingerprint matches; it fails
+     *     with a {@link RestConfigurationException} when the fingerprint differs
      */
     Future<Void> publish(
-            String name, Context caller, Callable<PublishedDocument> assemble, Callable<Snapshot> ownSnapshot) {
-        return publish(name, caller, Source.GENERATED, assemble, ownSnapshot);
+            String name,
+            Context caller,
+            Callable<PublishedDocument> assemble,
+            Callable<PublicationFingerprint> ownFingerprint) {
+        return publish(name, caller, Source.GENERATED, assemble, ownFingerprint);
     }
 
     /**
      * Publishes the document of an application from the given source, or compares a later
-     * composition's snapshot with the stored one, as {@link #publish(String, Context, Callable,
+     * composition's fingerprint with the stored one, as {@link #publish(String, Context, Callable,
      * Callable)} does.
      *
      * <p>The stored line names the source. For a generated document the store also logs, at {@code
@@ -142,22 +145,22 @@ public final class DocumentStore {
      * @param caller the context that called, on which the returned future completes
      * @param source where the document comes from
      * @param assemble produces the document
-     * @param ownSnapshot renders the caller's own snapshot
-     * @return a future completing when the document is stored and the snapshot matches; it fails
-     *     with a {@link RestConfigurationException} when the snapshot differs
+     * @param ownFingerprint calculates the caller's own fingerprint
+     * @return a future completing when the document is stored and the fingerprint matches; it fails
+     *     with a {@link RestConfigurationException} when the fingerprint differs
      */
     Future<Void> publish(
             String name,
             Context caller,
             Source source,
             Callable<PublishedDocument> assemble,
-            Callable<Snapshot> ownSnapshot) {
+            Callable<PublicationFingerprint> ownFingerprint) {
         Promise<PublishedDocument> mine = Promise.promise();
         Future<PublishedDocument> existing = flights.putIfAbsent(name, mine.future());
         if (existing == null) {
             return assembleAndStore(name, caller, source, assemble, mine);
         }
-        return compareWithStored(name, caller, ownSnapshot, existing);
+        return compareWithStored(name, caller, ownFingerprint, existing);
     }
 
     private Future<Void> assembleAndStore(
@@ -170,7 +173,8 @@ public final class DocumentStore {
                     long start = System.nanoTime();
                     PublishedDocument document = assemble.call();
                     if (source == Source.GENERATED) {
-                        Snapshot.MountPart mount = document.snapshot().mountPart();
+                        PublicationFingerprint.MountPart mount =
+                                document.fingerprint().mountPart();
                         LOG.debug(
                                 "Assembled the document of application '{}' at mount '{}' in {} ms",
                                 name,
@@ -192,14 +196,17 @@ public final class DocumentStore {
                     LOG.info(
                             "The document of application '{}' at mount '{}' is stored (source: {})",
                             name,
-                            document.snapshot().mountPart().mountPath(),
+                            document.fingerprint().mountPart().mountPath(),
                             source.label());
                     return Future.succeededFuture();
                 });
     }
 
     private Future<Void> compareWithStored(
-            String name, Context caller, Callable<Snapshot> ownSnapshot, Future<PublishedDocument> stored) {
+            String name,
+            Context caller,
+            Callable<PublicationFingerprint> ownFingerprint,
+            Future<PublishedDocument> stored) {
         Promise<Void> result = Promise.promise();
         // The stored future completes on the context of the composition that assembled: hop to this
         // caller's own context before doing anything else, so this caller's future never completes
@@ -210,13 +217,14 @@ public final class DocumentStore {
                 return;
             }
             caller.executeBlocking(() -> {
-                        Snapshot own = ownSnapshot.call();
-                        Snapshot storedSnapshot = assembled.result().snapshot();
+                        PublicationFingerprint own = ownFingerprint.call();
+                        PublicationFingerprint storedFingerprint =
+                                assembled.result().fingerprint();
                         LOG.debug(
                                 "Compared the snapshot of application '{}' at mount '{}' with the stored document",
                                 name,
                                 own.mountPart().mountPath());
-                        failOnDifference(name, own, storedSnapshot);
+                        failOnDifference(name, own, storedFingerprint);
                         return null;
                     })
                     .onComplete(compared -> {
@@ -231,10 +239,10 @@ public final class DocumentStore {
     }
 
     /**
-     * Throws when the snapshots differ. The message names the application, its declaring interface,
+     * Throws when the fingerprints differ. The message names the application, its declaring interface,
      * its mount, and the first differing operation, and carries no digest, schema, or value.
      */
-    private static void failOnDifference(String name, Snapshot own, Snapshot stored) {
+    private static void failOnDifference(String name, PublicationFingerprint own, PublicationFingerprint stored) {
         boolean mountDiffers = !own.mountPart().equals(stored.mountPart());
         Optional<String> operation = own.firstDifferingOperation(stored);
         if (!mountDiffers && operation.isEmpty()) {

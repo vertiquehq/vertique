@@ -11,7 +11,7 @@ import dev.vertique.rest.core.security.SecurityPolicyViolation;
 import dev.vertique.rest.core.security.SecurityPolicyViolationException;
 import dev.vertique.rest.core.security.SecuritySchemeHandler;
 import dev.vertique.rest.jaxrs.synthetic.SyntheticOperation;
-import dev.vertique.rest.jaxrs.synthetic.SyntheticOperations;
+import dev.vertique.rest.jaxrs.synthetic.SyntheticOperationInstaller;
 import io.netty.handler.codec.http.HttpResponseStatus;
 import io.vertx.core.Handler;
 import io.vertx.core.http.HttpMethod;
@@ -33,10 +33,11 @@ import java.util.Set;
 import java.util.WeakHashMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Supplier;
-import lombok.extern.slf4j.Slf4j;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
- * Package-private {@link SyntheticOperations} implementation, bound by {@code @Binds} in
+ * Package-private {@link SyntheticOperationInstaller} implementation, bound by {@code @Binds} in
  * {@link RestModule}. Reuses {@link JaxRsRouterMount.Factory}'s shared services and the registrar's
  * shared helpers, so a synthetic route runs exactly the chain an equally annotated JAX-RS resource
  * method gets.
@@ -70,9 +71,10 @@ import lombok.extern.slf4j.Slf4j;
  * installation through {@link JaxRsRouterMount#configureSecuritySchemes}, and the operation ids
  * installed on it.
  */
-@Slf4j
 @Singleton
-final class SyntheticOperationInstaller implements SyntheticOperations {
+final class DefaultSyntheticOperationInstaller implements SyntheticOperationInstaller {
+
+    private static final Logger LOG = LoggerFactory.getLogger("dev.vertique.rest.jaxrs.SyntheticOperationInstaller");
 
     private final JaxRsRouterMount.Factory factory;
     private final SecurityPolicyBuilder policyBuilder = new SecurityPolicyBuilder();
@@ -85,7 +87,7 @@ final class SyntheticOperationInstaller implements SyntheticOperations {
      *                policy validator, and authentication-enforcement flag this installer reuses
      */
     @Inject
-    SyntheticOperationInstaller(JaxRsRouterMount.Factory factory) {
+    DefaultSyntheticOperationInstaller(JaxRsRouterMount.Factory factory) {
         this.factory = factory;
     }
 
@@ -321,7 +323,7 @@ final class SyntheticOperationInstaller implements SyntheticOperations {
                 status = 500;
             }
             if (status >= 500) {
-                log.error("Synthetic operation {} failed with status {}", operationId, status, failure);
+                LOG.error("Synthetic operation {} failed with status {}", operationId, status, failure);
             }
             String body = new JsonObject()
                     .put("type", "about:blank")

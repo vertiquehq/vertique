@@ -21,17 +21,17 @@ import java.util.Objects;
  *
  * <p>Internal to the OpenAPI documentation module; not an application API.
  */
-public final class OutputGenerators {
+public final class OutputSchemaGeneratorCache {
 
     private final JsonMapperProfileRegistry profiles;
     private final Map<String, AnnotationJsonSchemaGenerator> generators = new HashMap<>();
 
     /**
-     * Creates the generators of one assembly.
+     * Creates the generator cache of one assembly.
      *
      * @param profiles the registry the profiles are resolved through
      */
-    public OutputGenerators(JsonMapperProfileRegistry profiles) {
+    public OutputSchemaGeneratorCache(JsonMapperProfileRegistry profiles) {
         this.profiles = Objects.requireNonNull(profiles, "profiles");
     }
 

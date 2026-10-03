@@ -9,11 +9,11 @@ import java.util.Objects;
 import java.util.Optional;
 
 /**
- * INTERNAL: describes one framework-owned synthetic operation for {@link SyntheticOperations}.
+ * INTERNAL: describes one framework-owned synthetic operation for {@link SyntheticOperationInstaller}.
  *
  * <p>An operation is guarded by one security scheme and is either authenticated-only ({@link
  * #authenticated}) or restricted to a non-empty list of roles ({@link #withRoles}). {@link
- * SyntheticOperations#install} gives it the effective security policy of a resource method annotated
+ * SyntheticOperationInstaller#install} gives it the effective security policy of a resource method annotated
  * with {@code @SecurityRequirement(name = schemeName)} plus, respectively, {@code @Authorized} or
  * {@code @RolesAllowed(rolesAllowed)}.
  *

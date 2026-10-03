@@ -16,7 +16,7 @@ import dev.vertique.rest.core.router.RouterCustomizer;
 import dev.vertique.rest.core.router.RouterMount;
 import dev.vertique.rest.jaxrs.JaxRsRouterMount;
 import dev.vertique.rest.jaxrs.RestModule;
-import dev.vertique.rest.jaxrs.publication.OperationPublicationSink;
+import dev.vertique.rest.jaxrs.publication.MountPublicationHook;
 import dev.vertique.rest.openapi.docs.fixture.CountingRouterLifecycleHook;
 import dev.vertique.rest.openapi.docs.fixture.DocsTestSupportModule;
 import dev.vertique.rest.openapi.docs.fixture.MarkerRouterMount;
@@ -293,7 +293,7 @@ public final class StartupTestComponents {
         interface ComponentFactory extends Factory<TwoProtectedEnforcementOnlyComponent> {}
     }
 
-    /** What a component exposes so a test can see which composition checks and sinks it holds. */
+    /** What a component exposes so a test can see which composition checks and hooks it holds. */
     public interface CompositionExtensions {
 
         /**
@@ -304,11 +304,11 @@ public final class StartupTestComponents {
         Set<MountCompositionValidator> mountCompositionValidators();
 
         /**
-         * Resolves the operation publication sinks of the component.
+         * Resolves the operation publication hooks of the component.
          *
-         * @return the sinks
+         * @return the hooks
          */
-        Set<OperationPublicationSink> publicationSinks();
+        Set<MountPublicationHook> publicationHooks();
     }
 
     /**

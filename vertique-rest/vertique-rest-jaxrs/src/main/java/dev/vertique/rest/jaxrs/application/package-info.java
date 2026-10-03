@@ -6,7 +6,7 @@
  *
  * <p>{@link dev.vertique.rest.jaxrs.application.RestApplications} is the component-scoped {@code
  * @Singleton} view over every declared {@code @RestApplication}, built once per component and
- * provided by {@code RestModule}; {@link dev.vertique.rest.jaxrs.application.ApiDocsInstalled} is
+ * provided by {@code RestModule}; {@link dev.vertique.rest.jaxrs.application.ApiDocsModuleInstalled} is
  * the marker {@code RestModule} detects, through {@code @BindsOptionalOf}, to know whether the
  * OpenAPI documentation module is present in the component.
  *

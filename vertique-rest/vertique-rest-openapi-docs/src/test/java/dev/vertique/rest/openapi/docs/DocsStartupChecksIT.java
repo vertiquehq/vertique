@@ -40,7 +40,7 @@ import dev.vertique.rest.openapi.docs.fixture.support.Cleanup;
 import dev.vertique.rest.openapi.docs.fixture.support.Futures;
 import dev.vertique.rest.openapi.docs.fixture.support.StartupDeployments;
 import dev.vertique.rest.openapi.docs.fixture.support.StartupDeployments.Outcome;
-import dev.vertique.rest.openapi.docs.publication.DocsPublicationSink;
+import dev.vertique.rest.openapi.docs.publication.DocsPublicationHook;
 import dev.vertique.rest.openapi.docs.publication.PublicationAccess;
 import dev.vertique.rest.openapi.docs.serving.DocsCompositionValidator;
 import dev.vertique.rest.openapi.docs.serving.DocsRouterMount;
@@ -83,7 +83,7 @@ import org.slf4j.LoggerFactory;
  * offending path or attribute without echoing a configured value, and an {@code @ApiDocs}
  * declaration without configuration publishes its document. It also observes the composition
  * checks: a JAX-RS mount under the documentation prefix and an operation using a document's
- * synthetic operation id refuse startup, disabled documentation adds no check, sink, or warning,
+ * synthetic operation id refuse startup, disabled documentation adds no check, hook, or warning,
  * and a documentation mount that no composition validator marked refuses to create its router.
  *
  * <p>Every row builds a fresh component (so its spies start at zero), deploys its
@@ -866,7 +866,7 @@ public class DocsStartupChecksIT {
                 assertStartupFailure(label, outcome, component, SpyCheck.NONE, null, List.of(failurePath), List.of());
             } else {
                 // Then: the build deploys, every route answers from its resource, and neither the
-                // documentation module's validator nor its sink is contributed
+                // documentation module's validator nor its hook is contributed
                 assertTrue(
                         outcome.deployed(),
                         () -> label + ": the composition deploys; it failed with " + outcome.failure());
@@ -881,7 +881,7 @@ public class DocsStartupChecksIT {
                                         .noneMatch(DocsCompositionValidator.class::isInstance),
                                 label + ": no documentation composition validator"),
                         () -> assertTrue(
-                                extensions.publicationSinks().stream().noneMatch(DocsPublicationSink.class::isInstance),
+                                extensions.publicationHooks().stream().noneMatch(DocsPublicationHook.class::isInstance),
                                 label + ": no documentation publication sink"));
             }
             // Then: no warning is written

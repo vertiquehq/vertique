@@ -11,7 +11,7 @@ import dev.vertique.rest.core.router.HttpVerticle;
 import dev.vertique.rest.jaxrs.RestModule;
 import dev.vertique.rest.openapi.docs.fixture.DocsTestSupportModule;
 import dev.vertique.rest.openapi.docs.fixture.input.InputValidationModule;
-import dev.vertique.rest.openapi.docs.fixture.input.RecordingInventorySink;
+import dev.vertique.rest.openapi.docs.fixture.input.RecordingInventoryPublicationHook;
 import dev.vertique.rest.openapi.docs.fixture.input.RecordingSchemaSource;
 import dev.vertique.rest.openapi.docs.fixture.input.a.PublicApplicationModule;
 import dev.vertique.rest.openapi.docs.fixture.input.b.PartnerApplicationModule;
@@ -27,8 +27,8 @@ import jakarta.inject.Singleton;
  * <p>Every component is built from {@code RestModule}, {@link OpenApiDocsModule}, the canonical
  * {@link ConfigParsingModule}, {@link DocsTestSupportModule}, and {@link InputValidationModule} (the
  * {@code web-validation} strategy, the canonical schema source wrapped by a {@link
- * RecordingSchemaSource}, an accepting {@code BeanValidator}, and a {@link RecordingInventorySink}
- * beside the documentation sink), plus the modules registering its declared applications and
+ * RecordingSchemaSource}, an accepting {@code BeanValidator}, and a {@link RecordingInventoryPublicationHook}
+ * beside the documentation hook), plus the modules registering its declared applications and
  * contributing their resources. A component whose proof needs authored {@code @Pattern} flags rendered
  * into the captured patterns also lists {@link TestValidatorModule}, which binds a real Bean
  * Validation {@code Validator}. Each takes the application configuration through its factory; the
@@ -61,11 +61,11 @@ public final class InputTestComponents {
         RecordingSchemaSource recordingSource();
 
         /**
-         * Resolves the component's recording inventory sink.
+         * Resolves the component's recording inventory hook.
          *
-         * @return the recording sink
+         * @return the recording hook
          */
-        RecordingInventorySink recordingSink();
+        RecordingInventoryPublicationHook recordingHook();
     }
 
     /** Creates a component from the application configuration. */

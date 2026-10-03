@@ -20,17 +20,17 @@ import dev.vertique.rest.core.router.MountCustomizer;
 import dev.vertique.rest.core.router.RouterMount;
 import dev.vertique.rest.core.security.AuthEnforcementCapability;
 import dev.vertique.rest.core.security.SecuritySchemeHandler;
-import dev.vertique.rest.jaxrs.application.ApiDocsInstalled;
+import dev.vertique.rest.jaxrs.application.ApiDocsModuleInstalled;
 import dev.vertique.rest.jaxrs.application.RestApplications;
-import dev.vertique.rest.jaxrs.publication.OperationPublicationSink;
-import dev.vertique.rest.jaxrs.synthetic.SyntheticOperations;
+import dev.vertique.rest.jaxrs.publication.MountPublicationHook;
+import dev.vertique.rest.jaxrs.synthetic.SyntheticOperationInstaller;
 import dev.vertique.rest.jaxrs.validation.OperationSchemaSource;
 import dev.vertique.rest.jaxrs.validation.RequestValidationStrategy;
 import dev.vertique.rest.openapi.docs.assembly.AssemblyContext;
 import dev.vertique.rest.openapi.docs.config.EnabledDocuments;
 import dev.vertique.rest.openapi.docs.config.EnabledDocumentsResolver;
 import dev.vertique.rest.openapi.docs.diagnostics.DocumentWarnings;
-import dev.vertique.rest.openapi.docs.publication.DocsPublicationSink;
+import dev.vertique.rest.openapi.docs.publication.DocsPublicationHook;
 import dev.vertique.rest.openapi.docs.publication.DocumentStore;
 import dev.vertique.rest.openapi.docs.serving.DocsCompositionValidator;
 import dev.vertique.rest.openapi.docs.serving.DocsRouterMount;
@@ -43,12 +43,12 @@ import java.util.Set;
 
 /**
  * Dagger module of the OpenAPI documentation feature. It provides the documents enabled for the
- * component, resolved from the {@code apidocs} configuration section, the publication sink and the
+ * component, resolved from the {@code apidocs} configuration section, the publication hook and the
  * router mount that publish and serve them, the composition validator that checks every composition
  * before its mounts create their routers and warns about the mount-scoped controls the document
  * routes bypass, and the marker that tells the JAX-RS module the documentation module is installed.
  *
- * <p>The sink, the validator, and the mount are contributed only when at least one document is
+ * <p>The hook, the validator, and the mount are contributed only when at least one document is
  * enabled; with none, no publication is built and no documentation route exists. The marker is
  * bound whatever the configuration.
  */
@@ -58,7 +58,7 @@ public abstract class OpenApiDocsModule {
     OpenApiDocsModule() {}
 
     /** The one marker instance the module binds. */
-    private static final ApiDocsInstalled INSTALLED = new ApiDocsInstalled() {};
+    private static final ApiDocsModuleInstalled INSTALLED = new ApiDocsModuleInstalled() {};
 
     /**
      * Binds the marker that reports the documentation module as installed, whether or not any
@@ -67,12 +67,12 @@ public abstract class OpenApiDocsModule {
      * @return the marker
      */
     @Provides
-    static ApiDocsInstalled apiDocsInstalled() {
+    static ApiDocsModuleInstalled apiDocsModuleInstalled() {
         return INSTALLED;
     }
 
     /**
-     * Contributes the publication sink when at least one document is enabled.
+     * Contributes the publication hook when at least one document is enabled.
      *
      * @param documents the enabled documents and the documentation prefix
      * @param store the document store of the component
@@ -83,11 +83,11 @@ public abstract class OpenApiDocsModule {
      * @param warnings the documentation module's warnings of the component
      * @param producerBindings the registered response producer bindings
      * @param securitySchemeHandlers the registered security scheme handlers
-     * @return the sink, or an empty set when no document is enabled
+     * @return the hook, or an empty set when no document is enabled
      */
     @Provides
     @ElementsIntoSet
-    static Set<OperationPublicationSink> publicationSinks(
+    static Set<MountPublicationHook> publicationHooks(
             EnabledDocuments documents,
             DocumentStore store,
             Set<RequestValidationStrategy> strategies,
@@ -100,7 +100,7 @@ public abstract class OpenApiDocsModule {
         if (documents.isEmpty()) {
             return Set.of();
         }
-        return Set.of(new DocsPublicationSink(
+        return Set.of(new DocsPublicationHook(
                 documents,
                 store,
                 documents.path(),
@@ -156,7 +156,7 @@ public abstract class OpenApiDocsModule {
      *     header of the public documents
      * @param securitySchemeHandlers the registered security scheme handlers
      * @param authEnforcement the authentication enforcement capability, empty when not installed
-     * @param syntheticOperations the installer the protected document routes are installed through
+     * @param syntheticOperationInstaller the installer the protected document routes are installed through
      * @param warnings the documentation module's warnings of the component
      * @return the mount, or an empty set when no document is enabled
      */
@@ -168,7 +168,7 @@ public abstract class OpenApiDocsModule {
             JaxRsConfig jaxRsConfig,
             Set<SecuritySchemeHandler> securitySchemeHandlers,
             Optional<AuthEnforcementCapability> authEnforcement,
-            SyntheticOperations syntheticOperations,
+            SyntheticOperationInstaller syntheticOperationInstaller,
             DocumentWarnings warnings) {
         if (documents.isEmpty()) {
             return Set.of();
@@ -180,7 +180,7 @@ public abstract class OpenApiDocsModule {
                 DocumentCachePolicy.publicCacheControl(jaxRsConfig),
                 securitySchemeHandlers,
                 authEnforcement,
-                syntheticOperations,
+                syntheticOperationInstaller,
                 warnings));
     }
 

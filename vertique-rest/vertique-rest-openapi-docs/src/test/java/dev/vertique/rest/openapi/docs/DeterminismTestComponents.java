@@ -15,7 +15,7 @@ import dev.vertique.rest.jaxrs.RestModule;
 import dev.vertique.rest.jaxrs.validation.OperationSchemaSource;
 import dev.vertique.rest.openapi.docs.fixture.DocsTestSupportModule;
 import dev.vertique.rest.openapi.docs.fixture.conformance.complete.CompleteModules;
-import dev.vertique.rest.openapi.docs.fixture.conformance.determinism.DetailCapturingSink;
+import dev.vertique.rest.openapi.docs.fixture.conformance.determinism.DetailCapturingPublicationHook;
 import dev.vertique.rest.openapi.docs.fixture.disclosure.sources.DisclosureSourceModules;
 import io.vertx.core.Vertx;
 import io.vertx.core.json.JsonObject;
@@ -29,9 +29,9 @@ final class DeterminismTestComponents {
     private DeterminismTestComponents() {}
 
     /**
-     * The complete-feature application {@code ref} with a {@link DetailCapturingSink}, without the
-     * documentation module, so no composition binds two documentation sinks: deploying its {@link
-     * HttpVerticle} builds the real mount and leaves the mount's attached publication in the sink. No
+     * The complete-feature application {@code ref} with a {@link DetailCapturingPublicationHook}, without the
+     * documentation module, so no composition binds two documentation hooks: deploying its {@link
+     * HttpVerticle} builds the real mount and leaves the mount's attached publication in the hook. No
      * document is assembled or served by this component. It exposes the inputs the documentation
      * module would hand the assembler: the bound schema source, the profile registry, the response
      * producer bindings, and the security scheme handlers.
@@ -44,7 +44,7 @@ final class DeterminismTestComponents {
                 DocsTestSupportModule.class,
                 DisclosureSourceModules.Canonical.class,
                 CompleteModules.Ref.class,
-                DetailCapturingSink.Binding.class
+                DetailCapturingPublicationHook.Binding.class
             })
     interface CaptureComponent {
 
@@ -56,11 +56,11 @@ final class DeterminismTestComponents {
         HttpVerticle httpVerticle();
 
         /**
-         * Resolves the component's capturing sink.
+         * Resolves the component's capturing hook.
          *
-         * @return the sink
+         * @return the hook
          */
-        DetailCapturingSink capture();
+        DetailCapturingPublicationHook capture();
 
         /**
          * Resolves the bound operation schema source.

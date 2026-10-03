@@ -118,7 +118,7 @@ WARN for each mount that selects this strategy; `@FilePart` and verifier executi
 Dagger `@Module` and the module's wiring entry point. Contributes
 `OpenApiContractValidationStrategy` to the `Set<RequestValidationStrategy>` multibinding declared by
 `RestModule`, and the startup contract-load check (see [Core Concepts](#core-concepts)) to
-`vertique-rest-jaxrs`'s `Set<OperationPublicationSink>` multibinding. The check is internal; nothing
+`vertique-rest-jaxrs`'s `Set<MountPublicationHook>` multibinding. The check is internal; nothing
 in an application calls or replaces it.
 
 ```java

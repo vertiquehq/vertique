@@ -39,12 +39,12 @@ import dev.vertique.rest.core.response.ResponseSerializer;
 import dev.vertique.rest.core.router.MountCompositionValidator;
 import dev.vertique.rest.core.router.RouterMount;
 import dev.vertique.rest.core.sse.SseChannelFactory;
-import dev.vertique.rest.jaxrs.application.ApiDocsInstalled;
+import dev.vertique.rest.jaxrs.application.ApiDocsModuleInstalled;
 import dev.vertique.rest.jaxrs.application.RestApplications;
-import dev.vertique.rest.jaxrs.publication.OperationPublicationSink;
+import dev.vertique.rest.jaxrs.publication.MountPublicationHook;
 import dev.vertique.rest.jaxrs.runtime.GeneratedJaxRsResourceEntry;
 import dev.vertique.rest.jaxrs.runtime.GeneratedRestApplicationRegistration;
-import dev.vertique.rest.jaxrs.synthetic.SyntheticOperations;
+import dev.vertique.rest.jaxrs.synthetic.SyntheticOperationInstaller;
 import dev.vertique.rest.jaxrs.validation.FileContentVerifier;
 import dev.vertique.rest.jaxrs.validation.NoneValidationStrategy;
 import dev.vertique.rest.jaxrs.validation.OperationSchemaSource;
@@ -116,17 +116,17 @@ public abstract class RestModule {
     abstract Set<RequestValidationStrategy> requestValidationStrategies();
 
     /**
-     * Declares the {@link OperationPublicationSink} multibinding set. Empty by default; sibling
+     * Declares the {@link MountPublicationHook} multibinding set. Empty by default; sibling
      * framework modules contribute to it — the documentation module through
      * {@code @ElementsIntoSet}, and the OpenAPI-contract validation module's startup contract-load
      * check through {@code @IntoSet}. Every JAX-RS mount hands its completed publication to each
-     * sink in this set once its router is built.
+     * hook in this set once its router is built.
      *
-     * @return the publication sink set (populated by {@code @ElementsIntoSet} and {@code @IntoSet}
+     * @return the publication hook set (populated by {@code @ElementsIntoSet} and {@code @IntoSet}
      *     contributions)
      */
     @Multibinds
-    abstract Set<OperationPublicationSink> operationPublicationSinks();
+    abstract Set<MountPublicationHook> mountPublicationHooks();
 
     /**
      * Declares the empty {@link FileContentVerifier} multibinding set. Applications contribute
@@ -148,14 +148,14 @@ public abstract class RestModule {
     abstract Set<GeneratedRestApplicationRegistration> generatedRestApplicationRegistrations();
 
     /**
-     * Declares the {@link ApiDocsInstalled} optional binding: present when the OpenAPI
+     * Declares the {@link ApiDocsModuleInstalled} optional binding: present when the OpenAPI
      * documentation module is included in this component, absent otherwise. rest-jaxrs never
      * depends on the docs module, so it can only detect this marker, never bind it.
      *
-     * @return the optional marker binding, resolved as {@code Optional<ApiDocsInstalled>}
+     * @return the optional marker binding, resolved as {@code Optional<ApiDocsModuleInstalled>}
      */
     @BindsOptionalOf
-    abstract ApiDocsInstalled apiDocsInstalled();
+    abstract ApiDocsModuleInstalled apiDocsModuleInstalled();
 
     /**
      * Provides the {@link RestApplications} view, built once per component by
@@ -175,7 +175,7 @@ public abstract class RestModule {
      * @param parser           the injected config parser
      * @param jaxRsConfig      the JAX-RS routing configuration, supplying the global
      *                         {@code jaxrs.openapiPath} default
-     * @param apiDocsInstalled present when the OpenAPI documentation module is included in this
+     * @param apiDocsModuleInstalled present when the OpenAPI documentation module is included in this
      *                         component
      * @return the component-scoped view
      */
@@ -186,9 +186,10 @@ public abstract class RestModule {
             @VertxConfig JsonObject config,
             ConfigParser parser,
             JaxRsConfig jaxRsConfig,
-            Optional<ApiDocsInstalled> apiDocsInstalled) {
+            Optional<ApiDocsModuleInstalled> apiDocsModuleInstalled) {
         List<RestApplicationConfig> configuredApplications = parseJaxRsApplications(config, parser);
-        return RestApplicationsBuilder.build(registrations, configuredApplications, jaxRsConfig, apiDocsInstalled);
+        return RestApplicationsBuilder.build(
+                registrations, configuredApplications, jaxRsConfig, apiDocsModuleInstalled);
     }
 
     /**
@@ -235,17 +236,17 @@ public abstract class RestModule {
     abstract RequestValidationStrategy noneValidationStrategy(NoneValidationStrategy strategy);
 
     /**
-     * Binds the INTERNAL {@link SyntheticOperations} seam to its package-private implementation.
+     * Binds the INTERNAL {@link SyntheticOperationInstaller} seam to its package-private implementation.
      *
      * <p>Consumed by sibling framework modules (starting with the OpenAPI documentation module) to
      * install a framework-owned route that runs exactly the chain an equally annotated JAX-RS
      * resource method gets.
      *
      * @param installer the package-private implementation
-     * @return the bound {@link SyntheticOperations} seam
+     * @return the bound {@link SyntheticOperationInstaller} seam
      */
     @Binds
-    abstract SyntheticOperations syntheticOperations(SyntheticOperationInstaller installer);
+    abstract SyntheticOperationInstaller syntheticOperationInstaller(DefaultSyntheticOperationInstaller installer);
 
     /**
      * Declares an optional binding for {@link OperationSchemaSource}.

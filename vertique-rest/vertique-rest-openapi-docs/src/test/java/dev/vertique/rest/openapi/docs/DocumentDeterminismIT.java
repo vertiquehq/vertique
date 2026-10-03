@@ -59,9 +59,9 @@ import org.junit.jupiter.api.function.Executable;
  * checks that the JSON bytes, the YAML bytes, and both entity tags do not change.
  *
  * <p>The publication is captured once: a composition without the documentation module, so it binds
- * no documentation sink, deploys the application {@code ref} on {@code 127.0.0.1} port {@code 0} with
+ * no documentation hook, deploys the application {@code ref} on {@code 127.0.0.1} port {@code 0} with
  * a sink that wants detail and keeps the attached publication. Each variant is then assembled as the
- * documentation sink does: the per-operation descriptor facts are taken, the publication is detached,
+ * documentation hook does: the per-operation descriptor facts are taken, the publication is detached,
  * and the document is assembled as the public document of {@code ref}, with the composition's schema
  * source, profile registry, response producer bindings and security scheme handlers, and a fresh
  * warning guard.
@@ -212,7 +212,7 @@ class DocumentDeterminismIT {
     // Assembly and assertions
     // ---------------------------------------------------------------------------------------------
 
-    /** Assembles one variant as the documentation sink does, with a fresh warning guard. */
+    /** Assembles one variant as the documentation hook does, with a fresh warning guard. */
     private static Assembled assemble(String name, Inputs inputs) {
         Map<String, OperationFacts> facts = PublicationAccess.operationFacts(inputs.attached());
         MountPublication detached = PublicationAccess.detach(inputs.attached());

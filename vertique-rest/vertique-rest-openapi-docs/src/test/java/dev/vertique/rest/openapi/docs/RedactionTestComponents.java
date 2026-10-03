@@ -30,8 +30,8 @@ import jakarta.inject.Singleton;
  *   <li>A <em>serving</em> component also lists {@link OpenApiDocsModule}, so its {@link
  *       HttpVerticle} serves the application's public document.
  *   <li>A <em>rendering</em> component lists {@link ProtectedRenderingModule} instead, and the
- *       application's protected declaration: its verticle never serves a document, and its sink keeps
- *       the protected rendering. It is declared here because that sink is package-private.
+ *       application's protected declaration: its verticle never serves a document, and its hook keeps
+ *       the protected rendering. It is declared here because that hook is package-private.
  *   <li>The notes and folds components use {@link InputValidationModule} (the canonical source
  *       wrapped by a {@link RecordingSchemaSource}); the notes components also list {@link
  *       TagsProfileModule}, whose profile the notes operation selects.
@@ -69,11 +69,11 @@ public final class RedactionTestComponents {
     interface RenderingProvisions extends RecordingProvisions {
 
         /**
-         * Resolves the component's rendering sink.
+         * Resolves the component's rendering hook.
          *
-         * @return the sink
+         * @return the hook
          */
-        ProtectedRenderingSink protectedRendering();
+        ProtectedRenderingPublicationHook protectedRendering();
     }
 
     /** Creates a component from the application configuration. */

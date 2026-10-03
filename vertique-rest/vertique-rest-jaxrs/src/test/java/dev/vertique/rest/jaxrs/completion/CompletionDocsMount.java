@@ -6,7 +6,7 @@ package dev.vertique.rest.jaxrs.completion;
 import dev.vertique.core.extension.ExtensionPhase;
 import dev.vertique.rest.core.router.RouterMount;
 import dev.vertique.rest.jaxrs.synthetic.SyntheticOperation;
-import dev.vertique.rest.jaxrs.synthetic.SyntheticOperations;
+import dev.vertique.rest.jaxrs.synthetic.SyntheticOperationInstaller;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
@@ -17,7 +17,7 @@ import java.util.List;
 /**
  * The fixture's {@code SYSTEM_FIRST} mount at {@code /apidocs/*}: installs one role-protected
  * synthetic operation, {@code apidocs:management:json} of application {@code management}, at
- * {@code /management/openapi.json} through {@link SyntheticOperations}, answering {@code GET} and
+ * {@code /management/openapi.json} through {@link SyntheticOperationInstaller}, answering {@code GET} and
  * {@code HEAD}. Its terminal writes a fixed body.
  */
 final class CompletionDocsMount implements RouterMount {
@@ -29,14 +29,14 @@ final class CompletionDocsMount implements RouterMount {
     static final String DOCUMENT_PATH = "/management/openapi.json";
     static final String DOCUMENT_BODY = "management-document-bytes";
 
-    private final SyntheticOperations operations;
+    private final SyntheticOperationInstaller operations;
 
     /**
      * Creates the mount.
      *
      * @param operations the installer the test component provides
      */
-    CompletionDocsMount(SyntheticOperations operations) {
+    CompletionDocsMount(SyntheticOperationInstaller operations) {
         this.operations = operations;
     }
 

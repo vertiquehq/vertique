@@ -30,7 +30,7 @@ import java.util.List;
 
 /**
  * Builds the flattened input inventory and the response shape of one resource method, for the
- * {@link dev.vertique.rest.jaxrs.publication.OperationDetail} a publication sink receives.
+ * {@link dev.vertique.rest.jaxrs.publication.OperationDetail} a publication hook receives.
  *
  * <p>Every fact is read from the {@link ResourceMethodMeta}, its {@link ResourceMethodMeta.ParamMeta}
  * entries, and the {@link BeanParamFieldMeta} list {@link ParameterExtractor#beanParamFields} returns

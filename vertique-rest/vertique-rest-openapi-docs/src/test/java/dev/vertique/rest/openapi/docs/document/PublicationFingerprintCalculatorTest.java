@@ -48,19 +48,19 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
 /**
- * Unit proof that the snapshot renderer digests every published fact of a documented mount and
+ * Unit proof that the fingerprint calculator digests every published fact of a documented mount and
  * nothing else. A base publication for the {@code public} application's mount is built by hand from
  * the public publication records, then varied in exactly one fact per row: a changed operation fact
  * changes that operation's digest and leaves the mount's part equal; a changed mount fact changes the
  * mount's part and leaves the operation's digest equal; and the base rebuilt from fresh objects, with
- * the parameter map and every {@link JsonObject} populated in reverse insertion order, renders a
- * snapshot equal to the base's.
+ * the parameter map and every {@link JsonObject} populated in reverse insertion order, calculates a
+ * fingerprint equal to the base's.
  *
- * <p>No expectation is derived from the renderer. Every build creates new objects — a second {@code
+ * <p>No expectation is derived from the calculator. Every build creates new objects — a second {@code
  * describe} call and so a new redaction manifest, new bindings, and a new identity-only descriptor
- * double — so a rendering that reads an object's identity cannot equal the base.
+ * double — so a calculation that reads an object's identity cannot equal the base.
  */
-public class SnapshotRendererTest {
+public class PublicationFingerprintCalculatorTest {
 
     /** The operation id of the base publication's only operation. */
     private static final String OPERATION_ID = CatalogResource.CREATE_ITEM;
@@ -74,14 +74,14 @@ public class SnapshotRendererTest {
     /** The query parameter of {@link CatalogResource#createItem}. */
     private static final String DRY_RUN = "dryRun";
 
-    /** What a variant's rendering is expected to change, compared with the base's. */
+    /** What a variant's calculation is expected to change, compared with the base's. */
     enum Expectation {
         /** The operation's digest differs; the mount's part is equal. */
         OPERATION_DIGEST_DIFFERS,
         /** The mount's part differs; the operation's digest is equal. */
         MOUNT_PART_DIFFERS,
-        /** The whole snapshot is equal. */
-        SNAPSHOT_EQUAL
+        /** The whole fingerprint is equal. */
+        FINGERPRINT_EQUAL
     }
 
     private static Stream<Arguments> variants() {
@@ -121,7 +121,7 @@ public class SnapshotRendererTest {
                 mountRow("application name", spec -> spec.applicationName = "other"),
                 mountRow("declaring type", spec -> spec.declaringType = MgmtApi.class),
                 Arguments.of(
-                        "rebuilt in reverse insertion order", Expectation.SNAPSHOT_EQUAL, (Consumer<PublicationSpec>)
+                        "rebuilt in reverse insertion order", Expectation.FINGERPRINT_EQUAL, (Consumer<PublicationSpec>)
                                 spec -> spec.reverseInsertionOrder = true),
                 // The base concatenates "/items" and "/items" into "/items/items"; moving the boundary
                 // gives the same concatenation, so only delimited text fields tell them apart.
@@ -133,8 +133,9 @@ public class SnapshotRendererTest {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("variants")
-    @DisplayName("Every published fact changes the snapshot; nothing else does")
-    void everyPublishedFactChangesTheSnapshot(String label, Expectation expectation, Consumer<PublicationSpec> change) {
+    @DisplayName("Every published fact changes the fingerprint; nothing else does")
+    void everyPublishedFactChangesTheFingerprint(
+            String label, Expectation expectation, Consumer<PublicationSpec> change) {
         // Given: the base publication, and a variant differing from it in one named way; each is
         // built from fresh objects.
         MountPublication basePublication = new PublicationSpec().build();
@@ -142,11 +143,11 @@ public class SnapshotRendererTest {
         change.accept(variantSpec);
         MountPublication variantPublication = variantSpec.build();
 
-        // When: the renderer renders each.
-        Snapshot base = SnapshotRenderer.render(basePublication);
-        Snapshot variant = SnapshotRenderer.render(variantPublication);
+        // When: the calculator calculates each.
+        PublicationFingerprint base = PublicationFingerprintCalculator.calculate(basePublication);
+        PublicationFingerprint variant = PublicationFingerprintCalculator.calculate(variantPublication);
 
-        // Then: each renders one digest, for the operation, before any digest is compared.
+        // Then: each calculates one digest, for the operation, before any digest is compared.
         assertEquals(List.of(OPERATION_ID), List.copyOf(base.operationDigests().keySet()));
         assertEquals(
                 List.of(OPERATION_ID), List.copyOf(variant.operationDigests().keySet()));
@@ -158,7 +159,7 @@ public class SnapshotRendererTest {
             assertTrue(SHA_256_HEX.matcher(digest).matches(), "not 64 lowercase hex characters: " + digest);
         }
 
-        // Then: exactly the expected part of the snapshot differs from the base's.
+        // Then: exactly the expected part of the fingerprint differs from the base's.
         String baseDigest = base.operationDigests().get(OPERATION_ID);
         String variantDigest = variant.operationDigests().get(OPERATION_ID);
         switch (expectation) {
@@ -170,7 +171,7 @@ public class SnapshotRendererTest {
                 assertNotEquals(base.mountPart(), variant.mountPart(), label + " left the mount's part unchanged");
                 assertEquals(baseDigest, variantDigest, label + " changed the operation digest");
             }
-            case SNAPSHOT_EQUAL -> assertEquals(base, variant, label + " changed the snapshot");
+            case FINGERPRINT_EQUAL -> assertEquals(base, variant, label + " changed the snapshot");
         }
     }
 
@@ -301,11 +302,11 @@ public class SnapshotRendererTest {
 
     /**
      * A new identity-only operation descriptor: it equals only itself, its hash and text are its
-     * identity, and every other member fails, since the snapshot reads nothing from the descriptor.
+     * identity, and every other member fails, since the fingerprint reads nothing from the descriptor.
      */
     private static JaxRsOperationDescriptor newDescriptor() {
         return (JaxRsOperationDescriptor) Proxy.newProxyInstance(
-                SnapshotRendererTest.class.getClassLoader(),
+                PublicationFingerprintCalculatorTest.class.getClassLoader(),
                 new Class<?>[] {JaxRsOperationDescriptor.class},
                 (proxy, method, args) -> switch (method.getName()) {
                     case "equals" -> proxy == args[0];

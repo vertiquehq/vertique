@@ -18,18 +18,18 @@ import java.util.TreeMap;
  * definition is named as {@code a relocated definition of <input>}; when either side is one, the
  * message says {@code one component} instead of the key, so no definition name is echoed.
  */
-final class ComponentRegistry {
+final class SchemaComponentCatalog {
 
     private final String subject;
 
     private final SortedMap<String, Component> components = new TreeMap<>();
 
     /**
-     * Creates an empty registry for one document.
+     * Creates an empty catalog for one document.
      *
      * @param subject the failure-message subject naming the application and its mount
      */
-    ComponentRegistry(String subject) {
+    SchemaComponentCatalog(String subject) {
         this.subject = subject;
     }
 

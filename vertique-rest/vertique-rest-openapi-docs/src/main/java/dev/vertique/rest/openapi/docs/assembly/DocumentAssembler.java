@@ -13,13 +13,13 @@ import dev.vertique.rest.openapi.docs.config.EnabledDocuments;
 import dev.vertique.rest.openapi.docs.diagnostics.DocumentWarnings;
 import dev.vertique.rest.openapi.docs.diagnostics.PendingWarnings;
 import dev.vertique.rest.openapi.docs.document.DocumentWriter;
+import dev.vertique.rest.openapi.docs.document.PublicationFingerprintCalculator;
 import dev.vertique.rest.openapi.docs.document.PublishedDocument;
-import dev.vertique.rest.openapi.docs.document.SnapshotRenderer;
 import dev.vertique.rest.openapi.docs.metadata.AnnotatedInfo;
 import dev.vertique.rest.openapi.docs.metadata.OperationFacts;
 import dev.vertique.rest.openapi.docs.metadata.OperationMetadata;
-import dev.vertique.rest.openapi.docs.schema.InputGenerators;
-import dev.vertique.rest.openapi.docs.schema.OutputGenerators;
+import dev.vertique.rest.openapi.docs.schema.InputSchemaGeneratorCache;
+import dev.vertique.rest.openapi.docs.schema.OutputSchemaGeneratorCache;
 import dev.vertique.rest.openapi.docs.schema.SchemaEmbedder;
 import java.util.ArrayList;
 import java.util.List;
@@ -48,7 +48,7 @@ import java.util.SortedMap;
  * <p>Hidden operations ({@link HiddenOperations}) are removed first, before paths are rendered and
  * before any input is checked: nothing of a hidden operation is rendered, verified, redacted,
  * checked, or recorded in the root flags, and a path item whose operations are all hidden is not
- * emitted. The snapshot still covers the whole publication.
+ * emitted. The fingerprint still covers the whole publication.
  *
  * <p>Inputs are assembled by {@link InputAssembler} in two phases over the whole document, both
  * visiting the operations in the order the document lists them (path keys in natural order, then
@@ -70,7 +70,7 @@ import java.util.SortedMap;
  * reads them, and a {@link DisclosureTally} created for the assembly records whether any was and
  * whether a reserved name was removed from a published request body. The input-direction schema
  * generators that inspect request bodies are likewise created per assembly ({@link
- * InputGenerators}).
+ * InputSchemaGeneratorCache}).
  *
  * <p>The warnings of the assembly are collected in document order and logged on the component's
  * {@link DocumentWarnings} only once the document is fully assembled and written, so a document that
@@ -121,8 +121,8 @@ public final class DocumentAssembler {
                 RenderedPaths.pathItems(subject, HiddenOperations.visible(publication.operations(), facts));
         SchemaEmbedder embedder = new SchemaEmbedder(subject);
         DisclosureTally tally = new DisclosureTally();
-        InputGenerators generators = new InputGenerators(context.profiles());
-        OutputGenerators outputGenerators = new OutputGenerators(context.profiles());
+        InputSchemaGeneratorCache generators = new InputSchemaGeneratorCache(context.profiles());
+        OutputSchemaGeneratorCache outputGenerators = new OutputSchemaGeneratorCache(context.profiles());
         ValidationDisclosure disclosure = new ValidationDisclosure(document.access(), publication.strategyId());
         PendingWarnings warnings = new PendingWarnings(document.name());
         AnnotatedInfo annotatedInfo = document.annotatedInfo();
@@ -206,7 +206,7 @@ public final class DocumentAssembler {
             root.set("tags", tags);
         }
         root.set(ValidationDisclosure.MEMBER, disclosure.root(context, tally));
-        PublishedDocument written = DocumentWriter.write(root, SnapshotRenderer.render(publication));
+        PublishedDocument written = DocumentWriter.write(root, PublicationFingerprintCalculator.calculate(publication));
         warnings.emit(context.warnings());
         return written;
     }

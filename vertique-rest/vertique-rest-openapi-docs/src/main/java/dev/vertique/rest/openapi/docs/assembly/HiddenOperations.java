@@ -21,7 +21,7 @@ import java.util.Map;
  * hidden} set. One level of composition counts too: a method annotation whose type is itself
  * annotated with {@code @Hidden} or with an {@code @Operation} that has {@code hidden} set hides the
  * operation, and so does a class annotation whose type is annotated with {@code @Hidden}. Deeper
- * nesting does not count. An operation the documentation sink took no facts for is
+ * nesting does not count. An operation the documentation hook took no facts for is
  * never hidden. Removal affects the document only: the operation's route still answers.
  *
  * <p>Internal to the OpenAPI documentation module; not an application API.

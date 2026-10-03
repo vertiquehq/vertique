@@ -19,7 +19,7 @@ import dev.vertique.rest.core.security.AuthEnforcementCapability;
 import dev.vertique.rest.core.security.SecurityPolicy;
 import dev.vertique.rest.core.security.SecurityPolicyValidator;
 import dev.vertique.rest.core.security.SecuritySchemeHandler;
-import dev.vertique.rest.jaxrs.synthetic.SyntheticOperations;
+import dev.vertique.rest.jaxrs.synthetic.SyntheticOperationInstaller;
 import jakarta.annotation.Nullable;
 import jakarta.inject.Singleton;
 import java.util.Collections;
@@ -118,7 +118,7 @@ final class CompletionFixtureModule {
 
     @Provides
     @IntoSet
-    static RouterMount completionDocsMount(SyntheticOperations operations) {
+    static RouterMount completionDocsMount(SyntheticOperationInstaller operations) {
         return new CompletionDocsMount(operations);
     }
 

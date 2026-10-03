@@ -22,8 +22,8 @@ import dev.vertique.rest.jaxrs.publication.OperationPublication;
 import dev.vertique.rest.jaxrs.publication.fixture.CountingSchemaSource;
 import dev.vertique.rest.jaxrs.publication.fixture.MountPathRecordingCustomizer;
 import dev.vertique.rest.jaxrs.publication.fixture.PublicationEventRecorder;
-import dev.vertique.rest.jaxrs.publication.fixture.PublicationEventRecordingSink;
-import dev.vertique.rest.jaxrs.publication.fixture.RecordingSink;
+import dev.vertique.rest.jaxrs.publication.fixture.PublicationEventRecordingMountHook;
+import dev.vertique.rest.jaxrs.publication.fixture.RecordingPublicationHook;
 import io.vertx.core.DeploymentOptions;
 import io.vertx.core.Future;
 import io.vertx.core.Verticle;
@@ -52,8 +52,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
  * T006's integration proofs, built from {@link PublicationComponents}: every JAX-RS mount publishes
- * exactly once (TP-001), a sink exception or failed future fails startup while a failed
- * registration never publishes (TP-006), and with no sink or no detail requested, routing and
+ * exactly once (TP-001), a hook exception or failed future fails startup while a failed
+ * registration never publishes (TP-006), and with no hook or no detail requested, routing and
  * schema-source calls are unchanged (TP-007, INV-1).
  *
  * <p>One class-scoped {@link Vertx} and {@link WebClient}; each test undeploys every deployment it
@@ -119,12 +119,12 @@ public class OperationPublicationDeploymentIT {
         // When: the zero-declaration composition's HttpVerticle is deployed.
         Deployment zeroDeployment = deploy(zeroComponent::httpVerticle, new DeploymentOptions());
         try (zeroDeployment) {
-            PublicationEventRecordingSink zeroSink = zeroComponent.eventRecordingSink();
+            PublicationEventRecordingMountHook zeroHook = zeroComponent.eventRecordingPublicationHook();
             PublicationEventRecorder zeroRecorder = zeroComponent.eventRecorder();
 
             // Then: the default legacy mount publishes its three operations, applicationName and
             // declaringType both null, strategyId the configured "none".
-            MountPublication defaultMount = zeroSink.onlyReceivedFor("/*");
+            MountPublication defaultMount = zeroHook.onlyReceivedFor("/*");
             assertEquals("jaxrs:/*", defaultMount.mountId());
             assertNull(defaultMount.applicationName());
             assertNull(defaultMount.declaringType());
@@ -137,7 +137,7 @@ public class OperationPublicationDeploymentIT {
             // The hand-built /api/mgmt/* mount: also null identity, its own operations, most
             // specific path first.
             MountPublication mgmtMount =
-                    zeroSink.onlyReceivedFor(PublicationComponents.HandBuiltMountsModule.MGMT_MOUNT_PATH);
+                    zeroHook.onlyReceivedFor(PublicationComponents.HandBuiltMountsModule.MGMT_MOUNT_PATH);
             assertEquals("jaxrs:/api/mgmt/*", mgmtMount.mountId());
             assertNull(mgmtMount.applicationName());
             assertNull(mgmtMount.declaringType());
@@ -147,7 +147,7 @@ public class OperationPublicationDeploymentIT {
             // The empty mount publishes zero operations with the configured strategyId, and null
             // identity like every non-application mount (S6-007).
             MountPublication emptyMount =
-                    zeroSink.onlyReceivedFor(PublicationComponents.HandBuiltMountsModule.EMPTY_MOUNT_PATH);
+                    zeroHook.onlyReceivedFor(PublicationComponents.HandBuiltMountsModule.EMPTY_MOUNT_PATH);
             assertEquals("jaxrs:" + PublicationComponents.HandBuiltMountsModule.EMPTY_MOUNT_PATH, emptyMount.mountId());
             assertNull(emptyMount.applicationName());
             assertNull(emptyMount.declaringType());
@@ -156,7 +156,7 @@ public class OperationPublicationDeploymentIT {
             assertNoDetail(emptyMount);
 
             // The non-JAX-RS mount never publishes.
-            assertTrue(zeroSink.received().stream().noneMatch(p -> p.mountPath().equals("/plain/*")));
+            assertTrue(zeroHook.received().stream().noneMatch(p -> p.mountPath().equals("/plain/*")));
 
             // Event order: afterRouterCreated -> mountBuilt -> customize for non-empty mounts,
             // mountBuilt -> customize for the empty mount.
@@ -182,17 +182,17 @@ public class OperationPublicationDeploymentIT {
         // its package (PublicationComponents lives in dev.vertique.rest.jaxrs.application).
         Deployment declaredDeployment = deploy(declaredComponent::httpVerticle, new DeploymentOptions());
         try (declaredDeployment) {
-            PublicationEventRecordingSink declaredSink = declaredComponent.eventRecordingSink();
+            PublicationEventRecordingMountHook declaredHook = declaredComponent.eventRecordingPublicationHook();
             PublicationEventRecorder declaredRecorder = declaredComponent.eventRecorder();
 
-            MountPublication publicMount = declaredSink.onlyReceivedFor("/api/public/*");
+            MountPublication publicMount = declaredHook.onlyReceivedFor("/api/public/*");
             assertEquals("jaxrs:/api/public/*", publicMount.mountId());
             assertEquals("public", publicMount.applicationName());
             assertEquals(PublicApi.class, publicMount.declaringType());
             assertEquals(List.of("blobLike", "catalog", "scoped"), operationIds(publicMount));
             assertNoDetail(publicMount);
 
-            MountPublication mgmtAppMount = declaredSink.onlyReceivedFor("/api/mgmt/*");
+            MountPublication mgmtAppMount = declaredHook.onlyReceivedFor("/api/mgmt/*");
             assertEquals("jaxrs:/api/mgmt/*", mgmtAppMount.mountId());
             assertEquals("mgmt", mgmtAppMount.applicationName());
             assertEquals(ManagementApi.class, mgmtAppMount.declaringType());
@@ -212,21 +212,21 @@ public class OperationPublicationDeploymentIT {
 
     @Test
     @DisplayName("A sink exception or failed future fails startup; a failed registration never publishes")
-    void sinkExceptionFailsStartup() {
+    void hookExceptionFailsStartup() {
         JsonObject config = baseConfig();
 
         // E12: rows (a), (b), and (c) are evaluated independently.
         assertAll(
                 "a throwing sink, a duplicate operationId, and a failing-future sink",
-                () -> verifyThrowingSinkRejectsMgmtMount(config),
+                () -> verifyThrowingPublicationHookRejectsMgmtMount(config),
                 () -> verifyDuplicateOperationIdNeverPublishes(config),
                 () -> verifyFailingFutureRejectsMgmtMount(config));
     }
 
-    private void verifyThrowingSinkRejectsMgmtMount(JsonObject config) throws Exception {
-        // Given: the zero-declaration composition with a sink whose mountBuilt throws for /api/mgmt/*.
+    private void verifyThrowingPublicationHookRejectsMgmtMount(JsonObject config) throws Exception {
+        // Given: the zero-declaration composition with a hook whose mountBuilt throws for /api/mgmt/*.
         RestConfigurationException thrown = new RestConfigurationException("sink rejected /api/mgmt/*");
-        PublicationComponents.ThrowingSinkComponent component = throwingSinkComponent(config, thrown);
+        PublicationComponents.ThrowingPublicationHookComponent component = throwingHookComponent(config, thrown);
 
         // When: the composition is deployed.
         Throwable cause = awaitFailure(deployFuture(component::httpVerticle, new DeploymentOptions()));
@@ -237,7 +237,7 @@ public class OperationPublicationDeploymentIT {
     }
 
     private void verifyDuplicateOperationIdNeverPublishes(JsonObject config) throws Exception {
-        // Given: the same mounts, a recording sink, and a second /api/mgmt/* resource declaring a
+        // Given: the same mounts, a recording hook, and a second /api/mgmt/* resource declaring a
         // duplicate operation id (guard: green at the staged baseline and after implementation —
         // duplicate-operationId detection predates T006).
         PublicationComponents.DuplicateOperationComponent component = duplicateOperationComponent(config);
@@ -246,18 +246,19 @@ public class OperationPublicationDeploymentIT {
         Throwable cause = awaitFailure(deployFuture(component::httpVerticle, new DeploymentOptions()));
 
         // Then: the deployment fails with the registrar's RouteRegistrationException, and the
-        // recording sink holds no publication for /api/mgmt/*.
+        // recording hook holds no publication for /api/mgmt/*.
         assertInstanceOf(RouteRegistrationException.class, cause);
-        RecordingSink sink = component.recordingSink();
-        assertTrue(sink.received().stream()
+        RecordingPublicationHook hook = component.recordingHook();
+        assertTrue(hook.received().stream()
                 .noneMatch(p -> p.mountPath().equals(PublicationComponents.HandBuiltMountsModule.MGMT_MOUNT_PATH)));
     }
 
     private void verifyFailingFutureRejectsMgmtMount(JsonObject config) throws Exception {
-        // Given: the zero-declaration composition with a sink whose mountBuilt returns a failed future for
+        // Given: the zero-declaration composition with a hook whose mountBuilt returns a failed future for
         // /api/mgmt/*, and TP-001's counting MountCustomizer.
         RestConfigurationException failure = new RestConfigurationException("sink failed /api/mgmt/*");
-        PublicationComponents.FailingFutureSinkComponent component = failingFutureSinkComponent(config, failure);
+        PublicationComponents.FailingFuturePublicationHookComponent component =
+                failingFutureHookComponent(config, failure);
 
         // When: the composition is deployed.
         Throwable cause = awaitFailure(deployFuture(component::httpVerticle, new DeploymentOptions()));
@@ -295,24 +296,24 @@ public class OperationPublicationDeploymentIT {
 
     @Test
     @DisplayName("With no sink or no detail, requests and source calls are unchanged")
-    void noSinkKeepsRoutingAndSourceCalls() throws Exception {
+    void noHookKeepsRoutingAndSourceCalls() throws Exception {
         JsonObject config = baseConfig("jaxrs.validationStrategy", "recording-strategy");
 
-        // Build 1: the @Multibinds sink set with no contribution (empty).
-        PublicationComponents.NoSinkComponent noSinkComponent = noSinkComponent(config);
-        Deployment noSinkDeployment = deploy(noSinkComponent::httpVerticle, new DeploymentOptions());
+        // Build 1: the @Multibinds hook set with no contribution (empty).
+        PublicationComponents.NoHookComponent noHookComponent = noHookComponent(config);
+        Deployment noHookDeployment = deploy(noHookComponent::httpVerticle, new DeploymentOptions());
         List<ResponseTriple> responses1;
         int calls1;
-        try (noSinkDeployment) {
+        try (noHookDeployment) {
             int port = readPort();
             responses1 = sendAll(port);
-            CountingSchemaSource source1 = noSinkComponent.countingSchemaSource();
+            CountingSchemaSource source1 = noHookComponent.countingSchemaSource();
             calls1 = source1.calls();
         }
         vertx.sharedData().getLocalMap(LOCAL_MAP_NAME).remove(HTTP_PORT_KEY);
 
-        // Build 2: a recording sink wanting no detail.
-        PublicationComponents.SinkWantsNoDetailComponent noDetailComponent = sinkWantsNoDetailComponent(config);
+        // Build 2: a recording hook wanting no detail.
+        PublicationComponents.HookWantsNoDetailComponent noDetailComponent = hookWantsNoDetailComponent(config);
         Deployment noDetailDeployment = deploy(noDetailComponent::httpVerticle, new DeploymentOptions());
         List<ResponseTriple> responses2;
         int calls2;
@@ -324,8 +325,8 @@ public class OperationPublicationDeploymentIT {
         }
         vertx.sharedData().getLocalMap(LOCAL_MAP_NAME).remove(HTTP_PORT_KEY);
 
-        // Build 3: a recording sink wanting detail for every mount.
-        PublicationComponents.SinkWantsAllDetailComponent allDetailComponent = sinkWantsAllDetailComponent(config);
+        // Build 3: a recording hook wanting detail for every mount.
+        PublicationComponents.HookWantsAllDetailComponent allDetailComponent = hookWantsAllDetailComponent(config);
         Deployment allDetailDeployment = deploy(allDetailComponent::httpVerticle, new DeploymentOptions());
         List<ResponseTriple> responses3;
         int calls3;
@@ -378,30 +379,32 @@ public class OperationPublicationDeploymentIT {
                 .create(config);
     }
 
-    private static PublicationComponents.ThrowingSinkComponent throwingSinkComponent(
-            JsonObject config, RestConfigurationException sinkFailure) {
-        return DaggerPublicationComponents_ThrowingSinkComponent.factory().create(config, sinkFailure);
+    private static PublicationComponents.ThrowingPublicationHookComponent throwingHookComponent(
+            JsonObject config, RestConfigurationException hookFailure) {
+        return DaggerPublicationComponents_ThrowingPublicationHookComponent.factory()
+                .create(config, hookFailure);
     }
 
     private static PublicationComponents.DuplicateOperationComponent duplicateOperationComponent(JsonObject config) {
         return DaggerPublicationComponents_DuplicateOperationComponent.factory().create(config);
     }
 
-    private static PublicationComponents.FailingFutureSinkComponent failingFutureSinkComponent(
-            JsonObject config, RestConfigurationException sinkFailure) {
-        return DaggerPublicationComponents_FailingFutureSinkComponent.factory().create(config, sinkFailure);
+    private static PublicationComponents.FailingFuturePublicationHookComponent failingFutureHookComponent(
+            JsonObject config, RestConfigurationException hookFailure) {
+        return DaggerPublicationComponents_FailingFuturePublicationHookComponent.factory()
+                .create(config, hookFailure);
     }
 
-    private static PublicationComponents.NoSinkComponent noSinkComponent(JsonObject config) {
-        return DaggerPublicationComponents_NoSinkComponent.factory().create(config);
+    private static PublicationComponents.NoHookComponent noHookComponent(JsonObject config) {
+        return DaggerPublicationComponents_NoHookComponent.factory().create(config);
     }
 
-    private static PublicationComponents.SinkWantsNoDetailComponent sinkWantsNoDetailComponent(JsonObject config) {
-        return DaggerPublicationComponents_SinkWantsNoDetailComponent.factory().create(config);
+    private static PublicationComponents.HookWantsNoDetailComponent hookWantsNoDetailComponent(JsonObject config) {
+        return DaggerPublicationComponents_HookWantsNoDetailComponent.factory().create(config);
     }
 
-    private static PublicationComponents.SinkWantsAllDetailComponent sinkWantsAllDetailComponent(JsonObject config) {
-        return DaggerPublicationComponents_SinkWantsAllDetailComponent.factory().create(config);
+    private static PublicationComponents.HookWantsAllDetailComponent hookWantsAllDetailComponent(JsonObject config) {
+        return DaggerPublicationComponents_HookWantsAllDetailComponent.factory().create(config);
     }
 
     // --- Assertion helper ---
@@ -496,7 +499,7 @@ public class OperationPublicationDeploymentIT {
 
     /**
      * Bounds {@code vertx.deployVerticle(supplier, options)} against a synchronously escaping
-     * {@link Throwable}, the way a sink exception or a validated-mark refusal can escape
+     * {@link Throwable}, the way a hook exception or a validated-mark refusal can escape
      * {@code HttpVerticle.start} before it ever returns a future.
      *
      * @param supplier creates a fresh {@link Verticle} instance

@@ -1105,7 +1105,7 @@ declaration's own non-empty `@RestApplication.openapiPath` (`ANNOTATION`); else 
 `jaxrs.openapiPath` (`GLOBAL`, which may itself be `null`). The validation strategy stays the global
 `jaxrs.validationStrategy` regardless of which setting supplied the location.
 
-When the optional `ApiDocsInstalled` marker is absent (the OpenAPI documentation module is not
+When the optional `ApiDocsModuleInstalled` marker is absent (the OpenAPI documentation module is not
 included in this component), the view logs one INFO line per active registration whose declaring
 interface carries an annotation named `dev.vertique.rest.openapi.docs.ApiDocs`, naming the application
 and stating that no documentation route is published for it. The annotation is
@@ -1676,7 +1676,7 @@ as proof of a complete body.
   binds. Names match exactly, except header names, which match ignoring ASCII letter case; cookie
   names in hiding entries still match exactly. Only ASCII letters fold, so a non-ASCII look-alike
   such as U+212A KELVIN SIGN does not match `k`. An unset `in` matches every location. A hidden entry that names no bound input
-  fails startup with a configuration exception, and only when such a sink is bound.
+  fails startup with a configuration exception, and only when such a hook is bound.
 
 ---
 
@@ -1699,15 +1699,15 @@ Beyond what `RestCoreModule` and `JsonRuntimeModule` contribute:
 | `Set<FileContentVerifier>` | `@Multibinds`, empty by default |
 | `Set<RestExceptionMapperCustomizer>` | `@Multibinds`, empty by default |
 | `Set<GeneratedRestApplicationRegistration>` | `@Multibinds`; INTERNAL generated-code contract, populated by the annotation processor with one entry per declared `@RestApplication`; empty by default |
-| `ApiDocsInstalled` | `@BindsOptionalOf`; INTERNAL marker; the OpenAPI documentation module binds it when present, so `Optional<ApiDocsInstalled>` is populated only when that module is in the component — see [Contract location](#contract-location) |
-| `RestApplications` | `@Provides @Singleton`; INTERNAL; built once per component from `Set<GeneratedRestApplicationRegistration>`, the parsed `jaxrs.applications`, and `Optional<ApiDocsInstalled>` — see [The `RestApplications` view](#the-restapplications-view) |
+| `ApiDocsModuleInstalled` | `@BindsOptionalOf`; INTERNAL marker; the OpenAPI documentation module binds it when present, so `Optional<ApiDocsModuleInstalled>` is populated only when that module is in the component — see [Contract location](#contract-location) |
+| `RestApplications` | `@Provides @Singleton`; INTERNAL; built once per component from `Set<GeneratedRestApplicationRegistration>`, the parsed `jaxrs.applications`, and `Optional<ApiDocsModuleInstalled>` — see [The `RestApplications` view](#the-restapplications-view) |
 | `Set<GeneratedJaxRsResourceEntry>` | `@Multibinds`; INTERNAL generated-code contract, populated by the annotation processor with one entry per DI-eligible JAX-RS resource; empty by default |
 | `Set<RouterMount>` | `@ElementsIntoSet`: with no `@RestApplication` declared, the default `JaxRsRouterMount` at `jaxrs.basePath`, empty when `@JaxRsResources` is empty; once one or more are declared, one mount per active application instead — see [`@RestApplication`](#restapplication) |
 | `MountCompositionValidator` (`JaxRsApplicationMountValidator`) | `@IntoSet`; INTERNAL; takes the `RestApplications` view, `JaxRsConfig`, and `Set<RequestValidationStrategy>`; validates application mounts against hand-built JAX-RS mounts and against each other, the cross-mount operationId refusal, and, under a contract-driven strategy, the contract-location parse — see [Mount conflicts](#mount-conflicts) |
 | `ComposeValidator` (`JaxRsDefaultProfileValidator`) | `@IntoSet`; fails the `VALIDATE` phase on an unknown `jaxrs.jsonProfile` (`json.systemProfile` is validated earlier, by the `CONFIGURE`-phase install step) |
 | `OperationSchemaSource`, `BeanValidator`, `InputObjectProcessor` (`dev.vertique.input.processing.InputObjectProcessor`), `ActionRegistry`, `Authorizer` | `@BindsOptionalOf`; satisfied by `rest-validation`, `validation`, `sanitization`, and `rest-security` respectively |
-| `SyntheticOperations` | `@Binds` to a package-private implementation; INTERNAL; framework documentation module only |
-| `Set<OperationPublicationSink>` | `@Multibinds`; INTERNAL; empty by default; sibling framework modules contribute: the documentation module through `@ElementsIntoSet`, the `openapi-contract` validation module's contract-load check through `@IntoSet` |
+| `SyntheticOperationInstaller` | `@Binds` to a package-private implementation; INTERNAL; framework documentation module only |
+| `Set<MountPublicationHook>` | `@Multibinds`; INTERNAL; empty by default; sibling framework modules contribute: the documentation module through `@ElementsIntoSet`, the `openapi-contract` validation module's contract-load check through `@IntoSet` |
 
 `dev.vertique.rest.jaxrs.runtime.MagicBytesVerifierModule` is a separate opt-in `@Module` that
 contributes the built-in magic-byte `FileContentVerifier`.
@@ -1715,7 +1715,7 @@ contributes the built-in magic-byte `FileContentVerifier`.
 Three INTERNAL framework packages back these sibling-module seams. Each is outside the maturity
 promise and not a stable application API.
 
-`dev.vertique.rest.jaxrs.synthetic` holds `SyntheticOperations`, which lets a sibling framework
+`dev.vertique.rest.jaxrs.synthetic` holds `SyntheticOperationInstaller`, which lets a sibling framework
 module install a framework-owned route through the resource security chain, behind the completion
 recorder, so its requests complete as `RestRequestCompletedEvent`s; an installed route deliberately
 bypasses two things a resource route would normally go through: the API-scoped middleware, request
@@ -1723,19 +1723,19 @@ interceptor, router-lifecycle-hook, and mount-customizer chains of a JAX-RS moun
 and its own failure handler ends every failure itself rather than handing it to the application's
 error pipeline.
 
-`dev.vertique.rest.jaxrs.publication` holds `OperationPublicationSink`, which is bound only through
-the `@Multibinds` `Set<OperationPublicationSink>` multibinding above — empty by default, never an
+`dev.vertique.rest.jaxrs.publication` holds `MountPublicationHook`, which is bound only through
+the `@Multibinds` `Set<MountPublicationHook>` multibinding above — empty by default, never an
 optional binding — to which sibling framework modules contribute (the documentation module through
 `@ElementsIntoSet`, the `openapi-contract` validation module's contract-load check through
-`@IntoSet`); application developers must not implement it. Once one or more sinks are bound, every
-JAX-RS mount hands each sink one `MountPublication` at the end of `createRouter`, naming an
+`@IntoSet`); application developers must not implement it. Once one or more hooks are bound, every
+JAX-RS mount hands each hook one `MountPublication` at the end of `createRouter`, naming an
 application mount's `@RestApplication` name and declaring interface (`null` for every other mount)
 and carrying one `OperationPublication` per registered operation with the route value exactly as
-registered and the operation's effective security facts; a mount at least one sink wants detail for
+registered and the operation's effective security facts; a mount at least one hook wants detail for
 also carries an `OperationDetail`: deep-copied `CapturedSchemas`, keyed by `InputKey`, taken before
 the validation gate is built, plus the operation's flattened input inventory and its response shape.
 
-`dev.vertique.rest.jaxrs.application` holds `RestApplications` and `ApiDocsInstalled`, the
+`dev.vertique.rest.jaxrs.application` holds `RestApplications` and `ApiDocsModuleInstalled`, the
 composition view and the docs-module marker described under [`@RestApplication`](#restapplication)
 above, public only so the JAX-RS application composer, the mount composition validator, the OpenAPI
 documentation module, and the `openapi-contract` validation module's contract-load check can read or

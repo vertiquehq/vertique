@@ -22,7 +22,7 @@ import java.util.SortedMap;
  * form field becomes one only when it holds a {@code $ref} or a {@code $defs} at a schema position;
  * any other schema is published inline, unchanged. A component is {@linkplain
  * SchemaRelocation relocated} and registered with its relocated definitions in the document's
- * {@link ComponentRegistry}, so key collisions are found as components are published.
+ * {@link SchemaComponentCatalog}, so key collisions are found as components are published.
  *
  * <p>The captured objects are only read; reserved-name redaction (see {@code ReservedNameRedaction}),
  * relocation, and reference rewriting change the owned copy.
@@ -35,7 +35,7 @@ public final class SchemaEmbedder {
 
     private final String subject;
 
-    private final ComponentRegistry registry;
+    private final SchemaComponentCatalog catalog;
 
     /**
      * Creates the embedder of one document.
@@ -44,7 +44,7 @@ public final class SchemaEmbedder {
      */
     public SchemaEmbedder(String subject) {
         this.subject = subject;
-        this.registry = new ComponentRegistry(subject);
+        this.catalog = new SchemaComponentCatalog(subject);
     }
 
     /**
@@ -90,9 +90,9 @@ public final class SchemaEmbedder {
         }
         String key = publicationSubject.componentKey();
         List<SchemaRelocation.Definition> definitions = SchemaRelocation.relocate(key, schema);
-        registry.register(key, schema, publicationSubject, false);
+        catalog.register(key, schema, publicationSubject, false);
         for (SchemaRelocation.Definition definition : definitions) {
-            registry.register(definition.key(), definition.schema(), publicationSubject, true);
+            catalog.register(definition.key(), definition.schema(), publicationSubject, true);
         }
         return reference(key);
     }
@@ -103,7 +103,7 @@ public final class SchemaEmbedder {
      * @return the component schemas, keys in natural order
      */
     public SortedMap<String, JsonNode> components() {
-        return registry.schemas();
+        return catalog.schemas();
     }
 
     /**

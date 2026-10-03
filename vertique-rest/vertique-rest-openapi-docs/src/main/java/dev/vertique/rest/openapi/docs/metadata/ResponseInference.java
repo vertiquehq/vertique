@@ -37,7 +37,7 @@ import java.util.concurrent.CompletionStage;
 public final class ResponseInference {
 
     /** The kind of response a resource method produces. */
-    public enum Row {
+    public enum ResponseKind {
         /** The response carries no content. */
         NO_CONTENT,
         /** The response is a JSON entity serialized from the method's return type. */
@@ -51,13 +51,13 @@ public final class ResponseInference {
     /**
      * The classification of one response.
      *
-     * @param row the kind of response
+     * @param kind the kind of response
      * @param status the published status key, or {@code default} when it is not known
      * @param mediaTypes the media types the response publishes, in published order
      * @param outputType the type the response body is described from, or {@code null} when none
      */
     public record Inference(
-            Row row,
+            ResponseKind kind,
             String status,
             List<String> mediaTypes,
             @Nullable Type outputType) {
@@ -68,12 +68,13 @@ public final class ResponseInference {
          * @return {@code true} for a JSON entity or raw text response
          */
         public boolean inferable() {
-            return row == Row.JSON_ENTITY || row == Row.RAW_TEXT;
+            return kind == ResponseKind.JSON_ENTITY || kind == ResponseKind.RAW_TEXT;
         }
     }
 
-    private static final Inference NO_CONTENT = new Inference(Row.NO_CONTENT, "204", List.of(), null);
-    private static final Inference RUNTIME = new Inference(Row.RUNTIME, ResponseStatuses.DEFAULT, List.of(), null);
+    private static final Inference NO_CONTENT = new Inference(ResponseKind.NO_CONTENT, "204", List.of(), null);
+    private static final Inference RUNTIME =
+            new Inference(ResponseKind.RUNTIME, ResponseStatuses.DEFAULT, List.of(), null);
     private static final String DEFAULT_MEDIA_TYPE = "application/json";
     private static final String EVENT_STREAM = "text/event-stream";
 
@@ -131,7 +132,7 @@ public final class ResponseInference {
         }
         List<String> produces = producedMediaTypes(shape);
         if (raw == String.class) {
-            return new Inference(Row.RAW_TEXT, "200", produces, null);
+            return new Inference(ResponseKind.RAW_TEXT, "200", produces, null);
         }
         if (produces.stream().anyMatch(mediaType -> mediaType.startsWith(EVENT_STREAM))) {
             return RUNTIME;
@@ -142,7 +143,7 @@ public final class ResponseInference {
         if (json.isEmpty()) {
             return RUNTIME;
         }
-        return new Inference(Row.JSON_ENTITY, "200", json, type);
+        return new Inference(ResponseKind.JSON_ENTITY, "200", json, type);
     }
 
     // ---------------------------------------------------------------------------------------------

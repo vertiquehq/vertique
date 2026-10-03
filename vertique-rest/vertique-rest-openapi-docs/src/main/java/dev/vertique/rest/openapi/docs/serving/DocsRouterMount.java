@@ -9,7 +9,7 @@ import dev.vertique.rest.core.router.MountMeta;
 import dev.vertique.rest.core.router.RouterMount;
 import dev.vertique.rest.core.security.AuthEnforcementCapability;
 import dev.vertique.rest.core.security.SecuritySchemeHandler;
-import dev.vertique.rest.jaxrs.synthetic.SyntheticOperations;
+import dev.vertique.rest.jaxrs.synthetic.SyntheticOperationInstaller;
 import dev.vertique.rest.openapi.docs.ApiDocs;
 import dev.vertique.rest.openapi.docs.config.EnabledDocuments;
 import dev.vertique.rest.openapi.docs.diagnostics.DocumentWarnings;
@@ -75,7 +75,7 @@ public final class DocsRouterMount implements RouterMount {
     private final String cacheControl;
     private final Set<SecuritySchemeHandler> securitySchemeHandlers;
     private final Optional<AuthEnforcementCapability> authEnforcement;
-    private final SyntheticOperations syntheticOperations;
+    private final SyntheticOperationInstaller syntheticOperationInstaller;
     private final DocumentWarnings warnings;
     // Plain field, not volatile or atomic: HttpVerticle runs the composition validators and then the
     // sequential createRouter chain on the same verticle context within one start, and the unscoped
@@ -93,7 +93,7 @@ public final class DocsRouterMount implements RouterMount {
      *     protected documents are checked against and whose descriptions decide their {@code Vary}
      * @param authEnforcement the authentication enforcement capability, empty when it is not
      *     installed
-     * @param syntheticOperations the installer the protected document routes are installed through
+     * @param syntheticOperationInstaller the installer the protected document routes are installed through
      * @param warnings the documentation module's warnings of the component
      */
     public DocsRouterMount(
@@ -103,7 +103,7 @@ public final class DocsRouterMount implements RouterMount {
             String cacheControl,
             Set<SecuritySchemeHandler> securitySchemeHandlers,
             Optional<AuthEnforcementCapability> authEnforcement,
-            SyntheticOperations syntheticOperations,
+            SyntheticOperationInstaller syntheticOperationInstaller,
             DocumentWarnings warnings) {
         this.prefix = prefix;
         this.documents = documents;
@@ -111,7 +111,7 @@ public final class DocsRouterMount implements RouterMount {
         this.cacheControl = cacheControl;
         this.securitySchemeHandlers = securitySchemeHandlers;
         this.authEnforcement = authEnforcement;
-        this.syntheticOperations = syntheticOperations;
+        this.syntheticOperationInstaller = syntheticOperationInstaller;
         this.warnings = warnings;
     }
 
@@ -185,7 +185,7 @@ public final class DocsRouterMount implements RouterMount {
                 .toList();
         try {
             if (!protectedDocuments.isEmpty()) {
-                new ProtectedDocumentRoutes(prefix, store, syntheticOperations, securitySchemeHandlers)
+                new ProtectedDocumentRoutes(prefix, store, syntheticOperationInstaller, securitySchemeHandlers)
                         .install(router, protectedDocuments);
             }
             for (EnabledDocuments.EnabledDocument document : documents.all()) {

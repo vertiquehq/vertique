@@ -19,12 +19,12 @@ import jakarta.inject.Singleton;
  * The Dagger components of the hidden-input integration tests.
  *
  * <p>Every component binds the {@code web-validation} wiring with the canonical schema source itself
- * ({@link DisclosureSourceModules.Canonical}) and no recording sink, so the schemas the gate and the
+ * ({@link DisclosureSourceModules.Canonical}) and no recording hook, so the schemas the gate and the
  * documents see are the generator's, and each lists exactly one application module of {@link
  * HiddenApplicationModules}. A <em>served</em> component lists {@link OpenApiDocsModule} and serves
  * the application's public document over HTTP. A <em>rendering</em> component lists {@link
  * ProtectedRenderingModule} instead, registers the application's protected twin, and exposes the
- * {@link ProtectedRenderingSink}, which keeps the protected rendering and the binding inventory; it
+ * {@link ProtectedRenderingPublicationHook}, which keeps the protected rendering and the binding inventory; it
  * never deploys the documentation mount. The configuration must select {@code web-validation}.
  *
  * <p>To add a component: declare a {@code @Singleton @Component} listing {@code RestModule}, {@link
@@ -52,11 +52,11 @@ public final class HiddenInputTestComponents {
     interface Renders extends Served {
 
         /**
-         * Resolves the component's rendering sink.
+         * Resolves the component's rendering hook.
          *
-         * @return the sink
+         * @return the hook
          */
-        ProtectedRenderingSink protectedRendering();
+        ProtectedRenderingPublicationHook protectedRendering();
     }
 
     /** Creates a component from the application configuration. */

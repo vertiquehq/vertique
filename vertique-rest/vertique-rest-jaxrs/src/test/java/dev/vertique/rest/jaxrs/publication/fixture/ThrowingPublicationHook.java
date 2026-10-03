@@ -4,30 +4,30 @@
 package dev.vertique.rest.jaxrs.publication.fixture;
 
 import dev.vertique.rest.jaxrs.publication.MountPublication;
-import dev.vertique.rest.jaxrs.publication.OperationPublicationSink;
+import dev.vertique.rest.jaxrs.publication.MountPublicationHook;
 import io.vertx.core.Future;
 import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Test {@link OperationPublicationSink} that throws a configured {@link RuntimeException} from
+ * Test {@link MountPublicationHook} that throws a configured {@link RuntimeException} from
  * {@link #mountBuilt} for one configured mount path and records every other mount's publication
- * (T006 TP-006, a sink exception fails the enclosing mount's {@code createRouter}).
+ * (T006 TP-006, a hook exception fails the enclosing mount's {@code createRouter}).
  */
-public final class ThrowingSink implements OperationPublicationSink {
+public final class ThrowingPublicationHook implements MountPublicationHook {
 
     private final String rejectedMountPath;
     private final RuntimeException exception;
     private final List<MountPublication> received = new ArrayList<>();
 
     /**
-     * Creates a sink that throws {@code exception} for {@code rejectedMountPath} and otherwise
+     * Creates a hook that throws {@code exception} for {@code rejectedMountPath} and otherwise
      * records the publication and succeeds.
      *
      * @param rejectedMountPath the mount path whose {@link #mountBuilt} call throws
      * @param exception         the exception to throw for {@code rejectedMountPath}
      */
-    public ThrowingSink(String rejectedMountPath, RuntimeException exception) {
+    public ThrowingPublicationHook(String rejectedMountPath, RuntimeException exception) {
         this.rejectedMountPath = rejectedMountPath;
         this.exception = exception;
     }

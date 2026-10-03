@@ -6,7 +6,7 @@ package dev.vertique.rest.openapi.validation;
 import dagger.Binds;
 import dagger.Module;
 import dagger.multibindings.IntoSet;
-import dev.vertique.rest.jaxrs.publication.OperationPublicationSink;
+import dev.vertique.rest.jaxrs.publication.MountPublicationHook;
 import dev.vertique.rest.jaxrs.validation.RequestValidationStrategy;
 
 /**
@@ -18,7 +18,7 @@ import dev.vertique.rest.jaxrs.validation.RequestValidationStrategy;
  * set contains an entry whose {@link RequestValidationStrategy#id()} is {@code "openapi-contract"}, so
  * selecting that id via {@code jaxrs.validationStrategy} resolves to this strategy.
  *
- * <p>It also contributes the contract-load check into the {@code Set<OperationPublicationSink>}
+ * <p>It also contributes the contract-load check into the {@code Set<MountPublicationHook>}
  * multibinding: when a mount validated by this strategy finishes building its router, the check awaits
  * that mount's contract load, so a contract that cannot be loaded fails startup naming the application's
  * contract setting or the mount path, rather than answering HTTP 500 at the first validated request.
@@ -43,16 +43,16 @@ public abstract class OpenApiContractValidationModule {
     abstract RequestValidationStrategy openApiContractValidationStrategy(OpenApiContractValidationStrategy strategy);
 
     /**
-     * Contributes the startup contract-load check into the publication-sink multibinding. The check
+     * Contributes the startup contract-load check into the publication-hook multibinding. The check
      * awaits the contract load of every mount the {@code openapi-contract} strategy validates, so an
      * unloadable contract fails that mount's router creation — and so startup — with a value-free
      * {@link dev.vertique.rest.core.RestConfigurationException}; mounts under any other strategy are
      * untouched.
      *
      * @param check the contract-load check
-     * @return the check as an {@link OperationPublicationSink} set element
+     * @return the check as an {@link MountPublicationHook} set element
      */
     @Binds
     @IntoSet
-    abstract OperationPublicationSink contractLoadCheck(ContractLoadCheck check);
+    abstract MountPublicationHook contractLoadCheck(ContractLoadCheck check);
 }

@@ -21,7 +21,7 @@ SPDX-License-Identifier: EUPL-1.2
     <description>Opt-in runtime OpenAPI 3.1 documents served per documented REST application</description>
 
     <dependencies>
-        <!-- The publication sink SPI, the RestApplications view, the ApiDocsInstalled marker, and the
+        <!-- The mount publication hook SPI, the RestApplications view, the ApiDocsModuleInstalled marker, and the
              JAX-RS routing configuration. -->
         <dependency>
             <groupId>dev.vertique</groupId>
@@ -37,7 +37,7 @@ SPDX-License-Identifier: EUPL-1.2
             <groupId>dev.vertique</groupId>
             <artifactId>vertique-core</artifactId>
         </dependency>
-        <!-- The snapshot reads a body schema's RedactionManifest digest. -->
+        <!-- The fingerprint reads a body schema's RedactionManifest digest. -->
         <dependency>
             <groupId>dev.vertique</groupId>
             <artifactId>vertique-json-schema</artifactId>

@@ -4,9 +4,9 @@
 package dev.vertique.rest.openapi.docs.fixture.input;
 
 import dev.vertique.rest.jaxrs.publication.MountPublication;
+import dev.vertique.rest.jaxrs.publication.MountPublicationHook;
 import dev.vertique.rest.jaxrs.publication.OperationDetail;
 import dev.vertique.rest.jaxrs.publication.OperationPublication;
-import dev.vertique.rest.jaxrs.publication.OperationPublicationSink;
 import io.vertx.core.Future;
 import jakarta.annotation.Nullable;
 import java.util.List;
@@ -16,7 +16,7 @@ import java.util.TreeSet;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * An {@link OperationPublicationSink} that, during each call, projects every operation's binding
+ * An {@link MountPublicationHook} that, during each call, projects every operation's binding
  * inventory into {@link InputProjection}s and keeps only those projections, per application name and
  * operation id. It retains nothing else from a publication.
  *
@@ -25,12 +25,12 @@ import java.util.concurrent.ConcurrentHashMap;
  * calling context. Several verticle instances building the same mount record equal projections; the
  * last one is kept.
  */
-public final class RecordingInventorySink implements OperationPublicationSink {
+public final class RecordingInventoryPublicationHook implements MountPublicationHook {
 
     private final Map<Key, List<InputProjection>> inventories = new ConcurrentHashMap<>();
 
-    /** Creates a sink with no recorded inventory. */
-    public RecordingInventorySink() {}
+    /** Creates a hook with no recorded inventory. */
+    public RecordingInventoryPublicationHook() {}
 
     /**
      * Wants detail for every mount that serves a declared application.

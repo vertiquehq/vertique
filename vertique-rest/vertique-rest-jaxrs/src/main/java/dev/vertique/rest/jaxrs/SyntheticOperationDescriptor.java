@@ -18,7 +18,7 @@ import java.util.Objects;
 import java.util.Optional;
 
 /**
- * The {@link RestOperationDescriptor} {@link SyntheticOperationInstaller} hands to validators and
+ * The {@link RestOperationDescriptor} {@link DefaultSyntheticOperationInstaller} hands to validators and
  * contributors for one installed synthetic operation.
  *
  * <p>It shows a contributor what an equally annotated resource method shows: {@link

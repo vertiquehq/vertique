@@ -8,7 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 
-import dev.vertique.rest.jaxrs.application.ApiDocsInstalled;
+import dev.vertique.rest.jaxrs.application.ApiDocsModuleInstalled;
 import dev.vertique.rest.openapi.docs.fixture.PublicApi;
 import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;
@@ -20,7 +20,7 @@ import org.junit.jupiter.api.Test;
 /**
  * Pins the cross-module contract that lets rest-jaxrs recognize {@link ApiDocs} without depending on
  * this module: rest-jaxrs's not-installed notice and the annotation processor's compile checks look
- * the annotation up by the name {@link ApiDocsInstalled#ANNOTATION_NAME}, so a rename or move of
+ * the annotation up by the name {@link ApiDocsModuleInstalled#ANNOTATION_NAME}, so a rename or move of
  * {@link ApiDocs}, or a retention that hides it from reflection, would silently stop them.
  */
 class ApiDocsNameContractTest {
@@ -41,11 +41,11 @@ class ApiDocsNameContractTest {
 
         // Then: the name matches the cross-module constant
         assertAll(
-                "rest-jaxrs recognizes @ApiDocs by the name ApiDocsInstalled.ANNOTATION_NAME",
+                "rest-jaxrs recognizes @ApiDocs by the name ApiDocsModuleInstalled.ANNOTATION_NAME",
                 () -> assertEquals(
-                        ApiDocsInstalled.ANNOTATION_NAME,
+                        ApiDocsModuleInstalled.ANNOTATION_NAME,
                         annotationName,
-                        "ApiDocs's name must equal rest-jaxrs's ApiDocsInstalled.ANNOTATION_NAME"),
+                        "ApiDocs's name must equal rest-jaxrs's ApiDocsModuleInstalled.ANNOTATION_NAME"),
                 () -> assertEquals(
                         EXPECTED_ANNOTATION_NAME,
                         annotationName,

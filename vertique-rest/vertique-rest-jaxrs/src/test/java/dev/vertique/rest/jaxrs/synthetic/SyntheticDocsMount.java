@@ -16,7 +16,7 @@ import java.util.List;
 
 /**
  * The IT's {@code SYSTEM_FIRST} test mount at {@code /apidocs/*}: installs three synthetic
- * operations through {@link SyntheticOperations} — a role-protected document, an authenticated-
+ * operations through {@link SyntheticOperationInstaller} — a role-protected document, an authenticated-
  * only document, and a role-protected document whose terminal throws — each answering {@code GET}
  * and {@code HEAD}.
  */
@@ -37,7 +37,7 @@ final class SyntheticDocsMount implements RouterMount {
     static final String BROKEN_OPERATION_ID = "apidocs:broken:json";
     static final String BROKEN_PATH = "/broken/openapi.json";
 
-    private final SyntheticOperations operations;
+    private final SyntheticOperationInstaller operations;
     private final TraceRecorder trace;
 
     /**
@@ -46,7 +46,7 @@ final class SyntheticDocsMount implements RouterMount {
      * @param operations the installer the test component's {@code @Binds} provides
      * @param trace      the shared trace recorder
      */
-    SyntheticDocsMount(SyntheticOperations operations, TraceRecorder trace) {
+    SyntheticDocsMount(SyntheticOperationInstaller operations, TraceRecorder trace) {
         this.operations = operations;
         this.trace = trace;
     }

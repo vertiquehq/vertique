@@ -372,7 +372,7 @@ public class HiddenOperationIT {
 
     /**
      * Returns the loopback configuration with the {@code web-validation} strategy and an {@code info}
-     * for each named document. A rendering component takes it without names: its sink renders with a
+     * for each named document. A rendering component takes it without names: its hook renders with a
      * fixed {@code info} and reads no {@code apidocs} configuration.
      */
     private static JsonObject webValidationConfig(String... documentNames) {
@@ -392,13 +392,13 @@ public class HiddenOperationIT {
         Outcome outcome = StartupDeployments.deploy(vertx, component::httpVerticle);
         try {
             assertDeployed("the protected rendering of '" + application + "'", outcome);
-            ProtectedRenderingSink sink = component.protectedRendering();
-            Optional<String> failure = sink.failure(application);
+            ProtectedRenderingPublicationHook hook = component.protectedRendering();
+            Optional<String> failure = hook.failure(application);
             if (failure.isPresent()) {
                 return new Rendered(null, failure);
             }
             DisclosureDocuments.Rendering rendering =
-                    new DisclosureDocuments.Rendering(sink.json(application), sink.yaml(application));
+                    new DisclosureDocuments.Rendering(hook.json(application), hook.yaml(application));
             return new Rendered(rendering, failure);
         } finally {
             StartupDeployments.undeploy(vertx, outcome);

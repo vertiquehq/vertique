@@ -302,7 +302,7 @@ stateful schema source, fails the later instance at startup.
 
 With no enabled document, because `apidocs.enabled` is `false`, no application carries `@ApiDocs`,
 every annotated application is switched off, or no application is registered, the module contributes
-no publication sink and no docs mount. No publication is built, no composition validator runs, no
+no publication hook and no docs mount. No publication is built, no composition validator runs, no
 startup warning is logged, and routes, validation, and schema-source calls are exactly as without
 the module. In particular, no request body is checked for a redaction manifest, so a schema source
 that binds none starts and routes unchanged, and no response is inferred, generated, or checked, so
@@ -1883,7 +1883,7 @@ see [Access](#access-public-and-protected) and [Protected Documents](#protected-
 ### OpenApiDocsModule
 
 The Dagger module an application lists. It reads the `apidocs` configuration, selects the enabled
-documents, and contributes the publication sink, the composition validator, and the docs mount when
+documents, and contributes the publication hook, the composition validator, and the docs mount when
 at least one document is enabled (see [Module Dagger Bindings](#module-dagger-bindings)).
 
 The `apidocs` section, including each document's `info`, is parsed into records internal to the
@@ -2102,7 +2102,7 @@ returns a description of a kind this module renders; otherwise the document fail
 scheme and the first operation that requires it (see
 [Fail-closed publication](#fail-closed-publication)).
 
-The sink checks run for every JAX-RS mount of the composition, documented or not, in the order reserved
+The hook checks run for every JAX-RS mount of the composition, documented or not, in the order reserved
 ids, route collisions, shared contract. The first check with a violation fails the mount, listing all of
 that check's violations.
 
@@ -2466,14 +2466,14 @@ and its message can quote that value.
 |---|---|
 | The enabled documents | Internal type, `@Singleton`; parses the `apidocs` section through the canonical `ConfigParser` (when `apidocs.enabled` is `false`, without parsing the rest of the subtree), decides which applications have a document, and runs the configuration checks above. The parsed section itself is not bound |
 | `@ElementsIntoSet Set<MountCompositionValidator>` | The composition validator when at least one document is enabled, otherwise an empty set; contributes to the set `HttpVerticle` runs before it creates any router |
-| `@ElementsIntoSet Set<OperationPublicationSink>` | The publication sink when at least one document is enabled, otherwise an empty set; contributes to the set `vertique-rest-jaxrs` declares |
+| `@ElementsIntoSet Set<MountPublicationHook>` | The publication hook when at least one document is enabled, otherwise an empty set; contributes to the set `vertique-rest-jaxrs` declares |
 | `@ElementsIntoSet Set<RouterMount>` | The docs mount when at least one document is enabled, otherwise an empty set; unscoped, so every composition builds its own mount |
 | The documentation warnings | Internal type, `@Singleton`; holds the once-per-component guard of the startup warnings |
 | The document store | Internal type, `@Singleton`, one per component; holds the documents keyed by application name and is shared by every `HttpVerticle` instance |
-| `ApiDocsInstalled` | Bound whenever the module is listed, whatever the configuration, so `vertique-rest-jaxrs` does not log that no documentation route is published for `@ApiDocs` applications, even with `apidocs.enabled` `false` |
+| `ApiDocsModuleInstalled` | Bound whenever the module is listed, whatever the configuration, so `vertique-rest-jaxrs` does not log that no documentation route is published for `@ApiDocs` applications, even with `apidocs.enabled` `false` |
 
 The module requires `@VertxConfig JsonObject`, `ConfigParser` (from `ConfigParsingModule`),
-`JaxRsConfig`, `RestApplications`, and `SyntheticOperations` (all bound by `RestModule` in
+`JaxRsConfig`, `RestApplications`, and `SyntheticOperationInstaller` (all bound by `RestModule` in
 `dev.vertique:vertique-rest-jaxrs`),
 and the component's multibound sets of `RequestValidationStrategy`, `SecuritySchemeHandler`,
 `MountCustomizer`, `Middleware`, `RouterLifecycleHook`, and `RequestInterceptor`, plus an optional
@@ -2944,7 +2944,7 @@ in the runtime document only.
 
 | Module | Why |
 |---|---|
-| `dev.vertique:vertique-rest-jaxrs` | The declared-application view, the operation publication seam the module consumes, and the `ApiDocsInstalled` marker |
+| `dev.vertique:vertique-rest-jaxrs` | The declared-application view, the operation publication seam the module consumes, and the `ApiDocsModuleInstalled` marker |
 | `dev.vertique:vertique-rest-core` | `RouterMount`, `MountMeta`, the extension phases, `JaxRsConfig` default headers, `ResponseProducerBinding`, `SecuritySchemeHandler` and `SecuritySchemeDescription` (rendered as `securitySchemes`), and `RestConfigurationException` |
 | `dev.vertique:vertique-core` | `ConfigParser`, configuration path navigation, `ConfigurationException`, `@KeyedBy`, and `JsonMapperProfileRegistry` |
 | `dev.vertique:vertique-json-schema` | The redaction manifest each published request body is verified against and redacted by, and whose digest is part of the comparison between instances; the input generator that reports hidden members of a request body; the output generator that describes response types and reports their renamed and hidden members |

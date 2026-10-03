@@ -4,7 +4,7 @@
 package dev.vertique.rest.jaxrs.publication.fixture;
 
 import dev.vertique.rest.jaxrs.publication.MountPublication;
-import dev.vertique.rest.jaxrs.publication.OperationPublicationSink;
+import dev.vertique.rest.jaxrs.publication.MountPublicationHook;
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
 import java.util.ArrayDeque;
@@ -13,11 +13,11 @@ import java.util.Deque;
 import java.util.List;
 
 /**
- * Test {@link OperationPublicationSink} that never wants detail and, on every {@link #mountBuilt}
+ * Test {@link MountPublicationHook} that never wants detail and, on every {@link #mountBuilt}
  * call, records the given {@link MountPublication} and returns the future of a fresh {@link Promise}
  * the test completes later, one call at a time (T006 TP-008).
  */
-public final class PromiseControlledSink implements OperationPublicationSink {
+public final class PromiseControlledPublicationHook implements MountPublicationHook {
 
     private final List<MountPublication> received = new ArrayList<>();
     private final Deque<Promise<Void>> promises = new ArrayDeque<>();

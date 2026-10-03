@@ -57,7 +57,7 @@ import org.slf4j.LoggerFactory;
  *
  * <p><b>Synthetic publications.</b> {@link #assemble(MountPublication, ApiDocs.Access, AssemblyContext)}
  * takes a publication built by {@link MetadataPublications}, whose operations still carry their
- * descriptors, and does what the documentation sink does before assembly: it takes the per-operation
+ * descriptors, and does what the documentation hook does before assembly: it takes the per-operation
  * facts through the sink's own {@code operationFacts}, detaches the publication through the sink's
  * own {@code detach}, then assembles. The document is enabled for the publication's application,
  * declared by its declaring type, at its mount path, with the fixed {@link #INFO}, no configured

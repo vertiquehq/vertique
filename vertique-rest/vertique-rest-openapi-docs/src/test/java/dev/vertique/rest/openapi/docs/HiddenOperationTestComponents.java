@@ -19,12 +19,12 @@ import jakarta.inject.Singleton;
  * The Dagger components of the hidden-operation integration test.
  *
  * <p>Every component binds the {@code web-validation} wiring with the canonical schema source itself
- * ({@link DisclosureSourceModules.Canonical}) and no recording sink, so the schemas the gate and the
+ * ({@link DisclosureSourceModules.Canonical}) and no recording hook, so the schemas the gate and the
  * documents see are the generator's, and lists exactly one module of {@link HiddenOperationModules}.
  * The <em>served</em> component lists {@link OpenApiDocsModule} and serves the public documents of
  * {@code hidden} and {@code hiddengen} over HTTP. A <em>rendering</em> component lists {@link
  * ProtectedRenderingModule} instead, registers a protected application, and exposes the {@link
- * ProtectedRenderingSink}, which keeps its protected rendering; it never deploys the documentation
+ * ProtectedRenderingPublicationHook}, which keeps its protected rendering; it never deploys the documentation
  * mount. The configuration must select {@code web-validation}.
  */
 final class HiddenOperationTestComponents {
@@ -46,11 +46,11 @@ final class HiddenOperationTestComponents {
     interface Renders extends Served {
 
         /**
-         * Resolves the component's rendering sink.
+         * Resolves the component's rendering hook.
          *
-         * @return the sink
+         * @return the hook
          */
-        ProtectedRenderingSink protectedRendering();
+        ProtectedRenderingPublicationHook protectedRendering();
     }
 
     /** Creates a component from the application configuration. */

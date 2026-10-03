@@ -44,7 +44,7 @@ import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 /**
- * Unit-level proofs for {@link ContractLoadCheck}, the publication sink that turns a mount's
+ * Unit-level proofs for {@link ContractLoadCheck}, the publication hook that turns a mount's
  * unloadable {@code openapi-contract} contract into a startup failure: for a mount bound under the
  * {@code openapi-contract} strategy, {@link ContractLoadCheck#mountBuilt} fails with a value-free
  * {@link RestConfigurationException} naming the application and the setting its contract location came

@@ -16,19 +16,19 @@ import dev.vertique.rest.core.router.MountCustomizer;
 import dev.vertique.rest.core.router.RouterMount;
 import dev.vertique.rest.jaxrs.JaxRsRouterMount;
 import dev.vertique.rest.jaxrs.RestModule;
-import dev.vertique.rest.jaxrs.publication.OperationPublicationSink;
+import dev.vertique.rest.jaxrs.publication.MountPublicationHook;
 import dev.vertique.rest.jaxrs.publication.fixture.CountingSchemaSource;
 import dev.vertique.rest.jaxrs.publication.fixture.DuplicateOperationIdResource;
-import dev.vertique.rest.jaxrs.publication.fixture.FailingFutureSink;
+import dev.vertique.rest.jaxrs.publication.fixture.FailingFuturePublicationHook;
 import dev.vertique.rest.jaxrs.publication.fixture.MgmtResource;
 import dev.vertique.rest.jaxrs.publication.fixture.MountPathRecordingCustomizer;
 import dev.vertique.rest.jaxrs.publication.fixture.PublicationEventRecorder;
 import dev.vertique.rest.jaxrs.publication.fixture.PublicationEventRecordingCustomizer;
 import dev.vertique.rest.jaxrs.publication.fixture.PublicationEventRecordingHook;
-import dev.vertique.rest.jaxrs.publication.fixture.PublicationEventRecordingSink;
-import dev.vertique.rest.jaxrs.publication.fixture.RecordingSink;
+import dev.vertique.rest.jaxrs.publication.fixture.PublicationEventRecordingMountHook;
+import dev.vertique.rest.jaxrs.publication.fixture.RecordingPublicationHook;
 import dev.vertique.rest.jaxrs.publication.fixture.RecordingValidationStrategy;
-import dev.vertique.rest.jaxrs.publication.fixture.ThrowingSink;
+import dev.vertique.rest.jaxrs.publication.fixture.ThrowingPublicationHook;
 import dev.vertique.rest.jaxrs.validation.OperationSchemaSource;
 import dev.vertique.rest.jaxrs.validation.OperationSchemas;
 import dev.vertique.rest.jaxrs.validation.RequestValidationStrategy;
@@ -45,7 +45,7 @@ import java.util.Set;
  * empty {@code /api/empty/*} mount, and one non-JAX-RS mount) and composition (b) (T023's ported
  * {@code unitb} applications, exactly the module set {@link DeploymentComponents.StandardComponent}
  * uses), each built several ways for TP-001, TP-006, and TP-007 by swapping in one of the small
- * nested sink/strategy modules below.
+ * nested hook/strategy modules below.
  */
 public final class PublicationComponents {
 
@@ -156,7 +156,7 @@ public final class PublicationComponents {
     // --- Nested modules: TP-001's event-recording fixtures ---
 
     /**
-     * TP-001's recording sink, counting {@link RouterLifecycleHook}, and counting
+     * TP-001's recording hook, counting {@link RouterLifecycleHook}, and counting
      * {@link MountCustomizer}, all sharing one {@link PublicationEventRecorder}.
      */
     @Module
@@ -170,14 +170,15 @@ public final class PublicationComponents {
 
         @Provides
         @Singleton
-        static PublicationEventRecordingSink publicationEventRecordingSink(PublicationEventRecorder recorder) {
-            return new PublicationEventRecordingSink(recorder);
+        static PublicationEventRecordingMountHook publicationEventRecordingPublicationHook(
+                PublicationEventRecorder recorder) {
+            return new PublicationEventRecordingMountHook(recorder);
         }
 
         @Provides
         @IntoSet
-        static OperationPublicationSink asOperationPublicationSink(PublicationEventRecordingSink sink) {
-            return sink;
+        static MountPublicationHook asMountPublicationHook(PublicationEventRecordingMountHook hook) {
+            return hook;
         }
 
         @Provides
@@ -193,39 +194,39 @@ public final class PublicationComponents {
         }
     }
 
-    // --- Nested modules: TP-006's sinks and counting customizer ---
+    // --- Nested modules: TP-006's hooks and counting customizer ---
 
-    /** TP-006(a)'s sink: throws for {@link HandBuiltMountsModule#MGMT_MOUNT_PATH}. */
+    /** TP-006(a)'s hook: throws for {@link HandBuiltMountsModule#MGMT_MOUNT_PATH}. */
     @Module
-    static final class ThrowingSinkModule {
+    static final class ThrowingPublicationHookModule {
 
         @Provides
         @Singleton
-        static ThrowingSink throwingSink(RestConfigurationException sinkFailure) {
-            return new ThrowingSink(HandBuiltMountsModule.MGMT_MOUNT_PATH, sinkFailure);
+        static ThrowingPublicationHook throwingHook(RestConfigurationException hookFailure) {
+            return new ThrowingPublicationHook(HandBuiltMountsModule.MGMT_MOUNT_PATH, hookFailure);
         }
 
         @Provides
         @IntoSet
-        static OperationPublicationSink asSink(ThrowingSink sink) {
-            return sink;
+        static MountPublicationHook asHook(ThrowingPublicationHook hook) {
+            return hook;
         }
     }
 
-    /** TP-006(c)'s sink: fails its future for {@link HandBuiltMountsModule#MGMT_MOUNT_PATH}. */
+    /** TP-006(c)'s hook: fails its future for {@link HandBuiltMountsModule#MGMT_MOUNT_PATH}. */
     @Module
-    static final class FailingFutureSinkModule {
+    static final class FailingFuturePublicationHookModule {
 
         @Provides
         @Singleton
-        static FailingFutureSink failingFutureSink(RestConfigurationException sinkFailure) {
-            return new FailingFutureSink(HandBuiltMountsModule.MGMT_MOUNT_PATH, sinkFailure);
+        static FailingFuturePublicationHook failingFutureHook(RestConfigurationException hookFailure) {
+            return new FailingFuturePublicationHook(HandBuiltMountsModule.MGMT_MOUNT_PATH, hookFailure);
         }
 
         @Provides
         @IntoSet
-        static OperationPublicationSink asSink(FailingFutureSink sink) {
-            return sink;
+        static MountPublicationHook asHook(FailingFuturePublicationHook hook) {
+            return hook;
         }
     }
 
@@ -246,39 +247,39 @@ public final class PublicationComponents {
         }
     }
 
-    // --- Nested modules: plain recording sinks (TP-006(b) guard, TP-007) ---
+    // --- Nested modules: plain recording hooks (TP-006(b) guard, TP-007) ---
 
-    /** A {@link RecordingSink} that never wants detail. */
+    /** A {@link RecordingPublicationHook} that never wants detail. */
     @Module
-    static final class RecordingSinkModule {
+    static final class RecordingPublicationHookModule {
 
         @Provides
         @Singleton
-        static RecordingSink recordingSink() {
-            return new RecordingSink();
+        static RecordingPublicationHook recordingHook() {
+            return new RecordingPublicationHook();
         }
 
         @Provides
         @IntoSet
-        static OperationPublicationSink asSink(RecordingSink sink) {
-            return sink;
+        static MountPublicationHook asHook(RecordingPublicationHook hook) {
+            return hook;
         }
     }
 
-    /** A {@link RecordingSink} that wants detail for every mount. */
+    /** A {@link RecordingPublicationHook} that wants detail for every mount. */
     @Module
-    static final class RecordingSinkWantsAllDetailModule {
+    static final class RecordingPublicationHookWantsAllDetailModule {
 
         @Provides
         @Singleton
-        static RecordingSink recordingSink() {
-            return new RecordingSink(applicationName -> true);
+        static RecordingPublicationHook recordingHook() {
+            return new RecordingPublicationHook(applicationName -> true);
         }
 
         @Provides
         @IntoSet
-        static OperationPublicationSink asSink(RecordingSink sink) {
-            return sink;
+        static MountPublicationHook asHook(RecordingPublicationHook hook) {
+            return hook;
         }
     }
 
@@ -340,11 +341,11 @@ public final class PublicationComponents {
         PublicationEventRecorder eventRecorder();
 
         /**
-         * Resolves the recording sink.
+         * Resolves the recording hook.
          *
-         * @return the recording sink
+         * @return the recording hook
          */
-        PublicationEventRecordingSink eventRecordingSink();
+        PublicationEventRecordingMountHook eventRecordingPublicationHook();
 
         /** Factory taking the application configuration. */
         @Component.Factory
@@ -385,11 +386,11 @@ public final class PublicationComponents {
         PublicationEventRecorder eventRecorder();
 
         /**
-         * Resolves the recording sink.
+         * Resolves the recording hook.
          *
-         * @return the recording sink
+         * @return the recording hook
          */
-        PublicationEventRecordingSink eventRecordingSink();
+        PublicationEventRecordingMountHook eventRecordingPublicationHook();
 
         /** Factory taking the application configuration. */
         @Component.Factory
@@ -407,7 +408,7 @@ public final class PublicationComponents {
 
     // --- Components: TP-006 ---
 
-    /** TP-006(a): composition (a) with a sink that throws for the mgmt mount. */
+    /** TP-006(a): composition (a) with a hook that throws for the mgmt mount. */
     @Singleton
     @Component(
             modules = {
@@ -416,17 +417,17 @@ public final class PublicationComponents {
                 dev.vertique.rest.jaxrs.application.legacy.GeneratedJaxRsResourcesModule.class,
                 dev.vertique.rest.jaxrs.application.legacy.ManualResourceModule.class,
                 HandBuiltMountsModule.class,
-                ThrowingSinkModule.class,
+                ThrowingPublicationHookModule.class,
                 MountPathCustomizerModule.class
             })
-    public interface ThrowingSinkComponent extends Provisions {
+    public interface ThrowingPublicationHookComponent extends Provisions {
 
         /**
-         * Resolves the throwing sink.
+         * Resolves the throwing hook.
          *
-         * @return the throwing sink
+         * @return the throwing hook
          */
-        ThrowingSink throwingSink();
+        ThrowingPublicationHook throwingHook();
 
         /**
          * Resolves the counting customizer.
@@ -435,7 +436,7 @@ public final class PublicationComponents {
          */
         MountPathRecordingCustomizer customizerRecorder();
 
-        /** Factory taking the application configuration and the sink's thrown exception. */
+        /** Factory taking the application configuration and the hook's thrown exception. */
         @Component.Factory
         interface Factory {
 
@@ -443,12 +444,12 @@ public final class PublicationComponents {
              * Creates the component bound to the given configuration and failure.
              *
              * @param config      the application configuration
-             * @param sinkFailure the exception {@link ThrowingSink} throws for the mgmt mount
+             * @param sinkFailure the exception {@link ThrowingPublicationHook} throws for the mgmt mount
              * @return the constructed component
              */
-            ThrowingSinkComponent create(
+            ThrowingPublicationHookComponent create(
                     @BindsInstance @VertxConfig JsonObject config,
-                    @BindsInstance RestConfigurationException sinkFailure);
+                    @BindsInstance RestConfigurationException hookFailure);
         }
     }
 
@@ -461,17 +462,17 @@ public final class PublicationComponents {
                 dev.vertique.rest.jaxrs.application.legacy.GeneratedJaxRsResourcesModule.class,
                 dev.vertique.rest.jaxrs.application.legacy.ManualResourceModule.class,
                 HandBuiltMountsWithDuplicateModule.class,
-                RecordingSinkModule.class,
+                RecordingPublicationHookModule.class,
                 MountPathCustomizerModule.class
             })
     public interface DuplicateOperationComponent extends Provisions {
 
         /**
-         * Resolves the recording sink.
+         * Resolves the recording hook.
          *
-         * @return the recording sink
+         * @return the recording hook
          */
-        RecordingSink recordingSink();
+        RecordingPublicationHook recordingHook();
 
         /** Factory taking the application configuration. */
         @Component.Factory
@@ -487,7 +488,7 @@ public final class PublicationComponents {
         }
     }
 
-    /** TP-006(c): composition (a) with a sink whose future fails for the mgmt mount. */
+    /** TP-006(c): composition (a) with a hook whose future fails for the mgmt mount. */
     @Singleton
     @Component(
             modules = {
@@ -496,17 +497,17 @@ public final class PublicationComponents {
                 dev.vertique.rest.jaxrs.application.legacy.GeneratedJaxRsResourcesModule.class,
                 dev.vertique.rest.jaxrs.application.legacy.ManualResourceModule.class,
                 HandBuiltMountsModule.class,
-                FailingFutureSinkModule.class,
+                FailingFuturePublicationHookModule.class,
                 MountPathCustomizerModule.class
             })
-    public interface FailingFutureSinkComponent extends Provisions {
+    public interface FailingFuturePublicationHookComponent extends Provisions {
 
         /**
-         * Resolves the failing-future sink.
+         * Resolves the failing-future hook.
          *
-         * @return the failing-future sink
+         * @return the failing-future hook
          */
-        FailingFutureSink failingFutureSink();
+        FailingFuturePublicationHook failingFutureHook();
 
         /**
          * Resolves the counting customizer.
@@ -515,7 +516,7 @@ public final class PublicationComponents {
          */
         MountPathRecordingCustomizer customizerRecorder();
 
-        /** Factory taking the application configuration and the sink future's failure. */
+        /** Factory taking the application configuration and the hook future's failure. */
         @Component.Factory
         interface Factory {
 
@@ -523,18 +524,18 @@ public final class PublicationComponents {
              * Creates the component bound to the given configuration and failure.
              *
              * @param config      the application configuration
-             * @param sinkFailure the failure {@link FailingFutureSink}'s future carries for the mgmt mount
+             * @param sinkFailure the failure {@link FailingFuturePublicationHook}'s future carries for the mgmt mount
              * @return the constructed component
              */
-            FailingFutureSinkComponent create(
+            FailingFuturePublicationHookComponent create(
                     @BindsInstance @VertxConfig JsonObject config,
-                    @BindsInstance RestConfigurationException sinkFailure);
+                    @BindsInstance RestConfigurationException hookFailure);
         }
     }
 
     // --- Components: TP-007 ---
 
-    /** TP-007 build 1: composition (a) with the {@code @Multibinds} sink set empty. */
+    /** TP-007 build 1: composition (a) with the {@code @Multibinds} hook set empty. */
     @Singleton
     @Component(
             modules = {
@@ -545,7 +546,7 @@ public final class PublicationComponents {
                 HandBuiltMountsModule.class,
                 CountingSourceAndRecordingStrategyModule.class
             })
-    public interface NoSinkComponent extends Provisions {
+    public interface NoHookComponent extends Provisions {
 
         /**
          * Resolves the counting schema source.
@@ -564,11 +565,11 @@ public final class PublicationComponents {
              * @param config the application configuration
              * @return the constructed component
              */
-            NoSinkComponent create(@BindsInstance @VertxConfig JsonObject config);
+            NoHookComponent create(@BindsInstance @VertxConfig JsonObject config);
         }
     }
 
-    /** TP-007 build 2: composition (a) with a sink that wants no detail. */
+    /** TP-007 build 2: composition (a) with a hook that wants no detail. */
     @Singleton
     @Component(
             modules = {
@@ -578,9 +579,9 @@ public final class PublicationComponents {
                 dev.vertique.rest.jaxrs.application.legacy.ManualResourceModule.class,
                 HandBuiltMountsModule.class,
                 CountingSourceAndRecordingStrategyModule.class,
-                RecordingSinkModule.class
+                RecordingPublicationHookModule.class
             })
-    public interface SinkWantsNoDetailComponent extends Provisions {
+    public interface HookWantsNoDetailComponent extends Provisions {
 
         /**
          * Resolves the counting schema source.
@@ -599,11 +600,11 @@ public final class PublicationComponents {
              * @param config the application configuration
              * @return the constructed component
              */
-            SinkWantsNoDetailComponent create(@BindsInstance @VertxConfig JsonObject config);
+            HookWantsNoDetailComponent create(@BindsInstance @VertxConfig JsonObject config);
         }
     }
 
-    /** TP-007 build 3: composition (a) with a sink that wants detail for every mount. */
+    /** TP-007 build 3: composition (a) with a hook that wants detail for every mount. */
     @Singleton
     @Component(
             modules = {
@@ -613,9 +614,9 @@ public final class PublicationComponents {
                 dev.vertique.rest.jaxrs.application.legacy.ManualResourceModule.class,
                 HandBuiltMountsModule.class,
                 CountingSourceAndRecordingStrategyModule.class,
-                RecordingSinkWantsAllDetailModule.class
+                RecordingPublicationHookWantsAllDetailModule.class
             })
-    public interface SinkWantsAllDetailComponent extends Provisions {
+    public interface HookWantsAllDetailComponent extends Provisions {
 
         /**
          * Resolves the counting schema source.
@@ -634,7 +635,7 @@ public final class PublicationComponents {
              * @param config the application configuration
              * @return the constructed component
              */
-            SinkWantsAllDetailComponent create(@BindsInstance @VertxConfig JsonObject config);
+            HookWantsAllDetailComponent create(@BindsInstance @VertxConfig JsonObject config);
         }
     }
 }

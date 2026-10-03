@@ -9,7 +9,7 @@ package dev.vertique.rest.jaxrs.application;
  * hand-written application code.
  *
  * <p>{@code RestModule} declares this as {@code @BindsOptionalOf}, so a component resolves {@code
- * Optional<ApiDocsInstalled>} whether or not the docs module is included. The docs module's own
+ * Optional<ApiDocsModuleInstalled>} whether or not the docs module is included. The docs module's own
  * Dagger module binds a trivial implementation when it is present; rest-jaxrs never depends on the
  * docs module itself, so it cannot bind — only detect — this marker.
  *
@@ -20,7 +20,7 @@ package dev.vertique.rest.jaxrs.application;
  * @ApiDocs} only when the docs artifact is on the classpath — whether or not the docs module
  * itself is included in this component.
  */
-public interface ApiDocsInstalled {
+public interface ApiDocsModuleInstalled {
 
     /**
      * The fully qualified name of the {@code @ApiDocs} annotation

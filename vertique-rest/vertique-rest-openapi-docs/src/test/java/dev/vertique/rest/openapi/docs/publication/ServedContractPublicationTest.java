@@ -42,15 +42,15 @@ import org.junit.jupiter.api.function.Executable;
 import org.junit.jupiter.api.io.TempDir;
 
 /**
- * Unit proof that the publication sink refuses to load an application's own contract when one of the
- * mount's routed operations reaches it without its operation detail: without the detail the sink
+ * Unit proof that the publication hook refuses to load an application's own contract when one of the
+ * mount's routed operations reaches it without its operation detail: without the detail the hook
  * cannot know the operation's hidden inputs, so the contract checks could not refuse a contract that
  * describes them.
  *
- * <p>The sink is the real {@link DocsPublicationSink}, built with a declared-application view in which
+ * <p>The hook is the real {@link DocsPublicationHook}, built with a declared-application view in which
  * the documented application {@value PartnerApi#NAME} serves its own contract from a temporary file.
  * That file is a valid contract describing exactly the two routed operations {@code listOrders} and
- * {@code createOrder}, and carries the marker {@code zq7} in a description. The sink is handed a
+ * {@code createOrder}, and carries the marker {@code zq7} in a description. The hook is handed a
  * hand-built publication on an event-loop context, as a mount's build hands it, and the test waits on
  * the future it returns. A control publishes the same mount with detail on every operation and must
  * store the document, so a refusal can only come from the missing detail.
@@ -76,7 +76,7 @@ class ServedContractPublicationTest {
     /** The profile id of every operation detail. */
     private static final String PROFILE_ID = "default";
 
-    /** The longest the test waits for the sink's call or its future. */
+    /** The longest the test waits for the hook's call or its future. */
     private static final long TIMEOUT_SECONDS = 10;
 
     /** The application's own contract, valid for the two routed operations. */
@@ -120,12 +120,12 @@ class ServedContractPublicationTest {
     void operationWithoutDetailFailsTheLoad() throws Exception {
         // Given: partner serving its own valid contract, and a mount whose createOrder has no detail
         DocumentStore store = new DocumentStore();
-        DocsPublicationSink sink = sink(store);
+        DocsPublicationHook hook = hook(store);
         MountPublication publication =
                 publication(operation(LIST_ORDERS, "GET", detail()), operation(CREATE_ORDER, "POST", null));
 
-        // When: the sink is handed the mount on an event-loop context
-        Future<Void> result = mountBuiltOnContext(sink, publication);
+        // When: the hook is handed the mount on an event-loop context
+        Future<Void> result = mountBuiltOnContext(hook, publication);
 
         // Then: the publication fails naming the application, the operation, and the missing detail
         RestConfigurationException failure = assertInstanceOf(RestConfigurationException.class, failureOf(result));
@@ -150,20 +150,20 @@ class ServedContractPublicationTest {
     void operationsWithDetailStoreTheDocument() throws Exception {
         // Given: partner serving its own valid contract, and a mount whose operations all have detail
         DocumentStore store = new DocumentStore();
-        DocsPublicationSink sink = sink(store);
+        DocsPublicationHook hook = hook(store);
         MountPublication publication =
                 publication(operation(LIST_ORDERS, "GET", detail()), operation(CREATE_ORDER, "POST", detail()));
 
-        // When: the sink is handed the mount on an event-loop context
-        Future<Void> result = mountBuiltOnContext(sink, publication);
+        // When: the hook is handed the mount on an event-loop context
+        Future<Void> result = mountBuiltOnContext(hook, publication);
 
         // Then: the publication succeeds and partner's document is stored
         awaitSuccess(result);
         assertTrue(store.lookup(PartnerApi.NAME).isPresent(), "no document was stored");
     }
 
-    /** Builds the sink for partner, whose declared contract location is a temporary copy of {@link #CONTRACT}. */
-    private DocsPublicationSink sink(DocumentStore store) throws Exception {
+    /** Builds the hook for partner, whose declared contract location is a temporary copy of {@link #CONTRACT}. */
+    private DocsPublicationHook hook(DocumentStore store) throws Exception {
         Path contract = directory.resolve("partner-contract.json");
         Files.writeString(contract, CONTRACT, StandardCharsets.UTF_8);
         String location = contract.toAbsolutePath().toString();
@@ -183,7 +183,7 @@ class ServedContractPublicationTest {
                 PartnerApi.MOUNT_PATH,
                 location,
                 RestApplications.ContractOrigin.CONFIGURATION)));
-        return new DocsPublicationSink(
+        return new DocsPublicationHook(
                 new EnabledDocuments(List.of(document), EnabledDocuments.DEFAULT_PATH),
                 store,
                 EnabledDocuments.DEFAULT_PATH,
@@ -224,12 +224,12 @@ class ServedContractPublicationTest {
      * Calls {@code mountBuilt} on an event-loop context, as a mount's build does, and returns the future
      * it returned; a call that throws instead of returning a future fails the test.
      */
-    private Future<Void> mountBuiltOnContext(DocsPublicationSink sink, MountPublication publication) throws Exception {
+    private Future<Void> mountBuiltOnContext(DocsPublicationHook hook, MountPublication publication) throws Exception {
         Context caller = vertx.getOrCreateContext();
         CompletableFuture<Future<Void>> returned = new CompletableFuture<>();
         caller.runOnContext(ignored -> {
             try {
-                returned.complete(sink.mountBuilt(publication));
+                returned.complete(hook.mountBuilt(publication));
             } catch (Throwable t) {
                 returned.completeExceptionally(t);
             }

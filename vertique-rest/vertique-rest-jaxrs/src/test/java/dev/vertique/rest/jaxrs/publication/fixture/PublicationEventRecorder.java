@@ -11,7 +11,7 @@ import java.util.Map;
 
 /**
  * T006 TP-001's per-mount event correlator: joins {@code RouterLifecycleHook.afterRouterCreated}
- * (which receives only the {@link Router}), {@code OperationPublicationSink.mountBuilt} (which
+ * (which receives only the {@link Router}), {@code MountPublicationHook.mountBuilt} (which
  * receives only the mount path, via the {@link io.vertx.core.json.JsonObject}-free
  * {@code MountPublication.mountPath()}), and {@code MountCustomizer.customize} (which receives
  * both) into one ordered event list per mount path.

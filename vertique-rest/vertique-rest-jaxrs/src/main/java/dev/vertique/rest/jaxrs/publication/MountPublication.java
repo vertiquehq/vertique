@@ -8,7 +8,7 @@ import java.util.List;
 
 /**
  * INTERNAL: one JAX-RS mount's detached publication, handed to every {@link
- * OperationPublicationSink} at the end of router creation. Public only for cross-module use by
+ * MountPublicationHook} at the end of router creation. Public only for cross-module use by
  * sibling framework modules; outside the maturity promise and not an application contract.
  *
  * @param mountPath       the mount path as registered (e.g. {@code "/api/public/*"})

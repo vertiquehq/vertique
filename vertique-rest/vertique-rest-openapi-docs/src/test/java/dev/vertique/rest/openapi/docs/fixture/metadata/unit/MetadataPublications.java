@@ -44,7 +44,7 @@ import java.util.SortedSet;
 
 /**
  * Turns a synthetic publication built by {@link Publications} into the publication the
- * documentation sink receives before it detaches it: every operation's detail carries a {@link
+ * documentation hook receives before it detaches it: every operation's detail carries a {@link
  * StubOperationDescriptor}, and the bindings of an annotated operation carry the real annotation
  * instances and Java types of a fixture method's parameters.
  *

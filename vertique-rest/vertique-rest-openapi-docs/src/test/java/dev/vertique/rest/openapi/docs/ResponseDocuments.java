@@ -241,7 +241,7 @@ public final class ResponseDocuments {
     }
 
     /**
-     * Builds the publication the documentation sink receives for a synthetic mount, every operation
+     * Builds the publication the documentation hook receives for a synthetic mount, every operation
      * carrying its stub descriptor and its response facts.
      *
      * @param documentName the document's name, which is also the application's name
@@ -303,7 +303,7 @@ public final class ResponseDocuments {
     }
 
     /**
-     * Assembles the public document of a synthetic mount through the documentation sink's steps and
+     * Assembles the public document of a synthetic mount through the documentation hook's steps and
      * the document assembler.
      *
      * @param documentName the document's name, which is also the application's name

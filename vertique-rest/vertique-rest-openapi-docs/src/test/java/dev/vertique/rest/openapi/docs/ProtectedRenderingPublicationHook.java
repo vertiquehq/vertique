@@ -9,9 +9,9 @@ import dev.vertique.rest.jaxrs.application.RestApplications;
 import dev.vertique.rest.jaxrs.application.RestApplications.ContractOrigin;
 import dev.vertique.rest.jaxrs.publication.InputBinding;
 import dev.vertique.rest.jaxrs.publication.MountPublication;
+import dev.vertique.rest.jaxrs.publication.MountPublicationHook;
 import dev.vertique.rest.jaxrs.publication.OperationDetail;
 import dev.vertique.rest.jaxrs.publication.OperationPublication;
-import dev.vertique.rest.jaxrs.publication.OperationPublicationSink;
 import dev.vertique.rest.jaxrs.validation.OperationSchemaSource;
 import dev.vertique.rest.openapi.docs.assembly.AssemblyContext;
 import dev.vertique.rest.openapi.docs.assembly.DocumentAssembler;
@@ -20,7 +20,7 @@ import dev.vertique.rest.openapi.docs.diagnostics.DiagnosticsAccess;
 import dev.vertique.rest.openapi.docs.document.DocumentInfo;
 import dev.vertique.rest.openapi.docs.document.PublishedDocument;
 import dev.vertique.rest.openapi.docs.metadata.OperationFacts;
-import dev.vertique.rest.openapi.docs.publication.DocsPublicationSink;
+import dev.vertique.rest.openapi.docs.publication.DocsPublicationHook;
 import dev.vertique.rest.openapi.docs.publication.PublicationAccess;
 import io.vertx.core.Context;
 import io.vertx.core.Future;
@@ -36,12 +36,12 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * A test publication sink that renders, without serving, the document of every application mount
+ * A test publication hook that renders, without serving, the document of every application mount
  * whose declaring interface carries {@link ApiDocs}, in the access that annotation declares, and keeps
  * only the rendered bytes and a projection of each operation's binding inventory.
  *
  * <p>For such a mount, {@link #mountBuilt} takes the operation facts with {@link
- * DocsPublicationSink#operationFacts}, takes its own detached copy of the publication (every schema
+ * DocsPublicationHook#operationFacts}, takes its own detached copy of the publication (every schema
  * object copied, the descriptor dropped), and calls {@link DocumentAssembler#assemble} with an enabled
  * document of the application (fixed {@link #INFO}, no server URL, access from the annotation's
  * {@code access()}) and an assembly context of the component's bound schema source and profile
@@ -49,10 +49,10 @@ import java.util.concurrent.ConcurrentHashMap;
  * calling thread otherwise; the returned future completes on the calling context only after the
  * outcome is stored, so a deployment that succeeded has its renderings.
  *
- * <p>The sink only records: a failed assembly stores the failure's message (the message of a {@link
+ * <p>The hook only records: a failed assembly stores the failure's message (the message of a {@link
  * RestConfigurationException}; the class name and message of anything else) and the mount still
- * builds. The documentation module's own sink, when the component lists that module, is what fails a
- * startup. A component that lists this sink and not the documentation module never deploys the
+ * builds. The documentation module's own hook, when the component lists that module, is what fails a
+ * startup. A component that lists this hook and not the documentation module never deploys the
  * documentation mount, so a protected document is rendered here and served nowhere.
  *
  * <p>It wants detail for every mount that serves a declared application. For each such operation
@@ -60,7 +60,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * the declaring interface carries {@code @ApiDocs}. Several verticle instances building one mount
  * record equal outcomes; the last one is kept. Thread-safe.
  */
-final class ProtectedRenderingSink implements OperationPublicationSink {
+final class ProtectedRenderingPublicationHook implements MountPublicationHook {
 
     /** The {@code info} of every rendered document. */
     static final DocumentInfo INFO = new DocumentInfo("Protected rendering", "1.0", null);
@@ -71,13 +71,13 @@ final class ProtectedRenderingSink implements OperationPublicationSink {
     private final Map<Key, List<InventoryEntry>> inventories = new ConcurrentHashMap<>();
 
     /**
-     * Creates the sink.
+     * Creates the hook.
      *
      * @param schemaSource the component's bound schema source, if any
      * @param profiles     the component's profile registry
      * @param applications the component's declared applications, for each document's contract origin
      */
-    ProtectedRenderingSink(
+    ProtectedRenderingPublicationHook(
             Optional<OperationSchemaSource> schemaSource,
             JsonMapperProfileRegistry profiles,
             RestApplications applications) {

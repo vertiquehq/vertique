@@ -11,7 +11,7 @@ import dev.vertique.rest.auth.jwt.JwtAuthModule;
 import dev.vertique.rest.core.router.HttpVerticle;
 import dev.vertique.rest.jaxrs.RestModule;
 import dev.vertique.rest.openapi.docs.fixture.DocsTestSupportModule;
-import dev.vertique.rest.openapi.docs.fixture.RecordingPublicationSink;
+import dev.vertique.rest.openapi.docs.fixture.RecordingPublicationHook;
 import dev.vertique.rest.openapi.docs.fixture.SchemaSourceModules;
 import dev.vertique.rest.openapi.docs.fixture.contract.AlphaApi;
 import dev.vertique.rest.openapi.docs.fixture.contract.AlphaCatalogApi;
@@ -91,11 +91,11 @@ public final class ServedContractTestComponents {
     public interface GatedProvisions extends DocsProvisions {
 
         /**
-         * Resolves the component's recording sink, which counts {@code mountBuilt} calls per mount path.
+         * Resolves the component's recording hook, which counts {@code mountBuilt} calls per mount path.
          *
-         * @return the sink
+         * @return the hook
          */
-        RecordingPublicationSink recordingSink();
+        RecordingPublicationHook recordingHook();
     }
 
     /** What every JWT component exposes besides {@link DocsProvisions}. */
@@ -221,7 +221,7 @@ public final class ServedContractTestComponents {
 
     /**
      * {@code partner} ({@link PartnerApi}) as the only documented application, under {@code
-     * web-validation}, with a {@link RecordingPublicationSink} beside the documentation sink.
+     * web-validation}, with a {@link RecordingPublicationHook} beside the documentation hook.
      */
     @Singleton
     @Component(
@@ -232,7 +232,7 @@ public final class ServedContractTestComponents {
                 DocsTestSupportModule.class,
                 DisclosureSourceModules.Canonical.class,
                 ContractApplications.Partner.class,
-                RecordingPublicationSink.Binding.class
+                RecordingPublicationHook.Binding.class
             })
     public interface GatedPartnerComponent extends GatedProvisions {
 
@@ -256,7 +256,7 @@ public final class ServedContractTestComponents {
                 DocsTestSupportModule.class,
                 SchemaSourceModules.Counting.class,
                 ContractApplications.Partner.class,
-                RecordingPublicationSink.Binding.class
+                RecordingPublicationHook.Binding.class
             })
     public interface GatedPartnerCountingComponent extends GatedProvisions {
 

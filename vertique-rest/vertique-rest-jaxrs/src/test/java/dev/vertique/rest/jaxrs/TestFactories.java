@@ -18,7 +18,7 @@ import dev.vertique.rest.core.router.OperationHandlerContributor;
 import dev.vertique.rest.core.security.AuthEnforcementCapability;
 import dev.vertique.rest.core.security.SecurityPolicyValidator;
 import dev.vertique.rest.core.security.SecuritySchemeHandler;
-import dev.vertique.rest.jaxrs.publication.OperationPublicationSink;
+import dev.vertique.rest.jaxrs.publication.MountPublicationHook;
 import dev.vertique.rest.jaxrs.validation.FileContentVerifier;
 import dev.vertique.rest.jaxrs.validation.NoneValidationStrategy;
 import dev.vertique.rest.jaxrs.validation.OperationSchemaSource;
@@ -79,11 +79,11 @@ final class TestFactories {
 
         /**
          * {@code null} (the default) keeps the retained public {@code Factory} constructor path, with
-         * no sink set threaded through at all. A non-{@code null} value — including an empty set —
+         * no hook set threaded through at all. A non-{@code null} value — including an empty set —
          * selects the package-private {@code @Inject} constructor and is passed as its 29th and last
          * parameter.
          */
-        private @Nullable Set<OperationPublicationSink> publicationSinks;
+        private @Nullable Set<MountPublicationHook> publicationHooks;
 
         /**
          * Sets the registered validation strategies.
@@ -312,16 +312,16 @@ final class TestFactories {
         }
 
         /**
-         * Sets the {@code Set<OperationPublicationSink>} multibinding. Leaving this unset
+         * Sets the {@code Set<MountPublicationHook>} multibinding. Leaving this unset
          * (the default, {@code null}) keeps the factory built through the retained public
          * constructor, exactly today's behavior; passing a set — including {@link Set#of()} — selects
-         * the package-private {@code @Inject} constructor and threads it through as the sink set.
+         * the package-private {@code @Inject} constructor and threads it through as the hook set.
          *
-         * @param sinks the sink set, or {@code null} to keep the public-constructor path
+         * @param hooks the hook set, or {@code null} to keep the public-constructor path
          * @return this builder
          */
-        Builder publicationSinks(@Nullable Set<OperationPublicationSink> sinks) {
-            this.publicationSinks = sinks;
+        Builder publicationHooks(@Nullable Set<MountPublicationHook> hooks) {
+            this.publicationHooks = hooks;
             return this;
         }
 
@@ -340,7 +340,7 @@ final class TestFactories {
             DefaultResponseSerializer responseSerializer = new DefaultResponseSerializer(List.of(), encoders);
             HttpConfig httpConfig = HttpConfig.builder().build();
 
-            if (publicationSinks == null) {
+            if (publicationHooks == null) {
                 return new JaxRsRouterMount.Factory(
                         Set.of(), // routerLifecycleHooks
                         operationInterceptors,
@@ -373,8 +373,8 @@ final class TestFactories {
                         operationSchemaSource);
             }
 
-            // A non-null publicationSinks (including an empty set) selects the package-private
-            // 29-parameter @Inject constructor, with the sink set as its last parameter.
+            // A non-null publicationHooks (including an empty set) selects the package-private
+            // 29-parameter @Inject constructor, with the hook set as its last parameter.
             return new JaxRsRouterMount.Factory(
                     Set.of(), // routerLifecycleHooks
                     operationInterceptors,
@@ -404,7 +404,7 @@ final class TestFactories {
                     fileContentVerifiers,
                     validationStrategies,
                     operationSchemaSource,
-                    publicationSinks);
+                    publicationHooks);
         }
     }
 }

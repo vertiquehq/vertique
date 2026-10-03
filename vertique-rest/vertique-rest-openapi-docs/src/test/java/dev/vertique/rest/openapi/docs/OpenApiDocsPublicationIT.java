@@ -308,7 +308,7 @@ public class OpenApiDocsPublicationIT {
             assertTrue(
                     outcome.mountPaths().stream().noneMatch(path -> path.startsWith(DOCS_MOUNT_PREFIX)),
                     label + ": no mount under " + DOCS_MOUNT_PREFIX + ", got " + outcome.mountPaths());
-            assertEquals(0, outcome.sinkCount(), label + ": no publication sink");
+            assertEquals(0, outcome.hookCount(), label + ": no publication sink");
             assertTrue(outcome.answeredByLastMarker(), label + ": the document request reaches the marker mount");
             if (variant.component() instanceof DocsProvisions) {
                 assertEquals(0, outcome.storeSize(), label + ": the store is empty");
@@ -339,7 +339,7 @@ public class OpenApiDocsPublicationIT {
     private record VariantOutcome(
             List<String> mountIds,
             List<String> mountPaths,
-            int sinkCount,
+            int hookCount,
             boolean answeredByLastMarker,
             @Nullable Integer storeSize,
             int schemaCalls) {}
@@ -357,7 +357,7 @@ public class OpenApiDocsPublicationIT {
             return new VariantOutcome(
                     applied.stream().map(MountMeta::mountId).toList(),
                     applied.stream().map(MountMeta::mountPath).toList(),
-                    component.publicationSinks().size(),
+                    component.publicationHooks().size(),
                     answeredByLastMarker(response),
                     component instanceof DocsProvisions docs
                             ? PublicationAccess.names(docs.documentStore()).size()

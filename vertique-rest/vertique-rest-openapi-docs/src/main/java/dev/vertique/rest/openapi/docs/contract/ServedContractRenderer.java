@@ -8,8 +8,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import dev.vertique.rest.openapi.docs.document.DocumentWriter;
+import dev.vertique.rest.openapi.docs.document.PublicationFingerprint;
 import dev.vertique.rest.openapi.docs.document.PublishedDocument;
-import dev.vertique.rest.openapi.docs.document.Snapshot;
 
 /**
  * Writes a served contract in its JSON and YAML forms from the one parsed tree.
@@ -33,16 +33,16 @@ final class ServedContractRenderer {
      * Renders a parsed contract in both forms. The tree is not modified.
      *
      * @param contract the parsed contract
-     * @param snapshot the snapshot of the mount whose application serves the contract
+     * @param fingerprint the fingerprint of the mount whose application serves the contract
      * @return the contract in both forms, with the entity tag of each
      * @throws IllegalStateException when the tree cannot be serialized, with no cause attached
      */
-    static PublishedDocument render(JsonNode contract, Snapshot snapshot) {
+    static PublishedDocument render(JsonNode contract, PublicationFingerprint fingerprint) {
         try {
             byte[] json = JSON.writeValueAsBytes(contract);
             byte[] yaml = YAML.writeValueAsBytes(contract);
             return new PublishedDocument(
-                    json, yaml, DocumentWriter.entityTag(json), DocumentWriter.entityTag(yaml), snapshot);
+                    json, yaml, DocumentWriter.entityTag(json), DocumentWriter.entityTag(yaml), fingerprint);
         } catch (JsonProcessingException unserializable) {
             // The serializer's message can quote content; it is never chained.
             throw new IllegalStateException("The served contract cannot be serialized");

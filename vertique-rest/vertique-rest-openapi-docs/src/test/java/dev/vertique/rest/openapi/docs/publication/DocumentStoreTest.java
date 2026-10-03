@@ -16,9 +16,9 @@ import dev.vertique.rest.openapi.docs.ApiDocs;
 import dev.vertique.rest.openapi.docs.TestContexts;
 import dev.vertique.rest.openapi.docs.config.EnabledDocuments;
 import dev.vertique.rest.openapi.docs.document.DocumentInfo;
+import dev.vertique.rest.openapi.docs.document.PublicationFingerprint;
+import dev.vertique.rest.openapi.docs.document.PublicationFingerprintCalculatorTest;
 import dev.vertique.rest.openapi.docs.document.PublishedDocument;
-import dev.vertique.rest.openapi.docs.document.Snapshot;
-import dev.vertique.rest.openapi.docs.document.SnapshotRendererTest;
 import dev.vertique.rest.openapi.docs.fixture.PublicApi;
 import io.vertx.core.Context;
 import io.vertx.core.Future;
@@ -45,11 +45,11 @@ import org.junit.jupiter.api.Test;
  * and nothing is stored, so a later deployment in the same component assembles again and stores the
  * document.
  *
- * <p>The store is driven as the publication sink drives it: each caller calls {@code publish} on
+ * <p>The store is driven as the publication hook drives it: each caller calls {@code publish} on
  * its own event-loop context. Every wait is bounded, so a future left incomplete fails the test
  * instead of hanging it.
  *
- * <p>It also proves the sink's guard for a mount built on a thread without a Vert.x context: the
+ * <p>It also proves the hook's guard for a mount built on a thread without a Vert.x context: the
  * publication fails naming the application and the store is left untouched.
  */
 class DocumentStoreTest {
@@ -118,7 +118,7 @@ class DocumentStoreTest {
     @Test
     @DisplayName("A mount built outside a Vert.x context fails naming its application and publishes nothing")
     void mountBuiltOutsideAVertxContextFailsAndStoresNothing() {
-        // Given: a sink for the enabled public document, and this JUnit thread, which has no Vert.x context
+        // Given: a hook for the enabled public document, and this JUnit thread, which has no Vert.x context
         DocumentStore store = new DocumentStore();
         EnabledDocuments.EnabledDocument document = new EnabledDocuments.EnabledDocument(
                 NAME,
@@ -129,12 +129,12 @@ class DocumentStoreTest {
                 new DocumentInfo("Catalog", "1.0", null),
                 null,
                 null);
-        DocsPublicationSink sink = new DocsPublicationSink(
+        DocsPublicationHook hook = new DocsPublicationHook(
                 new EnabledDocuments(List.of(document), EnabledDocuments.DEFAULT_PATH), store, TestContexts.noSource());
         assertNull(Vertx.currentContext(), "the JUnit thread must have no Vert.x context");
 
-        // When: the sink is handed the public application's mount
-        Future<Void> result = sink.mountBuilt(new SnapshotRendererTest.PublicationSpec().build());
+        // When: the hook is handed the public application's mount
+        Future<Void> result = hook.mountBuilt(new PublicationFingerprintCalculatorTest.PublicationSpec().build());
 
         // Then: the future has already failed with a configuration exception naming the application
         assertTrue(result.failed(), "the publication of a mount built outside a context must fail");
@@ -147,7 +147,7 @@ class DocumentStoreTest {
     }
 
     /**
-     * Calls {@code publish} for {@link #NAME} on {@code caller}, as the sink does from its mount's
+     * Calls {@code publish} for {@link #NAME} on {@code caller}, as the hook does from its mount's
      * event loop, and returns the future the store returned.
      */
     private static Future<Void> publishOn(Context caller, DocumentStore store, FailFirstAssembler assembler)
@@ -155,7 +155,7 @@ class DocumentStoreTest {
         CompletableFuture<Future<Void>> returned = new CompletableFuture<>();
         caller.runOnContext(ignored -> {
             try {
-                returned.complete(store.publish(NAME, caller, assembler, DocumentStoreTest::ownSnapshot));
+                returned.complete(store.publish(NAME, caller, assembler, DocumentStoreTest::ownFingerprint));
             } catch (Throwable t) {
                 returned.completeExceptionally(t);
             }
@@ -186,9 +186,9 @@ class DocumentStoreTest {
         }
     }
 
-    /** The snapshot each caller renders of its own mount, equal to the stored document's. */
-    private static Snapshot ownSnapshot() {
-        return new Snapshot(new Snapshot.MountPart("", "", "", ""), new TreeMap<>());
+    /** The fingerprint each caller calculates of its own mount, equal to the stored document's. */
+    private static PublicationFingerprint ownFingerprint() {
+        return new PublicationFingerprint(new PublicationFingerprint.MountPart("", "", "", ""), new TreeMap<>());
     }
 
     /** The document the assembler produces once it succeeds; the only place one is constructed. */
@@ -198,7 +198,7 @@ class DocumentStoreTest {
                 "{}\n".getBytes(StandardCharsets.UTF_8),
                 "\"json-tag\"",
                 "\"yaml-tag\"",
-                ownSnapshot());
+                ownFingerprint());
     }
 
     /**

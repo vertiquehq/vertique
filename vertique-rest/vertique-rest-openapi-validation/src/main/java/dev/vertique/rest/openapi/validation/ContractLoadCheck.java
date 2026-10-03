@@ -6,7 +6,7 @@ package dev.vertique.rest.openapi.validation;
 import dev.vertique.rest.core.RestConfigurationException;
 import dev.vertique.rest.jaxrs.application.RestApplications;
 import dev.vertique.rest.jaxrs.publication.MountPublication;
-import dev.vertique.rest.jaxrs.publication.OperationPublicationSink;
+import dev.vertique.rest.jaxrs.publication.MountPublicationHook;
 import io.vertx.core.Context;
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
@@ -44,7 +44,7 @@ import java.util.SortedSet;
  * <p>The returned future is already complete when every load has finished. While any load is still
  * pending, it completes on the caller's Vert.x context, never on the context that loads a contract.
  */
-final class ContractLoadCheck implements OperationPublicationSink {
+final class ContractLoadCheck implements MountPublicationHook {
 
     /** The fixed part of every failure message, after the mount's identification. */
     private static final String CANNOT_BE_LOADED =

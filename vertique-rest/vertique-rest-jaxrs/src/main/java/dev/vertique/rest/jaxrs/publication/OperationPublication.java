@@ -22,7 +22,7 @@ import java.util.List;
  * @param securityRequirementSets the operation's security requirement sets
  * @param requiresAction         whether the operation declares an authorization action
  * @param detail                 the operation's captured detail; non-{@code null} exactly when a
- *                                sink wanted detail for the enclosing mount
+ *                                hook wanted detail for the enclosing mount
  */
 public record OperationPublication(
         String operationId,

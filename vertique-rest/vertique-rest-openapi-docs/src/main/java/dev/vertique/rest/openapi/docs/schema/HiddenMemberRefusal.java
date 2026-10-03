@@ -39,7 +39,11 @@ public final class HiddenMemberRefusal {
      *     body type could not be inspected
      */
     public static void refuse(
-            String subject, String operationId, InputBinding body, String profileId, InputGenerators generators) {
+            String subject,
+            String operationId,
+            InputBinding body,
+            String profileId,
+            InputSchemaGeneratorCache generators) {
         List<HiddenMember> hidden;
         try {
             hidden = generators.generator(profileId).hiddenMembers(body.type());

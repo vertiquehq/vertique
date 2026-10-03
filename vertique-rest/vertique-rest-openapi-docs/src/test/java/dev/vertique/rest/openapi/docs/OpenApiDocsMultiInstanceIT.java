@@ -25,7 +25,7 @@ import dev.vertique.rest.openapi.docs.fixture.DocsConfigs;
 import dev.vertique.rest.openapi.docs.fixture.ManagementResource;
 import dev.vertique.rest.openapi.docs.fixture.MarkerRouterMount;
 import dev.vertique.rest.openapi.docs.fixture.PublicApi;
-import dev.vertique.rest.openapi.docs.fixture.RecordingPublicationSink;
+import dev.vertique.rest.openapi.docs.fixture.RecordingPublicationHook;
 import dev.vertique.rest.openapi.docs.fixture.conformance.shared.BackOfficeApi;
 import dev.vertique.rest.openapi.docs.fixture.conformance.shared.OrderBodySwitchingSchemaSource;
 import dev.vertique.rest.openapi.docs.fixture.conformance.support.StoreLogCapture;
@@ -82,7 +82,7 @@ import org.slf4j.LoggerFactory;
  * Integration proof that one component's compositions share one document per application: each
  * complete document, a public one and a protected one, is assembled and stored once per component
  * and served byte-identically by every composition, whether the compositions start one after the
- * other or race; a later composition whose snapshot differs from the stored one fails its startup
+ * other or race; a later composition whose fingerprint differs from the stored one fails its startup
  * with a message that names where, never what; and a racing composition neither assembles again nor
  * blocks its event loop while the first composition's assembly runs on a worker thread.
  *
@@ -217,7 +217,7 @@ public class OpenApiDocsMultiInstanceIT {
     /** The keyword of the {@code DEBUG} line logged once per completed assembly. */
     private static final String ASSEMBLY_KEYWORD = "assembl";
 
-    /** The keyword of the {@code DEBUG} line logged once per snapshot comparison. */
+    /** The keyword of the {@code DEBUG} line logged once per fingerprint comparison. */
     private static final String COMPARISON_KEYWORD = "compar";
 
     /** The documented application of the gated scenario. */
@@ -247,7 +247,7 @@ public class OpenApiDocsMultiInstanceIT {
      */
     private static final Duration GATE_START_BOUND = Duration.ofSeconds(2);
 
-    /** The longest the gated test waits for both compositions to reach the sinks. */
+    /** The longest the gated test waits for both compositions to reach the hooks. */
     private static final Duration BOTH_CALLS_BOUND = Duration.ofSeconds(6);
 
     /** The longest the gated test waits for its deployment, and then for the gate's outcome. */
@@ -473,8 +473,8 @@ public class OpenApiDocsMultiInstanceIT {
     }
 
     @Test
-    @DisplayName("A later composition whose snapshot differs fails its startup naming where, never what")
-    void divergentSnapshotFailsStartupNamingWhereNeverWhat(Vertx vertx) throws Exception {
+    @DisplayName("A later composition whose fingerprint differs fails its startup naming where, never what")
+    void divergentFingerprintFailsStartupWithApplicationAndMountNames(Vertx vertx) throws Exception {
         List<String> deployments = new ArrayList<>();
         WebClient client = DocumentRequests.separateConnectionsClient(vertx);
         String adminToken = SharedDeployment.alice(SharedDeployment.jwtAuth(vertx));
@@ -512,7 +512,7 @@ public class OpenApiDocsMultiInstanceIT {
                 // (ii) When: the comparer, the same supplier, deploys after the winner completed.
                 comparerFailure = Deployments.failureOf(vertx, component::httpVerticle, new DeploymentOptions(), WAIT);
 
-                // Then: the comparer compared its management snapshot, and only the winner assembled.
+                // Then: the comparer compared its management fingerprint, and only the winner assembled.
                 assertEquals(
                         COMPARISON_LINES_PER_APPLICATION,
                         logs.comparisonLines(MANAGEMENT_NAME, MANAGEMENT_MOUNT).size(),
@@ -527,7 +527,7 @@ public class OpenApiDocsMultiInstanceIT {
             // composition.
             assertEquals(2, source.orderResolutions(), "comparer: resolutions of createOrder");
 
-            // Then: it fails with the snapshot comparison's configuration failure naming the application,
+            // Then: it fails with the fingerprint comparison's configuration failure naming the application,
             // its declaring interface, its mount, and the differing operation.
             assertNotNull(comparerFailure, "the comparer started although its snapshot differs");
             RestConfigurationException divergence = assertInstanceOf(
@@ -570,7 +570,8 @@ public class OpenApiDocsMultiInstanceIT {
             assertTrue(storedAfter.isPresent(), "the failed comparer removed the stored document");
             assertArrayEquals(storedBefore.get().json(), storedAfter.get().json(), "the stored JSON bytes changed");
             assertArrayEquals(storedBefore.get().yaml(), storedAfter.get().yaml(), "the stored YAML bytes changed");
-            assertEquals(storedBefore.get().snapshot(), storedAfter.get().snapshot(), "the stored snapshot changed");
+            assertEquals(
+                    storedBefore.get().fingerprint(), storedAfter.get().fingerprint(), "the stored snapshot changed");
 
             // Then: the winner still serves the bytes and entity tag it served before, in both forms.
             Answer winnerJsonAfter = DocumentRequests.get(client, winnerPort, MANAGEMENT_JSON, adminToken, WAIT);
@@ -620,10 +621,11 @@ public class OpenApiDocsMultiInstanceIT {
             cleanup.await("close the test-owned Vert.x instance", vertx::close, GATED_CLOSE_BOUND);
             cleanup.step("release the gate", gateRelease::countDown);
 
-            // Given: the shared fixture plus the recording sink and the SYSTEM_LAST context recorder.
-            DocsTestComponents.RecordingSinkComponent component =
-                    DaggerDocsTestComponents_RecordingSinkComponent.factory().create(DocsConfigs.shared());
-            RecordingPublicationSink recordingSink = component.recordingSink();
+            // Given: the shared fixture plus the recording hook and the SYSTEM_LAST context recorder.
+            DocsTestComponents.RecordingPublicationHookComponent component =
+                    DaggerDocsTestComponents_RecordingPublicationHookComponent.factory()
+                            .create(DocsConfigs.shared());
+            RecordingPublicationHook recordingHook = component.recordingHook();
             ContextRecordingRouterMount contextRecorder = component.contextRecordingMount();
             DocumentStore store = component.documentStore();
 
@@ -649,13 +651,13 @@ public class OpenApiDocsMultiInstanceIT {
             Future<String> deployment;
             try {
                 // When: two instances deploy with the named one-thread pool, and both compositions
-                // reach the sinks while the pool is gated.
+                // reach the hooks while the pool is gated.
                 DeploymentOptions options = new DeploymentOptions()
                         .setInstances(COMPOSITIONS)
                         .setWorkerPoolName(GATED_POOL)
                         .setWorkerPoolSize(1);
                 deployment = Deployments.deploy(vertx, component::httpVerticle, options);
-                bothCallsWhileGated = recordingSink.awaitCalls(MOUNT_PATH, COMPOSITIONS, BOTH_CALLS_BOUND);
+                bothCallsWhileGated = recordingHook.awaitCalls(MOUNT_PATH, COMPOSITIONS, BOTH_CALLS_BOUND);
                 assemblyLinesWhileGated = assemblyLines(appender.lines()).size();
                 storedWhileGated = store.lookup(NAME).isPresent();
             } finally {
@@ -665,7 +667,7 @@ public class OpenApiDocsMultiInstanceIT {
             assertTrue(
                     bothCallsWhileGated,
                     () -> "startup did not reach both mountBuilt calls for " + MOUNT_PATH
-                            + " while the named pool was gated; recorded calls: " + recordingSink.calls(MOUNT_PATH));
+                            + " while the named pool was gated; recorded calls: " + recordingHook.calls(MOUNT_PATH));
 
             // When: the deployment completes; then the gate's own outcome is observed.
             String deploymentId = Futures.await(deployment, GATED_DEPLOY_BOUND);

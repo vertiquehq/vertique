@@ -4,7 +4,7 @@
 package dev.vertique.rest.jaxrs.publication.fixture;
 
 import dev.vertique.rest.jaxrs.publication.MountPublication;
-import dev.vertique.rest.jaxrs.publication.OperationPublicationSink;
+import dev.vertique.rest.jaxrs.publication.MountPublicationHook;
 import io.vertx.core.Future;
 import java.util.ArrayList;
 import java.util.List;
@@ -12,23 +12,23 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * T006 TP-001's recording {@link OperationPublicationSink}: never wants detail, always succeeds,
+ * T006 TP-001's recording {@link MountPublicationHook}: never wants detail, always succeeds,
  * records every {@link MountPublication} it receives, and forwards each {@code mountBuilt} call to
  * a shared {@link PublicationEventRecorder} so the per-mount event order
  * ({@code afterRouterCreated} → {@code mountBuilt} → {@code customize}) can be verified.
  */
-public final class PublicationEventRecordingSink implements OperationPublicationSink {
+public final class PublicationEventRecordingMountHook implements MountPublicationHook {
 
     private final PublicationEventRecorder recorder;
     private final List<MountPublication> received = new ArrayList<>();
     private final Map<String, MountPublication> receivedByMountPath = new ConcurrentHashMap<>();
 
     /**
-     * Creates a sink that forwards every {@code mountBuilt} call to {@code recorder}.
+     * Creates a hook that forwards every {@code mountBuilt} call to {@code recorder}.
      *
      * @param recorder the shared event recorder
      */
-    public PublicationEventRecordingSink(PublicationEventRecorder recorder) {
+    public PublicationEventRecordingMountHook(PublicationEventRecorder recorder) {
         this.recorder = recorder;
     }
 

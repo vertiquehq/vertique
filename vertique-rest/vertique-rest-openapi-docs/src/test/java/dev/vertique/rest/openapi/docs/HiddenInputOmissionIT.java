@@ -17,7 +17,7 @@ import dev.vertique.rest.openapi.docs.HiddenInputTestComponents.ProbeComponent;
 import dev.vertique.rest.openapi.docs.HiddenInputTestComponents.ProtectedFixedAccountsComponent;
 import dev.vertique.rest.openapi.docs.HiddenInputTestComponents.ProtectedProbeComponent;
 import dev.vertique.rest.openapi.docs.HiddenInputTestComponents.Served;
-import dev.vertique.rest.openapi.docs.ProtectedRenderingSink.InventoryEntry;
+import dev.vertique.rest.openapi.docs.ProtectedRenderingPublicationHook.InventoryEntry;
 import dev.vertique.rest.openapi.docs.fixture.DocsConfigs;
 import dev.vertique.rest.openapi.docs.fixture.disclosure.dto.AccountBeanZx;
 import dev.vertique.rest.openapi.docs.fixture.disclosure.dto.AccountCtorZx;
@@ -144,10 +144,10 @@ public class HiddenInputOmissionIT {
 
         // When: the protected rendering and the inventory are read ...
         DisclosureDocuments.Rendering protectedRendering = renderProtected(renderingComponent, HiddenProbeApi.NAME);
-        ProtectedRenderingSink sink = renderingComponent.protectedRendering();
-        List<InventoryEntry> listInventory = sink.inventory(HiddenProbeApi.NAME, HiddenProbeResource.LIST_OPERATION_ID);
+        ProtectedRenderingPublicationHook hook = renderingComponent.protectedRendering();
+        List<InventoryEntry> listInventory = hook.inventory(HiddenProbeApi.NAME, HiddenProbeResource.LIST_OPERATION_ID);
         List<InventoryEntry> createInventory =
-                sink.inventory(HiddenProbeApi.NAME, HiddenProbeResource.CREATE_OPERATION_ID);
+                hook.inventory(HiddenProbeApi.NAME, HiddenProbeResource.CREATE_OPERATION_ID);
 
         // ... then the public JSON and YAML, and the three requests.
         DisclosureDocuments.Rendering publicRendering;
@@ -458,7 +458,7 @@ public class HiddenInputOmissionIT {
 
     /**
      * Returns the loopback configuration with the {@code web-validation} strategy and an {@code info}
-     * for each named document. A rendering component takes it without names: its sink renders with a
+     * for each named document. A rendering component takes it without names: its hook renders with a
      * fixed {@code info} and reads no {@code apidocs} configuration.
      */
     private static JsonObject webValidationConfig(String... documentNames) {
@@ -476,17 +476,17 @@ public class HiddenInputOmissionIT {
 
     /**
      * Deploys a rendering component, reads the protected rendering of one application, and
-     * undeploys it; the component's sink keeps the binding inventory for later reads.
+     * undeploys it; the component's hook keeps the binding inventory for later reads.
      */
     private static DisclosureDocuments.Rendering renderProtected(
             HiddenInputTestComponents.Renders component, String application) throws Exception {
         Outcome outcome = StartupDeployments.deploy(vertx, component::httpVerticle);
         try {
             assertDeployed("the protected rendering of '" + application + "'", outcome);
-            ProtectedRenderingSink sink = component.protectedRendering();
-            Optional<String> failure = sink.failure(application);
+            ProtectedRenderingPublicationHook hook = component.protectedRendering();
+            Optional<String> failure = hook.failure(application);
             assertTrue(failure.isEmpty(), () -> "the protected document of '" + application + "' failed: " + failure);
-            return new DisclosureDocuments.Rendering(sink.json(application), sink.yaml(application));
+            return new DisclosureDocuments.Rendering(hook.json(application), hook.yaml(application));
         } finally {
             StartupDeployments.undeploy(vertx, outcome);
         }

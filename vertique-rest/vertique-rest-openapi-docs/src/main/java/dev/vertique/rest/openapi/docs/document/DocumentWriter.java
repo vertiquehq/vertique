@@ -109,15 +109,15 @@ public final class DocumentWriter {
      * Writes a document tree in both forms. The tree is not modified.
      *
      * @param root the root object of the document, members in the order they are written
-     * @param snapshot the snapshot of the mount the document is assembled from
+     * @param fingerprint the fingerprint of the mount the document is assembled from
      * @return the document in both forms, with the entity tag of each
      * @throws IllegalStateException when the tree cannot be serialized
      */
-    public static PublishedDocument write(ObjectNode root, Snapshot snapshot) {
+    public static PublishedDocument write(ObjectNode root, PublicationFingerprint fingerprint) {
         try {
             byte[] json = JSON.writeValueAsBytes(root);
             byte[] yaml = YAML.writeValueAsBytes(root);
-            return new PublishedDocument(json, yaml, entityTag(json), entityTag(yaml), snapshot);
+            return new PublishedDocument(json, yaml, entityTag(json), entityTag(yaml), fingerprint);
         } catch (JsonProcessingException e) {
             throw new IllegalStateException("The OpenAPI document cannot be serialized", e);
         }

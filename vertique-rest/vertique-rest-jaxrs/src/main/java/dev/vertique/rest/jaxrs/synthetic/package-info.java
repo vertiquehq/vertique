@@ -9,7 +9,7 @@
  * the scheme's authentication handler, every registered {@code OperationHandlerContributor} in
  * resource order, then a caller-supplied terminal handler. {@link
  * dev.vertique.rest.jaxrs.synthetic.SyntheticOperation} describes one such operation and {@link
- * dev.vertique.rest.jaxrs.synthetic.SyntheticOperations} installs it. The implementation is a
+ * dev.vertique.rest.jaxrs.synthetic.SyntheticOperationInstaller} installs it. The implementation is a
  * package-private type in {@code dev.vertique.rest.jaxrs}, bound by {@code @Binds} in {@code
  * RestModule}, because it builds on that package's package-private security-policy and route
  * validation internals.

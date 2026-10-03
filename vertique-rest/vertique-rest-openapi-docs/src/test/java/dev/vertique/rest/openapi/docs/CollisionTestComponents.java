@@ -15,7 +15,7 @@ import dev.vertique.rest.openapi.docs.fixture.startup.StartupRegistrations;
 import dev.vertique.rest.openapi.docs.fixture.startup.collision.CaseMount;
 import dev.vertique.rest.openapi.docs.fixture.startup.collision.CaseResources;
 import dev.vertique.rest.openapi.docs.fixture.startup.collision.CollisionRegistrations;
-import dev.vertique.rest.openapi.docs.fixture.startup.collision.PublicationRetainingSink;
+import dev.vertique.rest.openapi.docs.fixture.startup.collision.PublicationRetainingHook;
 import dev.vertique.rest.openapi.docs.publication.DocumentStore;
 import io.vertx.core.json.JsonObject;
 import jakarta.inject.Singleton;
@@ -122,7 +122,7 @@ public final class CollisionTestComponents {
 
     /**
      * No documentation module and no registrations: the bound {@link CaseMount} is the only mount,
-     * and a {@link PublicationRetainingSink} retains its publication.
+     * and a {@link PublicationRetainingHook} retains its publication.
      */
     @Singleton
     @Component(
@@ -131,7 +131,7 @@ public final class CollisionTestComponents {
                 ConfigParsingModule.class,
                 DocsTestSupportModule.class,
                 CaseMount.Contribution.class,
-                PublicationRetainingSink.Binding.class,
+                PublicationRetainingHook.Binding.class,
                 SchemaSourceModules.Counting.class
             })
     public interface CaseMountComponent {
@@ -144,11 +144,11 @@ public final class CollisionTestComponents {
         HttpVerticle httpVerticle();
 
         /**
-         * Resolves the component's retaining sink.
+         * Resolves the component's retaining hook.
          *
-         * @return the sink
+         * @return the hook
          */
-        PublicationRetainingSink publicationSink();
+        PublicationRetainingHook publicationHook();
 
         /** Factory taking the application configuration and the case mount. */
         @Component.Factory

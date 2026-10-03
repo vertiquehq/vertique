@@ -15,8 +15,8 @@ import dev.vertique.rest.openapi.docs.assembly.PublicRestrictionWarning;
 import dev.vertique.rest.openapi.docs.config.EnabledDocuments;
 import dev.vertique.rest.openapi.docs.diagnostics.DocumentWarnings;
 import dev.vertique.rest.openapi.docs.diagnostics.PendingWarnings;
+import dev.vertique.rest.openapi.docs.document.PublicationFingerprintCalculator;
 import dev.vertique.rest.openapi.docs.document.PublishedDocument;
-import dev.vertique.rest.openapi.docs.document.SnapshotRenderer;
 import dev.vertique.rest.openapi.docs.metadata.OperationFacts;
 import dev.vertique.rest.openapi.docs.schema.ContractReferences;
 import io.vertx.core.buffer.Buffer;
@@ -130,7 +130,8 @@ public final class ServedContractLoader {
         List<OperationPublication> visible = HiddenOperations.visible(publication.operations(), facts);
         PublicRestrictionWarning.addServed(document, publication.mountPath(), visible, pending);
 
-        PublishedDocument rendered = ServedContractRenderer.render(contract, SnapshotRenderer.render(publication));
+        PublishedDocument rendered =
+                ServedContractRenderer.render(contract, PublicationFingerprintCalculator.calculate(publication));
         pending.emit(warnings);
         LOG.debug(
                 "Loaded the served contract of apidocs.documents.{} at mount '{}' in {} ms",

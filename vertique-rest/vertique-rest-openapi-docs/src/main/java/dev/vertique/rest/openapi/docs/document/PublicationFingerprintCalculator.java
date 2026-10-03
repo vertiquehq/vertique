@@ -24,7 +24,7 @@ import java.util.Map;
 import java.util.TreeMap;
 
 /**
- * Renders the {@link Snapshot} of a mount publication.
+ * Calculates the {@link PublicationFingerprint} of a mount publication.
  *
  * <p>Each operation is rendered to one canonical UTF-8 text and reduced to its SHA-256 digest, as 64
  * lowercase hexadecimal characters. Every value in the text is delimited by its own length, so no
@@ -35,20 +35,20 @@ import java.util.TreeMap;
  *
  * <p>Internal to the OpenAPI documentation module; not an application API.
  */
-public final class SnapshotRenderer {
+public final class PublicationFingerprintCalculator {
 
     private static final String HASH_ALGORITHM = "SHA-256";
 
-    private SnapshotRenderer() {}
+    private PublicationFingerprintCalculator() {}
 
     /**
-     * Renders the snapshot of a publication.
+     * Calculates the fingerprint of a publication.
      *
      * @param publication the mount publication
-     * @return the snapshot of the publication
+     * @return the fingerprint of the publication
      */
-    public static Snapshot render(MountPublication publication) {
-        Snapshot.MountPart mountPart = new Snapshot.MountPart(
+    public static PublicationFingerprint calculate(MountPublication publication) {
+        PublicationFingerprint.MountPart mountPart = new PublicationFingerprint.MountPart(
                 publication.mountPath(),
                 publication.strategyId(),
                 publication.applicationName() == null ? "" : publication.applicationName(),
@@ -59,7 +59,7 @@ public final class SnapshotRenderer {
         for (OperationPublication operation : publication.operations()) {
             digests.put(operation.operationId(), digest(renderOperation(operation)));
         }
-        return new Snapshot(mountPart, new TreeMap<>(digests));
+        return new PublicationFingerprint(mountPart, new TreeMap<>(digests));
     }
 
     private static String renderOperation(OperationPublication operation) {

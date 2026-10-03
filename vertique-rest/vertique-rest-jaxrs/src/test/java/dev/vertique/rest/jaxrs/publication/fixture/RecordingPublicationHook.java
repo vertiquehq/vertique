@@ -4,7 +4,7 @@
 package dev.vertique.rest.jaxrs.publication.fixture;
 
 import dev.vertique.rest.jaxrs.publication.MountPublication;
-import dev.vertique.rest.jaxrs.publication.OperationPublicationSink;
+import dev.vertique.rest.jaxrs.publication.MountPublicationHook;
 import io.vertx.core.Future;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -12,32 +12,32 @@ import java.util.List;
 import java.util.function.Predicate;
 
 /**
- * Test {@link OperationPublicationSink} that always succeeds and records, in call order, every
+ * Test {@link MountPublicationHook} that always succeeds and records, in call order, every
  * {@link #wantsDetail} argument it was asked and every {@link MountPublication} it was handed
  * (T006 TP-002, TP-003, TP-004, TP-005).
  *
  * <p>Whether an application wants detail is decided by a caller-supplied predicate, applied to the
  * (possibly {@code null}) application name {@link #wantsDetail} receives.
  */
-public final class RecordingSink implements OperationPublicationSink {
+public final class RecordingPublicationHook implements MountPublicationHook {
 
     private final Predicate<String> wantsDetail;
     private final List<String> wantsDetailArgs = new ArrayList<>();
     private final List<MountPublication> received = new ArrayList<>();
 
-    /** Creates a sink that never wants detail for any mount. */
-    public RecordingSink() {
+    /** Creates a hook that never wants detail for any mount. */
+    public RecordingPublicationHook() {
         this(applicationName -> false);
     }
 
     /**
-     * Creates a sink that wants detail exactly for the application names {@code wantsDetail}
+     * Creates a hook that wants detail exactly for the application names {@code wantsDetail}
      * accepts.
      *
      * @param wantsDetail the predicate deciding {@link #wantsDetail(String)}, applied to the
      *                    (possibly {@code null}) application name
      */
-    public RecordingSink(Predicate<String> wantsDetail) {
+    public RecordingPublicationHook(Predicate<String> wantsDetail) {
         this.wantsDetail = wantsDetail;
     }
 

@@ -230,7 +230,7 @@ class ApplicationNameCarrierTest {
                 .authEnforcementCapability(Optional.of(AuthEnforcementCapability.INSTANCE))
                 .operationHandlerContributors(Set.of(contributor))
                 .build();
-        SyntheticOperationInstaller installer = new SyntheticOperationInstaller(factory);
+        DefaultSyntheticOperationInstaller installer = new DefaultSyntheticOperationInstaller(factory);
         Router router = Router.router(vertx);
 
         // When

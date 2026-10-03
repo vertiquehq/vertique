@@ -22,7 +22,7 @@ import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import dev.vertique.rest.openapi.docs.ServedContractTestComponents.DocsProvisions;
 import dev.vertique.rest.openapi.docs.ServedContractTestComponents.GatedProvisions;
 import dev.vertique.rest.openapi.docs.ServedContractTestComponents.JwtProvisions;
-import dev.vertique.rest.openapi.docs.fixture.RecordingPublicationSink;
+import dev.vertique.rest.openapi.docs.fixture.RecordingPublicationHook;
 import dev.vertique.rest.openapi.docs.fixture.contract.ContractConfigs;
 import dev.vertique.rest.openapi.docs.fixture.contract.ContractFiles;
 import dev.vertique.rest.openapi.docs.fixture.contract.ContractMounts;
@@ -949,11 +949,11 @@ public class ServedContractIT {
             cleanup.await("close the test-owned Vert.x instance", gatedVertx::close, GATED_CLOSE_BOUND);
             cleanup.step("release the gate", gateRelease::countDown);
 
-            // Given: partner as the only documented application, with the recording sink beside the docs sink.
+            // Given: partner as the only documented application, with the recording hook beside the docs hook.
             docs.clear();
             GatedProvisions component = DaggerServedContractTestComponents_GatedPartnerComponent.factory()
                     .create(gatedVertx, ContractConfigs.partnerOnly());
-            RecordingPublicationSink recordingSink = component.recordingSink();
+            RecordingPublicationHook recordingHook = component.recordingHook();
             DocumentStore store = component.documentStore();
 
             // Given: the gate occupies the named pool's only thread, submitted from this JUnit thread.
@@ -978,7 +978,7 @@ public class ServedContractIT {
             Future<String> deployment;
             try {
                 // When: two instances deploy with the named one-thread pool, and both compositions
-                // reach the sinks while the pool is gated.
+                // reach the hooks while the pool is gated.
                 DeploymentOptions options = new DeploymentOptions()
                         .setInstances(COMPOSITIONS)
                         .setWorkerPoolName(GATED_POOL)
@@ -988,7 +988,7 @@ public class ServedContractIT {
                         .getLocalMap(StartupDeployments.LOCAL_MAP)
                         .remove(StartupDeployments.PORT_KEY);
                 deployment = Deployments.deploy(gatedVertx, component::httpVerticle, options);
-                bothCallsWhileGated = recordingSink.awaitCalls(PARTNER_MOUNT_PATH, COMPOSITIONS, BOTH_CALLS_BOUND);
+                bothCallsWhileGated = recordingHook.awaitCalls(PARTNER_MOUNT_PATH, COMPOSITIONS, BOTH_CALLS_BOUND);
                 loaderLinesWhileGated = loaderLines(PARTNER).size();
                 storedWhileGated = store.lookup(PARTNER).isPresent();
             } finally {
@@ -999,7 +999,7 @@ public class ServedContractIT {
                     bothCallsWhileGated,
                     () -> "startup did not reach both mountBuilt calls for " + PARTNER_MOUNT_PATH
                             + " while the named pool was gated; recorded calls: "
-                            + recordingSink.calls(PARTNER_MOUNT_PATH));
+                            + recordingHook.calls(PARTNER_MOUNT_PATH));
 
             // When: the deployment completes; then the gate's own outcome is observed.
             String deploymentId = Futures.await(deployment, GATED_DEPLOY_BOUND);

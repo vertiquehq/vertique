@@ -87,8 +87,8 @@ import org.junit.jupiter.params.provider.MethodSource;
  * <p>The missing-handler refusal is checked on a publication captured from a real mount build: a
  * component without the documentation module deploys the application {@code ghost}, whose one
  * operation requires {@value GhostResource#SCHEME}, with a handler for that scheme (the route
- * registrar refuses an operation whose scheme has none) and a capturing publication sink that wants
- * detail. The captured publication is then assembled as the documentation sink does, against a
+ * registrar refuses an operation whose scheme has none) and a capturing publication hook that wants
+ * detail. The captured publication is then assembled as the documentation hook does, against a
  * handler set that lacks {@value GhostResource#SCHEME}; a deployment never reaches this state, so the
  * rule is reachable only here.
  *

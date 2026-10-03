@@ -12,29 +12,29 @@ import java.util.TreeSet;
 
 /**
  * The comparable facts of one mount's publication: its mount part and one digest per operation.
- * A snapshot holds strings only, so it retains nothing of the publication it was rendered from.
+ * A fingerprint holds strings only, so it retains nothing of the publication it was calculated from.
  *
  * <p>Internal to the OpenAPI documentation module; not an application API.
  *
  * @param mountPart the mount-level facts, held as strings
  * @param operationDigests the digest of each operation, keyed by operation id in sorted order
  */
-public record Snapshot(MountPart mountPart, SortedMap<String, String> operationDigests) {
+public record PublicationFingerprint(MountPart mountPart, SortedMap<String, String> operationDigests) {
 
     /** Stores an unmodifiable copy of {@code operationDigests}. */
-    public Snapshot {
+    public PublicationFingerprint {
         operationDigests = Collections.unmodifiableSortedMap(new TreeMap<>(operationDigests));
     }
 
     /**
-     * Finds the first operation, in operation-id order over the ids of both snapshots, that differs
-     * between this snapshot and another: present in only one of them, or present in both with
+     * Finds the first operation, in operation-id order over the ids of both fingerprints, that differs
+     * between this fingerprint and another: present in only one of them, or present in both with
      * different digests.
      *
-     * @param other the snapshot to compare with
+     * @param other the fingerprint to compare with
      * @return the id of the first differing operation, or empty when every operation matches
      */
-    public Optional<String> firstDifferingOperation(Snapshot other) {
+    public Optional<String> firstDifferingOperation(PublicationFingerprint other) {
         SortedSet<String> ids = new TreeSet<>(operationDigests.keySet());
         ids.addAll(other.operationDigests.keySet());
         for (String id : ids) {
@@ -47,7 +47,7 @@ public record Snapshot(MountPart mountPart, SortedMap<String, String> operationD
     }
 
     /**
-     * The mount-level facts of a snapshot.
+     * The mount-level facts of a fingerprint.
      *
      * @param mountPath the mount path
      * @param strategyId the strategy id

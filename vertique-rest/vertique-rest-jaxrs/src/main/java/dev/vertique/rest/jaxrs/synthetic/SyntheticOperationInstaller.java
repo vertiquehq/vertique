@@ -31,7 +31,7 @@ import java.util.List;
  * <p>Public only for cross-module use by sibling framework modules (starting with the OpenAPI
  * documentation module); outside the maturity promise and not an application contract.
  */
-public interface SyntheticOperations {
+public interface SyntheticOperationInstaller {
 
     /**
      * Installs one route answering {@code methods} at {@code path} on {@code router}: the

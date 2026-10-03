@@ -7,7 +7,7 @@ import dagger.Module;
 import dagger.Provides;
 import dagger.multibindings.IntoSet;
 import dev.vertique.rest.jaxrs.publication.MountPublication;
-import dev.vertique.rest.jaxrs.publication.OperationPublicationSink;
+import dev.vertique.rest.jaxrs.publication.MountPublicationHook;
 import io.vertx.core.Future;
 import jakarta.annotation.Nullable;
 import jakarta.inject.Singleton;
@@ -16,16 +16,16 @@ import java.util.HashMap;
 import java.util.Map;
 
 /**
- * An {@link OperationPublicationSink} that never wants detail, counts its {@code mountBuilt} calls
+ * An {@link MountPublicationHook} that never wants detail, counts its {@code mountBuilt} calls
  * per mount path, and returns an already succeeded future. It retains nothing from a publication
  * but its mount path.
  */
-public final class RecordingPublicationSink implements OperationPublicationSink {
+public final class RecordingPublicationHook implements MountPublicationHook {
 
     private final Map<String, Integer> callsByMountPath = new HashMap<>();
 
-    /** Creates a sink with no recorded call. */
-    public RecordingPublicationSink() {}
+    /** Creates a hook with no recorded call. */
+    public RecordingPublicationHook() {}
 
     @Override
     public boolean wantsDetail(@Nullable String applicationName) {
@@ -52,7 +52,7 @@ public final class RecordingPublicationSink implements OperationPublicationSink 
     }
 
     /**
-     * Blocks the calling thread until the sink has counted at least {@code expected} calls for a
+     * Blocks the calling thread until the hook has counted at least {@code expected} calls for a
      * mount path, or the timeout elapses. Call it only from a thread that no Vert.x instance owns.
      *
      * @param mountPath the mount path
@@ -74,33 +74,33 @@ public final class RecordingPublicationSink implements OperationPublicationSink 
         return true;
     }
 
-    /** Binds one component-scoped {@link RecordingPublicationSink} into {@code Set<OperationPublicationSink>}. */
+    /** Binds one component-scoped {@link RecordingPublicationHook} into {@code Set<MountPublicationHook>}. */
     @Module
     public static final class Binding {
 
         private Binding() {}
 
         /**
-         * Provides the component's recording sink.
+         * Provides the component's recording hook.
          *
-         * @return a new sink
+         * @return a new hook
          */
         @Provides
         @Singleton
-        static RecordingPublicationSink recordingPublicationSink() {
-            return new RecordingPublicationSink();
+        static RecordingPublicationHook recordingPublicationHook() {
+            return new RecordingPublicationHook();
         }
 
         /**
-         * Contributes the recording sink beside every other sink.
+         * Contributes the recording hook beside every other hook.
          *
-         * @param sink the component's recording sink
-         * @return {@code sink}
+         * @param hook the component's recording hook
+         * @return {@code hook}
          */
         @Provides
         @IntoSet
-        static OperationPublicationSink asSink(RecordingPublicationSink sink) {
-            return sink;
+        static MountPublicationHook asHook(RecordingPublicationHook hook) {
+            return hook;
         }
     }
 }

@@ -23,7 +23,7 @@ import dev.vertique.rest.jaxrs.publication.OperationDetail;
 import dev.vertique.rest.jaxrs.publication.OperationPublication;
 import dev.vertique.rest.jaxrs.publication.ResponseShape;
 import dev.vertique.rest.jaxrs.publication.fixture.CountingSchemaSource;
-import dev.vertique.rest.jaxrs.publication.fixture.RecordingSink;
+import dev.vertique.rest.jaxrs.publication.fixture.RecordingPublicationHook;
 import dev.vertique.rest.jaxrs.publication.fixture.RecordingValidationStrategy;
 import dev.vertique.rest.jaxrs.publication.inventory.Conversions;
 import dev.vertique.rest.jaxrs.publication.inventory.Filters;
@@ -92,7 +92,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * {@code _BeanParamModel} companions, so its composites are distinct classes too: a composite type
  * is compared through the fixed {@link #GENERATED_TO_REFLECTION_COMPOSITES} map, and each path is
  * also checked against its own fixed composite classes. Every proof builds routers through a bare
- * {@link TestFactories}-built factory with a recording sink that wants detail for every mount, and
+ * {@link TestFactories}-built factory with a recording hook that wants detail for every mount, and
  * reads the recorded publication; no server is started and no request is sent.
  */
 @ExtendWith(VertxExtension.class)
@@ -208,7 +208,7 @@ class OperationInventoryParityTest {
                     "a bean-param model for " + composite.getSimpleName());
         }
 
-        // When: both mounts are built with a sink wanting detail and a gate installed
+        // When: both mounts are built with a hook wanting detail and a gate installed
         MountPublication reflection =
                 buildMount(vertx, gatedFactory(debugSchema, Optional.empty()), Set.of(new HiddenInputsResource()));
         MountPublication generated = buildMount(
@@ -290,7 +290,7 @@ class OperationInventoryParityTest {
         }
 
         // When: the reflection twins, the generated twins, and the reflection twins again on an
-        // application mount are built with a sink wanting detail
+        // application mount are built with a hook wanting detail
         MountPublication reflection = buildMount(
                 vertx,
                 gatedFactory(schemas, Optional.of(validator)),
@@ -411,34 +411,34 @@ class OperationInventoryParityTest {
     }
 
     /**
-     * Builds one plain mount at {@code /*} with its own sink wanting detail for every mount, and
+     * Builds one plain mount at {@code /*} with its own hook wanting detail for every mount, and
      * returns the single publication it recorded.
      */
     private static MountPublication buildMount(Vertx vertx, TestFactories.Builder builder, Set<Object> resources)
             throws Exception {
-        RecordingSink sink = new RecordingSink(applicationName -> true);
+        RecordingPublicationHook hook = new RecordingPublicationHook(applicationName -> true);
         JaxRsRouterMount.Factory factory =
-                builder.publicationSinks(new LinkedHashSet<>(List.of(sink))).build();
+                builder.publicationHooks(new LinkedHashSet<>(List.of(hook))).build();
         JaxRsRouterMount mount = factory.create("/*", "openapi.json", resources);
         awaitRouter(vertx, mount);
-        return sink.onlyReceived();
+        return hook.onlyReceived();
     }
 
     /**
      * Builds the {@code inventory} application's mount through the package-private
      * application-mount factory method, marks it validated as the composition validator would, and
-     * returns the single publication its own sink recorded.
+     * returns the single publication its own hook recorded.
      */
     private static MountPublication buildApplicationMount(
             Vertx vertx, TestFactories.Builder builder, Set<Object> resources) throws Exception {
-        RecordingSink sink = new RecordingSink(applicationName -> true);
+        RecordingPublicationHook hook = new RecordingPublicationHook(applicationName -> true);
         JaxRsRouterMount.Factory factory =
-                builder.publicationSinks(new LinkedHashSet<>(List.of(sink))).build();
+                builder.publicationHooks(new LinkedHashSet<>(List.of(hook))).build();
         JaxRsRouterMount mount = factory.createApplicationMount(
                 "/api/inventory/*", "openapi.json", resources, "inventory", InventoryApi.class);
         mount.markValidated();
         awaitRouter(vertx, mount);
-        return sink.onlyReceived();
+        return hook.onlyReceived();
     }
 
     private static void awaitRouter(Vertx vertx, JaxRsRouterMount mount) throws Exception {

@@ -65,7 +65,7 @@ import org.junit.jupiter.params.provider.MethodSource;
  * at {@value MetadataPublications#MOUNT_PATH} with {@link Publications}, reads real annotation
  * instances onto its operations and bindings from a fixture method with {@link MetadataPublications},
  * and assembles the public document through {@link MetadataDocuments}, which takes the descriptor
- * facts and detaches the publication as the documentation sink does. Each assembly gets a fresh
+ * facts and detaches the publication as the documentation hook does. Each assembly gets a fresh
  * warning guard, and the warnings it logs are captured on the documentation module's warning logger.
  *
  * <p>Expected fragments are hand-written literals. Failure messages and warnings are checked by

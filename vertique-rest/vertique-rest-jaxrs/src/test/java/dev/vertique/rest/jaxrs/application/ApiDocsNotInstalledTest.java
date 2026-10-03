@@ -41,10 +41,10 @@ import org.junit.jupiter.api.Test;
 import org.slf4j.LoggerFactory;
 
 /**
- * TP-012 (FR-037, AC-037.1): without the docs module — the optional {@code ApiDocsInstalled} empty
+ * TP-012 (FR-037, AC-037.1): without the docs module — the optional {@code ApiDocsModuleInstalled} empty
  * — the view logs one INFO line per active registration whose declaring interface carries an
- * annotation named {@link ApiDocsInstalled#ANNOTATION_NAME}, naming the application and stating
- * that documentation is not installed. With {@code ApiDocsInstalled} bound (the docs module
+ * annotation named {@link ApiDocsModuleInstalled#ANNOTATION_NAME}, naming the application and stating
+ * that documentation is not installed. With {@code ApiDocsModuleInstalled} bound (the docs module
  * present), it logs nothing. The check runs once per component, when the view is built, not once
  * per resolution.
  */
@@ -80,10 +80,10 @@ class ApiDocsNotInstalledTest {
     void apiDocsWithoutTheDocsModuleLogsOneInfoPerActiveApplication() {
         assertEquals(
                 "dev.vertique.rest.openapi.docs.ApiDocs",
-                ApiDocsInstalled.ANNOTATION_NAME,
+                ApiDocsModuleInstalled.ANNOTATION_NAME,
                 "the constant must equal the real docs annotation's fully qualified name");
         assertEquals(
-                ApiDocsInstalled.ANNOTATION_NAME,
+                ApiDocsModuleInstalled.ANNOTATION_NAME,
                 ApiDocs.class.getName(),
                 "the test-source stand-in annotation's own name must equal the constant");
 
@@ -123,7 +123,7 @@ class ApiDocsNotInstalledTest {
                 .toList();
         assertTrue(
                 withDocsInfoMessages.isEmpty(),
-                () -> "with ApiDocsInstalled bound, nothing is logged: " + withDocsInfoMessages);
+                () -> "with ApiDocsModuleInstalled bound, nothing is logged: " + withDocsInfoMessages);
         assertMountsAreExactlyDocsAAndPlain(withDocsMounts);
     }
 
@@ -268,22 +268,22 @@ class ApiDocsNotInstalledTest {
         }
     }
 
-    /** Binds a test {@link ApiDocsInstalled} implementation — standing in for the docs module being present. */
+    /** Binds a test {@link ApiDocsModuleInstalled} implementation — standing in for the docs module being present. */
     @Module
-    static final class ApiDocsInstalledModule {
+    static final class ApiDocsModuleInstalledModule {
 
-        private ApiDocsInstalledModule() {}
+        private ApiDocsModuleInstalledModule() {}
 
         @Provides
-        static ApiDocsInstalled apiDocsInstalled() {
-            return new TestApiDocsInstalled();
+        static ApiDocsModuleInstalled apiDocsModuleInstalled() {
+            return new TestApiDocsModuleInstalled();
         }
     }
 
     /** Marker implementation standing in for the real docs module's binding. */
-    static final class TestApiDocsInstalled implements ApiDocsInstalled {}
+    static final class TestApiDocsModuleInstalled implements ApiDocsModuleInstalled {}
 
-    /** Component with no {@code ApiDocsInstalled} binding — the docs module is not in the component. */
+    /** Component with no {@code ApiDocsModuleInstalled} binding — the docs module is not in the component. */
     @Singleton
     @Component(modules = {RestModule.class, ApplicationTestSupportModule.class, ApiDocsRegistrationModule.class})
     interface ComponentWithoutDocs {
@@ -309,14 +309,14 @@ class ApiDocsNotInstalledTest {
         }
     }
 
-    /** Component with {@code ApiDocsInstalled} bound — standing in for the docs module being present. */
+    /** Component with {@code ApiDocsModuleInstalled} bound — standing in for the docs module being present. */
     @Singleton
     @Component(
             modules = {
                 RestModule.class,
                 ApplicationTestSupportModule.class,
                 ApiDocsRegistrationModule.class,
-                ApiDocsInstalledModule.class
+                ApiDocsModuleInstalledModule.class
             })
     interface ComponentWithDocs {
 

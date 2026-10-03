@@ -12,7 +12,7 @@ import dev.vertique.rest.core.config.JaxRsConfig;
 import dev.vertique.rest.core.router.HttpVerticle;
 import dev.vertique.rest.jaxrs.RestModule;
 import dev.vertique.rest.jaxrs.application.RestApplications;
-import dev.vertique.rest.jaxrs.publication.OperationPublicationSink;
+import dev.vertique.rest.jaxrs.publication.MountPublicationHook;
 import dev.vertique.rest.openapi.docs.fixture.CatalogResourceModule;
 import dev.vertique.rest.openapi.docs.fixture.ContextRecordingRouterMount;
 import dev.vertique.rest.openapi.docs.fixture.CountingRouterLifecycleHook;
@@ -23,7 +23,7 @@ import dev.vertique.rest.openapi.docs.fixture.ManualMountModule;
 import dev.vertique.rest.openapi.docs.fixture.MarkerRouterMount;
 import dev.vertique.rest.openapi.docs.fixture.ProtectedRegistrationModule;
 import dev.vertique.rest.openapi.docs.fixture.RecordingMountCustomizer;
-import dev.vertique.rest.openapi.docs.fixture.RecordingPublicationSink;
+import dev.vertique.rest.openapi.docs.fixture.RecordingPublicationHook;
 import dev.vertique.rest.openapi.docs.fixture.SchemaSourceModules;
 import dev.vertique.rest.openapi.docs.fixture.SharedRegistrationModule;
 import dev.vertique.rest.openapi.docs.fixture.SharedResourcesModule;
@@ -69,11 +69,11 @@ public final class DocsTestComponents {
         RestApplications restApplications();
 
         /**
-         * Resolves the component's publication sinks.
+         * Resolves the component's publication hooks.
          *
-         * @return the sink set, empty when nothing contributes a sink
+         * @return the hook set, empty when nothing contributes a hook
          */
-        Set<OperationPublicationSink> publicationSinks();
+        Set<MountPublicationHook> publicationHooks();
 
         /**
          * Resolves the component's JAX-RS routing configuration.
@@ -353,7 +353,7 @@ public final class DocsTestComponents {
     }
 
     /**
-     * The shared fixture plus a recording publication sink beside the documentation sink and a
+     * The shared fixture plus a recording publication hook beside the documentation hook and a
      * {@code SYSTEM_LAST} context-recording mount at {@code /zz-last/*}.
      */
     @Singleton
@@ -368,17 +368,17 @@ public final class DocsTestComponents {
                 SchemaSourceModules.Counting.class,
                 RecordingMountCustomizer.Binding.class,
                 MarkerRouterMount.Last.class,
-                RecordingPublicationSink.Binding.class,
+                RecordingPublicationHook.Binding.class,
                 ContextRecordingRouterMount.Binding.class
             })
-    public interface RecordingSinkComponent extends DocsProvisions {
+    public interface RecordingPublicationHookComponent extends DocsProvisions {
 
         /**
-         * Resolves the component's recording sink.
+         * Resolves the component's recording hook.
          *
-         * @return the recording sink
+         * @return the recording hook
          */
-        RecordingPublicationSink recordingSink();
+        RecordingPublicationHook recordingHook();
 
         /**
          * Resolves the component's context-recording mount.
@@ -389,7 +389,7 @@ public final class DocsTestComponents {
 
         /** Factory taking the application configuration. */
         @Component.Factory
-        interface ComponentFactory extends Factory<RecordingSinkComponent> {}
+        interface ComponentFactory extends Factory<RecordingPublicationHookComponent> {}
     }
 
     /**

@@ -9,9 +9,9 @@ import dev.vertique.rest.jaxrs.publication.CapturedSchemas;
 import dev.vertique.rest.jaxrs.publication.InputBinding;
 import dev.vertique.rest.jaxrs.publication.InputKey;
 import dev.vertique.rest.jaxrs.publication.MountPublication;
+import dev.vertique.rest.jaxrs.publication.MountPublicationHook;
 import dev.vertique.rest.jaxrs.publication.OperationDetail;
 import dev.vertique.rest.jaxrs.publication.OperationPublication;
-import dev.vertique.rest.jaxrs.publication.OperationPublicationSink;
 import dev.vertique.rest.jaxrs.routing.FilePartDescriptor;
 import dev.vertique.rest.jaxrs.routing.JaxRsOperationDescriptor;
 import dev.vertique.rest.jaxrs.routing.ParamDescriptor;
@@ -25,8 +25,8 @@ import dev.vertique.rest.openapi.docs.contract.RoutedOperation;
 import dev.vertique.rest.openapi.docs.contract.ServedContractLoader;
 import dev.vertique.rest.openapi.docs.contract.ServedContractSource;
 import dev.vertique.rest.openapi.docs.diagnostics.DocumentWarnings;
+import dev.vertique.rest.openapi.docs.document.PublicationFingerprintCalculator;
 import dev.vertique.rest.openapi.docs.document.PublishedDocument;
-import dev.vertique.rest.openapi.docs.document.SnapshotRenderer;
 import dev.vertique.rest.openapi.docs.metadata.OperationFacts;
 import dev.vertique.rest.openapi.docs.schema.ContractReferences;
 import io.vertx.core.Context;
@@ -46,7 +46,7 @@ import java.util.Optional;
 import java.util.Set;
 
 /**
- * The publication sink of the documentation module. It asks for operation detail only for the
+ * The publication hook of the documentation module. It asks for operation detail only for the
  * applications that have an enabled document, and hands each such mount's publication to the
  * {@link DocumentStore}.
  *
@@ -74,17 +74,17 @@ import java.util.Set;
  * ServedContractSource}), has that contract loaded as its document ({@link ServedContractLoader})
  * inside the same single flight, in place of the assembly; every other documented application's
  * document is assembled and, once assembled, logged as generated. Either way a later composition
- * compares its own snapshot and never loads or assembles.
+ * compares its own fingerprint and never loads or assembles.
  *
- * <p>The publication a sink receives must not be retained past the call. The sink therefore takes a
+ * <p>The publication a hook receives must not be retained past the call. The hook therefore takes a
  * detached copy during {@link #mountBuilt}: every schema {@link JsonObject} is copied and the
  * operation descriptor is dropped. The copy shares only immutable records with the publication (the
  * input bindings, response shapes, policies, requirement sets and the body provenance manifest).
- * The stored document retains only the byte arrays, entity tags and the string snapshot.
+ * The stored document retains only the byte arrays, entity tags and the string fingerprint.
  *
  * <p>Internal to the OpenAPI documentation module; not an application API.
  */
-public final class DocsPublicationSink implements OperationPublicationSink {
+public final class DocsPublicationHook implements MountPublicationHook {
 
     private final EnabledDocuments documents;
     private final DocumentStore store;
@@ -94,19 +94,19 @@ public final class DocsPublicationSink implements OperationPublicationSink {
     private final AssemblyContext context;
 
     /**
-     * Creates a sink with the default documentation prefix, no registered request-validation
+     * Creates a hook with the default documentation prefix, no registered request-validation
      * strategy, and no declared application.
      *
      * @param documents the enabled documents
      * @param store the document store of the component
      * @param context the component's assembly inputs the assembler reads besides the publication
      */
-    DocsPublicationSink(EnabledDocuments documents, DocumentStore store, AssemblyContext context) {
+    DocsPublicationHook(EnabledDocuments documents, DocumentStore store, AssemblyContext context) {
         this(documents, store, EnabledDocuments.DEFAULT_PATH, Set.of(), new RestApplications(List.of()), context);
     }
 
     /**
-     * Creates the sink.
+     * Creates the hook.
      *
      * @param documents the enabled documents
      * @param store the document store of the component
@@ -115,7 +115,7 @@ public final class DocsPublicationSink implements OperationPublicationSink {
      * @param applications the declared applications of the component
      * @param context the component's assembly inputs the assembler reads besides the publication
      */
-    public DocsPublicationSink(
+    public DocsPublicationHook(
             EnabledDocuments documents,
             DocumentStore store,
             String prefix,
@@ -212,7 +212,7 @@ public final class DocsPublicationSink implements OperationPublicationSink {
                             routed,
                             caller.owner().fileSystem(),
                             context.warnings()),
-                    () -> SnapshotRenderer.render(detached));
+                    () -> PublicationFingerprintCalculator.calculate(detached));
         }
         return store.publish(
                 applicationName,
@@ -227,7 +227,7 @@ public final class DocsPublicationSink implements OperationPublicationSink {
                                     DocumentWarnings.generatedSource(applicationName));
                     return assembled;
                 },
-                () -> SnapshotRenderer.render(detached));
+                () -> PublicationFingerprintCalculator.calculate(detached));
     }
 
     /**
@@ -399,7 +399,7 @@ public final class DocsPublicationSink implements OperationPublicationSink {
     /** Copies a publication without retaining descriptors, copying every captured schema so the copy is independent. */
     static MountPublication detach(MountPublication publication) {
         List<OperationPublication> operations = publication.operations().stream()
-                .map(DocsPublicationSink::detach)
+                .map(DocsPublicationHook::detach)
                 .toList();
         return new MountPublication(
                 publication.mountPath(),

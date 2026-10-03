@@ -41,7 +41,7 @@ import dev.vertique.rest.jaxrs.publication.OperationDetail;
 import dev.vertique.rest.jaxrs.publication.OperationPublication;
 import dev.vertique.rest.jaxrs.publication.ResponseShape;
 import dev.vertique.rest.jaxrs.publication.fixture.CountingSchemaSource;
-import dev.vertique.rest.jaxrs.publication.fixture.RecordingSink;
+import dev.vertique.rest.jaxrs.publication.fixture.RecordingPublicationHook;
 import dev.vertique.rest.jaxrs.publication.fixture.RecordingValidationStrategy;
 import dev.vertique.rest.jaxrs.publication.inventory.BlankHiddenInputResource;
 import dev.vertique.rest.jaxrs.publication.inventory.BodyOnlyResource;
@@ -127,7 +127,7 @@ import org.junit.jupiter.params.provider.MethodSource;
  * flags, produces types, and output profile.
  *
  * <p>Every proof builds routers through a bare {@link TestFactories}-built factory with a recording
- * sink that wants detail for every mount, and reads the recorded publication; no server is started
+ * hook that wants detail for every mount, and reads the recorded publication; no server is started
  * and no request is sent. Expectations are fixed literals, or read by reflection from the fixture
  * classes themselves, never from the scanner, the descriptor adapter, or the registrar.
  */
@@ -801,7 +801,7 @@ class OperationInventoryTest {
                 .lookup(MethodHiddenBean.class)
                 .isEmpty());
 
-        // When: the mount is built with a sink that wants detail
+        // When: the mount is built with a hook that wants detail
         MountPublication publication =
                 buildMount(vertx, TestFactories.builder(), Set.of(new MethodHiddenInputsResource()));
 
@@ -867,11 +867,11 @@ class OperationInventoryTest {
         assertTrue(GeneratedJaxRsDescriptorRegistry.shared()
                 .lookup(MismatchedHiddenInputResource.class)
                 .isEmpty());
-        RecordingSink sink = new RecordingSink(applicationName -> true);
+        RecordingPublicationHook hook = new RecordingPublicationHook(applicationName -> true);
 
-        // When: the mount is built with a sink that wants detail
+        // When: the mount is built with a hook that wants detail
         RestConfigurationException failure =
-                assertMountBuildFails(vertx, sink, Set.of(new MismatchedHiddenInputResource()));
+                assertMountBuildFails(vertx, hook, Set.of(new MismatchedHiddenInputResource()));
 
         // Then: the failure names the operation and the entry, and nothing is published
         String message = String.valueOf(failure.getMessage());
@@ -883,7 +883,7 @@ class OperationInventoryTest {
                                 .matcher(message)
                                 .find(),
                         "names the entry's location: " + message),
-                () -> assertTrue(sink.received().isEmpty(), "nothing is published"));
+                () -> assertTrue(hook.received().isEmpty(), "nothing is published"));
     }
 
     @Test
@@ -893,18 +893,18 @@ class OperationInventoryTest {
         assertTrue(GeneratedJaxRsDescriptorRegistry.shared()
                 .lookup(UnmatchedHiddenInputResource.class)
                 .isEmpty());
-        RecordingSink sink = new RecordingSink(applicationName -> true);
+        RecordingPublicationHook hook = new RecordingPublicationHook(applicationName -> true);
 
-        // When: the mount is built with a sink that wants detail
+        // When: the mount is built with a hook that wants detail
         RestConfigurationException failure =
-                assertMountBuildFails(vertx, sink, Set.of(new UnmatchedHiddenInputResource()));
+                assertMountBuildFails(vertx, hook, Set.of(new UnmatchedHiddenInputResource()));
 
         // Then: the failure names the operation and the entry, and nothing is published
         String message = String.valueOf(failure.getMessage());
         assertAll(
                 () -> assertTrue(message.contains("hideGhost"), "names the operation: " + message),
                 () -> assertTrue(message.contains("ghost"), "names the entry: " + message),
-                () -> assertTrue(sink.received().isEmpty(), "nothing is published"));
+                () -> assertTrue(hook.received().isEmpty(), "nothing is published"));
     }
 
     @Test
@@ -916,7 +916,7 @@ class OperationInventoryTest {
                 .lookup(LocationHiddenInputsResource.class)
                 .isEmpty());
 
-        // When: the mount is built with a sink that wants detail
+        // When: the mount is built with a hook that wants detail
         MountPublication publication =
                 buildMount(vertx, TestFactories.builder(), Set.of(new LocationHiddenInputsResource()));
 
@@ -959,7 +959,7 @@ class OperationInventoryTest {
                 .lookup(LocationHiddenInputsResource.class)
                 .isEmpty());
 
-        // When: the mount is built with a sink that wants detail
+        // When: the mount is built with a hook that wants detail
         MountPublication publication =
                 buildMount(vertx, TestFactories.builder(), Set.of(new LocationHiddenInputsResource()));
 
@@ -976,17 +976,17 @@ class OperationInventoryTest {
         assertTrue(GeneratedJaxRsDescriptorRegistry.shared()
                 .lookup(BlankHiddenInputResource.class)
                 .isEmpty());
-        RecordingSink sink = new RecordingSink(applicationName -> true);
+        RecordingPublicationHook hook = new RecordingPublicationHook(applicationName -> true);
 
-        // When: the mount is built with a sink that wants detail
-        RestConfigurationException failure = assertMountBuildFails(vertx, sink, Set.of(new BlankHiddenInputResource()));
+        // When: the mount is built with a hook that wants detail
+        RestConfigurationException failure = assertMountBuildFails(vertx, hook, Set.of(new BlankHiddenInputResource()));
 
         // Then: the failure names the operation and the blank entry, and nothing is published
         String message = String.valueOf(failure.getMessage());
         assertAll(
                 () -> assertTrue(message.contains("'hideBlank'"), "names the operation: " + message),
                 () -> assertTrue(message.contains("named ''"), "names the blank entry: " + message),
-                () -> assertTrue(sink.received().isEmpty(), "nothing is published"));
+                () -> assertTrue(hook.received().isEmpty(), "nothing is published"));
     }
 
     @Test
@@ -1000,11 +1000,11 @@ class OperationInventoryTest {
         assertEquals(300, name.length(), "fixture name length");
         assertEquals('\007', name.charAt(4), "fixture name carries BEL at index 4");
         assertEquals(128, name.indexOf("TAIL"), "fixture marker starts at index 128");
-        RecordingSink sink = new RecordingSink(applicationName -> true);
+        RecordingPublicationHook hook = new RecordingPublicationHook(applicationName -> true);
 
-        // When: the mount is built with a sink that wants detail
+        // When: the mount is built with a hook that wants detail
         RestConfigurationException failure =
-                assertMountBuildFails(vertx, sink, Set.of(new UnsafeNameHiddenInputResource()));
+                assertMountBuildFails(vertx, hook, Set.of(new UnsafeNameHiddenInputResource()));
 
         // Then: the name appears cut to its first 128 characters, BEL shown as '?', marked "..."
         String expectedName = "bell?" + "a".repeat(123) + "...";
@@ -1018,7 +1018,7 @@ class OperationInventoryTest {
                 () -> assertTrue(message.length() <= 324, "message length " + message.length() + ": " + message),
                 () -> assertTrue(
                         message.chars().noneMatch(Character::isISOControl), "no control characters: " + message),
-                () -> assertTrue(sink.received().isEmpty(), "nothing is published"));
+                () -> assertTrue(hook.received().isEmpty(), "nothing is published"));
     }
 
     @Test
@@ -1030,7 +1030,7 @@ class OperationInventoryTest {
                 .lookup(ComposedHiddenInputsResource.class)
                 .isEmpty());
 
-        // When: the mount is built with a sink that wants detail
+        // When: the mount is built with a hook that wants detail
         MountPublication publication =
                 buildMount(vertx, TestFactories.builder(), Set.of(new ComposedHiddenInputsResource()));
 
@@ -1063,18 +1063,18 @@ class OperationInventoryTest {
         assertTrue(GeneratedJaxRsDescriptorRegistry.shared()
                 .lookup(UnmatchedComposedHiddenInputResource.class)
                 .isEmpty());
-        RecordingSink sink = new RecordingSink(applicationName -> true);
+        RecordingPublicationHook hook = new RecordingPublicationHook(applicationName -> true);
 
-        // When: the mount is built with a sink that wants detail
+        // When: the mount is built with a hook that wants detail
         RestConfigurationException failure =
-                assertMountBuildFails(vertx, sink, Set.of(new UnmatchedComposedHiddenInputResource()));
+                assertMountBuildFails(vertx, hook, Set.of(new UnmatchedComposedHiddenInputResource()));
 
         // Then: the failure names the operation and the entry, and nothing is published
         String message = String.valueOf(failure.getMessage());
         assertAll(
                 () -> assertTrue(message.contains("'hidePhantom'"), "names the operation: " + message),
                 () -> assertTrue(message.contains("'phantom'"), "names the entry: " + message),
-                () -> assertTrue(sink.received().isEmpty(), "nothing is published"));
+                () -> assertTrue(hook.received().isEmpty(), "nothing is published"));
     }
 
     @Test
@@ -1086,7 +1086,7 @@ class OperationInventoryTest {
                 .lookup(InterfaceHiddenInputsResource.class)
                 .isEmpty());
 
-        // When: the mount is built with a sink that wants detail
+        // When: the mount is built with a hook that wants detail
         MountPublication publication =
                 buildMount(vertx, TestFactories.builder(), Set.of(new InterfaceHiddenInputsResource()));
 
@@ -1106,7 +1106,7 @@ class OperationInventoryTest {
                 .lookup(CaseMismatchedHiddenHeaderResource.class)
                 .isEmpty());
 
-        // When: the mount is built with a sink that wants detail
+        // When: the mount is built with a hook that wants detail
         MountPublication publication = assertDoesNotThrow(
                 () -> buildMount(vertx, TestFactories.builder(), Set.of(new CaseMismatchedHiddenHeaderResource())),
                 "the mount builds");
@@ -1129,7 +1129,7 @@ class OperationInventoryTest {
                 .lookup(DefaultLocationCaseFoldedHiddenHeaderResource.class)
                 .isEmpty());
 
-        // When: the mount is built with a sink that wants detail
+        // When: the mount is built with a hook that wants detail
         MountPublication publication = assertDoesNotThrow(
                 () -> buildMount(
                         vertx, TestFactories.builder(), Set.of(new DefaultLocationCaseFoldedHiddenHeaderResource())),
@@ -1184,10 +1184,10 @@ class OperationInventoryTest {
         assertTrue(
                 !entryName.equals(boundName) && entryName.equalsIgnoreCase(boundName),
                 "fixture names differ only in case: " + label);
-        RecordingSink sink = new RecordingSink(applicationName -> true);
+        RecordingPublicationHook hook = new RecordingPublicationHook(applicationName -> true);
 
-        // When: the mount is built with a sink that wants detail
-        RestConfigurationException failure = assertMountBuildFails(vertx, sink, Set.of(resource));
+        // When: the mount is built with a hook that wants detail
+        RestConfigurationException failure = assertMountBuildFails(vertx, hook, Set.of(resource));
 
         // Then: the failure names the operation and the entry, does not echo the bound spelling, and
         // nothing is published
@@ -1197,7 +1197,7 @@ class OperationInventoryTest {
                 () -> assertTrue(message.contains("'" + operationId + "'"), "names the operation: " + message),
                 () -> assertTrue(message.contains("named '" + entryName + "'"), "names the entry: " + message),
                 () -> assertFalse(message.contains(boundName), "does not echo the bound name: " + message),
-                () -> assertTrue(sink.received().isEmpty(), "nothing is published"));
+                () -> assertTrue(hook.received().isEmpty(), "nothing is published"));
     }
 
     @Test
@@ -1211,11 +1211,11 @@ class OperationInventoryTest {
                 .isEmpty());
         String entryName = KelvinSignHiddenHeaderResource.ENTRY_NAME;
         assertEquals(0x212A, (int) entryName.charAt(2), "fixture entry carries KELVIN SIGN at index 2");
-        RecordingSink sink = new RecordingSink(applicationName -> true);
+        RecordingPublicationHook hook = new RecordingPublicationHook(applicationName -> true);
 
-        // When: the mount is built with a sink that wants detail
+        // When: the mount is built with a hook that wants detail
         RestConfigurationException failure =
-                assertMountBuildFails(vertx, sink, Set.of(new KelvinSignHiddenHeaderResource()));
+                assertMountBuildFails(vertx, hook, Set.of(new KelvinSignHiddenHeaderResource()));
 
         // Then: the failure names the operation and the entry, states the ASCII letter case header
         // match, does not echo the bound name, and nothing is published
@@ -1232,7 +1232,7 @@ class OperationInventoryTest {
                 () -> assertFalse(
                         message.contains(KelvinSignHiddenHeaderResource.BOUND_NAME),
                         "does not echo the bound name: " + message),
-                () -> assertTrue(sink.received().isEmpty(), "nothing is published"));
+                () -> assertTrue(hook.received().isEmpty(), "nothing is published"));
     }
 
     /** One binding's location, name, and hidden flag. */
@@ -1248,13 +1248,13 @@ class OperationInventoryTest {
     }
 
     /**
-     * Builds one mount at {@code /*} with the given sink and asserts that the build fails at startup
+     * Builds one mount at {@code /*} with the given hook and asserts that the build fails at startup
      * with a {@link RestConfigurationException}.
      */
     private static RestConfigurationException assertMountBuildFails(
-            Vertx vertx, RecordingSink sink, Set<Object> resources) {
+            Vertx vertx, RecordingPublicationHook hook, Set<Object> resources) {
         JaxRsRouterMount.Factory factory = TestFactories.builder()
-                .publicationSinks(new LinkedHashSet<>(List.of(sink)))
+                .publicationHooks(new LinkedHashSet<>(List.of(hook)))
                 .build();
         JaxRsRouterMount mount = factory.create("/*", "openapi.json", resources);
         return assertThrows(RestConfigurationException.class, () -> mount.createRouter(vertx)
@@ -1283,20 +1283,20 @@ class OperationInventoryTest {
     // ---------------------------------------------------------------------------------------
 
     /**
-     * Builds one mount at {@code /*} with a sink wanting detail for every mount, and returns the
+     * Builds one mount at {@code /*} with a hook wanting detail for every mount, and returns the
      * single publication it recorded.
      */
     private static MountPublication buildMount(Vertx vertx, TestFactories.Builder builder, Set<Object> resources)
             throws Exception {
-        RecordingSink sink = new RecordingSink(applicationName -> true);
+        RecordingPublicationHook hook = new RecordingPublicationHook(applicationName -> true);
         JaxRsRouterMount.Factory factory =
-                builder.publicationSinks(new LinkedHashSet<>(List.of(sink))).build();
+                builder.publicationHooks(new LinkedHashSet<>(List.of(hook))).build();
         JaxRsRouterMount mount = factory.create("/*", "openapi.json", resources);
         mount.createRouter(vertx)
                 .toCompletionStage()
                 .toCompletableFuture()
                 .get(BUILD_TIMEOUT_SECONDS, TimeUnit.SECONDS);
-        return sink.onlyReceived();
+        return hook.onlyReceived();
     }
 
     private static Map<String, OperationPublication> operationsById(MountPublication publication) {

@@ -32,8 +32,8 @@ import dev.vertique.rest.core.security.AuthEnforcementCapability;
 import dev.vertique.rest.core.security.SecurityPolicyValidator;
 import dev.vertique.rest.core.security.SecuritySchemeHandler;
 import dev.vertique.rest.jaxrs.publication.MountPublication;
+import dev.vertique.rest.jaxrs.publication.MountPublicationHook;
 import dev.vertique.rest.jaxrs.publication.OperationPublication;
-import dev.vertique.rest.jaxrs.publication.OperationPublicationSink;
 import dev.vertique.rest.jaxrs.request.BoundRequest;
 import dev.vertique.rest.jaxrs.validation.FileContentVerifier;
 import dev.vertique.rest.jaxrs.validation.OperationSchemaSource;
@@ -264,7 +264,7 @@ public class JaxRsRouterMount implements RouterMount {
      * with no resources, so an all-disabled application is refused too.
      *
      * <p>If no resources are registered, an empty router is returned: immediately when no {@link
-     * OperationPublicationSink} is bound, otherwise after the publication step at the end of the
+     * MountPublicationHook} is bound, otherwise after the publication step at the end of the
      * pipeline below, with no operations and the configured request-validation strategy id. Otherwise
      * the pipeline is:
      * <ol>
@@ -279,12 +279,12 @@ public class JaxRsRouterMount implements RouterMount {
      *   <li>Configure {@link dev.vertique.rest.core.security.SecuritySchemeHandler} instances, recording
      *       each scheme's authentication handler into a {@link SecuritySchemeHandlerCollector}.</li>
      *   <li>Run {@link RouterLifecycleHook#afterAuthSetup} hooks.</li>
-     *   <li>When any {@link OperationPublicationSink} is bound, ask every sink, in the injected order and
+     *   <li>When any {@link MountPublicationHook} is bound, ask every hook, in the injected order and
      *       once each, whether it wants detail for this mount's application name ({@code null} for a
-     *       mount that serves no declared application); detail is captured when any sink wants it.</li>
+     *       mount that serves no declared application); detail is captured when any hook wants it.</li>
      *   <li>Scan and register all JAX-RS resource methods via {@link JaxRsRouteRegistrar}, installing per
      *       operation: the collected auth handler(s) → the validation gate → the sorted contributors →
-     *       the {@link ResourceMethodInvoker}. When a sink is bound, the registrar also records one
+     *       the {@link ResourceMethodInvoker}. When a hook is bound, the registrar also records one
      *       {@link OperationPublication} per registered operation, with detached schema copies when
      *       detail is captured.</li>
      *   <li>When this mount serves a declared application, log the no-explicit-security-policy warning
@@ -292,19 +292,19 @@ public class JaxRsRouterMount implements RouterMount {
      *   <li>Run {@link RouterLifecycleHook#afterRouterCreated} hooks.</li>
      *   <li>Mount {@link MiddlewareScope#API} middlewares on the API router.</li>
      *   <li>Attach the router-level failure handler.</li>
-     *   <li>When any {@link OperationPublicationSink} is bound, build one {@link MountPublication} for
-     *       this mount and hand that same instance to every sink's {@link
-     *       OperationPublicationSink#mountBuilt}, calling every sink before any returned future is
+     *   <li>When any {@link MountPublicationHook} is bound, build one {@link MountPublication} for
+     *       this mount and hand that same instance to every hook's {@link
+     *       MountPublicationHook#mountBuilt}, calling every hook before any returned future is
      *       awaited.</li>
      * </ol>
      *
-     * <p>With no sink bound, no publication is built, no sink is asked, no schema is copied, and the
-     * returned future is already succeeded. With sinks bound, the returned future succeeds with the
-     * router once every sink's future has succeeded, and fails with a sink future's failure, so the
-     * mount's {@code MountCustomizer}s never run. A {@link RuntimeException} thrown by a sink's
-     * {@link OperationPublicationSink#wantsDetail} or {@link OperationPublicationSink#mountBuilt}
-     * propagates out of this method unwrapped, and no later sink is called. No sink's {@link
-     * OperationPublicationSink#mountBuilt} is called when this method throws before the publication
+     * <p>With no hook bound, no publication is built, no hook is asked, no schema is copied, and the
+     * returned future is already succeeded. With hooks bound, the returned future succeeds with the
+     * router once every hook's future has succeeded, and fails with a hook future's failure, so the
+     * mount's {@code MountCustomizer}s never run. A {@link RuntimeException} thrown by a hook's
+     * {@link MountPublicationHook#wantsDetail} or {@link MountPublicationHook#mountBuilt}
+     * propagates out of this method unwrapped, and no later hook is called. No hook's {@link
+     * MountPublicationHook#mountBuilt} is called when this method throws before the publication
      * step.
      *
      * <p>An application mount whose registration left one or more operations with no explicit
@@ -318,7 +318,7 @@ public class JaxRsRouterMount implements RouterMount {
      * so an {@code openapi.json} (when present) is documentation only (PRD-REST-017 FR-001).
      *
      * @param vertx the Vert.x instance
-     * @return a future resolving to the configured API router, once every bound sink's future has
+     * @return a future resolving to the configured API router, once every bound hook's future has
      *     succeeded
      */
     @Override
@@ -333,7 +333,7 @@ public class JaxRsRouterMount implements RouterMount {
 
         if (resources.isEmpty()) {
             Router emptyRouter = Router.router(vertx);
-            if (factory.publicationSinks.isEmpty()) {
+            if (factory.publicationHooks.isEmpty()) {
                 return Future.succeededFuture(emptyRouter);
             }
             // No strategy is selected for an empty mount, so the publication carries the configured id.
@@ -433,14 +433,14 @@ public class JaxRsRouterMount implements RouterMount {
             hook.afterAuthSetup(routerSetup);
         }
 
-        // With no sink bound, nothing is published and no schema is copied. Otherwise every sink is
-        // asked once, in order, with no short-circuit; detail is captured when any sink wants it.
+        // With no hook bound, nothing is published and no schema is copied. Otherwise every hook is
+        // asked once, in order, with no short-circuit; detail is captured when any hook wants it.
         List<OperationPublication> publications = null;
         boolean captureDetail = false;
-        if (!factory.publicationSinks.isEmpty()) {
+        if (!factory.publicationHooks.isEmpty()) {
             publications = new ArrayList<>();
-            for (OperationPublicationSink sink : factory.publicationSinks) {
-                if (sink.wantsDetail(applicationName())) {
+            for (MountPublicationHook hook : factory.publicationHooks) {
+                if (hook.wantsDetail(applicationName())) {
                     captureDetail = true;
                 }
             }
@@ -544,23 +544,23 @@ public class JaxRsRouterMount implements RouterMount {
 
     /**
      * Builds this mount's one {@link MountPublication} and hands that same instance to every bound
-     * sink's {@link OperationPublicationSink#mountBuilt}, in the injected order. Every sink is called
-     * before any returned future is awaited; a {@link RuntimeException} thrown by a sink propagates
-     * unwrapped and no later sink is called.
+     * hook's {@link MountPublicationHook#mountBuilt}, in the injected order. Every hook is called
+     * before any returned future is awaited; a {@link RuntimeException} thrown by a hook propagates
+     * unwrapped and no later hook is called.
      *
      * @param router     the router this mount built, completing the returned future
      * @param strategyId the selected request-validation strategy's id, or the configured id for an
      *                   empty mount
      * @param operations every registered operation's publication, in registration order
-     * @return a future that succeeds with {@code router} once every sink's future has succeeded, and
-     *     fails with a sink future's failure
+     * @return a future that succeeds with {@code router} once every hook's future has succeeded, and
+     *     fails with a hook future's failure
      */
     private Future<Router> publish(Router router, String strategyId, List<OperationPublication> operations) {
         MountPublication publication = new MountPublication(
                 mountPath, meta().mountId(), applicationName(), declaringType(), strategyId, operations);
-        List<Future<Void>> futures = new ArrayList<>(factory.publicationSinks.size());
-        for (OperationPublicationSink sink : factory.publicationSinks) {
-            futures.add(sink.mountBuilt(publication));
+        List<Future<Void>> futures = new ArrayList<>(factory.publicationHooks.size());
+        for (MountPublicationHook hook : factory.publicationHooks) {
+            futures.add(hook.mountBuilt(publication));
         }
         return Future.all(futures).map(v -> router);
     }
@@ -853,15 +853,15 @@ public class JaxRsRouterMount implements RouterMount {
         final boolean authorizerAvailable;
 
         /**
-         * Publication sinks contributed to the {@code Set<OperationPublicationSink>} multibinding,
+         * Publication hooks contributed to the {@code Set<MountPublicationHook>} multibinding,
          * in the set's injected iteration order. Empty when the factory was built through the
          * public constructor.
          */
-        final List<OperationPublicationSink> publicationSinks;
+        final List<MountPublicationHook> publicationHooks;
 
         /**
          * Creates the factory with all shared framework services and an empty
-         * {@code OperationPublicationSink} set.
+         * {@code MountPublicationHook} set.
          *
          * @param routerLifecycleHooks         hooks for router creation phases
          * @param operationInterceptors        interceptors for per-operation invocation lifecycle
@@ -987,7 +987,7 @@ public class JaxRsRouterMount implements RouterMount {
 
         /**
          * Creates the factory with all shared framework services and the
-         * {@code Set<OperationPublicationSink>} multibinding.
+         * {@code Set<MountPublicationHook>} multibinding.
          *
          * @param routerLifecycleHooks         hooks for router creation phases
          * @param operationInterceptors        interceptors for per-operation invocation lifecycle
@@ -1048,8 +1048,8 @@ public class JaxRsRouterMount implements RouterMount {
          * @param operationSchemaSource        optional source of per-operation validation schemas, present
          *                                     when a module providing an {@link OperationSchemaSource}
          *                                     (e.g. {@code vertique-rest-validation}) is included
-         * @param publicationSinks             the {@code Set<OperationPublicationSink>} multibinding, in
-         *                                     its injected iteration order; empty when no sink is
+         * @param publicationHooks             the {@code Set<MountPublicationHook>} multibinding, in
+         *                                     its injected iteration order; empty when no hook is
          *                                     contributed
          */
         @Inject
@@ -1082,7 +1082,7 @@ public class JaxRsRouterMount implements RouterMount {
                 Set<FileContentVerifier> fileContentVerifiers,
                 Set<RequestValidationStrategy> validationStrategies,
                 Optional<OperationSchemaSource> operationSchemaSource,
-                Set<OperationPublicationSink> publicationSinks) {
+                Set<MountPublicationHook> publicationHooks) {
             this.routerLifecycleHooks = routerLifecycleHooks;
             this.operationInterceptors = operationInterceptors;
             this.errorInterceptors = errorInterceptors;
@@ -1111,7 +1111,7 @@ public class JaxRsRouterMount implements RouterMount {
             this.fileContentVerifiers = fileContentVerifiers;
             this.validationStrategies = validationStrategies;
             this.operationSchemaSource = operationSchemaSource;
-            this.publicationSinks = List.copyOf(publicationSinks);
+            this.publicationHooks = List.copyOf(publicationHooks);
         }
 
         /**

@@ -19,7 +19,7 @@ import dev.vertique.rest.openapi.docs.metadata.InputDocumentation;
 import dev.vertique.rest.openapi.docs.metadata.OperationFacts;
 import dev.vertique.rest.openapi.docs.metadata.OperationMetadata;
 import dev.vertique.rest.openapi.docs.schema.HiddenMemberRefusal;
-import dev.vertique.rest.openapi.docs.schema.InputGenerators;
+import dev.vertique.rest.openapi.docs.schema.InputSchemaGeneratorCache;
 import dev.vertique.rest.openapi.docs.schema.ParameterPropertyNames;
 import dev.vertique.rest.openapi.docs.schema.SchemaEmbedder;
 import dev.vertique.rest.openapi.docs.schema.SchemaPublicationSubject;
@@ -126,7 +126,7 @@ final class InputAssembler {
 
     private static final JsonNodeFactory NODES = JsonNodeFactory.instance;
 
-    /** The facts of an operation the documentation sink took none for. */
+    /** The facts of an operation the documentation hook took none for. */
     private static final OperationFacts NO_FACTS = new OperationFacts(List.of(), List.of());
 
     private InputAssembler() {}
@@ -161,7 +161,7 @@ final class InputAssembler {
             OperationFacts facts,
             AssemblyContext context,
             DisclosureTally tally,
-            InputGenerators generators,
+            InputSchemaGeneratorCache generators,
             boolean markInputs,
             MetadataAgreement agreement) {
         String operationId = operation.operationId();

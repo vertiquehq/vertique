@@ -21,7 +21,7 @@ import dev.vertique.rest.openapi.docs.metadata.OperationFacts;
 import dev.vertique.rest.openapi.docs.metadata.ResponseAttributes;
 import dev.vertique.rest.openapi.docs.metadata.ResponseInference;
 import dev.vertique.rest.openapi.docs.metadata.ResponseStatuses;
-import dev.vertique.rest.openapi.docs.schema.OutputGenerators;
+import dev.vertique.rest.openapi.docs.schema.OutputSchemaGeneratorCache;
 import dev.vertique.rest.openapi.docs.schema.OutputSchemas;
 import dev.vertique.rest.openapi.docs.schema.SchemaEmbedder;
 import io.swagger.v3.oas.annotations.headers.Header;
@@ -118,7 +118,7 @@ public final class ResponseAssembler {
             OperationPublication operation,
             @Nullable OperationFacts facts,
             AssemblyContext context,
-            OutputGenerators generators,
+            OutputSchemaGeneratorCache generators,
             PendingWarnings warnings) {
         OperationDetail detail = operation.detail();
         ResponseShape shape = detail == null ? null : detail.response();
@@ -310,7 +310,7 @@ public final class ResponseAssembler {
     /** Plans the inferred content: one media type per inferred media type. */
     private static List<PlannedMediaType> inferredContent(
             ResponseInference.Inference inference, @Nullable Slot inferred) {
-        boolean json = inference.row() == ResponseInference.Row.JSON_ENTITY;
+        boolean json = inference.kind() == ResponseInference.ResponseKind.JSON_ENTITY;
         List<PlannedMediaType> content = new ArrayList<>();
         for (String mediaType : inference.mediaTypes()) {
             content.add(
@@ -397,7 +397,7 @@ public final class ResponseAssembler {
         }
 
         /** Generates and checks the slot's schema, once. */
-        void check(String prefix, String subject, OutputGenerators generators) {
+        void check(String prefix, String subject, OutputSchemaGeneratorCache generators) {
             if (checked == null) {
                 checked = OutputSchemas.check(prefix, subject, generators, target);
             }
