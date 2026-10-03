@@ -19,6 +19,7 @@ import dev.vertique.rest.openapi.docs.ConfigViewComponents;
 import dev.vertique.rest.openapi.docs.DaggerConfigViewComponents_ViewComponent;
 import dev.vertique.rest.openapi.docs.DaggerDocsTestComponents_SharedComponent;
 import dev.vertique.rest.openapi.docs.DocsTestComponents;
+import dev.vertique.rest.openapi.docs.document.DocumentInfo;
 import dev.vertique.rest.openapi.docs.fixture.DocsConfigs;
 import dev.vertique.rest.openapi.docs.fixture.PublicApi;
 import dev.vertique.rest.openapi.docs.fixture.startup.OpsApi;
@@ -672,13 +673,13 @@ class ApidocsConfigTest {
                         "annotated info without configured info",
                         AnnotatedInfoApi.class,
                         null,
-                        new InfoConfig("Annotated", "2", "From code"),
+                        new DocumentInfo("Annotated", "2", "From code"),
                         null),
                 Arguments.of(
                         "configured info replaces the annotated info as a whole",
                         AnnotatedInfoApi.class,
                         configured.copy(),
-                        new InfoConfig("Configured", "9", null),
+                        new DocumentInfo("Configured", "9", null),
                         null),
                 Arguments.of(
                         "blank annotated title without configured info",
@@ -699,7 +700,7 @@ class ApidocsConfigTest {
                         "configured info beside a blank annotated title",
                         BlankTitleInfoApi.class,
                         configured.copy(),
-                        new InfoConfig("Configured", "9", null),
+                        new DocumentInfo("Configured", "9", null),
                         null),
                 Arguments.of(
                         "blank configured title without annotation",
@@ -716,7 +717,7 @@ class ApidocsConfigTest {
             String variant,
             Class<?> declaringInterface,
             JsonObject configuredInfo,
-            InfoConfig expectedInfo,
+            DocumentInfo expectedInfo,
             List<String> expectedFragments) {
         // Given application public declared by the interface under test beside mgmt, and the shared
         // configuration with the public entry's info replaced by the configured info, or removed

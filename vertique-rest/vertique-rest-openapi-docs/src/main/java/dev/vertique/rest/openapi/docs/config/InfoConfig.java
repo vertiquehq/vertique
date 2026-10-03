@@ -16,8 +16,7 @@ import jakarta.annotation.Nullable;
  * @param version the document version
  * @param description the optional document description
  */
-public record InfoConfig(
-        String title, String version, @Nullable String description) {
+record InfoConfig(String title, String version, @Nullable String description) {
 
     /**
      * Jackson factory: every attribute is optional at parse time; the selection of enabled

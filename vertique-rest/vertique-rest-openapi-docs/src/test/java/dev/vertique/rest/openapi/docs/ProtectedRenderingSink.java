@@ -16,8 +16,8 @@ import dev.vertique.rest.jaxrs.validation.OperationSchemaSource;
 import dev.vertique.rest.openapi.docs.assembly.AssemblyContext;
 import dev.vertique.rest.openapi.docs.assembly.DocumentAssembler;
 import dev.vertique.rest.openapi.docs.config.EnabledDocuments;
-import dev.vertique.rest.openapi.docs.config.InfoConfig;
 import dev.vertique.rest.openapi.docs.diagnostics.DiagnosticsAccess;
+import dev.vertique.rest.openapi.docs.document.DocumentInfo;
 import dev.vertique.rest.openapi.docs.document.PublishedDocument;
 import dev.vertique.rest.openapi.docs.metadata.OperationFacts;
 import dev.vertique.rest.openapi.docs.publication.DocsPublicationSink;
@@ -63,7 +63,7 @@ import java.util.concurrent.ConcurrentHashMap;
 final class ProtectedRenderingSink implements OperationPublicationSink {
 
     /** The {@code info} of every rendered document. */
-    static final InfoConfig INFO = new InfoConfig("Protected rendering", "1.0", null);
+    static final DocumentInfo INFO = new DocumentInfo("Protected rendering", "1.0", null);
 
     private final AssemblyContext context;
     private final RestApplications applications;

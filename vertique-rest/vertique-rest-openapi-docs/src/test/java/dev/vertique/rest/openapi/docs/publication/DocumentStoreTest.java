@@ -15,7 +15,7 @@ import dev.vertique.rest.jaxrs.application.RestApplications;
 import dev.vertique.rest.openapi.docs.ApiDocs;
 import dev.vertique.rest.openapi.docs.TestContexts;
 import dev.vertique.rest.openapi.docs.config.EnabledDocuments;
-import dev.vertique.rest.openapi.docs.config.InfoConfig;
+import dev.vertique.rest.openapi.docs.document.DocumentInfo;
 import dev.vertique.rest.openapi.docs.document.PublishedDocument;
 import dev.vertique.rest.openapi.docs.document.Snapshot;
 import dev.vertique.rest.openapi.docs.document.SnapshotRendererTest;
@@ -126,7 +126,7 @@ class DocumentStoreTest {
                 ApiDocs.Access.PUBLIC,
                 PublicApi.MOUNT_PATH,
                 RestApplications.ContractOrigin.ANNOTATION,
-                new InfoConfig("Catalog", "1.0", null),
+                new DocumentInfo("Catalog", "1.0", null),
                 null,
                 null);
         DocsPublicationSink sink = new DocsPublicationSink(

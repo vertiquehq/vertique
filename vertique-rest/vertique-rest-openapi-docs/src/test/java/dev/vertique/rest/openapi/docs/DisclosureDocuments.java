@@ -15,8 +15,8 @@ import dev.vertique.rest.jaxrs.validation.OperationSchemaSource;
 import dev.vertique.rest.openapi.docs.assembly.AssemblyContext;
 import dev.vertique.rest.openapi.docs.assembly.DocumentAssembler;
 import dev.vertique.rest.openapi.docs.config.EnabledDocuments;
-import dev.vertique.rest.openapi.docs.config.InfoConfig;
 import dev.vertique.rest.openapi.docs.diagnostics.DiagnosticsAccess;
+import dev.vertique.rest.openapi.docs.document.DocumentInfo;
 import dev.vertique.rest.openapi.docs.document.PublishedDocument;
 import dev.vertique.rest.openapi.docs.fixture.disclosure.profile.TagsProfileModule;
 import dev.vertique.rest.openapi.docs.fixture.input.Publications;
@@ -50,7 +50,7 @@ import java.util.Set;
 public final class DisclosureDocuments {
 
     /** The {@code info} of every document. */
-    static final InfoConfig INFO = new InfoConfig("Disclosure", "1.0", null);
+    static final DocumentInfo INFO = new DocumentInfo("Disclosure", "1.0", null);
 
     private static final ObjectMapper YAML = new ObjectMapper(new YAMLFactory());
 

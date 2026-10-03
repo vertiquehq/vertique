@@ -8,7 +8,6 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
-import dev.vertique.rest.openapi.docs.config.InfoConfig;
 import dev.vertique.rest.openapi.docs.metadata.AnnotatedInfo;
 import jakarta.annotation.Nullable;
 import java.security.MessageDigest;
@@ -44,11 +43,11 @@ public final class DocumentWriter {
     /**
      * Builds the {@code info} object of a document.
      *
-     * @param info the configured {@code info} of the document
+     * @param info the resolved {@code info} of the document
      * @return a new {@code info} object holding {@code title}, {@code description} when present, and
      *     {@code version}, in that order
      */
-    public static ObjectNode info(InfoConfig info) {
+    public static ObjectNode info(DocumentInfo info) {
         ObjectNode infoNode = JSON.createObjectNode();
         infoNode.put("title", info.title());
         if (info.description() != null) {

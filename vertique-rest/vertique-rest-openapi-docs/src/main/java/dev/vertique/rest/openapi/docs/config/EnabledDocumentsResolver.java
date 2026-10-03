@@ -8,6 +8,7 @@ import dev.vertique.core.config.JsonConfigPaths;
 import dev.vertique.core.exception.ConfigurationException;
 import dev.vertique.rest.jaxrs.application.RestApplications;
 import dev.vertique.rest.openapi.docs.ApiDocs;
+import dev.vertique.rest.openapi.docs.document.DocumentInfo;
 import io.vertx.core.json.JsonObject;
 import java.util.ArrayList;
 import java.util.List;
@@ -119,7 +120,10 @@ public final class EnabledDocumentsResolver {
             if (entry.map(DocumentConfig::enabled).map(Boolean.FALSE::equals).orElse(false)) {
                 continue;
             }
-            InfoConfig info = entry.map(DocumentConfig::info).orElse(null);
+            DocumentInfo info = entry.map(DocumentConfig::info)
+                    .map(configured ->
+                            new DocumentInfo(configured.title(), configured.version(), configured.description()))
+                    .orElse(null);
             String serverUrl = entry.map(DocumentConfig::serverUrl).orElse(null);
             enabled.add(new EnabledDocuments.EnabledDocument(
                     application.name(),

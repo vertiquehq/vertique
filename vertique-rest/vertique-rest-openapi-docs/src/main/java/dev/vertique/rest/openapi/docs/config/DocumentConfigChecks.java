@@ -9,6 +9,7 @@ import dev.vertique.rest.core.RestConfigurationException;
 import dev.vertique.rest.jaxrs.application.RestApplications;
 import dev.vertique.rest.jaxrs.application.RestApplications.ContractOrigin;
 import dev.vertique.rest.openapi.docs.ApiDocs;
+import dev.vertique.rest.openapi.docs.document.DocumentInfo;
 import dev.vertique.rest.openapi.docs.metadata.AnnotatedInfo;
 import dev.vertique.rest.openapi.docs.schema.ContractReferences;
 import io.swagger.v3.oas.annotations.OpenAPIDefinition;
@@ -110,9 +111,9 @@ final class DocumentConfigChecks {
                 continue;
             }
             AnnotatedInfo annotated = resolveInfo(document);
-            InfoConfig info = annotated == null
+            DocumentInfo info = annotated == null
                     ? document.info()
-                    : new InfoConfig(annotated.title(), annotated.version(), annotated.description());
+                    : new DocumentInfo(annotated.title(), annotated.version(), annotated.description());
             checkServerUrl(document);
             resolved.add(new EnabledDocuments.EnabledDocument(
                     document.name(),
@@ -271,7 +272,7 @@ final class DocumentConfigChecks {
     @Nullable
     private static AnnotatedInfo resolveInfo(EnabledDocuments.EnabledDocument document) {
         String base = "apidocs.documents." + document.name() + ".info";
-        InfoConfig configured = document.info();
+        DocumentInfo configured = document.info();
         if (configured != null) {
             if (configured.title() == null || configured.title().isBlank()) {
                 throw infoFailure(document, base + ".title");
