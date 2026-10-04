@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Codegen AOP Module
 
-> **Status:** Alpha
+> **Status:** Stable
 > **Package:** `dev.vertique.codegen.aop`
 > **Artifact:** `vertique-codegen-aop`
 > **Depends on:** `vertique-codegen-core` (compile), `vertique-aop` (compile)

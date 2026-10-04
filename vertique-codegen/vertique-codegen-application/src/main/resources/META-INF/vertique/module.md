@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Codegen Application Module
 
-> **Status:** Alpha
+> **Status:** Stable
 > **Package:** `dev.vertique.codegen.application`
 > **Artifact:** `vertique-codegen-application`
 > **Depends on:** `vertique-codegen-core` (compile), `vertique-application` (processor classpath only)

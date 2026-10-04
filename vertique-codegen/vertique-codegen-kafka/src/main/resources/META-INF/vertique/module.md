@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Codegen Kafka Consumer Metadata Module
 
-> **Status:** Beta
+> **Status:** Stable
 > **Package:** `dev.vertique.codegen.kafka.processor`
 > **Artifact:** `vertique-codegen-kafka`
 > **Depends on:** codegen-core, kafka (processor classpath only)
