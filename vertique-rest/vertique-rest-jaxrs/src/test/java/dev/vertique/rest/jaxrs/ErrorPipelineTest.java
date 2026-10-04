@@ -538,7 +538,7 @@ class ErrorPipelineTest {
         }
 
         @Test
-        @DisplayName("Fallback overrides status for non-ProblemDetail entity without modifying entity")
+        @DisplayName("Fallback fail-closes a non-ProblemDetail entity into a fresh ProblemDetail")
         void fallbackWithNonProblemDetailEntity() {
             // Use a mapper that returns a plain string entity (not ProblemDetail)
             DefaultExceptionMapper defaults = new DefaultExceptionMapper()
@@ -557,7 +557,17 @@ class ErrorPipelineTest {
 
             Response response = future.result();
             assertEquals(403, response.getStatus());
-            assertEquals("plain error", response.getEntity()); // Entity unchanged
+            assertInstanceOf(ProblemDetail.class, response.getEntity());
+            ProblemDetail pd = (ProblemDetail) response.getEntity();
+            assertEquals(403, pd.status());
+            assertNull(pd.detail(), "fail-closed override must not publish the superseded body/detail");
+            assertNotNull(response.getMediaType(), "fail-closed override must set a media type");
+            assertTrue(
+                    "application/problem+json"
+                                    .equalsIgnoreCase(response.getMediaType().toString())
+                            || response.getMediaType()
+                                    .isCompatible(jakarta.ws.rs.core.MediaType.valueOf("application/problem+json")),
+                    "superseded text/plain Content-Type must not ride along, got " + response.getMediaType());
         }
     }
 }

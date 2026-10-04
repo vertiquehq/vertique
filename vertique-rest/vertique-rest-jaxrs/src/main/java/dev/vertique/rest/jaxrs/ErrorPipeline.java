@@ -36,10 +36,13 @@ public class ErrorPipeline {
     /**
      * Lower-cased names of the headers dropped when this pipeline replaces a response entity — the
      * ones whose value describes the octets of the superseded body rather than the response itself.
-     * A header describing what the body <em>means</em> ({@code Content-Type},
-     * {@code Content-Language}) is not here: the replacement is always a {@link ProblemDetail} in the
-     * same media type, so those still hold. Matched case-insensitively; see
-     * {@link #rebuildWithHeaders} for why each must not survive.
+     * Matched case-insensitively; see {@link #rebuildWithHeaders} for why each must not survive.
+     *
+     * <p>Headers that describe what the body <em>means</em> ({@code Content-Type},
+     * {@code Content-Language}) are not in this set: when the replacement stays a
+     * {@link ProblemDetail} under {@code application/problem+json} they still hold. When the
+     * override fail-closes a non-{@code ProblemDetail} entity into a fresh problem document, those
+     * meaning headers are dropped separately so the superseded media type cannot ride along.
      */
     private static final Set<String> ENTITY_DESCRIBING_HEADERS = Set.of(
             "content-length",
@@ -50,6 +53,13 @@ public class ErrorPipeline {
             "digest",
             "content-digest",
             "repr-digest");
+
+    /**
+     * Lower-cased names of headers that name the body's media type / language. Dropped only when the
+     * override replaces a non-{@link ProblemDetail} entity with a fresh problem document, so the
+     * winning response cannot inherit a superseded {@code Content-Type} such as {@code text/plain}.
+     */
+    private static final Set<String> MEDIA_TYPE_HEADERS = Set.of("content-type", "content-language");
 
     private final List<ErrorInterceptor> errorInterceptors;
     private final List<RequestInterceptor> requestInterceptors;
@@ -219,16 +229,19 @@ public class ErrorPipeline {
      * <p>The stored status is consumed by the caller before this method runs — see
      * {@link #mapToResponse} — so it is passed in rather than read from the context here.
      *
-     * <p>When it does override, the {@link ProblemDetail} body is rebuilt from the overriding status
-     * rather than patched: the title is recomputed and the detail is dropped. A detail was written
-     * for the status being superseded — and on the {@code ctx.fail(4xx, cause)} path it is an arbitrary
-     * application exception's message — so carrying it into the new status would both contradict the
-     * title and publish a message the framework never intended for the client. The same reasoning
-     * applies to everything else the superseded body carried: typed subclass fields (such as
+     * <p>When it does override, the body is rebuilt for the overriding status rather than re-labelled.
+     * A {@link ProblemDetail} is reconstructed: the title is recomputed and the detail is dropped. A
+     * detail was written for the status being superseded — and on the {@code ctx.fail(4xx, cause)} path
+     * it is an arbitrary application exception's message — so carrying it into the new status would both
+     * contradict the title and publish a message the framework never intended for the client. The same
+     * reasoning applies to everything else the superseded body carried: typed subclass fields (such as
      * {@link dev.vertique.rest.core.ValidationProblemDetail#errors()}) and RFC 9457 extension members
      * are dropped with it, so only {@code instance} — request-scoped and status-independent — survives.
-     * A body the mapper authored <em>for the status that survives</em> is untouched, which is what the
-     * equal-status early return above protects.
+     * A non-{@code ProblemDetail} entity is fail-closed the same way: replaced with a fresh
+     * {@link ProblemDetail} for the winning status and {@code application/problem+json}, rather than
+     * shipping the superseded body under a new status line. A body the mapper authored <em>for the
+     * status that survives</em> is untouched, which is what the equal-status early return above
+     * protects.
      *
      * <p>This method is only called when no specific (user-contributed) {@code ExceptionMapper}
      * matched the unwrapped cause — the caller checks
@@ -268,10 +281,17 @@ public class ErrorPipeline {
             // members, and toBuilder() would copy those fields — which describe the status being
             // superseded — straight into the overriding status, defeating the cleared detail. Only
             // instance carries over; it is request-scoped and status-independent.
-            entity = ProblemDetail.of(vertxStatus, null, pd.instance());
+            Response.ResponseBuilder rb =
+                    Response.status(vertxStatus).entity(ProblemDetail.of(vertxStatus, null, pd.instance()));
+            return rebuildWithHeaders(response, rb, true, false);
         }
-        Response.ResponseBuilder rb = Response.status(vertxStatus).entity(entity);
-        return rebuildWithHeaders(response, rb, entity != response.getEntity());
+        // Fail closed: a non-ProblemDetail entity (or a missing one) describes the superseded status —
+        // including via its Content-Type. Replace it with a fresh problem document for the winning
+        // status rather than re-labelling the old body. instance is filled by enrichProblemDetail.
+        Response.ResponseBuilder rb = Response.status(vertxStatus)
+                .entity(ProblemDetail.of(vertxStatus, null))
+                .type("application/problem+json");
+        return rebuildWithHeaders(response, rb, true, true);
     }
 
     /**
@@ -288,13 +308,41 @@ public class ErrorPipeline {
      * undecodable, and an {@code ETag} or digest identifies a representation the client never
      * receives.
      *
-     * <p>Everything else is preserved deliberately, including headers that describe the body's
-     * <em>meaning</em> rather than its bytes: the rebuilt entity is a {@link ProblemDetail} in every
-     * case (either enriched with its instance or re-derived at the overriding status), so
-     * {@code Content-Type} and {@code Content-Language} still hold. {@code WWW-Authenticate},
-     * {@code Retry-After} and {@code Allow} describe the response, not its body, and remain correct —
-     * indeed a {@code WWW-Authenticate} the mapper authored is exactly what a status overridden
-     * <em>to</em> 401 needs.
+     * <p>When the replacement stays a {@link ProblemDetail} under the same media type,
+     * {@code Content-Type} and {@code Content-Language} still hold and are preserved. When the
+     * override fail-closes a non-{@code ProblemDetail} entity, {@code mediaTypeReplaced} drops those
+     * meaning headers so the builder's {@code application/problem+json} is not overwritten by the
+     * superseded type. {@code WWW-Authenticate}, {@code Retry-After} and {@code Allow} describe the
+     * response, not its body, and remain correct — indeed a {@code WWW-Authenticate} the mapper
+     * authored is exactly what a status overridden <em>to</em> 401 needs.
+     *
+     * @param source            the original response whose headers should be preserved
+     * @param builder           the response builder (with status and entity already set)
+     * @param entityReplaced    whether the builder carries a different entity than {@code source} did
+     * @param mediaTypeReplaced whether the builder's media type replaces the source's (fail-closed
+     *                          non-{@code ProblemDetail} override)
+     * @return the built response with the source's headers
+     */
+    private static Response rebuildWithHeaders(
+            Response source, Response.ResponseBuilder builder, boolean entityReplaced, boolean mediaTypeReplaced) {
+        source.getStringHeaders().forEach((name, values) -> {
+            String lower = name.toLowerCase(Locale.ROOT);
+            if (entityReplaced && ENTITY_DESCRIBING_HEADERS.contains(lower)) {
+                return;
+            }
+            if (mediaTypeReplaced && MEDIA_TYPE_HEADERS.contains(lower)) {
+                return;
+            }
+            for (String value : values) {
+                builder.header(name, value);
+            }
+        });
+        return builder.build();
+    }
+
+    /**
+     * Copies the source response's headers into the builder when the entity was replaced but the
+     * media type still describes the rebuilt body (ProblemDetail enrichment / ProblemDetail override).
      *
      * @param source         the original response whose headers should be preserved
      * @param builder        the response builder (with status and entity already set)
@@ -303,14 +351,6 @@ public class ErrorPipeline {
      */
     private static Response rebuildWithHeaders(
             Response source, Response.ResponseBuilder builder, boolean entityReplaced) {
-        source.getStringHeaders().forEach((name, values) -> {
-            if (entityReplaced && ENTITY_DESCRIBING_HEADERS.contains(name.toLowerCase(Locale.ROOT))) {
-                return;
-            }
-            for (String value : values) {
-                builder.header(name, value);
-            }
-        });
-        return builder.build();
+        return rebuildWithHeaders(source, builder, entityReplaced, false);
     }
 }
