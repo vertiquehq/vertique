@@ -19,6 +19,8 @@ import java.util.regex.Pattern;
 import lombok.extern.slf4j.Slf4j;
 
 /**
+ * INTERNAL framework seam — not an application contract and outside the maturity promise.
+ *
  * {@link ServiceContractContributor} that registers typed delayed job executors as service
  * contract entries.
  *

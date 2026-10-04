@@ -15,6 +15,8 @@ import java.util.List;
 import java.util.Map;
 
 /**
+ * INTERNAL framework seam — not an application contract and outside the maturity promise.
+ *
  * Typed model of the {@code delayedJob} configuration section.
  *
  * <p>This is the typed, validated result assembled at the Dagger provider boundary (see

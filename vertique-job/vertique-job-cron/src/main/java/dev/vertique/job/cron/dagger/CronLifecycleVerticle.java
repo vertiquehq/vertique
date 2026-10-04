@@ -11,6 +11,8 @@ import io.vertx.core.Promise;
 import lombok.extern.slf4j.Slf4j;
 
 /**
+ * INTERNAL framework seam — not an application contract and outside the maturity promise.
+ *
  * Vert.x verticle that owns cron startup and shutdown.
  *
  * <p>On {@link #start(Promise)}, runs {@link CronJobRegistrar#scan()} to validate and load all

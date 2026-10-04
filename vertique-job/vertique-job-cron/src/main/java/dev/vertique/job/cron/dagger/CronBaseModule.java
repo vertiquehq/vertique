@@ -13,6 +13,8 @@ import dev.vertique.job.cron.CronScheduler;
 import dev.vertique.job.dagger.JobModule;
 
 /**
+ * INTERNAL framework seam — not an application contract and outside the maturity promise.
+ *
  * Shared Dagger base module for cron scheduling.
  *
  * <p>Includes {@link JobModule} to ensure the job interceptor multibinding ({@code Set<JobInterceptor>})

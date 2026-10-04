@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Job Cron Module
 
-> **Status:** Beta
+> **Status:** Stable
 > **Package:** `dev.vertique.job.cron`
 > **Artifact:** `vertique-job-cron`
 > **Depends on:** job-core, core, context, services, deploy, logging
@@ -65,7 +65,7 @@ public class CleanupServiceImpl implements CleanupService {
 | `maxAttempts` | No | `3` | Max retry attempts before dead-letter |
 | `overlapPolicy` | No | `SKIP` | What to do when the previous execution is still running |
 | `tracked` | No | `""` (use global) | `"true"`, `"false"`, or `""` (use `cron.tracked` config; default `true`) |
-| `misfirePolicy` | No | `FIRE_NOW` for `SINGLE_INSTANCE`, `SKIP` for `EVERY_INSTANCE` | How to handle fires missed while the app was down. The annotation's own default is `FIRE_NOW`; for `EVERY_INSTANCE` jobs, an unset (or explicit — the two are indistinguishable) `FIRE_NOW` is rewritten to `SKIP` at registration so the mode-based default applies |
+| `misfirePolicy` | No | `FIRE_NOW` for `SINGLE_INSTANCE`, `SKIP` for `EVERY_INSTANCE` | How to handle fires missed while the app was down. The annotation's own default is `FIRE_NOW`; for `EVERY_INSTANCE` jobs, an unset (or explicit — the two are indistinguishable) `FIRE_NOW` is rewritten to `SKIP` at registration so the mode-based default applies. See **`EVERY_INSTANCE` + `FIRE_NOW` rewrite** below. |
 
 **Cron expression format (6 fields):**
 
@@ -322,7 +322,10 @@ Choose exactly one cron module:
 
 ### `CronModule` (in-memory, no DB)
 
-No `JobRepository` required. `SINGLE_INSTANCE` mode is not available. Execution records are never persisted. `ServiceTargetResolver` must be provided (bound from the `services` module) for `service:` target resolution.
+No `JobRepository` required. `SINGLE_INSTANCE` mode is not available. Execution records are never
+persisted. `ServiceTargetResolver` must be provided (bound from the `services` module) for
+`service:` target resolution. This flavor omits `JobCoordinatorModule`, so there is no execution
+timeout and no progress flush — both intervals are effectively `0`.
 
 ```java
 @Component(modules = {VertxModule.class, DispatchModule.class, CronModule.class})
@@ -374,6 +377,13 @@ static JobInterceptor metricsInterceptor(MetricsService metrics) {
 ```
 
 ---
+
+### Framework seams
+
+`CronConcurrencyManager`, `CronJobDispatcher`, `CronMisfireRecovery`, `CronLifecycleVerticle`,
+`CronPersistenceMarker`, and `CronBaseModule` are framework seams. Their Javadoc marks them
+INTERNAL. Applications include `CronModule` or `CronPersistenceModule` and use the declaration and
+configuration surfaces above; they never construct these collaborators.
 
 ## Dependencies
 

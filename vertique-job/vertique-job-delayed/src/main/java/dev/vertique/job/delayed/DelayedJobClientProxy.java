@@ -14,6 +14,8 @@ import java.time.Instant;
 import java.util.UUID;
 
 /**
+ * INTERNAL framework seam — not an application contract and outside the maturity promise.
+ *
  * JDK {@link InvocationHandler} that backs a typed {@link DelayedJobClient} proxy.
  *
  * <p>Constructed by {@link DelayedJobClientFactory} and receives all method calls on the

@@ -4,6 +4,8 @@
 package dev.vertique.job.cron.dagger;
 
 /**
+ * INTERNAL framework seam — not an application contract and outside the maturity promise.
+ *
  * Empty marker type bound exclusively by {@link CronPersistenceModule}.
  *
  * <p>Exists so consumers can prove at Dagger compile time that the persistence-backed cron flavor
