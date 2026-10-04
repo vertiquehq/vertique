@@ -34,7 +34,7 @@ import org.junit.jupiter.api.extension.RegisterExtension;
  * Starts the example with its shipped configuration and reads the {@code services} document, then
  * checks that a business route still answers as before.
  *
- * <p>The shipped {@code config/application.json} is read from the classpath and merged with the
+ * <p>The shipped {@code config/application.json} is read from the module-root filesystem and merged with the
  * loopback HTTP binding and the disabled management server of {@link ShippedTestConfiguration}.
  */
 @Timeout(value = 20, unit = TimeUnit.SECONDS)

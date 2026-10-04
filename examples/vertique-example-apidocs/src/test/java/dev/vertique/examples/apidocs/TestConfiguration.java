@@ -5,21 +5,26 @@ package dev.vertique.examples.apidocs;
 
 import io.vertx.core.json.JsonObject;
 import java.io.IOException;
-import java.io.InputStream;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 
 /**
- * The configuration the tests start the example with: the shipped {@code config/application.json},
- * read from the classpath as the application reads it, deep-merged with the test-only keys.
+ * The configuration the tests start the example with: the shipped module-root
+ * {@code config/application.json}, read from the filesystem the same way ConfigBootstrap does at
+ * runtime, deep-merged with the test-only keys.
  *
  * <p>The test-only keys bind the HTTP server to {@code 127.0.0.1} on an ephemeral port and supply
  * {@link #JWT_KEY}, the key the tests mint their tokens with.
+ *
+ * <p>Surefire uses the module basedir as the working directory, so {@code config/application.json}
+ * resolves to this example's relocated project-root config file.
  */
 final class TestConfiguration {
 
-    /** The classpath location of the shipped configuration. */
-    private static final String SHIPPED_CONFIGURATION = "config/application.json";
+    /** Filesystem path of the shipped configuration relative to the module basedir. */
+    private static final Path SHIPPED_CONFIGURATION = Path.of("config/application.json");
 
     /** The test-only HS256 key, 40 characters; never part of the shipped configuration. */
     static final String JWT_KEY = "test-only-hs256-key-for-apidocs-example!";
@@ -30,7 +35,7 @@ final class TestConfiguration {
      * Returns the shipped configuration merged with the test-only keys.
      *
      * @return a new configuration object
-     * @throws IllegalStateException when the resource is missing
+     * @throws IllegalStateException when the file is missing
      */
     static JsonObject forTest() {
         JsonObject testKeys = new JsonObject()
@@ -42,16 +47,16 @@ final class TestConfiguration {
     /**
      * Returns the text of the shipped configuration.
      *
-     * @return the resource's text
-     * @throws IllegalStateException when the resource is missing
+     * @return the file's text
+     * @throws IllegalStateException when the file is missing
      */
     static String shippedText() {
-        try (InputStream in = TestConfiguration.class.getClassLoader().getResourceAsStream(SHIPPED_CONFIGURATION)) {
-            if (in == null) {
-                throw new IllegalStateException(
-                        "the shipped configuration " + SHIPPED_CONFIGURATION + " is not on the classpath");
-            }
-            return new String(in.readAllBytes(), StandardCharsets.UTF_8);
+        if (!Files.isRegularFile(SHIPPED_CONFIGURATION)) {
+            throw new IllegalStateException("the shipped configuration "
+                    + SHIPPED_CONFIGURATION.toAbsolutePath().normalize() + " is missing (expected at the module root)");
+        }
+        try {
+            return Files.readString(SHIPPED_CONFIGURATION, StandardCharsets.UTF_8);
         } catch (IOException e) {
             throw new UncheckedIOException("reading " + SHIPPED_CONFIGURATION + " failed", e);
         }
