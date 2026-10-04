@@ -60,16 +60,9 @@ latency records as `0`.
 ### OpenTelemetryRateLimitModule
 
 Dagger `@Module` (public, abstract, not instantiable). It includes the generated
-`GeneratedRegistrationsModule`, which contributes the module's span observer into
+`GeneratedRegistrationsModule`, which contributes one `RateLimitObserver` into
 `Set<RateLimitObserver>`. Install it in the application component alongside a module that
 binds `Tracer`; it is the module's only application-facing type.
-
-### RateLimitSpanObserver (INTERNAL)
-
-Package-private `RateLimitObserver` that records the `vertique.ratelimit.decision` span
-described in [Spans](#spans). Its Javadoc marks it INTERNAL: it is outside this module's
-compatibility promise and may change in any release. Applications obtain it only through
-`Set<RateLimitObserver>`, never by constructing or referencing the type.
 
 ## Module Dagger Bindings
 

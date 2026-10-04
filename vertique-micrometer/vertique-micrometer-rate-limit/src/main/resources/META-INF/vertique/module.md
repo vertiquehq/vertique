@@ -73,17 +73,10 @@ optional is empty and the adapter is enabled.
 ### MicrometerRateLimitModule
 
 Dagger `@Module` (public, abstract, not instantiable). It includes the generated
-`GeneratedRegistrationsModule`, which contributes the module's metrics observer into
+`GeneratedRegistrationsModule`, which contributes one `RateLimitObserver` into
 `Set<RateLimitObserver>`, and declares `@BindsOptionalOf MetricsConfig metricsConfig()` so
-the observer can inject `Optional<MetricsConfig>` without requiring `MicrometerModule`.
+that observer can inject `Optional<MetricsConfig>` without requiring `MicrometerModule`.
 Install it in the application component; it is the module's only application-facing type.
-
-### RateLimitMetricsObserver (INTERNAL)
-
-Package-private `RateLimitObserver` that records the meters in [Meters](#meters). Its
-Javadoc marks it INTERNAL: it is outside this module's compatibility promise and may change
-in any release. Applications obtain it only through `Set<RateLimitObserver>`, never by
-constructing or referencing the type.
 
 ## Module Dagger Bindings
 
