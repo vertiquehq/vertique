@@ -262,9 +262,9 @@ class JaxRsDescriptorArrayParamTest {
         // generated source, where "Outer$Inner[]" would not compile — so that position must keep the
         // dotted source form. assertSuccess() is the load-bearing assertion here: compile-testing
         // compiles the generated sources, so a binary base name in this position fails the build.
-        // This fixture pins BOTH forms coexisting in one generated file: the componentType slot
-        // (a runtime resolveClass(...) argument) carries the binary Inner$-form array FQN, while the
-        // TypeReference generic argument carries the dotted source-form one.
+        // A body parameter does not resolve a component type, matching ResourceScanner. genericType
+        // still carries List<Inner[]>. The componentType slot is null, so the binary Inner$-form
+        // string is absent. Query-param fixtures still pin that binary string.
         var result = ProcessorTestHarness.run(
                 new JaxRsPipelineProcessor(), SourceFiles.inline("dev.vertique.test.NestedArrayBodyOuter", """
                         package dev.vertique.test;
@@ -290,10 +290,11 @@ class JaxRsDescriptorArrayParamTest {
         result.assertSuccess();
 
         String descriptorFqn = "dev.vertique.test.NestedArrayBodyOuter_JaxRsDescriptor";
-        // Source position: the TypeReference generic argument, dotted.
+        // Source position: the TypeReference generic argument, dotted, with a null componentType slot.
         result.assertGeneratedSourceContains(
-                descriptorFqn, "TypeReference<java.util.List<dev.vertique.test.NestedArrayBodyOuter.Inner[]>>");
-        // Runtime-resolved position: the componentType string constant, binary.
-        result.assertGeneratedSourceContains(descriptorFqn, "\"dev.vertique.test.NestedArrayBodyOuter$Inner[]\"");
+                descriptorFqn,
+                "null, new com.fasterxml.jackson.core.type.TypeReference<"
+                        + "java.util.List<dev.vertique.test.NestedArrayBodyOuter.Inner[]>>");
+        result.assertGeneratedSourceDoesNotContain(descriptorFqn, "\"dev.vertique.test.NestedArrayBodyOuter$Inner[]\"");
     }
 }

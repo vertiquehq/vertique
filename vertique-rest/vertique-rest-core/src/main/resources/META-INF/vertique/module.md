@@ -1584,7 +1584,7 @@ multi-scheme AND requirement, scopes declared on an OR alternative, and scopes d
 | Exception | Extends | Typical mapping |
 |---|---|---|
 | `RestValidationException` | `ValidationException` | 400 with a `ValidationProblemDetail` body |
-| `ParamConversionException` | `ValidationException` | 400; carries `paramName()`, `source()`, `targetType()` |
+| `ParamConversionException` | `ValidationException` | 400; carries `paramName()`, `source()`, `targetType()`. A converter returning null for a present value, or a null or wrong-typed collection element, raises it. The message omits the submitted value. |
 | `InvalidCursorException` | `ValidationException` | 400 — always the same opaque `"Invalid cursor"` message, whether tampered, unknown-key, or expired |
 | `ParamConverterNotFoundException` | `TechnicalException` | 500 — a wiring gap, not a client error |
 

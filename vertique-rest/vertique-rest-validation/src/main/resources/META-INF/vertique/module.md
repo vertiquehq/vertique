@@ -263,7 +263,8 @@ Each operation's schemas are synthesized once at registration and closed over by
 
 `RequestValidationStrategy` implementation for the `web-validation` strategy. `gateFor` compiles
 body and parameter validators once at router-build time and closes over them in the returned
-handler. Its gate builds the shared `DefaultBoundRequest` for body validation and uses the same
+handler. Its gate builds the shared `DefaultBoundRequest` for body validation. Declared scalars
+stay raw strings on that binder. Conversion runs later in `ParameterExtractor`, through the same
 `ParamConversionResolver` as dispatch.
 
 The gate processes request data in this order:

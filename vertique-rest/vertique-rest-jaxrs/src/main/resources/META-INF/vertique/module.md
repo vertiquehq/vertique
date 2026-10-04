@@ -769,8 +769,10 @@ shared `dev.vertique.rest.core.convert.ParamConversionResolver`, not a fixed sca
   is converted through the resolver.
 - A collection-valued parameter — `List<T>`, `Set<T>`, `SortedSet<T>`, `NavigableSet<T>`, `Collection<T>`,
   or `T[]` on `@QueryParam`, `@HeaderParam`, `@CookieParam`, or `@FormParam` — coerces each submitted
-  value individually against the declared component type; a malformed element fails closed with
-  `ParamConversionException` rather than leaving the whole collection as raw strings. See
+  value individually against the declared component type; a malformed element, a null element, or a
+  converter that returns null for a present value fails closed with `ParamConversionException`
+  rather than inserting null or leaving the whole collection as raw strings. The message omits the
+  submitted value. See
   [Collection parameter shapes](#collection-parameter-shapes) for the absence/default/read-only contract.
 - A value that fails conversion raises `ParamConversionException` (400). A declared type with no
   resolvable converter raises `ParamConverterNotFoundException` (500) — a wiring gap that startup
@@ -806,10 +808,8 @@ does not — a path segment is always single-valued.
 - **Read-only.** An injected collection is unmodifiable; mutation throws `UnsupportedOperationException`.
   This includes the native `@FormParam List<FileUpload>` / `List<EntityPart>` targets and the unannotated
   aggregates. Arrays stay mutable — no read-only array wrapper exists.
-- **Input policies** run per element at the position a scalar parameter of that source would use: for
-  `@FormParam` the raw submitted string is canonicalized/sanitized **before** conversion; for
-  `@QueryParam`, `@HeaderParam`, and `@CookieParam` the **converted** element is processed, and only
-  while it is still a `String`.
+- **Input policies** run on the raw submitted string before conversion, for every source and for
+  each collection element. `@DefaultValue` stays off the policy chain.
 - **Ordering** is whatever the transport reported for repeated values — neither Vert.x nor Jakarta REST
   guarantees one, and the framework makes none.
 - **Case sensitivity follows the transport.** `@HeaderParam`/`@CookieParam` names match
