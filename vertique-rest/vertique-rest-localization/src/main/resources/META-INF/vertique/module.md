@@ -5,10 +5,10 @@ SPDX-License-Identifier: EUPL-1.2
 
 # REST Localization Module
 
-> **Status:** Beta
+> **Status:** Stable
 > **Package:** `dev.vertique.rest.localization`
 > **Artifact:** `vertique-rest-localization`
-> **Depends on:** core, rest-core, localization
+> **Depends on:** core, rest-core, localization, context
 
 Provides inbound REST locale negotiation. At the start of every request the module walks an ordered set of `LocaleSource` implementations, picks the first that returns a resolved locale, and binds a `LocalizationContext` into `ContextHolder`. Handler code reads the result via `ContextHolder`; there is no parallel RoutingContext-data accessor.
 
@@ -126,7 +126,10 @@ public class AcceptLanguageLocaleSource implements LocaleSource {
 | Malformed or unsupported value | Defer + WARN throttled once per `LocaleResolutionException.Reason` |
 | Valid supported locale | `ResolvedLocale.of(locale, "rest-accept-language")` |
 
-The WARN throttle uses a lock-free `AtomicInteger` bitmask keyed by `LocaleResolutionException.Reason` ordinal, scoped to the AppComponent lifetime. This means at most one WARN per reason value per JVM process startup, preventing log flooding on repeated bad headers.
+The WARN throttle uses `WarningThrottle` from `vertique-context` (a lock-free string-keyed set on
+the `@Singleton` bean). The built-in source keys on `LocaleResolutionException.Reason#name()`, so
+at most one WARN per reason per process lifetime; `RequestLocaleInterceptor` keys on the throwing
+source's class name. Either way, repeated bad headers do not flood the log.
 
 #### Invariants & Gotchas
 
@@ -236,6 +239,7 @@ The `examples/vertique-example-localization` example shows this pattern end-to-e
 - `dev.vertique:vertique-core` — `ContextHolder`, `ContextHolder.Scope`, common exceptions
 - `dev.vertique:vertique-rest-core` — `RequestInterceptor`, `RequestContextLifecycle`
 - `dev.vertique:vertique-localization` — `LocalizationModule`, `LocalizationContext`, `LocalizationConfig`, `LocaleResolver`, `LocaleResolutionException`
+- `dev.vertique:vertique-context` — `WarningThrottle` used by the built-in source and interceptor
 - `com.google.dagger:dagger`
 - `jakarta.inject:jakarta.inject-api`
 - `io.vertx:vertx-web` (RoutingContext)

@@ -5,12 +5,24 @@ SPDX-License-Identifier: EUPL-1.2
 
 # DB Test Module
 
-> **Status:** Beta
+> **Status:** Stable
 > **Package:** `dev.vertique.db.test`
 > **Artifact:** `vertique-db-test`
 > **Depends on:** `dev.vertique:vertique-db-core`, `dev.vertique:vertique-db-flyway` (optional)
 
 Test utilities for database integration tests using Testcontainers. Provides a fluent container API, Flyway migration support, and a JUnit 5 extension for auto-start/stop lifecycle management. Add as a `test` scope dependency only.
+
+---
+
+## When To Use It
+
+Add `vertique-db-test` as a **test-scoped** dependency in modules or applications that need a
+PostgreSQL Testcontainers fixture for integration tests. Prefer the no-arg `PostgresContainer`
+(shared-server mode) for ordinary repository and Flyway ITs; use the image-string constructor only
+when a test needs a dedicated container, a non-default image, or custom credentials.
+
+Pair with `vertique-db-flyway` on the test classpath when calling `withMigration()`. Do not use this
+artifact on a production/runtime classpath.
 
 ---
 
