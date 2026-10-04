@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Rate Limit Codegen
 
-> **Status:** Alpha
+> **Status:** Stable
 > **Package:** `dev.vertique.codegen.ratelimit`
 > **Artifact:** `vertique-codegen-rate-limit`
 > **Depends on:** `vertique-rate-limit-aop`, `vertique-codegen-core`
@@ -36,10 +36,10 @@ and always returns `false` from `process()`. It checks:
   resolve to a supported scalar type (`String`, `Character`, `Boolean`, a numeric
   primitive or wrapper, `BigInteger`, `BigDecimal`, `UUID`, an enum type, or a
   `java.time` scalar).
-- **Proxyability preconditions** — the declaring class must be public and non-final
+- **Proxyability preconditions** — the declaring type must be a public, non-final class
   with exactly one `@Inject` constructor, and the annotated method must be an
-  instance method that can be overridden (not final, private, static, or abstract) —
-  the same rules and error-wording style as `vertique-codegen-cache`.
+  instance method that can be overridden (not final, private, static, or abstract).
+  Diagnostics are prefixed `rate-limited methods ...`.
 
 A blank path, an invalid identifier, an unresolved parameter or accessor, excessive
 segment depth, or an unsupported terminal type each produce a distinct compile-time
@@ -47,9 +47,37 @@ diagnostic naming the offending path, for example: *"rate-limit key property pat
 are limited to eight segments including the root parameter"* and *"rate-limited
 methods require exactly one @Inject constructor"*.
 
+### `@RateLimited` on an interface method
+
+`@RateLimited` on an interface method is a **compile error**. An interface is not a class
+with an `@Inject` constructor, so the declaration fails the proxyability preconditions above
+(*"rate-limited methods require exactly one @Inject constructor"*), and an abstract interface
+method additionally fails *"rate-limited methods must be instance methods that can be
+overridden"*. Move the annotation to the implementing class's method.
+
+This differs deliberately from the generic AOP processor (`vertique-codegen-aop`), which
+silently ignores aspect triggers placed on interface methods for proxy generation. This
+processor does not follow that behavior: the misplacement is rejected at build time
+rather than ignored.
+
 The generic AOP processor must be present on the same annotation-processor path for
 a validated `@RateLimited` declaration to actually produce a proxy and method
 metadata; this artifact validates only.
+
+## Key Classes
+
+### `RateLimitAnnotationProcessor`
+
+`AbstractProcessor` registered via `META-INF/services/javax.annotation.processing.Processor`.
+
+```
+@SupportedAnnotationTypes("dev.vertique.ratelimit.aop.RateLimited")
+@SupportedSourceVersion(SourceVersion.RELEASE_21)
+```
+
+Validates every `@RateLimited` method as described under Core Concepts. `process()` always
+returns `false`, so other processors still see the annotation, and the processor generates no
+sources.
 
 ## Verification
 
