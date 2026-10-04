@@ -88,8 +88,7 @@ class ParamConversionDefaultMapperTest {
         assertEquals(500, detail.status());
         assertEquals("Internal Server Error", detail.detail());
         assertFalse(
-                detail.detail().contains("java.util.UUID"),
-                "client body must not leak the unresolved target type FQN");
+                detail.detail().contains("java.util.UUID"), "client body must not leak the unresolved target type FQN");
         assertFalse(detail.detail().contains("'id'"), "client body must not leak the parameter name");
         // Diagnostic detail stays on the exception for server-side logging.
         assertTrue(ex.getMessage().contains("java.util.UUID"));
