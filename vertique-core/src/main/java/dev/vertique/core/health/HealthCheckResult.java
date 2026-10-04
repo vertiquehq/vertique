@@ -20,18 +20,20 @@ import java.util.Objects;
  *   <li>{@link #down(Map)} — unhealthy, with data</li>
  * </ul>
  *
- * @param status the health status
+ * @param status the health status; never {@code null}
  * @param data optional diagnostic key-value pairs (may be empty, never null)
  */
 public record HealthCheckResult(HealthStatus status, Map<String, Object> data) {
 
     /**
-     * Creates a result with a guaranteed non-null, unmodifiable data map.
+     * Creates a result with a guaranteed non-null status and unmodifiable data map.
      *
-     * @param status the health status
+     * @param status the health status; must not be {@code null}
      * @param data optional diagnostic data (null treated as empty)
+     * @throws NullPointerException if {@code status} is {@code null}
      */
     public HealthCheckResult {
+        Objects.requireNonNull(status, "status");
         data = data == null ? Map.of() : Map.copyOf(data);
     }
 
