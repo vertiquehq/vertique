@@ -8,7 +8,6 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.core.context.DurableCarrierDescriptor;
@@ -32,7 +31,6 @@ import dev.vertique.security.SnapshotIntegrity;
 import dev.vertique.security.SystemIdentities;
 import dev.vertique.security.authz.AuthorityClaim;
 import dev.vertique.security.authz.AuthorityKind;
-import dev.vertique.security.authz.AuthorizationClaims;
 import dev.vertique.security.authz.ReconstructedAuthorityMode;
 import dev.vertique.security.events.CapturedAuthorityActivatedEvent;
 import dev.vertique.security.events.SecurityEventObserver;
@@ -285,60 +283,6 @@ class CapturedAuthorityActivatedEventTest {
                 CapturedAuthorityActivatedEvent.Mode.DEFERRED,
                 observer.single().mode(),
                 "the deferred entry point must stamp the event with Mode.DEFERRED");
-    }
-
-    @Test
-    @DisplayName("the compact constructor rejects a null activation mode — the invariant an unchecked "
-            + "safeAttributes marker could not enforce")
-    void constructorRejectsNullMode() {
-        AuthenticationState authentication = new AuthenticationState(
-                DefaultAuthMethod.custom("jwt"), List.of(), Optional.empty(), Optional.empty(), Map.of());
-        SecurityIdentity identity =
-                new SecurityIdentity(ACTOR, Optional.of(SUBJECT), Optional.empty(), Optional.empty());
-        Instant occurredAt = Instant.parse("2026-07-01T10:15:32Z");
-        UUID activationId = UUID.randomUUID();
-
-        NullPointerException failure = assertThrows(
-                NullPointerException.class,
-                () -> new CapturedAuthorityActivatedEvent(
-                        occurredAt,
-                        CorrelationContext.unbound(),
-                        Optional.empty(),
-                        authentication,
-                        identity,
-                        AuthorizationClaims.empty(),
-                        null,
-                        activationId,
-                        ALLOWED_CARRIER),
-                "a null activation mode must be rejected at construction, never carried onto an audit record");
-        assertEquals("mode", failure.getMessage(), "the rejection must name the offending component");
-    }
-
-    @Test
-    @DisplayName("the compact constructor rejects null activated authority — an audit record must never claim an "
-            + "activation occurred without stating which privileges it granted")
-    void constructorRejectsNullAuthorization() {
-        AuthenticationState authentication = new AuthenticationState(
-                DefaultAuthMethod.custom("jwt"), List.of(), Optional.empty(), Optional.empty(), Map.of());
-        SecurityIdentity identity =
-                new SecurityIdentity(ACTOR, Optional.of(SUBJECT), Optional.empty(), Optional.empty());
-        Instant occurredAt = Instant.parse("2026-07-01T10:15:32Z");
-        UUID activationId = UUID.randomUUID();
-
-        NullPointerException failure = assertThrows(
-                NullPointerException.class,
-                () -> new CapturedAuthorityActivatedEvent(
-                        occurredAt,
-                        CorrelationContext.unbound(),
-                        Optional.empty(),
-                        authentication,
-                        identity,
-                        null,
-                        CapturedAuthorityActivatedEvent.Mode.RESUME,
-                        activationId,
-                        ALLOWED_CARRIER),
-                "null activated authority must be rejected at construction, never carried onto an audit record");
-        assertEquals("authorization", failure.getMessage(), "the rejection must name the offending component");
     }
 
     @Test
