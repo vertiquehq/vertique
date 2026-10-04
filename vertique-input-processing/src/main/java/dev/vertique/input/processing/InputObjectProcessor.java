@@ -97,6 +97,25 @@ public interface InputObjectProcessor {
     }
 
     /**
+     * Returns the element class of a collection or array type using the same rules as the reflective
+     * walker, or {@code null} when no element schema is determinable.
+     *
+     * <p>Exists for transports and codecs that must resolve a collection body's element without
+     * reimplementing the {@code Collection<E>} supertype walk — including shapes Jackson's
+     * {@code TypeFactory} leaves unbound, such as an owner-bound inner class
+     * ({@code Outer<Dto>.Inner} where {@code Inner extends ArrayList<T>}). The element is {@code E}
+     * in the type's {@code Collection<E>} binding, not a type argument read off the declared type by
+     * position — the same rule the reflective walker applies to every collection field and body.
+     *
+     * @param type the collection or array type; may be {@code null}
+     * @return the element class, or {@code null} when no element schema is determinable
+     */
+    @Nullable
+    static Class<?> collectionElementType(@Nullable Type type) {
+        return TypeClassifier.elementType(type);
+    }
+
+    /**
      * Hands {@code resolver} every owner type this processor may pass to
      * {@link InputFieldNameResolver#logicalName} while processing {@code declaredType}, so no
      * projection is composed on the request path.

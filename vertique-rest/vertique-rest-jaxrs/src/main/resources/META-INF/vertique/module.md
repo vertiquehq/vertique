@@ -696,7 +696,15 @@ Both SPIs are declared in `dev.vertique:vertique-rest-core`; the implementations
 | `TextRequestBodyDecoder` | 1000 | `text/*` | `String` |
 | `BinaryRequestBodyDecoder` | 1000 | `application/octet-stream` | `Buffer`, `byte[]` |
 | `FormUrlencodedRequestBodyDecoder` | 1000 | `application/x-www-form-urlencoded` | any POJO (not `String`, `Buffer`, `byte[]`, `JsonObject`) |
-| `JsonRequestBodyDecoder` | 1100 (fallback) | absent, or containing `"json"` | `JsonObject` → raw; `String` → raw; other → `JsonObject.mapTo(targetType)` |
+| `JsonRequestBodyDecoder` | 1100 (fallback) | absent, or containing `"json"` | `JsonObject` → raw; `String` → raw; collection/array → typed elements (see note); other → `JsonObject.mapTo(targetType)` |
+
+Collection and array JSON bodies resolve their element type through Jackson's `TypeFactory`. When
+Jackson leaves an owner-bound inner class unbound (`Outer<Dto>.Inner` where `Inner extends ArrayList<T>`
+— content type `Object`, empty bindings), the decoder asks `InputObjectProcessor.collectionElementType`
+(the same `Collection<E>` rule as the reflective walker) and rebuilds the `JavaType` with
+`TypeFactory.constructCollectionType` on `ArrayList`/`LinkedHashSet`. Prefer a top-level `List`/`Set`
+or a static collection subtype as the body parameter type; a non-static inner collection cannot be
+instantiated without an enclosing instance, so materialization uses those concrete containers.
 
 | `ResponseBodyEncoder` | Priority | Handles |
 |---|---|---|

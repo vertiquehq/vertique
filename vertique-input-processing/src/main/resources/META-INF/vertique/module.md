@@ -106,6 +106,8 @@ static InputObjectProcessor createDefault(
 
 static boolean declaresPolicies(Type targetType);
 
+static Class<?> collectionElementType(Type type);
+
 Object processInput(
         Object input,
         Type targetType,
@@ -127,6 +129,8 @@ Memoization is not mutual exclusion: threads racing on a cold class may each run
 `targetType` may be anything that reduces to a class: a class, a parameterized type, a bounded wildcard or type variable, an `Optional` of any of those, or an array of them. A type that reduces to no class at all — a `GenericArrayType` such as `List<Inner>[]`, or a foreign `Type` implementation — cannot be processed: the call throws `IllegalStateException` when `policies` is non-empty, because the caller declared processing that provably cannot run, and returns `input` unchanged when `policies` is empty.
 
 `declaresPolicies(Type)` answers whether the type graph reachable from `targetType` declares any canonicalizer or sanitizer chain, without an engine instance. It exists for the composition decision a transport makes at startup: the engine binding is optional, so a transport that mounts a route whose body type declares `@Canonicalize` or `@Sanitize` while nothing is bound would otherwise serve requests with none of the declared processing running. The walk is breadth-first with a visited set, so it terminates on any type graph, and it reports only *declared chains* — a `@SkipCanonicalization` / `@SkipSanitization` declares nothing to run and is not a policy. The [coverage limits](#coverage-limits) below apply to it in full, for the same reason they apply to the engine: nothing reachable only through a runtime value is visible to a walk over declared types. Its link set is deliberately **narrower** than the set of types the engine can key metadata against at runtime — it skips `String` and every type `isDescendableObject` rejects, and for a collection field it follows the element type instead of the container. That is correct for the question it answers (*does anything declare a policy?*) and is why it is **not** the walk that decides which projections to precompute; see `precomputeFieldNameResolution` below. It is a startup-time query that builds and discards its own cache, retaining no `Class` past the call.
+
+`collectionElementType(Type)` returns the element class of a collection or array type under the same `Collection<E>` supertype-binding rule the reflective walker uses, or `null` when no element schema is determinable. Transports and codecs call it when they must resolve an element without reimplementing that walk — for example when Jackson's `TypeFactory` leaves an owner-bound inner class (`Outer<Dto>.Inner` where `Inner extends ArrayList<T>`) with an `Object` content type. It is the public face of the rule in [Core Concepts](#core-concepts); a raw collection, a nested container element, or an `Object`/`Optional` element still yields `null`.
 
 `precomputeFieldNameResolution(Type, InputFieldNameResolver)` hands the resolver every owner type this engine may pass to `InputFieldNameResolver.logicalName` while processing the given declared type, so no projection is composed on the request path. A transport calls it once per body or message type at registration, when an engine is bound.
 
