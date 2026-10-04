@@ -110,12 +110,18 @@ public interface RequestInterceptor extends OrderedExtension {
      * {@link SerializedBody} should be modified here. Use {@link #transformResponse} to
      * modify the response before serialization.
      *
+     * <p>{@code body} is {@code null} when the response has no entity — for example a
+     * {@code 204 No Content}, or any resource method that returns a status with no body. Callers
+     * such as {@code DefaultResponseSerializer} pass {@code null} on that path; implementors must
+     * treat it as a bodyless response rather than assuming a sealed {@link SerializedBody} subtype.
+     *
      * <p>Exceptions thrown by this callback are caught, logged, and swallowed; they do not affect the
      * enclosing operation.
      *
      * @param rc       the Vert.x {@link RoutingContext}
      * @param response the JAX-RS {@link Response} that produced the body
-     * @param body     the serialized body about to be written to the wire
+     * @param body     the serialized body about to be written to the wire, or {@code null} when the
+     *                 response has no entity
      */
     default void onSerialize(RoutingContext rc, Response response, SerializedBody body) {}
 
