@@ -28,6 +28,7 @@ import java.lang.reflect.Method;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
@@ -107,6 +108,9 @@ class RestClientRequestFactoryDefaultValueTest {
 
     // --- Shared Vert.x fixture for the dispatcher-side parity assertion ---
 
+    /** Bound for the single Vert.x close this class awaits. */
+    private static final long AWAIT_SECONDS = 5;
+
     private static Vertx vertx;
 
     /**
@@ -124,16 +128,19 @@ class RestClientRequestFactoryDefaultValueTest {
     }
 
     /**
-     * Closes the shared {@link WebClient} before {@link Vertx#close()} tears down the event loops it
-     * runs on. {@link WebClient#close()} is {@code void}, so it cannot be chained — the
-     * {@link Vertx} close that follows carries the completion.
+     * Closes the shared {@link WebClient} before awaiting {@link Vertx#close()}.
+     *
+     * <p>{@link WebClient#close()} is {@code void}, so it cannot be joined; the owned {@link Vertx}
+     * close that follows is awaited so the event loops finish shutting down before the JVM moves on.
      */
     @AfterAll
-    static void stopVertx() {
+    static void stopVertx() throws Exception {
         if (webClient != null) {
             webClient.close();
         }
-        vertx.close();
+        if (vertx != null) {
+            vertx.close().toCompletionStage().toCompletableFuture().get(AWAIT_SECONDS, TimeUnit.SECONDS);
+        }
     }
 
     private static DefaultRestClientDispatcher newDispatcher(ParamConversionResolver resolver) {
