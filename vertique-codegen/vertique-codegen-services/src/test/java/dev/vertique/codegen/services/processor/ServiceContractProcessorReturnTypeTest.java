@@ -80,6 +80,76 @@ class ServiceContractProcessorReturnTypeTest {
                 .assertErrorMessage("Future");
     }
 
+    @Test
+    @DisplayName("@OneWay method returning Future<String> → FAILED requiring Future<Void>")
+    void oneWayMethodReturningNonVoid_fails() {
+        JavaFileObject contract = SourceFiles.inline("com.example.NotifyService", """
+                package com.example;
+                import dev.vertique.services.OneWay;
+                import dev.vertique.services.ServiceContract;
+                import dev.vertique.services.ServiceOperation;
+                import io.vertx.core.Future;
+                @ServiceContract(value = "notify-service", namespace = "integration")
+                public interface NotifyService {
+                    @OneWay
+                    @ServiceOperation("send")
+                    Future<String> send(String message);
+                }
+                """);
+
+        JavaFileObject impl = SourceFiles.inline("com.example.NotifyServiceImpl", """
+                package com.example;
+                import io.vertx.core.Future;
+                import jakarta.inject.Inject;
+                public class NotifyServiceImpl implements NotifyService {
+                    @Inject NotifyServiceImpl() {}
+                    @Override public Future<String> send(String message) {
+                        return Future.succeededFuture(message);
+                    }
+                }
+                """);
+
+        JavaFileObject[] sources = concat(FRAMEWORK_SOURCES, contract, impl);
+
+        ProcessorTestHarness.run(new ServiceContractProcessor(), sources)
+                .assertFailed()
+                .assertErrorMessage("@OneWay methods must return Future<Void>");
+    }
+
+    @Test
+    @DisplayName("@OneWay method returning Future<Void> → succeeds")
+    void oneWayMethodReturningVoid_succeeds() {
+        JavaFileObject contract = SourceFiles.inline("com.example.NotifyService", """
+                package com.example;
+                import dev.vertique.services.OneWay;
+                import dev.vertique.services.ServiceContract;
+                import dev.vertique.services.ServiceOperation;
+                import io.vertx.core.Future;
+                @ServiceContract(value = "notify-service", namespace = "integration")
+                public interface NotifyService {
+                    @OneWay
+                    @ServiceOperation("send")
+                    Future<Void> send(String message);
+                }
+                """);
+
+        JavaFileObject impl = SourceFiles.inline("com.example.NotifyServiceImpl", """
+                package com.example;
+                import io.vertx.core.Future;
+                import jakarta.inject.Inject;
+                public class NotifyServiceImpl implements NotifyService {
+                    @Inject NotifyServiceImpl() {}
+                    @Override public Future<Void> send(String message) {
+                        return Future.succeededFuture();
+                    }
+                }
+                """);
+
+        JavaFileObject[] sources = concat(FRAMEWORK_SOURCES, contract, impl);
+
+        ProcessorTestHarness.run(new ServiceContractProcessor(), sources).assertSuccess();
+    }
+
     // --- Helper ---
 
     private static JavaFileObject[] concat(JavaFileObject[] base, JavaFileObject... extra) {

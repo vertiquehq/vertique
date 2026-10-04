@@ -15,15 +15,18 @@ import javax.lang.model.type.TypeKind;
 import javax.lang.model.type.TypeMirror;
 
 /**
- * Validates that every contract method returns a parameterized {@code Future<T>}.
+ * Validates that every contract method returns a parameterized {@code Future<T>}, and that
+ * {@code @OneWay} methods return {@code Future<Void>} specifically.
  *
  * <p>Mirrors {@code dev.vertique.services.ReturnTypeResolver} (runtime check
- * {@code ReturnTypeResolver.java:26-63}).
+ * {@code ReturnTypeResolver.java:26-63}) and the {@code @OneWay} rule in
+ * {@code ServiceRegistrar} (runtime check that rejects {@code Future<T>} for {@code T != Void}).
  *
  * <p>Rejects:
  * <ul>
  *   <li>Non-{@code Future} return types (void, primitives, raw types).</li>
  *   <li>Raw (unparameterized) {@code Future}.</li>
+ *   <li>{@code @OneWay} methods whose type argument is not {@code Void}.</li>
  * </ul>
  */
 public final class ReturnTypeValidator {
@@ -54,6 +57,7 @@ public final class ReturnTypeValidator {
             return true;
         }
         TypeMirror futureErasure = ctx.types().erasure(futureElement.asType());
+        TypeElement voidElement = ctx.elements().getTypeElement("java.lang.Void");
 
         boolean valid = true;
         for (var op : operations) {
@@ -93,6 +97,21 @@ public final class ReturnTypeValidator {
                                 contractType.getSimpleName(),
                                 method.getSimpleName());
                 valid = false;
+                continue;
+            }
+
+            if (op.oneWay() && voidElement != null) {
+                TypeMirror typeArg = declared.getTypeArguments().get(0);
+                if (!ctx.types().isSameType(typeArg, voidElement.asType())) {
+                    ctx.diagnostics()
+                            .error(
+                                    method,
+                                    "@OneWay methods must return Future<Void>, found Future<%s> on %s.%s()",
+                                    typeArg,
+                                    contractType.getSimpleName(),
+                                    method.getSimpleName());
+                    valid = false;
+                }
             }
         }
         return valid;
