@@ -46,6 +46,9 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * the status code is correct — which every scrape assertion below, reading the rendered exposition
  * text, would surface as a content mismatch unrelated to the endpoint (issues #167, #330). A
  * {@link WebClient} aggregates the body into its {@code HttpResponse} before completing the send.
+ * Each real-HTTP case also closes its {@code HttpServer} via {@code Future.eventually} before the
+ * extension tears down {@link Vertx}, so the listener is not left for reclaim-only cleanup
+ * (issue #333).
  *
  * <p>No case here answers 3xx, so {@link WebClient}'s follow-redirects default (a raw
  * {@code HttpClient} follows none) never engages.
@@ -227,7 +230,8 @@ class PrometheusScrapeEndpointTest {
                                             "body must contain test_counter_total, got: " + bodyStr);
                                 });
                                 return resp;
-                            }))
+                            })
+                            .eventually(() -> server.close()))
                     .onSuccess(ignored -> ctx.completeNow())
                     .onFailure(ctx::failNow);
         }
@@ -263,7 +267,8 @@ class PrometheusScrapeEndpointTest {
                                             "OpenMetrics body must end with '# EOF', body=" + bodyStr);
                                 });
                                 return resp;
-                            }))
+                            })
+                            .eventually(() -> server.close()))
                     .onSuccess(ignored -> ctx.completeNow())
                     .onFailure(ctx::failNow);
         }
@@ -300,7 +305,8 @@ class PrometheusScrapeEndpointTest {
                                             "exception details must not be in the response body");
                                 });
                                 return resp;
-                            }))
+                            })
+                            .eventually(() -> server.close()))
                     .onSuccess(ignored -> ctx.completeNow())
                     .onFailure(ctx::failNow);
         }
@@ -348,7 +354,8 @@ class PrometheusScrapeEndpointTest {
                                     assertEquals("metrics unavailable", body.toString(), "body must be constant");
                                 });
                                 return resp;
-                            }))
+                            })
+                            .eventually(() -> server.close()))
                     .onSuccess(ignored -> ctx.completeNow())
                     .onFailure(ctx::failNow);
         }
