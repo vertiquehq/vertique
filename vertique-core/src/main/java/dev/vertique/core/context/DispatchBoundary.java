@@ -44,7 +44,7 @@ public final class DispatchBoundary {
 
     /**
      * Workflow producer-side merge for native workflow carriers (branch tokens). Used by
-     * {@code PgWorkflowEngine} at branch creation to capture ambient durable context into
+     * {@code ForkJoinCoordinator} at branch creation to capture ambient durable context into
      * {@code workflow_branch_tokens.metadata}, and by {@code BranchTransitionEngine.runBranchDispatch}
      * and the branch-recovery sweep to bind the persisted metadata back via {@code bindFrom}
      * before invoking the branch advance.

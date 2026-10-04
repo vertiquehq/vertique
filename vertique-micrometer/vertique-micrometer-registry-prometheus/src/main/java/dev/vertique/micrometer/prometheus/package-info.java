@@ -7,11 +7,11 @@
  * <p>This package provides:
  *
  * <ul>
- *   <li><b>Prometheus registry backend</b> — {@code PrometheusRegistryProvider} implements
- *       {@code MicrometerRegistryProvider} to contribute a
+ *   <li><b>Prometheus registry backend</b> — {@link PrometheusMeterRegistryProvider} implements
+ *       {@link dev.vertique.micrometer.MeterRegistryProvider} to contribute a
  *       {@link io.micrometer.prometheusmetrics.PrometheusMeterRegistry} to the composite
  *       registry assembled by the core module.</li>
- *   <li><b>Management scrape endpoint</b> — a {@code PrometheusScrapeHandler} registered on
+ *   <li><b>Management scrape endpoint</b> — {@link PrometheusScrapeEndpoint} registered on
  *       the management HTTP server (via {@link dev.vertique.management}) that exposes
  *       {@code /metrics} for Prometheus scraping.</li>
  * </ul>

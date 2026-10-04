@@ -10,20 +10,18 @@ import java.util.UUID;
 /**
  * Payload for the {@link WorkflowTimerFireJob} delayed job.
  *
- * <p>Carries the minimal identifiers required to fire a workflow timer: the stable timer UUID
- * (used to lock the {@code workflow_timers} row), the workflow instance ID (used to invoke
- * {@link dev.vertique.workflow.ops.TransactionalTimerCallbacks} on the engine), and optional
- * branch-identity fields for routing the timer callback back to the owning branch when the timer
- * was created inside a fan-out branch.
+ * <p>Carries the identifiers required to fire a workflow timer: the stable timer UUID (used to
+ * lock the {@code workflow_timers} row) and the workflow instance ID (cross-checked against the
+ * locked row before dispatching engine callbacks).
  *
- * <p>{@code timerId} and {@code workflowId} are required. {@code branchTokenId} is set only for
- * branch-owned timers; absent from single-path timer queue entries (Jackson tolerates absent
- * fields and deserialises them as {@code null}, preserving backward compatibility).
+ * <p>{@code timerId} and {@code workflowId} are required. {@code branchTokenId} is retained for
+ * wire compatibility with previously enqueued jobs but is unused: production construction sites
+ * always pass {@code null}, and {@link WorkflowTimerFireExecutor} resolves branch identity from
+ * the locked {@link dev.vertique.workflow.timer.TimerRecord} rather than from this field.
  *
  * @param timerId       the stable UUID identifying the timer row in {@code workflow_timers}
  * @param workflowId    the workflow instance that owns this timer
- * @param branchTokenId the branch token id when the timer was created inside a fan-out branch;
- *     null for single-path (non-branch) timers
+ * @param branchTokenId unused; always {@code null} on newly enqueued jobs
  */
 public record TimerFirePayload(
         UUID timerId,

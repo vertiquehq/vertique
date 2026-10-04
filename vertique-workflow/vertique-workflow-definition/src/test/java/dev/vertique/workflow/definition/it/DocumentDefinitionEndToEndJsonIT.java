@@ -78,7 +78,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
  * End-to-end integration test proving a JSON-defined workflow document executes through the same
- * {@link dev.vertique.workflow.postgresql.engine.PgWorkflowEngine} as code-first definitions, and
+ * {@link dev.vertique.workflow.engine.WorkflowEngineHandle} as code-first definitions, and
  * that JSON-compiled {@code planHash} values are valid (AC #10, AC #12).
  *
  * <p>This IT is fully independent from {@link DocumentDefinitionEndToEndYamlIT}:

@@ -2,10 +2,12 @@
 // SPDX-License-Identifier: EUPL-1.2
 
 /**
- * Task-domain types for the human-task wait node (cycle 3).
+ * Task-domain SPI types for the human-task wait node (cycle 3).
  *
- * <p>Contains the {@link dev.vertique.workflow.tasks.TaskStore} SPI, status enumerations,
- * runtime-literal assignment ({@link dev.vertique.workflow.tasks.TaskAssignment}), query filter,
- * result records, and the immutable {@link dev.vertique.workflow.tasks.TaskRecord} snapshot.
+ * <p>Contains the {@link TaskStore} SPI, status enumerations, runtime-literal assignment
+ * ({@link TaskAssignment}), query filter, result records, and the immutable {@link TaskRecord}
+ * snapshot. Action APIs ({@code TaskService} / transactional variants) live in
+ * {@code vertique-workflow-tasks} in this same package name — a classpath split package; only this
+ * module ships {@code package-info.java} (JPMS redesign deferred).
  */
 package dev.vertique.workflow.tasks;

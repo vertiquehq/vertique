@@ -125,9 +125,9 @@ public final class PgWorkflowRetentionRepository extends PgSqlRepository {
     /**
      * Purges up to {@code limit} previously archived workflow instances whose
      * {@code archived_at <= cutoff}, optionally filtered by {@code definitionId}. CASCADE FKs on
-     * {@code workflow_history}, {@code workflow_tasks}, {@code workflow_timers}, and
-     * {@code workflow_dedup} drop dependent rows automatically. Opens its own transaction; rolls
-     * back on SQL failure.
+     * {@code workflow_history}, {@code workflow_tasks}, {@code workflow_timers},
+     * {@code workflow_dedup}, {@code workflow_branch_tokens}, and {@code workflow_join_states}
+     * drop dependent rows automatically. Opens its own transaction; rolls back on SQL failure.
      *
      * @param cutoff       inclusive upper bound on {@code archived_at}
      * @param definitionId optional definition-id filter; null means all definitions

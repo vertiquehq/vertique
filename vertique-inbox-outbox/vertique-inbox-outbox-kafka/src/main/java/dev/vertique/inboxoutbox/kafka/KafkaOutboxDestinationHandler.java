@@ -204,19 +204,6 @@ public class KafkaOutboxDestinationHandler implements OutboxDestinationHandler {
     // --- Internal ---
 
     /**
-     * Fires all registered {@link KafkaOutboxCaptureHook} instances in sorted order, isolating
-     * each hook in a {@code try/catch} so exceptions never propagate to callers and never change
-     * the publish result.
-     *
-     * @param topic    the Kafka topic targeted by the outbox entry
-     * @param key      the Kafka record key, or {@code null}
-     * @param value    a no-copy {@link PayloadSource} over the serialized bytes, or {@code null}
-     *                 when serialization failed before any bytes were produced
-     * @param headers  the application headers from the outbox envelope
-     * @param result   the classified publish outcome
-     * @param entryId  the string form of the outbox entry surrogate key
-     */
-    /**
      * Builds the headers handed to capture hooks: the application headers MERGED with the persisted
      * durable context (the same projection {@code sendForOutbox} applies before publishing), so the
      * audit record's correlation matches the message that was (or would have been) published rather
@@ -236,6 +223,19 @@ public class KafkaOutboxDestinationHandler implements OutboxDestinationHandler {
         }
     }
 
+    /**
+     * Fires all registered {@link KafkaOutboxCaptureHook} instances in sorted order, isolating
+     * each hook in a {@code try/catch} so exceptions never propagate to callers and never change
+     * the publish result.
+     *
+     * @param topic    the Kafka topic targeted by the outbox entry
+     * @param key      the Kafka record key, or {@code null}
+     * @param value    a no-copy {@link PayloadSource} over the serialized bytes, or {@code null}
+     *                 when serialization failed before any bytes were produced
+     * @param headers  the merged egress headers from {@link #hookHeaders(OutboxEnvelope)}
+     * @param result   the classified publish outcome
+     * @param entryId  the string form of the outbox entry surrogate key
+     */
     private void fireHooks(
             String topic,
             String key,

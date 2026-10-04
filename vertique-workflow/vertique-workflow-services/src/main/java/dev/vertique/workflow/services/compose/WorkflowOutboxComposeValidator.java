@@ -42,7 +42,7 @@ import java.util.Set;
  * {@link dev.vertique.workflow.services.recorder.OutboxSideEffectRecorder} takes this validator
  * as a required dependency, so Dagger must construct the validator before the recorder. Because
  * the recorder participates in the {@code @WorkflowRecorders} multibinding that
- * {@code RecorderRouter} consumes inside {@code PgWorkflowEngine}, requesting the engine forces
+ * {@code RecorderRouter} consumes inside {@code WorkflowEngine}, requesting the engine forces
  * the entire chain — including this validator — to be built. Validation runs at Dagger graph
  * construction time; if any check fails the constructor throws
  * {@link IllegalStateException} with a message identifying the offending definition, step, and

@@ -35,7 +35,7 @@ import java.util.Set;
  *       enforced through the recorder constructor: {@link OutboxSideEffectRecorder} takes the
  *       validator as a required dependency, so Dagger must construct the validator before the
  *       recorder. The recorder participates in the {@code @WorkflowRecorders} multibinding
- *       consumed by {@code RecorderRouter} → {@code PgWorkflowEngine}, and Dagger constructs that
+ *       consumed by {@code RecorderRouter} → {@code WorkflowEngine}, and Dagger constructs that
  *       chain when the engine is requested. Applications still MAY expose
  *       {@code WorkflowOutboxComposeValidator workflowComposeValidator()} on their
  *       {@code AppComponent} for an even earlier fail-fast (e.g., before deploying any verticles),

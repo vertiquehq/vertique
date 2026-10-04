@@ -55,7 +55,7 @@ public final class OutboxSideEffectRecorder implements WorkflowSideEffectRecorde
      * required constructor parameter purely for its construction side-effect: when Dagger
      * instantiates this recorder (which happens eagerly because it participates in the
      * {@code @WorkflowRecorders Set<WorkflowSideEffectRecorder<SqlClient>>} multibinding consumed
-     * by {@code RecorderRouter} → {@code PgWorkflowEngine}), it must first instantiate the
+     * by {@code RecorderRouter} → {@code WorkflowEngine}), it must first instantiate the
      * validator, which performs the SERVICE-handler-presence + plan-target-shape checks. Apps can
      * no longer silently downgrade those checks to runtime by forgetting to expose an explicit
      * {@code workflowComposeValidator()} accessor on their {@code AppComponent}; the recorder

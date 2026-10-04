@@ -19,7 +19,7 @@ import java.time.Clock;
  * <p>Provides:
  * <ul>
  *   <li>The management verticle deployment descriptor.</li>
- *   <li>{@link Clock} — used by {@link dev.vertique.workflow.postgresql.engine.PgWorkflowEngine}
+ *   <li>{@link Clock} — used by {@link dev.vertique.workflow.engine.WorkflowEngineHandle}
  *       for timestamping history entries.</li>
  * </ul>
  *

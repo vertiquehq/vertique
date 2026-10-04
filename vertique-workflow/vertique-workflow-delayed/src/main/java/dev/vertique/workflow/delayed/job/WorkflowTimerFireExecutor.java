@@ -84,7 +84,7 @@ public final class WorkflowTimerFireExecutor implements DelayedJobExecutor<Timer
      *   ServiceContractRegistry
      *     ← DelayedJobContractContributor(@DelayedJobs Set&lt;Object&gt;)
      *     ← WorkflowTimerFireExecutor
-     *     ← TransactionalTimerCallbacks / TransactionalTaskCallbacks (= PgWorkflowEngine)
+     *     ← TransactionalTimerCallbacks / TransactionalTaskCallbacks (= WorkflowEngine)
      *     ← RecorderRouter(@WorkflowRecorders)
      *     ← OutboxSideEffectRecorder
      *     ← ServiceTargetResolver

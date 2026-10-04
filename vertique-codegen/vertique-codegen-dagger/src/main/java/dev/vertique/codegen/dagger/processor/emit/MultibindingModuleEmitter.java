@@ -19,16 +19,17 @@ import javax.lang.model.SourceVersion;
 /**
  * Emitter that generates a Dagger {@code @Module} containing
  * {@code @Provides @IntoSet @Qualifier Object methodName(ImplType impl)} methods for the
- * multibinding qualifiers ({@code @Services}, {@code @JaxRsResources}, {@code @KafkaConsumers},
+ * {@code @IntoSet} multibinding qualifiers owned by this processor ({@code @KafkaConsumers},
  * {@code @DelayedJobs}).
  *
- * <p>The produced type for all four multibinding qualifiers is {@code Object} — this matches the
- * {@code Set<Object>} multibindings declared by the framework modules
- * ({@code DispatchModule}, {@code RestCoreModule}, {@code KafkaModule},
- * {@code DelayedJobModule}).
+ * <p>The produced type for both multibinding qualifiers is {@code Object} — this matches the
+ * {@code Set<Object>} multibindings declared by {@code KafkaModule} and {@code DelayedJobModule}.
+ * Service-contract and JAX-RS resource bindings are owned by other codegen modules
+ * ({@code vertique-codegen-services}, {@code vertique-codegen-jaxrs}); {@link Qualifier#REST_CLIENTS}
+ * uses a direct {@code @Singleton} binding via {@code RestClientModuleEmitter}, not this emitter.
  *
- * <p>Method names are derived via {@link Identifiers#generatedMethodName} to ensure they are
- * valid Java identifiers and do not collide with Java keywords.
+ * <p>Method names are derived by decapitalizing the implementation simple name and appending
+ * {@code "Binding"}, with a trailing underscore when the result would be a Java keyword.
  */
 public final class MultibindingModuleEmitter {
 

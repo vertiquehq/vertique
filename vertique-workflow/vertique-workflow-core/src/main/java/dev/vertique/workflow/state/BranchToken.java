@@ -21,7 +21,7 @@ import java.util.UUID;
  *
  * <p>The {@link #metadata()} field carries durable propagation context in wire-format key/value
  * pairs (FR-CTX-178). It is captured at branch-creation time by
- * {@link dev.vertique.workflow.postgresql.engine.PgWorkflowEngine} via
+ * {@code ForkJoinCoordinator} in {@code vertique-workflow-engine} via
  * {@code DurableContextPropagator.mergeCaptured(..., WORKFLOW)} and persisted in
  * {@code workflow_branch_tokens.metadata JSONB}. Before each service-dispatch or recovery
  * advance, the branch metadata is restored via {@code DurableContextPropagator.bindFrom(...)}.
