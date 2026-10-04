@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Inbox/Outbox PostgreSQL Module
 
-> **Status:** Beta
+> **Status:** Stable
 > **Package:** `dev.vertique.inboxoutbox.postgresql`
 > **Artifact:** `vertique-inbox-outbox-postgresql`
 > **Depends on:** `dev.vertique:vertique-inbox-outbox-core`, `dev.vertique:vertique-db-postgresql`,
@@ -187,7 +187,9 @@ these types.
 
 ## Database Schema
 
-The Flyway migration creates two tables and associated indexes.
+The Flyway migration creates two tables and associated indexes. **`V1__create_inbox_outbox_tables.sql`
+is frozen from this Stable release.** Every later schema change ships as `V2+`, never as an edit to
+`V1`.
 
 **`outbox` table** — relay rows:
 

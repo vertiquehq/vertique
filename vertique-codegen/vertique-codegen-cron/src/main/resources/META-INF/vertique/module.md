@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Codegen Cron Build-Time Validation Module
 
-> **Status:** Beta
+> **Status:** Stable
 > **Package:** `dev.vertique.codegen.cron.processor`
 > **Artifact:** `vertique-codegen-cron`
 > **Depends on:** `vertique-codegen-core` (compile), `vertique-job-cron` (compile — the processor invokes `new CronExpression(expr)` at processor-runtime to reuse the runtime parser)
