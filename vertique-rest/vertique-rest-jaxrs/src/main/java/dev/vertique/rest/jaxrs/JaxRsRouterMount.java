@@ -532,6 +532,13 @@ public class JaxRsRouterMount implements RouterMount {
         ObjectMapper noMethodDefaultMapper = resolveNoMethodDefaultMapper(
                 factory.jaxRsConfig, factory.jsonConfig, factory.jsonMapperProfileRegistry);
 
+        // Observe (failure, statusCode) before the terminal handler so a Vert.x fail(int) that rewrites
+        // status without clearing failure cannot stash a stale 4xx over an older cause. See
+        // VertxFailureStatus.observeFailurePair.
+        apiRouter.route().failureHandler(ctx -> {
+            VertxFailureStatus.observeFailurePair(ctx);
+            ctx.next();
+        });
         apiRouter
                 .route()
                 .failureHandler(ctx -> handleFailure(ctx, errorPipeline, responsePipeline, noMethodDefaultMapper));
@@ -664,6 +671,13 @@ public class JaxRsRouterMount implements RouterMount {
      * {@code RoutingContext.fail(Throwable)} synthesises a 500 that is indistinguishable from a deliberate
      * {@code fail(500, cause)}, and a sub-400 status is not a client-error decision at all.
      *
+     * <p>The status stashed for that branch is the one that accompanied the cause on the same
+     * {@code fail(...)} call. Vert.x {@code fail(int)} rewrites {@code statusCode} without clearing
+     * {@code failure}; {@link VertxFailureStatus#observeFailurePair} records the first-seen pair so a
+     * later status-only rewrite of a non-4xx observation cannot make this handler stash a 4xx over an
+     * older server-error cause. The observation is cleared when the failure is handed to mapping, so it
+     * cannot freeze a later cycle that reuses the same Throwable after {@code reroute()}.
+     *
      * <p>Before dispatching, the resolved no-matched-method error-body default mapper (FR-JSON-058) — when
      * non-{@code null} and not already stashed by an upstream per-method handler — is placed under
      * {@link dev.vertique.rest.jaxrs.request.BoundRequest#KEY_RESOLVED_BODY_MAPPER} so the JSON body
@@ -736,12 +750,17 @@ public class JaxRsRouterMount implements RouterMount {
                 cause = new jakarta.ws.rs.WebApplicationException(
                         he.getPayload(), errorStatusOrServerError(he.getStatusCode()));
             }
-        } else if (ctx.statusCode() >= 400 && ctx.statusCode() < 500) {
+        } else {
             // ctx.fail(4xx, cause): the Vert.x layer made a deliberate client-error decision *and* handed
             // over a cause. Carry the status as the authoritative failure status, but leave the cause raw —
             // wrapping it would hide the original type from an application ExceptionMapper, which outranks
             // this status. 5xx is excluded because fail(Throwable) synthesises an indistinguishable 500.
-            ctx.data().put(VertxFailureStatus.KEY, ctx.statusCode());
+            // Prefer the status first observed alongside this failure when fail(int) rewrote statusCode
+            // without replacing the cause (VertxFailureStatus.observeFailurePair).
+            Integer clientError = VertxFailureStatus.clientErrorStatusForCause(ctx);
+            if (clientError != null) {
+                ctx.data().put(VertxFailureStatus.KEY, clientError);
+            }
         }
         dispatchError(ctx, cause, errorPipeline, responsePipeline);
     }

@@ -558,10 +558,11 @@ above.
 `ValidationProblemDetail.errors[]` and any RFC 9457 extension members — only `instance` carries over. Everything the superseded body held was written for a status that no
 longer applies, and on the `ctx.fail(4xx, cause)` path the detail is an arbitrary application
 exception's message that must not reach the client. A mapped response carrying a **non-`ProblemDetail`
-entity** is left exactly as the mapper authored it, body and `Content-Type` included, so only the
-status is reconciled. Register your own `ExceptionMapper` for the cause's type when a specific detail
-is required — it outranks the Vert.x status entirely. When the recorded status *agrees* with the mapped
-one nothing changes, so a 415 whose detail names the offending content type keeps it.
+entity** is fail-closed the same way: replaced with a fresh `ProblemDetail` for the winning status and
+`application/problem+json`, so a 500 diagnostic body cannot ride under an overriding 401. Register your
+own `ExceptionMapper` for the cause's type when a specific detail is required — it outranks the Vert.x
+status entirely. When the recorded status *agrees* with the mapped one nothing changes, so a 415 whose
+detail names the offending content type keeps it.
 
 **Headers when the body is rebuilt.** Rebuilding the body — by this override, or by the `instance`
 enrichment every `ProblemDetail` gets — drops the headers your mapper set that describe the *octets*
