@@ -313,6 +313,45 @@ class OpenApiSchemaCompositionTest {
         }
 
         /**
+         * Pins the runtime chain that {@code examples/vertique-example-sse/pom.xml} must produce
+         * after {@code vertiquehq/vertique-dev#395}: {@code FutureModelConverter} ahead of
+         * {@code SseModelConverter}.
+         *
+         * <p>The pom declares {@code Sse} then {@code Future} because {@link ModelConverters#addConverter}
+         * prepends. This test asserts the <em>resolved</em> order {@code [Future, Sse, ...]}, not the
+         * declaration order — those are not the same thing, which is the whole point of #395.
+         *
+         * <p>Uses a throwaway {@code new ModelConverters()} for the same isolation reasons as
+         * {@link #addConverter_prependsSoDeclaredOrderIsReversed()}.
+         */
+        @Test
+        @DisplayName("SSE example declaration (Sse then Future) yields runtime chain [Future, Sse]")
+        void sseExampleDeclaration_yieldsFutureBeforeSseInRuntimeChain() {
+            ModelConverters registry = new ModelConverters();
+            SseModelConverter sse = new SseModelConverter();
+            FutureModelConverter future = new FutureModelConverter();
+
+            // Declaration order in examples/vertique-example-sse/pom.xml after the #395 fix.
+            registry.addConverter(sse);
+            registry.addConverter(future);
+
+            List<ModelConverter> converters = registry.getConverters();
+
+            assertEquals(
+                    3,
+                    converters.size(),
+                    "a fresh ModelConverters seeds one ModelResolver, so two registrations must yield three"
+                            + " converters, but was: " + converters);
+            assertSame(
+                    future,
+                    converters.get(0),
+                    "FutureModelConverter must be at the chain head so it unwraps before SseModelConverter");
+            assertSame(sse, converters.get(1), "SseModelConverter must sit after Future unwrap in the runtime chain");
+            assertInstanceOf(
+                    ModelResolver.class, converters.get(2), "the seeded ModelResolver must remain at the chain tail");
+        }
+
+        /**
          * Pins the one type for which the prepend inversion is <em>not</em> benign:
          * {@code Future<BigDecimal>}.
          *
@@ -329,11 +368,12 @@ class OpenApiSchemaCompositionTest {
          * {@code number}.
          *
          * <p>This test records the observed behaviour; it does <strong>not</strong> assert desired
-         * behaviour. The {@code number} outcome is a consequence of the registration inversion
-         * raised in {@code vertiquehq/vertique-dev#395}, not a shape this module intends to emit —
-         * the declared pom order resolves the same type to the decimal-string schema, which
+         * behaviour. The {@code number} outcome is a consequence of the same {@code addConverter}
+         * prepend used by the hello-example declaration order, not a shape this module intends to
+         * emit — the declared pom order resolves the same type to the decimal-string schema, which
          * {@code BigDecimalModelConverterTest#bigDecimalInsideFuture_resolvedWhenChainedAfterFutureConverter}
-         * pins. If #395 is resolved, this test is expected to change with it.
+         * pins. The SSE-specific registration fix for {@code vertiquehq/vertique-dev#395} does not
+         * change this BigDecimal observation.
          *
          * <p>The consequence is <strong>latent</strong>: no production code currently returns a
          * {@code Future<BigDecimal>} — verified across {@code examples/} and

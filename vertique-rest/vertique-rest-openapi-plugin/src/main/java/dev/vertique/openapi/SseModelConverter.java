@@ -22,12 +22,15 @@ import java.util.Iterator;
  * attempting to describe the internal {@code SseEvent} structure.
  *
  * <p>Register this converter alongside {@link FutureModelConverter} in the
- * {@code swagger-maven-plugin} configuration:
+ * {@code swagger-maven-plugin} configuration. {@code ModelConverters#addConverter}
+ * prepends each registration, so list {@code SseModelConverter} <em>before</em>
+ * {@code FutureModelConverter} to get the runtime chain {@code [Future, Sse]}:
  *
  * <pre>{@code
  * <modelConverterClasses>
- *     <modelConverterClass>dev.vertique.openapi.FutureModelConverter</modelConverterClass>
+ *     <!-- Declared before Future: addConverter prepends, so Future ends up ahead at runtime. -->
  *     <modelConverterClass>dev.vertique.openapi.SseModelConverter</modelConverterClass>
+ *     <modelConverterClass>dev.vertique.openapi.FutureModelConverter</modelConverterClass>
  * </modelConverterClasses>
  * }</pre>
  *

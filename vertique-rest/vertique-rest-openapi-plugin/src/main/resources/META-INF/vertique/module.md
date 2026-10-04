@@ -73,12 +73,16 @@ public class SseModelConverter implements ModelConverter {
 - Resolves them to a `string` schema in the OpenAPI spec (SSE is a plain-text streaming format)
 - Prevents Swagger from trying to generate a JSON schema for the `ReadStream` wrapper
 
-**Configuration** — add alongside `FutureModelConverter` in the swagger-maven-plugin config:
+**Configuration** — add alongside `FutureModelConverter` in the swagger-maven-plugin config.
+`ModelConverters.addConverter` prepends each registration, so list `SseModelConverter`
+*before* `FutureModelConverter` to get the runtime chain `[Future, Sse]` (Future must
+unwrap first):
 
 ```xml
 <modelConverterClasses>
-    <modelConverterClass>dev.vertique.openapi.FutureModelConverter</modelConverterClass>
+    <!-- Declared before Future: addConverter prepends, so Future ends up ahead at runtime. -->
     <modelConverterClass>dev.vertique.openapi.SseModelConverter</modelConverterClass>
+    <modelConverterClass>dev.vertique.openapi.FutureModelConverter</modelConverterClass>
 </modelConverterClasses>
 ```
 
@@ -247,7 +251,7 @@ The plugin is configured in the application module's `pom.xml`:
 
 **Key configuration points:**
 - `resourcePackages`: The Java package(s) to scan for JAX-RS annotated classes
-- `modelConverterClasses`: Must include `dev.vertique.openapi.FutureModelConverter` (and `SseModelConverter` when SSE endpoints are present, `BigDecimalModelConverter` when the application uses the `vertique-strict` JSON profile, and `ScalarOptionalModelConverter` when any DTO exposes an `OptionalInt`/`OptionalLong`/`OptionalDouble` property). With more than one entry, prefer the nested `<modelConverterClass>` element form
+- `modelConverterClasses`: Must include `dev.vertique.openapi.FutureModelConverter` (and `SseModelConverter` when SSE endpoints are present — declare `Sse` before `Future` because `addConverter` prepends; `BigDecimalModelConverter` when the application uses the `vertique-strict` JSON profile, and `ScalarOptionalModelConverter` when any DTO exposes an `OptionalInt`/`OptionalLong`/`OptionalDouble` property). With more than one entry, prefer the nested `<modelConverterClass>` element form
 - `outputPath`: Set to `${project.build.directory}/classes` so the generated spec is on the runtime classpath
 - `outputFormat`: `JSONANDYAML` generates both `openapi.json` and `openapi.yaml`
 - `RequestParamsExtension` needs no entry here — it is picked up automatically via `ServiceLoader` once the `<dependency>` above is present
