@@ -172,6 +172,10 @@ public class JwtClaimsRejectionStatusIT {
                 result.statusCode(),
                 "a claims rejection is an authentication outcome and must reach the client as 401; body was "
                         + result.bodyText());
+        assertEquals(
+                "Bearer",
+                result.wwwAuthenticate(),
+                "a framework 401 must carry a WWW-Authenticate challenge (RFC 9110 §11.6.1)");
     }
 
     @Test
@@ -224,7 +228,10 @@ public class JwtClaimsRejectionStatusIT {
                 .putHeader("Authorization", "Bearer " + VALID_TOKEN)
                 .send()
                 .map(response -> new HttpResult(
-                        response.statusCode(), response.getHeader("Content-Type"), response.bodyAsString()))
+                        response.statusCode(),
+                        response.getHeader("Content-Type"),
+                        response.getHeader("WWW-Authenticate"),
+                        response.bodyAsString()))
                 .toCompletionStage()
                 .toCompletableFuture()
                 .get(ASYNC_TIMEOUT_SECONDS, TimeUnit.SECONDS);
@@ -238,11 +245,12 @@ public class JwtClaimsRejectionStatusIT {
      * client reported a zero-length buffer, and every assertion here reads a rendered problem
      * body, so an empty one is a failure to surface rather than a value to decode.
      *
-     * @param statusCode  the response status code
-     * @param contentType the raw {@code Content-Type} header, or {@code null} when absent
-     * @param body        the raw response body as text, or {@code null} when the response had none
+     * @param statusCode       the response status code
+     * @param contentType      the raw {@code Content-Type} header, or {@code null} when absent
+     * @param wwwAuthenticate  the raw {@code WWW-Authenticate} header, or {@code null} when absent
+     * @param body             the raw response body as text, or {@code null} when the response had none
      */
-    private record HttpResult(int statusCode, String contentType, String body) {
+    private record HttpResult(int statusCode, String contentType, String wwwAuthenticate, String body) {
 
         JsonObject problem() {
             return new JsonObject(body);

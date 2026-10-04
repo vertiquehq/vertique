@@ -22,7 +22,9 @@ import dev.vertique.security.events.SecurityEventObserver;
 import dev.vertique.security.runtime.events.SecurityEventEmitter;
 import dev.vertique.security.verification.JwksVerificationSource;
 import io.vertx.core.Future;
+import io.vertx.core.MultiMap;
 import io.vertx.core.http.HttpServerRequest;
+import io.vertx.core.http.HttpServerResponse;
 import io.vertx.ext.auth.User;
 import io.vertx.ext.auth.authentication.Credentials;
 import io.vertx.ext.auth.jwt.JWTAuth;
@@ -140,6 +142,14 @@ class JwtBearerSecuritySchemeHandlerTest {
         HttpServerRequest request = mock(HttpServerRequest.class);
         when(ctx.request()).thenReturn(request);
 
+        // Capture response headers so failure-path tests can assert WWW-Authenticate.
+        // BearerWwwAuthenticateChallenge appends via headers().add(...).
+        HttpServerResponse response = mock(HttpServerResponse.class);
+        MultiMap responseHeaders = MultiMap.caseInsensitiveMultiMap();
+        when(response.headers()).thenReturn(responseHeaders);
+        when(ctx.response()).thenReturn(response);
+        backingMap.put("__responseHeaders", responseHeaders);
+
         // Wire userContext() to return the ctx itself (which also implements UserContextInternal)
         UserContextInternal userContextInternal = (UserContextInternal) ctx;
         when(ctx.userContext()).thenReturn((UserContext) userContextInternal);
@@ -155,6 +165,10 @@ class JwtBearerSecuritySchemeHandlerTest {
         when(ctx.user()).thenAnswer(inv -> userRef.get());
 
         return ctx;
+    }
+
+    private static MultiMap responseHeaders(Map<String, Object> store) {
+        return (MultiMap) store.get("__responseHeaders");
     }
 
     /**
@@ -594,6 +608,27 @@ class JwtBearerSecuritySchemeHandlerTest {
             List<CredentialRejectedEvent> rejections = lastObserver.rejections;
             assertEquals(1, rejections.size(), "exactly one rejection event must be stashed");
             assertEquals("BEARER_MISSING", rejections.get(0).reasonCode(), "reasonCode must be BEARER_MISSING");
+            assertEquals(
+                    "Bearer realm=\"" + ISSUER + "\"",
+                    responseHeaders(store).get(BearerWwwAuthenticateChallenge.HEADER),
+                    "401 must carry a WWW-Authenticate challenge with the configured issuer as realm");
+        }
+
+        @Test
+        @DisplayName("Missing Authorization header with no configured issuer → WWW-Authenticate: Bearer")
+        void missingAuthorizationHeader_bareBearerChallengeWhenIssuerUnset() {
+            when(ctx.request().getHeader("Authorization")).thenReturn(null);
+            doAnswer(inv -> null).when(ctx).fail(anyInt());
+
+            JWTAuth mockAuth = mock(JWTAuth.class);
+            JwtBearerSecuritySchemeHandler handler =
+                    handlerWithMockAuth(mockAuth, JwtValidationConfig.builder().build());
+            handler.handle(ctx);
+
+            assertEquals(
+                    "Bearer",
+                    responseHeaders(store).get(BearerWwwAuthenticateChallenge.HEADER),
+                    "without a configured issuer the challenge is the bare Bearer scheme");
         }
 
         @Test

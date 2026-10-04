@@ -111,6 +111,8 @@ import java.util.stream.Collectors;
  *   <li>Calls {@link CredentialRejectionReporter#report} with a pre-auth
  *       {@link JwksVerificationSource} (issuer/JWKS URI from config; kid/alg empty since the JWT
  *       header is not available before verification completes).</li>
+ *   <li>Sets a {@code WWW-Authenticate} challenge ({@code Bearer}, with {@code realm} from
+ *       {@link JwtValidationConfig#issuer()} when configured) before failing the context.</li>
  *   <li>Delegates the original {@code ctx.fail(...)} to continue Vert.x error processing.</li>
  * </ol>
  *
@@ -296,10 +298,15 @@ public class JwtBearerSecuritySchemeHandler implements SecuritySchemeHandler, Ha
      *       matching the old {@code ctx.fail(new HttpException(...))}.</li>
      * </ul>
      *
+     * <p>Before failing, applies a {@code WWW-Authenticate} challenge so the single-scheme path
+     * matches RFC 9110 §11.6.1 (the Vert.x {@code AuthenticationHandlerImpl} path that would have
+     * called {@code setAuthenticateHeader} is bypassed by the direct {@code handle} implementation).
+     *
      * @param ctx   the current routing context
      * @param error the failure from {@code authenticate(...)} (always an {@link HttpException})
      */
-    private static void failContext(RoutingContext ctx, Throwable error) {
+    private void failContext(RoutingContext ctx, Throwable error) {
+        BearerWwwAuthenticateChallenge.apply(ctx, validationConfig);
         if (error instanceof HttpException httpEx && httpEx.getCause() == null) {
             // Missing / malformed header: the HttpException carries only status 401 and no cause.
             // Preserve the old ctx.fail(401) (bare int) shape exactly.
@@ -736,11 +743,10 @@ public class JwtBearerSecuritySchemeHandler implements SecuritySchemeHandler, Ha
      * member's {@link #postAuthentication(RoutingContext)}, which this wrapper overrides to append the
      * framework {@link AuthenticationEvidence} (stashed by {@code authenticate}) and then advance via
      * {@code ctx.next()} — without that override the OR path would never append evidence and the
-     * request would resolve to an anonymous framework identity. The {@code setAuthenticateHeader} and
-     * {@code performsRedirect} defaults from the internal interface are inherited unchanged: the JWT
-     * bearer scheme does not set a {@code WWW-Authenticate} challenge header today (the single-scheme
-     * route fails with a bare {@code ctx.fail(401)}), so the default {@code setAuthenticateHeader}
-     * returning {@code false} preserves that observable behavior.
+     * request would resolve to an anonymous framework identity. {@link #setAuthenticateHeader} is
+     * overridden so a {@link ChainAuthHandler} that finalizes a 401 (and the single-scheme
+     * {@link #failContext} path) both emit the same {@code WWW-Authenticate} challenge from
+     * {@link JwtValidationConfig}.
      */
     private final class DelegatingJwtAuthHandler implements JWTAuthHandler, AuthenticationHandlerInternal {
 
@@ -802,6 +808,18 @@ public class JwtBearerSecuritySchemeHandler implements SecuritySchemeHandler, Ha
         public void postAuthentication(RoutingContext ctx) {
             appendStashedEvidence(ctx, ctx.user());
             ctx.next();
+        }
+
+        /**
+         * Applies the JWT bearer {@code WWW-Authenticate} challenge when a
+         * {@link ChainAuthHandler} (or Vert.x's {@code processException}) finalizes a 401.
+         *
+         * @param context the routing context whose response receives the challenge
+         * @return {@code true} after the header is set
+         */
+        @Override
+        public boolean setAuthenticateHeader(RoutingContext context) {
+            return BearerWwwAuthenticateChallenge.apply(context, validationConfig);
         }
 
         @Override

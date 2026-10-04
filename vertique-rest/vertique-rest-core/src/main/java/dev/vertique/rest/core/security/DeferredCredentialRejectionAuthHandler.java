@@ -13,8 +13,8 @@ import java.util.Objects;
  * points and configuration this module documents and never names this type.
  *
  * <p>Authentication-handler wrapper that arms per-request deferral of credential-rejection events for an
- * OR route (multiple alternative {@code @SecurityRequirement}s composed as a Vert.x
- * {@code ChainAuthHandler.any()}).
+ * OR route (multiple alternative {@code @SecurityRequirement}s composed as an
+ * {@link AuthenticationOrChain}).
  *
  * <p><strong>Why this exists.</strong> On an OR route each failed alternative's scheme handler reports
  * a credential rejection synchronously, before the chain advances to the next alternative. Without
@@ -48,8 +48,8 @@ public final class DeferredCredentialRejectionAuthHandler implements Authenticat
     /**
      * Creates a wrapper around the given OR-chain authentication handler.
      *
-     * @param delegate the OR chain ({@code ChainAuthHandler.any()}) to delegate authentication to;
-     *                 must not be {@code null}
+     * @param delegate the OR chain ({@link AuthenticationOrChain#any()}) to delegate authentication
+     *                 to; must not be {@code null}
      */
     public DeferredCredentialRejectionAuthHandler(AuthenticationHandler delegate) {
         this.delegate = Objects.requireNonNull(delegate, "delegate");

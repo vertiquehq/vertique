@@ -21,7 +21,9 @@ import dev.vertique.security.events.SecurityEventObserver;
 import dev.vertique.security.runtime.events.SecurityEventEmitter;
 import io.vertx.core.Future;
 import io.vertx.core.Handler;
+import io.vertx.core.MultiMap;
 import io.vertx.core.http.HttpServerRequest;
+import io.vertx.core.http.HttpServerResponse;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.auth.User;
 import io.vertx.ext.web.RoutingContext;
@@ -110,6 +112,13 @@ class JwtClaimsValidatorContributorTest {
 
         HttpServerRequest request = mock(HttpServerRequest.class);
         when(ctx.request()).thenReturn(request);
+
+        HttpServerResponse response = mock(HttpServerResponse.class);
+        // BearerWwwAuthenticateChallenge appends via headers().add(...).
+        MultiMap responseHeaders = MultiMap.caseInsensitiveMultiMap();
+        when(response.headers()).thenReturn(responseHeaders);
+        when(ctx.response()).thenReturn(response);
+        backingMap.put("__responseHeaders", responseHeaders);
 
         UserContextInternal userContextInternal = (UserContextInternal) ctx;
         when(ctx.userContext()).thenReturn((UserContext) userContextInternal);
@@ -387,6 +396,11 @@ class JwtClaimsValidatorContributorTest {
 
             // Assert (b): request still fails with 401
             assertTrue(failCalled.get(), "ctx.fail(401, e) must be called after emitting the rejection event");
+            MultiMap headers = (MultiMap) store.get("__responseHeaders");
+            assertEquals(
+                    "Bearer realm=\"" + ISSUER + "\"",
+                    headers.get(BearerWwwAuthenticateChallenge.HEADER),
+                    "claims-validator 401 must carry the same WWW-Authenticate challenge as token-level 401s");
         }
 
         @Test
