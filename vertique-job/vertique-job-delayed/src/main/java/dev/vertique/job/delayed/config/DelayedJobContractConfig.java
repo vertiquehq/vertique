@@ -10,6 +10,8 @@ import io.vertx.core.json.JsonObject;
 import jakarta.annotation.Nullable;
 
 /**
+ * INTERNAL framework seam — not an application contract and outside the maturity promise.
+ *
  * Typed per-contract configuration read from {@code delayedJob.contracts.{name}}.
  *
  * <p>This is the typed, validated per-contract record assembled at the {@code DelayedJobModule}

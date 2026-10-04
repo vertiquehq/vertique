@@ -10,6 +10,8 @@ import java.util.function.BiConsumer;
 import lombok.extern.slf4j.Slf4j;
 
 /**
+ * INTERNAL framework seam — not an application contract and outside the maturity promise.
+ *
  * Recovers missed cron job fires at startup based on each job's {@link MisfirePolicy}.
  *
  * <p>Only {@link ExecutionMode#SINGLE_INSTANCE} jobs with a non-{@link MisfirePolicy#SKIP} policy

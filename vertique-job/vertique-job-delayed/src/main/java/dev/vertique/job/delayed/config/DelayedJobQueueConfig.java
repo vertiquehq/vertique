@@ -12,6 +12,8 @@ import lombok.experimental.Accessors;
 import lombok.extern.jackson.Jacksonized;
 
 /**
+ * INTERNAL framework seam — not an application contract and outside the maturity promise.
+ *
  * Per-queue configuration for the delayed job poller, deserialized from
  * {@code delayedJob.queues.<queueName>} in the application config.
  *

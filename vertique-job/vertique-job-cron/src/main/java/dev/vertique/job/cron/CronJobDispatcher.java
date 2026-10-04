@@ -38,6 +38,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import lombok.extern.slf4j.Slf4j;
 
 /**
+ * INTERNAL framework seam — not an application contract and outside the maturity promise.
+ *
  * Dispatches cron job executions to handlers via the event bus, managing per-execution resources
  * (cancel consumers, progress-flush timers, timeout timers) and completion handling.
  *

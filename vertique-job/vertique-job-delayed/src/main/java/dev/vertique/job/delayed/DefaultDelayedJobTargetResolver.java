@@ -14,6 +14,8 @@ import java.util.Set;
 import lombok.extern.slf4j.Slf4j;
 
 /**
+ * INTERNAL framework seam — not an application contract and outside the maturity promise.
+ *
  * Default implementation of {@link DelayedJobTargetResolver}.
  *
  * <p>Built at startup from the {@link ServiceContractRegistry} (entries with

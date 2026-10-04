@@ -46,6 +46,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 import lombok.extern.slf4j.Slf4j;
 
 /**
+ * INTERNAL framework seam — not an application contract and outside the maturity promise.
+ *
  * Vert.x verticle that polls a single named queue for {@link JobState#ENQUEUED} jobs and
  * dispatches each claimed execution via fire-and-report through the event bus.
  *

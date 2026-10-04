@@ -14,6 +14,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 import lombok.extern.slf4j.Slf4j;
 
 /**
+ * INTERNAL framework seam — not an application contract and outside the maturity promise.
+ *
  * Manages global concurrency slots and per-job overlap policies for cron job execution.
  *
  * <p>Two levels of control are provided:

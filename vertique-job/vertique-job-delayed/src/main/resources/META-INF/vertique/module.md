@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Job Delayed Module
 
-> **Status:** Beta
+> **Status:** Stable
 > **Package:** `dev.vertique.job.delayed`
 > **Artifact:** `vertique-job-delayed`
 > **Depends on:** job-core, job-postgresql, services, deploy, core, context, db-core, logging, config-core
@@ -452,6 +452,14 @@ public class ManualWiringModule {
 ```
 
 ---
+
+### Framework seams
+
+`DelayedJobPoller`, `DelayedJobClientProxy`, `DelayedJobContractContributor`,
+`DefaultDelayedJobTargetResolver`, and the `…delayed.config` Java records are framework seams.
+Their Javadoc marks them INTERNAL. The configuration *keys* above remain part of this module's
+Stable contract; applications configure those keys and call the enqueue / contract surfaces, and
+never construct these types.
 
 ## Dependencies
 
