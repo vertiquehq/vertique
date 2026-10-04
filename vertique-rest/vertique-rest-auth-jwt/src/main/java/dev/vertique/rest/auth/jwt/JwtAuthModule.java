@@ -11,6 +11,7 @@ import dev.vertique.core.VertxConfig;
 import dev.vertique.core.config.ConfigParser;
 import dev.vertique.core.config.JsonConfigPaths;
 import dev.vertique.core.exception.ConfigurationException;
+import dev.vertique.correlation.CorrelationContextMutator;
 import dev.vertique.rest.core.router.OperationHandlerContributor;
 import dev.vertique.rest.core.router.OperationRegistrationContext;
 import dev.vertique.rest.core.security.RouteAuthHandler;
@@ -295,6 +296,21 @@ public abstract class JwtAuthModule {
                 .<OperationHandlerContributor>map(
                         v -> new JwtClaimsValidatorContributor(v, rejectionReporter, effective.validation()))
                 .orElseGet(JwtAuthModule::noOpContributor);
+    }
+
+    /**
+     * Contributes JWT claim → {@code CorrelationContext.session()} enrichment after authentication.
+     *
+     * @param effective the effective JWT auth config (provides session-correlation settings)
+     * @param mutator   the live correlation mutator
+     * @return the contributor; never {@code null}
+     */
+    @Provides
+    @IntoSet
+    static OperationHandlerContributor jwtCorrelationSessionContributor(
+            @JwtEffective JwtAuthConfig effective, CorrelationContextMutator mutator) {
+        return new JwtCorrelationSessionContributor(
+                new JwtCorrelationSessionEnricher(effective.sessionCorrelation()), mutator);
     }
 
     /**

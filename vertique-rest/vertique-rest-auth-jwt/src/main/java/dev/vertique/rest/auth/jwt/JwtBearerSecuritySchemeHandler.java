@@ -670,9 +670,10 @@ public class JwtBearerSecuritySchemeHandler implements SecuritySchemeHandler, Ha
         // notAfter — exp claim as Unix epoch seconds, converted to Instant
         Optional<Instant> notAfter = Optional.ofNullable(claims.getLong("exp")).map(Instant::ofEpochSecond);
 
-        // safeAttributes — sub, client_id, azp claims; no raw token material included.
-        // client_id and azp are non-secret OAuth claims needed by DefaultSecurityIdentityResolver
-        // to build a ClientRef and classify client-credentials JWTs as SERVICE principals.
+        // safeAttributes — non-secret claims for identity resolution and correlation consumers;
+        // no raw token material included. client_id/azp feed DefaultSecurityIdentityResolver;
+        // sid/jti are surfaced for FR-COR-100 consumers (JwtCorrelationSessionContributor reads the
+        // same validated principal map used here, not this map, for the live setSession path).
         Map<String, Object> safeAttributes = new HashMap<>();
         String sub = claims.getString("sub");
         if (sub != null) {
@@ -685,6 +686,14 @@ public class JwtBearerSecuritySchemeHandler implements SecuritySchemeHandler, Ha
         String azp = claims.getString("azp");
         if (azp != null) {
             safeAttributes.put("azp", azp);
+        }
+        String sid = claims.getString("sid");
+        if (sid != null) {
+            safeAttributes.put("sid", sid);
+        }
+        String jti = claims.getString("jti");
+        if (jti != null) {
+            safeAttributes.put("jti", jti);
         }
 
         return new AuthenticationEvidence(
