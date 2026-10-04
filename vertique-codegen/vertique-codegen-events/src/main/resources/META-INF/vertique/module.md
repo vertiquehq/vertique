@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Codegen Events Module
 
-> **Status:** Alpha
+> **Status:** Stable
 > **Package:** `dev.vertique.codegen.events`
 > **Artifact:** `vertique-codegen-events`
 > **Depends on:** `vertique-codegen-core` (compile), `vertique-events` (compile)

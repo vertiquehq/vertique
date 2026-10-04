@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Vertique Codegen Resilience
 
-> **Status:** Alpha
+> **Status:** Stable
 > **Package:** `dev.vertique.codegen.resilience`
 > **Artifact:** `vertique-codegen-resilience`
 > **Depends on:** `vertique-resilience`, `vertique-codegen-core`
@@ -21,6 +21,27 @@ Put this artifact on the annotation-processor path of an application that uses
 the resilience annotations, alongside `vertique-codegen-aop`. Applications
 declare `vertique-resilience` separately at runtime. The `vertique-codegen-all`
 facade includes this processor transitively.
+
+## Key Classes
+
+### `ResilienceAnnotationProcessor`
+
+`AbstractProcessor` registered via `META-INF/services/javax.annotation.processing.Processor`.
+
+```
+@SupportedAnnotationTypes({
+    "dev.vertique.resilience.annotation.Resilient",
+    "dev.vertique.resilience.annotation.Retry",
+    "dev.vertique.resilience.annotation.Timeout",
+    "dev.vertique.resilience.annotation.CircuitBreaker",
+    "dev.vertique.resilience.annotation.Bulkhead"
+})
+@SupportedSourceVersion(SourceVersion.RELEASE_21)
+```
+
+Validates the resilience annotation family and generates no sources. Always
+returns `false` from `process()` so Dagger, Lombok, `vertique-codegen-aop`, and
+other processors still see the same elements. See [Validation Rules](#validation-rules).
 
 ## Validation Rules
 
