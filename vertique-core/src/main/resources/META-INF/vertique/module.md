@@ -611,9 +611,10 @@ static HealthCheck databaseHealth(DatabaseHealthCheck check) {
 ```
 
 `HealthCheckResult` is a `record (HealthStatus status, Map<String, Object> data)` with the factories
-`up()`, `up(Map)`, `down()`, `down(String error)`, `down(Throwable cause)`, and `down(Map)`; `data`
-is copied and never `null`. `down(String)` treats a `null` error as "no message" and yields empty
-data rather than throwing, so `down(throwable.getMessage())` is safe for a message-less exception.
+`up()`, `up(Map)`, `down()`, `down(String error)`, `down(Throwable cause)`, and `down(Map)`; `status`
+must not be `null`, and `data` is copied and never `null`. `down(String)` treats a `null` error as
+"no message" and yields empty data rather than throwing, so `down(throwable.getMessage())` is safe
+for a message-less exception.
 `down(Throwable)` puts the throwable's message under the `error` key, falling back to its fully
 qualified class name when the message is `null` — and equally when `getMessage()` itself throws an
 exception, so a failure that cannot describe itself still yields a `DOWN` result instead of a

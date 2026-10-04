@@ -169,6 +169,12 @@ class HealthCheckResultTest {
     class DataHandling {
 
         @Test
+        @DisplayName("null status is rejected")
+        void nullStatusRejected() {
+            assertThrows(NullPointerException.class, () -> new HealthCheckResult(null, Map.of()));
+        }
+
+        @Test
         @DisplayName("null data is normalized to empty map")
         void nullDataNormalized() {
             HealthCheckResult result = new HealthCheckResult(HealthStatus.UP, null);
