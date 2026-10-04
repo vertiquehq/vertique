@@ -169,6 +169,32 @@ class ErrorPipelineTest {
         }
 
         @Test
+        @DisplayName("The hint is consumed even when RestExceptionMapper.translate throws")
+        void hintIsConsumedWhenTranslatorThrows() {
+            // Consumption is hoisted before translate so a throwing FailureTranslator cannot leave the
+            // hint in RoutingContext.data() for a later mapping on the same context to pick up.
+            DefaultExceptionMapper defaults = new DefaultExceptionMapper()
+                    .on(Throwable.class, ex -> Response.status(500)
+                            .entity(ProblemDetail.of(500, "Internal Server Error"))
+                            .type("application/problem+json")
+                            .build());
+            ExceptionMapperRegistry registry = new ExceptionMapperRegistry(defaults, Set.of());
+            RestExceptionMapper throwingMapper = new RestExceptionMapper().on(RuntimeException.class, ex -> {
+                throw new IllegalStateException("translator boom");
+            });
+            ErrorPipeline customPipeline = new ErrorPipeline(List.of(), List.of(), throwingMapper, registry);
+
+            ctxData.put(VertxFailureStatus.KEY, 401);
+
+            Future<Response> future = customPipeline.mapToResponse(ctx, new RuntimeException("auth failed"));
+            assertTrue(future.failed(), "a throwing translator must fail the mapping future");
+            assertInstanceOf(IllegalStateException.class, future.cause());
+            assertEquals("translator boom", future.cause().getMessage());
+            assertFalse(
+                    ctxData.containsKey(VertxFailureStatus.KEY), "the hint must be removed even when translate throws");
+        }
+
+        @Test
         @DisplayName("Fallback DOES activate when the user mapper is an ExceptionMapper<Throwable> catch-all")
         void fallbackOverridesUserThrowableCatchAllMapper() {
             // Asymmetry with noFallbackWhenUserMapperMatches: a user mapper registered for a type more
