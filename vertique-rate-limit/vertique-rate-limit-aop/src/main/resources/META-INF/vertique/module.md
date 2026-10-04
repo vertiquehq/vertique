@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Rate Limit AOP
 
-> **Status:** Alpha
+> **Status:** Stable
 > **Package:** `dev.vertique.ratelimit.aop`
 > **Artifact:** `vertique-rate-limit-aop`
 > **Depends on:** `vertique-rate-limit-core`, `vertique-aop`, `vertique-core`
@@ -41,7 +41,8 @@ public Future<SearchResult> search(String tenantId, String userId, Query query) 
 algorithm, mode, revision, and failure behavior never appear in the annotation, only
 in the named policy's configuration. `key()` is an ordered array of selector paths —
 never a template or format string — following the shared
-[selector-path grammar](../../../../../../../vertique-aop/src/main/resources/META-INF/vertique/module.md#selector-path-grammar).
+selector-path grammar documented in the `Selector-path grammar` section of the
+`dev.vertique:vertique-aop` module reference.
 `subject` (default `EFFECTIVE_PRINCIPAL`) and `anonymous` (default
 `SHARED_BUCKET`) control identity-scoped keying (see `vertique-rate-limit-core`'s
 `RateLimitSubjectResolver`/`RateLimitAdapterSupport`); `cost` (default `1`) is the
@@ -81,6 +82,22 @@ Dagger-resolved proxy are intercepted.
 `policy()` (required), `key()` (default `{}`), `subject()` (default
 `RateLimitSubject.EFFECTIVE_PRINCIPAL`), `anonymous()` (default
 `AnonymousRateLimitPolicy.SHARED_BUCKET`), `cost()` (default `1`).
+
+The annotation is `@Target(ElementType.METHOD)` only and carries
+`@Aspect(ordering = 300)`. Place it on methods of Dagger-provided classes. Interface-method
+weaving is not supported: consistent with the `vertique-codegen-aop` rule that only trigger
+methods enclosed by an `ElementKind.CLASS` are collected for proxy generation, a
+`@RateLimited` on an interface method (for example a service-contract or REST-client
+interface method) is ignored — no proxy is generated for it and no admission occurs. Put the
+annotation on the implementing class's method.
+
+### RateLimitAopModule
+
+Public abstract Dagger `@Module`. Its single `@Binds` method binds `AspectProvider<RateLimited>`
+to the package-private `RateLimitedAspect`, which the generated proxy resolves to build the
+interceptor for each `@RateLimited` method. `RateLimitedAspect` itself is not application API.
+Install the module in the application component alongside `RateLimitCoreModule`, which supplies
+the `RateLimiters` runtime the aspect depends on.
 
 ## Module Dagger Bindings
 

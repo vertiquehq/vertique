@@ -5,10 +5,11 @@ SPDX-License-Identifier: EUPL-1.2
 
 # OpenTelemetry Rate Limit Module
 
-> **Status:** Beta
+> **Status:** Stable
 > **Package:** `dev.vertique.opentelemetry.ratelimit`
 > **Artifact:** `vertique-opentelemetry-rate-limit`
-> **Depends on:** `vertique-rate-limit-core`, `vertique-opentelemetry-core`
+> **Depends on:** `vertique-rate-limit-core`, opentelemetry-api (library)
+> **Runtime pairing:** `vertique-opentelemetry-core` (provides the `Tracer` binding)
 
 `vertique-opentelemetry-rate-limit` is the optional OpenTelemetry adapter for the
 provider-neutral rate-limiting runtime. It contributes exactly one
@@ -20,6 +21,10 @@ contributes no observer and emits no telemetry.
 Install `OpenTelemetryRateLimitModule` alongside `OpenTelemetryModule` and the
 application's rate-limit modules when a completed rate-limit decision should be
 represented as its own span.
+
+This artifact has no compile-time dependency on `vertique-opentelemetry-core`. The observer
+injects an OpenTelemetry API `Tracer`, which the application's component must supply —
+in practice by installing `OpenTelemetryModule` from `vertique-opentelemetry-core`.
 
 ## Core Concepts
 
@@ -33,6 +38,10 @@ behavior, not an error. No key, identity, or IP value is ever set as a span
 attribute. The adapter is subject to the same redaction constraint as the events it
 consumes; `policy` is the only per-request-shape attribute it emits.
 
+When `tracing.enabled=false`, `OpenTelemetryModule` binds `OpenTelemetry.noop()`, so the
+`Tracer` this observer receives is a no-op: the adapter stays installed but inert, starts no
+recording spans, and exports nothing. This module owns no configuration keys of its own.
+
 ## Spans
 
 | Attribute | Source |
@@ -45,6 +54,15 @@ consumes; `policy` is the only per-request-shape attribute it emits.
 `duration_ms` is a truncating integer conversion (nanoseconds divided into whole
 milliseconds), not a rounded or fractional value — a sub-millisecond backend
 latency records as `0`.
+
+## Key Classes
+
+### OpenTelemetryRateLimitModule
+
+Dagger `@Module` (public, abstract, not instantiable). It includes the generated
+`GeneratedRegistrationsModule`, which contributes one `RateLimitObserver` into
+`Set<RateLimitObserver>`. Install it in the application component alongside a module that
+binds `Tracer`; it is the module's only application-facing type.
 
 ## Module Dagger Bindings
 
@@ -63,4 +81,5 @@ latency records as `0`.
 | Artifact | Purpose |
 |---|---|
 | `vertique-rate-limit-core` | Provides the `RateLimitObserver` SPI and `RateLimitDecisionCompleted` events |
-| `vertique-opentelemetry-core` | Provides `Tracer` and tracing configuration |
+| opentelemetry-api | `Tracer`, `Span`, and `StatusCode` APIs |
+| `vertique-opentelemetry-core` *(runtime pairing, not a compile dependency)* | Supplies the `Tracer` binding via `OpenTelemetryModule` and the `tracing.enabled` switch; with `tracing.enabled=false` the `Tracer` is a no-op |

@@ -253,14 +253,6 @@ The `LOCAL` backend entry itself is a framework-private Bucket4j implementation
 reached only through this map; it is Dagger composition surface, not something an
 application implements or replaces.
 
-## Framework Seams (INTERNAL)
-
-`LocalRateLimitRegistry`, `LocalBucket4jRateLimitBackend`, `RateLimitStorageIdentity`, and
-`RateLimiterLifecycle` are engine and runtime internals behind `RateLimiters`; their Javadoc marks
-them INTERNAL. They are outside this module's compatibility promise and may change in any release:
-applications obtain LOCAL admission through `RateLimiters`, never by constructing or referencing
-these types.
-
 ## Verification
 
 Run the rate-limit family proof with:

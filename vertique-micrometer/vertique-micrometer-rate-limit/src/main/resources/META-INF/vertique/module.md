@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Micrometer Rate Limit Module
 
-> **Status:** Beta
+> **Status:** Stable
 > **Package:** `dev.vertique.micrometer.ratelimit`
 > **Artifact:** `vertique-micrometer-rate-limit`
 > **Depends on:** `vertique-rate-limit-core`, `vertique-micrometer-core`, micrometer-core
@@ -55,8 +55,28 @@ of the decision timer's count. **No gauges** are registered: isolated runtime sc
 make an aggregate gauge misleading, the same rationale `vertique-micrometer-resilience`
 documents for its own meters.
 
-Only validated policy/outcome/mode/failure-code values become labels — key, identity,
-IP, exception, and message are never labels.
+Only the policy name, outcome, mode, and failure code become labels — key, identity,
+IP, exception, and message are never labels. This module performs no label validation
+of its own: `policy`, `outcome`, `mode`, and `code` are taken from the event as-is, and
+the only bound on their cardinality is the shared cardinality guard installed by
+`vertique-micrometer-core` (see its `module.md`).
+
+## Configuration
+
+This module owns no configuration keys. It follows the global `metrics.enabled` switch
+through the optional `MetricsConfig`: when `MicrometerModule` supplies a `MetricsConfig`,
+`metrics.enabled=false` silences the adapter; when no `MetricsConfig` binding exists the
+optional is empty and the adapter is enabled.
+
+## Key Classes
+
+### MicrometerRateLimitModule
+
+Dagger `@Module` (public, abstract, not instantiable). It includes the generated
+`GeneratedRegistrationsModule`, which contributes one `RateLimitObserver` into
+`Set<RateLimitObserver>`, and declares `@BindsOptionalOf MetricsConfig metricsConfig()` so
+that observer can inject `Optional<MetricsConfig>` without requiring `MicrometerModule`.
+Install it in the application component; it is the module's only application-facing type.
 
 ## Module Dagger Bindings
 

@@ -16,7 +16,10 @@ import jakarta.inject.Singleton;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Records each completed rate-limit admission decision as a short-lived
+ * INTERNAL framework seam — consumed by sibling framework modules; not an application contract and
+ * outside the maturity promise. Applications use the surface the module document lists.
+ *
+ * <p>Records each completed rate-limit admission decision as a short-lived
  * {@code vertique.ratelimit.decision} span (contracts/observability.md, "OpenTelemetry adapter").
  */
 @Singleton
