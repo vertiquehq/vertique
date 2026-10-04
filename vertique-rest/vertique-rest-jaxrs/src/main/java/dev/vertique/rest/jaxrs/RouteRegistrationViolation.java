@@ -131,8 +131,8 @@ public record RouteRegistrationViolation(String operationId, ViolationType type,
          * <p><b>Why there is no correct binding.</b> Request binding resolves a name to a
          * <em>single</em> declared parameter: {@code DefaultBoundRequest.findDescriptor} returns the
          * <em>first</em> descriptor matching a location and name, and that one declaration then decides —
-         * for <em>every</em> parameter reading that name — the multiplicity of the bound value, the scalar
-         * conversion applied to it, and the single parameter schema derived for the name. Two declarations
+         * for <em>every</em> parameter reading that name — the multiplicity of the bound value and the
+         * single parameter schema derived for the name. Two declarations
          * that disagree about any of those cannot both be honored, so the declaration is rejected at
          * registration rather than mounted and mis-bound per request. The reported disagreements:
          *
@@ -145,10 +145,9 @@ public record RouteRegistrationViolation(String operationId, ViolationType type,
          *       repeated value; the <b>collection</b> one hands the scalar parameter a {@code JsonArray}
          *       its declared type has no converter for.</li>
          *   <li><b>Different declared types on a scalar pair</b> — e.g. {@code @QueryParam("id") Integer}
-         *       plus {@code @QueryParam("id") UUID}. {@code DefaultBoundRequest.wrapScalar} converts the
-         *       raw value <em>once</em>, with the first declaration's type, and extraction passes an
-         *       already-converted value through unchanged, so the other parameter receives the wrong type
-         *       and every request carrying the name fails opaquely in {@code Method.invoke}.</li>
+         *       plus {@code @QueryParam("id") UUID}. The binder stores the raw string and each parameter
+         *       converts it with its own type, so a value can satisfy one declaration and fail the other.
+         *       The single parameter schema derived for the name still describes only one of them.</li>
          *   <li><b>Different element types on a collection pair</b> — e.g. {@code List<String>} plus
          *       {@code List<UUID>}. One request name cannot mean two element types: the single parameter
          *       schema derived for the name describes only one of them, and each parameter's element

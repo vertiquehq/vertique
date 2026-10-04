@@ -834,11 +834,12 @@ public final class EffectiveJaxRsContractResolver {
      *       {@code isFileUploadList} / {@code isEntityPartList} branches hard-code
      *       {@code FileUpload.class} / {@code EntityPart.class}; resolving the declared {@code List}
      *       element yields the same class, so these must stay inside the gate.</li>
-     *   <li>{@code BODY} — held exactly as it was. The two paths already disagree here (the
-     *       reflective scanner hard-codes {@code null} for BODY), a divergence audited inert and
-     *       routed as a deliberate follow-up rather than changed under this gate: source-gating BODY
-     *       would also drop the {@code componentType} of a BODY <em>collection</em>, a
-     *       consumer-visible change to the public {@code ParamMeta} record.</li>
+     *   <li>{@code BODY} — excluded. A body is one entity, deserialized from {@code type()} and
+     *       {@code genericType()}. The reflective scanner hard-codes {@code componentType} to
+     *       {@code null} for BODY, including {@code List<T>}. A non-null component type is the
+     *       multiplicity trigger, so emitting one here would publish a different {@code ParamMeta}
+     *       than the reflective path and could route a body collection through element-wise parameter
+     *       conversion. {@code genericType} stays populated for parameterized bodies.</li>
      *   <li>{@code PATH} — excluded. A path parameter is <em>never</em> multi-valued: it is bound
      *       from {@code RoutingContext.pathParams()}, a {@code Map<String, String>}, and
      *       {@code DefaultBoundRequest.bindPath} always wraps a single scalar, so no
@@ -859,8 +860,8 @@ public final class EffectiveJaxRsContractResolver {
      */
     private static boolean resolvesComponentType(JaxRsParamSource source) {
         return switch (source) {
-            case QUERY, HEADER, COOKIE, FORM, FILE_UPLOADS, ENTITY_PARTS, BODY -> true;
-            case PATH, CONTEXT, PRECONDITIONS, BEAN_PARAM -> false;
+            case QUERY, HEADER, COOKIE, FORM, FILE_UPLOADS, ENTITY_PARTS -> true;
+            case PATH, BODY, CONTEXT, PRECONDITIONS, BEAN_PARAM -> false;
         };
     }
 
