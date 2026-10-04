@@ -90,9 +90,12 @@ emitted event carry the caller's address even when authentication fails.
 
 Inject it into any resource method (see [JAX-RS integration](#jax-rs-integration)), or read it
 anywhere in the request through `SecurityRuntime.current()`. The binding unwinds with the request
-lifecycle. The same context is captured onto outbound `vertique-services` dispatches automatically,
-so a downstream service handler observes the caller's identity without threading it through the
-contract.
+lifecycle. `SecurityRuntime.clearCurrent()` discards the current holder binding without restoring a
+prior value — reserved for trust-boundary clears (MCP's no-scheme admit path) that must not leave a
+foreign ambient identity visible before the transport binds its own. Prefer `bindCurrent` with
+lifecycle-owned scopes for ordinary bind/unbind. The same context is captured onto outbound
+`vertique-services` dispatches automatically, so a downstream service handler observes the caller's
+identity without threading it through the contract.
 
 ### Authorization model: OR of AND, with scopes
 

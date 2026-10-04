@@ -170,7 +170,11 @@ already legitimately established at the point of settlement — the classified m
 name once a real, registry-validated descriptor is found — falling back to `OTHER`/the bounded
 `UNKNOWN` placeholder only when settlement lands before that fact was ever established. The
 caller-supplied raw tool-name string is never retained for this purpose, matching the same
-never-invent rule the unresolved-name rejection terminal below already follows. MCP arms no
+never-invent rule the unresolved-name rejection terminal below already follows. The abort terminal's
+security snapshot is likewise only the identity MCP itself established: when no scheme is configured,
+admit clears any ambient `SecurityRuntime` holder binding (alongside ambient Router user/evidence)
+before identity resolution, so a foreign ROOT-middleware snapshot cannot appear on a pre-identity
+settlement terminal. MCP arms no
 whole-request timer of its own: transport liveness
 comes from the shared `HttpConfig` idle/read/write timeouts — guaranteed armed for every mount that
 actually starts by the startup gate described above — so an idle or slow connection is closed by the

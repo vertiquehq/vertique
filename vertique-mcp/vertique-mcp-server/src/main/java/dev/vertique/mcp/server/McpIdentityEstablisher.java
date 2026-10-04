@@ -5,6 +5,7 @@ package dev.vertique.mcp.server;
 
 import dev.vertique.core.context.DispatchBoundary;
 import dev.vertique.rest.core.security.RouteAuthHandler;
+import dev.vertique.rest.core.security.SecurityRuntime;
 import dev.vertique.rest.security.IdentityResolutionMiddleware;
 import dev.vertique.rest.security.RestAuthenticationEvidence;
 import dev.vertique.security.authz.InvocationOrigin;
@@ -23,18 +24,22 @@ final class McpIdentityEstablisher {
     private final boolean schemeConfigured;
     private final Handler<RoutingContext> optionalAuthentication;
     private final Handler<RoutingContext> identityResolution;
+    private final SecurityRuntime securityRuntime;
 
     McpIdentityEstablisher(
             McpServerConfig config,
             Set<RouteAuthHandler> routeAuthHandlers,
-            IdentityResolutionMiddleware identityResolutionMiddleware) {
+            IdentityResolutionMiddleware identityResolutionMiddleware,
+            SecurityRuntime securityRuntime) {
         Objects.requireNonNull(config, "config");
         Objects.requireNonNull(routeAuthHandlers, "routeAuthHandlers");
         Objects.requireNonNull(identityResolutionMiddleware, "identityResolutionMiddleware");
+        Objects.requireNonNull(securityRuntime, "securityRuntime");
         this.schemeConfigured = config.enabled() && config.authenticationScheme() != null;
         optionalAuthentication =
                 selectOptionalHandler(config, routeAuthHandlers).orElse(context -> context.next());
         identityResolution = identityResolutionMiddleware.handlerFor(MCP_ORIGIN);
+        this.securityRuntime = securityRuntime;
     }
 
     /**
@@ -44,9 +49,11 @@ final class McpIdentityEstablisher {
      * admitted: a pre-existing {@code RoutingContext.user()} or authentication evidence fails closed
      * before the selected scheme runs. When no scheme is configured, the mount binds an MCP-owned
      * canonical anonymous context <em>without consulting</em> ambient Router user/evidence: it
-     * actively clears any ambient {@code RoutingContext.user()} and any ambient authentication
-     * evidence before advancing, so the whole downstream pipeline sees a clean canonical-anonymous
-     * context and no ambient authorization claims or evidence method can leak into the bound identity.
+     * actively clears any ambient {@code RoutingContext.user()}, any ambient authentication
+     * evidence, and any ambient {@link SecurityRuntime} holder binding before advancing, so the
+     * whole downstream pipeline sees a clean canonical-anonymous context and no foreign
+     * authorization claims, evidence method, or security-holder snapshot can leak into the bound
+     * identity or into a pre-identity settlement terminal.
      *
      * @param context the request context inspected at the MCP trust boundary
      */
@@ -118,15 +125,21 @@ final class McpIdentityEstablisher {
     }
 
     /**
-     * Strips any ambient {@code RoutingContext.user()} and accumulated authentication evidence so the
-     * no-scheme canonical-anonymous path binds an identity without consulting ambient Router state.
+     * Strips any ambient {@code RoutingContext.user()}, accumulated authentication evidence, and
+     * ambient {@link SecurityRuntime} holder binding so the no-scheme canonical-anonymous path binds
+     * an identity without consulting ambient Router or holder state.
      */
-    private static void clearAmbientAuthenticationState(RoutingContext context) {
+    private void clearAmbientAuthenticationState(RoutingContext context) {
         // Relies on the Vert.x-internal UserContextInternal because Vert.x 5.1.6 exposes no public
         // "clear user" API — a Vert.x upgrade must re-verify this security-critical clear still works
         // (exercised by the McpDiscoverIT no-scheme rows).
         ((UserContextInternal) context.userContext()).setUser(null);
         RestAuthenticationEvidence.clear(context);
+        // Discard a foreign SecurityRuntime binding that a ROOT middleware may have installed on the
+        // same duplicated context before the MCP sub-router. Without this clear, a timeout or
+        // transport settlement that fires before MCP identity resolution would snapshot that foreign
+        // context via McpRequestDispatcher.establishedSecurity() instead of null.
+        securityRuntime.clearCurrent();
     }
 
     private static void reject(RoutingContext context) {
