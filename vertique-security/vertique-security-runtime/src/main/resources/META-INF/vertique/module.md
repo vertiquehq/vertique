@@ -86,9 +86,11 @@ The evaluation order and the reason code each step produces are specified in `de
 
 `SecurityEventEmitter` fans out to all registered `SecurityEventObserver`s in parallel and waits for **every** observer to settle, regardless of individual outcomes. A synchronous throw, a returned `null` `Future`, and an asynchronous failure are each caught, logged at WARN, and counted as settled. One misbehaving observer cannot prevent others from receiving the event, and the returned `Future<Void>` always succeeds.
 
-An observer's failure is logged by the emitter so the fan-out stays diagnosable. Observer
-implementations must keep credentials, tokens, personal data, and raw claim values out of the
-exceptions they throw; the `SecurityEventObserver` contract states this.
+Failure WARN lines carry the observer class, the observer method (event type), and the failure
+class name only — never the throwable message, `toString()`, or stack. An observer that embeds
+event payloads in an exception therefore cannot leak JWT claims, introspection fields, or
+credentials into the application log through this path. Observers should still keep sensitive
+values out of exception messages for any other sinks that may see them.
 
 ### Narrowing Composition & Reconstructed-Authority Modes
 

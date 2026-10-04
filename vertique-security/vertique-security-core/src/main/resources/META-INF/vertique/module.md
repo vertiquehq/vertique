@@ -800,7 +800,7 @@ public interface SecurityEventObserver {
 }
 ```
 
-**Failure isolation:** one observer's failure must not prevent other observers from receiving the event and must not alter the authentication or authorization result that produced it. The `SecurityEventEmitter` (in `dev.vertique:vertique-security-runtime`) enforces this — a synchronous throw, a returned `null`, and an asynchronous failure are each caught, logged at WARN, and treated as settled.
+**Failure isolation:** one observer's failure must not prevent other observers from receiving the event and must not alter the authentication or authorization result that produced it. The `SecurityEventEmitter` (in `dev.vertique:vertique-security-runtime`) enforces this — a synchronous throw, a returned `null`, and an asynchronous failure are each caught, logged at WARN (observer class + method + failure class name only; never the throwable message or stack), and treated as settled.
 
 **Threading and long-running work:** the emitter does **not** force-offload observer work — every observer method runs on whichever thread emitted the event. For the request-driven families that is normally a Vert.x event loop, but `CapturedAuthorityActivatedEvent` is emitted by the Mode-3 activation seam, which job, workflow, and outbox-relay resume paths invoke from their own threads. An observer must therefore never assume an event-loop context, and must offload blocking or CPU-intensive work itself:
 

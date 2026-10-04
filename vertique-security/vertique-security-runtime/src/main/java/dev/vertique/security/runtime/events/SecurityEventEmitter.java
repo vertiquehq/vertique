@@ -200,6 +200,12 @@ public final class SecurityEventEmitter {
      * it is treated as a success. If the returned future fails asynchronously, the failure is
      * recovered and logged. The returned future therefore never fails.
      *
+     * <p>Failure WARN lines carry the observer class, the observer method (event type), and the
+     * failure class name only — never {@link Throwable#toString()}, {@link Throwable#getMessage()},
+     * or a throwable proxy. An observer that embeds event payloads (JWT claims, introspection
+     * fields, credentials) in its exception message therefore cannot leak them into the application
+     * log through this path.
+     *
      * @param invocation a {@link Supplier} that calls the observer method and returns its future
      * @param observer   the observer instance (used only for log messages)
      * @param method     the observer method name (used only for log messages)
@@ -219,11 +225,12 @@ public final class SecurityEventEmitter {
         } catch (Exception synchronousFailure) {
             // Catch Exception (not just RuntimeException) so a sneak-thrown checked exception is
             // also logged-and-isolated here rather than escaping into the kernel's no-op onFailure.
+            // Class name only: never throwable.toString()/message (may embed event payloads).
             log.warn(
                     "Security observer {} threw from {}: {}",
                     observer.getClass().getName(),
                     method,
-                    synchronousFailure.toString());
+                    synchronousFailure.getClass().getName());
             return Future.succeededFuture();
         }
         return result.recover(t -> {
@@ -231,7 +238,7 @@ public final class SecurityEventEmitter {
                     "Security observer {} failed asynchronously in {}: {}",
                     observer.getClass().getName(),
                     method,
-                    t.toString());
+                    t.getClass().getName());
             return Future.succeededFuture();
         });
     }
