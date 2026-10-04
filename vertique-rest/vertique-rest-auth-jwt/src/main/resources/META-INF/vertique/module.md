@@ -471,11 +471,12 @@ On success the handler builds an `AuthenticationEvidence` carrying:
 | method | `DefaultAuthMethod.jwt()` |
 | `notAfter` | The `exp` claim, as an `Instant` |
 | verification source | `JwksVerificationSource` with the configured issuer and a JWKS URI derived as `<issuer>/.well-known/jwks.json`; `kid` and `alg` are always empty because Vert.x does not expose the verified JWT header |
-| safe attributes | `sub`, `client_id`, `azp`, `sid`, and `jti` when present — never raw token material |
+| safe attributes | `sub`, `client_id`, `azp`, `sid`, and `jti` when present as JSON strings — never raw token material, and never coerced from objects/arrays/numbers |
 
 `client_id` and `azp` are what let identity resolution classify a client-credentials token as a
 service principal rather than a user. `sid` and `jti` are surfaced for correlation consumers;
-live session binding still reads the validated principal map in `JwtCorrelationSessionContributor`.
+live session binding still reads the validated principal map in `JwtCorrelationSessionContributor`,
+and only when `RestAuthenticationEvidence` already carries a verified JWT entry.
 
 #### Rejection reason codes
 
@@ -635,11 +636,12 @@ Parsed from the `jwt` section of the application configuration into `JwtAuthConf
 }
 ```
 
-After JWT authentication succeeds, `JwtCorrelationSessionContributor` (priority 55) reads the
-validated principal claims — never the raw token — and binds a `CorrelationSessionRef` via
-`CorrelationContextMutator.setSession`. Kind is `jwt-sid` / `jwt-jti` for those claim names and
-`jwt-claim` otherwise; source is always `jwt-claim`. With the default `durableSafe=false`, audit
-projection leaves `sessionId` null.
+After JWT authentication succeeds, `JwtCorrelationSessionContributor` (priority 55) runs only when
+`RestAuthenticationEvidence` contains a verified JWT entry. It then reads the validated principal
+claims — never the raw token, and never an ambient user from another scheme or a public route —
+and binds a `CorrelationSessionRef` via `CorrelationContextMutator.setSession`. Kind is `jwt-sid` /
+`jwt-jti` for those claim names and `jwt-claim` otherwise; source is always `jwt-claim`. With the
+default `durableSafe=false`, audit projection leaves `sessionId` null.
 
 An application-supplied `@Provides JwtAuthConfig` takes priority over this section entirely — which
 also makes it, not the `jwt` section, the value the startup clock-skew check compares against.

@@ -672,29 +672,15 @@ public class JwtBearerSecuritySchemeHandler implements SecuritySchemeHandler, Ha
 
         // safeAttributes — non-secret claims for identity resolution and correlation consumers;
         // no raw token material included. client_id/azp feed DefaultSecurityIdentityResolver;
-        // sid/jti are surfaced for FR-COR-100 consumers (JwtCorrelationSessionContributor reads the
-        // same validated principal map used here, not this map, for the live setSession path).
+        // sid/jti are surfaced for FR-COR-100 consumers. Only actual JSON string values are copied —
+        // JsonObject.getString would coerce objects/arrays/numbers into text and leak structured
+        // claim contents into supposedly-safe metadata.
         Map<String, Object> safeAttributes = new HashMap<>();
-        String sub = claims.getString("sub");
-        if (sub != null) {
-            safeAttributes.put("sub", sub);
-        }
-        String clientId = claims.getString("client_id");
-        if (clientId != null) {
-            safeAttributes.put("client_id", clientId);
-        }
-        String azp = claims.getString("azp");
-        if (azp != null) {
-            safeAttributes.put("azp", azp);
-        }
-        String sid = claims.getString("sid");
-        if (sid != null) {
-            safeAttributes.put("sid", sid);
-        }
-        String jti = claims.getString("jti");
-        if (jti != null) {
-            safeAttributes.put("jti", jti);
-        }
+        putStringClaim(safeAttributes, claims, "sub");
+        putStringClaim(safeAttributes, claims, "client_id");
+        putStringClaim(safeAttributes, claims, "azp");
+        putStringClaim(safeAttributes, claims, "sid");
+        putStringClaim(safeAttributes, claims, "jti");
 
         return new AuthenticationEvidence(
                 DefaultAuthMethod.jwt(),
@@ -703,6 +689,18 @@ public class JwtBearerSecuritySchemeHandler implements SecuritySchemeHandler, Ha
                 notAfter,
                 buildVerificationSource(),
                 safeAttributes);
+    }
+
+    /**
+     * Copies {@code claimName} into {@code target} only when the claim is present as a non-null
+     * JSON string (same type rule as {@link JwtCorrelationSessionEnricher}).
+     */
+    private static void putStringClaim(
+            Map<String, Object> target, io.vertx.core.json.JsonObject claims, String claimName) {
+        Object raw = claims.getValue(claimName);
+        if (raw instanceof String text && !text.isBlank()) {
+            target.put(claimName, text);
+        }
     }
 
     // --- DelegatingJwtAuthHandler ---
