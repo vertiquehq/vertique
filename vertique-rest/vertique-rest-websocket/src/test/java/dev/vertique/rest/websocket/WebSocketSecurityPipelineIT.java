@@ -582,6 +582,9 @@ public class WebSocketSecurityPipelineIT {
      * still bind {@link DispatchBoundary#REST} — origin-conditional policy can distinguish the two
      * transports (vertiquehq/vertique-dev#414).
      *
+     * <p>Without an explicit origin bind, {@link SecurityPolicyEnforcer} falls back to
+     * {@link InvocationOrigin#unspecified()} rather than inventing a privileged {@code rest} origin.
+     *
      * @param vertx the Vert.x instance
      * @param ctx   the test context
      */
@@ -735,8 +738,8 @@ public class WebSocketSecurityPipelineIT {
     /**
      * Builds an {@link OriginPipelineFixture} wired with an origin-storing {@link ContextHolder}
      * (unlike the shared {@link #contextHolder} field, whose no-op {@code bind} always yields an
-     * empty {@code current}, which would mask the origin behind
-     * {@link SecurityPolicyEnforcer#currentOrigin()}'s {@code REST_ORIGIN} fallback) and a recording
+     * empty {@code current}, which would leave the enforcer on
+     * {@link InvocationOrigin#unspecified()} instead of the bound transport origin) and a recording
      * {@link SecurityEventObserver} so emitted {@link AuthorizationDecisionEvent}s are observable.
      *
      * @param capture the recording identity-snapshot capture wired into the pipeline

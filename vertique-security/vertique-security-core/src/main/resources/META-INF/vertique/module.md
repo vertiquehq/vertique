@@ -309,7 +309,7 @@ public record InvocationOrigin(String kind, Map<String, Object> attributes) impl
 }
 ```
 
-`kind` is a non-blank, transport-neutral ingress identifier drawn from `DispatchBoundary` values (e.g. `"rest"`, `"external"`, `"delayed-job"`, `"kafka"`, `"workflow"`) — centralizing the string constants there avoids typos. Implements `ContextValue` so an ingress boundary can bind a real `InvocationOrigin` as the ambient invocation origin on `ContextHolder`, and downstream authorization/snapshot-capture code reads it back via `contextHolder.current(InvocationOrigin.class)`. A caller that doesn't seed one gets `unspecified()`.
+`kind` is a non-blank, transport-neutral ingress identifier drawn from `DispatchBoundary` values (e.g. `"rest"`, `"external"`, `"delayed-job"`, `"kafka"`, `"workflow"`) — centralizing the string constants there avoids typos. Implements `ContextValue` so an ingress boundary can bind a real `InvocationOrigin` as the ambient invocation origin on `ContextHolder`, and downstream authorization/snapshot-capture code reads it back via `contextHolder.current(InvocationOrigin.class)`. A caller that doesn't seed one gets `unspecified()`. Origin-aware policies and narrowers that allowlist interactive ingress must treat `unspecified` as deny — never as implied `"rest"`.
 
 Service dispatch is root-ingress-aware rather than an unconditional overwrite: an already-present upstream origin is preserved, a propagated `DeferredExecutionOrigin` is mapped to an origin of the same `kind()` so deferred work stays distinguishable, and only when neither is present does it seed its own boundary. See `dev.vertique:vertique-services` for the full precedence.
 
@@ -711,6 +711,8 @@ static AuthorizationNarrower myNarrower(MyNarrower n) { return n; }
 `narrow(request, base)` participates in the async per-request decision path: given the decision so far (the base verdict, or a previous narrower's result), it may turn a permit into a deny or annotate an existing deny, but **must never turn a deny into a permit**. `requirementFor(ctx, action)` participates in the sync per-action introspection path, independent of any specific resource: it reports whether this narrower places an additional, describable condition on the action for the given actor — annotating a capability rather than removing it.
 
 Multiple installed narrowers fold in `OrderedExtension#comparator()` order (phase, then ascending `priority()`, then `orderKey()`). Two narrowers sharing the same `(priority, orderKey)` pair fail startup naming both. With no narrowers installed, the composed pair is behavior-identical to the base engine.
+
+An origin-aware narrower that discriminates on `AuthorizationRequest.origin()` must treat `InvocationOrigin.unspecified()` as deny (or otherwise non-privileged) — never as implied `"rest"`. Transport-neutral PEPs fall back to `unspecified` when no origin is ambient.
 
 Two framework-shipped narrowers ship behind their own opt-in Dagger module — see `dev.vertique:vertique-security-runtime` for `DelegationEnforcementNarrower` (priority 100) and `AssuranceRequirementNarrower` (priority 200).
 

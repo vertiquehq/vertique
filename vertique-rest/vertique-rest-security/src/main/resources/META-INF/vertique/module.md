@@ -321,6 +321,12 @@ from `AuthorizationClaims` — no decision point talks to a provider.
 Builds the `Handler<RoutingContext>` that enforces a `SecurityPolicy`, optionally AND-composed with
 a `@RequiresAction` gate. `AuthorizationContributor` uses it for JAX-RS routes; reuse it directly
 when registering non-JAX-RS routes (for example a WebSocket upgrade) that need the same enforcement.
+The enforcer is transport-neutral: when no ambient `InvocationOrigin` is bound it falls back to
+`InvocationOrigin.unspecified()`, never to a privileged `rest` origin (DEF-007). Each transport's
+identity step must bind its own origin before authorization — REST via
+`IdentityResolutionMiddleware`, non-REST via `IdentityPipelineFactory.identityResolutionHandler`.
+Origin-aware policies and narrowers that allowlist interactive ingress must treat `unspecified` as
+deny, not as REST.
 
 | Method | Purpose |
 |---|---|
