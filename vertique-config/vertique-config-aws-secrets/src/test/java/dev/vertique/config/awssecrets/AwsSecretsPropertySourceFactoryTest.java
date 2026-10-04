@@ -8,6 +8,8 @@ import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -17,6 +19,7 @@ import dev.vertique.config.source.ConfigPropertySourceFactory;
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -25,6 +28,11 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import software.amazon.awssdk.awscore.exception.AwsErrorDetails;
+import software.amazon.awssdk.services.secretsmanager.SecretsManagerClient;
+import software.amazon.awssdk.services.secretsmanager.model.GetSecretValueRequest;
+import software.amazon.awssdk.services.secretsmanager.model.GetSecretValueResponse;
+import software.amazon.awssdk.services.secretsmanager.model.SecretsManagerException;
 
 /**
  * Unit tests for {@link AwsSecretsPropertySourceFactory} using a stub {@link SecretsGateway}.
@@ -177,6 +185,72 @@ class AwsSecretsPropertySourceFactoryTest {
             assertTrue(
                     ex.getMessage().contains("exactly one"),
                     "error must indicate exactly one of prefix/key is required");
+        }
+    }
+
+    // --- Non-object secrets[] elements ---
+
+    @Nested
+    @DisplayName("non-object secrets[] elements")
+    class NonObjectSecretsElements {
+
+        /** Wraps {@code element} after one valid entry so the offending index is 1. */
+        private JsonObject configWithElementAtIndexOne(Object element) {
+            JsonArray secrets = new JsonArray()
+                    .add(new JsonObject().put("secretId", "ok/secret").put("key", "ok.key"))
+                    .add(element);
+            return new JsonObject().put("secrets", secrets);
+        }
+
+        @Test
+        @DisplayName("null, string, number, boolean and array elements throw ConfigPropertySourceException "
+                + "naming the source and index")
+        void nonObjectElementThrowsNamingSourceAndIndex() {
+            for (Object element : Arrays.asList(null, "db/creds", 42, true, new JsonArray().add("x"))) {
+                JsonObject config = configWithElementAtIndexOne(element);
+
+                var ex = assertThrows(
+                        ConfigPropertySourceException.class,
+                        () -> factoryWithStub(Map.of("ok/secret", "v")).create("test-src", config),
+                        "element " + element + " must be rejected with ConfigPropertySourceException");
+
+                assertEquals("test-src", ex.sourceName(), "sourceName must equal the declared source name");
+                assertTrue(ex.getMessage().contains("index 1"), "error must name the index; was: " + ex.getMessage());
+                assertTrue(
+                        ex.getMessage().contains("JSON object"),
+                        "error must say a JSON object is required; was: " + ex.getMessage());
+            }
+        }
+
+        @Test
+        @DisplayName("the offending element's value is never echoed in the error")
+        void nonObjectElementValueNotEchoed() {
+            String sentinel = "NON-OBJECT-ELEMENT-SENTINEL-5521";
+            JsonObject config = configWithElementAtIndexOne(sentinel);
+
+            var ex = assertThrows(ConfigPropertySourceException.class, () -> factoryWithStub(Map.of("ok/secret", "v"))
+                    .create("test-src", config));
+
+            assertFalse(
+                    containsAnywhere(ex, sentinel),
+                    "exception chain must not echo the element; was: " + ex.getMessage());
+        }
+
+        @Test
+        @DisplayName("validation fails before any gateway call")
+        void nonObjectElementFailsBeforeFetch() {
+            AtomicBoolean fetched = new AtomicBoolean(false);
+            AwsSecretsPropertySourceFactory factory =
+                    new AwsSecretsPropertySourceFactory((name, settings) -> secretId -> {
+                        fetched.set(true);
+                        return "value";
+                    });
+
+            assertThrows(
+                    ConfigPropertySourceException.class,
+                    () -> factory.create("test-src", configWithElementAtIndexOne("x")));
+
+            assertFalse(fetched.get(), "schema failure must precede any SDK/gateway call");
         }
     }
 
@@ -659,6 +733,280 @@ class AwsSecretsPropertySourceFactoryTest {
                 assertFalse(
                         allMessages.contains(sentinel),
                         "sentinel secret value must NOT appear in any log message; found in: " + allMessages);
+            } finally {
+                rootLogger.detachAppender(appender);
+                appender.stop();
+            }
+        }
+    }
+
+    // --- Key collision: later declarations win ---
+
+    @Nested
+    @DisplayName("key collision — later declaration wins")
+    class KeyCollision {
+
+        @Test
+        @DisplayName("two key-mode secrets targeting the same key: the later value wins")
+        void laterKeyModeSecretWins() {
+            JsonObject config = new JsonObject()
+                    .put(
+                            "secrets",
+                            new JsonArray()
+                                    .add(new JsonObject()
+                                            .put("secretId", "first")
+                                            .put("key", "shared.key"))
+                                    .add(new JsonObject()
+                                            .put("secretId", "second")
+                                            .put("key", "shared.key")));
+
+            ConfigPropertySource source =
+                    factoryWithStub(Map.of("first", "one", "second", "two")).create("src", config);
+
+            assertEquals(Optional.of("two"), source.lookup("shared.key"));
+        }
+
+        @Test
+        @DisplayName("two prefix-mode secrets sharing a prefix: overlapping keys take the later value, "
+                + "disjoint keys from both survive")
+        void laterPrefixModeSecretWinsOnOverlap() {
+            JsonObject config = new JsonObject()
+                    .put(
+                            "secrets",
+                            new JsonArray()
+                                    .add(new JsonObject()
+                                            .put("secretId", "first")
+                                            .put("prefix", "db."))
+                                    .add(new JsonObject()
+                                            .put("secretId", "second")
+                                            .put("prefix", "db.")));
+
+            ConfigPropertySource source = factoryWithStub(Map.of(
+                            "first", "{\"password\":\"old\",\"user\":\"alice\"}",
+                            "second", "{\"password\":\"new\",\"host\":\"db-host\"}"))
+                    .create("src", config);
+
+            assertEquals(Optional.of("new"), source.lookup("db.password"), "overlapping key: later wins");
+            assertEquals(Optional.of("alice"), source.lookup("db.user"), "key only in the earlier secret survives");
+            assertEquals(Optional.of("db-host"), source.lookup("db.host"), "key only in the later secret is added");
+        }
+
+        @Test
+        @DisplayName("prefix-mode key colliding with a later key-mode key: the key-mode value wins")
+        void laterKeyModeBeatsEarlierPrefixMode() {
+            JsonObject config = new JsonObject()
+                    .put(
+                            "secrets",
+                            new JsonArray()
+                                    .add(new JsonObject()
+                                            .put("secretId", "blob")
+                                            .put("prefix", "db."))
+                                    .add(new JsonObject()
+                                            .put("secretId", "plain")
+                                            .put("key", "db.password")));
+
+            ConfigPropertySource source = factoryWithStub(
+                            Map.of("blob", "{\"password\":\"from-blob\"}", "plain", "from-key"))
+                    .create("src", config);
+
+            assertEquals(Optional.of("from-key"), source.lookup("db.password"));
+        }
+
+        @Test
+        @DisplayName("key-mode key colliding with a later prefix-mode key: the prefix-mode value wins")
+        void laterPrefixModeBeatsEarlierKeyMode() {
+            JsonObject config = new JsonObject()
+                    .put(
+                            "secrets",
+                            new JsonArray()
+                                    .add(new JsonObject()
+                                            .put("secretId", "plain")
+                                            .put("key", "db.password"))
+                                    .add(new JsonObject()
+                                            .put("secretId", "blob")
+                                            .put("prefix", "db.")));
+
+            ConfigPropertySource source = factoryWithStub(
+                            Map.of("blob", "{\"password\":\"from-blob\"}", "plain", "from-key"))
+                    .create("src", config);
+
+            assertEquals(Optional.of("from-blob"), source.lookup("db.password"));
+        }
+    }
+
+    // --- SdkSecretsGateway error handling ---
+
+    @Nested
+    @DisplayName("SdkSecretsGateway — SDK error handling")
+    class SdkGatewayErrorHandling {
+
+        /** Minimal client whose {@code getSecretValue} delegates to the supplied behavior. */
+        private static SecretsManagerClient clientThrowing(RuntimeException toThrow) {
+            return new StubSecretsManagerClient() {
+                @Override
+                public GetSecretValueResponse getSecretValue(GetSecretValueRequest request) {
+                    throw toThrow;
+                }
+            };
+        }
+
+        @Test
+        @DisplayName("SecretsManagerException with null awsErrorDetails() wraps as ConfigPropertySourceException")
+        void nullAwsErrorDetailsWrapsWithoutNpe() {
+            SecretsManagerException sdkFailure = (SecretsManagerException) SecretsManagerException.builder()
+                    .message("sdk-level failure")
+                    .build();
+            assertNull(sdkFailure.awsErrorDetails(), "precondition: SDK exception carries no error details");
+
+            SdkSecretsGateway gateway = new SdkSecretsGateway("aws-src", clientThrowing(sdkFailure));
+
+            var ex = assertThrows(ConfigPropertySourceException.class, () -> gateway.fetchSecretString("prod/db"));
+
+            assertEquals("aws-src", ex.sourceName());
+            assertTrue(ex.getMessage().contains("prod/db"), "message must name the secret ID: " + ex.getMessage());
+            assertTrue(
+                    ex.getMessage().contains("sdk-level failure"),
+                    "message must fall back to the SDK exception message: " + ex.getMessage());
+            assertSame(sdkFailure, ex.getCause(), "the SDK exception must be preserved as the cause");
+        }
+
+        @Test
+        @DisplayName("SecretsManagerException with neither details nor message falls back to the class name")
+        void noDetailsAndNoMessageFallsBackToClassName() {
+            SecretsManagerException sdkFailure =
+                    (SecretsManagerException) SecretsManagerException.builder().build();
+
+            SdkSecretsGateway gateway = new SdkSecretsGateway("aws-src", clientThrowing(sdkFailure));
+
+            var ex = assertThrows(ConfigPropertySourceException.class, () -> gateway.fetchSecretString("prod/db"));
+
+            assertTrue(
+                    ex.getMessage().contains("SecretsManagerException"),
+                    "message must fall back to the exception class name: " + ex.getMessage());
+        }
+
+        @Test
+        @DisplayName("SecretsManagerException with awsErrorDetails() uses the SDK error message")
+        void awsErrorDetailsMessageUsedWhenPresent() {
+            SecretsManagerException sdkFailure = (SecretsManagerException) SecretsManagerException.builder()
+                    .awsErrorDetails(AwsErrorDetails.builder()
+                            .errorCode("AccessDeniedException")
+                            .errorMessage("not authorized to read prod/db")
+                            .build())
+                    .message("outer message")
+                    .build();
+
+            SdkSecretsGateway gateway = new SdkSecretsGateway("aws-src", clientThrowing(sdkFailure));
+
+            var ex = assertThrows(ConfigPropertySourceException.class, () -> gateway.fetchSecretString("prod/db"));
+
+            assertTrue(
+                    ex.getMessage().contains("not authorized to read prod/db"),
+                    "message must carry the AWS error message: " + ex.getMessage());
+        }
+
+        @Test
+        @DisplayName("binary secret (no SecretString) fails closed naming the secret ID")
+        void binarySecretFailsClosed() {
+            SdkSecretsGateway gateway = new SdkSecretsGateway("aws-src", new StubSecretsManagerClient() {
+                @Override
+                public GetSecretValueResponse getSecretValue(GetSecretValueRequest request) {
+                    return GetSecretValueResponse.builder().build();
+                }
+            });
+
+            var ex = assertThrows(ConfigPropertySourceException.class, () -> gateway.fetchSecretString("bin/secret"));
+
+            assertTrue(ex.getMessage().contains("bin/secret") && ex.getMessage().contains("binary"));
+        }
+
+        @Test
+        @DisplayName("non-SDK runtime failure wraps as ConfigPropertySourceException")
+        void genericFailureWraps() {
+            SdkSecretsGateway gateway =
+                    new SdkSecretsGateway("aws-src", clientThrowing(new IllegalStateException("socket closed")));
+
+            var ex = assertThrows(ConfigPropertySourceException.class, () -> gateway.fetchSecretString("prod/db"));
+
+            assertTrue(ex.getMessage().contains("socket closed"));
+        }
+
+        @Test
+        @DisplayName("close() closes the wrapped client")
+        void closeClosesClient() {
+            AtomicBoolean closed = new AtomicBoolean(false);
+            SdkSecretsGateway gateway = new SdkSecretsGateway("aws-src", new StubSecretsManagerClient() {
+                @Override
+                public void close() {
+                    closed.set(true);
+                }
+            });
+
+            gateway.close();
+
+            assertTrue(closed.get());
+        }
+
+        /** Base stub: every SDK operation is unsupported unless a test overrides it. */
+        private abstract static class StubSecretsManagerClient implements SecretsManagerClient {
+
+            @Override
+            public String serviceName() {
+                return "secretsmanager";
+            }
+
+            @Override
+            public void close() {}
+        }
+    }
+
+    // --- Failure-path log capture ---
+
+    @Nested
+    @DisplayName("redaction — failing create leaves no secret value in logs")
+    class FailurePathLogging {
+
+        @Test
+        @DisplayName("prefix-mode parse failure after a successful fetch: no log event contains the secret value "
+                + "or carries a throwable")
+        void sentinelAbsentFromLogsOnFailingCreate() {
+            String sentinel = "AWS-FAILURE-PATH-SENTINEL-8842";
+
+            ch.qos.logback.classic.Logger rootLogger = (ch.qos.logback.classic.Logger)
+                    org.slf4j.LoggerFactory.getLogger(org.slf4j.Logger.ROOT_LOGGER_NAME);
+            ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> appender =
+                    new ch.qos.logback.core.read.ListAppender<>();
+            appender.setContext(rootLogger.getLoggerContext());
+            appender.start();
+            rootLogger.addAppender(appender);
+
+            try {
+                JsonObject config = new JsonObject()
+                        .put(
+                                "secrets",
+                                new JsonArray()
+                                        .add(new JsonObject()
+                                                .put("secretId", "good")
+                                                .put("key", "good.key"))
+                                        .add(new JsonObject()
+                                                .put("secretId", "bad")
+                                                .put("prefix", "db.")));
+
+                // "bad" is not a JSON object and embeds the sentinel; "good" also holds the sentinel.
+                var ex = assertThrows(ConfigPropertySourceException.class, () -> factoryWithStub(
+                                Map.of("good", sentinel, "bad", "not-json-" + sentinel))
+                        .create("src", config));
+
+                assertFalse(containsAnywhere(ex, sentinel), "exception chain must not contain the secret value");
+
+                for (var event : appender.list) {
+                    assertFalse(
+                            event.getFormattedMessage().contains(sentinel),
+                            "log message must not contain the secret value: " + event.getFormattedMessage());
+                    assertNull(
+                            event.getThrowableProxy(),
+                            "no log event may attach a throwable on the failure path: " + event.getFormattedMessage());
+                }
             } finally {
                 rootLogger.detachAppender(appender);
                 appender.stop();

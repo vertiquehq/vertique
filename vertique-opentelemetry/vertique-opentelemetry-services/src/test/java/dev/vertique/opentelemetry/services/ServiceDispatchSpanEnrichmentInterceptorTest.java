@@ -5,8 +5,14 @@ package dev.vertique.opentelemetry.services;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import dev.vertique.core.eventbus.DispatchEnvelope;
 import dev.vertique.core.eventbus.Result;
 import dev.vertique.services.interceptor.ServiceDispatchContext;
@@ -23,6 +29,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.RegisterExtension;
+import org.slf4j.LoggerFactory;
 
 /**
  * Unit tests for {@link ServiceDispatchSpanEnrichmentInterceptor}.
@@ -43,6 +50,8 @@ import org.junit.jupiter.api.extension.RegisterExtension;
  *   <li>{@code onTerminalComplete} after the span was ENDED → safe no-op, no exception, exported
  *       span unchanged (best-effort contract pinned under controlled lifecycle).</li>
  *   <li>Never throws: poisoned context (ctx accessor throwing) → both methods return normally.</li>
+ *   <li>Failure logging: the swallowed-exception WARN carries the exception class name only — no
+ *       throwable proxy and no exception message (which may carry credentials).</li>
  * </ol>
  */
 class ServiceDispatchSpanEnrichmentInterceptorTest {
@@ -290,6 +299,50 @@ class ServiceDispatchSpanEnrichmentInterceptorTest {
         }
     }
 
+    // --- Test 9: swallowed failures log class name only, no throwable proxy ---
+
+    @Nested
+    @DisplayName("Swallowed failures log the exception class name only")
+    class CatchBlockLogging {
+
+        private static final String SENTINEL = "SENTINEL_secret_xyz";
+
+        @Test
+        @DisplayName("onDispatch + onTerminalComplete never throw; each WARN has no sentinel text and no throwable")
+        void warnLogsClassNameOnlyNoThrowableProxy() {
+            ServiceDispatchContext ctx = ctx("integration.svc.op", false);
+            Result<?> result = Result.failure(new IllegalStateException("boom"));
+            Logger interceptorLogger = (Logger) LoggerFactory.getLogger(ServiceDispatchSpanEnrichmentInterceptor.class);
+            ListAppender<ILoggingEvent> appender = new ListAppender<>();
+            appender.start();
+            interceptorLogger.addAppender(appender);
+
+            try {
+                try (var ignored = new ThrowingSpan(SENTINEL).makeCurrent()) {
+                    assertDoesNotThrow(() -> interceptor.onDispatch(ctx));
+                    assertDoesNotThrow(() -> interceptor.onTerminalComplete(ctx, result, T0, T1));
+                }
+
+                List<ILoggingEvent> events = appender.list;
+                assertEquals(
+                        2, events.size(), "exactly one WARN per swallowed failure (onDispatch, onTerminalComplete)");
+                for (ILoggingEvent event : events) {
+                    String msg = event.getFormattedMessage();
+                    assertEquals(Level.WARN, event.getLevel(), "swallowed failure must log at WARN");
+                    assertFalse(msg.contains(SENTINEL), "log message must not leak the exception message: " + msg);
+                    assertTrue(
+                            msg.contains(RuntimeException.class.getName()),
+                            "log message must carry the exception class name: " + msg);
+                    assertNull(event.getThrowableProxy(), "log event must carry no throwable proxy: " + msg);
+                }
+                assertTrue(events.get(0).getFormattedMessage().contains("onDispatch"));
+                assertTrue(events.get(1).getFormattedMessage().contains("onTerminalComplete"));
+            } finally {
+                interceptorLogger.detachAppender(appender);
+            }
+        }
+    }
+
     // --- Helpers ---
 
     /**
@@ -301,29 +354,39 @@ class ServiceDispatchSpanEnrichmentInterceptorTest {
      */
     private static final class ThrowingSpan implements Span {
 
+        private final String message;
+
+        ThrowingSpan() {
+            this("span is poisoned");
+        }
+
+        ThrowingSpan(String message) {
+            this.message = message;
+        }
+
         @Override
         public <T> Span setAttribute(io.opentelemetry.api.common.AttributeKey<T> key, T value) {
-            throw new RuntimeException("span is poisoned");
+            throw new RuntimeException(message);
         }
 
         @Override
         public Span setStatus(StatusCode statusCode, String description) {
-            throw new RuntimeException("span is poisoned");
+            throw new RuntimeException(message);
         }
 
         @Override
         public Span setStatus(StatusCode statusCode) {
-            throw new RuntimeException("span is poisoned");
+            throw new RuntimeException(message);
         }
 
         @Override
         public Span recordException(Throwable exception, io.opentelemetry.api.common.Attributes additionalAttributes) {
-            throw new RuntimeException("span is poisoned");
+            throw new RuntimeException(message);
         }
 
         @Override
         public Span updateName(String name) {
-            throw new RuntimeException("span is poisoned");
+            throw new RuntimeException(message);
         }
 
         @Override
@@ -349,7 +412,7 @@ class ServiceDispatchSpanEnrichmentInterceptorTest {
 
         @Override
         public Span addEvent(String name, io.opentelemetry.api.common.Attributes attributes) {
-            throw new RuntimeException("span is poisoned");
+            throw new RuntimeException(message);
         }
 
         @Override
@@ -358,18 +421,18 @@ class ServiceDispatchSpanEnrichmentInterceptorTest {
                 io.opentelemetry.api.common.Attributes attributes,
                 long timestamp,
                 java.util.concurrent.TimeUnit unit) {
-            throw new RuntimeException("span is poisoned");
+            throw new RuntimeException(message);
         }
 
         @Override
         public Span addLink(io.opentelemetry.api.trace.SpanContext spanContext) {
-            throw new RuntimeException("span is poisoned");
+            throw new RuntimeException(message);
         }
 
         @Override
         public Span addLink(
                 io.opentelemetry.api.trace.SpanContext spanContext, io.opentelemetry.api.common.Attributes attributes) {
-            throw new RuntimeException("span is poisoned");
+            throw new RuntimeException(message);
         }
     }
 }

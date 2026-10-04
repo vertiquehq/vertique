@@ -14,6 +14,9 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 
 /**
+ * INTERNAL framework seam — consumed by sibling framework modules; not an application contract and
+ * outside the maturity promise. Applications use the surface the module document lists.
+ *
  * Shared close/fencing state for one {@link RateLimiters} runtime, owned by that runtime and
  * threaded into every {@link RateLimiter} handle it resolves. Mirrors {@code Resilience}'s
  * idempotent-close idiom (same {@code AtomicReference<Promise<Void>>} pattern): every caller of

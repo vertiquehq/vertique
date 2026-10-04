@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # OpenTelemetry Services Module
 
-> **Status:** Alpha
+> **Status:** Stable
 > **Package:** `dev.vertique.opentelemetry.services`
 > **Artifact:** `vertique-opentelemetry-services`
 > **Depends on:** opentelemetry-api (library), vertique-services
@@ -79,7 +79,9 @@ Called synchronously when the service method is about to be invoked. Sets:
   `stableTargetId()` returns `null`.
 
 When no recording span is current (no parent trace or PROPAGATE policy with no parent), both writes
-are skipped. Exceptions are swallowed — this observer cannot affect the dispatch outcome.
+are skipped. Exceptions are swallowed — this observer cannot affect the dispatch outcome. A swallowed
+exception is logged once at `WARN` with its class name only; the exception message and stack trace are
+never logged because exporter and SDK exceptions can carry credentials.
 
 **`onTerminalComplete(ServiceDispatchContext ctx, Result<?> result, Instant startTime, Instant endTime)`**
 
@@ -95,7 +97,7 @@ Called after the terminal dispatch outcome is reached (post-recovery). Records:
 Writes to an already-ended span are safe no-ops per the OTel API contract (best-effort contract:
 the reply is sent before this hook fires, so the tracer may have already closed the span).
 
-Exceptions are swallowed — this observer cannot affect the dispatch outcome.
+Exceptions are swallowed and logged at `WARN` as class name only, exactly as for `onDispatch`.
 
 ```java
 // Traced request dispatched from inside a parent span's scope.

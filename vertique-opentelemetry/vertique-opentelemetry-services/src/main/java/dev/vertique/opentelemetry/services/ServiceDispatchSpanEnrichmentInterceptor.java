@@ -92,10 +92,11 @@ public final class ServiceDispatchSpanEnrichmentInterceptor implements ServiceIn
                 span.setAttribute(ServiceAttributes.SERVICE_TARGET, target);
             }
         } catch (Exception e) {
+            // Class name only: exporter/SDK exceptions can carry credentials in message or cause.
             log.warn(
-                    "[{}] onDispatch span enrichment failed (swallowed)",
+                    "[{}] onDispatch span enrichment failed (swallowed): {}",
                     this.getClass().getSimpleName(),
-                    e);
+                    e.getClass().getName());
         }
     }
 
@@ -133,10 +134,11 @@ public final class ServiceDispatchSpanEnrichmentInterceptor implements ServiceIn
             }
             // Success: leave span status UNSET — no writes
         } catch (Exception e) {
+            // Class name only: exporter/SDK exceptions can carry credentials in message or cause.
             log.warn(
-                    "[{}] onTerminalComplete span enrichment failed (swallowed)",
+                    "[{}] onTerminalComplete span enrichment failed (swallowed): {}",
                     this.getClass().getSimpleName(),
-                    e);
+                    e.getClass().getName());
         }
     }
 }

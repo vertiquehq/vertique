@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Config AWS Secrets Module
 
-> **Status:** Alpha
+> **Status:** Stable
 > **Package:** `dev.vertique.config.awssecrets`
 > **Artifact:** `vertique-config-aws-secrets`
 > **Depends on:** config
@@ -101,8 +101,8 @@ The full per-source configuration block under `config.propertySources[*]`:
 |-------|----------|---------|-------------|
 | `type` | Yes | — | Must be `"aws-secrets"` |
 | `name` | No | `aws-secrets[{index}]` | Source instance name for diagnostics |
-| `region` | No | SDK default region chain | AWS region string (e.g. `"eu-west-1"`). When absent, the SDK resolves the region via `AWS_DEFAULT_REGION`, `aws.region`, instance metadata, etc. |
-| `endpointOverride` | No | none | Override the Secrets Manager endpoint URL. Use for LocalStack (`http://localhost:4566`) or other test endpoints. |
+| `region` | No | SDK default region chain | AWS region string (e.g. `"eu-west-1"`). When absent, the SDK resolves the region via `AWS_DEFAULT_REGION`, `aws.region`, instance metadata, etc. Passed to the SDK unvalidated (see below). |
+| `endpointOverride` | No | none | Override the Secrets Manager endpoint URL. Use for LocalStack (`http://localhost:4566`) or other test endpoints. Passed to the SDK unvalidated (see below). |
 | `connectTimeoutMs` | No | 5000 | Connection timeout in milliseconds, applied to `UrlConnectionHttpClient` |
 | `readTimeoutMs` | No | 5000 | Socket/read timeout in milliseconds, applied to `UrlConnectionHttpClient` |
 | `secrets` | Yes | — | Non-empty array of secret entry objects |
@@ -119,9 +119,22 @@ Each element of the `secrets` array:
 
 **Validation errors** (thrown during bootstrap pass 2):
 - Missing or empty `secrets` array
+- A `secrets` element that is not a JSON object (`null`, string, number, boolean, or array). The
+  `ConfigPropertySourceException` names the source and the element's index and the JSON type it found,
+  never the element's value.
 - Missing or blank `secretId`
 - Both `prefix` and `key` present on the same entry
 - Neither `prefix` nor `key` present on an entry
+
+### `region` and `endpointOverride` Are Not Validated
+
+`region` and `endpointOverride` are handed to the AWS SDK as given: a non-null `region` becomes
+`Region.of(...)` and a non-null `endpointOverride` becomes `URI.create(...)`. This module does not check
+either value. An unknown region string or a malformed endpoint URI surfaces as the SDK's or JDK's own
+exception (for example `IllegalArgumentException`) from `create()`, not as a
+`ConfigPropertySourceException`; bootstrap still fails, so the fail-closed outcome holds. Every other
+validation error listed above is a `ConfigPropertySourceException`. This passthrough is deliberate and
+stable: the SDK's messages are more precise than anything this module could synthesize.
 
 ---
 
@@ -140,7 +153,7 @@ The factory discovered by `ServiceLoader`. Registered in `META-INF/services/dev.
 
 #### Invariants and Gotchas
 
-- `create()` is fail-closed: any declared secret that returns `SecretBinary` (not `SecretString`), is missing, or cannot be reached throws `ConfigPropertySourceException` and aborts bootstrap.
+- `create()` is fail-closed: any declared secret that returns `SecretBinary` (not `SecretString`), is missing, or cannot be reached throws `ConfigPropertySourceException` and aborts bootstrap. This holds even when the AWS SDK exception carries no error details; the message then falls back to the SDK exception's own message.
 - Schema validation happens before any SDK call. A malformed `secrets` entry fails before the first network request is made.
 - `create()` is called from the single-threaded bootstrap path; no thread-safety is required.
 

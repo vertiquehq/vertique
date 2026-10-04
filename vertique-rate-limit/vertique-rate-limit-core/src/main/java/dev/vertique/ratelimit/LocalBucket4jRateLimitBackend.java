@@ -14,6 +14,9 @@ import java.util.concurrent.ConcurrentMap;
 import java.util.function.ToLongFunction;
 
 /**
+ * INTERNAL framework seam — consumed by sibling framework modules; not an application contract and
+ * outside the maturity promise. Applications use the surface the module document lists.
+ *
  * LOCAL {@link RateLimitBackend}: routes each request to the requesting policy's own bounded
  * {@link LocalRateLimitRegistry} (contracts/rate-limit-runtime.md, "Local engine contract" — the
  * registry, and its {@code maxTrackedKeys} budget, is per policy, never one shared pool).
