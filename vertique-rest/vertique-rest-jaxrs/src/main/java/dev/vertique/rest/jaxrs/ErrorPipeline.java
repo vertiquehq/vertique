@@ -107,14 +107,16 @@ public class ErrorPipeline {
      *   <li>{@link ErrorInterceptor#afterMapping} async chain (transforms the response)</li>
      * </ol>
      *
-     * <p>The Vert.x failure-status hint ({@code VertxFailureStatus.KEY}) is <em>consumed</em> when the
-     * mapping step begins: read and removed from {@link RoutingContext#data()} before
-     * {@link RestExceptionMapper#translate} runs, so a throwing translator cannot leave it behind.
+     * <p>The Vert.x failure-status hint ({@code VertxFailureStatus.KEY}) and the failure-cycle
+     * observation keys ({@code VertxFailureStatus.OBSERVED_*}) are <em>consumed</em> when the mapping
+     * step begins: read and removed from {@link RoutingContext#data()} before
+     * {@link RestExceptionMapper#translate} runs, so a throwing translator cannot leave them behind.
      * Removal does not depend on which mapper produces the response or whether the fallback applies
-     * the stored status. The hint describes the failure being mapped; leaving it would let a later
-     * mapping on the same context (a reroute, for instance) be steered by a status that no longer
-     * describes anything. Consumption happens after the {@link ErrorInterceptor#beforeMapping} chain,
-     * so an error interceptor still observes the hint that produced the failure it is inspecting.
+     * the stored status. The hint describes the failure being mapped; leaving it — or the observation
+     * pair that produced it — would let a later mapping on the same context (a reroute, for instance)
+     * be steered by a status that no longer describes anything. Consumption happens after the
+     * {@link ErrorInterceptor#beforeMapping} chain, so an error interceptor still observes the hint
+     * that produced the failure it is inspecting.
      *
      * @param ctx   the current routing context
      * @param cause the throwable to map into an error response
@@ -152,14 +154,16 @@ public class ErrorPipeline {
                                     return Future.succeededFuture(t);
                                 }))
                 .map(mappedCause -> {
-                    // Consume the Vert.x failure-status hint at the start of the mapping step, before
-                    // translate: the hint describes exactly the failure being mapped, so it must be gone
-                    // whichever mapper produces the response — including when a specific application mapper
-                    // outranks it and the fallback never runs, and including when translate throws.
-                    // Leaving it behind would let it steer a mapping raised later on the same context
-                    // (reroute() clears failure and statusCode, but not data()). Consuming here rather than
-                    // at method entry keeps it observable to the beforeMapping chain, which runs first.
+                    // Consume the Vert.x failure-status hint and the failure-cycle observation at the
+                    // start of the mapping step, before translate: both describe exactly the failure
+                    // being mapped, so they must be gone whichever mapper produces the response —
+                    // including when a specific application mapper outranks the hint and the fallback
+                    // never runs, and including when translate throws. Leaving either behind would let
+                    // it steer a mapping raised later on the same context (reroute() clears failure and
+                    // statusCode, but not data()). Consuming here rather than at method entry keeps the
+                    // hint observable to the beforeMapping chain, which runs first.
                     Object vertxFailureStatus = ctx.data().remove(VertxFailureStatus.KEY);
+                    VertxFailureStatus.consumeObservation(ctx);
                     Throwable translated = restExceptionMapper.translate(mappedCause);
                     Response response = exceptionMapperRegistry.toResponse(translated);
                     if (!exceptionMapperRegistry.hasSpecificMapper(translated.getClass())) {

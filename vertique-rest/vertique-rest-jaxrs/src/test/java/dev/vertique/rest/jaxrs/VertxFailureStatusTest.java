@@ -4,6 +4,7 @@
 package dev.vertique.rest.jaxrs;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -16,9 +17,10 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Unit tests for {@link VertxFailureStatus}'s double-fail observation: {@code fail(int)} rewriting
- * {@code statusCode} without clearing {@code failure} must not stash the rewritten 4xx over the
- * status that accompanied the cause.
+ * Unit tests for {@link VertxFailureStatus}'s failure-cycle observation: {@code fail(int)} rewriting
+ * a non-4xx {@code statusCode} without clearing {@code failure} must not stash the rewritten 4xx over
+ * the status that accompanied the cause, and a consumed observation must not freeze a later cycle that
+ * reuses the same Throwable.
  */
 class VertxFailureStatusTest {
 
@@ -63,20 +65,23 @@ class VertxFailureStatusTest {
     }
 
     @Test
-    @DisplayName("fail(401, cause) then fail(404) keeps the original 401 for the stash")
-    void statusOnlyRewriteAfterClientErrorKeepsOriginalFourHundred() {
+    @DisplayName("fail(401, cause) then fail(401, sameCause) with a new status refreshes the 4xx pair")
+    void explicitClientErrorRefailWithSharedCauseRefreshesPair() {
+        // Identity alone is not a status-only rewrite: fail(newStatus, sharedCause) assigns both
+        // fields. A prior 4xx observation must not freeze the new client-error status.
         RuntimeException cause = new RuntimeException("auth");
         when(ctx.failure()).thenReturn(cause);
-        when(ctx.statusCode()).thenReturn(401);
+        when(ctx.statusCode()).thenReturn(400);
         VertxFailureStatus.observeFailurePair(ctx);
 
-        when(ctx.statusCode()).thenReturn(404);
+        when(ctx.statusCode()).thenReturn(401);
         VertxFailureStatus.observeFailurePair(ctx);
 
         assertEquals(
                 401,
                 VertxFailureStatus.clientErrorStatusForCause(ctx),
-                "the status that accompanied the cause must win over a later fail(int)");
+                "an explicit fail(401, sharedCause) must not be treated as a status-only rewrite of 400");
+        assertEquals(401, data.get(VertxFailureStatus.OBSERVED_STATUS_KEY));
     }
 
     @Test
@@ -94,5 +99,27 @@ class VertxFailureStatusTest {
 
         assertEquals(401, VertxFailureStatus.clientErrorStatusForCause(ctx));
         assertEquals(second, data.get(VertxFailureStatus.OBSERVED_FAILURE_KEY));
+    }
+
+    @Test
+    @DisplayName("consumeObservation clears the pair so a later shared-cause fail records a fresh status")
+    void consumeObservationAllowsSharedCauseRefailToRecordNewStatus() {
+        RuntimeException shared = new RuntimeException("shared");
+        when(ctx.failure()).thenReturn(shared);
+        when(ctx.statusCode()).thenReturn(400);
+        VertxFailureStatus.observeFailurePair(ctx);
+        assertEquals(400, VertxFailureStatus.clientErrorStatusForCause(ctx));
+
+        VertxFailureStatus.consumeObservation(ctx);
+        assertFalse(data.containsKey(VertxFailureStatus.OBSERVED_FAILURE_KEY));
+        assertFalse(data.containsKey(VertxFailureStatus.OBSERVED_STATUS_KEY));
+
+        when(ctx.statusCode()).thenReturn(401);
+        VertxFailureStatus.observeFailurePair(ctx);
+
+        assertEquals(
+                401,
+                VertxFailureStatus.clientErrorStatusForCause(ctx),
+                "after consume, fail(401, sharedCause) must observe 401 — not a frozen 400");
     }
 }

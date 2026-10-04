@@ -674,7 +674,9 @@ public class JaxRsRouterMount implements RouterMount {
      * <p>The status stashed for that branch is the one that accompanied the cause on the same
      * {@code fail(...)} call. Vert.x {@code fail(int)} rewrites {@code statusCode} without clearing
      * {@code failure}; {@link VertxFailureStatus#observeFailurePair} records the first-seen pair so a
-     * later status-only rewrite cannot make this handler stash a 4xx over an older server-error cause.
+     * later status-only rewrite of a non-4xx observation cannot make this handler stash a 4xx over an
+     * older server-error cause. The observation is cleared when the failure is handed to mapping, so it
+     * cannot freeze a later cycle that reuses the same Throwable after {@code reroute()}.
      *
      * <p>Before dispatching, the resolved no-matched-method error-body default mapper (FR-JSON-058) — when
      * non-{@code null} and not already stashed by an upstream per-method handler — is placed under

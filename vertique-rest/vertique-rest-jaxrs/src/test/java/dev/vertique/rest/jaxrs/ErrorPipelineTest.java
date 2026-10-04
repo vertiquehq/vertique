@@ -158,6 +158,9 @@ class ErrorPipelineTest {
             ErrorPipeline customPipeline = new ErrorPipeline(List.of(), List.of(), new RestExceptionMapper(), registry);
 
             ctxData.put(VertxFailureStatus.KEY, 401);
+            RuntimeException observed = new RuntimeException("observed");
+            ctxData.put(VertxFailureStatus.OBSERVED_FAILURE_KEY, observed);
+            ctxData.put(VertxFailureStatus.OBSERVED_STATUS_KEY, 401);
 
             Future<Response> future = customPipeline.mapToResponse(ctx, new IllegalArgumentException("bad"));
             assertTrue(future.succeeded());
@@ -166,6 +169,10 @@ class ErrorPipelineTest {
             assertFalse(
                     ctxData.containsKey(VertxFailureStatus.KEY),
                     "the hint must be consumed even on the branch where the fallback never runs");
+            assertFalse(
+                    ctxData.containsKey(VertxFailureStatus.OBSERVED_FAILURE_KEY),
+                    "observation must be cleared with the hint so a later shared-cause fail cannot freeze it");
+            assertFalse(ctxData.containsKey(VertxFailureStatus.OBSERVED_STATUS_KEY));
         }
 
         @Test
@@ -185,6 +192,8 @@ class ErrorPipelineTest {
             ErrorPipeline customPipeline = new ErrorPipeline(List.of(), List.of(), throwingMapper, registry);
 
             ctxData.put(VertxFailureStatus.KEY, 401);
+            ctxData.put(VertxFailureStatus.OBSERVED_FAILURE_KEY, new RuntimeException("observed"));
+            ctxData.put(VertxFailureStatus.OBSERVED_STATUS_KEY, 401);
 
             Future<Response> future = customPipeline.mapToResponse(ctx, new RuntimeException("auth failed"));
             assertTrue(future.failed(), "a throwing translator must fail the mapping future");
@@ -192,6 +201,10 @@ class ErrorPipelineTest {
             assertEquals("translator boom", future.cause().getMessage());
             assertFalse(
                     ctxData.containsKey(VertxFailureStatus.KEY), "the hint must be removed even when translate throws");
+            assertFalse(
+                    ctxData.containsKey(VertxFailureStatus.OBSERVED_FAILURE_KEY),
+                    "observation must be removed even when translate throws");
+            assertFalse(ctxData.containsKey(VertxFailureStatus.OBSERVED_STATUS_KEY));
         }
 
         @Test
