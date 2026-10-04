@@ -24,8 +24,9 @@ import lombok.extern.slf4j.Slf4j;
  *   <li>Reads the authenticated {@link io.vertx.ext.auth.User} from the routing context</li>
  *   <li>Passes the decoded principal claims to {@link JwtClaimsValidator#validate(java.util.Map)}</li>
  *   <li>On failure: emits a {@link dev.vertique.security.events.CredentialRejectedEvent} via
- *       {@link CredentialRejectionReporter} with reason code {@code JWT_CLAIMS_INVALID}, then
- *       fails the request with {@code 401 Unauthorized}</li>
+ *       {@link CredentialRejectionReporter} with reason code {@code JWT_CLAIMS_INVALID}, applies
+ *       the same {@code WWW-Authenticate} challenge as token-level 401s, then fails the request
+ *       with {@code 401 Unauthorized}</li>
  * </ol>
  *
  * <p>Priority: 50 — runs before authorization (100) and SecurityContext bridging (200),
@@ -108,6 +109,8 @@ public class JwtClaimsValidatorContributor implements OperationHandlerContributo
                             Optional.of(buildVerificationSource()),
                             REASON_CODE,
                             Map.of());
+                    // Same challenge the scheme handler emits on token-level 401s (RFC 9110 §11.6.1).
+                    BearerWwwAuthenticateChallenge.apply(ctx, validationConfig);
                     ctx.fail(401, e);
                     return;
                 }

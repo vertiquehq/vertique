@@ -480,7 +480,9 @@ and only when `RestAuthenticationEvidence` already carries a verified JWT entry.
 
 #### Rejection reason codes
 
-Every one of these fails the request with **401** and emits a credential-rejected event first.
+Every one of these fails the request with **401**, emits a credential-rejected event first, and sets
+a `WWW-Authenticate` challenge (`Bearer`, with `realm` equal to `jwt.validation.issuer` when that
+value is configured; otherwise the bare `Bearer` scheme).
 
 | Code | Condition |
 |---|---|
@@ -665,7 +667,7 @@ also makes it, not the `jwt` section, the value the startup clock-skew check com
 
 | Outcome | Status |
 |---|---|
-| Every rejection reason code in the table above | 401 |
+| Every rejection reason code in the table above | 401 with `WWW-Authenticate: Bearer` (and `realm="<issuer>"` when `jwt.validation.issuer` is set) |
 | Authenticated but lacking a required role or scope | 403 (or 401 when authentication was required and absent) — decided by `dev.vertique:vertique-rest-security` |
 | Authenticated and authorized | The operation runs |
 

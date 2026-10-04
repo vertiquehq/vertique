@@ -22,6 +22,7 @@ import dev.vertique.security.runtime.events.SecurityEventEmitter;
 import io.vertx.core.Future;
 import io.vertx.core.Handler;
 import io.vertx.core.http.HttpServerRequest;
+import io.vertx.core.http.HttpServerResponse;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.auth.User;
 import io.vertx.ext.web.RoutingContext;
@@ -110,6 +111,19 @@ class JwtClaimsValidatorContributorTest {
 
         HttpServerRequest request = mock(HttpServerRequest.class);
         when(ctx.request()).thenReturn(request);
+
+        HttpServerResponse response = mock(HttpServerResponse.class);
+        Map<String, String> responseHeaders = new HashMap<>();
+        org.mockito.stubbing.Answer<HttpServerResponse> captureHeader = inv -> {
+            responseHeaders.put(
+                    inv.getArgument(0).toString(), inv.getArgument(1).toString());
+            return response;
+        };
+        when(response.putHeader(anyString(), anyString())).thenAnswer(captureHeader);
+        when(response.putHeader(any(CharSequence.class), any(CharSequence.class)))
+                .thenAnswer(captureHeader);
+        when(ctx.response()).thenReturn(response);
+        backingMap.put("__responseHeaders", responseHeaders);
 
         UserContextInternal userContextInternal = (UserContextInternal) ctx;
         when(ctx.userContext()).thenReturn((UserContext) userContextInternal);
@@ -387,6 +401,12 @@ class JwtClaimsValidatorContributorTest {
 
             // Assert (b): request still fails with 401
             assertTrue(failCalled.get(), "ctx.fail(401, e) must be called after emitting the rejection event");
+            @SuppressWarnings("unchecked")
+            Map<String, String> headers = (Map<String, String>) store.get("__responseHeaders");
+            assertEquals(
+                    "Bearer realm=\"" + ISSUER + "\"",
+                    headers.get(BearerWwwAuthenticateChallenge.HEADER),
+                    "claims-validator 401 must carry the same WWW-Authenticate challenge as token-level 401s");
         }
 
         @Test

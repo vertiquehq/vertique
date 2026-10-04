@@ -23,6 +23,7 @@ import dev.vertique.security.runtime.events.SecurityEventEmitter;
 import dev.vertique.security.verification.JwksVerificationSource;
 import io.vertx.core.Future;
 import io.vertx.core.http.HttpServerRequest;
+import io.vertx.core.http.HttpServerResponse;
 import io.vertx.ext.auth.User;
 import io.vertx.ext.auth.authentication.Credentials;
 import io.vertx.ext.auth.jwt.JWTAuth;
@@ -140,6 +141,22 @@ class JwtBearerSecuritySchemeHandlerTest {
         HttpServerRequest request = mock(HttpServerRequest.class);
         when(ctx.request()).thenReturn(request);
 
+        // Capture response headers so failure-path tests can assert WWW-Authenticate.
+        HttpServerResponse response = mock(HttpServerResponse.class);
+        Map<String, String> responseHeaders = new HashMap<>();
+        // Stub both String and CharSequence overloads — BearerWwwAuthenticateChallenge uses String.
+        org.mockito.stubbing.Answer<HttpServerResponse> captureHeader = inv -> {
+            responseHeaders.put(
+                    inv.getArgument(0).toString(), inv.getArgument(1).toString());
+            return response;
+        };
+        when(response.putHeader(anyString(), anyString())).thenAnswer(captureHeader);
+        when(response.putHeader(any(CharSequence.class), any(CharSequence.class)))
+                .thenAnswer(captureHeader);
+        when(ctx.response()).thenReturn(response);
+        // Expose the capture map for assertions without widening the stub API.
+        backingMap.put("__responseHeaders", responseHeaders);
+
         // Wire userContext() to return the ctx itself (which also implements UserContextInternal)
         UserContextInternal userContextInternal = (UserContextInternal) ctx;
         when(ctx.userContext()).thenReturn((UserContext) userContextInternal);
@@ -155,6 +172,11 @@ class JwtBearerSecuritySchemeHandlerTest {
         when(ctx.user()).thenAnswer(inv -> userRef.get());
 
         return ctx;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, String> responseHeaders(Map<String, Object> store) {
+        return (Map<String, String>) store.get("__responseHeaders");
     }
 
     /**
@@ -594,6 +616,27 @@ class JwtBearerSecuritySchemeHandlerTest {
             List<CredentialRejectedEvent> rejections = lastObserver.rejections;
             assertEquals(1, rejections.size(), "exactly one rejection event must be stashed");
             assertEquals("BEARER_MISSING", rejections.get(0).reasonCode(), "reasonCode must be BEARER_MISSING");
+            assertEquals(
+                    "Bearer realm=\"" + ISSUER + "\"",
+                    responseHeaders(store).get(BearerWwwAuthenticateChallenge.HEADER),
+                    "401 must carry a WWW-Authenticate challenge with the configured issuer as realm");
+        }
+
+        @Test
+        @DisplayName("Missing Authorization header with no configured issuer → WWW-Authenticate: Bearer")
+        void missingAuthorizationHeader_bareBearerChallengeWhenIssuerUnset() {
+            when(ctx.request().getHeader("Authorization")).thenReturn(null);
+            doAnswer(inv -> null).when(ctx).fail(anyInt());
+
+            JWTAuth mockAuth = mock(JWTAuth.class);
+            JwtBearerSecuritySchemeHandler handler =
+                    handlerWithMockAuth(mockAuth, JwtValidationConfig.builder().build());
+            handler.handle(ctx);
+
+            assertEquals(
+                    "Bearer",
+                    responseHeaders(store).get(BearerWwwAuthenticateChallenge.HEADER),
+                    "without a configured issuer the challenge is the bare Bearer scheme");
         }
 
         @Test

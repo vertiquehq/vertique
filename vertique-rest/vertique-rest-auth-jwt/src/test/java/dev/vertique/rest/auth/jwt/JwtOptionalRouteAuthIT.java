@@ -4,6 +4,8 @@
 package dev.vertique.rest.auth.jwt;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.rest.core.security.RouteAuthHandler;
 import dev.vertique.rest.security.CredentialRejectionReporter;
@@ -97,6 +99,13 @@ class JwtOptionalRouteAuthIT {
                 })
                 .onComplete(testContext.succeeding(invalid -> {
                     assertEquals(401, invalid.statusCode());
+                    assertNotNull(
+                            invalid.getHeader("WWW-Authenticate"),
+                            "a framework 401 must carry a WWW-Authenticate challenge (RFC 9110 §11.6.1)");
+                    assertTrue(
+                            invalid.getHeader("WWW-Authenticate").startsWith("Bearer"),
+                            "JWT bearer 401 challenge must use the Bearer scheme; was "
+                                    + invalid.getHeader("WWW-Authenticate"));
                     assertEquals(2, continuations.get());
                     testContext.completeNow();
                 }));
