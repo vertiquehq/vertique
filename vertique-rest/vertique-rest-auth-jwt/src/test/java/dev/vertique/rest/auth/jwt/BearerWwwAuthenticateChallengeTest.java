@@ -4,7 +4,7 @@
 package dev.vertique.rest.auth.jwt;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -63,8 +63,7 @@ class BearerWwwAuthenticateChallengeTest {
         RoutingContext ctx = mock(RoutingContext.class);
         HttpServerResponse response = mock(HttpServerResponse.class);
         when(ctx.response()).thenReturn(response);
-        when(response.putHeader(any(CharSequence.class), any(CharSequence.class)))
-                .thenReturn(response);
+        when(response.putHeader(anyString(), anyString())).thenReturn(response);
 
         JwtValidationConfig config =
                 JwtValidationConfig.builder().issuer("https://issuer.test").build();

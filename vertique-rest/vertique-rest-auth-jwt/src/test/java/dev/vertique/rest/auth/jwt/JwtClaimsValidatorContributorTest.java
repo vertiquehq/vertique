@@ -114,14 +114,13 @@ class JwtClaimsValidatorContributorTest {
 
         HttpServerResponse response = mock(HttpServerResponse.class);
         Map<String, String> responseHeaders = new HashMap<>();
-        org.mockito.stubbing.Answer<HttpServerResponse> captureHeader = inv -> {
-            responseHeaders.put(
-                    inv.getArgument(0).toString(), inv.getArgument(1).toString());
-            return response;
-        };
-        when(response.putHeader(anyString(), anyString())).thenAnswer(captureHeader);
-        when(response.putHeader(any(CharSequence.class), any(CharSequence.class)))
-                .thenAnswer(captureHeader);
+        // BearerWwwAuthenticateChallenge calls putHeader(String, String).
+        doAnswer(inv -> {
+                    responseHeaders.put(inv.getArgument(0), inv.getArgument(1));
+                    return response;
+                })
+                .when(response)
+                .putHeader(anyString(), anyString());
         when(ctx.response()).thenReturn(response);
         backingMap.put("__responseHeaders", responseHeaders);
 
