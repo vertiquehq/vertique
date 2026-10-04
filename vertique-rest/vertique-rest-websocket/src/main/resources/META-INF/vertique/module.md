@@ -432,9 +432,9 @@ application declares security the same way on both transports:
 | `@PathParam("name")` | lifecycle method parameter | Binds a path-template placeholder |
 | `@ValidateWith(groups = {...})` | `@OnMessage` method | Selects Bean Validation groups |
 
-Method-level security annotations on lifecycle methods are not consulted; the endpoint class is the
-only site for the security policy above. Input canonicalization and sanitization policies are
-resolved separately, and do read method- and parameter-level declarations — see
+Method-level security annotations on lifecycle methods fail startup — the endpoint class is the only
+site for the security policy above. Input canonicalization and sanitization policies are resolved
+separately, and do read method- and parameter-level declarations — see
 [Validation and Input Processing](#validation-and-input-processing).
 
 ---
@@ -656,6 +656,7 @@ All of these are raised while the router is built, so a misconfigured endpoint n
 | `@PathParam("x")` names no placeholder in the path template | `IllegalArgumentException` |
 | Conflicting security annotations on the class | `IllegalArgumentException` |
 | `@RolesAllowed` with an empty value list | `IllegalArgumentException` |
+| `@DenyAll`, `@RolesAllowed`, `@PermitAll`, or `@Authorized` on a lifecycle method | `IllegalArgumentException` |
 | `@RequiresAction` on a lifecycle method | `IllegalArgumentException` |
 | `@RequiresAction` that is not a canonical action reference | `IllegalArgumentException` |
 | `@RequiresAction` combined with `@PermitAll` or `@DenyAll` | `IllegalArgumentException` |
@@ -702,8 +703,10 @@ exactly one `HttpRequestCompletedEvent`.
 
 ### Common mistakes
 
-- **Expecting per-message authorization.** There is none. A `@RequiresAction` on a lifecycle method
-  fails startup for exactly this reason — it would suggest a guarantee the transport cannot make.
+- **Expecting per-message authorization.** There is none. A `@DenyAll`, `@RolesAllowed`,
+  `@PermitAll`, `@Authorized`, or `@RequiresAction` on a lifecycle method fails startup for exactly
+  this reason — it would suggest a guarantee the transport cannot make. Put the annotation on the
+  endpoint class instead; WebSocket authorizes once at upgrade.
 - **Storing the `SecurityContext` in `session.attributes()` at `@OnOpen`.** It goes stale across an
   identity refresh. Read it per invocation instead.
 - **Assuming a class-level `@Canonicalize`/`@Sanitize` is inert.** It governs every lifecycle method
