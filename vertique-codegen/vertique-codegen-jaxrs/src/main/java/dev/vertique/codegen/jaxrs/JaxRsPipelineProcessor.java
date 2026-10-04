@@ -274,7 +274,6 @@ public final class JaxRsPipelineProcessor extends AbstractProcessor {
                 security.validateClassLevel(contract);
             }
 
-            boolean contractValid = true;
             for (Map.Entry<EffectiveMethodContract, List<String>> entry : verbsByMethod.entrySet()) {
                 EffectiveMethodContract method = entry.getKey();
                 List<String> presentVerbs = entry.getValue();

@@ -69,7 +69,11 @@ public interface KafkaOutboxCaptureHook extends OrderedExtension {
      *                if the aggregate ID was not set
      * @param value   a no-copy {@link PayloadSource} over the serialized wire bytes; {@code null}
      *                when serialization failed before any bytes were produced
-     * @param headers the application headers from the outbox envelope; never {@code null}
+     * @param headers the egress headers handed to hooks: application headers merged with the
+     *                projected durable context ({@code vertique-*} keys) via
+     *                {@link dev.vertique.core.context.DurableMetadataHeaderCodec#mergeForEgress},
+     *                matching the Kafka record that was (or would have been) published; never
+     *                {@code null}
      * @param result  the classified publish outcome; never {@code null}
      * @param entryId the string form of
      *                {@link dev.vertique.inboxoutbox.OutboxEnvelope#entryId()}; never {@code null}

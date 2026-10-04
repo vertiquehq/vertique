@@ -79,7 +79,7 @@ public record HumanTaskNode(
             throw new IllegalArgumentException("HumanTaskNode requires at least one decision");
         }
         // Decision names form the closed dispatch keyspace at completion time
-        // (PgWorkflowEngine.taskCompleted resolves by name). Duplicates would silently leave the
+        // (WorkflowEngine.taskCompleted resolves by name). Duplicates would silently leave the
         // second declaration unreachable while still appearing in decisions_snapshot_json — fail
         // loud at definition time instead.
         java.util.Set<String> seenNames = new java.util.HashSet<>();

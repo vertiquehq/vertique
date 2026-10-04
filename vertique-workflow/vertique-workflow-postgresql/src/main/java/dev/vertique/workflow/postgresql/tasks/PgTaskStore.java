@@ -46,7 +46,7 @@ import java.util.UUID;
  *
  * <p>This implementation is storage-only: it does not perform dedup, does not append history, and
  * does not read or update the {@code workflow_instances} table. The engine
- * ({@link dev.vertique.workflow.postgresql.engine.PgWorkflowEngine}) owns those concerns.
+ * ({@link dev.vertique.workflow.engine.WorkflowEngine}) owns those concerns.
  *
  * <p>The {@code mark*} methods follow the same compare-and-swap pattern as
  * {@link dev.vertique.workflow.postgresql.timer.PgTimerStore}: an {@code UPDATE … WHERE status='OPEN'}

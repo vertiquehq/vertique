@@ -18,7 +18,7 @@ SPDX-License-Identifier: EUPL-1.2
 
     <artifactId>vertique-workflow-postgresql</artifactId>
     <name>Vertique Workflow PostgreSQL</name>
-    <description>PostgreSQL persistence for workflow state machines: instance/history/dedup repositories, PgWorkflowEngine, optimistic concurrency, Flyway migrations.</description>
+    <description>PostgreSQL persistence for workflow state machines: instance/history/dedup repositories, dialect adapters for the portable WorkflowEngine, optimistic concurrency, Flyway migrations.</description>
 
     <build>
         <plugins>

@@ -94,8 +94,8 @@ import jakarta.inject.Singleton;
  *   <li>{@link TransactionalMessagingPostgresqlModule} — outbox/inbox infrastructure and relay.</li>
  *   <li>{@link TransactionalMessagingServiceModule} — SERVICE {@code OutboxDestinationHandler}
  *       (required by the {@link WorkflowOutboxComposeValidator} startup contract).</li>
- *   <li>{@link WorkflowPostgresqlModule} — {@code PgWorkflowEngine}, repositories, and recorder
- *       multibinding.</li>
+ *   <li>{@link WorkflowPostgresqlModule} — portable {@code WorkflowEngine} (via included
+ *       {@code WorkflowEngineModule}), PostgreSQL repositories, and recorder multibinding.</li>
  *   <li>{@link WorkflowServicesModule} — outbox recorder + signal contributor + compose
  *       validator.</li>
  *   <li>{@link WorkflowDelayedModule} — timer recorder, fire-job executor, and recovery

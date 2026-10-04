@@ -49,7 +49,7 @@ import java.util.Map;
  * <p>The constructor takes {@link WorkflowEventsComposeValidator} as a required (otherwise unused)
  * parameter so that the validator's startup checks run whenever this recorder is instantiated.
  * Because the recorder participates in the {@code @WorkflowRecorders} multibinding consumed by
- * {@code RecorderRouter} → {@code PgWorkflowEngine}, Dagger constructs the validator before
+ * {@code RecorderRouter} → {@code WorkflowEngine}, Dagger constructs the validator before
  * the recorder, making validation happen at graph-construction time rather than as an opt-in
  * step at application boot. Mirrors the pattern established by
  * {@link dev.vertique.workflow.services.recorder.OutboxSideEffectRecorder} in cycle 1.
@@ -67,7 +67,7 @@ public final class WorkflowEventSideEffectRecorder implements WorkflowSideEffect
      * for its construction side-effect: when Dagger instantiates this recorder (which happens
      * eagerly because it participates in the {@code @WorkflowRecorders}
      * {@code Set<WorkflowSideEffectRecorder<SqlClient>>} multibinding consumed by
-     * {@code RecorderRouter} → {@code PgWorkflowEngine}), it must first instantiate the validator,
+     * {@code RecorderRouter} → {@code WorkflowEngine}), it must first instantiate the validator,
      * which performs the destination-handler-presence check. Apps can no longer silently bypass
      * that check by forgetting to expose an explicit accessor on their {@code AppComponent}; the
      * recorder cannot exist without the validator having run.

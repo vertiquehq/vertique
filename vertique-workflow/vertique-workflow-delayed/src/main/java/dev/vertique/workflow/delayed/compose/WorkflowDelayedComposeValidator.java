@@ -48,7 +48,7 @@ import jakarta.inject.Singleton;
  * {@link dev.vertique.workflow.delayed.recorder.WorkflowTimerSideEffectRecorder} takes this
  * validator as a required dependency, so Dagger must construct it before the recorder. Because the
  * recorder participates in the {@code @WorkflowRecorders} multibinding consumed by
- * {@code RecorderRouter} inside {@code PgWorkflowEngine}, requesting the engine forces the entire
+ * {@code RecorderRouter} inside {@code WorkflowEngine}, requesting the engine forces the entire
  * chain — including this validator — to be built at Dagger graph construction time.
  *
  * <p>This validator implements {@link ComposeValidator} so the framework can materialize it in the

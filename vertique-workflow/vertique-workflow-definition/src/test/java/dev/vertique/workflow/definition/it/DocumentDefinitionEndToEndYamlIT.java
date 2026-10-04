@@ -78,7 +78,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
  * End-to-end integration test proving a YAML-defined workflow document executes through the same
- * {@link dev.vertique.workflow.postgresql.engine.PgWorkflowEngine} as code-first definitions, with
+ * {@link dev.vertique.workflow.engine.WorkflowEngineHandle} as code-first definitions, with
  * no engine awareness of the document syntax.
  *
  * <p>The test fixture ({@code order-fulfillment.workflow.yaml}) declares a saga with:

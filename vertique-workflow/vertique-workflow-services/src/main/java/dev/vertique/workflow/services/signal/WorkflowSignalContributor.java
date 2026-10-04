@@ -82,7 +82,7 @@ public final class WorkflowSignalContributor implements ServiceContractContribut
      * {@link ServiceContractContributor}, and the {@code ServiceContractRegistry} that aggregates
      * contributors is in turn needed by {@code ServiceTargetResolver}, which is depended on by
      * {@code OutboxSideEffectRecorder}, which feeds into the {@code @WorkflowRecorders}
-     * multibinding consumed by {@code RecorderRouter}, which {@code PgWorkflowEngine} depends on.
+     * multibinding consumed by {@code RecorderRouter}, which {@code WorkflowEngine} depends on.
      * Using {@code Provider} defers the lookup to dispatch-time, breaking the compile-time cycle.
      *
      * @param txOpsProvider lazy provider for transactional workflow operations; resolved at

@@ -33,12 +33,14 @@ public final class JaxRsCandidateScanner {
     // --- Public API ---
 
     /**
-     * Scans the round environment for semantic JAX-RS candidates: concrete (non-abstract,
-     * non-interface) classes that have an effective {@code @Path} annotation as determined by
+     * Scans the round environment for semantic JAX-RS candidates: non-interface, non-annotation
+     * type elements that have an effective {@code @Path} annotation as determined by
      * {@link EffectiveJaxRsContractResolver#hasEffectivePath(TypeElement)}.
      *
-     * <p>The {@code @Inject} and {@link NoAutoWire} filters are intentionally absent here —
-     * they are DI-emission concerns, applied separately by {@link #filterDiCandidates}.
+     * <p>Abstract classes are <em>not</em> filtered here — only {@link ElementKind#INTERFACE}
+     * and {@link ElementKind#ANNOTATION_TYPE} are skipped. The {@code @Inject} and
+     * {@link NoAutoWire} filters are intentionally absent here — they are DI-emission concerns,
+     * applied separately by {@link #filterDiCandidates}.
      *
      * @param roundEnv the current annotation processing round environment; must not be {@code null}
      * @param resolver the contract resolver used to check for an effective {@code @Path};
