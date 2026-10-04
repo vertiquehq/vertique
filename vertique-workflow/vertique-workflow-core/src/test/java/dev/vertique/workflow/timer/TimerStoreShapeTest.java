@@ -13,31 +13,36 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Contract test that verifies {@link TimerStore} declares the eight expected method names.
+ * Contract test that verifies {@link TimerStore} declares exactly the expected SPI method names.
  *
- * <p>This test exists to catch accidental renames or removals of SPI methods before a
- * downstream implementation notices at compile time.
+ * <p>This test exists to catch accidental renames, additions, or removals of SPI methods before a
+ * downstream implementation notices at compile time. Uses exact equality (not {@code containsAll})
+ * so a new method fails until it is intentionally listed here.
  */
 class TimerStoreShapeTest {
 
     private static final Set<String> EXPECTED_METHODS = Set.of(
             "insertScheduled",
+            "findById",
             "lockForFiring",
             "markFired",
             "markCancelled",
             "markFailed",
             "findRecoverableScheduled",
             "updateExecutionId",
-            "findScheduledRemindersForTask");
+            "findScheduledRemindersForTask",
+            "findScheduledByBranchToken");
 
     @Test
-    @DisplayName("TimerStore declares the 8 expected SPI method names")
+    @DisplayName("TimerStore declares exactly the expected SPI method names")
     void timerStoreHasExpectedMethods() {
         Set<String> declared = Arrays.stream(TimerStore.class.getDeclaredMethods())
                 .map(Method::getName)
                 .collect(Collectors.toSet());
 
-        assertThat(declared).as("TimerStore must declare all 8 SPI methods").containsAll(EXPECTED_METHODS);
+        assertThat(declared)
+                .as("TimerStore must declare exactly the expected SPI methods")
+                .isEqualTo(EXPECTED_METHODS);
     }
 
     @Test

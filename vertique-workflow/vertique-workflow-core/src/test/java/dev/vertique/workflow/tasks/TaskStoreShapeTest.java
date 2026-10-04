@@ -13,10 +13,12 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Contract test that verifies {@link TaskStore} declares the expected SPI method names.
+ * Contract test that verifies {@link TaskStore} declares exactly the expected SPI method names.
  *
- * <p>This test exists to catch accidental renames or removals of SPI methods before a downstream
- * implementation notices at compile time. Mirrors the style of {@code TimerStoreShapeTest}.
+ * <p>This test exists to catch accidental renames, additions, or removals of SPI methods before a
+ * downstream implementation notices at compile time. Mirrors the style of {@code TimerStoreShapeTest}.
+ * Uses exact equality (not {@code containsAll}) so a new method fails until it is intentionally
+ * listed here.
  */
 class TaskStoreShapeTest {
 
@@ -28,16 +30,20 @@ class TaskStoreShapeTest {
             "markExpired",
             "reassign",
             "findByFilter",
-            "findById");
+            "findById",
+            "findOpenByBranchToken",
+            "incrementRemindersFiredCount");
 
     @Test
-    @DisplayName("TaskStore declares all 8 expected SPI method names")
+    @DisplayName("TaskStore declares exactly the expected SPI method names")
     void taskStoreHasExpectedMethods() {
         Set<String> declared = Arrays.stream(TaskStore.class.getDeclaredMethods())
                 .map(Method::getName)
                 .collect(Collectors.toSet());
 
-        assertThat(declared).as("TaskStore must declare all 8 SPI methods").containsAll(EXPECTED_METHODS);
+        assertThat(declared)
+                .as("TaskStore must declare exactly the expected SPI methods")
+                .isEqualTo(EXPECTED_METHODS);
     }
 
     @Test
