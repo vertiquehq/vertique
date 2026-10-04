@@ -91,12 +91,15 @@ import org.junit.jupiter.params.provider.MethodSource;
  *       nested array ({@code String[][]}), whose element type is itself an array and therefore not a
  *       scalar component on either path, and the collection shapes whose type argument core reflection
  *       does not reify as a {@link Class} — a wildcard ({@code List<? extends CharSequence>}), a type
- *       variable ({@code List<T>}), and a nested parameterized type
- *       ({@code List<List<String>>}). Those three are the load-bearing rows for the element-type gate
+ *       variable ({@code List<T>}), a nested parameterized type ({@code List<List<String>>}), and a
+ *       non-static member class of a parameterized owner ({@code List<Outer<String>.Inner>}, plus
+ *       {@code List<Outer<String>.Inner[]>} through array recursion). Those are the load-bearing rows
+ *       for the element-type gate
  *       ({@code EffectiveJaxRsContractResolver.isReflectivelyClassTypeArgument}), which must mirror the
  *       reflective {@code typeArg instanceof Class<?>} test rather than erase the argument to its
- *       bound; {@code List<String[]>} pins the same gate's <em>accepting</em> direction, since an
- *       array of a non-generic type <em>is</em> reified as a {@code Class}.</li>
+ *       bound or accept an empty {@code getTypeArguments()} without inspecting
+ *       {@code getEnclosingType()}; {@code List<String[]>} pins the same gate's <em>accepting</em>
+ *       direction, since an array of a non-generic type <em>is</em> reified as a {@code Class}.</li>
  * </ul>
  *
  * <p>{@code ParameterExtractor} and its {@code GeneratedJaxRsSupport} adapter
@@ -360,6 +363,41 @@ class GeneratedArrayParamParityTest {
         }
     }
 
+    /**
+     * Parameterized-owner inner-class element: core reflection reifies
+     * {@code Outer<String>.Inner} as a {@code ParameterizedType} (empty args, parameterized owner),
+     * so neither path may resolve a component type (vertique-dev#71).
+     */
+    @Path("/matrix-parameterized-owner-inner")
+    @PermitAll
+    static class ParameterizedOwnerInnerCollectionReflective {
+        static class Outer<T> {
+            class Inner {}
+        }
+
+        @GET
+        public String handle(@QueryParam("t") List<Outer<String>.Inner> t) {
+            return "";
+        }
+    }
+
+    /**
+     * Array-of-parameterized-owner-inner element: reaches the same gate through
+     * {@code GenericArrayType} recursion (vertique-dev#71).
+     */
+    @Path("/matrix-parameterized-owner-inner-array")
+    @PermitAll
+    static class ParameterizedOwnerInnerArrayCollectionReflective {
+        static class Outer<T> {
+            class Inner {}
+        }
+
+        @GET
+        public String handle(@QueryParam("t") List<Outer<String>.Inner[]> t) {
+            return "";
+        }
+    }
+
     @Path("/matrix-int-body")
     @PermitAll
     static class IntArrayBodyReflective {
@@ -419,11 +457,14 @@ class GeneratedArrayParamParityTest {
      *       {@code short[]} unannotated bodies (expected BODY + null componentType, decision 8's
      *       carve-out), a {@code @QueryParam String[][]} (QUERY + null componentType: the element
      *       type is itself an array, not a scalar component), and {@code @QueryParam} declarations of
-     *       {@code List<? extends CharSequence>}, {@code List<T>}, and {@code List<List<String>>}
+     *       {@code List<? extends CharSequence>}, {@code List<T>}, {@code List<List<String>>},
+     *       {@code List<Outer<String>.Inner>}, and {@code List<Outer<String>.Inner[]>}
      *       (QUERY + null componentType: core reflection reifies none of those type arguments as a
-     *       {@link Class}, so neither path may classify the parameter as multi-valued). The
-     *       {@code List<String[]>} row is the counterpart, pinning the argument shape that IS reified
-     *       as a {@code Class} and must stay non-null on both paths.</li>
+     *       {@link Class}, so neither path may classify the parameter as multi-valued — including the
+     *       parameterized-owner inner-class shapes, which are {@code ParameterizedType}/
+     *       {@code GenericArrayType} despite empty type arguments). The {@code List<String[]>} row is
+     *       the counterpart, pinning the argument shape that IS reified as a {@code Class} and must
+     *       stay non-null on both paths.</li>
      * </ul>
      *
      * @return the matrix rows as JUnit 5 {@link Arguments}, named by their label
@@ -816,6 +857,62 @@ class GeneratedArrayParamParityTest {
                                 }
                                 """),
                         "dev.vertique.test.matrix.NestedGenericCollectionGenerated",
+                        ResourceMethodMeta.ParamSource.QUERY,
+                        null,
+                        null),
+                new MatrixCase(
+                        "List<Outer<String>.Inner> (parameterized-owner inner)",
+                        new ParameterizedOwnerInnerCollectionReflective(),
+                        SourceFiles.inline(
+                                "dev.vertique.test.matrix.ParameterizedOwnerInnerCollectionGenerated", """
+                                package dev.vertique.test.matrix;
+
+                                import jakarta.ws.rs.GET;
+                                import jakarta.ws.rs.Path;
+                                import jakarta.ws.rs.QueryParam;
+                                import java.util.List;
+
+                                @Path("/matrix-parameterized-owner-inner")
+                                public class ParameterizedOwnerInnerCollectionGenerated {
+                                    public ParameterizedOwnerInnerCollectionGenerated() {}
+
+                                    public static class Outer<T> {
+                                        public class Inner {}
+                                    }
+
+                                    @GET
+                                    public String handle(@QueryParam("t") List<Outer<String>.Inner> t) { return ""; }
+                                }
+                                """),
+                        "dev.vertique.test.matrix.ParameterizedOwnerInnerCollectionGenerated",
+                        ResourceMethodMeta.ParamSource.QUERY,
+                        null,
+                        null),
+                new MatrixCase(
+                        "List<Outer<String>.Inner[]> (parameterized-owner inner array)",
+                        new ParameterizedOwnerInnerArrayCollectionReflective(),
+                        SourceFiles.inline(
+                                "dev.vertique.test.matrix.ParameterizedOwnerInnerArrayCollectionGenerated", """
+                                package dev.vertique.test.matrix;
+
+                                import jakarta.ws.rs.GET;
+                                import jakarta.ws.rs.Path;
+                                import jakarta.ws.rs.QueryParam;
+                                import java.util.List;
+
+                                @Path("/matrix-parameterized-owner-inner-array")
+                                public class ParameterizedOwnerInnerArrayCollectionGenerated {
+                                    public ParameterizedOwnerInnerArrayCollectionGenerated() {}
+
+                                    public static class Outer<T> {
+                                        public class Inner {}
+                                    }
+
+                                    @GET
+                                    public String handle(@QueryParam("t") List<Outer<String>.Inner[]> t) { return ""; }
+                                }
+                                """),
+                        "dev.vertique.test.matrix.ParameterizedOwnerInnerArrayCollectionGenerated",
                         ResourceMethodMeta.ParamSource.QUERY,
                         null,
                         null),
