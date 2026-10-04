@@ -336,15 +336,16 @@ class ResponsePipeline {
      * @param cause the pipeline failure that triggered this fallback
      */
     void sendFallback500(RoutingContext ctx, Throwable cause) {
-        // ERROR carries class name + a sanitised message only: Jackson WRAP_EXCEPTIONS (and similar)
-        // append caller-controlled map keys into encode-failure messages, so logging the raw throwable
-        // at ERROR would let CR/LF in those keys forge additional log lines. Full detail stays at DEBUG.
+        // Jackson WRAP_EXCEPTIONS (and similar) append caller-controlled map keys into encode-failure
+        // messages. Never attach the raw Throwable: Logback renders exception messages with their
+        // original CR/LF, which would forge additional log lines even at DEBUG. Both ERROR and DEBUG
+        // interpolate only sanitised class/message text.
         log.error(
                 "Response pipeline failed — sending bare-metal 500 — {} — {}",
                 cause.getClass().getSimpleName(),
                 sanitizeLogMessage(cause.getMessage()));
         if (log.isDebugEnabled()) {
-            log.debug("Response pipeline failure detail", cause);
+            log.debug("Response pipeline failure detail — {}", sanitizeFailureChain(cause));
         }
         Response synthetic = Response.status(500).build();
         Combinators.forEachSwallowSync(
@@ -376,6 +377,29 @@ class ResponsePipeline {
         }
         String cleaned = message.replaceAll("\\p{Cntrl}", "?");
         return cleaned.length() <= LOG_MESSAGE_MAX_CHARS ? cleaned : cleaned.substring(0, LOG_MESSAGE_MAX_CHARS);
+    }
+
+    /**
+     * Renders {@code cause} and its causal chain as a single-line diagnostic: each link is
+     * {@code ClassName: sanitised-message}, joined with {@code | caused by }. Caps chain depth so a
+     * pathological cycle cannot dominate the log stream.
+     *
+     * @param cause the failure that triggered fallback-500; must not be {@code null}
+     * @return a single-line, sanitised cause-chain stand-in safe to interpolate into a log format string
+     */
+    static String sanitizeFailureChain(Throwable cause) {
+        StringBuilder sb = new StringBuilder();
+        Throwable current = cause;
+        int depth = 0;
+        while (current != null && depth < 8) {
+            if (depth > 0) {
+                sb.append(" | caused by ");
+            }
+            sb.append(current.getClass().getName()).append(": ").append(sanitizeLogMessage(current.getMessage()));
+            current = current.getCause();
+            depth++;
+        }
+        return sb.toString();
     }
 
     // --- Wire-completion observation ---
