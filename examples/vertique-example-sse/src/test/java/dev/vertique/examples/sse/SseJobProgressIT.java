@@ -207,22 +207,31 @@ public class SseJobProgressIT {
      * Opens an SSE subscription and hands the response to {@code subscriber} for incremental
      * consumption.
      *
-     * <p>The subscriber — which registers the frame, end, and exception handlers — is attached to
-     * the request's {@code response()} future <em>before</em> {@code end()} initiates the send.
-     * That ordering is load-bearing: Vert.x discards response data delivered before a handler is
-     * attached, so handlers registered after the send lose every frame that arrived on the head's
-     * tick, and the stream then looks silently short rather than failing. See
-     * {@code HttpClientBodyReadRaceIT}. The send's own outcome is deliberately not observed — a
-     * response the server did send must not be masked by a write failure.
+     * <p>The response is paused on the tick that delivers the head — via a continuation attached to
+     * {@code response()} <em>before</em> {@code end()} initiates the send — so body frames cannot
+     * race past the subscriber while it registers handlers. Vert.x discards stream data delivered
+     * before a handler is attached; without the pause, the first progress event can vanish into that
+     * gap and the test then waits forever for a trigger that already arrived. Same idiom as
+     * {@code StreamingWireFailureIT} / {@code UploadTempFileCleanupIT#postStreamingMultipart}. The
+     * send's own outcome is deliberately not observed — a response the server did send must not be
+     * masked by a write failure.
      *
      * @param opts       the request options describing the subscription
      * @param ctx        the test context failed if the request or the response never arrives
-     * @param subscriber receives the response and registers the streaming handlers on it
+     * @param subscriber receives the paused response and registers the streaming handlers on it;
+     *                   this helper resumes the stream after the subscriber returns
      */
     private static void subscribe(RequestOptions opts, VertxTestContext ctx, Handler<HttpClientResponse> subscriber) {
         httpClient.request(opts).onComplete(ctx.succeeding(request -> {
-            request.response().onComplete(ctx.succeeding(subscriber));
+            var paused = request.response().map(response -> {
+                response.pause();
+                return response;
+            });
             request.end();
+            paused.onComplete(ctx.succeeding(response -> {
+                subscriber.handle(response);
+                response.resume();
+            }));
         }));
     }
 
