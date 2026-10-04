@@ -203,10 +203,11 @@ so — like a body-limit rejection — a request that fails admission on its fir
 produces no lifecycle observation; only an admitted request opens observation.
 
 **Completion events for MCP requests.** A request MCP settles — one it writes a response for, one it
-rejects after its completion coordinator exists, or one whose lost connection it settles as
-disconnected or reset while the request is in the MCP mount — produces only MCP's own lifecycle
-events: the observation's terminal and completion events, and the `McpRequestCompletedListener`
-callback. MCP claims each such request, so rest-core's completion emitter produces neither a
+rejects after its completion coordinator exists, one whose response already ended before MCP's
+failure handler ran (ends-then-fails: settle without a second write), or one whose lost connection
+it settles as disconnected or reset while the request is in the MCP mount — produces only MCP's own
+lifecycle events: the observation's terminal and completion events, and the
+`McpRequestCompletedListener` callback. MCP claims each such request, so rest-core's completion emitter produces neither a
 `RestRequestCompletedEvent` nor an `HttpRequestCompletedEvent` for it, even when the request first
 entered another mount and fell through to the MCP mount. REST listeners, and the
 `vertique.rest.server.requests` metric, therefore never see those requests; applications observe
