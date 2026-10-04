@@ -37,7 +37,7 @@ public class FutureModelConverter implements ModelConverter {
     @Override
     public Schema<?> resolve(AnnotatedType type, ModelConverterContext context,
                           Iterator<ModelConverter> chain) {
-        // If the type is Future<T>, unwrap to T and continue resolution
+        // If the type is Future<T>, unwrap to T and restart resolution via context.resolve
         // Otherwise, delegate to the next converter in the chain
         // Returns null (not a chain.next() call) when this is the last converter
     }
@@ -47,8 +47,8 @@ public class FutureModelConverter implements ModelConverter {
 **What it does:**
 - Intercepts Swagger model resolution during OpenAPI spec generation
 - Detects `io.vertx.core.Future<T>` types
-- Extracts the type parameter `T` and passes it to the next converter
-- Result: `Future<GreetingResponse>` becomes `GreetingResponse` in the spec
+- Extracts the type parameter `T` and restarts resolution at the head of the converter chain (`context.resolve`) so every registered converter sees the payload type
+- Result: `Future<GreetingResponse>` becomes `GreetingResponse` in the spec; `Future<ReadStream<SseEvent>>` reaches `SseModelConverter` regardless of registration order
 
 **Why a separate module:**
 The swagger-maven-plugin runs during the Maven `compile` phase and loads ModelConverters from its own classpath. Putting `FutureModelConverter` in the `rest` module would require the swagger-maven-plugin to depend on the entire `rest` module and all its transitive dependencies. This separate module has minimal dependencies (swagger-core-jakarta and vertx-core) to avoid classpath pollution.
@@ -74,15 +74,14 @@ public class SseModelConverter implements ModelConverter {
 - Prevents Swagger from trying to generate a JSON schema for the `ReadStream` wrapper
 
 **Configuration** — add alongside `FutureModelConverter` in the swagger-maven-plugin config.
-`ModelConverters.addConverter` prepends each registration, so list `SseModelConverter`
-*before* `FutureModelConverter` to get the runtime chain `[Future, Sse]` (Future must
-unwrap first):
+Declaration order does not matter: `FutureModelConverter` unwraps `Future<T>` and restarts
+resolution, and Swagger's plugin path also loses `<modelConverterClasses>` order (Jackson
+deep-copy into a `HashSet` before `buildModelConverters`):
 
 ```xml
 <modelConverterClasses>
-    <!-- Declared before Future: addConverter prepends, so Future ends up ahead at runtime. -->
-    <modelConverterClass>dev.vertique.openapi.SseModelConverter</modelConverterClass>
     <modelConverterClass>dev.vertique.openapi.FutureModelConverter</modelConverterClass>
+    <modelConverterClass>dev.vertique.openapi.SseModelConverter</modelConverterClass>
 </modelConverterClasses>
 ```
 
@@ -251,7 +250,7 @@ The plugin is configured in the application module's `pom.xml`:
 
 **Key configuration points:**
 - `resourcePackages`: The Java package(s) to scan for JAX-RS annotated classes
-- `modelConverterClasses`: Must include `dev.vertique.openapi.FutureModelConverter` (and `SseModelConverter` when SSE endpoints are present — declare `Sse` before `Future` because `addConverter` prepends; `BigDecimalModelConverter` when the application uses the `vertique-strict` JSON profile, and `ScalarOptionalModelConverter` when any DTO exposes an `OptionalInt`/`OptionalLong`/`OptionalDouble` property). With more than one entry, prefer the nested `<modelConverterClass>` element form
+- `modelConverterClasses`: Must include `dev.vertique.openapi.FutureModelConverter` (and `SseModelConverter` when SSE endpoints are present; `BigDecimalModelConverter` when the application uses the `vertique-strict` JSON profile, and `ScalarOptionalModelConverter` when any DTO exposes an `OptionalInt`/`OptionalLong`/`OptionalDouble` property). Declaration order is not load-bearing — `FutureModelConverter` restarts resolution after unwrap, and the plugin's configuration deep-copy does not preserve list order. With more than one entry, prefer the nested `<modelConverterClass>` element form
 - `outputPath`: Set to `${project.build.directory}/classes` so the generated spec is on the runtime classpath
 - `outputFormat`: `JSONANDYAML` generates both `openapi.json` and `openapi.yaml`
 - `RequestParamsExtension` needs no entry here — it is picked up automatically via `ServiceLoader` once the `<dependency>` above is present

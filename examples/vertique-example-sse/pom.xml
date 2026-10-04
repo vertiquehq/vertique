@@ -120,14 +120,13 @@ SPDX-License-Identifier: EUPL-1.2
                     <prettyPrint>true</prettyPrint>
                     <modelConverterClasses>
                         <!--
-                          ModelConverters.addConverter prepends (inserts at index 0), so the
-                          declared order here is reversed in the runtime chain. List Sse before
-                          Future so the resolved order is [Future, Sse] — Future must unwrap
-                          Future<ReadStream<SseEvent>> before SseModelConverter sees the stream.
-                          See vertiquehq/vertique-dev#395.
+                          Order is not load-bearing: FutureModelConverter unwraps Future<T> and
+                          restarts resolution so SseModelConverter sees ReadStream<SseEvent>
+                          regardless of registration order. Swagger's plugin path also loses
+                          declaration order (HashSet deep-copy). See vertiquehq/vertique-dev#395.
                         -->
-                        <modelConverterClass>dev.vertique.openapi.SseModelConverter</modelConverterClass>
                         <modelConverterClass>dev.vertique.openapi.FutureModelConverter</modelConverterClass>
+                        <modelConverterClass>dev.vertique.openapi.SseModelConverter</modelConverterClass>
                     </modelConverterClasses>
                 </configuration>
                 <dependencies>

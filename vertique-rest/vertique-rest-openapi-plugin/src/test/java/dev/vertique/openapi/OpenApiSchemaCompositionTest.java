@@ -19,16 +19,28 @@ import io.swagger.v3.core.converter.ModelConverters;
 import io.swagger.v3.core.jackson.ModelResolver;
 import io.swagger.v3.core.util.Json;
 import io.swagger.v3.oas.annotations.media.Schema.RequiredMode;
+import io.swagger.v3.oas.integration.ContextUtils;
+import io.swagger.v3.oas.integration.GenericOpenApiContext;
+import io.swagger.v3.oas.integration.SwaggerConfiguration;
+import io.swagger.v3.oas.integration.api.OpenAPIConfiguration;
 import io.swagger.v3.oas.models.media.Schema;
+import io.swagger.v3.oas.models.media.StringSchema;
 import io.vertx.core.Future;
+import io.vertx.core.streams.ReadStream;
 import java.math.BigDecimal;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
+import java.util.Set;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 /**
  * Composition tests for this module's {@link ModelConverter} implementations: they pin the schema
@@ -37,8 +49,9 @@ import org.junit.jupiter.api.Test;
  *
  * <p>{@link FutureModelConverter} takes no part in those DTO assertions: none of the fixtures below
  * has a {@code Future}-typed component, so nothing in them would notice its absence. It is
- * exercised by {@link RegistrationOrder} instead, which resolves a {@code Future<BigDecimal>}
- * through the same chain.
+ * exercised by {@link RegistrationOrder} instead, which resolves {@code Future<BigDecimal>} and
+ * {@code Future<ReadStream<SseEvent>>} through the same chain and through Swagger's configuration
+ * deep-copy path.
  *
  * <p>Resolution is driven through an explicit, per-test {@link ModelConverterContextImpl} chain —
  * never {@link ModelConverters#getInstance()}. The static singleton is process-wide mutable state
@@ -58,10 +71,10 @@ import org.junit.jupiter.api.Test;
  * {@link ScalarOptionalModelConverter} carries {@code rank} <em>only</em>. The {@code nickname} and
  * {@code tags} assertions stay green without it, because swagger-core's {@link ModelResolver}
  * unwraps generic {@code Optional<T>} natively — they pin that native behaviour, not this module's.
- * {@link FutureModelConverter} carries no DTO assertion at all; its removal reddens only
- * {@link RegistrationOrder#futureOfBigDecimal_resolvesAsBareNumberBecauseBigDecimalConverterIsBehindTheUnwrap()},
+ * {@link FutureModelConverter} carries no DTO assertion at all; its removal reddens
+ * {@link RegistrationOrder#futureOfBigDecimal_resolvesAsDecimalStringBecauseFutureRestartsResolution()},
  * where the un-unwrapped {@code Future} reaches the {@link ModelResolver} and resolves as a
- * JavaBean object schema with a {@code complete} property instead of a number.
+ * JavaBean object schema with a {@code complete} property instead of the decimal-string schema.
  *
  * <p>The fixtures below mirror the <em>shapes</em> of that example's {@code OptionalGreeting} and
  * {@code PriceQuote} DTOs. They are fixtures, not copies: they exist to exercise the converters,
@@ -112,21 +125,15 @@ class OpenApiSchemaCompositionTest {
     // --- Converter chain ---
 
     /**
-     * Builds the converter chain in the order the {@code swagger-maven-plugin} registration
-     * actually produces, then a {@link ModelResolver} tail so record types resolve to object
-     * schemas at all (without a resolver at the tail the chain exhausts and returns {@code null}).
+     * Builds the converter chain used for the DTO composition fixtures: optional/decimal converters
+     * ahead of {@link FutureModelConverter}, then a {@link ModelResolver} tail so record types
+     * resolve to object schemas at all (without a resolver at the tail the chain exhausts and
+     * returns {@code null}).
      *
-     * <p>The rule: {@link ModelConverters#addConverter} inserts at index {@code 0}, so each
-     * registration lands ahead of the previous one and a {@code <modelConverterClasses>} list
-     * composes <strong>back-to-front</strong> relative to how it reads — see
-     * {@link RegistrationOrder#addConverter_prependsSoDeclaredOrderIsReversed()}, which pins that
-     * behaviour empirically, and {@code vertiquehq/vertique-dev#395}.
-     *
-     * <p>The head-first order below is what a declaration of {@code FutureModelConverter},
-     * {@code BigDecimalModelConverter}, {@code ScalarOptionalModelConverter} composes to.
-     * {@code examples/vertique-example-hello/pom.xml} is an illustration of such a declaration
-     * rather than the authority for this chain: nothing enforces what that pom declares, so read
-     * the rule above, not the example's current contents.
+     * <p>{@link FutureModelConverter} restarts resolution after unwrap, so this order is a
+     * convenient fixture rather than a required registration sequence. Swagger's plugin path does
+     * not preserve {@code <modelConverterClasses>} order (Jackson deep-copy into a {@code HashSet})
+     * — see {@link RegistrationOrder}.
      *
      * @return the converters, head first
      */
@@ -258,42 +265,30 @@ class OpenApiSchemaCompositionTest {
         }
     }
 
-    // --- Registration order ---
+    // --- Registration order / plugin configuration path ---
 
     @Nested
-    @DisplayName("swagger-maven-plugin registration order")
+    @DisplayName("swagger-maven-plugin registration and Future composition")
     class RegistrationOrder {
 
         /**
-         * Pins what {@link ModelConverters#addConverter} does to the declared registration order.
-         * This is the one assertion covering the registration <em>mechanism</em> that every other
-         * test in this class deliberately bypasses by building the chain explicitly.
+         * Pins what {@link ModelConverters#addConverter} does when called sequentially. A throwaway
+         * {@code new ModelConverters()} is used rather than {@link ModelConverters#getInstance()} so
+         * this test mutates no process-wide singleton. The {@link ModelResolver} a fresh registry
+         * seeds still registers Jackson modules on {@link Json#mapper()}; Jackson dedupes by module
+         * type id, so that registration is idempotent and harmless.
          *
-         * <p>Registering the three converters in the order
-         * {@code examples/vertique-example-hello/pom.xml} declares them yields the reverse order in
-         * {@link ModelConverters#getConverters()}: {@code addConverter} inserts at index {@code 0}.
-         * A plugin configuration therefore composes back-to-front relative to how it reads, which
-         * is the concern raised in {@code vertiquehq/vertique-dev#395}. This test pins the observed
-         * behaviour; it does not endorse or change it.
-         *
-         * <p>A throwaway {@code new ModelConverters()} is used rather than
-         * {@link ModelConverters#getInstance()} so this test mutates no converter registry outside
-         * itself — in particular it never touches the process-wide singleton that every other test
-         * and any Swagger tooling in the same JVM share. That is the isolation that matters here;
-         * it is not total isolation from global state, because the {@link ModelResolver} a fresh
-         * {@code ModelConverters} seeds registers Jackson modules on the static
-         * {@link Json#mapper()} — exactly as {@link #chainConverters()} does on every call.
-         * Jackson dedupes by module type id, so that registration is idempotent and harmless.
+         * <p>This is <em>not</em> the order the swagger-maven-plugin preserves from XML: see
+         * {@link #deepCopy_deserializesModelConverterClassesIntoHashSet()}.
          */
         @Test
-        @DisplayName("addConverter prepends, so the pom's declared order is reversed in the resolved chain")
+        @DisplayName("addConverter prepends, so sequential registrations reverse relative to call order")
         void addConverter_prependsSoDeclaredOrderIsReversed() {
             ModelConverters registry = new ModelConverters();
             FutureModelConverter future = new FutureModelConverter();
             BigDecimalModelConverter bigDecimal = new BigDecimalModelConverter();
             ScalarOptionalModelConverter scalarOptional = new ScalarOptionalModelConverter();
 
-            // The pom's declared order.
             registry.addConverter(future);
             registry.addConverter(bigDecimal);
             registry.addConverter(scalarOptional);
@@ -313,77 +308,83 @@ class OpenApiSchemaCompositionTest {
         }
 
         /**
-         * Pins the runtime chain that {@code examples/vertique-example-sse/pom.xml} must produce
-         * after {@code vertiquehq/vertique-dev#395}: {@code FutureModelConverter} ahead of
-         * {@code SseModelConverter}.
-         *
-         * <p>The pom declares {@code Sse} then {@code Future} because {@link ModelConverters#addConverter}
-         * prepends. This test asserts the <em>resolved</em> order {@code [Future, Sse, ...]}, not the
-         * declaration order — those are not the same thing, which is the whole point of #395.
-         *
-         * <p>Uses a throwaway {@code new ModelConverters()} for the same isolation reasons as
-         * {@link #addConverter_prependsSoDeclaredOrderIsReversed()}.
+         * Pins the Swagger configuration-copy step that makes pom declaration order unreliable:
+         * {@link ContextUtils#deepCopy} JSON-round-trips {@link SwaggerConfiguration} and
+         * deserializes {@code modelConverterClasses} into a plain {@link HashSet}.
          */
         @Test
-        @DisplayName("SSE example declaration (Sse then Future) yields runtime chain [Future, Sse]")
-        void sseExampleDeclaration_yieldsFutureBeforeSseInRuntimeChain() {
-            ModelConverters registry = new ModelConverters();
-            SseModelConverter sse = new SseModelConverter();
-            FutureModelConverter future = new FutureModelConverter();
+        @DisplayName("ContextUtils.deepCopy deserializes modelConverterClasses into a HashSet")
+        void deepCopy_deserializesModelConverterClassesIntoHashSet() {
+            LinkedHashSet<String> declared = new LinkedHashSet<>(
+                    List.of(SseModelConverter.class.getName(), FutureModelConverter.class.getName()));
+            SwaggerConfiguration config = new SwaggerConfiguration().modelConverterClasses(declared);
 
-            // Declaration order in examples/vertique-example-sse/pom.xml after the #395 fix.
-            registry.addConverter(sse);
-            registry.addConverter(future);
+            OpenAPIConfiguration copied = ContextUtils.deepCopy(config);
 
-            List<ModelConverter> converters = registry.getConverters();
-
-            assertEquals(
-                    3,
-                    converters.size(),
-                    "a fresh ModelConverters seeds one ModelResolver, so two registrations must yield three"
-                            + " converters, but was: " + converters);
-            assertSame(
-                    future,
-                    converters.get(0),
-                    "FutureModelConverter must be at the chain head so it unwraps before SseModelConverter");
-            assertSame(sse, converters.get(1), "SseModelConverter must sit after Future unwrap in the runtime chain");
+            assertNotNull(copied, "deepCopy must return a configuration");
+            assertNotNull(copied.getModelConverterClasses(), "copied config must retain converter class names");
             assertInstanceOf(
-                    ModelResolver.class, converters.get(2), "the seeded ModelResolver must remain at the chain tail");
+                    HashSet.class,
+                    copied.getModelConverterClasses(),
+                    "Swagger 2.2.44 deepCopy loses LinkedHashSet declaration order by deserializing into HashSet");
+            assertEquals(
+                    declared,
+                    copied.getModelConverterClasses(),
+                    "deepCopy must preserve the converter class name set membership");
         }
 
         /**
-         * Pins the one type for which the prepend inversion is <em>not</em> benign:
-         * {@code Future<BigDecimal>}.
+         * Regression for {@code vertiquehq/vertique-dev#395}: {@code Future<ReadStream<SseEvent>>}
+         * must resolve to the SSE string schema through the <em>actual</em> plugin configuration
+         * path — {@link ContextUtils#deepCopy} then {@link GenericOpenApiContext}'s {@code
+         * buildModelConverters}, then sequential {@link ModelConverters#addConverter} prepends —
+         * for either pom declaration order.
          *
-         * <p>{@link FutureModelConverter#resolve} unwraps {@code Future<T>} and hands the inner
-         * type to {@link ConverterChain#delegate} — it continues down the <em>remaining</em> chain
-         * rather than restarting at the head via
-         * {@link io.swagger.v3.core.converter.ModelConverterContext#resolve}. In the registered
-         * order {@code [ScalarOptional, BigDecimal, Future, ModelResolver]}, a
-         * {@code Future<BigDecimal>} therefore passes {@link ScalarOptionalModelConverter} (raw
-         * class is {@code Future} — no match) and {@link BigDecimalModelConverter} (same — no
-         * match) before {@link FutureModelConverter} unwraps it, at which point only the bare
-         * {@link ModelResolver} is left. The converter that would have produced the decimal-string
-         * schema now sits <em>behind</em> the unwrap, so the type resolves as a plain JSON
-         * {@code number}.
-         *
-         * <p>This test records the observed behaviour; it does <strong>not</strong> assert desired
-         * behaviour. The {@code number} outcome is a consequence of the same {@code addConverter}
-         * prepend used by the hello-example declaration order, not a shape this module intends to
-         * emit — the declared pom order resolves the same type to the decimal-string schema, which
-         * {@code BigDecimalModelConverterTest#bigDecimalInsideFuture_resolvedWhenChainedAfterFutureConverter}
-         * pins. The SSE-specific registration fix for {@code vertiquehq/vertique-dev#395} does not
-         * change this BigDecimal observation.
-         *
-         * <p>The consequence is <strong>latent</strong>: no production code currently returns a
-         * {@code Future<BigDecimal>} — verified across {@code examples/} and
-         * {@code vertique-rest/} — so no generated spec is wrong today. This test is where the
-         * surprise is written down should such a return type appear.
+         * @param sseBeforeFuture {@code true} when the LinkedHashSet is seeded as {@code [Sse,
+         *     Future]}, {@code false} for {@code [Future, Sse]}
+         */
+        @ParameterizedTest(name = "declared order sseBeforeFuture={0}")
+        @ValueSource(booleans = {true, false})
+        @DisplayName(
+                "deepCopy + buildModelConverters: Future<ReadStream<SseEvent>> is an SSE string in either pom order")
+        void futureReadStreamSse_resolvesAsStringThroughSwaggerConfigPath(boolean sseBeforeFuture) throws Exception {
+            LinkedHashSet<String> declared = sseBeforeFuture
+                    ? new LinkedHashSet<>(
+                            List.of(SseModelConverter.class.getName(), FutureModelConverter.class.getName()))
+                    : new LinkedHashSet<>(
+                            List.of(FutureModelConverter.class.getName(), SseModelConverter.class.getName()));
+
+            List<ModelConverter> registry = registryAfterSwaggerConfigPath(declared);
+            ModelConverterContextImpl context = new ModelConverterContextImpl(registry);
+
+            JavaType readStreamOfSse = Json.mapper()
+                    .getTypeFactory()
+                    .constructParametricType(ReadStream.class, dev.vertique.rest.core.sse.SseEvent.class);
+            JavaType futureOfStream =
+                    Json.mapper().getTypeFactory().constructParametricType(Future.class, readStreamOfSse);
+
+            Schema<?> resolved = context.resolve(new AnnotatedType().type(futureOfStream));
+
+            assertInstanceOf(StringSchema.class, resolved, "expected SSE string schema but was: " + resolved);
+            assertEquals("string", resolved.getType());
+            assertEquals("SSE event stream", resolved.getDescription());
+            assertTrue(
+                    registry.stream().anyMatch(SseModelConverter.class::isInstance),
+                    "registry must include SseModelConverter");
+            assertTrue(
+                    registry.stream().anyMatch(FutureModelConverter.class::isInstance),
+                    "registry must include FutureModelConverter");
+        }
+
+        /**
+         * {@link FutureModelConverter} restarts resolution after unwrap, so {@code
+         * Future<BigDecimal>} reaches {@link BigDecimalModelConverter} even when that converter sits
+         * ahead of Future in {@link #chainConverters()} (the order sequential {@code addConverter}
+         * prepends produce from the hello-example declaration).
          */
         @Test
-        @DisplayName("Future<BigDecimal> resolves as a bare number: the BigDecimal converter lands behind the"
-                + " unwrap (observed consequence of #395)")
-        void futureOfBigDecimal_resolvesAsBareNumberBecauseBigDecimalConverterIsBehindTheUnwrap() {
+        @DisplayName("Future<BigDecimal> resolves as the decimal-string schema (Future restarts resolution)")
+        void futureOfBigDecimal_resolvesAsDecimalStringBecauseFutureRestartsResolution() {
             ModelConverterContextImpl context = new ModelConverterContextImpl(chainConverters());
             JavaType futureOfBigDecimal =
                     Json.mapper().getTypeFactory().constructParametricType(Future.class, BigDecimal.class);
@@ -391,16 +392,43 @@ class OpenApiSchemaCompositionTest {
             Schema<?> resolved = context.resolve(new AnnotatedType().type(futureOfBigDecimal));
 
             assertNotNull(resolved, "Future<BigDecimal> must resolve to a schema through the registered chain");
-            assertEquals(
-                    "number",
-                    resolved.getType(),
-                    "in the registered order the unwrapped BigDecimal reaches only the ModelResolver, so it resolves"
-                            + " as a bare number, but was: " + resolved);
-            // Negative half of the claim: this is neither BigDecimalModelConverter's decimal-string
-            // schema nor the JavaBean shape a chain without FutureModelConverter would produce.
-            assertNull(resolved.getFormat(), "the bare number schema must carry no decimal format: " + resolved);
-            assertNull(resolved.getPattern(), "the bare number schema must carry no decimal pattern: " + resolved);
+            assertDecimalStringSchema(resolved, "Future<BigDecimal>");
             assertNull(resolved.getProperties(), "the Future must be unwrapped, not resolved as a bean: " + resolved);
+        }
+
+        /**
+         * Mirrors swagger-integration 2.2.44 {@code GenericOpenApiContext.init}: deep-copy the
+         * configuration, {@code buildModelConverters}, then prepend each converter onto a registry
+         * that already has a {@link ModelResolver} seed — without touching
+         * {@link ModelConverters#getInstance()}.
+         *
+         * @param declaredClassNames pom-style converter class names in declaration order
+         * @return the resulting converter list, head first
+         */
+        private static List<ModelConverter> registryAfterSwaggerConfigPath(Set<String> declaredClassNames)
+                throws Exception {
+            SwaggerConfiguration config =
+                    new SwaggerConfiguration().modelConverterClasses(new LinkedHashSet<>(declaredClassNames));
+            OpenAPIConfiguration copied = ContextUtils.deepCopy(config);
+            Set<ModelConverter> built = new ConverterBuildContext().exposeBuildModelConverters(copied);
+            assertNotNull(built, "buildModelConverters must construct the configured converters");
+
+            List<ModelConverter> registry = new ArrayList<>();
+            registry.add(new ModelResolver(Json.mapper()));
+            for (ModelConverter converter : built) {
+                registry.add(0, converter);
+            }
+            return registry;
+        }
+
+        /**
+         * Test-only subclass that exposes {@link GenericOpenApiContext#buildModelConverters} so the
+         * regression can call the same protected factory the plugin uses after {@code deepCopy}.
+         */
+        private static final class ConverterBuildContext extends GenericOpenApiContext<ConverterBuildContext> {
+            Set<ModelConverter> exposeBuildModelConverters(OpenAPIConfiguration configuration) throws Exception {
+                return buildModelConverters(configuration);
+            }
         }
     }
 
