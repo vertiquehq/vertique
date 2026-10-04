@@ -877,8 +877,10 @@ public final class EffectiveJaxRsContractResolver {
      *       {@code T} is an argument the reflective side would see as a plain {@link Class} (see
      *       {@link #isReflectivelyClassTypeArgument(TypeMirror)}), mirroring that side's
      *       {@code typeArg instanceof Class<?>} gate. A wildcard ({@code List<? extends CharSequence>},
-     *       {@code List<?>}), a type variable ({@code List<T>}), and a nested parameterized type
-     *       ({@code List<List<String>>}) therefore resolve {@code null} on both paths;
+     *       {@code List<?>}), a type variable ({@code List<T>}), a nested parameterized type
+     *       ({@code List<List<String>>}), and a non-static member class of a parameterized owner
+     *       ({@code List<Outer<String>.Inner>}, including {@code List<Outer<String>.Inner[]>})
+     *       therefore resolve {@code null} on both paths;
      *   <li>an array {@code T[]} whose element type is a scalar array component (see
      *       {@link #isScalarArrayComponent(TypeMirror)}) — yields {@code T}.
      * </ul>
@@ -951,17 +953,24 @@ public final class EffectiveJaxRsContractResolver {
      * otherwise. The mirror-side equivalents:
      *
      * <ul>
-     *   <li>a {@link javax.lang.model.type.DeclaredType} with <b>no</b> type arguments &rarr; accepted
-     *       ({@code List<String>}, {@code List<Season>}, a raw {@code List<Map>});</li>
+     *   <li>a {@link javax.lang.model.type.DeclaredType} with <b>no</b> type arguments and either no
+     *       enclosing type or an enclosing type that itself satisfies this predicate &rarr; accepted
+     *       ({@code List<String>}, {@code List<Season>}, a raw {@code List<Map>},
+     *       {@code List<Outer.Inner>} with a non-generic owner);</li>
      *   <li>an {@link javax.lang.model.type.ArrayType} whose component type recursively satisfies this
      *       predicate &rarr; accepted ({@code List<Inner[]>}, {@code List<int[]>}), matching the
      *       reflective {@code Inner[].class};</li>
      *   <li>a primitive &rarr; accepted; it can only be reached as an array component;</li>
-     *   <li>a parameterized {@code DeclaredType} ({@code List<List<String>>}), a wildcard
+     *   <li>a parameterized {@code DeclaredType} ({@code List<List<String>>}), a member class of a
+     *       parameterized owner ({@code List<Outer<String>.Inner>}), a wildcard
      *       ({@code List<? extends CharSequence>}, {@code List<?>}), a type variable
-     *       ({@code List<T>}), or a generic array ({@code List<T[]>}) &rarr; rejected, exactly as the
-     *       reflective gate rejects the {@code ParameterizedType}/{@code WildcardType}/
-     *       {@code TypeVariable}/{@code GenericArrayType} it sees for each.</li>
+     *       ({@code List<T>}), or a generic array ({@code List<T[]>},
+     *       {@code List<Outer<String>.Inner[]>}) &rarr; rejected, exactly as the reflective gate
+     *       rejects the {@code ParameterizedType}/{@code WildcardType}/{@code TypeVariable}/
+     *       {@code GenericArrayType} it sees for each. Core reflection reifies
+     *       {@code Outer<String>.Inner} as a {@code ParameterizedType} with empty type arguments and
+     *       a parameterized owner — so an empty {@code getTypeArguments()} alone is not enough; the
+     *       enclosing type must be inspected too.</li>
      * </ul>
      *
      * @param argument the collection's first type argument
@@ -969,7 +978,17 @@ public final class EffectiveJaxRsContractResolver {
      */
     private static boolean isReflectivelyClassTypeArgument(TypeMirror argument) {
         if (argument instanceof javax.lang.model.type.DeclaredType declared) {
-            return declared.getTypeArguments().isEmpty();
+            if (!declared.getTypeArguments().isEmpty()) {
+                return false;
+            }
+            TypeMirror enclosing = declared.getEnclosingType();
+            // Outer<String>.Inner is a ParameterizedType reflectively (empty args, parameterized
+            // owner). Recurse so a parameterized enclosing type rejects the argument the same way
+            // a nested ParameterizedType does — getTypeArguments().isEmpty() alone is not enough.
+            if (enclosing.getKind() != javax.lang.model.type.TypeKind.NONE) {
+                return isReflectivelyClassTypeArgument(enclosing);
+            }
+            return true;
         }
         if (argument instanceof javax.lang.model.type.ArrayType array) {
             return isReflectivelyClassTypeArgument(array.getComponentType());
