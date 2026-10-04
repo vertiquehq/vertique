@@ -775,6 +775,19 @@ shared `dev.vertique.rest.core.convert.ParamConversionResolver`, not a fixed sca
   resolvable converter raises `ParamConverterNotFoundException` (500) — a wiring gap that startup
   validation is meant to catch first.
 
+**Absent scalar parameters** on those same sources (`PATH`, `QUERY`, `HEADER`, `COOKIE`, and text
+`FORM` / `@FormParam`) follow Jakarta REST:
+
+- **`@DefaultValue` wins** — when present, the annotation value is coerced through the same resolver
+  and bound; the request need not supply the name.
+- **Otherwise, primitives receive their Java language defaults** (`0`, `0L`, `0.0`, `false`, `'\0'`, …)
+  so reflective invocation never unboxes `null`.
+- **Otherwise, reference types (including boxed numerics) receive `null`.**
+
+The BoundRequest scalar path (reflective and generated resource invocation) and the text `@FormParam`
+path share this rule so the two never diverge. Collection-shaped parameters use the separate absence
+contract under [Collection parameter shapes](#collection-parameter-shapes).
+
 ### Collection parameter shapes
 
 `@QueryParam`, `@HeaderParam`, `@CookieParam`, and `@FormParam` additionally accept `List<T>`, `Set<T>`,
