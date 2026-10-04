@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # OpenTelemetry Prometheus Exemplar Bridge Module
 
-> **Status:** Alpha
+> **Status:** Stable
 > **Package:** `dev.vertique.opentelemetry.prometheus`
 > **Artifact:** `vertique-opentelemetry-prometheus`
 > **Depends on:** opentelemetry-api (library), prometheus-metrics-tracer-otel (library)
@@ -54,8 +54,8 @@ return `null` and no exemplar trace information is emitted.
 
 **Zero vertique core coupling.** The bridge has no compile dependency on
 `vertique-opentelemetry-core` or `vertique-micrometer-registry-prometheus`. It depends only on
-`io.opentelemetry:opentelemetry-api` (for `Span.current()`, transitively via
-`prometheus-metrics-tracer-otel`) and `io.prometheus:prometheus-metrics-tracer-otel`. This preserves
+`io.opentelemetry:opentelemetry-api` (for `Span.current()`, declared directly in this module's
+`pom.xml`) and `io.prometheus:prometheus-metrics-tracer-otel`. This preserves
 the invariant that neither telemetry core knows about the other.
 
 ---
@@ -141,8 +141,9 @@ cardinality guard (which bounds distinct tag *values* per key) does not apply to
 
 ## Dependencies
 
+- `io.opentelemetry:opentelemetry-api` — `Span.current()`; declared directly
 - `io.prometheus:prometheus-metrics-tracer-otel` — `OpenTelemetrySpanContext` (provides the bridge
-  implementation; transitively brings `opentelemetry-api` and `prometheus-metrics-tracer-common`)
+  implementation)
 - `io.prometheus:prometheus-metrics-tracer-common` — `SpanContext` (the interface being provided)
 - `com.google.dagger:dagger`, `jakarta.inject:jakarta.inject-api`
 

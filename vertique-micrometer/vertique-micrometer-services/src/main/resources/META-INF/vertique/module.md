@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Micrometer Services Module
 
-> **Status:** Alpha
+> **Status:** Stable
 > **Package:** `dev.vertique.micrometer.services`
 > **Artifact:** `vertique-micrometer-services`
 > **Depends on:** io.micrometer:micrometer-core (library), vertique-micrometer-core, vertique-services
@@ -57,13 +57,17 @@ lookup is the cache. A separate tuple-keyed adapter cache was evaluated and reje
 drop-on-saturation variant silently stops recording real time series once legitimate tag combinations
 exceed any fixed cap.
 
-**Never-throws.** Every callback body is wrapped in a try/catch that logs at WARN and swallows. A
-misbehaving registry can never affect dispatch processing.
+**Never-throws.** Every callback body is wrapped in a try/catch that logs at WARN and swallows. The
+WARN carries only the exception class name, never the throwable or its message. A misbehaving
+registry can never affect dispatch processing.
 
 **Zero-overhead when unconfigured.** Before `VertiqueApplication` bootstrap the injected
 `MeterRegistry` is an empty composite whose recording is a no-op (NFR-TEL-003). When the optional
 `MetricsConfig` binding is absent (i.e., `MicrometerModule` is not installed), the interceptor
 defaults to enabled.
+
+**No module-owned configuration.** This module owns no config keys beyond following the
+`metrics.enabled` gate owned by `vertique-micrometer-core`.
 
 ---
 

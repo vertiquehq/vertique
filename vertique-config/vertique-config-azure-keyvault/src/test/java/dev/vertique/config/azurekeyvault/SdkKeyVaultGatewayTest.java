@@ -4,15 +4,19 @@
 package dev.vertique.config.azurekeyvault;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.azure.core.exception.HttpResponseException;
 import com.azure.core.http.HttpHeaders;
 import com.azure.core.http.HttpRequest;
 import com.azure.core.http.HttpResponse;
+import com.azure.core.util.HttpClientOptions;
 import dev.vertique.config.source.ConfigPropertySourceException;
 import java.nio.ByteBuffer;
 import java.nio.charset.Charset;
+import java.time.Duration;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -178,6 +182,38 @@ class SdkKeyVaultGatewayTest {
             assertTrue(
                     mapped.getMessage().contains("HTTP 401"),
                     "message must contain 'HTTP 401' for a 401 response; was: " + mapped.getMessage());
+        }
+    }
+
+    @Nested
+    @DisplayName("production constructor — timeouts reach HttpClientOptions")
+    class TimeoutsReachHttpClientOptions {
+
+        @BeforeEach
+        void resetCapture() {
+            CapturingHttpClientProvider.reset();
+        }
+
+        @Test
+        @DisplayName("connectTimeoutMs → connect timeout; readTimeoutMs → read AND response timeout")
+        void timeoutsAreAppliedToHttpClientOptions() {
+            AzureConnectionSettings settings = new AzureConnectionSettings(
+                    "https://myvault.vault.azure.net",
+                    "https://myvault.vault.azure.net",
+                    null,
+                    AzureCredentials.METHOD_MANAGED_IDENTITY,
+                    null,
+                    3_000,
+                    7_000);
+
+            new SdkKeyVaultGateway("my-vault", settings);
+
+            HttpClientOptions options = CapturingHttpClientProvider.lastOptions();
+            assertNotNull(options, "SdkKeyVaultGateway must build its HTTP client from HttpClientOptions");
+            assertEquals(Duration.ofMillis(3_000), options.getConnectTimeout(), "connect timeout");
+            assertEquals(Duration.ofMillis(7_000), options.getReadTimeout(), "read timeout");
+            assertEquals(
+                    Duration.ofMillis(7_000), options.getResponseTimeout(), "response timeout follows readTimeoutMs");
         }
     }
 }

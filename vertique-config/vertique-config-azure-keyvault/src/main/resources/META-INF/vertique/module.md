@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Config Azure Key Vault Module
 
-> **Status:** Alpha
+> **Status:** Stable
 > **Package:** `dev.vertique.config.azurekeyvault`
 > **Artifact:** `vertique-config-azure-keyvault`
 > **Depends on:** config
@@ -103,11 +103,27 @@ The full per-source configuration block under `config.propertySources[*]`:
 |-------|----------|---------|-------------|
 | `type` | Yes | — | Must be `"azure-keyvault"` |
 | `name` | No | `azure-keyvault[{index}]` | Source instance name for diagnostics |
-| `endpoint` | Yes | — | Azure Key Vault endpoint URL (e.g. `https://myapp.vault.azure.net`). Non-blank. |
+| `endpoint` | Yes | — | Azure Key Vault endpoint URL (e.g. `https://myapp.vault.azure.net`). Non-blank and validated at `create()` time; see [Endpoint Validation](#endpoint-validation). |
 | `prefix` | No | none | Optional key prefix. When set, only keys starting with this prefix reach the vault. The prefix is stripped before the lookup — routing multiple sources via non-overlapping prefixes is the standard way to separate vault namespaces. |
 | `auth` | No | `{"method": "default"}` | Auth configuration object; see Auth Methods below. When absent entirely, defaults to `method: "default"` with no `clientId`. |
 | `connectTimeoutMs` | No | 5000 | Connection timeout in milliseconds. Must be > 0. Applied via `HttpClientOptions` to the underlying Netty client. |
 | `readTimeoutMs` | No | 5000 | Read and response timeout in milliseconds. Must be > 0. Applied as both `readTimeout` and `responseTimeout` via `HttpClientOptions`, bounding per-chunk read time and total time-to-first-byte from the server. |
+
+### Endpoint Validation
+
+`endpoint` is parsed as a URI at `create()` time. Any violation throws `ConfigPropertySourceException` naming the source and the `endpoint` field. The messages describe the violation only; they never echo the configured value, userinfo, or path.
+
+| Rule | Accepted | Rejected (diagnostic) |
+|------|----------|-----------------------|
+| Present | Non-blank string | Missing or blank: `required field 'endpoint' is missing or blank` |
+| Syntax | Valid URI | Unparseable: `field 'endpoint' is not a valid URI: <reason>` |
+| Absolute, with host | `scheme://host[:port]` | Relative or hostless (e.g. `myapp.vault.azure.net`): `field 'endpoint' must be an absolute http(s) URI with a host` |
+| Scheme | `https`; `http` only for loopback hosts (below). Scheme comparison is case-insensitive. | Any other scheme (e.g. `ftp`): `field 'endpoint' scheme must be 'http' or 'https'` |
+| Userinfo, query, fragment | None present | `user:pass@host`, `?x=y`, `#frag`: `field 'endpoint' must not contain userinfo/query/fragment` |
+| `http` host | `localhost`, `127.0.0.1`, `::1` (written `[::1]`), or any `*.localhost` host, case-insensitive; intended for test doubles such as Lowkey Vault | `http` on any other host: `field 'endpoint' must use HTTPS for non-localhost hosts; http is only allowed for test doubles (localhost, 127.0.0.1, ::1, *.localhost)` |
+| Path | Empty or a single `/` | Any other path (e.g. `/secrets`): `field 'endpoint' must not contain a path component` |
+
+A port is allowed (`https://myapp.vault.azure.net:8443`). The validated endpoint is reduced to a canonical form, `scheme://host` or `scheme://host:port`, with a trailing `/` removed, the scheme lowercased, and IPv6 brackets kept (`http://[::1]:8443`). The canonical form, not the raw string, is what the Azure SDK client is built with and what appears in the `INFO` construction log.
 
 ### Auth Methods
 
@@ -158,7 +174,7 @@ The factory discovered by `ServiceLoader`. Registered in `META-INF/services/dev.
 | Method | Description |
 |--------|-------------|
 | `type()` | Returns `"azure-keyvault"` |
-| `create(String name, JsonObject sourceConfig)` | Parses and validates the source config, builds an `AzureConnectionSettings`, constructs an `SdkKeyVaultGateway`, and returns an `AzureKeyVaultPropertySource` for on-demand lookup. Throws `ConfigPropertySourceException` on validation failure (missing/blank endpoint, unknown auth method, non-positive timeout). |
+| `create(String name, JsonObject sourceConfig)` | Parses and validates the source config, builds an `AzureConnectionSettings`, constructs an `SdkKeyVaultGateway`, and returns an `AzureKeyVaultPropertySource` for on-demand lookup. Throws `ConfigPropertySourceException` on validation failure (missing/blank or invalid endpoint, unknown auth method, non-positive timeout). |
 
 #### Invariants and Gotchas
 

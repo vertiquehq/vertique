@@ -5,8 +5,14 @@ package dev.vertique.micrometer.services;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import dev.vertique.core.eventbus.DispatchEnvelope;
 import dev.vertique.core.eventbus.Result;
 import dev.vertique.micrometer.MetricsConfig;
@@ -23,6 +29,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
 
 /**
  * Unit tests for {@link ServiceDispatchMetricsInterceptor}.
@@ -255,6 +262,47 @@ class ServiceDispatchMetricsInterceptorTest {
             var result = Result.success("ok");
 
             assertDoesNotThrow(() -> interceptor.onTerminalComplete(ctx, result, T0, T1));
+        }
+
+        @Test
+        @DisplayName("never-throws WARN logs the exception class name only, with no throwable proxy")
+        void warnCarriesNoThrowableProxy() {
+            Logger interceptorLogger = (Logger) LoggerFactory.getLogger(ServiceDispatchMetricsInterceptor.class);
+            Level previousLevel = interceptorLogger.getLevel();
+            ListAppender<ILoggingEvent> appender = new ListAppender<>();
+            appender.start();
+            interceptorLogger.setLevel(Level.WARN);
+            interceptorLogger.addAppender(appender);
+            try {
+                MeterRegistry throwing = new SimpleMeterRegistry() {
+                    @Override
+                    protected Timer newTimer(
+                            io.micrometer.core.instrument.Meter.Id id,
+                            io.micrometer.core.instrument.distribution.DistributionStatisticConfig
+                                    distributionStatisticConfig,
+                            io.micrometer.core.instrument.distribution.pause.PauseDetector pauseDetector) {
+                        throw new RuntimeException("registry is broken");
+                    }
+                };
+                var interceptor = new ServiceDispatchMetricsInterceptor(throwing, Optional.empty());
+
+                interceptor.onTerminalComplete(ctx("svc/op", "svc.op", false), Result.success("ok"), T0, T1);
+
+                assertEquals(1, appender.list.size(), "exactly one WARN must be logged");
+                ILoggingEvent event = appender.list.get(0);
+                assertEquals(Level.WARN, event.getLevel());
+                assertNull(event.getThrowableProxy(), "WARN must not carry a throwable proxy (no stack trace)");
+                assertTrue(
+                        event.getFormattedMessage().contains(RuntimeException.class.getName()),
+                        "WARN must name the exception class");
+                assertFalse(
+                        event.getFormattedMessage().contains("registry is broken"),
+                        "WARN must not echo the exception message");
+            } finally {
+                interceptorLogger.detachAppender(appender);
+                appender.stop();
+                interceptorLogger.setLevel(previousLevel);
+            }
         }
     }
 

@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Starter Services Module
 
-> **Status:** Alpha
+> **Status:** Stable
 > **Package:** `dev.vertique.starter.services`
 > **Artifact:** `vertique-starter-services`
 > **Depends on:** starter-core, management, services

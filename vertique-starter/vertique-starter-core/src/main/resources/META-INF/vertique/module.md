@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Starter Core Module
 
-> **Status:** Alpha
+> **Status:** Stable
 > **Package:** `dev.vertique.starter.core`
 > **Artifact:** `vertique-starter-core`
 > **Depends on:** application, core, config-core, deploy
