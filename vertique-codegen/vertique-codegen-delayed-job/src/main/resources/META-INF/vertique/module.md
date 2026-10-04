@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Codegen Delayed-Job Static Proxies Module
 
-> **Status:** Beta
+> **Status:** Stable
 > **Package:** `dev.vertique.codegen.delayed.processor`
 > **Artifact:** `vertique-codegen-delayed-job`
 > **Depends on:** codegen-core, job-delayed (processor classpath only)
