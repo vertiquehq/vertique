@@ -455,7 +455,7 @@ The framework's `ExceptionMapper<Throwable>`, pre-configured by `RestModule`:
 | `BeanValidationException` (core.validation) | 400 | `ValidationProblemDetail`; violations become `ValidationErrorDetail` with `location` `null` |
 | `ValidationException` (core.exception) | 400 | `ProblemDetail` |
 | `ParamConversionException` (rest-core `convert`) | 400 | `ProblemDetail` — an inbound value failed conversion to its declared type |
-| `ParamConverterNotFoundException` (rest-core `convert`) | 500 | `ProblemDetail` — no converter satisfies a declared type at request time |
+| `ParamConverterNotFoundException` (rest-core `convert`) | 500 | `ProblemDetail` with the fixed detail `"Internal Server Error"` — no converter satisfies a declared type at request time; the exception's diagnostic message (parameter name and target type) is logged server-side and never echoed |
 | `IllegalArgumentException` | 400 | `ProblemDetail` |
 | `UnauthorizedException` (core.exception) | 401 | `ProblemDetail` |
 | `ForbiddenException` (core.exception) | 403 | `ProblemDetail` |

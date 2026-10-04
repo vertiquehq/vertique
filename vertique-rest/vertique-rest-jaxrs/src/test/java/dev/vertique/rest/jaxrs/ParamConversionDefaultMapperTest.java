@@ -4,7 +4,11 @@
 package dev.vertique.rest.jaxrs;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import dev.vertique.rest.core.ProblemDetail;
 import dev.vertique.rest.core.convert.ParamConversionException;
 import dev.vertique.rest.core.convert.ParamConverterNotFoundException;
 import dev.vertique.rest.core.convert.ParamSource;
@@ -68,5 +72,26 @@ class ParamConversionDefaultMapperTest {
                 500,
                 response.getStatus(),
                 "an unsatisfiable converter at request time is a misconfiguration and must default to 500");
+    }
+
+    @Test
+    @DisplayName("ParamConverterNotFoundException ProblemDetail omits parameter name and target type")
+    void paramConverterNotFoundExceptionBodyIsClientSafe() {
+        String diagnosticMessage = "No ParamConverter registered for parameter 'id' of type java.util.UUID";
+        ParamConverterNotFoundException ex =
+                new ParamConverterNotFoundException(diagnosticMessage, "id", ParamSource.PATH, UUID.class);
+
+        Response response = defaultRegistry().toResponse(ex);
+
+        assertInstanceOf(ProblemDetail.class, response.getEntity());
+        ProblemDetail detail = (ProblemDetail) response.getEntity();
+        assertEquals(500, detail.status());
+        assertEquals("Internal Server Error", detail.detail());
+        assertFalse(
+                detail.detail().contains("java.util.UUID"), "client body must not leak the unresolved target type FQN");
+        assertFalse(detail.detail().contains("'id'"), "client body must not leak the parameter name");
+        // Diagnostic detail stays on the exception for server-side logging.
+        assertTrue(ex.getMessage().contains("java.util.UUID"));
+        assertTrue(ex.getMessage().contains("id"));
     }
 }
