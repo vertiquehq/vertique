@@ -13,6 +13,9 @@ import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 
 /**
+ * INTERNAL framework seam — consumed by sibling framework modules; not an application contract and
+ * outside the maturity promise. Applications use the surface the module document lists.
+ *
  * Pure-function storage-identity derivation ({@code contracts/rate-limit-runtime.md},
  * "Storage identity"). Package-private to {@code vertique-rate-limit-core} in v1 ({@code
  * spec.md} §14 defers a shared extraction).

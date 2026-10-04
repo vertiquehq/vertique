@@ -6,6 +6,7 @@ package dev.vertique.config.awssecrets;
 import dev.vertique.config.source.ConfigPropertySourceException;
 import java.net.URI;
 import java.time.Duration;
+import software.amazon.awssdk.awscore.exception.AwsErrorDetails;
 import software.amazon.awssdk.http.urlconnection.UrlConnectionHttpClient;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.secretsmanager.SecretsManagerClient;
@@ -54,8 +55,19 @@ class SdkSecretsGateway implements SecretsGateway, AutoCloseable {
      * @param settings   the connection and timeout parameters
      */
     SdkSecretsGateway(String sourceName, AwsConnectionSettings settings) {
+        this(sourceName, buildClient(settings));
+    }
+
+    /**
+     * Package-private constructor for unit tests: wraps an already-built client so the SDK error
+     * handling can be exercised without a network endpoint.
+     *
+     * @param sourceName the source instance name; used in error messages only
+     * @param client     the Secrets Manager client to use; closed by {@link #close()}
+     */
+    SdkSecretsGateway(String sourceName, SecretsManagerClient client) {
         this.sourceName = sourceName;
-        this.client = buildClient(settings);
+        this.client = client;
     }
 
     // --- SecretsGateway ---
@@ -85,11 +97,15 @@ class SdkSecretsGateway implements SecretsGateway, AutoCloseable {
         } catch (ConfigPropertySourceException e) {
             throw e;
         } catch (SecretsManagerException e) {
+            // awsErrorDetails() is nullable on AwsServiceException; fall back to the SDK exception's
+            // own message, then to its class name, so the catch block itself can never throw.
+            AwsErrorDetails details = e.awsErrorDetails();
+            String detail = details != null ? details.errorMessage() : null;
+            if (detail == null) {
+                detail = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
+            }
             throw new ConfigPropertySourceException(
-                    sourceName,
-                    "failed to fetch secret '" + secretId + "': "
-                            + e.awsErrorDetails().errorMessage(),
-                    e);
+                    sourceName, "failed to fetch secret '" + secretId + "': " + detail, e);
         } catch (Exception e) {
             throw new ConfigPropertySourceException(
                     sourceName, "failed to fetch secret '" + secretId + "': " + e.getMessage(), e);

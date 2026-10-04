@@ -158,7 +158,7 @@ public class AwsSecretsPropertySourceFactory implements ConfigPropertySourceFact
     /**
      * Parses the {@code secrets} JSON array into an ordered list of {@link SecretEntry} records.
      *
-     * <p>Validates that each entry has a non-blank {@code secretId}, and exactly one of
+     * <p>Validates that each entry is a JSON object, has a non-blank {@code secretId}, and exactly one of
      * {@code prefix} or {@code key} (not both, not neither).
      *
      * @param name         the source instance name for error messages
@@ -169,7 +169,13 @@ public class AwsSecretsPropertySourceFactory implements ConfigPropertySourceFact
     private static List<SecretEntry> parseSecrets(String name, JsonArray secretsArray) {
         List<SecretEntry> result = new ArrayList<>(secretsArray.size());
         for (int i = 0; i < secretsArray.size(); i++) {
-            JsonObject entry = secretsArray.getJsonObject(i);
+            Object rawEntry = secretsArray.getValue(i);
+            if (!(rawEntry instanceof JsonObject entry)) {
+                // Describe the JSON type only — never echo the element, which could be a mis-pasted secret.
+                throw new ConfigPropertySourceException(
+                        name,
+                        "secrets entry at index " + i + " must be a JSON object, got " + describeJsonType(rawEntry));
+            }
 
             // --- secretId (required, non-blank) ---
             String secretId = entry.getString("secretId");
@@ -218,5 +224,32 @@ public class AwsSecretsPropertySourceFactory implements ConfigPropertySourceFact
             result.add(new SecretEntry(secretId, prefix, key));
         }
         return List.copyOf(result);
+    }
+
+    /**
+     * Names the JSON type of a non-object {@code secrets} element for error messages, without ever
+     * echoing its value.
+     *
+     * @param value the raw array element; may be {@code null}
+     * @return one of {@code null}, {@code array}, {@code string}, {@code number}, {@code boolean},
+     *         or {@code unknown}
+     */
+    private static String describeJsonType(Object value) {
+        if (value == null) {
+            return "null";
+        }
+        if (value instanceof JsonArray) {
+            return "array";
+        }
+        if (value instanceof CharSequence) {
+            return "string";
+        }
+        if (value instanceof Number) {
+            return "number";
+        }
+        if (value instanceof Boolean) {
+            return "boolean";
+        }
+        return "unknown";
     }
 }

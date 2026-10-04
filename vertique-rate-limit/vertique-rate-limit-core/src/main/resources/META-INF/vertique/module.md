@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Rate Limit Core
 
-> **Status:** Alpha
+> **Status:** Stable
 > **Package:** `dev.vertique.ratelimit`
 > **Artifact:** `vertique-rate-limit-core`
 > **Depends on:** `vertique-core`, `vertique-context`, `vertique-security-core`
@@ -173,6 +173,71 @@ is the shared identity-framing seam the annotation and REST adapters use on top 
 resolved identity — it is integration surface for adapters, not application API to call
 directly in ordinary business code.
 
+## Configuration
+
+All keys live under the root `rateLimit` object. Every key is optional unless stated; an omitted
+`rateLimit` section yields the defaults below with no policies declared. Durations carry an
+explicit `Ms` suffix.
+
+```json
+{
+  "rateLimit": {
+    "enabled": true,
+    "defaultMode": "LOCAL",
+    "local": {
+      "maxTrackedKeys": 100000,
+      "cleanupIntervalMs": 60000
+    },
+    "keyDerivation": {
+      "secret": "${RATE_LIMIT_KEY_SECRET}"
+    },
+    "policies": {
+      "search-quota": {
+        "enabled": true,
+        "failureMode": "CLOSED",
+        "revision": "r1",
+        "defaultCost": 1,
+        "algorithm": {
+          "type": "TOKEN_BUCKET",
+          "capacity": 100,
+          "refill": { "type": "GREEDY", "tokens": 100, "periodMs": 60000 }
+        },
+        "local": { "maxTrackedKeys": 500000 }
+      }
+    }
+  }
+}
+```
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `rateLimit.enabled` | boolean | `true` | Root kill switch. When `false`, every `acquire(...)` on every handle yields a `DISABLED` decision without engaging any backend; `execute(...)` runs the action. Startup validation still runs. |
+| `rateLimit.defaultMode` | `LOCAL` \| `CLUSTERED` | `LOCAL` | Mode applied to any policy that omits `mode`. An unrecognized value fails startup with `ConfigurationException` naming `rateLimit.defaultMode`. |
+| `rateLimit.local.maxTrackedKeys` | long | `100000` | Per-policy bound on distinct keys a LOCAL registry tracks. Must be at least 1. Applies to each LOCAL policy separately, never as one pool shared across policies. |
+| `rateLimit.local.cleanupIntervalMs` | long (ms) | `60000` | Interval at which inactive LOCAL state is reclaimed. Must be at least 1. |
+| `rateLimit.keyDerivation.secret` | string | none | HMAC secret used to derive CLUSTERED physical keys. Required when any **enabled** policy is `CLUSTERED`, and must be at least 32 bytes in UTF-8; a missing, shorter, or unresolved `${...}` placeholder value fails startup. Not validated for LOCAL-only applications. Supply it through a secret-bearing property source or environment placeholder, never as a literal in a committed file. |
+| `rateLimit.policies.<name>` | object | none | One policy per key; the key is the policy `name` (`[A-Za-z0-9._~-]{1,128}`). A configuration policy replaces a same-named Dagger-contributed `RateLimitPolicy` wholesale. |
+
+### Policy Fields
+
+`rateLimit.policies.<name>` accepts these fields. All are required with no default except `mode`
+(falls back to `rateLimit.defaultMode`) and `local`.
+
+| Field | Type | Description |
+|---|---|---|
+| `enabled` | boolean | Whether the policy is active. A disabled policy resolves a handle that always yields `DISABLED` and needs no bound backend. |
+| `mode` | `LOCAL` \| `CLUSTERED` | Where admission state lives. Defaults to `rateLimit.defaultMode`. |
+| `failureMode` | `OPEN` \| `CLOSED` | Backend-failure and LOCAL key-space-saturation behavior. Required even on a disabled policy. |
+| `revision` | string | Bumped on any semantic algorithm or key change; `[A-Za-z0-9._-]{1,32}`. |
+| `defaultCost` | long | Tokens consumed when a caller passes no explicit cost; `1..1000000000000`. |
+| `algorithm` | object | `type` must be `TOKEN_BUCKET`; `capacity` is `1..1000000000000`; `refill` is `{ "type": "GREEDY" \| "INTERVAL", "tokens": 1..1000000000000, "periodMs": 1..31536000000 }`. |
+| `local.maxTrackedKeys` | long | Optional per-policy override of `rateLimit.local.maxTrackedKeys`; at least 1. Absent means the global value applies. Only meaningful for `LOCAL` policies. |
+
+At most 10,000 policies may be declared. Invalid or out-of-range values fail startup with a
+`ConfigurationException` (or `IllegalStateException` for runtime-level validation such as a
+duplicate policy name, an enabled policy whose mode has no bound backend, or a missing or short
+`keyDerivation.secret`) before any handle is requested.
+
 ## Module Dagger Bindings
 
 | Binding | Kind | Description |
@@ -187,6 +252,14 @@ directly in ordinary business code.
 The `LOCAL` backend entry itself is a framework-private Bucket4j implementation
 reached only through this map; it is Dagger composition surface, not something an
 application implements or replaces.
+
+## Framework Seams (INTERNAL)
+
+`LocalRateLimitRegistry`, `LocalBucket4jRateLimitBackend`, `RateLimitStorageIdentity`, and
+`RateLimiterLifecycle` are engine and runtime internals behind `RateLimiters`; their Javadoc marks
+them INTERNAL. They are outside this module's compatibility promise and may change in any release:
+applications obtain LOCAL admission through `RateLimiters`, never by constructing or referencing
+these types.
 
 ## Verification
 

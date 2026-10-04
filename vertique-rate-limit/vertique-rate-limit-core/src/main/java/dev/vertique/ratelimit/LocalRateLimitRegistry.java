@@ -18,6 +18,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
+ * INTERNAL framework seam — consumed by sibling framework modules; not an application contract and
+ * outside the maturity promise. Applications use the surface the module document lists.
+ *
  * One policy's bounded local Bucket4j registry (contracts/rate-limit-runtime.md, "Local engine
  * contract"). Every enabled LOCAL policy owns exactly one instance, sized by its own resolved
  * {@code maxTrackedKeys} budget — never a pool shared across policies (§7.2, R2 amendment). {@link
