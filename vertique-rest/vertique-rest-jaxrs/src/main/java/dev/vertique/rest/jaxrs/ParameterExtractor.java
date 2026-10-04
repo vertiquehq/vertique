@@ -604,10 +604,10 @@ final class ParameterExtractor {
     /**
      * Shared scalar extraction logic operating on a {@link RequestValue}, used by both the
      * reflective and generated paths (both now read from a {@link BoundRequest}) so the two
-     * never diverge. Applies the {@code @DefaultValue}-or-null rule for absent scalars, routes an
-     * absent collection-valued parameter through {@link #absentCollectionValue}, coerces the
-     * present value to the declared scalar type, and runs the input processor for String values when
-     * a route chain is active.
+     * never diverge. Applies the absent-scalar contract ({@code @DefaultValue}, else the Java
+     * default for a primitive, else {@code null}), routes an absent collection-valued parameter
+     * through {@link #absentCollectionValue}, coerces the present value to the declared scalar
+     * type, and runs the input processor for String values when a route chain is active.
      *
      * <p>A parameter whose {@code componentType()} is non-{@code null} is <em>always</em> handled by one
      * of the two collection branches — {@link #absentCollectionValue} when the request supplied nothing,
@@ -618,7 +618,8 @@ final class ParameterExtractor {
      * @param policies  the effective input policies for this parameter
      * @param rv        the request value to extract from (never {@code null}; wraps {@code null} when
      *                  the request supplied no value)
-     * @return the extracted parameter value, or {@code null} if absent and no default applies
+     * @return the extracted parameter value; for an absent scalar this is the {@code @DefaultValue}
+     *         when present, otherwise the Java default for a primitive type, otherwise {@code null}
      */
     private Object extractScalarValue(
             ResourceMethodMeta.ParamMeta paramMeta, EffectiveInputPolicies policies, RequestValue rv) {
@@ -629,10 +630,7 @@ final class ParameterExtractor {
             if (paramMeta.componentType() != null) {
                 return absentCollectionValue(paramMeta);
             }
-            if (paramMeta.defaultValue() != null) {
-                return coerceString(paramMeta.defaultValue(), paramMeta);
-            }
-            return null;
+            return absentScalarValue(paramMeta);
         }
 
         // Multi-valued parameter (e.g. @QueryParam("ids") List<Integer> / Set / array): the
@@ -789,6 +787,27 @@ final class ParameterExtractor {
             coerced.add(element);
         }
         return coerced;
+    }
+
+    /**
+     * Absence contract for a scalar parameter (Jakarta REST): {@code @DefaultValue} when present,
+     * otherwise the Java language default for a primitive ({@code 0}, {@code false}, …), otherwise
+     * {@code null} for a reference type. Shared by the BoundRequest scalar path and text
+     * {@code @FormParam} so the two sources never diverge.
+     *
+     * @param paramMeta the scalar parameter metadata ({@code componentType()} is {@code null})
+     * @return the coerced {@code @DefaultValue}, a boxed primitive default, or {@code null}
+     */
+    private Object absentScalarValue(ResourceMethodMeta.ParamMeta paramMeta) {
+        if (paramMeta.defaultValue() != null) {
+            return coerceString(paramMeta.defaultValue(), paramMeta);
+        }
+        Class<?> type = paramMeta.type();
+        if (type.isPrimitive()) {
+            // Array.get on a one-element primitive array yields the language default (0 / false / '\0').
+            return Array.get(Array.newInstance(type, 1), 0);
+        }
+        return null;
     }
 
     /**
@@ -1323,10 +1342,7 @@ final class ParameterExtractor {
         // Scalar text form field
         String formValue = ctx.request().getFormAttribute(pm.name());
         if (formValue == null) {
-            if (pm.defaultValue() != null) {
-                return coerceString(pm.defaultValue(), pm);
-            }
-            return null;
+            return absentScalarValue(pm);
         }
         if (objectProcessor != null && !policies.isEmpty()) {
             formValue = (String) objectProcessor.processInput(
