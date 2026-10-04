@@ -14,11 +14,11 @@ SPDX-License-Identifier: EUPL-1.2
 Injected `CacheBuilder` creates immutable `Cache<K,V>` handles; annotation support is layered in
 `vertique-cache-aop` and no provider implementation is exposed.
 
-**Maturity split.** This module is Stable. `vertique-cache-aop` (annotations),
-`vertique-cache-caffeine` (local provider), and `vertique-cache-redis` (clustered provider)
+**Maturity split.** This module and `vertique-cache-aop` (annotations) are Stable.
+`vertique-cache-caffeine` (local provider) and `vertique-cache-redis` (clustered provider)
 remain Alpha: the programmatic API, configuration, and provider SPI documented here are frozen
-under the evolution rules of a Stable module, while those adapters and providers may still change
-without notice.
+under the evolution rules of a Stable module, while those providers may still change without
+notice.
 
 ## When To Use It
 
