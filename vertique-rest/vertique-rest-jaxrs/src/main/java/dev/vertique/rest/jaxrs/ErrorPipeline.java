@@ -97,13 +97,14 @@ public class ErrorPipeline {
      *   <li>{@link ErrorInterceptor#afterMapping} async chain (transforms the response)</li>
      * </ol>
      *
-     * <p>The Vert.x failure-status hint ({@code VertxFailureStatus.KEY}) is <em>consumed</em> at the
-     * mapping step: read and removed from {@link RoutingContext#data()} exactly once, whichever mapper
-     * produces the response and whether or not the fallback ends up applying it. The hint describes the
-     * failure being mapped, so it must not survive it — otherwise a mapping raised later on the same
-     * context (a reroute, for instance) would be steered by a status that no longer describes anything.
-     * Consumption happens after the {@link ErrorInterceptor#beforeMapping} chain, so an error
-     * interceptor still observes the hint that produced the failure it is inspecting.
+     * <p>The Vert.x failure-status hint ({@code VertxFailureStatus.KEY}) is <em>consumed</em> when the
+     * mapping step begins: read and removed from {@link RoutingContext#data()} before
+     * {@link RestExceptionMapper#translate} runs, so a throwing translator cannot leave it behind.
+     * Removal does not depend on which mapper produces the response or whether the fallback applies
+     * the stored status. The hint describes the failure being mapped; leaving it would let a later
+     * mapping on the same context (a reroute, for instance) be steered by a status that no longer
+     * describes anything. Consumption happens after the {@link ErrorInterceptor#beforeMapping} chain,
+     * so an error interceptor still observes the hint that produced the failure it is inspecting.
      *
      * @param ctx   the current routing context
      * @param cause the throwable to map into an error response
@@ -140,16 +141,16 @@ public class ErrorPipeline {
                                             mf);
                                     return Future.succeededFuture(t);
                                 }))
-                .map(mappedCause -> restExceptionMapper.translate(mappedCause))
-                .map(translated -> {
-                    // Consume the Vert.x failure-status hint here, at the mapping step itself, rather than
-                    // inside the fallback: the hint describes exactly the failure being mapped, so it must
-                    // be gone whichever mapper produces the response — including on the branch below where a
-                    // specific application mapper outranks it and the fallback never runs. Leaving it behind
-                    // would let it steer a mapping raised later on the same context (reroute() clears failure
-                    // and statusCode, but not data()). Consuming here rather than at method entry keeps it
-                    // observable to the beforeMapping chain, which runs before this step.
+                .map(mappedCause -> {
+                    // Consume the Vert.x failure-status hint at the start of the mapping step, before
+                    // translate: the hint describes exactly the failure being mapped, so it must be gone
+                    // whichever mapper produces the response — including when a specific application mapper
+                    // outranks it and the fallback never runs, and including when translate throws.
+                    // Leaving it behind would let it steer a mapping raised later on the same context
+                    // (reroute() clears failure and statusCode, but not data()). Consuming here rather than
+                    // at method entry keeps it observable to the beforeMapping chain, which runs first.
                     Object vertxFailureStatus = ctx.data().remove(VertxFailureStatus.KEY);
+                    Throwable translated = restExceptionMapper.translate(mappedCause);
                     Response response = exceptionMapperRegistry.toResponse(translated);
                     if (!exceptionMapperRegistry.hasSpecificMapper(translated.getClass())) {
                         response = applyVertxStatusCodeFallback(response, vertxFailureStatus);
