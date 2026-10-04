@@ -601,6 +601,84 @@ class ResponsePipelineTest {
         }
     }
 
+    /**
+     * The fallback-500 ERROR line interpolates a sanitised cause message so Jackson
+     * {@code WRAP_EXCEPTIONS} reference chains (caller-controlled map keys with CR/LF) cannot forge
+     * additional log lines. The raw throwable stays at DEBUG only.
+     */
+    @Nested
+    @DisplayName("sendFallback500 log boundary")
+    class Fallback500LogBoundary {
+
+        private Logger pipelineLogger;
+        private Level previousLevel;
+        private ListAppender<ILoggingEvent> appender;
+
+        @BeforeEach
+        void capturePipelineLogs() {
+            pipelineLogger = (Logger) LoggerFactory.getLogger(ResponsePipeline.class);
+            previousLevel = pipelineLogger.getLevel();
+            pipelineLogger.setLevel(Level.ERROR);
+            appender = new ListAppender<>();
+            appender.start();
+            pipelineLogger.addAppender(appender);
+        }
+
+        @AfterEach
+        void releasePipelineLogs() {
+            pipelineLogger.detachAppender(appender);
+            appender.stop();
+            pipelineLogger.setLevel(previousLevel);
+        }
+
+        @Test
+        @DisplayName("sanitizeLogMessage neutralises control characters and caps length")
+        void sanitizeLogMessageNeutralisesControlsAndCapsLength() {
+            assertEquals("", ResponsePipeline.sanitizeLogMessage(null));
+            assertEquals("", ResponsePipeline.sanitizeLogMessage(""));
+            assertEquals("evil?INFO forged line", ResponsePipeline.sanitizeLogMessage("evil\nINFO forged line"));
+            assertEquals("a?b?c", ResponsePipeline.sanitizeLogMessage("a\rb\nc"));
+            String longMessage = "x".repeat(600);
+            String sanitised = ResponsePipeline.sanitizeLogMessage(longMessage);
+            assertEquals(512, sanitised.length());
+            assertTrue(sanitised.chars().allMatch(ch -> ch == 'x'));
+        }
+
+        @Test
+        @DisplayName("fallback-500 ERROR line carries sanitised message, never raw CR/LF")
+        void fallback500ErrorLineSanitisesCauseMessage() {
+            when(httpResponse.ended()).thenReturn(false);
+            when(httpResponse.end(anyString())).thenReturn(Future.succeededFuture());
+            String forged = "Failed to encode as JSON: evil\nINFO forged line";
+            RequestInterceptor failingTransform = new RequestInterceptor() {
+                @Override
+                public Future<Response> transformResponse(RoutingContext rc, Response response) {
+                    return Future.failedFuture(new EncodeException(forged));
+                }
+            };
+            ResponsePipeline p = new ResponsePipeline(Set.of(), List.of(failingTransform), serializer);
+
+            p.sendResponse(ctx, Response.ok("body").build());
+
+            List<String> errors = appender.list.stream()
+                    .filter(event -> event.getLevel() == Level.ERROR)
+                    .map(ILoggingEvent::getFormattedMessage)
+                    .filter(message -> message.contains("bare-metal 500"))
+                    .toList();
+            assertEquals(1, errors.size(), "exactly one ERROR must report the fallback-500");
+            assertTrue(errors.get(0).contains("EncodeException"), "ERROR must name the cause class: " + errors.get(0));
+            assertTrue(
+                    errors.get(0).contains("evil?INFO forged line"),
+                    "ERROR must carry the sanitised message: " + errors.get(0));
+            assertFalse(
+                    errors.get(0).contains("\n"),
+                    "ERROR formatted message must not contain a raw newline: " + errors.get(0));
+            assertTrue(
+                    appender.list.stream().noneMatch(event -> event.getThrowableProxy() != null),
+                    "ERROR must not attach the raw throwable (detail is DEBUG-only)");
+        }
+    }
+
     // --- Wire-completion observation (post-handoff) ---
 
     /**

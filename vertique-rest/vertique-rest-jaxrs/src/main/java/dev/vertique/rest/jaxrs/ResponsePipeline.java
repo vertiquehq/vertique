@@ -72,6 +72,9 @@ class ResponsePipeline {
     private static final String FALLBACK_500_BODY =
             "{\"type\":\"about:blank\",\"status\":500,\"title\":\"Internal Server Error\"}";
 
+    /** Cap for exception messages interpolated into {@link #sendFallback500} log lines. */
+    private static final int LOG_MESSAGE_MAX_CHARS = 512;
+
     /**
      * Routing-context data key marking a response as an <em>error</em> / {@code ProblemDetail} response.
      * Set by {@link ErrorPipeline#mapToResponse} for every error it maps, so the wire-writing path can
@@ -333,12 +336,24 @@ class ResponsePipeline {
      * @param cause the pipeline failure that triggered this fallback
      */
     void sendFallback500(RoutingContext ctx, Throwable cause) {
-        log.error("Response pipeline failed — sending bare-metal 500", cause);
+        // ERROR carries class name + a sanitised message only: Jackson WRAP_EXCEPTIONS (and similar)
+        // append caller-controlled map keys into encode-failure messages, so logging the raw throwable
+        // at ERROR would let CR/LF in those keys forge additional log lines. Full detail stays at DEBUG.
+        log.error(
+                "Response pipeline failed — sending bare-metal 500 — {} — {}",
+                cause.getClass().getSimpleName(),
+                sanitizeLogMessage(cause.getMessage()));
+        if (log.isDebugEnabled()) {
+            log.debug("Response pipeline failure detail", cause);
+        }
         Response synthetic = Response.status(500).build();
         Combinators.forEachSwallowSync(
                 hooks,
                 hook -> hook.afterResponse(ctx, synthetic),
-                (hook, e) -> log.warn("afterResponse observer threw during fallback-500: {}", e.getMessage(), e));
+                (hook, e) -> log.warn(
+                        "afterResponse observer threw during fallback-500: {} — {}",
+                        e.getClass().getSimpleName(),
+                        sanitizeLogMessage(e.getMessage())));
         if (!ctx.response().ended() && !ctx.response().headWritten()) {
             ctx.response()
                     .setStatusCode(500)
@@ -346,6 +361,21 @@ class ResponsePipeline {
                     // The response is already terminal here — record and log only; no cleanup end().
                     .onFailure(wireFailure -> recordWireFailure(ctx, wireFailure));
         }
+    }
+
+    /**
+     * Neutralises control characters and caps length so a caller-influenced exception message cannot
+     * forge log lines or dominate the log stream when interpolated into a format string.
+     *
+     * @param message the raw exception message; may be {@code null}
+     * @return a single-line, length-capped stand-in safe to interpolate into a log format string
+     */
+    static String sanitizeLogMessage(String message) {
+        if (message == null || message.isEmpty()) {
+            return "";
+        }
+        String cleaned = message.replaceAll("\\p{Cntrl}", "?");
+        return cleaned.length() <= LOG_MESSAGE_MAX_CHARS ? cleaned : cleaned.substring(0, LOG_MESSAGE_MAX_CHARS);
     }
 
     // --- Wire-completion observation ---
