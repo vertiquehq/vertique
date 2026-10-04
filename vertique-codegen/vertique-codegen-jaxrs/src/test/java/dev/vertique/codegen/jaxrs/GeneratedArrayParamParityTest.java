@@ -863,8 +863,7 @@ class GeneratedArrayParamParityTest {
                 new MatrixCase(
                         "List<Outer<String>.Inner> (parameterized-owner inner)",
                         new ParameterizedOwnerInnerCollectionReflective(),
-                        SourceFiles.inline(
-                                "dev.vertique.test.matrix.ParameterizedOwnerInnerCollectionGenerated", """
+                        SourceFiles.inline("dev.vertique.test.matrix.ParameterizedOwnerInnerCollectionGenerated", """
                                 package dev.vertique.test.matrix;
 
                                 import jakarta.ws.rs.GET;
