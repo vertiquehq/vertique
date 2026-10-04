@@ -47,7 +47,6 @@ import dev.vertique.security.verification.CustomVerificationSource;
 import io.vertx.core.Future;
 import io.vertx.core.Handler;
 import io.vertx.core.Vertx;
-import io.vertx.core.http.HttpMethod;
 import io.vertx.core.http.HttpServer;
 import io.vertx.core.http.WebSocket;
 import io.vertx.core.http.WebSocketClient;
@@ -59,6 +58,7 @@ import io.vertx.ext.auth.authorization.AuthorizationProvider;
 import io.vertx.ext.auth.authorization.RoleBasedAuthorization;
 import io.vertx.ext.web.Router;
 import io.vertx.ext.web.RoutingContext;
+import io.vertx.ext.web.client.WebClient;
 import io.vertx.ext.web.impl.UserContextInternal;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
@@ -848,15 +848,17 @@ public class WebSocketSecurityPipelineIT {
      * @return a future completing with the response body string
      */
     private static Future<String> getRestControlOrigin(Vertx vertx, int serverPort, String token) {
-        return vertx.createHttpClient()
-                .request(HttpMethod.GET, serverPort, "127.0.0.1", "/rest-control")
-                .compose(request -> {
-                    request.putHeader("Authorization", "Bearer " + token);
-                    return request.send();
-                })
-                .compose(response -> {
+        WebClient client = WebClient.create(vertx);
+        return client.get(serverPort, "127.0.0.1", "/rest-control")
+                .putHeader("Authorization", "Bearer " + token)
+                .send()
+                .map(response -> {
                     assertEquals(200, response.statusCode(), "REST control request must succeed");
-                    return response.body().map(buffer -> buffer.toString());
+                    return response.bodyAsString();
+                })
+                .eventually(() -> {
+                    client.close();
+                    return Future.succeededFuture();
                 });
     }
 
