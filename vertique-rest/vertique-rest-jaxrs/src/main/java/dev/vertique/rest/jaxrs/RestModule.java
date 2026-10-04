@@ -349,7 +349,9 @@ public abstract class RestModule {
      *       independent of the {@link ValidationException} hierarchy fallback</li>
      *   <li>{@link ParamConverterNotFoundException} (500) — no converter/provider satisfies a declared
      *       parameter type at request time (a misconfiguration); registered explicitly rather than
-     *       relying on the {@link Throwable} fallback</li>
+     *       relying on the {@link Throwable} fallback. The exception's diagnostic message (parameter
+     *       name and target type) is logged server-side; the {@link ProblemDetail} detail is the
+     *       fixed client-safe {@code "Internal Server Error"}</li>
      *   <li>{@link IllegalArgumentException} (400) — third-party and application validation</li>
      *   <li>{@code dev.vertique.core.exception.UnauthorizedException} (401) — missing or invalid credentials</li>
      *   <li>{@code dev.vertique.core.exception.ForbiddenException} (403) — authenticated principal lacks permission</li>
@@ -421,10 +423,15 @@ public abstract class RestModule {
                         .entity(ProblemDetail.of(400, ex.getMessage()))
                         .type("application/problem+json")
                         .build())
-                .on(ParamConverterNotFoundException.class, ex -> Response.status(500)
-                        .entity(ProblemDetail.of(500, ex.getMessage()))
-                        .type("application/problem+json")
-                        .build())
+                .on(ParamConverterNotFoundException.class, ex -> {
+                    // Wiring gap: keep param name / target type for operators, never for clients
+                    // (OWASP A02:2025 / CWE-209).
+                    log.error("ParamConverter not found for a declared parameter type", ex);
+                    return Response.status(500)
+                            .entity(ProblemDetail.of(500, "Internal Server Error"))
+                            .type("application/problem+json")
+                            .build();
+                })
                 .on(IllegalArgumentException.class, ex -> Response.status(400)
                         .entity(ProblemDetail.of(400, ex.getMessage()))
                         .type("application/problem+json")
