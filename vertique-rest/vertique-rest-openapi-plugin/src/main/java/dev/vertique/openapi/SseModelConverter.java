@@ -22,7 +22,10 @@ import java.util.Iterator;
  * attempting to describe the internal {@code SseEvent} structure.
  *
  * <p>Register this converter alongside {@link FutureModelConverter} in the
- * {@code swagger-maven-plugin} configuration:
+ * {@code swagger-maven-plugin} configuration. Declaration order does not matter: {@link
+ * FutureModelConverter} unwraps {@code Future<T>} and restarts resolution, so this converter sees
+ * {@code ReadStream<SseEvent>} whether it is registered before or after Future (Swagger's plugin
+ * path also loses {@code <modelConverterClasses>} order via a Jackson {@code HashSet} deep-copy):
  *
  * <pre>{@code
  * <modelConverterClasses>
@@ -31,9 +34,9 @@ import java.util.Iterator;
  * </modelConverterClasses>
  * }</pre>
  *
- * <p>Note: {@code Future<ReadStream<SseEvent>>} is already unwrapped to
- * {@code ReadStream<SseEvent>} by {@link FutureModelConverter} before this converter
- * runs, so this converter only needs to handle the {@code ReadStream} level.
+ * <p>This converter only matches the {@code ReadStream} level; {@code
+ * Future<ReadStream<SseEvent>>} reaches it after {@link FutureModelConverter} unwraps the {@code
+ * Future}.
  */
 public class SseModelConverter implements ModelConverter {
 
