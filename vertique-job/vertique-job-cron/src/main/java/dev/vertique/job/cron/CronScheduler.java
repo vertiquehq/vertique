@@ -14,6 +14,7 @@ import dev.vertique.job.JobType;
 import dev.vertique.job.ProgressSnapshot;
 import dev.vertique.services.ServiceTargetResolver;
 import io.vertx.core.Future;
+import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
 import jakarta.annotation.Nullable;
 import java.time.Instant;
@@ -476,15 +477,22 @@ public class CronScheduler {
     /**
      * Dispatches the job according to its execution mode.
      *
+     * <p>Returns a future that completes when this fire is finished enough for another fire of the
+     * same job to be admitted on this node (in-flight guard released, or the fire was skipped /
+     * abandoned without holding the guard). Timer ticks ignore the future; {@link
+     * MisfirePolicy#FIRE_ALL} recovery chains it so catch-up fires run sequentially.
+     *
      * @param job         the cron job to fire
      * @param scheduledAt the time this execution was scheduled for
+     * @return a future that completes when this fire no longer blocks the next admission
      */
-    private void fire(CronJobDefinition job, Instant scheduledAt) {
+    private Future<Void> fire(CronJobDefinition job, Instant scheduledAt) {
         if (job.mode() == ExecutionMode.SINGLE_INSTANCE) {
-            fireSingleInstance(job, scheduledAt);
-        } else {
-            fireEveryInstance(job, scheduledAt);
+            return fireSingleInstance(job, scheduledAt);
         }
+        fireEveryInstance(job, scheduledAt);
+        // EVERY_INSTANCE is never used by misfire recovery; timer ticks ignore this future.
+        return Future.succeededFuture();
     }
 
     // --- SINGLE_INSTANCE: leader election via INSERT ON CONFLICT ---
@@ -506,20 +514,25 @@ public class CronScheduler {
      * in-flight guard and abandons this fire; the next tick retries. Only the in-flight guard is
      * released, because no concurrency slot has been acquired yet.
      *
+     * <p>The returned future completes when the in-flight guard for this fire is released (or when
+     * the fire was skipped / abandoned without holding it), so callers such as {@link
+     * MisfirePolicy#FIRE_ALL} recovery can admit the next catch-up fire only after this one.
+     *
      * @param job         the cron job to fire
      * @param scheduledAt the time this execution was scheduled for
+     * @return a future that completes when this fire no longer blocks the next admission
      */
-    private void fireSingleInstance(CronJobDefinition job, Instant scheduledAt) {
+    private Future<Void> fireSingleInstance(CronJobDefinition job, Instant scheduledAt) {
         // Local in-flight guard — prevent overlapping executions on this node
         if (!concurrency.tryAcquireInFlight(job.id())) {
             log.debug("SINGLE_INSTANCE cron '{}' skipped — already in-flight on this node", job.id());
-            return;
+            return Future.succeededFuture();
         }
         String effectiveAddress = resolveEffectiveAddress(job);
         if (effectiveAddress == null) {
             // Release what we took; no slot was acquired and no row has been written yet.
             concurrency.removeInFlight(job.id());
-            return;
+            return Future.succeededFuture();
         }
         // JobRepository is an application-implemented SPI: tryInsert may throw synchronously or
         // return null instead of a failed future, and the onFailure handler below catches neither.
@@ -541,18 +554,33 @@ public class CronScheduler {
                             + " — this fire is abandoned, the next tick retries",
                     forLog(job.id()),
                     e);
-            return;
+            return Future.failedFuture(e);
         }
+        Promise<Void> done = Promise.promise();
         insert.onSuccess(optId -> {
                     if (optId.isPresent()) {
                         log.debug("SINGLE_INSTANCE cron '{}' won at {}", job.id(), scheduledAt);
-                        concurrency.acquireSlotAndRun(
-                                job.id(),
-                                () -> dispatcher.dispatch(
-                                        job, scheduledAt, execution, effectiveAddress, this::markCompleted));
+                        concurrency.acquireSlotAndRun(job.id(), () -> {
+                            try {
+                                dispatcher.dispatch(job, scheduledAt, execution, effectiveAddress, completedJob -> {
+                                    // SINGLE_INSTANCE requires SKIP, so markCompleted always
+                                    // releases the in-flight guard (QUEUE_ONE never arms).
+                                    // Complete only after that release so FIRE_ALL can admit
+                                    // the next catch-up fire.
+                                    markCompleted(completedJob);
+                                    done.tryComplete();
+                                });
+                            } catch (RuntimeException e) {
+                                // runContained also releases the guards on a sync throw; fail the
+                                // admission future so FIRE_ALL sequencing cannot hang.
+                                done.tryFail(e);
+                                throw e;
+                            }
+                        });
                     } else {
                         log.debug("SINGLE_INSTANCE cron '{}' skipped — another node won", job.id());
                         concurrency.removeInFlight(job.id());
+                        done.tryComplete();
                     }
                 })
                 .onFailure(err -> {
@@ -562,7 +590,9 @@ public class CronScheduler {
                     // SQL state that actually rejected it — which is the only thing that tells an
                     // operator whether the leader election is failing on data or on the schema.
                     log.warn("SINGLE_INSTANCE insert failed for '{}'", forLog(job.id()), err);
+                    done.tryFail(err);
                 });
+        return done.future();
     }
 
     // --- EVERY_INSTANCE: local in-flight guard + overlap policy ---

@@ -4,9 +4,10 @@
 package dev.vertique.job.cron;
 
 import dev.vertique.job.JobRepository;
+import io.vertx.core.Future;
 import java.time.Instant;
 import java.util.List;
-import java.util.function.BiConsumer;
+import java.util.function.BiFunction;
 import lombok.extern.slf4j.Slf4j;
 
 /**
@@ -55,11 +56,16 @@ final class CronMisfireRecovery {
      *       node independently and does not have shared tracking state)</li>
      * </ul>
      *
+     * <p>The callback must return a future that completes when that fire has finished enough for
+     * the next catch-up fire to be admitted (typically when the per-job in-flight guard is
+     * released). {@link MisfirePolicy#FIRE_ALL} chains those futures so missed ticks run oldest
+     * to newest instead of racing the in-flight guard in a synchronous loop.
+     *
      * @param jobs         the full list of registered cron job definitions
      * @param fireCallback callback invoked for each missed fire; receives the job definition and
-     *                     the scheduled-at time that was missed
+     *                     the scheduled-at time that was missed, and returns a completion future
      */
-    void recover(List<CronJobDefinition> jobs, BiConsumer<CronJobDefinition, Instant> fireCallback) {
+    void recover(List<CronJobDefinition> jobs, BiFunction<CronJobDefinition, Instant, Future<Void>> fireCallback) {
         for (CronJobDefinition job : jobs) {
             if (job.misfirePolicy() == MisfirePolicy.SKIP) {
                 continue;
@@ -104,7 +110,7 @@ final class CronMisfireRecovery {
             CronJobDefinition job,
             Instant lastFiredAt,
             Instant now,
-            BiConsumer<CronJobDefinition, Instant> fireCallback) {
+            BiFunction<CronJobDefinition, Instant, Future<Void>> fireCallback) {
         List<Instant> recentFires =
                 job.cronExpression().computeFireTimesBetween(lastFiredAt, now, job.timezone(), MAX_MISFIRE_FIRES);
         if (recentFires.isEmpty()) {
@@ -126,12 +132,19 @@ final class CronMisfireRecovery {
             }
         }
         log.warn("Cron job '{}' missed fire at {} — executing now (FIRE_NOW policy)", job.id(), latest);
-        fireCallback.accept(job, latest);
+        // Fire-and-forget: a single catch-up does not need sequencing.
+        fireCallback.apply(job, latest);
     }
 
     /**
-     * Finds all missed fires since {@code lastFiredAt} and invokes the callback for each.
+     * Finds all missed fires since {@code lastFiredAt} and invokes the callback for each in
+     * chronological order, waiting for each fire's completion future before starting the next.
      * Capped at {@link #MAX_MISFIRE_FIRES} to avoid overwhelming the system.
+     *
+     * <p>Sequencing is required because {@code SINGLE_INSTANCE} admission takes a per-job
+     * in-flight guard that is released only when that fire finishes. A synchronous loop would
+     * see the guard still held on iterations 2..N and skip them, collapsing {@link
+     * MisfirePolicy#FIRE_ALL} into {@link MisfirePolicy#FIRE_NOW}.
      *
      * @param job          the cron job to recover
      * @param lastFiredAt  the last time this job successfully fired
@@ -142,7 +155,7 @@ final class CronMisfireRecovery {
             CronJobDefinition job,
             Instant lastFiredAt,
             Instant now,
-            BiConsumer<CronJobDefinition, Instant> fireCallback) {
+            BiFunction<CronJobDefinition, Instant, Future<Void>> fireCallback) {
         List<Instant> missedFires =
                 job.cronExpression().computeFireTimesBetween(lastFiredAt, now, job.timezone(), MAX_MISFIRE_FIRES);
         if (missedFires.isEmpty()) {
@@ -153,8 +166,18 @@ final class CronMisfireRecovery {
                 job.id(),
                 missedFires.size(),
                 missedFires.size() >= MAX_MISFIRE_FIRES ? " [capped at " + MAX_MISFIRE_FIRES + "]" : "");
+        Future<Void> chain = Future.succeededFuture();
         for (Instant missed : missedFires) {
-            fireCallback.accept(job, missed);
+            Instant scheduledAt = missed;
+            chain = chain.compose(v -> fireCallback.apply(job, scheduledAt).recover(err -> {
+                log.warn(
+                        "FIRE_ALL catch-up fire failed for cron job '{}' at {} — continuing with remaining"
+                                + " missed fires: {}",
+                        job.id(),
+                        scheduledAt,
+                        err.getMessage());
+                return Future.succeededFuture();
+            }));
         }
     }
 }

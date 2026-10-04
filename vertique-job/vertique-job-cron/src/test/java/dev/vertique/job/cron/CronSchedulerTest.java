@@ -11,6 +11,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.anyLong;
+import static org.mockito.Mockito.atLeast;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
@@ -46,11 +47,13 @@ import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
 import java.time.Instant;
 import java.time.ZoneId;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -1054,8 +1057,15 @@ class CronSchedulerTest {
         @Test
         @DisplayName("FIRE_ALL: dispatches every missed fire when last_fired_at is old")
         void fireAllDispatchesEveryMissedFire(Vertx vertx, VertxTestContext ctx) {
-            // lastFiredAt 3 hours ago for an every-hour job (should have fired at +1h and +2h)
+            // lastFiredAt 3 hours ago for an every-hour job — multiple hour boundaries missed.
             Instant threeHoursAgo = Instant.now().minusSeconds(3 * 3600);
+            CronExpression hourly = new CronExpression("0 0 * * * *");
+            List<Instant> expectedMissed = hourly.computeFireTimesBetween(
+                    threeHoursAgo, Instant.now(), ZoneId.of("UTC"), CronScheduler.MAX_MISFIRE_FIRES);
+            assertTrue(
+                    expectedMissed.size() >= 2,
+                    "precondition: test window must contain at least 2 missed fires, got " + expectedMissed.size());
+
             JobRepository repo = mock(JobRepository.class);
             CronJobSchedule schedule = new CronJobSchedule(
                     "fire-all-job",
@@ -1072,7 +1082,7 @@ class CronSchedulerTest {
                     null);
             when(repo.findSchedule(anyString())).thenReturn(Future.succeededFuture(Optional.of(schedule)));
             when(repo.tryInsert(any(JobExecution.class)))
-                    .thenReturn(Future.succeededFuture(Optional.of(UUID.randomUUID())));
+                    .thenAnswer(inv -> Future.succeededFuture(Optional.of(UUID.randomUUID())));
             when(repo.updateScheduleFireTimes(anyString(), any(Instant.class), any(Instant.class)))
                     .thenReturn(Future.succeededFuture());
             when(repo.completeExecution(any(UUID.class), any(), any(), any(), any()))
@@ -1086,10 +1096,13 @@ class CronSchedulerTest {
                     testEventBusClient(vertx),
                     DispatchEnvelopeBuilder.forTesting());
 
-            AtomicInteger fireCount = new AtomicInteger();
+            List<Instant> dispatchedScheduledAt = new CopyOnWriteArrayList<>();
             vertx.eventBus().consumer("test.fire-all.address", msg -> {
-                fireCount.incrementAndGet();
                 var body = (DispatchEnvelope<?>) msg.body();
+                Instant scheduledAt = ((JobDispatchContext)
+                                body.metadata().dispatchContext().get(JobDispatchContext.class.getName()))
+                        .scheduledAt();
+                dispatchedScheduledAt.add(scheduledAt);
                 if (body.replyAddress().isPresent()) {
                     vertx.eventBus()
                             .send(
@@ -1101,7 +1114,7 @@ class CronSchedulerTest {
 
             CronJobDefinition job = new CronJobDefinition(
                     "fire-all-job",
-                    new CronExpression("0 0 * * * *"), // every hour
+                    hourly,
                     new CronTargetReference.EventBusTarget("test.fire-all.address"),
                     "test.fire-all.address",
                     ExecutionMode.SINGLE_INSTANCE,
@@ -1116,14 +1129,29 @@ class CronSchedulerTest {
             scheduler.register(job);
             scheduler.start();
 
-            // Allow time for async recovery
+            // FIRE_ALL chains fires sequentially (each awaits in-flight release); allow headroom.
             vertx.setTimer(
-                    500,
+                    5_000,
                     id -> ctx.verify(() -> {
-                        // FIRE_ALL fires in a loop but SINGLE_INSTANCE has an in-flight guard,
-                        // so only the first fire proceeds; subsequent ones are dropped by the guard
-                        // until the first completes. At least 1 fire should dispatch.
-                        assertTrue(fireCount.get() >= 1, "FIRE_ALL should dispatch at least 1 missed fire");
+                        ArgumentCaptor<JobExecution> inserted = ArgumentCaptor.forClass(JobExecution.class);
+                        verify(repo, atLeast(expectedMissed.size())).tryInsert(inserted.capture());
+                        List<Instant> insertedAt = inserted.getAllValues().stream()
+                                .map(JobExecution::scheduledAt)
+                                .toList();
+                        List<Instant> dispatched = new ArrayList<>(dispatchedScheduledAt);
+                        assertTrue(
+                                dispatched.size() >= expectedMissed.size(),
+                                "FIRE_ALL must dispatch every missed fire, got " + dispatched.size());
+                        // Leader-election inserts and dispatches must cover every missed tick in
+                        // chronological order (prefix — later timer ticks may append more).
+                        assertEquals(
+                                expectedMissed,
+                                insertedAt.subList(0, expectedMissed.size()),
+                                "FIRE_ALL must tryInsert each missed fire oldest-to-newest");
+                        assertEquals(
+                                expectedMissed,
+                                dispatched.subList(0, expectedMissed.size()),
+                                "FIRE_ALL must dispatch each missed fire oldest-to-newest");
                         ctx.completeNow();
                     }));
         }
