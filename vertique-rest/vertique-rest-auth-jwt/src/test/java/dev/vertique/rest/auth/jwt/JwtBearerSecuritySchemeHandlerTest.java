@@ -425,6 +425,58 @@ class JwtBearerSecuritySchemeHandlerTest {
         }
 
         @Test
+        @DisplayName("string sid and jti reach safeAttributes")
+        void stringSidAndJti_inSafeAttributes() {
+            long expEpochSec = Instant.now().plusSeconds(3600).getEpochSecond();
+            User user = stubUserWithClaims(new io.vertx.core.json.JsonObject()
+                    .put("iss", ISSUER)
+                    .put("sub", "alice@example.com")
+                    .put("exp", expEpochSec)
+                    .put("sid", "session-1")
+                    .put("jti", "token-1"));
+
+            JWTAuth mockAuth = mock(JWTAuth.class);
+            when(mockAuth.authenticate(any(Credentials.class))).thenReturn(Future.succeededFuture(user));
+            doNothing().when(ctx).next();
+
+            handlerWithMockAuth(mockAuth).handle(ctx);
+
+            AuthenticationEvidence ev = RestAuthenticationEvidence.get(ctx).get(0);
+            assertEquals("session-1", ev.safeAttributes().get("sid"));
+            assertEquals("token-1", ev.safeAttributes().get("jti"));
+        }
+
+        @Test
+        @DisplayName("object/array/number sid and jti are omitted from safeAttributes — not stringified")
+        void nonStringSidAndJti_omittedFromSafeAttributes() {
+            long expEpochSec = Instant.now().plusSeconds(3600).getEpochSecond();
+            User user = stubUserWithClaims(new io.vertx.core.json.JsonObject()
+                    .put("iss", ISSUER)
+                    .put("sub", "alice@example.com")
+                    .put("exp", expEpochSec)
+                    .put("sid", new io.vertx.core.json.JsonObject().put("password", "secret"))
+                    .put("jti", new io.vertx.core.json.JsonArray().add("token-1"))
+                    .put("client_id", 42));
+
+            JWTAuth mockAuth = mock(JWTAuth.class);
+            when(mockAuth.authenticate(any(Credentials.class))).thenReturn(Future.succeededFuture(user));
+            doNothing().when(ctx).next();
+
+            handlerWithMockAuth(mockAuth).handle(ctx);
+
+            AuthenticationEvidence ev = RestAuthenticationEvidence.get(ctx).get(0);
+            assertEquals("alice@example.com", ev.safeAttributes().get("sub"));
+            assertFalse(ev.safeAttributes().containsKey("sid"), "object sid must not be stringified into evidence");
+            assertFalse(ev.safeAttributes().containsKey("jti"), "array jti must not be stringified into evidence");
+            assertFalse(
+                    ev.safeAttributes().containsKey("client_id"),
+                    "numeric client_id must not be coerced into a string attribute");
+            assertFalse(
+                    ev.safeAttributes().values().stream().map(String::valueOf).anyMatch(v -> v.contains("secret")),
+                    "structured claim contents must not leak into safeAttributes");
+        }
+
+        @Test
         @DisplayName("Success without sub — safeAttributes is empty")
         void successWithoutSub_safeAttributesEmpty() {
             long expEpochSec = Instant.now().plusSeconds(3600).getEpochSecond();

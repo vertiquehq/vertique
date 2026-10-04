@@ -38,14 +38,17 @@ import jakarta.annotation.Nullable;
  * }
  * }</pre>
  *
- * @param schemeName the OpenAPI security scheme name the JWT handler registers under (default
- *                   {@code "bearerAuth"})
- * @param validation the JWT validation constraints (issuer / audience / clock skew); defaults to an
- *                   empty {@link JwtValidationConfig} when omitted. Its {@code issuer}/{@code audience}
- *                   drive post-authentication enforcement in {@link JwtBearerSecuritySchemeHandler}
- *                   (rejecting mismatched tokens), not merely evidence/rejection metadata
+ * @param schemeName         the OpenAPI security scheme name the JWT handler registers under (default
+ *                           {@code "bearerAuth"})
+ * @param validation         the JWT validation constraints (issuer / audience / clock skew); defaults to an
+ *                           empty {@link JwtValidationConfig} when omitted. Its {@code issuer}/{@code audience}
+ *                           drive post-authentication enforcement in {@link JwtBearerSecuritySchemeHandler}
+ *                           (rejecting mismatched tokens), not merely evidence/rejection metadata
+ * @param sessionCorrelation token-derived {@code CorrelationContext.session()} enrichment (FR-COR-100..105);
+ *                           defaults to {@link JwtSessionCorrelationConfig#defaults()}
  */
-public record JwtAuthConfig(String schemeName, JwtValidationConfig validation) {
+public record JwtAuthConfig(
+        String schemeName, JwtValidationConfig validation, JwtSessionCorrelationConfig sessionCorrelation) {
 
     /** Default scheme name applied when no {@code jwt.schemeName} is configured. */
     private static final String DEFAULT_SCHEME_NAME = "bearerAuth";
@@ -61,34 +64,52 @@ public record JwtAuthConfig(String schemeName, JwtValidationConfig validation) {
         if (validation == null) {
             validation = JwtValidationConfig.builder().build();
         }
+        if (sessionCorrelation == null) {
+            sessionCorrelation = JwtSessionCorrelationConfig.defaults();
+        }
+    }
+
+    /**
+     * Convenience constructor that keeps default session-correlation enrichment.
+     *
+     * @param schemeName the OpenAPI security scheme name
+     * @param validation the JWT validation constraints
+     */
+    public JwtAuthConfig(String schemeName, JwtValidationConfig validation) {
+        this(schemeName, validation, JwtSessionCorrelationConfig.defaults());
     }
 
     /**
      * Jackson-friendly factory that fills in defaults for any omitted JSON properties. Used by
      * {@link JwtAuthModule} when mapping the {@code "jwt"} section to this record.
      *
-     * @param schemeName the scheme name; defaults to {@code "bearerAuth"} when {@code null}
-     * @param validation the validation config; defaults to an empty {@link JwtValidationConfig} when
-     *                   {@code null}
+     * @param schemeName         the scheme name; defaults to {@code "bearerAuth"} when {@code null}
+     * @param validation         the validation config; defaults to an empty {@link JwtValidationConfig} when
+     *                           {@code null}
+     * @param sessionCorrelation session enrichment config; defaults when {@code null}
      * @return the deserialised config
      */
     @JsonCreator
     public static JwtAuthConfig fromJson(
             @JsonProperty("schemeName") @Nullable String schemeName,
-            @JsonProperty("validation") @Nullable JwtValidationConfig validation) {
+            @JsonProperty("validation") @Nullable JwtValidationConfig validation,
+            @JsonProperty("sessionCorrelation") @Nullable JwtSessionCorrelationConfig sessionCorrelation) {
         JwtAuthConfig d = defaults();
         return new JwtAuthConfig(
-                schemeName != null ? schemeName : d.schemeName, validation != null ? validation : d.validation);
+                schemeName != null ? schemeName : d.schemeName,
+                validation != null ? validation : d.validation,
+                sessionCorrelation != null ? sessionCorrelation : d.sessionCorrelation);
     }
 
     /**
-     * Default configuration: scheme name {@code "bearerAuth"} and an empty
-     * {@link JwtValidationConfig} (no issuer/audience constraints, 30-second clock skew).
+     * Default configuration: scheme name {@code "bearerAuth"}, an empty
+     * {@link JwtValidationConfig} (no issuer/audience constraints, 30-second clock skew), and default
+     * session enrichment ({@code sid} then {@code jti}, not durable-safe).
      *
      * @return the default config; never {@code null}
      */
     public static JwtAuthConfig defaults() {
         return new JwtAuthConfig(
-                DEFAULT_SCHEME_NAME, JwtValidationConfig.builder().build());
+                DEFAULT_SCHEME_NAME, JwtValidationConfig.builder().build(), JwtSessionCorrelationConfig.defaults());
     }
 }

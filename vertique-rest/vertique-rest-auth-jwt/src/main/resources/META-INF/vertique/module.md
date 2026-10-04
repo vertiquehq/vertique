@@ -215,7 +215,7 @@ The application must supply exactly one thing: a `JWTAuth` binding. Everything e
 | `Set<SecuritySchemeHandler>` | `@IntoSet` | A `JwtBearerSecuritySchemeHandler` registered under the effective scheme name, for OpenAPI-described operations |
 | `Set<RouteAuthHandler>` | `@IntoSet` | A route-level handler under the same scheme name, for transports with no OpenAPI description (WebSocket upgrades, action-only routes), including explicit optional-authentication support |
 | `Set<AuthorizationProvider>` | `@IntoSet` | `JwtClaimAuthorizationProvider` — feeds the Vert.x cache; the opt-in `VertxAuthorizationImportModule` import always excludes it |
-| `Set<OperationHandlerContributor>` | `@IntoSet` | `JwtClaimsValidatorContributor` at priority 50 when a `JwtClaimsValidator` is bound; otherwise a no-op contributor |
+| `Set<OperationHandlerContributor>` | `@IntoSet` | `JwtClaimsValidatorContributor` at priority 50 when a `JwtClaimsValidator` is bound (otherwise a no-op), plus `JwtCorrelationSessionContributor` at priority 55 for token-derived `CorrelationContext.session()` enrichment |
 | `JwtAuthConfig` | `@BindsOptionalOf` | The application's optional whole-config override |
 | `JwtClaimsValidator` | `@BindsOptionalOf` | The application's optional custom claim check |
 | `@JwtEffective JwtAuthConfig` | `@Provides @Singleton` | The resolved config: the application override when bound, else the parsed `jwt` section |
@@ -244,7 +244,11 @@ warning, and no clock-skew enforcement from this module.
 ### `JwtAuthConfig`
 
 ```java
-public record JwtAuthConfig(String schemeName, JwtValidationConfig validation) {
+public record JwtAuthConfig(
+        String schemeName,
+        JwtValidationConfig validation,
+        JwtSessionCorrelationConfig sessionCorrelation) {
+    public JwtAuthConfig(String schemeName, JwtValidationConfig validation);
     public static JwtAuthConfig defaults();
 }
 ```
@@ -253,10 +257,11 @@ public record JwtAuthConfig(String schemeName, JwtValidationConfig validation) {
 |---|---|---|
 | `schemeName` | `"bearerAuth"` | Must match the `@SecurityScheme` / `@SecurityRequirement` name |
 | `validation` | An all-defaults `JwtValidationConfig` | Issuer / audience / clock-skew constraints |
+| `sessionCorrelation` | `JwtSessionCorrelationConfig.defaults()` | Token-derived `CorrelationContext.session()` enrichment (`sid` then `jti`, not durable-safe) |
 
 The compact constructor normalizes `null` components to those defaults, so a partial `jwt` object —
 `schemeName` only, say — deserializes safely. `fromJson` is the `@JsonCreator` and fills defaults for
-omitted properties.
+omitted properties. The two-argument constructor keeps default session enrichment.
 
 Bind your own `@Provides JwtAuthConfig` to override the parsed `jwt` section entirely. Injection
 sites read the resolved value through the `@JwtEffective` qualifier; the unqualified binding is the
@@ -466,10 +471,12 @@ On success the handler builds an `AuthenticationEvidence` carrying:
 | method | `DefaultAuthMethod.jwt()` |
 | `notAfter` | The `exp` claim, as an `Instant` |
 | verification source | `JwksVerificationSource` with the configured issuer and a JWKS URI derived as `<issuer>/.well-known/jwks.json`; `kid` and `alg` are always empty because Vert.x does not expose the verified JWT header |
-| safe attributes | `sub`, `client_id`, and `azp` when present — never raw token material |
+| safe attributes | `sub`, `client_id`, `azp`, `sid`, and `jti` when present as JSON strings — never raw token material, and never coerced from objects/arrays/numbers |
 
 `client_id` and `azp` are what let identity resolution classify a client-credentials token as a
-service principal rather than a user.
+service principal rather than a user. `sid` and `jti` are surfaced for correlation consumers;
+live session binding still reads the validated principal map in `JwtCorrelationSessionContributor`,
+and only when `RestAuthenticationEvidence` already carries a verified JWT entry.
 
 #### Rejection reason codes
 
@@ -607,6 +614,9 @@ Parsed from the `jwt` section of the application configuration into `JwtAuthConf
 | `jwt.validation.issuer` | String | _(none)_ | Expected `iss`. Unset means no issuer check |
 | `jwt.validation.audience` | List\<String\> | _(none)_ | Accepted `aud` values, any-match. Unset or empty means no audience check |
 | `jwt.validation.clockSkewSeconds` | int | `30` | Leeway for `exp`/`nbf`/`iat`, applied at `JWTAuth` construction. Must be `0`–`300`. Must equal what the application passed to `JwtAuthFactory`, or startup fails |
+| `jwt.sessionCorrelation.claimPreference` | List\<String\> | `["sid","jti"]` | Ordered claim names tried as the session id; first non-blank string wins |
+| `jwt.sessionCorrelation.durableSafe` | boolean | `false` | When `true`, the session ref may be persisted and audit-projected (`sessionId`) |
+| `jwt.sessionCorrelation.enabled` | boolean | `true` | When `false`, session enrichment is a no-op |
 
 ```json
 {
@@ -616,10 +626,22 @@ Parsed from the `jwt` section of the application configuration into `JwtAuthConf
       "issuer": "https://auth.example.com/",
       "audience": ["https://api.example.com"],
       "clockSkewSeconds": 30
+    },
+    "sessionCorrelation": {
+      "claimPreference": ["sid", "jti"],
+      "durableSafe": false,
+      "enabled": true
     }
   }
 }
 ```
+
+After JWT authentication succeeds, `JwtCorrelationSessionContributor` (priority 55) runs only when
+`RestAuthenticationEvidence` contains a verified JWT entry. It then reads the validated principal
+claims — never the raw token, and never an ambient user from another scheme or a public route —
+and binds a `CorrelationSessionRef` via `CorrelationContextMutator.setSession`. Kind is `jwt-sid` /
+`jwt-jti` for those claim names and `jwt-claim` otherwise; source is always `jwt-claim`. With the
+default `durableSafe=false`, audit projection leaves `sessionId` null.
 
 An application-supplied `@Provides JwtAuthConfig` takes priority over this section entirely — which
 also makes it, not the `jwt` section, the value the startup clock-skew check compares against.

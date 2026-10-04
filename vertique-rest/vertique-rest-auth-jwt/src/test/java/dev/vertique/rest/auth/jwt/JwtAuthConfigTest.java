@@ -76,6 +76,13 @@ class JwtAuthConfigTest {
                     JwtValidationConfig.builder().build().clockSkewSeconds(),
                     config.validation().clockSkewSeconds(),
                     "validation must default to JwtValidationConfig defaults");
+            assertEquals(
+                    List.of("sid", "jti"),
+                    config.sessionCorrelation().claimPreference(),
+                    "sessionCorrelation must default to sid then jti");
+            assertEquals(
+                    false, config.sessionCorrelation().durableSafe(), "sessionCorrelation durableSafe defaults false");
+            assertEquals(true, config.sessionCorrelation().enabled(), "sessionCorrelation enabled defaults true");
         }
     }
 
