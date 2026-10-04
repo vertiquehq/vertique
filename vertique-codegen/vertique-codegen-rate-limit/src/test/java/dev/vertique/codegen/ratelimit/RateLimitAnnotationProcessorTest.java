@@ -269,6 +269,55 @@ class RateLimitAnnotationProcessorTest {
                 .assertErrorMessage("rate-limit key property path contains an invalid identifier");
     }
 
+    // --- Supplementary: interface placement (proxyability rejects it; unlike codegen-aop's silent ignore) ---
+
+    /**
+     * {@code @RateLimited} on an abstract interface method is a compile error: the interface has no
+     * {@code @Inject} constructor and the method is abstract. This differs from the generic AOP
+     * processor, which silently ignores aspect triggers on interface methods.
+     */
+    @Test
+    @DisplayName("rejects @RateLimited on an abstract interface method")
+    void shouldRejectRateLimitedOnAnAbstractInterfaceMethod() {
+        JavaFileObject source = SourceFiles.inline(PACKAGE + ".SearchPort", """
+                package com.example;
+
+                import dev.vertique.ratelimit.aop.RateLimited;
+
+                public interface SearchPort {
+
+                    @RateLimited(policy = "search-quota", key = {"0"})
+                    String search(String query);
+                }
+                """);
+        ProcessorTestHarness.Result result = ProcessorTestHarness.run(new RateLimitAnnotationProcessor(), source)
+                .assertFailed();
+        result.assertErrorMessage("rate-limited methods require exactly one @Inject constructor");
+        result.assertErrorMessage("rate-limited methods must be instance methods that can be overridden");
+    }
+
+    /** A {@code default} interface method is not abstract, but the interface still has no constructor. */
+    @Test
+    @DisplayName("rejects @RateLimited on a default interface method")
+    void shouldRejectRateLimitedOnADefaultInterfaceMethod() {
+        JavaFileObject source = SourceFiles.inline(PACKAGE + ".DefaultSearchPort", """
+                package com.example;
+
+                import dev.vertique.ratelimit.aop.RateLimited;
+
+                public interface DefaultSearchPort {
+
+                    @RateLimited(policy = "search-quota", key = {"0"})
+                    default String search(String query) {
+                        return query;
+                    }
+                }
+                """);
+        ProcessorTestHarness.run(new RateLimitAnnotationProcessor(), source)
+                .assertFailed()
+                .assertErrorMessage("rate-limited methods require exactly one @Inject constructor");
+    }
+
     // --- TP-002: process() contract ---
 
     @Test
