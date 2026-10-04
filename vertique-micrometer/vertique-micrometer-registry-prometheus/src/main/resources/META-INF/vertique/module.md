@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Micrometer Registry Prometheus Module
 
-> **Status:** Beta
+> **Status:** Stable
 > **Package:** `dev.vertique.micrometer.prometheus`
 > **Artifact:** `vertique-micrometer-registry-prometheus`
 > **Depends on:** micrometer-core, management, vertx-web, micrometer-registry-prometheus, prometheus-metrics-tracer-common
