@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # codegen-test
 
-> **Status:** Beta
+> **Status:** Stable
 
 ## Overview
 

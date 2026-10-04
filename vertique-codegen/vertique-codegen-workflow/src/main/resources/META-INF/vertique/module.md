@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Codegen Workflow Client Proxy Module
 
-> **Status:** Beta
+> **Status:** Stable
 > **Package:** `dev.vertique.codegen.workflow.processor`
 > **Artifact:** `vertique-codegen-workflow`
 > **Depends on:** codegen-core; workflow-core (test-scope in this processor module — but a consuming app needs it on its normal runtime classpath)

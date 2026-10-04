@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Codegen Dagger Auto-Wiring Module
 
-> **Status:** Beta
+> **Status:** Stable
 
 ## Overview
 
