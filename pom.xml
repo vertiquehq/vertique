@@ -1222,6 +1222,13 @@ SPDX-License-Identifier: EUPL-1.2
                              Late replacement preserves the JaCoCo agent prepared for this module. -->
                         <argLine>@{argLine} -javaagent:${project.build.directory}/mockito-agent.jar</argLine>
                         <redirectTestOutputToFile>${test.output.toFile}</redirectTestOutputToFile>
+                        <!-- Neutralize an ambient VERTX_CONFIG_LOCATIONS so ConfigBootstrap and
+                             example/archetype working-directory proofs resolve the default
+                             project-root config/ directory instead of a developer machine path
+                             (vertique-dev#20). A blank value is treated as unset. -->
+                        <environmentVariables>
+                            <VERTX_CONFIG_LOCATIONS></VERTX_CONFIG_LOCATIONS>
+                        </environmentVariables>
                         <!-- Hard per-fork wall-clock cap: hard-kills the forked JVM if it exceeds
                              the limit, regardless of where it is stuck. This is the reliable
                              hang-guard — a JUnit @Timeout only *interrupts* the thread (SAME_THREAD
@@ -1251,6 +1258,10 @@ SPDX-License-Identifier: EUPL-1.2
                         <!-- Keep the same deterministic premain setup for integration-test forks. -->
                         <argLine>@{argLine} -javaagent:${project.build.directory}/mockito-agent.jar</argLine>
                         <redirectTestOutputToFile>${test.output.toFile}</redirectTestOutputToFile>
+                        <!-- Same VERTX_CONFIG_LOCATIONS neutralization as surefire (vertique-dev#20). -->
+                        <environmentVariables>
+                            <VERTX_CONFIG_LOCATIONS></VERTX_CONFIG_LOCATIONS>
+                        </environmentVariables>
                         <!-- Hard per-fork wall-clock cap for integration tests. Container-backed ITs
                              do broker/DB startup and verticle deployment in @BeforeAll; when a broker
                              comes up unreachable (the apache/kafka advertised-listener flake) the

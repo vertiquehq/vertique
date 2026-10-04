@@ -5,19 +5,23 @@ package dev.vertique.examples.services.codegen;
 
 import io.vertx.core.json.JsonObject;
 import java.io.IOException;
-import java.io.InputStream;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 
 /**
- * The shipped {@code config/application.json}, read from the classpath as the application reads it,
- * deep-merged with the test-only keys: the HTTP server on {@code 127.0.0.1} at an ephemeral port and
- * the management server disabled.
+ * The shipped module-root {@code config/application.json}, read from the filesystem the same way
+ * ConfigBootstrap does at runtime, deep-merged with the test-only keys: the HTTP server on
+ * {@code 127.0.0.1} at an ephemeral port and the management server disabled.
+ *
+ * <p>Surefire uses the module basedir as the working directory, so {@code config/application.json}
+ * resolves to this example's relocated project-root config file.
  */
 final class ShippedTestConfiguration {
 
-    /** The classpath location of the shipped configuration. */
-    private static final String SHIPPED_CONFIGURATION = "config/application.json";
+    /** Filesystem path of the shipped configuration relative to the module basedir. */
+    private static final Path SHIPPED_CONFIGURATION = Path.of("config/application.json");
 
     private ShippedTestConfiguration() {}
 
@@ -25,7 +29,7 @@ final class ShippedTestConfiguration {
      * Returns the shipped configuration merged with the test-only keys.
      *
      * @return a new configuration object
-     * @throws IllegalStateException when the resource is missing
+     * @throws IllegalStateException when the file is missing
      */
     static JsonObject forTest() {
         JsonObject testKeys = new JsonObject()
@@ -35,13 +39,12 @@ final class ShippedTestConfiguration {
     }
 
     private static JsonObject shipped() {
-        try (InputStream in =
-                ShippedTestConfiguration.class.getClassLoader().getResourceAsStream(SHIPPED_CONFIGURATION)) {
-            if (in == null) {
-                throw new IllegalStateException(
-                        "the shipped configuration " + SHIPPED_CONFIGURATION + " is not on the classpath");
-            }
-            return new JsonObject(new String(in.readAllBytes(), StandardCharsets.UTF_8));
+        if (!Files.isRegularFile(SHIPPED_CONFIGURATION)) {
+            throw new IllegalStateException("the shipped configuration "
+                    + SHIPPED_CONFIGURATION.toAbsolutePath().normalize() + " is missing (expected at the module root)");
+        }
+        try {
+            return new JsonObject(Files.readString(SHIPPED_CONFIGURATION, StandardCharsets.UTF_8));
         } catch (IOException e) {
             throw new UncheckedIOException("reading " + SHIPPED_CONFIGURATION + " failed", e);
         }

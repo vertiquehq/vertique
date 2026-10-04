@@ -262,11 +262,18 @@ container image:
 ```
 
 ```bash
-# Compile and start (config from src/main/resources/ + env/sys properties)
-./mvnw compile exec:java -pl examples/vertique-example-hello -am
+# Compile and start from the reactor root. exec:java keeps Maven's launch cwd, so point
+# ConfigBootstrap at this example's module-root config/ (not a classpath copy under
+# src/main/resources/config).
+VERTX_CONFIG_LOCATIONS="$PWD/examples/vertique-example-hello/config" \
+  ./mvnw compile exec:java -pl examples/vertique-example-hello -am
+
+# Equivalent: launch with the example directory as the working directory
+# (cd examples/vertique-example-hello && ../../mvnw compile exec:java)
 
 # Pass a config overlay with --conf
-./mvnw compile exec:java -pl examples/vertique-example-hello -am \
+VERTX_CONFIG_LOCATIONS="$PWD/examples/vertique-example-hello/config" \
+  ./mvnw compile exec:java -pl examples/vertique-example-hello -am \
     -Dexec.args='--conf {"http":{"port":8080}}'
 ```
 

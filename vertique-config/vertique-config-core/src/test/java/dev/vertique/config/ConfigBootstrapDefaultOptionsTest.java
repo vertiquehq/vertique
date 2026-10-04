@@ -39,6 +39,9 @@ class ConfigBootstrapDefaultOptionsTest {
 
         assertEquals("directory", first.getType(), "First store must be a directory store");
         assertTrue(first.isOptional(), "Directory store must be optional");
+        // Path is "config" when VERTX_CONFIG_LOCATIONS is unset/blank. vertique-parent pins that
+        // env var blank in surefire/failsafe so this assertion is stable on developer machines
+        // that export VERTX_CONFIG_LOCATIONS (vertique-dev#20).
         assertEquals("config", first.getConfig().getString("path"), "Directory store path must be 'config'");
 
         JsonArray filesets = first.getConfig().getJsonArray("filesets");
