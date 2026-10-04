@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Codegen REST Client Static Proxies Module
 
-> **Status:** Beta
+> **Status:** Stable
 
 ## Overview
 
@@ -43,7 +43,13 @@ retains the JDK proxy as its fallback.
 })
 ```
 
-> **Note:** `vertique.codegen.package` is currently **not end-to-end for REST client artifacts** — the override is honored when generating the bean-param accessor and by the scanner's same-package access check, but the proxy generator does not add the required import for the `@RestClient` interface, and the runtime `BeanParamAccessorRegistry` derives the accessor FQN from the bean's binary name (not the override package). Setting this option for `@RestClient` interfaces will produce a generated proxy that fails to compile and/or accessors that the runtime cannot discover. Tracked as [#20](https://github.com/vertiquehq/vertique/issues/20). Until that is resolved, leave the option unset for projects using `@RestClient`.
+> **Note:** `vertique.codegen.package` is currently **not end-to-end for REST client artifacts** — the
+> override is honored when generating the bean-param accessor and by the scanner's same-package
+> access check, but the proxy generator does not add the required import for the `@RestClient`
+> interface, and the runtime `BeanParamAccessorRegistry` derives the accessor FQN from the bean's
+> binary name (not the override package). Setting this option for `@RestClient` interfaces will
+> produce a generated proxy that fails to compile and/or accessors that the runtime cannot discover.
+> Leave the option unset for projects using `@RestClient` until the override path is completed.
 
 ### Validators
 

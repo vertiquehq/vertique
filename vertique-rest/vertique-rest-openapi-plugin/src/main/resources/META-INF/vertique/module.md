@@ -5,11 +5,22 @@ SPDX-License-Identifier: EUPL-1.2
 
 # REST OpenAPI Plugin Module
 
-> **Status:** Beta
+> **Status:** Stable
 > **Package:** `dev.vertique.openapi`
-> **Artifact:** `rest-openapi-plugin`
+> **Artifact:** `vertique-rest-openapi-plugin`
 
 A thin build-time module that provides Swagger `ModelConverter`s and an `OpenAPIExtension` for the swagger-maven-plugin. `FutureModelConverter` unwraps `Future<T>` return types to `T`, `SseModelConverter` resolves SSE `ReadStream` return types to a string schema, `BigDecimalModelConverter` resolves `BigDecimal` types to the `vertique-strict` string wire-form schema, `ScalarOptionalModelConverter` resolves `OptionalInt`/`OptionalLong`/`OptionalDouble` to scalar schemas, and `RequestParamsExtension` expands `@RequestParams`-annotated parameter objects into individual OpenAPI parameters — so the generated spec reflects the actual JAX-RS contract rather than the framework's internal wrapper/aggregation types. Each model converter also initializes swagger-core's shared registry under the `ModelConverters` monitor before the Maven plugin registers application-specific converters, keeping parallel Maven reactor builds deterministic.
+
+---
+
+## When To Use It
+
+Add `vertique-rest-openapi-plugin` to the **swagger-maven-plugin classpath** (build-time only) when
+generating OpenAPI from JAX-RS resources that return `Future`, SSE `ReadStream`, use
+`BigDecimal` / scalar `Optional*` wire forms, or aggregate parameters with `@RequestParams`. List
+the converter/extension class names explicitly in the plugin configuration — they are not
+ServiceLoader-discovered. Do not put this artifact on an application runtime classpath; it has no
+runtime role.
 
 ---
 
