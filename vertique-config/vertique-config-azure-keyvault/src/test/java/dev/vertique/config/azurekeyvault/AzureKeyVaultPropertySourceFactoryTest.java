@@ -692,6 +692,9 @@ class AzureKeyVaultPropertySourceFactoryTest {
             var ex = assertThrows(ConfigPropertySourceException.class, () -> factoryWithStub(Map.of())
                     .create("src", new JsonObject().put("endpoint", "myvault.vault.azure.net")));
             assertTrue(ex.getMessage().toLowerCase().contains("endpoint"), "error must mention 'endpoint'");
+            assertTrue(
+                    ex.getMessage().contains("absolute http(s) URI"),
+                    "error must say: absolute http(s) URI with a host; was: " + ex.getMessage());
         }
 
         @Test
@@ -700,6 +703,10 @@ class AzureKeyVaultPropertySourceFactoryTest {
             var ex = assertThrows(ConfigPropertySourceException.class, () -> factoryWithStub(Map.of())
                     .create("src", new JsonObject().put("endpoint", "https://user:pass@myvault.vault.azure.net")));
             assertTrue(ex.getMessage().toLowerCase().contains("endpoint"), "error must mention 'endpoint'");
+            assertTrue(
+                    ex.getMessage().contains("userinfo/query/fragment"),
+                    "error must say: userinfo/query/fragment; was: " + ex.getMessage());
+            assertFalse(ex.getMessage().contains("pass"), "error must not echo the configured userinfo");
         }
 
         @Test
@@ -708,6 +715,9 @@ class AzureKeyVaultPropertySourceFactoryTest {
             var ex = assertThrows(ConfigPropertySourceException.class, () -> factoryWithStub(Map.of())
                     .create("src", new JsonObject().put("endpoint", "https://myvault.vault.azure.net?foo=bar")));
             assertTrue(ex.getMessage().toLowerCase().contains("endpoint"), "error must mention 'endpoint'");
+            assertTrue(
+                    ex.getMessage().contains("userinfo/query/fragment"),
+                    "error must say: userinfo/query/fragment; was: " + ex.getMessage());
         }
 
         @Test
@@ -716,6 +726,9 @@ class AzureKeyVaultPropertySourceFactoryTest {
             var ex = assertThrows(ConfigPropertySourceException.class, () -> factoryWithStub(Map.of())
                     .create("src", new JsonObject().put("endpoint", "https://myvault.vault.azure.net#section")));
             assertTrue(ex.getMessage().toLowerCase().contains("endpoint"), "error must mention 'endpoint'");
+            assertTrue(
+                    ex.getMessage().contains("userinfo/query/fragment"),
+                    "error must say: userinfo/query/fragment; was: " + ex.getMessage());
         }
 
         @Test
@@ -724,6 +737,9 @@ class AzureKeyVaultPropertySourceFactoryTest {
             var ex = assertThrows(ConfigPropertySourceException.class, () -> factoryWithStub(Map.of())
                     .create("src", new JsonObject().put("endpoint", "http://myvault.vault.azure.net")));
             assertTrue(ex.getMessage().toLowerCase().contains("endpoint"), "error must mention 'endpoint'");
+            assertTrue(
+                    ex.getMessage().contains("must use HTTPS for non-localhost hosts"),
+                    "error must say: HTTPS for non-localhost; was: " + ex.getMessage());
         }
 
         @Test
@@ -784,6 +800,9 @@ class AzureKeyVaultPropertySourceFactoryTest {
             var ex = assertThrows(ConfigPropertySourceException.class, () -> factoryWithStub(Map.of())
                     .create("src", new JsonObject().put("endpoint", "ftp://myvault.vault.azure.net")));
             assertTrue(ex.getMessage().toLowerCase().contains("endpoint"), "error must mention 'endpoint'");
+            assertTrue(
+                    ex.getMessage().contains("scheme must be 'http' or 'https'"),
+                    "error must say: scheme http/https; was: " + ex.getMessage());
         }
 
         @Test
@@ -792,6 +811,10 @@ class AzureKeyVaultPropertySourceFactoryTest {
             var ex = assertThrows(ConfigPropertySourceException.class, () -> factoryWithStub(Map.of())
                     .create("src", new JsonObject().put("endpoint", "https://myvault.vault.azure.net/foo")));
             assertTrue(ex.getMessage().toLowerCase().contains("path"), "error must mention 'path'");
+            assertTrue(
+                    ex.getMessage().contains("must not contain a path component"),
+                    "error must say the path component is not allowed; was: " + ex.getMessage());
+            assertFalse(ex.getMessage().contains("/foo"), "error must not echo the configured path");
         }
 
         @Test

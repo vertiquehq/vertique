@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Config AWS SSM Module
 
-> **Status:** Alpha
+> **Status:** Stable
 > **Package:** `dev.vertique.config.store.ssm`
 > **Artifact:** `vertique-config-aws-ssm`
 > **Depends on:** `io.vertx:vertx-config`, `software.amazon.awssdk:ssm`, `software.amazon.awssdk:url-connection-client`

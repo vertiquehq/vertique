@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # OpenTelemetry Core Module
 
-> **Status:** Alpha
+> **Status:** Stable
 > **Package:** `dev.vertique.opentelemetry`
 > **Artifact:** `vertique-opentelemetry-core`
 > **Depends on:** core, correlation, bootstrap, security-core

@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Starter PostgreSQL Module
 
-> **Status:** Alpha
+> **Status:** Stable
 > **Package:** `dev.vertique.starter.postgresql`
 > **Artifact:** `vertique-starter-postgresql`
 > **Depends on:** db-core, db-postgresql, db-flyway

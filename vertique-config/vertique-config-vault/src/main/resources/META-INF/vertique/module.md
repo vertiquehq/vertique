@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Config Vault Module
 
-> **Status:** Alpha
+> **Status:** Stable
 > **Package:** `dev.vertique.config.vault`
 > **Artifact:** `vertique-config-vault`
 > **Depends on:** config
