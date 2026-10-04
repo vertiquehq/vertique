@@ -29,6 +29,7 @@ import dev.vertique.rest.core.routing.RestOperationDescriptor;
 import dev.vertique.rest.core.routing.RouteRegistration;
 import dev.vertique.rest.core.routing.SecurityRequirement;
 import dev.vertique.rest.core.routing.SecurityRequirementSet;
+import dev.vertique.rest.core.security.AuthenticationOrChain;
 import dev.vertique.rest.core.security.DeferredCredentialRejectionAuthHandler;
 import dev.vertique.rest.core.security.RequiresActionResolver;
 import dev.vertique.rest.core.security.SecurityPolicy;
@@ -107,8 +108,8 @@ import lombok.extern.slf4j.Slf4j;
  *       forbids adding an {@code AUTHENTICATION} handler to a route that already carries a
  *       {@code USER} handler, and the {@code @Consumes} check below is a {@code USER} handler.
  *       Multiple alternative requirements are an OpenAPI OR, composed into a single
- *       {@code ChainAuthHandler.any()} (a request satisfying any one is authenticated) rather than
- *       chained sequentially — see {@code applySecurity}.</li>
+ *       {@link AuthenticationOrChain#any()} (a request satisfying any one is authenticated) rather
+ *       than chained sequentially — see {@code applySecurity}.</li>
  *   <li>A {@code @Consumes} 415-check handler — installed only when the operation declares a
  *       non-empty {@code @Consumes} list; rejects requests whose {@code Content-Type} does not
  *       match any declared consume via wildcard-aware {@link MediaType#isCompatible} matching.</li>
@@ -573,7 +574,7 @@ public class JaxRsRouteRegistrar {
             // below is a USER handler), so auth must be added ahead of it. This also matches the
             // historical runtime order: authentication ran before content-type/validation under the
             // OpenAPI router. Multiple alternative @SecurityRequirements are an OPENAPI OR (a request
-            // satisfying ANY one is authenticated), so they are composed into a ChainAuthHandler.any()
+            // satisfying ANY one is authenticated), so they are composed into an AuthenticationOrChain
             // rather than chained sequentially (which Vert.x would run as an AND). An operation that
             // declares a security requirement whose scheme has no collected handler fails startup here
             // (fail-closed) rather than mounting with no authentication.
@@ -1135,9 +1136,9 @@ public class JaxRsRouteRegistrar {
      * <ul>
      *   <li>no requirements declared (a public operation) → nothing is installed;</li>
      *   <li>exactly one → it is installed directly on the route;</li>
-     *   <li>more than one → they are composed into a {@link ChainAuthHandler#any()} (an OR chain — the
-     *       first handler that authenticates wins) and the chain is installed as the single
-     *       authentication handler.</li>
+     *   <li>more than one → they are composed into an {@link AuthenticationOrChain#any()} (an OR
+     *       chain — the first handler that authenticates wins) and the chain is installed as the
+     *       single authentication handler.</li>
      * </ul>
      *
      * <p>Chaining each handler sequentially via {@code route.handler(...)} would instead enforce an
@@ -1168,13 +1169,15 @@ public class JaxRsRouteRegistrar {
      * directly): a non-single-scheme set fails with a {@link RestConfigurationException} rather than
      * silently mounting with only its first scheme enforced.
      *
-     * <p><strong>OR rejection deferral.</strong> A multi-alternative (OR) operation is mounted as a
-     * {@link ChainAuthHandler#any()} wrapped in a
-     * {@link dev.vertique.rest.core.security.DeferredCredentialRejectionAuthHandler}. The wrapper arms
-     * per-request deferral so an earlier alternative's {@code CredentialRejected} is buffered and
-     * emitted only if the whole chain ultimately fails — a request that authenticates via a later
-     * alternative records no spurious rejection. Single-scheme routes are mounted without the wrapper
-     * and continue to emit rejections immediately.
+     * <p><strong>OR rejection deferral.</strong> A multi-alternative (OR) operation is mounted as an
+     * {@link AuthenticationOrChain#any()} wrapped in a
+     * {@link DeferredCredentialRejectionAuthHandler}. The wrapper arms per-request deferral so an
+     * earlier alternative's {@code CredentialRejected} is buffered and emitted only if the whole
+     * chain ultimately fails — a request that authenticates via a later alternative records no
+     * spurious rejection. {@link AuthenticationOrChain} also finalizes 401s (including XHR) by
+     * walking every member's {@code setAuthenticateHeader}, so each alternative's
+     * {@code WWW-Authenticate} challenge survives. Single-scheme routes are mounted without the
+     * wrapper and continue to emit rejections immediately.
      *
      * @param operationId      the operation identifier, used in the fail-closed error message
      * @param route            the Vert.x route to install the authentication handler(s) on
@@ -1225,7 +1228,7 @@ public class JaxRsRouteRegistrar {
             route.handler(present.get(0));
             return;
         }
-        ChainAuthHandler orChain = ChainAuthHandler.any();
+        ChainAuthHandler orChain = AuthenticationOrChain.any();
         present.forEach(orChain::add);
         // Wrap the OR chain so each failed alternative's CredentialRejected is buffered and emitted
         // only when the whole chain ultimately fails — a request authenticated by a LATER alternative

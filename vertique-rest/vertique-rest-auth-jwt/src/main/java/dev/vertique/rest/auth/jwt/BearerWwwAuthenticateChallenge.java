@@ -22,16 +22,25 @@ final class BearerWwwAuthenticateChallenge {
     private BearerWwwAuthenticateChallenge() {}
 
     /**
-     * Sets {@code WWW-Authenticate} on the response from the configured validation metadata.
+     * Appends this bearer challenge to {@code WWW-Authenticate} on the response.
+     *
+     * <p>Uses {@code headers().add} rather than {@code putHeader}: an OR chain walks every member's
+     * {@code setAuthenticateHeader}, and Vert.x HTTP auth handlers append their own challenges. A
+     * replace would drop earlier Bearer realms and any non-Bearer challenge (e.g. Basic) already on
+     * the response. An identical value already present is left alone (idempotent for the
+     * single-scheme / claims paths that call this once).
      *
      * @param ctx              the routing context whose response receives the challenge
      * @param validationConfig JWT validation config whose issuer (when present) becomes the realm
-     * @return {@code true} after the header is set
+     * @return {@code true} after the header is ensured
      */
     static boolean apply(RoutingContext ctx, JwtValidationConfig validationConfig) {
         Objects.requireNonNull(ctx, "ctx");
         Objects.requireNonNull(validationConfig, "validationConfig");
-        ctx.response().putHeader(HEADER, challengeValue(validationConfig));
+        String value = challengeValue(validationConfig);
+        if (!ctx.response().headers().getAll(HEADER).contains(value)) {
+            ctx.response().headers().add(HEADER, value);
+        }
         return true;
     }
 
@@ -47,8 +56,9 @@ final class BearerWwwAuthenticateChallenge {
         if (issuer == null || issuer.isBlank()) {
             return "Bearer";
         }
-        // Match Vert.x HTTPAuthorizationHandler: escape quotes; refuse CR/LF in the realm.
-        String realm = issuer.replace("\"", "\\\"");
+        // RFC 9110 §5.6.4: escape backslash before quote so a trailing '\' cannot consume the
+        // closing quote; refuse CR/LF (illegal in qdtext / quoted-pair).
+        String realm = issuer.replace("\\", "\\\\").replace("\"", "\\\"");
         if (realm.indexOf('\r') != -1 || realm.indexOf('\n') != -1) {
             return "Bearer";
         }

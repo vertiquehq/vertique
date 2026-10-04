@@ -22,6 +22,7 @@ import dev.vertique.security.events.SecurityEventObserver;
 import dev.vertique.security.runtime.events.SecurityEventEmitter;
 import dev.vertique.security.verification.JwksVerificationSource;
 import io.vertx.core.Future;
+import io.vertx.core.MultiMap;
 import io.vertx.core.http.HttpServerRequest;
 import io.vertx.core.http.HttpServerResponse;
 import io.vertx.ext.auth.User;
@@ -142,17 +143,11 @@ class JwtBearerSecuritySchemeHandlerTest {
         when(ctx.request()).thenReturn(request);
 
         // Capture response headers so failure-path tests can assert WWW-Authenticate.
+        // BearerWwwAuthenticateChallenge appends via headers().add(...).
         HttpServerResponse response = mock(HttpServerResponse.class);
-        Map<String, String> responseHeaders = new HashMap<>();
-        // BearerWwwAuthenticateChallenge calls putHeader(String, String).
-        doAnswer(inv -> {
-                    responseHeaders.put(inv.getArgument(0), inv.getArgument(1));
-                    return response;
-                })
-                .when(response)
-                .putHeader(anyString(), anyString());
+        MultiMap responseHeaders = MultiMap.caseInsensitiveMultiMap();
+        when(response.headers()).thenReturn(responseHeaders);
         when(ctx.response()).thenReturn(response);
-        // Expose the capture map for assertions without widening the stub API.
         backingMap.put("__responseHeaders", responseHeaders);
 
         // Wire userContext() to return the ctx itself (which also implements UserContextInternal)
@@ -172,9 +167,8 @@ class JwtBearerSecuritySchemeHandlerTest {
         return ctx;
     }
 
-    @SuppressWarnings("unchecked")
-    private static Map<String, String> responseHeaders(Map<String, Object> store) {
-        return (Map<String, String>) store.get("__responseHeaders");
+    private static MultiMap responseHeaders(Map<String, Object> store) {
+        return (MultiMap) store.get("__responseHeaders");
     }
 
     /**

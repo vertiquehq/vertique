@@ -482,7 +482,9 @@ and only when `RestAuthenticationEvidence` already carries a verified JWT entry.
 
 Every one of these fails the request with **401**, emits a credential-rejected event first, and sets
 a `WWW-Authenticate` challenge (`Bearer`, with `realm` equal to `jwt.validation.issuer` when that
-value is configured; otherwise the bare `Bearer` scheme).
+value is configured; otherwise the bare `Bearer` scheme). On a multi-scheme OR route each
+alternative **appends** its own challenge (including for `X-Requested-With: XMLHttpRequest`); a
+successful alternative leaves the header unset.
 
 | Code | Condition |
 |---|---|

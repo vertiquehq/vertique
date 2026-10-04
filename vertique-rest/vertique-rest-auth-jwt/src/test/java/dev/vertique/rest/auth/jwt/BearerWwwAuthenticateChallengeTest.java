@@ -4,13 +4,14 @@
 package dev.vertique.rest.auth.jwt;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.mockito.ArgumentMatchers.anyString;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import io.vertx.core.MultiMap;
 import io.vertx.core.http.HttpServerResponse;
 import io.vertx.ext.web.RoutingContext;
+import java.util.List;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -49,6 +50,24 @@ class BearerWwwAuthenticateChallengeTest {
     }
 
     @Test
+    @DisplayName("Trailing backslash is escaped before the closing quote")
+    void challengeValue_escapesTrailingBackslashInRealm() {
+        JwtValidationConfig config =
+                JwtValidationConfig.builder().issuer("acme\\").build();
+
+        assertEquals("Bearer realm=\"acme\\\\\"", BearerWwwAuthenticateChallenge.challengeValue(config));
+    }
+
+    @Test
+    @DisplayName("Backslash-plus-quote in the issuer is escaped as quoted-pairs")
+    void challengeValue_escapesBackslashThenQuoteInRealm() {
+        JwtValidationConfig config =
+                JwtValidationConfig.builder().issuer("acme\\\"").build();
+
+        assertEquals("Bearer realm=\"acme\\\\\\\"\"", BearerWwwAuthenticateChallenge.challengeValue(config));
+    }
+
+    @Test
     @DisplayName("CR/LF in the issuer drops the realm (bare Bearer)")
     void challengeValue_rejectsRealmWithControlChars() {
         JwtValidationConfig config =
@@ -58,17 +77,39 @@ class BearerWwwAuthenticateChallengeTest {
     }
 
     @Test
-    @DisplayName("apply() writes WWW-Authenticate onto the response")
-    void apply_setsWwwAuthenticateHeader() {
+    @DisplayName("apply() appends WWW-Authenticate onto the response")
+    void apply_appendsWwwAuthenticateHeader() {
         RoutingContext ctx = mock(RoutingContext.class);
         HttpServerResponse response = mock(HttpServerResponse.class);
+        MultiMap headers = MultiMap.caseInsensitiveMultiMap();
         when(ctx.response()).thenReturn(response);
-        when(response.putHeader(anyString(), anyString())).thenReturn(response);
+        when(response.headers()).thenReturn(headers);
 
         JwtValidationConfig config =
                 JwtValidationConfig.builder().issuer("https://issuer.test").build();
 
         assertEquals(true, BearerWwwAuthenticateChallenge.apply(ctx, config));
-        verify(response).putHeader(BearerWwwAuthenticateChallenge.HEADER, "Bearer realm=\"https://issuer.test\"");
+        assertEquals(
+                List.of("Bearer realm=\"https://issuer.test\""), headers.getAll(BearerWwwAuthenticateChallenge.HEADER));
+    }
+
+    @Test
+    @DisplayName("apply() preserves an existing non-Bearer challenge and deduplicates an identical Bearer")
+    void apply_preservesOtherChallengesAndDedupsIdentical() {
+        RoutingContext ctx = mock(RoutingContext.class);
+        HttpServerResponse response = mock(HttpServerResponse.class);
+        MultiMap headers = MultiMap.caseInsensitiveMultiMap();
+        headers.add(BearerWwwAuthenticateChallenge.HEADER, "Basic realm=\"x\"");
+        when(ctx.response()).thenReturn(response);
+        when(response.headers()).thenReturn(headers);
+
+        JwtValidationConfig config =
+                JwtValidationConfig.builder().issuer("https://issuer.test").build();
+        String bearer = "Bearer realm=\"https://issuer.test\"";
+
+        assertTrue(BearerWwwAuthenticateChallenge.apply(ctx, config));
+        assertTrue(BearerWwwAuthenticateChallenge.apply(ctx, config));
+
+        assertEquals(List.of("Basic realm=\"x\"", bearer), headers.getAll(BearerWwwAuthenticateChallenge.HEADER));
     }
 }

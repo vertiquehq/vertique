@@ -14,6 +14,7 @@ import dev.vertique.core.correlation.CorrelationContext;
 import dev.vertique.core.correlation.CorrelationIdentifier;
 import dev.vertique.correlation.CorrelationContextFactory;
 import dev.vertique.rest.core.routing.SecuritySchemeRegistry;
+import dev.vertique.rest.core.security.AuthenticationOrChain;
 import dev.vertique.rest.core.security.DeferredCredentialRejectionAuthHandler;
 import dev.vertique.rest.security.DefaultCredentialRejectionReporter;
 import dev.vertique.rest.security.RestAuthenticationEvidence;
@@ -55,25 +56,26 @@ import org.mockito.Mockito;
 
 /**
  * End-to-end proof for finding C2: two real {@link JwtBearerSecuritySchemeHandler}s — each backed by a
- * distinct symmetric key and issuer — compose into a Vert.x {@link ChainAuthHandler#any()} OR chain
- * and authenticate at request time, exactly as the registrar's multi-scheme {@code applySecurity}
- * path wires them.
+ * distinct symmetric key and issuer — compose into an {@link AuthenticationOrChain} OR chain and
+ * authenticate at request time, exactly as the registrar's multi-scheme {@code applySecurity} path
+ * wires them.
  *
  * <p>The chain is built here precisely as {@code JaxRsRouteRegistrar.applySecurity} builds it for an
- * operation declaring two alternative bearer {@code @SecurityRequirement}s: {@code ChainAuthHandler.any()}
- * with each scheme's registered {@link AuthenticationHandler} added via {@code chain.add(...)}. Vert.x's
- * {@code ChainAuthHandlerImpl.add(...)} unconditionally casts each member to the internal
- * {@code AuthenticationHandlerInternal}; the framework's {@code DelegatingJwtAuthHandler} now implements
- * that interface, so the build no longer throws a {@code ClassCastException} and the chain invokes each
- * member's {@code authenticate(ctx)} at request time, advancing to the next alternative when one fails
- * with a {@code 401} {@code HttpException}.
+ * operation declaring two alternative bearer {@code @SecurityRequirement}s:
+ * {@link AuthenticationOrChain#any()} with each scheme's registered {@link AuthenticationHandler}
+ * added via {@code chain.add(...)}. Vert.x's {@code ChainAuthHandlerImpl.add(...)} unconditionally
+ * casts each member to the internal {@code AuthenticationHandlerInternal}; the framework's
+ * {@code DelegatingJwtAuthHandler} now implements that interface, so the build no longer throws a
+ * {@code ClassCastException} and the chain invokes each member's {@code authenticate(ctx)} at request
+ * time, advancing to the next alternative when one fails with a {@code 401} {@code HttpException}.
  *
  * <h3>Scenarios</h3>
  * <ul>
  *   <li>a token valid for issuer A (signed with key A) → authorized, reaches the terminal handler (200);</li>
  *   <li>a token valid for issuer B (signed with key B) → authorized (200);</li>
- *   <li>an invalid/garbage token → neither alternative authenticates → 401;</li>
- *   <li>a missing {@code Authorization} header → 401.</li>
+ *   <li>an invalid/garbage token → neither alternative authenticates → 401 with both Bearer realms;</li>
+ *   <li>a missing {@code Authorization} header → 401 with both Bearer realms (XHR included);</li>
+ *   <li>a successful alternative with the XHR header → 200 and no {@code WWW-Authenticate}.</li>
  * </ul>
  *
  * <p>Each handler enforces its own issuer via {@link JwtValidationConfig}; the distinct signing keys
@@ -118,8 +120,8 @@ public class DelegatingJwtAuthHandlerOrChainIT {
     private static DefaultCredentialRejectionReporter sharedPostAuthReporter;
 
     /**
-     * Builds the two real JWT scheme handlers, composes their registered handlers into a
-     * {@code ChainAuthHandler.any()} OR chain (mirroring {@code applySecurity}), mounts the chain plus a
+     * Builds the two real JWT scheme handlers, composes their registered handlers into an
+     * {@link AuthenticationOrChain} (mirroring {@code applySecurity}), mounts the chain plus a
      * terminal 200 handler on {@code /or-secured}, and starts a shared HTTP server. One
      * {@link WebClient} is bound to a static field and shared across all tests: a client per
      * request accumulates netty channel pools that are never reclaimed, and an unbound client can
@@ -148,10 +150,10 @@ public class DelegatingJwtAuthHandlerOrChainIT {
                 JwtValidationConfig.builder().issuer(ISSUER_B).build());
 
         // Mirror exactly what JaxRsRouteRegistrar.applySecurity does for the multi-scheme OR path:
-        // build the OR chain, then wrap it in DeferredCredentialRejectionAuthHandler so a failed
-        // earlier alternative's CredentialRejected is buffered and only emitted if the whole chain
-        // ultimately fails (no later alternative authenticated).
-        ChainAuthHandler orChain = ChainAuthHandler.any();
+        // build AuthenticationOrChain, then wrap it in DeferredCredentialRejectionAuthHandler so a
+        // failed earlier alternative's CredentialRejected is buffered and only emitted if the whole
+        // chain ultimately fails (no later alternative authenticated).
+        ChainAuthHandler orChain = AuthenticationOrChain.any();
         orChain.add(handlerA);
         orChain.add(handlerB);
 
@@ -175,7 +177,7 @@ public class DelegatingJwtAuthHandlerOrChainIT {
         // DEFER_CONTEXT_KEY flag is set. Proves the Codex review critical finding: the user-null guard
         // is what scopes deferral to chain-attempt rejections only.
         sharedPostAuthReporter = buildReporter();
-        ChainAuthHandler orChainForPostAuth = ChainAuthHandler.any();
+        ChainAuthHandler orChainForPostAuth = AuthenticationOrChain.any();
         AuthenticationHandler handlerA2 = registeredHandler(
                 vertx,
                 "schemeA2",
@@ -206,7 +208,7 @@ public class DelegatingJwtAuthHandlerOrChainIT {
         // not just the HTTP status. The OR chain runs each member's authenticate(ctx) and then the
         // winning member's postAuthentication(ctx); the framework evidence must be appended on that
         // path for the resolved identity to be the authenticated user (not anonymous).
-        ChainAuthHandler identityChain = ChainAuthHandler.any();
+        ChainAuthHandler identityChain = AuthenticationOrChain.any();
         identityChain.add(handlerA);
         identityChain.add(handlerB);
         router.route("/or-identity").handler(identityChain);
@@ -386,6 +388,72 @@ public class DelegatingJwtAuthHandlerOrChainIT {
                 .map(response -> response.statusCode())
                 .onComplete(ctx.succeeding(status -> ctx.verify(() -> {
                     assertEquals(401, status, "a request with no Authorization header must be rejected");
+                    ctx.completeNow();
+                })));
+    }
+
+    /**
+     * On a final OR-chain 401, every member's {@code WWW-Authenticate} challenge must survive —
+     * append, not replace — so clients discover both realms.
+     *
+     * @param ctx the test context
+     */
+    @Test
+    @DisplayName("OR-chain 401 carries both Bearer realms (append, not replace)")
+    void missingToken_carriesBothBearerRealms(VertxTestContext ctx) {
+        client.get(port, "127.0.0.1", "/or-secured")
+                .send()
+                .onComplete(ctx.succeeding(response -> ctx.verify(() -> {
+                    assertEquals(401, response.statusCode());
+                    assertEquals(
+                            List.of("Bearer realm=\"" + ISSUER_A + "\"", "Bearer realm=\"" + ISSUER_B + "\""),
+                            response.headers().getAll("WWW-Authenticate"),
+                            "both OR alternatives must append their challenge");
+                    ctx.completeNow();
+                })));
+    }
+
+    /**
+     * Vert.x skips {@code setAuthenticateHeader} for {@code X-Requested-With: XMLHttpRequest};
+     * {@link AuthenticationOrChain} still emits every member challenge on that path.
+     *
+     * @param ctx the test context
+     */
+    @Test
+    @DisplayName("OR-chain XHR 401 still carries both Bearer realms")
+    void missingToken_xhr_carriesBothBearerRealms(VertxTestContext ctx) {
+        client.get(port, "127.0.0.1", "/or-secured")
+                .putHeader("X-Requested-With", "XMLHttpRequest")
+                .send()
+                .onComplete(ctx.succeeding(response -> ctx.verify(() -> {
+                    assertEquals(401, response.statusCode());
+                    assertEquals(
+                            List.of("Bearer realm=\"" + ISSUER_A + "\"", "Bearer realm=\"" + ISSUER_B + "\""),
+                            response.headers().getAll("WWW-Authenticate"),
+                            "XHR must not suppress OR-chain challenges (RFC 9110 §11.6.1)");
+                    ctx.completeNow();
+                })));
+    }
+
+    /**
+     * A successful OR alternative must not leave {@code WWW-Authenticate} on the 200 — challenges
+     * are written only when the chain's authenticate future fails.
+     *
+     * @param ctx the test context
+     */
+    @Test
+    @DisplayName("OR-chain success with XHR leaves WWW-Authenticate unset")
+    void tokenForIssuerB_xhr_authorizedWithoutChallenge(VertxTestContext ctx) {
+        String token = jwtAuthB.generateToken(new JsonObject().put("sub", "bob").put("iss", ISSUER_B));
+        client.get(port, "127.0.0.1", "/or-secured")
+                .putHeader("Authorization", "Bearer " + token)
+                .putHeader("X-Requested-With", "XMLHttpRequest")
+                .send()
+                .onComplete(ctx.succeeding(response -> ctx.verify(() -> {
+                    assertEquals(200, response.statusCode());
+                    assertTrue(
+                            response.headers().getAll("WWW-Authenticate").isEmpty(),
+                            "a successful alternative must not carry a failed member's challenge");
                     ctx.completeNow();
                 })));
     }
