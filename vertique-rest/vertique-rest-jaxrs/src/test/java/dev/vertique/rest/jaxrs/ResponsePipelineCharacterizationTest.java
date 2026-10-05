@@ -7,7 +7,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
-import dev.vertique.rest.core.events.RestRequestCompletionEmitter;
+import dev.vertique.rest.core.events.RequestCompletionRecorder;
 import dev.vertique.rest.core.interceptor.RequestInterceptor;
 import dev.vertique.rest.core.response.ResponseSerializer;
 import io.vertx.core.Future;
@@ -20,6 +20,7 @@ import jakarta.ws.rs.core.Response;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -131,8 +132,16 @@ class ResponsePipelineCharacterizationTest {
         when(httpResponse.end()).thenReturn(Future.succeededFuture());
         when(httpResponse.end(anyString())).thenReturn(Future.succeededFuture());
 
-        // RequestPreconditions.from() caches in ctx.data()
-        when(ctx.data()).thenReturn(new HashMap<>());
+        // RequestPreconditions.from() caches in ctx.data(); get/put must share that map so the
+        // framework-owned completion holder is visible to recordWireFailure.
+        Map<String, Object> ctxData = new HashMap<>();
+        when(ctx.data()).thenReturn(ctxData);
+        when(ctx.get(anyString())).thenAnswer(invocation -> ctxData.get(invocation.getArgument(0)));
+        when(ctx.put(anyString(), any())).thenAnswer(invocation -> {
+            ctxData.put(invocation.getArgument(0), invocation.getArgument(1));
+            return ctx;
+        });
+        RequestCompletionRecorder.installHolder(ctx);
         when(httpRequest.getHeader("If-None-Match")).thenReturn(null);
         when(httpRequest.getHeader("If-Match")).thenReturn(null);
         when(httpRequest.getHeader("If-Modified-Since")).thenReturn(null);
@@ -409,8 +418,8 @@ class ResponsePipelineCharacterizationTest {
                     List.of("after:pending"), events, "the wire-completion observer must not re-fire afterResponse");
             assertSame(
                     cause,
-                    ctx.data().get(RestRequestCompletionEmitter.KEY_WIRE_FAILURE),
-                    "a post-handoff failure is reported on the routing context, not through the hook");
+                    RequestCompletionRecorder.recordedWireFailure(ctx),
+                    "a post-handoff failure is reported on the framework-owned completion state, not through the hook");
         }
     }
 

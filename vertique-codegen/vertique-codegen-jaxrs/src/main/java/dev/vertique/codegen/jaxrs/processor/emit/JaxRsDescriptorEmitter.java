@@ -290,7 +290,7 @@ public final class JaxRsDescriptorEmitter {
             describeBody.addStatement("var $L = resolveCanonicalizerChain(support, cl_, $L)", ccVarName, ccConstName);
             describeBody.addStatement("var $L = resolveSanitizerChain(support, cl_, $L)", scVarName, scConstName);
             describeBody.addStatement(
-                    "$T<$T> $L = support.effectiveMethodAnnotations($L)",
+                    "$T<$T> $L = support.effectiveMethodAnnotations($L, resourceType())",
                     LIST,
                     ANNOTATION,
                     methodAnnosVarName,

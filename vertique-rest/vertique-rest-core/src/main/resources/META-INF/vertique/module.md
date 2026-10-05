@@ -180,10 +180,14 @@ claim, so the rerouted target decides it, and the event keeps the first pass's s
 `DEBUG`, `RestRequestCompletionEmitter` logs one line for each request it skips because another
 transport claimed it.
 
-The completion state is framework-owned. No `RoutingContext.data()` key exposes it, and writing the
-retired `rest.events.*` keys has no effect on the event. `RestRequestCompletionEmitter` holds the
-state in its own end handler and emits exactly once whether or not `RequestContextLifecycle` is
-mounted.
+The completion state is framework-owned. No `RoutingContext.data()` key exposes the start time,
+emitted flag, claim, operation identity, or post-handoff wire-failure marker, and writing the
+retired `rest.events.*` keys or the retired `vertique.rest.core.events.wireFailure` key has no
+effect on the event. `RestRequestCompletionEmitter` holds the state in its own end handler and
+emits exactly once whether or not `RequestContextLifecycle` is mounted. A sibling framework module
+records a post-handoff wire failure through `RequestCompletionRecorder.recordWireFailure` (first
+writer wins); the emitter still consults a failed response end-handler result when no marker was
+recorded, including the documented late-`end()` carve-out.
 
 Two deliberate properties:
 
@@ -441,7 +445,10 @@ expired token raises `InvalidCursorException`.
 
 `SseChannelFactory` is injectable; the resource method returns `channel.stream()`. The framework
 detects a `ReadStream<SseEvent>` return type at startup and installs the SSE encoder — no extra
-configuration.
+configuration. Client disconnect mid-stream is observed through `RoutingContext.addEndHandler`
+(multicast), so completion emission and `RequestContextLifecycle` cleanup still run; do not register
+on the response's single-slot `closeHandler` / `endHandler` / `exceptionHandler` for the same purpose
+(see Common mistakes).
 
 ```java
 @Path("/jobs")
@@ -1597,6 +1604,14 @@ multi-scheme AND requirement, scopes declared on an OR alternative, and scopes d
 - **Registering your own end handler for cleanup.** `ctx.addEndHandler(...)` for scope teardown
   breaks the reverse-order guarantee that keeps bound values readable. Use
   `RequestContextLifecycle.Handle.onClose(...)` / `afterClose(...)`.
+- **Calling `response().endHandler` / `exceptionHandler` / `closeHandler`.** Those three setters are
+  single-slot: last writer wins. Vert.x Web installs its own handlers there the first time anything
+  calls `ctx.addEndHandler` — which `RequestContextLifecycle` does for every request — so a later
+  call silently replaces them. On that exit path no routing-context end handler fires: the completion
+  event (and with it metrics and audit), `Handle.closeAll()`, and every other `addEndHandler`
+  registration are skipped. Observe disconnects, resets, and normal ends through
+  `ctx.addEndHandler(...)` (multicast), never through the response setters. Framework code that needs
+  disconnect notification (SSE, MCP settlement) already follows this rule; application code must too.
 - **Registering on the `Handle` after completion.** `onClose`, `afterClose`, and `bindMdc` throw
   `IllegalStateException` once the lifecycle has closed. Leaks are loud, not silent.
 - **Giving a middleware `API` scope on a non-JAX-RS mount.** It is dropped without warning. Only the

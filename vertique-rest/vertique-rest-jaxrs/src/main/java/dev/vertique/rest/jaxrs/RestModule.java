@@ -456,13 +456,15 @@ public abstract class RestModule {
                         .entity(ProblemDetail.of(503, ex.getMessage()))
                         .type("application/problem+json")
                         .build())
-                .on(Throwable.class, ex -> {
-                    log.error("Unhandled exception", ex);
-                    return Response.status(500)
-                            .entity(ProblemDetail.of(500, "Internal Server Error"))
-                            .type("application/problem+json")
-                            .build();
-                });
+                .on(
+                        Throwable.class,
+                        ex ->
+                                // Logging lives in ErrorPipeline after Vert.x status-code fallback: a catch-all
+                                // that ends as 4xx is a client rejection, not an unhandled server fault.
+                                Response.status(500)
+                                        .entity(ProblemDetail.of(500, "Internal Server Error"))
+                                        .type("application/problem+json")
+                                        .build());
     }
 
     /**
