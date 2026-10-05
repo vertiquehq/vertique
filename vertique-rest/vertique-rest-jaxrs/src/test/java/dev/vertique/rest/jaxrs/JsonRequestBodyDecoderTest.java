@@ -539,6 +539,53 @@ class JsonRequestBodyDecoderTest {
     }
 
     @Test
+    @DisplayName(
+            "Should reject owner-bound inner-class collection bodies that cannot be assigned to the declared parameter")
+    void ownerBoundInnerClassBodyIsRejected() {
+        RoutingContext ctx = mock(RoutingContext.class);
+        RequestValue body = RequestValue.of(pojoArray());
+        Type declared = declaredShape("ownerBoundOfPojo");
+
+        assertThrows(ValidationException.class, () -> decoder.decode(ctx, body, rawTypeOf(declared), declared));
+    }
+
+    @Test
+    @DisplayName(
+            "Should reject owner-bound Inner extending ArrayList<Object> before falling through to raw materialization")
+    void ownerBoundInnerClassOfObjectBodyIsRejected() {
+        RoutingContext ctx = mock(RoutingContext.class);
+        RequestValue body = RequestValue.of(pojoArray());
+        Type declared = declaredShape("ownerBoundOfObject");
+
+        assertThrows(ValidationException.class, () -> decoder.decode(ctx, body, rawTypeOf(declared), declared));
+    }
+
+    @Test
+    @DisplayName("Should not materialize owner-bound inner collections as a plain ArrayList")
+    void ownerBoundInnerClassIsNotSatisfiedByArrayListMaterialization() {
+        Type declared = declaredShape("ownerBoundOfPojo");
+        assertFalse(
+                rawTypeOf(declared).isInstance(new ArrayList<>()),
+                "decoded ArrayList must not be assignable to the declared inner-class parameter type");
+    }
+
+    @Test
+    @DisplayName("Should bind a static nested collection subtype body through Jackson")
+    void staticNestedCollectionBodyStillBinds() {
+        RoutingContext ctx = mock(RoutingContext.class);
+        RequestValue body = RequestValue.of(pojoArray());
+        Type declared = declaredShape("staticNestedOfPojo");
+
+        Object result = decoder.decode(ctx, body, rawTypeOf(declared), declared);
+
+        assertInstanceOf(Outer.StaticInner.class, result);
+        Outer.StaticInner<?> elements = (Outer.StaticInner<?>) result;
+        assertEquals(2, elements.size());
+        assertInstanceOf(SamplePojo.class, elements.get(0));
+        assertEquals("Alice", ((SamplePojo) elements.get(0)).name());
+    }
+
+    @Test
     @DisplayName("Should bind a nested container body's inner elements instead of degrading to a raw list")
     void nestedContainerBodyBindsItsInnerElements() {
         RoutingContext ctx = mock(RoutingContext.class);
@@ -625,6 +672,24 @@ class JsonRequestBodyDecoderTest {
         private static final long serialVersionUID = 1L;
     }
 
+    /**
+     * An outer/inner pair where the inner class's {@code Collection<E>} binding comes from the
+     * enclosing instance's type argument rather than from any type argument local to {@code Inner}
+     * itself — {@code Inner} declares no type parameters of its own. Jackson's
+     * {@code TypeFactory.constructType} leaves this shape's content type as {@code Object}; the
+     * decoder must recover {@link SamplePojo} through the shared classifier.
+     */
+    static class Outer<T> {
+        class Inner extends ArrayList<T> {
+            private static final long serialVersionUID = 1L;
+        }
+
+        /** Static nested collection — constructible without an enclosing instance. */
+        static class StaticInner<E> extends ArrayList<E> {
+            private static final long serialVersionUID = 1L;
+        }
+    }
+
     /** Declared body shapes; their generic types are read reflectively by {@link #declaredShape}. */
     @SuppressWarnings("unused")
     private static final class BodyShapes {
@@ -635,5 +700,8 @@ class JsonRequestBodyDecoderTest {
         Pair<SamplePojo, OtherPojo> pairOfPojo;
         Fixed<SamplePojo> fixedOfPojo;
         Dtos dtosOfPojo;
+        Outer<SamplePojo>.Inner ownerBoundOfPojo;
+        Outer<Object>.Inner ownerBoundOfObject;
+        Outer.StaticInner<SamplePojo> staticNestedOfPojo;
     }
 }
