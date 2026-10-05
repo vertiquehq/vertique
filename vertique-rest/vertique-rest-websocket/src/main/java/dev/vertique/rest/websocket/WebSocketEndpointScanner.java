@@ -404,7 +404,10 @@ class WebSocketEndpointScanner {
     /**
      * Resolves the message payload type and its parameter position from the {@link OnMessage}
      * method's parameters. The message parameter is the first parameter that is not a
-     * {@link WebSocketSession}, {@link PathParam}, {@link Throwable}, or {@link SecurityContext}.
+     * {@link WebSocketSession}, {@link PathParam}, or {@link SecurityContext}. {@link Throwable}
+     * parameters are payload-eligible here so scan-time counting matches {@code buildArgs} on
+     * {@link OnMessage}, where {@code error} is always {@code null} and a {@code Throwable} slot
+     * receives the decoded message payload.
      *
      * <p>The index is resolved here, by the same predicate that picks the type, so the registrar
      * never re-derives which parameter is the payload when it applies that parameter's own
@@ -445,17 +448,13 @@ class WebSocketEndpointScanner {
      * Whether the parameter can carry the decoded {@link OnMessage} payload.
      *
      * @param param the method parameter
-     * @return {@code true} when the parameter is not a session, path param, throwable, or security
-     *     context
+     * @return {@code true} when the parameter is not a session, path param, or security context
      */
     private static boolean isPayloadEligible(Parameter param) {
         if (WebSocketSession.class.isAssignableFrom(param.getType())) {
             return false;
         }
         if (param.isAnnotationPresent(PathParam.class)) {
-            return false;
-        }
-        if (Throwable.class.isAssignableFrom(param.getType())) {
             return false;
         }
         if (SecurityContext.class.isAssignableFrom(param.getType())) {

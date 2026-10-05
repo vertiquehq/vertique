@@ -147,6 +147,13 @@ class WebSocketEndpointScannerTest {
         void onMessage(String a, @Sanitize(A.class) String b) {}
     }
 
+    @WebSocketEndpoint("/ws/string-and-throwable")
+    static class StringAndThrowableEndpoint {
+
+        @OnMessage
+        void onMessage(String payload, Throwable error) {}
+    }
+
     // --- Tests ---
 
     @Nested
@@ -277,6 +284,19 @@ class WebSocketEndpointScannerTest {
             assertTrue(
                     failure.getMessage().contains("more than one payload parameter"),
                     "message must describe the cardinality violation: " + failure.getMessage());
+        }
+
+        @Test
+        @DisplayName("String plus Throwable @OnMessage parameters fail scan like other multi-payload shapes")
+        void stringPlusThrowableRejected() {
+            ConfigurationException failure = assertThrows(
+                    ConfigurationException.class, () -> scanner.scan(new StringAndThrowableEndpoint()));
+            assertTrue(
+                    failure.getMessage().contains("StringAndThrowableEndpoint.onMessage"),
+                    failure.getMessage());
+            assertTrue(
+                    failure.getMessage().contains("more than one payload parameter"),
+                    failure.getMessage());
         }
     }
 
