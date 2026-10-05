@@ -38,13 +38,6 @@ class ServicesConfigTest {
     // --- Helpers ---
 
     /**
-     * Builds a {@link ServicesConfig} from the {@code services} section of a root config object,
-     * exercising the boundary parser exactly as the Dagger provider does.
-     *
-     * @param services the {@code services} section JSON
-     * @return the parsed typed config
-     */
-    /**
      * Creates a lenient {@link ConfigParser} instance for test-side config parsing.
      *
      * @return a {@link DefaultConfigParser} backed by a lenient {@link DefaultConfigMapper}
@@ -53,6 +46,13 @@ class ServicesConfigTest {
         return new DefaultConfigParser(DefaultConfigMapper.lenient());
     }
 
+    /**
+     * Builds a {@link ServicesConfig} from the {@code services} section of a root config object,
+     * exercising the boundary parser exactly as the Dagger provider does.
+     *
+     * @param services the {@code services} section JSON
+     * @return the parsed typed config
+     */
     private static ServicesConfig parse(JsonObject services) {
         return ServicesConfig.fromConfig(new JsonObject().put("services", services), configParser());
     }

@@ -80,13 +80,6 @@ class RestClientJsonProfileTest {
     class ConfigJsonProfile {
 
         /**
-         * Parses the {@code restClient} section into the typed index, exercising the boundary
-         * parser exactly as the Dagger provider does.
-         *
-         * @param restClientSection the {@code restClient} section JSON
-         * @return the immutable name -&gt; RestClientConfig index
-         */
-        /**
          * Creates a lenient {@link ConfigParser} instance for test-side config parsing.
          *
          * @return a {@link DefaultConfigParser} backed by a lenient {@link DefaultConfigMapper}
@@ -95,6 +88,13 @@ class RestClientJsonProfileTest {
             return new DefaultConfigParser(DefaultConfigMapper.lenient());
         }
 
+        /**
+         * Parses the {@code restClient} section into the typed index, exercising the boundary
+         * parser exactly as the Dagger provider does.
+         *
+         * @param restClientSection the {@code restClient} section JSON
+         * @return the immutable name -&gt; RestClientConfig index
+         */
         private static Map<String, RestClientConfig> parse(JsonObject restClientSection) {
             return RestClientConfig.indexFromConfig(
                     new JsonObject().put("restClient", restClientSection), configParser());

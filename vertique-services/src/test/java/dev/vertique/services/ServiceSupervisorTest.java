@@ -67,13 +67,6 @@ class ServiceSupervisorTest {
     // --- Helpers ---
 
     /**
-     * Builds the typed {@code (type, name) -> ServiceConfig} index from a root config object via the
-     * boundary parser, exactly as the Dagger provider does.
-     *
-     * @param rootConfig the root application config (may contain a {@code services} section)
-     * @return the parsed service config index
-     */
-    /**
      * Creates a lenient {@link ConfigParser} instance for test-side config parsing.
      *
      * @return a {@link DefaultConfigParser} backed by a lenient {@link DefaultConfigMapper}
@@ -82,6 +75,13 @@ class ServiceSupervisorTest {
         return new DefaultConfigParser(DefaultConfigMapper.lenient());
     }
 
+    /**
+     * Builds the typed {@code (type, name) -> ServiceConfig} index from a root config object via the
+     * boundary parser, exactly as the Dagger provider does.
+     *
+     * @param rootConfig the root application config (may contain a {@code services} section)
+     * @return the parsed service config index
+     */
     private static Map<ServicesConfig.ServiceKey, ServiceConfig> indexFor(JsonObject rootConfig) {
         return ServicesConfig.fromConfig(rootConfig, configParser()).index();
     }

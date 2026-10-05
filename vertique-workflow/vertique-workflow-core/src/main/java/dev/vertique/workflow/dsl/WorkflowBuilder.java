@@ -1808,6 +1808,26 @@ public final class WorkflowBuilder<S> {
     }
 
     /**
+     * Test-only helper that computes the canonical plan hash for a hand-crafted
+     * {@link WorkflowPlan}. Used by drift coverage tests that exercise nodes (e.g., {@code
+     * ForkNode}/{@code JoinNode}) before their fluent DSL methods exist on this builder. Not part
+     * of the public DSL surface; do not call from production code.
+     *
+     * @param plan a fully-populated plan record (the {@code planHash} field of the input is
+     *     ignored — the helper computes a fresh hash from the other fields)
+     * @return lowercase hex SHA-256 digest; 64 characters
+     */
+    public static String computePlanHashForTesting(WorkflowPlan plan) {
+        return computePlanHash(
+                plan.definitionId(),
+                plan.definitionVersion(),
+                plan.stateTypeName(),
+                plan.initialStepId(),
+                plan.nodes(),
+                plan.subjectResolverCallbackId());
+    }
+
+    /**
      * Computes a SHA-256 hex digest over the plan's canonical content.
      *
      * <p>Only string-valued fields are included: definitionId, definitionVersion, stateTypeName,
@@ -1830,26 +1850,6 @@ public final class WorkflowBuilder<S> {
      * @param nodes the ordered list of nodes
      * @return lowercase hex SHA-256 digest; 64 characters
      */
-    /**
-     * Test-only helper that computes the canonical plan hash for a hand-crafted
-     * {@link WorkflowPlan}. Used by drift coverage tests that exercise nodes (e.g., {@code
-     * ForkNode}/{@code JoinNode}) before their fluent DSL methods exist on this builder. Not part
-     * of the public DSL surface; do not call from production code.
-     *
-     * @param plan a fully-populated plan record (the {@code planHash} field of the input is
-     *     ignored — the helper computes a fresh hash from the other fields)
-     * @return lowercase hex SHA-256 digest; 64 characters
-     */
-    public static String computePlanHashForTesting(WorkflowPlan plan) {
-        return computePlanHash(
-                plan.definitionId(),
-                plan.definitionVersion(),
-                plan.stateTypeName(),
-                plan.initialStepId(),
-                plan.nodes(),
-                plan.subjectResolverCallbackId());
-    }
-
     private static String computePlanHash(
             String definitionId,
             long definitionVersion,
@@ -1981,16 +1981,6 @@ public final class WorkflowBuilder<S> {
     }
 
     /**
-     * Updates the digest with a {@link TimerSpec}, including a variant tag and its payload fields.
-     *
-     * <p>The variant tag ({@code "At"}, {@code "After"}, or {@code "FromState"}) prevents different
-     * spec types with coincidentally equal payloads from hashing identically. Payload values are
-     * serialized as deterministic strings.
-     *
-     * @param digest the digest to update
-     * @param spec the timer spec to incorporate
-     */
-    /**
      * Updates the digest with a {@link HumanTaskNode.AssignmentSpec}, including a variant tag
      * and either the literal value (User/Role/Queue) or the {@code CallbackId} (FromState
      * variants). The variant tag prevents a literal {@code Role("alice")} from colliding with a
@@ -2068,6 +2058,16 @@ public final class WorkflowBuilder<S> {
         }
     }
 
+    /**
+     * Updates the digest with a {@link TimerSpec}, including a variant tag and its payload fields.
+     *
+     * <p>The variant tag ({@code "At"}, {@code "After"}, or {@code "FromState"}) prevents different
+     * spec types with coincidentally equal payloads from hashing identically. Payload values are
+     * serialized as deterministic strings.
+     *
+     * @param digest the digest to update
+     * @param spec the timer spec to incorporate
+     */
     private static void updateTimerSpec(MessageDigest digest, TimerSpec spec) {
         switch (spec) {
             case TimerSpec.At at -> {
