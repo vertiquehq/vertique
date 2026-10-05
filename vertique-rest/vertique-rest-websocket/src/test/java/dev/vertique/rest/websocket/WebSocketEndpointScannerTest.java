@@ -289,14 +289,10 @@ class WebSocketEndpointScannerTest {
         @Test
         @DisplayName("String plus Throwable @OnMessage parameters fail scan like other multi-payload shapes")
         void stringPlusThrowableRejected() {
-            ConfigurationException failure = assertThrows(
-                    ConfigurationException.class, () -> scanner.scan(new StringAndThrowableEndpoint()));
-            assertTrue(
-                    failure.getMessage().contains("StringAndThrowableEndpoint.onMessage"),
-                    failure.getMessage());
-            assertTrue(
-                    failure.getMessage().contains("more than one payload parameter"),
-                    failure.getMessage());
+            ConfigurationException failure =
+                    assertThrows(ConfigurationException.class, () -> scanner.scan(new StringAndThrowableEndpoint()));
+            assertTrue(failure.getMessage().contains("StringAndThrowableEndpoint.onMessage"), failure.getMessage());
+            assertTrue(failure.getMessage().contains("more than one payload parameter"), failure.getMessage());
         }
     }
 
