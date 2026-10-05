@@ -707,7 +707,14 @@ Both SPIs are declared in `dev.vertique:vertique-rest-core`; the implementations
 | `TextRequestBodyDecoder` | 1000 | `text/*` | `String` |
 | `BinaryRequestBodyDecoder` | 1000 | `application/octet-stream` | `Buffer`, `byte[]` |
 | `FormUrlencodedRequestBodyDecoder` | 1000 | `application/x-www-form-urlencoded` | any POJO (not `String`, `Buffer`, `byte[]`, `JsonObject`) |
-| `JsonRequestBodyDecoder` | 1100 (fallback) | absent, or containing `"json"` | `JsonObject` → raw; `String` → raw; other → `JsonObject.mapTo(targetType)` |
+| `JsonRequestBodyDecoder` | 1100 (fallback) | absent, or containing `"json"` | `JsonObject` → raw; `String` → raw; collection/array → typed elements (see note); other → `JsonObject.mapTo(targetType)` |
+
+Collection and array JSON bodies resolve their element type through Jackson's `TypeFactory`. A
+non-static (owner-bound) inner collection body type — for example `Outer<Dto>.Inner` where
+`Inner extends ArrayList<T>` — cannot be constructed without an enclosing instance, so the decoder
+fails closed with `ValidationException` (HTTP 400) rather than materializing an `ArrayList` /
+`LinkedHashSet` that is not assignable to the declared parameter. Prefer a top-level `List`/`Set`
+or a static collection subtype as the body parameter type.
 
 | `ResponseBodyEncoder` | Priority | Handles |
 |---|---|---|

@@ -6,6 +6,7 @@ package dev.vertique.rest.jaxrs;
 import com.fasterxml.jackson.databind.JavaType;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.type.TypeFactory;
+import dev.vertique.core.exception.ValidationException;
 import dev.vertique.core.json.VertiqueJson;
 import dev.vertique.rest.core.request.RequestBodyDecoder;
 import dev.vertique.rest.core.request.RequestValue;
@@ -16,6 +17,8 @@ import io.vertx.ext.web.RoutingContext;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
 import java.util.Collection;
+import java.util.LinkedHashSet;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
@@ -169,11 +172,14 @@ class JsonRequestBodyDecoder implements RequestBodyDecoder {
      * generic-supertype-fixed declaration always leaves a non-empty binding behind (verified against
      * {@code List<Object>}, {@code List<?>}, and {@code Bag<Object>}), while a raw {@code List} with no
      * generic signature at all — whose content type also resolves to {@code Object} the same way a raw
-     * {@code Collection} does — leaves {@code getBindings()} empty. The gate therefore falls through to
-     * the untyped branch only when content type is {@code Object} <em>and</em> bindings are empty
-     * together; either signal alone is unsafe ({@code Dtos extends ArrayList<SamplePojo>} has empty
-     * bindings too, since its element comes from its own generic superclass rather than a use-site
-     * argument, yet its content type is correctly {@code SamplePojo}, not {@code Object}).
+     * {@code Collection} does — leaves {@code getBindings()} empty.
+     *
+     * <p>A non-static (owner-bound) inner collection body type — for example {@code Outer<Dto>.Inner}
+     * where {@code Inner extends ArrayList<T>} — cannot be constructed without an enclosing instance.
+     * That shape is rejected with {@link ValidationException} (HTTP 400) before Jackson materialization;
+     * prefer a top-level {@code List}/{@code Set} or a static collection subtype. The gate therefore
+     * falls through to the untyped branch only when content type is {@code Object} <em>and</em>
+     * bindings are empty together on a constructible target.
      *
      * <p>The {@link JavaType} is built the same way regardless of profile; the element binding then
      * routes through {@code profileMapper} when the route's profile differs from the process codec's
@@ -211,19 +217,13 @@ class JsonRequestBodyDecoder implements RequestBodyDecoder {
         //
         // A content type of plain Object is NOT by itself "no binding to report" — List<Object>,
         // List<?>, and Bag<Object> all legitimately resolve to Object and must still convert. The
-        // discriminator is content type == Object AND getBindings().isEmpty() together: a genuinely
-        // raw target (List with no generic signature at all) or an unresolvable owner-bound generic
-        // leaves both signals empty, while every explicitly declared shape leaves at least one of
-        // them non-trivial (a directly-parameterized declaration leaves bindings non-empty; a
-        // generic-supertype-fixed declaration like Dtos leaves content type non-Object even with
-        // empty bindings). Only the fully-empty combination falls through to the untyped branch
-        // below unconverted.
+        // discriminator is content type == Object AND getBindings().isEmpty() together. Owner-bound
+        // non-static inner collection types are rejected before this gate (see
+        // {@link #rejectOwnerBoundInnerCollection}).
         if (genericType != null) {
+            rejectOwnerBoundInnerCollection(genericType);
             JavaType declaredType = declaredCollectionTypes.computeIfAbsent(genericType, tf::constructType);
-            if (declaredType.isCollectionLikeType()
-                    && declaredType.getContentType() != null
-                    && (declaredType.getContentType().getRawClass() != Object.class
-                            || !declaredType.getBindings().isEmpty())) {
+            if (isConvertibleCollectionType(declaredType)) {
                 return convertList(jsonArray.getList(), declaredType, profileMapper);
             }
         }
@@ -231,10 +231,49 @@ class JsonRequestBodyDecoder implements RequestBodyDecoder {
         // Raw collection or unknown generic — return appropriate collection type
         @SuppressWarnings("unchecked")
         java.util.List<Object> rawList = jsonArray.getList();
-        if (java.util.Set.class.isAssignableFrom(targetType)) {
-            return new java.util.LinkedHashSet<>(rawList);
+        if (Set.class.isAssignableFrom(targetType)) {
+            return new LinkedHashSet<>(rawList);
         }
         return rawList;
+    }
+
+    /**
+     * Fails closed when {@code genericType} erases to a non-static member class. Such a collection
+     * cannot be constructed without an enclosing instance, and materializing a plain
+     * {@link LinkedHashSet} / {@code ArrayList} would not be assignable to the declared parameter.
+     *
+     * @param genericType the declared collection body type
+     * @throws ValidationException when the erased raw type is a non-static member class
+     */
+    private static void rejectOwnerBoundInnerCollection(Type genericType) {
+        Class<?> raw = null;
+        if (genericType instanceof Class<?> cls) {
+            raw = cls;
+        } else if (genericType instanceof ParameterizedType parameterized
+                && parameterized.getRawType() instanceof Class<?> parameterizedRaw) {
+            raw = parameterizedRaw;
+        }
+        if (raw != null && raw.isMemberClass() && !java.lang.reflect.Modifier.isStatic(raw.getModifiers())) {
+            throw new ValidationException("Cannot decode request body to owner-bound inner collection type "
+                    + raw.getName()
+                    + ": no enclosing instance is available at decode time");
+        }
+    }
+
+    /**
+     * Returns whether {@code declaredType} carries enough element information to route through
+     * {@link #convertList} rather than the untyped fallback.
+     *
+     * @param declaredType the resolved collection {@link JavaType}
+     * @return {@code true} when the type is collection-like with a non-{@code Object} content type,
+     *     or with a content type of {@code Object} that still carries non-empty bindings
+     *     ({@code List<Object>}, {@code List<?>}, {@code Bag<Object>})
+     */
+    private static boolean isConvertibleCollectionType(JavaType declaredType) {
+        return declaredType.isCollectionLikeType()
+                && declaredType.getContentType() != null
+                && (declaredType.getContentType().getRawClass() != Object.class
+                        || !declaredType.getBindings().isEmpty());
     }
 
     /**
