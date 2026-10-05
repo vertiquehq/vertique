@@ -372,26 +372,99 @@ class RequestOriginCapturerTest {
         }
     }
 
-    // --- IP-literal guard ---
+    // --- IP-literal parsing ---
 
     /**
-     * The guard in front of every {@code InetAddress.getByName} call on the request path. Anything it
-     * passes that the JDK does not treat as a literal goes to the OS resolver — a blocking lookup on
-     * the event loop, triggered by an unauthenticated {@code X-Forwarded-For} header. The chain outcome
-     * cannot catch such a regression (a failed lookup also drops and counts the entry), so these tests
-     * assert on the guard itself.
+     * {@code X-Forwarded-For} is attacker-supplied and parsed before authentication, so no entry may
+     * reach the JDK resolver: a string the JDK does not accept as a literal goes to the OS resolver,
+     * a blocking lookup on the event loop. {@link RecordingInetAddressResolverProvider} records every
+     * name the JDK hands to the resolver, so these tests assert on the lookup itself rather than on
+     * the chain outcome (a failed lookup also drops and counts the entry).
      */
     @Nested
-    @DisplayName("IP-literal guard — nothing it passes reaches the DNS resolver")
-    class IpLiteralGuard {
+    @DisplayName("IP-literal parsing — header data never reaches the DNS resolver")
+    class IpLiteralParsing {
+
+        private static final List<String> HOSTILE = List.of(
+                "cafe",
+                "a1",
+                "deadbeef",
+                "abc",
+                "1234",
+                "999.1.1.1",
+                "256.256.256.256",
+                "1.2.3.256",
+                "1.2.3",
+                "1.2.3.4.5",
+                "1.2.3.4.",
+                ".1.2.3.4",
+                "0x7f.0.0.1",
+                "010.1.1.1",
+                "1.2.3.04",
+                "localhost",
+                "example.com",
+                "dead.beef.cafe.f00d");
 
         @Test
-        @DisplayName("hex-only names and dotted quads with an octet above 255 are not IP literals")
-        void lookalikesAreNotIpLiterals() {
-            // A hex-only label is a hostname; an octet above 255 makes the JDK treat a dotted quad as
-            // one. Both used to pass the guard and trigger a real lookup.
-            for (String lookalike : List.of("cafe", "a1", "deadbeef", "999.1.1.1", "256.256.256.256", "1.2.3.256")) {
-                assertFalse(RequestOriginCapturer.isIpLiteral(lookalike), lookalike + " must not pass the guard");
+        @DisplayName("the recording resolver sees a real lookup (harness self-check)")
+        void harnessRecordsLookups() {
+            String probe = "recording-probe-" + System.nanoTime() + ".invalid";
+
+            assertThrows(java.net.UnknownHostException.class, () -> java.net.InetAddress.getByName(probe));
+
+            assertTrue(
+                    RecordingInetAddressResolverProvider.lookedUpHosts().contains(probe),
+                    "the provider is not installed, so the no-lookup assertions below would pass vacuously");
+        }
+
+        @Test
+        @DisplayName("hex-word, short, oversized-octet and hostname entries are rejected without any resolver call")
+        void hostileEntriesNeverReachResolver() {
+            int lookupsBefore = RecordingInetAddressResolverProvider.lookupCount();
+
+            // A trusted peer, so an accepted entry would also become the derived clientIp.
+            String xff = String.join(", ", HOSTILE.subList(0, 16));
+            RequestOrigin origin = capturerWithTrustedProxies("10.0.0.0/8")
+                    .capture(stubRequest("10.0.0.5", 0, "http", "example.com", xff));
+
+            assertTrue(origin.forwardedFor().isEmpty(), "every hostile entry must be dropped");
+            assertEquals(16, origin.forwardedForRejectedCount());
+            assertEquals("10.0.0.5", origin.clientIp());
+
+            RequestOriginCapturer capturer = capturerWithTrustedProxies("10.0.0.0/8");
+            for (String entry : HOSTILE) {
+                RequestOrigin single = capturer.capture(stubRequest("10.0.0.5", 0, "http", "example.com", entry));
+                assertTrue(single.forwardedFor().isEmpty(), entry + " must be rejected");
+                assertEquals(1, single.forwardedForRejectedCount(), entry);
+                assertFalse(RequestOriginCapturer.isIpLiteral(entry), entry + " must not be an IP literal");
+            }
+
+            List<String> lookedUp = RecordingInetAddressResolverProvider.lookedUpHosts();
+            for (int i = lookupsBefore; i < lookedUp.size(); i++) {
+                String resolved = lookedUp.get(i);
+                assertFalse(HOSTILE.contains(resolved), resolved + " reached the DNS resolver");
+            }
+        }
+
+        @Test
+        @DisplayName("a hostile entry as the direct peer address is not resolved either")
+        void hostilePeerAddressNeverReachesResolver() {
+            int lookupsBefore = RecordingInetAddressResolverProvider.lookupCount();
+            RequestOriginCapturer capturer = capturerWithTrustedProxies("10.0.0.0/8");
+
+            for (String peer : List.of("deadbeef", "999.1.1.1", "1234")) {
+                RequestOrigin origin = capturer.capture(stubRequest(peer, 0, "http", "example.com", "198.51.100.5"));
+
+                assertEquals(peer, origin.remoteIp(), "a non-literal peer is passed through unchanged");
+                assertEquals(peer, origin.clientIp(), "a non-literal peer is never trusted");
+            }
+
+            List<String> lookedUp = RecordingInetAddressResolverProvider.lookedUpHosts();
+            for (int i = lookupsBefore; i < lookedUp.size(); i++) {
+                String resolved = lookedUp.get(i);
+                assertFalse(
+                        List.of("deadbeef", "999.1.1.1", "1234").contains(resolved),
+                        resolved + " reached the DNS resolver");
             }
         }
 
@@ -410,7 +483,7 @@ class RequestOriginCapturerTest {
         }
 
         @Test
-        @DisplayName("IPv4, IPv6, scoped IPv6 and IPv4-mapped literals still pass")
+        @DisplayName("IPv4, IPv6, scoped IPv6 and IPv4-mapped literals pass")
         void realLiteralsPass() {
             for (String literal : List.of(
                     "0.0.0.0",
@@ -418,11 +491,83 @@ class RequestOriginCapturerTest {
                     "255.255.255.255",
                     "::",
                     "::1",
+                    "1::",
                     "2001:db8::1",
+                    "2001:0db8:0000:0000:0000:0000:0000:0001",
+                    "1:2:3:4:5:6:7:8",
+                    "1:2:3:4:5:6:1.2.3.4",
+                    "FE80::1",
                     "fe80::1%lo0",
-                    "::ffff:1.2.3.4")) {
-                assertTrue(RequestOriginCapturer.isIpLiteral(literal), literal + " must pass the guard");
+                    "fe80::1%eth0.100",
+                    "::ffff:1.2.3.4",
+                    "::ffff:102:304")) {
+                assertTrue(RequestOriginCapturer.isIpLiteral(literal), literal + " must be an IP literal");
             }
+        }
+
+        @Test
+        @DisplayName("malformed IPv6 forms are rejected")
+        void malformedIpv6Rejected() {
+            for (String bad : List.of(
+                    ":",
+                    ":::",
+                    "1:::2",
+                    "1::2::3",
+                    ":1:2:3:4:5:6:7",
+                    "1:2:3:4:5:6:7:",
+                    "1:2:3:4:5:6:7",
+                    "1:2:3:4:5:6:7:8:9",
+                    "1:2:3:4:5:6:7::8",
+                    "12345::1",
+                    "g::1",
+                    "::1%",
+                    "::1%bad scope",
+                    "::1%a%b",
+                    "1.2.3.4::1",
+                    "::1.2.3.4:5",
+                    "::1.2.3",
+                    "::256.1.1.1",
+                    "1:2:3:4:5:6:7:1.2.3.4",
+                    "\uFF11::1")) {
+                assertFalse(RequestOriginCapturer.isIpLiteral(bad), "'" + bad + "' must be rejected");
+            }
+            assertFalse(RequestOriginCapturer.isIpLiteral(null));
+            assertFalse(RequestOriginCapturer.isIpLiteral(""));
+        }
+
+        @Test
+        @DisplayName("IPv4-mapped IPv6 normalizes to dotted IPv4 in every spelling; native IPv6 is untouched")
+        void normalization() {
+            assertEquals("1.2.3.4", RequestOriginCapturer.normalizeIp("::ffff:1.2.3.4"));
+            assertEquals("1.2.3.4", RequestOriginCapturer.normalizeIp("::ffff:102:304"));
+            assertEquals("1.2.3.4", RequestOriginCapturer.normalizeIp("0:0:0:0:0:FFFF:1.2.3.4"));
+            assertEquals("1.2.3.4", RequestOriginCapturer.normalizeIp("1.2.3.4"));
+            assertEquals("2001:db8::1", RequestOriginCapturer.normalizeIp("2001:db8::1"));
+            assertEquals("::1", RequestOriginCapturer.normalizeIp("::1"));
+            assertEquals("deadbeef", RequestOriginCapturer.normalizeIp("deadbeef"));
+        }
+
+        @Test
+        @DisplayName("IPv6 trusted-proxy CIDRs match and exclude by prefix")
+        void ipv6CidrMatching() {
+            RequestOriginCapturer capturer = capturerWithTrustedProxies("fd00::/8");
+
+            RequestOrigin trusted = capturer.capture(stubRequest("fd12::5", 0, "http", "example.com", "198.51.100.5"));
+            assertEquals("198.51.100.5", trusted.clientIp());
+
+            RequestOrigin untrusted =
+                    capturer.capture(stubRequest("fe80::5", 0, "http", "example.com", "198.51.100.5"));
+            assertEquals("fe80::5", untrusted.clientIp());
+        }
+
+        @Test
+        @DisplayName("an IPv4-mapped peer matches an IPv4 trusted-proxy CIDR")
+        void mappedPeerMatchesIpv4Cidr() {
+            RequestOrigin origin = capturerWithTrustedProxies("10.0.0.0/8")
+                    .capture(stubRequest("::ffff:10.0.0.5", 0, "http", "example.com", "198.51.100.5"));
+
+            assertEquals("10.0.0.5", origin.remoteIp());
+            assertEquals("198.51.100.5", origin.clientIp());
         }
     }
 
