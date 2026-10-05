@@ -1457,6 +1457,7 @@ When `enabled` is `false` (the default) no CORS handler is installed and every o
 | `jaxrs.validationMode` | `"aggregate"` | `aggregate` or `failFast` |
 | `jaxrs.validationPatternMaxChars` | `4096` | at least `1`, else startup fails; the most UTF-16 code units one string value or object key may have when it reaches a `pattern`, `patternProperties`, or pattern-bearing `propertyNames` position, or an `idn-hostname`, `idn-email`, or `regex` format, under the `web-validation` strategy — a longer one is rejected with 400 before that check runs |
 | `jaxrs.validationPatternMaxTotalChars` | `262144` | at least `1` and no smaller than `jaxrs.validationPatternMaxChars`, else startup fails; the most UTF-16 code units the strings and keys reaching those positions may add up to in one request — the request is rejected with 400 once the total exceeds it |
+| `jaxrs.fileContentVerifierDeadlineMs` | `5000` | must be `> 0`, else startup fails; per-invocation wait deadline for each bound `FileContentVerifier` future under `web-validation` — timeout fails closed (500) and stops the sequential chain; does not cancel verifier-owned work (see `vertique-rest-validation`) |
 | `jaxrs.autoEtag` | `false` | attach a weak ETag derived from the serialized body when none is set |
 | `jaxrs.jsonProfile` | *(none)* | must name a registered JSON mapper profile; resolution is method `@JsonProfile` → class `@JsonProfile` → this key → `json.jsonProfile` → the `vertique` floor |
 | `jaxrs.security.requireExplicitPolicy` | `false` | boolean; when `true`, every JAX-RS operation must declare an explicit security policy, else startup fails — details in the `vertique-rest-jaxrs` reference |
@@ -1484,6 +1485,12 @@ so a body with none of them — dates, timestamps, or identifiers alone — is n
 limits. Both values are validated where `RestCoreModule` provides the `jaxrs` configuration, so an
 invalid value fails startup whichever validation strategy is selected. The positions, the rejection
 details, and the formats left unbounded are described in the `vertique-rest-validation` reference.
+
+`jaxrs.fileContentVerifierDeadlineMs` bounds each `FileContentVerifier` wait under `web-validation`
+(per invocation, default `5000` ms, must be `> 0`). A hanging verifier fails closed with 500 within
+that bound; the framework does not cancel verifier-owned scanner or client work. The cancellation
+and resource-release contract for implementors is documented in the `vertique-rest-validation`
+reference. The value is validated where `RestCoreModule` provides the `jaxrs` configuration.
 
 ### `jaxrs.defaultHeaders`
 
@@ -1577,7 +1584,7 @@ root of this module's wiring failures.
 |---|---|
 | `IllegalStateException` failing the start promise | one or more invalid mount paths, reported as a single aggregated message |
 | `RestConfigurationException` | invalid `ssl.clientAuth`, blank `http.uploadsDirectory`, an unsupported security declaration shape, an unknown `jaxrs.validationStrategy` |
-| `ConfigurationException` | an invalid pattern-input limit; the per-string limit is checked first, with the message `jaxrs.validationPatternMaxChars must be at least 1`, then the total, with `jaxrs.validationPatternMaxTotalChars must be at least 1 and no smaller than the per-string pattern limit`; neither message echoes a configured value |
+| `ConfigurationException` | an invalid pattern-input limit; the per-string limit is checked first, with the message `jaxrs.validationPatternMaxChars must be at least 1`, then the total, with `jaxrs.validationPatternMaxTotalChars must be at least 1 and no smaller than the per-string pattern limit`; or a non-positive `jaxrs.fileContentVerifierDeadlineMs`, with the message `jaxrs.fileContentVerifierDeadlineMs must be > 0`; none of these messages echo a configured value |
 | `SecurityPolicyViolationException` | security-policy validation found violations; `violations()` lists each with its `operationId` and `ViolationType` |
 | `IllegalStateException` at component construction | two `ParamConverterBinding`s claim the same target type |
 | `RestContextUnavailableException` | a declared `@Context` parameter has no resolver; carries `type()`, `resourceClass()`, `methodName()` |

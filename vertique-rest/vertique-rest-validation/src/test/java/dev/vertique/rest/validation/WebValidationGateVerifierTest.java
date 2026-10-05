@@ -30,6 +30,7 @@ import dev.vertique.rest.jaxrs.validation.OperationSchemas;
 import io.vertx.core.Future;
 import io.vertx.core.Handler;
 import io.vertx.core.MultiMap;
+import io.vertx.core.Promise;
 import io.vertx.core.http.Cookie;
 import io.vertx.core.http.HttpServerRequest;
 import io.vertx.ext.web.FileUpload;
@@ -39,7 +40,11 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -302,10 +307,81 @@ class WebValidationGateVerifierTest {
         verify(ctx, never()).fail(any(Throwable.class));
     }
 
+    /**
+     * Issue #230 — a verifier future that never resolves must not hang the request chain. The gate
+     * races each verifier against {@code jaxrs.fileContentVerifierDeadlineMs}; when the deadline
+     * elapses first the request fails closed as infrastructure (500), within a test await bound
+     * comfortably larger than the configured deadline.
+     *
+     * <p><strong>Decisive:</strong> without the {@code .timeout(...)} call, {@code latch.await}
+     * times out and this test fails red — do not replace it with a bare {@code verify(ctx).fail}
+     * assertion that would hang the suite instead.
+     */
+    @Test
+    @DisplayName("A hanging FileContentVerifier fails closed within the configured wait deadline")
+    void hangingVerifierFailsClosedWithinDeadline() throws Exception {
+        long deadlineMs = 100L;
+        long awaitBoundMs = 3_000L;
+        AtomicInteger hangingCalls = new AtomicInteger();
+        List<String> laterCalls = new ArrayList<>();
+        FileContentVerifier hanging = new FileContentVerifier() {
+            @Override
+            public Future<FileVerificationResult> verify(FileUpload part) {
+                hangingCalls.incrementAndGet();
+                return Promise.<FileVerificationResult>promise().future();
+            }
+
+            @Override
+            public ExtensionPhase phase() {
+                return ExtensionPhase.SYSTEM_FIRST;
+            }
+
+            @Override
+            public String orderKey() {
+                return "hanging";
+            }
+        };
+        FileContentVerifier later = new RecordingVerifier("later", ExtensionPhase.APPLICATION, 0, laterCalls);
+        Handler<RoutingContext> gate = gate(
+                Set.of(hanging, later),
+                List.of(new FilePartDescriptor(null, List.of(), -1)),
+                JaxRsConfig.builder().fileContentVerifierDeadlineMs(deadlineMs).build());
+        RoutingContext ctx = context(List.of(upload("avatar")));
+        CountDownLatch failed = new CountDownLatch(1);
+        doAnswer(invocation -> {
+                    failed.countDown();
+                    return null;
+                })
+                .when(ctx)
+                .fail(any(Throwable.class));
+
+        long startNanos = System.nanoTime();
+        gate.handle(ctx);
+        assertTrue(
+                failed.await(awaitBoundMs, TimeUnit.MILLISECONDS),
+                "without the wait deadline this latch would time out — the decisive red signal");
+        long elapsedMs = (System.nanoTime() - startNanos) / 1_000_000L;
+
+        Throwable failure = captureFailure(ctx);
+        assertInfrastructureFailure(failure);
+        assertTrue(
+                failure instanceof TimeoutException || failure.getCause() instanceof TimeoutException,
+                "timeout must surface as a TimeoutException (or cause), got: " + failure);
+        assertEquals(1, hangingCalls.get(), "the hanging verifier is invoked exactly once");
+        assertEquals(List.of(), laterCalls, "later verifiers must not run after a wait-deadline timeout");
+        verify(ctx, never()).next();
+        assertTrue(elapsedMs < awaitBoundMs, "fail-closed must land well inside the test await bound");
+    }
+
     private static Handler<RoutingContext> gate(
             Set<FileContentVerifier> verifiers, List<FilePartDescriptor> fileParts) {
-        WebValidationStrategy strategy = new WebValidationStrategy(
-                JaxRsConfig.builder().build(), ConversionContexts.defaultResolver(), verifiers);
+        return gate(verifiers, fileParts, JaxRsConfig.builder().build());
+    }
+
+    private static Handler<RoutingContext> gate(
+            Set<FileContentVerifier> verifiers, List<FilePartDescriptor> fileParts, JaxRsConfig config) {
+        WebValidationStrategy strategy =
+                new WebValidationStrategy(config, ConversionContexts.defaultResolver(), verifiers);
         return strategy.gateFor(descriptor(fileParts), OperationSchemas.empty()).orElseThrow();
     }
 

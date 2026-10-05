@@ -140,6 +140,20 @@ public class JaxRsConfig {
     private final int validationPatternMaxTotalChars = 262_144;
 
     /**
+     * Per-invocation wait deadline, in milliseconds, for every bound {@code FileContentVerifier}
+     * future under the {@code web-validation} gate (config key {@code
+     * jaxrs.fileContentVerifierDeadlineMs}). The framework races each verifier future against this
+     * bound and fails closed (500) when it elapses first; it does not cancel verifier-owned work.
+     * See the {@code FileContentVerifier} cancellation contract in {@code vertique-rest-validation}.
+     *
+     * <p>Must be positive ({@code > 0}); otherwise startup fails with a {@code ConfigurationException}
+     * naming this setting. Defaults to {@code 5000}: headroom for a genuine remote/scanner call
+     * without hanging the request chain indefinitely.
+     */
+    @Builder.Default
+    private final long fileContentVerifierDeadlineMs = 5_000L;
+
+    /**
      * Default security and cache-control headers applied to every HTTP response by
      * {@link dev.vertique.rest.core.middleware.DefaultHeadersMiddleware}. Defaults to the
      * standard set ({@code Cache-Control: no-store}, {@code X-Content-Type-Options: nosniff},
