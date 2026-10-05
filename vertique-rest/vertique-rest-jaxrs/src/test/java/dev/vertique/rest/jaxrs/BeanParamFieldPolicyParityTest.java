@@ -136,6 +136,22 @@ class BeanParamFieldPolicyParityTest {
         public void search(@BeanParam ConflictingBean bean) {}
     }
 
+    /** Bean with no field-level policies — inherits the {@code @BeanParam} parameter baseline. */
+    static class PlainBean {
+        @QueryParam("page")
+        public String page;
+    }
+
+    /**
+     * Resource whose {@code @BeanParam} parameter itself carries {@code @Sanitize} — the shape
+     * issue #533 requires both engines to honour.
+     */
+    @Path("/bean-param-param-policy")
+    static class BeanParamParameterSanitizedResource {
+        @GET
+        public void search(@BeanParam @Sanitize(StubSanit.class) PlainBean bean) {}
+    }
+
     // --- Tests ---
 
     @Nested
@@ -295,6 +311,68 @@ class BeanParamFieldPolicyParityTest {
             assertTrue(
                     ex.getMessage().contains("ConflictingBean.q"),
                     "message must name the conflicting field site: " + ex.getMessage());
+        }
+    }
+
+    @Nested
+    @DisplayName("@BeanParam parameter policies — parameter-level @Sanitize applies on both paths (#533)")
+    class BeanParamParameterPolicies {
+
+        @Test
+        @DisplayName("reflective: @BeanParam @Sanitize(X) with a field that declares nothing — field inherits [X]")
+        void reflective_parameterSanitize_appliesToFieldsWithoutOwnPolicy() throws Exception {
+            List<ResourceMethodMeta> metas = new ResourceScanner(new SecurityPolicyBuilder())
+                    .scanResource(new BeanParamParameterSanitizedResource());
+            assertEquals(1, metas.size());
+            ResourceMethodMeta meta = metas.get(0);
+
+            InputObjectProcessor processor = newProcessorStub();
+            ParameterExtractor extractor =
+                    new ParameterExtractor(meta, List.of(), new RestContextResolution(Set.of()), processor);
+
+            BoundRequest request = stubBoundRequestWithQuery("page", "value-to-process");
+            RoutingContext ctx = mock(RoutingContext.class);
+            Object[] args = extractor.extractArguments(ctx, request);
+            assertNotNull(args[0]);
+            assertTrue(PlainBean.class.isInstance(args[0]));
+
+            Optional<EffectiveInputPolicies> fieldPolicies = capturePerFieldPolicies(processor, InputLocation.QUERY);
+            assertTrue(fieldPolicies.isPresent(), "plain field must inherit the @BeanParam parameter sanitize chain");
+            assertEquals(List.of(StubSanit.class), fieldPolicies.get().sanitizers());
+
+            Optional<EffectiveInputPolicies> beanPolicies =
+                    capturePerFieldPolicies(processor, InputLocation.BEAN_PARAM);
+            assertTrue(beanPolicies.isPresent(), "intermediate map must use the @BeanParam parameter policies");
+            assertEquals(List.of(StubSanit.class), beanPolicies.get().sanitizers());
+        }
+
+        @Test
+        @DisplayName("codegen materializeBean: same baseline as reflective — [StubSanit] reaches the field and map")
+        void codegen_parameterSanitize_baselineMatchesReflective() throws Exception {
+            // Direct materializeBean call with the parameter's resolved policies (what POL_i carries).
+            EffectiveInputPolicies paramPolicies = new EffectiveInputPolicies(List.of(), List.of(StubSanit.class));
+            Field f = PlainBean.class.getDeclaredField("page");
+            ParamMeta pm = new ParamMeta("page", ParamSource.QUERY, String.class, null, null, null, f.getAnnotations());
+            BeanParamFieldMeta[] fields = new BeanParamFieldMeta[] {new BeanParamFieldMeta("page", pm)};
+
+            ResourceMethodMeta meta = stubMeta(List.of(), List.of());
+            InputObjectProcessor processor = newProcessorStub();
+            ParameterExtractor extractor =
+                    new ParameterExtractor(meta, List.of(), new RestContextResolution(Set.of()), processor);
+
+            BoundRequest request = stubBoundRequestWithQuery("page", "value-to-process");
+            RoutingContext ctx = mock(RoutingContext.class);
+            Object result = extractor.materializeBean(fields, paramPolicies, request, ctx, PlainBean.class);
+            assertNotNull(result);
+
+            Optional<EffectiveInputPolicies> fieldPolicies = capturePerFieldPolicies(processor, InputLocation.QUERY);
+            assertTrue(fieldPolicies.isPresent());
+            assertEquals(List.of(StubSanit.class), fieldPolicies.get().sanitizers());
+
+            Optional<EffectiveInputPolicies> beanPolicies =
+                    capturePerFieldPolicies(processor, InputLocation.BEAN_PARAM);
+            assertTrue(beanPolicies.isPresent());
+            assertEquals(List.of(StubSanit.class), beanPolicies.get().sanitizers());
         }
     }
 

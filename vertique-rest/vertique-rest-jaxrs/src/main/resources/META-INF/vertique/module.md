@@ -152,7 +152,11 @@ class/method case, instead of silently resolving to an empty chain. A conflict o
 field is rejected as well, a step later: it fails while the route's parameter extractor is built
 during route registration. Both are startup failures — declaring both `@Sanitize` and
 `@SkipSanitization` (or both `@Canonicalize` and `@SkipCanonicalization`) on one parameter or one bean
-field never reaches a request.
+field never reaches a request. A `@Canonicalize`/`@Sanitize`/`@Skip*` written on the `@BeanParam`
+parameter itself is the baseline for that bean's fields and for the intermediate-map processing step
+on both the reflective and generated paths (field-level annotations still override it); the startup
+gate that refuses an unbound engine when a route declares processing counts that parameter chain,
+so a declared parameter policy cannot fail startup for work that would never run.
 
 **Which body shapes step 3 reaches.** A DTO body, a collection or array body, a `String` body, a
 form-urlencoded body bound to a POJO, and the schema-free `JsonObject` / `JsonArray` bodies all pass

@@ -533,7 +533,7 @@ final class ParameterExtractor {
                 case FORM -> extractFormParam(pm, ctx);
                 case FILE_UPLOADS -> List.copyOf(ctx.fileUploads());
                 case ENTITY_PARTS -> extractAllEntityParts(ctx);
-                case BEAN_PARAM -> extractBeanParam(pm.type(), boundRequest, ctx);
+                case BEAN_PARAM -> extractBeanParam(pm.type(), cachedParamPolicies[i], boundRequest, ctx);
                 default -> extractParam(pm, boundRequest);
             };
         }
@@ -1412,41 +1412,24 @@ final class ParameterExtractor {
 
     /**
      * Extracts a {@code @BeanParam} or {@code @RequestParams} composite parameter by populating
-     * its components via Jackson's {@code ObjectMapper.convertValue()}.
+     * its components via {@link #materializeBean}, so the reflective and generated paths share one
+     * policy baseline.
      *
-     * <p>Field metadata is resolved once per bean type via {@link #BEAN_PARAM_CACHE} and reused
-     * on every subsequent request, eliminating per-request reflection overhead.
+     * <p>{@code paramPolicies} is the {@code @BeanParam} parameter's own resolved chain (route
+     * baseline plus any parameter-level {@code @Canonicalize}/{@code @Sanitize}/{@code @Skip*}),
+     * not the bare route chains. Field-level annotations still override that baseline inside
+     * {@link #materializeBean}.
      *
-     * @param beanType     the record or POJO class to instantiate
-     * @param boundRequest the bound request parameters
-     * @param ctx          the routing context (for form params)
+     * @param beanType      the record or POJO class to instantiate
+     * @param paramPolicies the {@code @BeanParam} parameter's cached {@link EffectiveInputPolicies}
+     * @param boundRequest  the bound request parameters
+     * @param ctx           the routing context (for form params)
      * @return the populated instance
      */
-    private Object extractBeanParam(Class<?> beanType, BoundRequest boundRequest, RoutingContext ctx) {
-        List<BeanFieldEntry> fields = BEAN_PARAM_CACHE.computeIfAbsent(beanType, ParameterExtractor::computeBeanFields);
-        Map<String, Object> values = new LinkedHashMap<>();
-        for (BeanFieldEntry entry : fields) {
-            Object value = extractParamValue(entry.meta(), boundRequest, ctx);
-            if (value != null) {
-                values.put(entry.name(), value);
-            }
-        }
-
-        // Apply input processing to the intermediate map before materialization
-        if (objectProcessor != null) {
-            EffectiveInputPolicies policies =
-                    new EffectiveInputPolicies(meta.routeCanonicalizerChain(), meta.routeSanitizerChain());
-            Object processed = objectProcessor.processInput(
-                    values, beanType, policies, InputLocation.BEAN_PARAM, InputFieldNameResolver.IDENTITY);
-            if (processed instanceof Map<?, ?> processedMap) {
-                values = new LinkedHashMap<>();
-                for (var entry2 : processedMap.entrySet()) {
-                    values.put(entry2.getKey().toString(), entry2.getValue());
-                }
-            }
-        }
-
-        return VertiqueJson.mapper().convertValue(values, beanType);
+    private Object extractBeanParam(
+            Class<?> beanType, EffectiveInputPolicies paramPolicies, BoundRequest boundRequest, RoutingContext ctx) {
+        BeanParamFieldMeta[] fields = beanParamFields(beanType).toArray(new BeanParamFieldMeta[0]);
+        return materializeBean(fields, paramPolicies, boundRequest, ctx, beanType);
     }
 
     /**
@@ -1496,15 +1479,18 @@ final class ParameterExtractor {
      * no parameters). A conflict in a warmed type always fails here.
      */
     private void warmBeanFieldPolicies() {
-        EffectiveInputPolicies route =
-                new EffectiveInputPolicies(meta.routeCanonicalizerChain(), meta.routeSanitizerChain());
-        for (ResourceMethodMeta.ParamMeta pm : meta.params()) {
+        List<ResourceMethodMeta.ParamMeta> params = meta.params();
+        for (int i = 0; i < params.size(); i++) {
+            ResourceMethodMeta.ParamMeta pm = params.get(i);
             if (pm.source() != ResourceMethodMeta.ParamSource.BEAN_PARAM) {
                 continue;
             }
             Class<?> beanType = pm.type();
             BeanParamFieldMeta[] fields = beanParamFields(beanType).toArray(new BeanParamFieldMeta[0]);
-            beanFieldPoliciesCache.computeIfAbsent(beanType, t -> resolveBeanFieldPolicies(t, fields, route));
+            // Seed with this @BeanParam parameter's own resolved policies (route + param-level),
+            // matching extractArguments / materializeBean — not the bare route chains alone.
+            EffectiveInputPolicies baseline = cachedParamPolicies[i];
+            beanFieldPoliciesCache.computeIfAbsent(beanType, t -> resolveBeanFieldPolicies(t, fields, baseline));
         }
     }
 
@@ -1526,9 +1512,11 @@ final class ParameterExtractor {
      * @param fields           ordered array of bean field metadata; must not be {@code null};
      *                         each {@code meta().annotations()} should carry the field's declared
      *                         annotations so per-field policies can be derived
-     * @param routePolicies    route-level policies used as the baseline for per-field policy
-     *                         derivation and for the final intermediate-map processing step;
-     *                         pass {@link EffectiveInputPolicies#NONE} to use empty chains
+     * @param routePolicies    baseline policies for per-field derivation and the intermediate-map
+     *                         processing step — the {@code @BeanParam} parameter's own resolved
+     *                         chain (route plus parameter-level annotations) on both the reflective
+     *                         and generated paths; pass {@link EffectiveInputPolicies#NONE} for
+     *                         empty chains
      * @param boundRequest     the bound request exposing parameter values as {@link RequestValue}s
      * @param ctx              the routing context (for form params)
      * @param beanType         the bean class to materialise via Jackson
@@ -1671,22 +1659,6 @@ final class ParameterExtractor {
             converted.add(new BeanParamFieldMeta(entry.name(), entry.meta()));
         }
         return Collections.unmodifiableList(converted);
-    }
-
-    /**
-     * Extracts a single parameter value, dispatching to {@link #extractFormParam} for form
-     * parameters and {@link #extractParam} for all other sources.
-     *
-     * @param meta         the parameter metadata describing the source and type
-     * @param boundRequest the bound request parameters
-     * @param ctx          the routing context (for form params)
-     * @return the extracted value, or {@code null} if absent
-     */
-    private Object extractParamValue(ResourceMethodMeta.ParamMeta meta, BoundRequest boundRequest, RoutingContext ctx) {
-        return switch (meta.source()) {
-            case FORM -> extractFormParam(meta, ctx);
-            default -> extractParam(meta, boundRequest);
-        };
     }
 
     // --- Bean param reflection helpers ---

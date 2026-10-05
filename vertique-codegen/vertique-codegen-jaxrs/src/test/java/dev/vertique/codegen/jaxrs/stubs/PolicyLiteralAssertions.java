@@ -8,20 +8,18 @@ import java.util.stream.Collectors;
 
 /**
  * Builds the exact source text {@link dev.vertique.codegen.jaxrs.processor.emit.ExecutionPlanEmitter}
- * emits for a {@code POL{n}} or {@code ROUTE_POL} {@code EffectiveInputPolicies} constant
+ * emits for a {@code POL{n}} {@code EffectiveInputPolicies} constant
  * initializer, from the simple class names of the resolved canonicalizer/sanitizer chain.
  *
- * <p>Mirrors {@code ExecutionPlanEmitter.buildPoliciesInitializer}/{@code
- * buildRoutePoliciesConstant} (both delegate to the same {@code buildClassList} shape): {@code
- * EffectiveInputPolicies.NONE} when both chains are empty, otherwise {@code new
- * EffectiveInputPolicies(List.of(Canon1.class, ...), List.of(Sanit1.class, ...))} using simple
- * names (JavaPoet's {@code $T} renders the imported simple name in the emitted source, exactly as
- * {@code InputPolicyParityTest} already asserts for individual class literals).
+ * <p>Mirrors {@code ExecutionPlanEmitter.buildPoliciesInitializer} (delegates to
+ * {@code buildClassList}): {@code EffectiveInputPolicies.NONE} when both chains are empty,
+ * otherwise {@code new EffectiveInputPolicies(List.of(Canon1.class, ...), List.of(Sanit1.class,
+ * ...))} using simple names (JavaPoet's {@code $T} renders the imported simple name in the emitted
+ * source, exactly as {@code InputPolicyParityTest} already asserts for individual class literals).
  *
  * <p>Both {@code InputPolicyParityTest} (T016) and {@code JaxRsInvocationPolicyMatrixTest} (T018,
- * issue #379) assert generated {@code POL{n}}/{@code ROUTE_POL} content through this single
- * formatter so the literal shape is never restated as a second literal that could silently drift
- * from the emitter.
+ * issue #379) assert generated {@code POL{n}} content through this single formatter so the
+ * literal shape is never restated as a second literal that could silently drift from the emitter.
  */
 public final class PolicyLiteralAssertions {
 
@@ -47,7 +45,7 @@ public final class PolicyLiteralAssertions {
     }
 
     /**
-     * The full {@code POL{n}}/{@code ROUTE_POL} initializer snippet for the given resolved chains,
+     * The full {@code POL{n}} initializer snippet for the given resolved chains,
      * exactly as {@code ExecutionPlanEmitter} emits it.
      *
      * @param canonicalizerSimpleNames the resolved canonicalizer chain's simple class names, in
