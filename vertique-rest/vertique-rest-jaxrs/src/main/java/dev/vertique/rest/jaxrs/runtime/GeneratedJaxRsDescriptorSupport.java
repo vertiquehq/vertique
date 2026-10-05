@@ -190,17 +190,39 @@ public final class GeneratedJaxRsDescriptorSupport {
     }
 
     /**
-     * Returns the merged annotation list for a method, walking the superclass chain and all
-     * transitively reachable interfaces in BFS order (via {@link AnnotationResolver}).
+     * Returns the merged annotation list for a method, walking the superclass chain and the
+     * interfaces of the method's declaring class in BFS order (via {@link AnnotationResolver}).
      *
-     * <p>Annotations declared only on the interface method (e.g. {@code @Operation},
-     * {@code @ValidateWith}) are included in the result even when the concrete override has
-     * none.
+     * <p>Equivalent to {@link #effectiveMethodAnnotations(Method, Class)
+     * effectiveMethodAnnotations(method, method.getDeclaringClass())}. Prefer the two-argument
+     * overload with the resource class so a superclass-declared method inherits annotations from
+     * interfaces the resource implements.
      *
      * @param method the method to inspect; must not be {@code null}
      * @return an immutable list of all resolved annotations; never {@code null}
      */
     public List<Annotation> effectiveMethodAnnotations(Method method) {
-        return AnnotationResolver.resolveMethodAnnotations(method);
+        return effectiveMethodAnnotations(method, method.getDeclaringClass());
+    }
+
+    /**
+     * Returns the merged annotation list for a method resolved as a member of {@code viewType},
+     * walking the superclass chain and the interfaces of {@code viewType} in BFS order (via
+     * {@link AnnotationResolver}).
+     *
+     * <p>Annotations declared only on an interface method (e.g. {@code @Operation},
+     * {@code @ValidateWith}) are included even when the concrete override has none. Pass the
+     * resource class as {@code viewType} for class-declared methods (including superclass ones);
+     * for an inherited interface {@code default}, pass the declaring interface.
+     *
+     * @param method   the method to inspect; must not be {@code null}
+     * @param viewType the type whose interface hierarchy supplies inherited annotations; must not
+     *                 be {@code null}
+     * @return an immutable list of all resolved annotations; never {@code null}
+     */
+    public List<Annotation> effectiveMethodAnnotations(Method method, Class<?> viewType) {
+        Class<?> declaring = method.getDeclaringClass();
+        Class<?> annotationView = declaring.isInterface() ? declaring : viewType;
+        return AnnotationResolver.resolveMethodAnnotations(method, annotationView);
     }
 }

@@ -181,11 +181,11 @@ public final class ExecutionPlanEmitter {
         List<EffectiveParamContract> params = method.params();
         boolean hasBeanParam = params.stream().anyMatch(p -> p.source() == JaxRsParamSource.BEAN_PARAM);
 
-        // Declaring class FQN — used as the resourceClass argument in resolveContext calls so
-        // error messages match what the runtime passes via meta.method().getDeclaringClass().getName().
-        String declaringClassFqn = ((TypeElement) method.concreteMethod().getEnclosingElement())
-                .getQualifiedName()
-                .toString();
+        // Declaring class binary name — used as the resourceClass argument in resolveContext calls so
+        // error messages match what the runtime passes via meta.method().getDeclaringClass().getName()
+        // (Outer$Inner, not Outer.Inner; vertiquehq/vertique-dev#636).
+        TypeElement declaringType = (TypeElement) method.concreteMethod().getEnclosingElement();
+        String declaringClassFqn = ctx.elements().getBinaryName(declaringType).toString();
 
         // --- Static ParamMeta constants per extractable parameter ---
         List<FieldSpec> staticFields =

@@ -417,7 +417,8 @@ class ApiSurfaceTest {
             assertMethods(
                     ReflectiveInvocationPolicies.class,
                     "resolveRoute(Method,Class)",
-                    "resolveParameter(Method,int,EffectiveInputPolicies)");
+                    "resolveParameter(Method,int,EffectiveInputPolicies)",
+                    "resolveParameter(Method,int,Class,EffectiveInputPolicies)");
             assertNoPublicFields(ReflectiveInvocationPolicies.class);
             assertNoPublicConstructors(ReflectiveInvocationPolicies.class);
         }

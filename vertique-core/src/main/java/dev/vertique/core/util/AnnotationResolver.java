@@ -57,25 +57,51 @@ public final class AnnotationResolver {
      * Resolves all annotations present on a method by walking both the superclass chain and the
      * interface hierarchy of the method's declaring class.
      *
-     * <p>Traversal order:
-     * <ol>
-     *   <li>Annotations directly declared on {@code method}</li>
-     *   <li>Annotations from the same method signature in each superclass (bottom-up)</li>
-     *   <li>Annotations from the same method signature in each transitively reachable interface
-     *       (discovery order from {@link TypeResolver#getAllInterfaces})</li>
-     * </ol>
-     *
-     * <p>If the same annotation type appears multiple times across the hierarchy the first
-     * occurrence is retained and later duplicates are silently dropped (via
-     * {@link LinkedHashSet} equality).
+     * <p>Equivalent to {@link #resolveMethodAnnotations(Method, Class)
+     * resolveMethodAnnotations(method, method.getDeclaringClass())}. Callers that resolve a method
+     * in the context of a more specific type (for example a JAX-RS resource class whose superclass
+     * declares the method but whose own interfaces contribute annotations) should pass that type as
+     * the view.
      *
      * @param method the method whose annotations should be resolved; must not be {@code null}
      * @return an immutable, ordered list of all resolved annotations; never {@code null}
      */
     public static List<Annotation> resolveMethodAnnotations(Method method) {
+        return resolveMethodAnnotations(method, method.getDeclaringClass());
+    }
+
+    /**
+     * Resolves all annotations present on a method by walking the superclass chain from the
+     * method's declaring class and the interface hierarchy of {@code viewType}.
+     *
+     * <p>Traversal order:
+     * <ol>
+     *   <li>Annotations directly declared on {@code method}</li>
+     *   <li>Annotations from the same method signature in each superclass of the declaring class
+     *       (bottom-up)</li>
+     *   <li>Annotations from the same method signature in each transitively reachable interface of
+     *       {@code viewType} (discovery order from {@link TypeResolver#getAllInterfaces})</li>
+     * </ol>
+     *
+     * <p>{@code viewType} is the type in whose context the method is being resolved. For a method
+     * declared by a superclass, pass the concrete subtype (so interfaces the subtype implements are
+     * visible). For an inherited interface {@code default} method, pass the declaring interface so
+     * its own super-interface hierarchy is consulted first — not a resource class that may list
+     * sibling interfaces in a different order.
+     *
+     * <p>If the same annotation type appears multiple times across the hierarchy the first
+     * occurrence is retained and later duplicates are silently dropped (via
+     * {@link LinkedHashSet} equality).
+     *
+     * @param method   the method whose annotations should be resolved; must not be {@code null}
+     * @param viewType the type whose interface hierarchy supplies inherited annotations; must not
+     *                 be {@code null}
+     * @return an immutable, ordered list of all resolved annotations; never {@code null}
+     */
+    public static List<Annotation> resolveMethodAnnotations(Method method, Class<?> viewType) {
         Set<Annotation> annotations = new LinkedHashSet<>(List.of(method.getAnnotations()));
 
-        // Walk superclass chain
+        // Walk superclass chain from the declaring class (the method is already that class's view)
         Class<?> current = method.getDeclaringClass().getSuperclass();
         while (current != null && current != Object.class) {
             try {
@@ -87,8 +113,8 @@ public final class AnnotationResolver {
             current = current.getSuperclass();
         }
 
-        // Walk interface hierarchy
-        for (Class<?> iface : TypeResolver.getAllInterfaces(method.getDeclaringClass())) {
+        // Walk interface hierarchy of the view type (may be more specific than the declaring class)
+        for (Class<?> iface : TypeResolver.getAllInterfaces(viewType)) {
             try {
                 Method m = iface.getMethod(method.getName(), method.getParameterTypes());
                 Collections.addAll(annotations, m.getAnnotations());
@@ -138,23 +164,44 @@ public final class AnnotationResolver {
 
     /**
      * Resolves all annotations present on a single method parameter by walking the same erased
-     * signature on the method's superclass chain and the BFS-ordered interface hierarchy. This is
-     * the parameter-level analog of {@link #resolveMethodAnnotations}.
+     * signature on the method's superclass chain and the BFS-ordered interface hierarchy of the
+     * method's declaring class. This is the parameter-level analog of
+     * {@link #resolveMethodAnnotations(Method)}.
+     *
+     * <p>Equivalent to {@link #resolveParameterAnnotations(Method, int, Class)
+     * resolveParameterAnnotations(method, parameterIndex, method.getDeclaringClass())}.
+     *
+     * @param method         the method whose parameter annotations should be resolved
+     * @param parameterIndex the zero-based parameter index
+     * @return an immutable array of merged annotations; never {@code null}
+     * @throws IndexOutOfBoundsException if {@code parameterIndex} is negative or
+     *     {@code >= method.getParameterCount()}
+     */
+    public static Annotation[] resolveParameterAnnotations(Method method, int parameterIndex) {
+        return resolveParameterAnnotations(method, parameterIndex, method.getDeclaringClass());
+    }
+
+    /**
+     * Resolves all annotations present on a single method parameter by walking the same erased
+     * signature on the method's superclass chain and the BFS-ordered interface hierarchy of
+     * {@code viewType}. This is the parameter-level analog of
+     * {@link #resolveMethodAnnotations(Method, Class)}.
      *
      * <p>Use case: a JAX-RS resource impl class declares
      * {@code public Response get(String id)} and the matching interface method declares
      * {@code Response get(@PathParam("id") @DefaultValue("0") String id)}. Direct
      * {@code parameter.getAnnotations()} on the impl returns nothing for {@code id}; this helper
      * returns the merged {@code @PathParam} + {@code @DefaultValue} array sourced from the
-     * interface declaration.
+     * interface declaration. When the impl method is declared by a superclass that does not
+     * itself implement the interface, pass the resource class as {@code viewType}.
      *
      * <p>Traversal order:
      * <ol>
      *   <li>Annotations directly declared on the parameter at {@code parameterIndex} of {@code method}</li>
      *   <li>Annotations from the same parameter index of the matching method signature in each
-     *       superclass (bottom-up)</li>
+     *       superclass of the declaring class (bottom-up)</li>
      *   <li>Annotations from the same parameter index of the matching method signature in each
-     *       transitively reachable interface (BFS discovery order from
+     *       transitively reachable interface of {@code viewType} (BFS discovery order from
      *       {@link TypeResolver#getAllInterfaces})</li>
      * </ol>
      *
@@ -167,18 +214,20 @@ public final class AnnotationResolver {
      *
      * @param method         the method whose parameter annotations should be resolved
      * @param parameterIndex the zero-based parameter index
+     * @param viewType       the type whose interface hierarchy supplies inherited annotations; must
+     *                       not be {@code null}
      * @return an immutable array of merged annotations; never {@code null}
      * @throws IndexOutOfBoundsException if {@code parameterIndex} is negative or
      *     {@code >= method.getParameterCount()}
      */
-    public static Annotation[] resolveParameterAnnotations(Method method, int parameterIndex) {
+    public static Annotation[] resolveParameterAnnotations(Method method, int parameterIndex, Class<?> viewType) {
         if (parameterIndex < 0 || parameterIndex >= method.getParameterCount()) {
             throw new IndexOutOfBoundsException("parameterIndex %d out of bounds for method %s (parameterCount=%d)"
                     .formatted(parameterIndex, method, method.getParameterCount()));
         }
         Set<Annotation> annotations = new LinkedHashSet<>(List.of(method.getParameterAnnotations()[parameterIndex]));
 
-        // Walk superclass chain
+        // Walk superclass chain from the declaring class
         Class<?> current = method.getDeclaringClass().getSuperclass();
         while (current != null && current != Object.class) {
             try {
@@ -190,8 +239,8 @@ public final class AnnotationResolver {
             current = current.getSuperclass();
         }
 
-        // Walk interface hierarchy (BFS, matching TypeResolver.getAllInterfaces)
-        for (Class<?> iface : TypeResolver.getAllInterfaces(method.getDeclaringClass())) {
+        // Walk interface hierarchy of the view type (BFS, matching TypeResolver.getAllInterfaces)
+        for (Class<?> iface : TypeResolver.getAllInterfaces(viewType)) {
             try {
                 Method m = iface.getMethod(method.getName(), method.getParameterTypes());
                 Collections.addAll(annotations, m.getParameterAnnotations()[parameterIndex]);

@@ -332,8 +332,10 @@ final class ParameterExtractor {
         }
         EffectiveInputPolicies route =
                 new EffectiveInputPolicies(meta.routeCanonicalizerChain(), meta.routeSanitizerChain());
+        Class<?> owner =
+                meta.resourceInstance() != null ? meta.resourceInstance().getClass() : method.getDeclaringClass();
         for (int i = 0; i < params.size(); i++) {
-            cache[i] = ReflectiveInvocationPolicies.resolveParameter(method, i, route);
+            cache[i] = ReflectiveInvocationPolicies.resolveParameter(method, i, owner, route);
         }
         return cache;
     }

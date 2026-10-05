@@ -73,7 +73,12 @@ Jakarta REST implementations such as Jersey and RESTEasy. A method declared by a
 interface default, and a default in a more specific interface wins over the one it overrides, so an
 override never adds a second route. A superclass's `private` method with the same signature is not
 inherited and does not hide the default. (A package-private one in another package does: the JVM
-dispatches the interface call to it and fails, so such a default is not routed.) The route takes the resource class's class-level annotations
+dispatches the interface call to it and fails, so such a default is not routed.) A public (or
+otherwise inherited) method declared by a superclass inherits method- and parameter-level JAX-RS
+annotations from the interfaces the *resource class* implements — not only from interfaces of the
+declaring superclass — so a `Base.delete` that implements `Crud.delete` for `R extends Base
+implements Crud` is routed with `Crud`'s `@DELETE` / `@Path` / `@PathParam` even when `Base`
+implements nothing. The route takes the resource class's class-level annotations
 (`@Path`, security, media types) together with the default method's merged method annotations.
 Inherited annotations are matched by erased signature, and type variables are not resolved against
 the implementing class: a generic interface method (`Crud<ID>`) overridden with a concrete parameter
@@ -372,9 +377,12 @@ A 16-component convenience constructor omits `executionPlan`. The compact constr
 `validationGroups` and copies the four lists, so every component is immutable regardless of what the
 caller passes. `methodAnnotations` and `classAnnotations` are resolved through
 `dev.vertique.core.util.AnnotationResolver`, which walks the superclass chain and interfaces — an
-annotation on an interface method is visible here. For a route backed by an inherited interface
-`default` method, `method()` is the interface's `Method`, so `method().getDeclaringClass()` is the
-interface; `resourceInstance().getClass()` is the resource class.
+annotation on an interface method is visible here. For a class-declared method (including one
+inherited from a superclass) the interface walk uses the resource class, so interfaces the resource
+implements contribute annotations even when the declaring superclass does not. For a route backed by
+an inherited interface `default` method, `method()` is the interface's `Method`, so
+`method().getDeclaringClass()` is the interface and the interface walk starts there;
+`resourceInstance().getClass()` is the resource class.
 
 `ParamMeta` describes one declared parameter:
 

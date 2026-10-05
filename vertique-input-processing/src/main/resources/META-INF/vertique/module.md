@@ -237,9 +237,10 @@ The reflective adapter — resolves `EffectiveInputPolicies` from real annotated
 ```java
 static EffectiveInputPolicies resolveRoute(Method method, Class<?> owner);
 static EffectiveInputPolicies resolveParameter(Method method, int index, EffectiveInputPolicies route);
+static EffectiveInputPolicies resolveParameter(Method method, int index, Class<?> owner, EffectiveInputPolicies route);
 ```
 
-`resolveRoute` resolves both `PolicyAxis` values and combines them into one `EffectiveInputPolicies`; `resolveParameter` does the same for one parameter, falling back to the route chains it is given. This is the reference reflective adapter — a REST resource scanner or a WebSocket endpoint registrar calls it once per route (and once per parameter) at registration time, so a conflicting declaration fails at startup rather than on the first matching request.
+`resolveRoute` resolves both `PolicyAxis` values and combines them into one `EffectiveInputPolicies`; `resolveParameter` does the same for one parameter, falling back to the route chains it is given. The three-argument form uses the method's declaring class as the annotation view; the four-argument form takes an explicit `owner` so a superclass-declared method still sees parameter annotations from interfaces the owner implements. This is the reference reflective adapter — a REST resource scanner or a WebSocket endpoint registrar calls it once per route (and once per parameter) at registration time, so a conflicting declaration fails at startup rather than on the first matching request.
 
 ### `ElementInvocationPolicies` — the annotation-processing adapter
 

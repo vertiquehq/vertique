@@ -78,7 +78,12 @@ public final class GeneratedJaxRsReflectiveAnnotations {
                 parameterTypes[i] = loadClass(parameterTypeFqns[i], cl);
             }
             Method method = declaringClass.getMethod(methodName, parameterTypes);
-            return AnnotationResolver.resolveParameterAnnotations(method, parameterIndex);
+            // declaringClassFqn is the concrete resource class; use it as the annotation view so a
+            // superclass-declared method inherits parameter annotations from the resource's
+            // interfaces (vertiquehq/vertique-dev#636).
+            Class<?> declaring = method.getDeclaringClass();
+            Class<?> annotationView = declaring.isInterface() ? declaring : declaringClass;
+            return AnnotationResolver.resolveParameterAnnotations(method, parameterIndex, annotationView);
         } catch (ClassNotFoundException | NoSuchMethodException e) {
             throw new IllegalStateException(
                     "Failed to resolve reflective parameter-annotation fallback for %s.%s parameter %d"
