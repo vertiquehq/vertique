@@ -388,7 +388,10 @@ inherited from a superclass) the interface walk uses the resource class, so inte
 implements contribute annotations even when the declaring superclass does not. For a route backed by
 an inherited interface `default` method, `method()` is the interface's `Method`, so
 `method().getDeclaringClass()` is the interface and the interface walk starts there;
-`resourceInstance().getClass()` is the resource class.
+`resourceInstance().getClass()` is the resource class. Security annotations from every declaration
+of the same method or class are merged and then checked for conflicts (incompatible kinds, or
+differing `@RolesAllowed` / `@Authorized` member values); a nearer declaration does not win. The
+codegen path applies the same fail-closed rule.
 
 `ParamMeta` describes one declared parameter:
 

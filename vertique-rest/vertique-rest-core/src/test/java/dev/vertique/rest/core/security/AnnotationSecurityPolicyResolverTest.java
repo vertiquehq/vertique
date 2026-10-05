@@ -119,6 +119,34 @@ class AnnotationSecurityPolicyResolverTest {
 
     // --- Interface-backed fixtures (exercise AnnotationResolver interface walk) ---
 
+    interface DenyAllApi {
+        @DenyAll
+        void purge();
+    }
+
+    interface PermitAllDefaultApi extends DenyAllApi {
+        @Override
+        @PermitAll
+        default void purge() {}
+    }
+
+    static class PermitAllDefaultImpl implements PermitAllDefaultApi {}
+
+    interface AdminRolesApi {
+        @RolesAllowed("admin")
+        void get();
+    }
+
+    interface UserRolesApi {
+        @RolesAllowed("user")
+        void get();
+    }
+
+    static class ConflictingRolesImpl implements AdminRolesApi, UserRolesApi {
+        @Override
+        public void get() {}
+    }
+
     interface ProtectedApi {
         @RolesAllowed("admin")
         void op();
@@ -304,6 +332,24 @@ class AnnotationSecurityPolicyResolverTest {
         void describeNoConflictReturnsClassBranch() throws NoSuchMethodException {
             String d = resolver.describeConflict(NoAnnotations.class, NoAnnotations.class.getMethod("roles"));
             assertTrue(d.startsWith("class-level"), "Must default to class branch when no method conflict: " + d);
+        }
+
+        @Test
+        @DisplayName("@DenyAll on super-interface + @PermitAll on overriding default → conflict (merge, fail-closed)")
+        void crossDeclarationDenyAllPermitAllOnDefault() throws NoSuchMethodException {
+            assertTrue(resolver.hasConflictingAnnotations(
+                    PermitAllDefaultImpl.class, PermitAllDefaultImpl.class.getMethod("purge")));
+        }
+
+        @Test
+        @DisplayName("different @RolesAllowed on two super-interfaces → conflict (member-value fail-closed)")
+        void crossDeclarationRolesAllowedValues() throws NoSuchMethodException {
+            assertTrue(resolver.hasConflictingAnnotations(
+                    ConflictingRolesImpl.class, ConflictingRolesImpl.class.getMethod("get")));
+            String d =
+                    resolver.describeConflict(ConflictingRolesImpl.class, ConflictingRolesImpl.class.getMethod("get"));
+            assertTrue(d.contains("method-level"), "Description must identify method-level: " + d);
+            assertTrue(d.contains("admin") && d.contains("user"), "Description must list both role sets: " + d);
         }
     }
 
