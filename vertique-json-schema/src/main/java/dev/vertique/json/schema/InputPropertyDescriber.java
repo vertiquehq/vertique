@@ -2465,7 +2465,9 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
      * any-setter-conjunction composition) and the member-level case-insensitive/{@code FALSE} branch in
      * {@link #propertySchema}: the override-first check, the distinct {@link #inlineInProgress} recursion
      * bound (shared with {@link #inProgress}, refusing re-entry from either set), {@link
-     * #requireNotDelegating}, the scalar-creator check, and {@link #populateObjectSchema} itself.
+     * #requireNotDelegating}, the scalar-creator check, {@link #populateObjectSchema} itself, and the
+     * class-level {@code additionalProperties = FALSE} closure the standard {@code CustomDefinition}/
+     * {@code AttributeInclusion.YES} path would otherwise apply.
      *
      * <p>An override on {@code memberType} is handled differently depending on {@code extrasSuppressed}:
      * a plain case-insensitive-inline member (extras not suppressed) keeps its override's own {@code
@@ -2536,10 +2538,33 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
                     context,
                     nestedBean.isCaseInsensitive(),
                     extrasSuppressed);
+            // Issue #624: the hand-built inline node never takes the standard CustomDefinition/
+            // AttributeInclusion.YES path that applies a class-level @Schema(additionalProperties =
+            // FALSE). describeExtras also returns false without writing the keyword when the type has
+            // no any-setter (or when a class-level FALSE suppresses describing one), so without this
+            // shared-tail write the class-level closure is silently dropped on every plain
+            // case-insensitive inline reach. Write only when nothing else already described extras
+            // (or closed them via extrasSuppressed).
+            if (!inline.has("additionalProperties") && classLevelAdditionalPropertiesFalse(memberType.getRawClass())) {
+                inline.put("additionalProperties", false);
+            }
             return inline;
         } finally {
             inlineInProgress.remove(memberType);
         }
+    }
+
+    /**
+     * Whether {@code type} declares or inherits {@code @Schema(additionalProperties = FALSE)} at the
+     * class level — the same {@link Class#getAnnotation(Class)} lookup {@link #describeExtras} uses,
+     * which follows {@link Schema}'s {@code @Inherited} meta-annotation.
+     *
+     * @param type the value type whose class-level closure is under question
+     * @return {@code true} when the resolved class-level annotation closes extras
+     */
+    private static boolean classLevelAdditionalPropertiesFalse(Class<?> type) {
+        Schema schema = type.getAnnotation(Schema.class);
+        return schema != null && schema.additionalProperties() == Schema.AdditionalPropertiesValue.FALSE;
     }
 
     /**

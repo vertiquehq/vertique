@@ -3,7 +3,9 @@
 
 package dev.vertique.rest.websocket;
 
+import dev.vertique.core.exception.ConfigurationException;
 import dev.vertique.rest.core.security.AnnotationSecurityPolicyResolver;
+import dev.vertique.rest.core.security.Authorized;
 import dev.vertique.rest.core.security.RequiresActionResolver;
 import dev.vertique.rest.core.security.SecurityPolicy;
 import dev.vertique.rest.core.security.SecurityPolicyResolver;
@@ -14,8 +16,13 @@ import dev.vertique.security.authz.RequiresAction;
 import io.vertx.core.Future;
 import io.vertx.core.buffer.Buffer;
 import jakarta.annotation.Nullable;
+import jakarta.annotation.security.DenyAll;
+import jakarta.annotation.security.PermitAll;
+import jakarta.annotation.security.RolesAllowed;
 import jakarta.ws.rs.PathParam;
+import java.lang.annotation.Annotation;
 import java.lang.reflect.Method;
+import java.lang.reflect.Parameter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -33,11 +40,13 @@ import lombok.extern.slf4j.Slf4j;
  *       {@link OnClose}, {@link OnError})</li>
  *   <li>Lifecycle methods must return {@code void} or {@code Future<Void>}</li>
  *   <li>{@link PathParam} names must match placeholders in the path template</li>
- *   <li>{@link RequiresAction} is supported at <strong>endpoint/class level only</strong> and
- *       enforced once at upgrade; a {@link RequiresAction} on any lifecycle method fails startup
- *       (FR-AUTHZ-048, ADR-0115). A class-level {@link RequiresAction} must parse as a canonical
- *       {@link ActionRef} and be registered in the {@link ActionRegistry}, or startup fails
- *       (fail-closed).</li>
+ *   <li>{@link OnMessage} may declare at most one payload-eligible parameter</li>
+ *   <li>Security annotations ({@link DenyAll}, {@link RolesAllowed}, {@link PermitAll},
+ *       {@link Authorized}, {@link RequiresAction}) are supported at <strong>endpoint/class level
+ *       only</strong> and enforced once at upgrade; any of them on a lifecycle method fails startup
+ *       rather than being silently ignored. A class-level {@link RequiresAction} must parse as a
+ *       canonical {@link ActionRef} and be registered in the {@link ActionRegistry}, or startup fails
+ *       (fail-closed; FR-AUTHZ-048, ADR-0115).</li>
  * </ul>
  */
 @Slf4j
@@ -98,6 +107,8 @@ class WebSocketEndpointScanner {
      * @param endpoint the endpoint instance; must be annotated with {@link WebSocketEndpoint}
      * @return the scanned metadata; never {@code null}
      * @throws IllegalArgumentException if the endpoint violates any validation constraint
+     * @throws ConfigurationException if {@link OnMessage} declares more than one payload-eligible
+     *     parameter
      */
     WebSocketEndpointMeta scan(Object endpoint) {
         Class<?> clazz = endpoint.getClass();
@@ -172,6 +183,11 @@ class WebSocketEndpointScanner {
         }
 
         // --- Resolve security policy from class-level annotations ---
+        // Reject lifecycle-method security annotations first: the sentinel resolver below ignores them,
+        // so leaving them in place would register an unauthenticated route with a false "I annotated it"
+        // model. WebSocket authorizes once at upgrade — class-level placement only.
+        rejectLifecycleMethodSecurityAnnotations(clazz, onOpen, onMessage, onClose, onError);
+        rejectLifecycleMethodRequiresAction(clazz, onOpen, onMessage, onClose, onError);
         // Validate conflicting annotations before resolving
         if (securityPolicyResolver.hasConflictingAnnotations(clazz, SENTINEL_METHOD)) {
             throw new IllegalArgumentException("Conflicting security annotations on " + clazz.getName() + ": "
@@ -186,9 +202,6 @@ class WebSocketEndpointScanner {
         SecurityPolicy securityPolicy = securityPolicyResolver.resolve(SENTINEL_METHOD, clazz);
 
         // --- Resolve and validate the @RequiresAction action gate (class-level only; ADR-0115) ---
-        // Reject a lifecycle-method @RequiresAction first: WebSocket authorizes once at upgrade, so a
-        // per-method annotation is unenforceable and must never be silently ignored (FR-AUTHZ-048).
-        rejectLifecycleMethodRequiresAction(clazz, onOpen, onMessage, onClose, onError);
         Optional<ActionRef> requiredAction = resolveClassLevelRequiredAction(clazz, securityPolicy);
 
         return new WebSocketEndpointMeta(
@@ -209,7 +222,54 @@ class WebSocketEndpointScanner {
                 requiredAction);
     }
 
-    // --- @RequiresAction resolution (class-level only; FR-AUTHZ-048, ADR-0115) ---
+    // --- Security annotation placement (class-level only; WebSocket authorizes once at upgrade) ---
+
+    /**
+     * Jakarta/framework security annotations that resolve into a {@link SecurityPolicy}. Present on a
+     * lifecycle method they would be silently ignored by the sentinel-based class-level resolver, so
+     * they must be rejected at scan time.
+     */
+    @SuppressWarnings("unchecked")
+    private static final Class<? extends Annotation>[] LIFECYCLE_FORBIDDEN_SECURITY_ANNOTATIONS =
+            new Class[] {DenyAll.class, RolesAllowed.class, PermitAll.class, Authorized.class};
+
+    /**
+     * Fails startup if {@link DenyAll}, {@link RolesAllowed}, {@link PermitAll}, or {@link Authorized}
+     * is present on any WebSocket lifecycle method.
+     *
+     * <p>WebSocket authorization happens once at upgrade, and the scanner resolves the endpoint's
+     * {@link SecurityPolicy} from class-level annotations only (via a sentinel method). A method-level
+     * security annotation is therefore unenforceable and must be rejected rather than silently ignored.
+     *
+     * @param clazz     the endpoint class, used for the error message
+     * @param onOpen    the {@link OnOpen} method, or {@code null}
+     * @param onMessage the {@link OnMessage} method, or {@code null}
+     * @param onClose   the {@link OnClose} method, or {@code null}
+     * @param onError   the {@link OnError} method, or {@code null}
+     * @throws IllegalArgumentException if any lifecycle method declares a forbidden security annotation
+     */
+    private void rejectLifecycleMethodSecurityAnnotations(
+            Class<?> clazz,
+            @Nullable Method onOpen,
+            @Nullable Method onMessage,
+            @Nullable Method onClose,
+            @Nullable Method onError) {
+        for (Method m : new Method[] {onOpen, onMessage, onClose, onError}) {
+            if (m == null) {
+                continue;
+            }
+            for (Class<? extends Annotation> annotationType : LIFECYCLE_FORBIDDEN_SECURITY_ANNOTATIONS) {
+                if (m.isAnnotationPresent(annotationType)) {
+                    String annotationName = "@" + annotationType.getSimpleName();
+                    throw new IllegalArgumentException(annotationName + " on WebSocket lifecycle method "
+                            + clazz.getSimpleName() + "." + m.getName()
+                            + " is not supported: WebSocket authorizes once at upgrade, so " + annotationName
+                            + " is endpoint/class-level only. Move it to the " + clazz.getSimpleName()
+                            + " class, or remove it.");
+                }
+            }
+        }
+    }
 
     /**
      * Fails startup if a {@link RequiresAction} is present on any WebSocket lifecycle method.
@@ -344,31 +404,63 @@ class WebSocketEndpointScanner {
     /**
      * Resolves the message payload type and its parameter position from the {@link OnMessage}
      * method's parameters. The message parameter is the first parameter that is not a
-     * {@link WebSocketSession}, {@link PathParam}, {@link Throwable}, or {@link SecurityContext}.
+     * {@link WebSocketSession}, {@link PathParam}, or {@link SecurityContext}. {@link Throwable}
+     * parameters are payload-eligible here so scan-time counting matches {@code buildArgs} on
+     * {@link OnMessage}, where {@code error} is always {@code null} and a {@code Throwable} slot
+     * receives the decoded message payload.
      *
      * <p>The index is resolved here, by the same predicate that picks the type, so the registrar
      * never re-derives which parameter is the payload when it applies that parameter's own
-     * invocation policies.
+     * invocation policies. A second payload-eligible parameter is rejected: the registrar would
+     * otherwise deliver the same decoded payload to that position without resolving its own policy
+     * chain.
      *
      * @param method the {@link OnMessage} method
      * @return the resolved message info; defaults to {@code String.class} at index {@code -1} if no
      *     message param found
+     * @throws ConfigurationException if the method declares more than one payload-eligible parameter
      */
     private MessageInfo resolveMessageType(Method method) {
         var params = method.getParameters();
+        MessageInfo found = null;
         for (int i = 0; i < params.length; i++) {
             var param = params[i];
-            if (WebSocketSession.class.isAssignableFrom(param.getType())) continue;
-            if (param.isAnnotationPresent(PathParam.class)) continue;
-            if (Throwable.class.isAssignableFrom(param.getType())) continue;
-            if (SecurityContext.class.isAssignableFrom(param.getType())) continue;
-
-            if (Buffer.class.isAssignableFrom(param.getType())) {
-                return new MessageInfo(Buffer.class, true, i);
+            if (!isPayloadEligible(param)) {
+                continue;
             }
-            return new MessageInfo(param.getType(), false, i);
+            if (found != null) {
+                throw new ConfigurationException("@OnMessage method "
+                        + method.getDeclaringClass().getSimpleName()
+                        + "."
+                        + method.getName()
+                        + " declares more than one payload parameter; declare exactly one");
+            }
+            if (Buffer.class.isAssignableFrom(param.getType())) {
+                found = new MessageInfo(Buffer.class, true, i);
+            } else {
+                found = new MessageInfo(param.getType(), false, i);
+            }
         }
-        return new MessageInfo(String.class, false, -1);
+        return found != null ? found : new MessageInfo(String.class, false, -1);
+    }
+
+    /**
+     * Whether the parameter can carry the decoded {@link OnMessage} payload.
+     *
+     * @param param the method parameter
+     * @return {@code true} when the parameter is not a session, path param, or security context
+     */
+    private static boolean isPayloadEligible(Parameter param) {
+        if (WebSocketSession.class.isAssignableFrom(param.getType())) {
+            return false;
+        }
+        if (param.isAnnotationPresent(PathParam.class)) {
+            return false;
+        }
+        if (SecurityContext.class.isAssignableFrom(param.getType())) {
+            return false;
+        }
+        return true;
     }
 
     /**

@@ -11,7 +11,10 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import dev.vertique.core.exception.ConfigurationException;
+import dev.vertique.core.sanitization.Sanitize;
 import dev.vertique.core.validation.ValidateWith;
+import dev.vertique.input.processing.testkit.A;
 import io.vertx.core.Future;
 import io.vertx.core.buffer.Buffer;
 import jakarta.ws.rs.PathParam;
@@ -137,6 +140,20 @@ class WebSocketEndpointScannerTest {
         void onOpen(WebSocketSession session) {}
     }
 
+    @WebSocketEndpoint("/ws/multi-payload")
+    static class MultiPayloadEndpoint {
+
+        @OnMessage
+        void onMessage(String a, @Sanitize(A.class) String b) {}
+    }
+
+    @WebSocketEndpoint("/ws/string-and-throwable")
+    static class StringAndThrowableEndpoint {
+
+        @OnMessage
+        void onMessage(String payload, Throwable error) {}
+    }
+
     // --- Tests ---
 
     @Nested
@@ -249,6 +266,33 @@ class WebSocketEndpointScannerTest {
         @DisplayName("invalid return type throws IllegalArgumentException")
         void invalidReturnTypeThrows() {
             assertThrows(IllegalArgumentException.class, () -> scanner.scan(new BadReturnType()));
+        }
+    }
+
+    @Nested
+    @DisplayName("payload parameter cardinality")
+    class PayloadParameterCardinality {
+
+        @Test
+        @DisplayName("second payload-eligible @OnMessage parameter fails scan naming the method")
+        void secondPayloadParameterRejected() {
+            ConfigurationException failure =
+                    assertThrows(ConfigurationException.class, () -> scanner.scan(new MultiPayloadEndpoint()));
+            assertTrue(
+                    failure.getMessage().contains("MultiPayloadEndpoint.onMessage"),
+                    "message must name the method: " + failure.getMessage());
+            assertTrue(
+                    failure.getMessage().contains("more than one payload parameter"),
+                    "message must describe the cardinality violation: " + failure.getMessage());
+        }
+
+        @Test
+        @DisplayName("String plus Throwable @OnMessage parameters fail scan like other multi-payload shapes")
+        void stringPlusThrowableRejected() {
+            ConfigurationException failure =
+                    assertThrows(ConfigurationException.class, () -> scanner.scan(new StringAndThrowableEndpoint()));
+            assertTrue(failure.getMessage().contains("StringAndThrowableEndpoint.onMessage"), failure.getMessage());
+            assertTrue(failure.getMessage().contains("more than one payload parameter"), failure.getMessage());
         }
     }
 

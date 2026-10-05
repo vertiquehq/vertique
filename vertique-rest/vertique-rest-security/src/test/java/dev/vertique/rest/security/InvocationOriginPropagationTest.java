@@ -39,10 +39,10 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Unit tests proving {@link SecurityPolicyEnforcer} seeds a real {@link InvocationOrigin} on every
- * {@link AuthorizationRequest} it builds for the constrained-policy REST authorization path
- * (identity-002 P2.S5b-i) — closing the gap where {@link AuthorizationRequest}'s 4-arg convenience
- * constructor left every REST-issued request with {@link InvocationOrigin#unspecified()}.
+ * Unit tests proving {@link SecurityPolicyEnforcer} threads the ambient {@link InvocationOrigin}
+ * onto every {@link AuthorizationRequest} it builds (identity-002 P2.S5b-i / DEF-007), falling back
+ * to {@link InvocationOrigin#unspecified()} when nothing is bound — never inventing a privileged
+ * {@code rest} origin for a transport-neutral enforcer.
  */
 class InvocationOriginPropagationTest {
 
@@ -151,9 +151,9 @@ class InvocationOriginPropagationTest {
     }
 
     @Test
-    @DisplayName("REST enforcer seeds InvocationOrigin.of(\"rest\") on the constrained-policy AuthorizationRequest"
-            + " when no ambient origin is bound")
-    void restIngressSeedsRestKind() {
+    @DisplayName("enforcer falls back to InvocationOrigin.unspecified() on the constrained-policy"
+            + " AuthorizationRequest when no ambient origin is bound (DEF-007)")
+    void unboundOriginFallsBackToUnspecified() {
         AtomicReference<AuthorizationRequest> captured = new AtomicReference<>();
         AuthorizationDecisionPoint dp = request -> {
             captured.set(request);
@@ -170,15 +170,15 @@ class InvocationOriginPropagationTest {
 
         assertNotNull(captured.get(), "decision point must have been invoked");
         assertEquals(
-                "rest",
-                captured.get().origin().kind(),
-                "the REST enforcer must seed InvocationOrigin.of(\"rest\") as the fallback when nothing"
-                        + " ambient is bound");
+                InvocationOrigin.unspecified(),
+                captured.get().origin(),
+                "the transport-neutral enforcer must fall back to InvocationOrigin.unspecified() when"
+                        + " nothing ambient is bound — never invent a privileged rest origin");
     }
 
     @Test
-    @DisplayName("REST enforcer reads an ambient InvocationOrigin over the \"rest\" fallback when one is bound")
-    void ambientOriginOverridesRestFallback() {
+    @DisplayName("enforcer reads an ambient InvocationOrigin over the unspecified fallback when one is bound")
+    void ambientOriginOverridesUnspecifiedFallback() {
         AtomicReference<AuthorizationRequest> captured = new AtomicReference<>();
         AuthorizationDecisionPoint dp = request -> {
             captured.set(request);
@@ -197,13 +197,13 @@ class InvocationOriginPropagationTest {
         assertEquals(
                 "camel",
                 captured.get().origin().kind(),
-                "an ambient InvocationOrigin bound on the ContextHolder must win over the \"rest\" fallback");
+                "an ambient InvocationOrigin bound on the ContextHolder must win over the unspecified" + " fallback");
     }
 
     @Test
-    @DisplayName("REST enforcer seeds InvocationOrigin.of(\"rest\") on the @RequiresAction action-gate"
-            + " AuthorizationRequest too, not InvocationOrigin.unspecified()")
-    void restActionGateEvaluatesWithAmbientOrigin() {
+    @DisplayName("action-gate AuthorizationRequest falls back to InvocationOrigin.unspecified() when no ambient"
+            + " origin is bound — matching the role/scope gate (DEF-007)")
+    void actionGateFallsBackToUnspecifiedWhenUnbound() {
         AtomicReference<AuthorizationRequest> captured = new AtomicReference<>();
         Authorizer authorizer = new Authorizer() {
             @Override
@@ -238,10 +238,10 @@ class InvocationOriginPropagationTest {
 
         assertNotNull(captured.get(), "the action gate must have been invoked");
         assertEquals(
-                "rest",
-                captured.get().origin().kind(),
-                "the action gate's AuthorizationRequest must carry InvocationOrigin.of(\"rest\") as the fallback,"
-                        + " matching the role/scope gate's origin — not InvocationOrigin.unspecified()");
+                InvocationOrigin.unspecified(),
+                captured.get().origin(),
+                "the action gate's AuthorizationRequest must carry InvocationOrigin.unspecified() as the"
+                        + " fallback, matching the role/scope gate — never a privileged rest origin");
     }
 
     @Test
@@ -267,8 +267,8 @@ class InvocationOriginPropagationTest {
         SecurityRuntime securityRuntime = mock(SecurityRuntime.class);
         // The ambient InvocationOrigin observed at handler entry is "camel"; a second read of the
         // holder (simulating the role/scope gate's async hop landing on a different Vert.x context)
-        // would observe nothing ambient bound — falling back to "rest" — if the enforcer re-read
-        // currentOrigin() at the action gate instead of reusing the entry capture.
+        // would observe nothing ambient bound — falling back to unspecified — if the enforcer
+        // re-read currentOrigin() at the action gate instead of reusing the entry capture.
         ContextHolder holder = changingOriginHolder(stubCorrelation(), InvocationOrigin.of("camel"), null);
         SecurityPolicyEnforcer enforcer = new SecurityPolicyEnforcer(
                 Optional.empty(),

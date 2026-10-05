@@ -39,6 +39,12 @@ import java.util.Optional;
  *
  * <p>With no narrowers installed, the composed {@code Authorizer} / {@code AuthorizationIntrospector}
  * are behavior-identical to the base engine they wrap.
+ *
+ * <p>An origin-aware narrower that discriminates on {@link AuthorizationRequest#origin()} MUST treat
+ * {@link InvocationOrigin#unspecified()} as a deny (or otherwise non-privileged) outcome — never as
+ * an implied {@code rest} (or other broad-allowance) ingress. Transport-neutral PEPs fall back to
+ * {@code unspecified} when no origin is ambient; conflating that sentinel with a real bind would
+ * fail open.
  */
 public interface AuthorizationNarrower extends OrderedExtension {
 

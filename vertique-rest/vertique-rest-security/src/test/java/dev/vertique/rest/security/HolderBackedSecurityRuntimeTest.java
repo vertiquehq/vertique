@@ -173,6 +173,58 @@ class HolderBackedSecurityRuntimeTest {
                 }
             });
         }
+
+        @Test
+        @DisplayName("clearCurrent() removes a bound SecurityContext; subsequent current() is null")
+        void clearCurrentRemovesBoundContext(io.vertx.core.Vertx vertx, VertxTestContext ctx) {
+            ContextInternal dup = ((ContextInternal) vertx.getOrCreateContext()).duplicate();
+            dup.runOnContext(v -> {
+                try {
+                    SecurityContext sc = mock(SecurityContext.class);
+                    runtime.bindCurrent(sc);
+                    assertSame(sc, runtime.current());
+
+                    runtime.clearCurrent();
+                    assertNull(runtime.current(), "clearCurrent() must leave no SecurityContext bound");
+                    assertTrue(
+                            ContextValues.current(SecurityContext.class).isEmpty(),
+                            "ContextValues must also report empty after clearCurrent()");
+                    ctx.completeNow();
+                } catch (Throwable t) {
+                    ctx.failNow(t);
+                }
+            });
+        }
+
+        @Test
+        @DisplayName("clearCurrent() is idempotent when no SecurityContext is bound")
+        void clearCurrentIsIdempotentWhenEmpty(io.vertx.core.Vertx vertx, VertxTestContext ctx) {
+            ContextInternal dup = ((ContextInternal) vertx.getOrCreateContext()).duplicate();
+            dup.runOnContext(v -> {
+                try {
+                    assertDoesNotThrow(runtime::clearCurrent);
+                    assertNull(runtime.current());
+                    assertDoesNotThrow(runtime::clearCurrent);
+                    ctx.completeNow();
+                } catch (Throwable t) {
+                    ctx.failNow(t);
+                }
+            });
+        }
+    }
+
+    @Nested
+    @DisplayName("clearCurrent() — fail-fast outside Vert.x")
+    class ClearCurrentOutsideContext {
+
+        @Test
+        @DisplayName("throws IllegalStateException when called outside any Vert.x context")
+        void throwsOutsideVertxContext() {
+            assertThrows(
+                    IllegalStateException.class,
+                    runtime::clearCurrent,
+                    "clearCurrent() must throw outside a Vert.x context");
+        }
     }
 
     // --- toJaxRs() ---

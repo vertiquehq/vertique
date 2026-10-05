@@ -1092,6 +1092,13 @@ carries `dev.vertique.rest.core.convert.ParamSource`, whose five constants are `
 `HEADER`, `COOKIE`, and `FORM` — the string-ish transport kinds. Do not confuse it with the
 same-named but unrelated parameter-source enums in the JAX-RS and REST-client modules.
 
+**Non-null converter-result contract.** `fromString` never returns `null` for a present transport
+string. A native or JAX-RS converter that returns `null` for that present value fails closed with
+`ParamConversionException` (400) — the same rule for a submitted value and for a `@DefaultValue`
+string routed through the resolver. Absence of a parameter is a caller concern (empty collection,
+`null` scalar, or applying a default); it is not expressed by a converter returning `null`. The
+exception message names the parameter and target type and never echoes the raw value.
+
 ### `RestRequestCompletedListener`, `HttpRequestCompletedListener`, and `RequestCompletionScope`
 
 `RestRequestCompletedListener` observes JAX-RS operations, and `HttpRequestCompletedListener`
@@ -1252,6 +1259,10 @@ credentials through the same verification path as its required handler.
 implemented in `vertique-rest-security`. Bind your own only to replace framework behavior wholesale.
 `SecurityRuntime.bindCurrent(SecurityContext)` returns a `ContextHolder.Scope` that **must** be
 registered with `RequestContextLifecycle.Handle.onClose(...)`.
+`SecurityRuntime.clearCurrent()` removes any currently bound `SecurityContext` without restoring a
+prior binding — used by trust-boundary clears such as MCP's no-scheme admit path that must discard
+ambient holder state before the transport binds its own identity. Prefer `bindCurrent` with
+lifecycle-owned scopes for ordinary bind/unbind.
 
 #### Describing a scheme for OpenAPI
 
@@ -1584,7 +1595,7 @@ multi-scheme AND requirement, scopes declared on an OR alternative, and scopes d
 | Exception | Extends | Typical mapping |
 |---|---|---|
 | `RestValidationException` | `ValidationException` | 400 with a `ValidationProblemDetail` body |
-| `ParamConversionException` | `ValidationException` | 400; carries `paramName()`, `source()`, `targetType()` |
+| `ParamConversionException` | `ValidationException` | 400; carries `paramName()`, `source()`, `targetType()`. A converter returning null for a present value, or a null or wrong-typed collection element, raises it. The message omits the submitted value. |
 | `InvalidCursorException` | `ValidationException` | 400 — always the same opaque `"Invalid cursor"` message, whether tampered, unknown-key, or expired |
 | `ParamConverterNotFoundException` | `TechnicalException` | 500 — a wiring gap, not a client error |
 

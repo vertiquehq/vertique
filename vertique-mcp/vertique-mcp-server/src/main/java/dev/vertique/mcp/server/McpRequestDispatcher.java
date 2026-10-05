@@ -414,6 +414,16 @@ final class McpRequestDispatcher {
     }
 
     /**
+     * Package accessor so {@link McpRouterMount} can hand the same runtime to
+     * {@link McpIdentityEstablisher} for the no-scheme ambient holder clear.
+     *
+     * @return this dispatcher's {@link SecurityRuntime}; never {@code null}
+     */
+    SecurityRuntime securityRuntime() {
+        return securityRuntime;
+    }
+
+    /**
      * Sorts {@code interceptors} by {@link OrderedExtension#comparator()} — phase, then priority,
      * then {@code orderKey} — and validates that no two share the same {@code (phase, priority,
      * orderKey)} triple (contract §4.4). Ordering never falls back to Dagger set iteration: this is
@@ -3096,7 +3106,10 @@ final class McpRequestDispatcher {
     /** Completes failures from optional authentication and identity establishment without leakage. */
     void handleFailure(RoutingContext context) {
         if (context.response().ended()) {
-            // The response already settled; nothing further to do.
+            // The response was already ended (a handler wrote then failed). Do not attempt a second
+            // write — that throws — but still settle the completion coordinator so an admitted
+            // request does not leave its observation open without terminal/completion (T004 S-b).
+            settleEndedFailure(context);
             return;
         }
         int status = context.statusCode();
@@ -3110,6 +3123,57 @@ final class McpRequestDispatcher {
         // An internal failure can occur on either side of identity establishment; the snapshot is
         // null exactly when no context was established before the failure.
         reject(context, McpMethod.OTHER, McpErrorType.INTERNAL, status, establishedSecurity());
+    }
+
+    /**
+     * Settles an admitted request whose response already ended before {@link #handleFailure} ran.
+     *
+     * <p>The ordinary {@link #reject} path writes a rejection body through {@link #write}; that is
+     * unsafe once {@code response.ended()} is true. This path claims the request, then drives the
+     * coordinator's two-phase write settlement ({@link McpCompletionCoordinator#beginWrite} then
+     * {@link McpCompletionCoordinator#finishWrite}) with no byte write, so observers still receive
+     * exactly one terminal then one completion. When the coordinator already settled, {@code
+     * beginWrite} loses and {@code finishWrite} either completes a stalled prior write or is a
+     * no-op once completion has already been emitted — first-observed-wins either way. A request
+     * with no owned coordinator (admission rejection before {@link #begin}) is left alone.
+     */
+    private void settleEndedFailure(RoutingContext context) {
+        McpCompletionCoordinator coordinator = ownedCoordinator(context);
+        if (coordinator == null) {
+            return;
+        }
+        int status = context.statusCode();
+        if (status < 400) {
+            status = 500;
+        }
+        McpErrorType errorType;
+        @Nullable SecurityContextSnapshot security;
+        if (status == 401 || status == 403) {
+            errorType = McpErrorType.AUTHENTICATION;
+            security = null;
+        } else {
+            errorType = McpErrorType.INTERNAL;
+            security = establishedSecurity();
+        }
+        McpRequestTerminalEvent terminal = McpRequestTerminalEvent.rejected(
+                startedAt(context),
+                Instant.now(),
+                McpMethod.OTHER,
+                McpRequestTerminalEvent.UNKNOWN_TOOL_NAME,
+                errorType,
+                status,
+                null,
+                protocolVersionOf(context),
+                authorizationOf(context),
+                security,
+                correlationOf(context));
+        RequestCompletionRecorder.claimForOtherTransport(context);
+        boolean responseCommitted = context.response().headWritten();
+        // WRITTEN requires a committed response; an ended response with no head is WRITE_FAILED.
+        McpTransportOutcome transport =
+                responseCommitted ? McpTransportOutcome.WRITTEN : McpTransportOutcome.WRITE_FAILED;
+        coordinator.beginWrite(terminal);
+        coordinator.finishWrite(transport, responseCommitted, Instant.now());
     }
 
     // --- Settlement seam wiring ---
@@ -3219,10 +3283,14 @@ final class McpRequestDispatcher {
     }
 
     /**
-     * Snapshots the security context identity establishment bound for this request.
+     * Snapshots the security context MCP identity establishment bound for this request.
      *
-     * @return the established snapshot, or {@code null} when no context is bound — i.e. the request
-     *         terminated before identity establishment completed
+     * <p>Returns {@code null} when no context is bound — i.e. the request terminated before MCP
+     * identity establishment completed. The no-scheme admit path clears any ambient
+     * {@link SecurityRuntime} holder binding before identity resolution, so a foreign ROOT-middleware
+     * snapshot cannot be mistaken for an MCP-established identity here.
+     *
+     * @return the established snapshot, or {@code null} when no context is bound
      */
     private @Nullable SecurityContextSnapshot establishedSecurity() {
         SecurityContext current = securityRuntime.current();

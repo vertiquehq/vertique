@@ -232,14 +232,12 @@ class RouteValidator {
      *   <li><b>The conversion target type.</b> Which type that is depends on the shape, because the
      *       descriptor's role differs:
      *       <ul>
-     *         <li><em>Scalar pair</em> — the descriptor performs the conversion:
-     *             {@code DefaultBoundRequest.wrapScalar} converts the raw value once through
-     *             {@code ConversionContexts.forDescriptor}, whose {@code rawType}/{@code genericType} come
-     *             from the first declaration, and {@code ParameterExtractor.coerce} passes an
-     *             already-converted value through unchanged. So {@code @QueryParam("id") Integer} plus
-     *             {@code @QueryParam("id") UUID} mounts and then fails in {@code Method.invoke} on every
-     *             request carrying {@code id}. Both {@code type()} and {@code genericType()} are compared,
-     *             since both are handed to a {@code ParamConverterProvider}.</li>
+     *         <li><em>Scalar pair</em> — the binder stores the raw string, and each parameter converts
+     *             that string with its own declared type. {@code @QueryParam("id") Integer} plus
+     *             {@code @QueryParam("id") UUID} can therefore accept a value for one declaration and
+     *             reject it for the other. The single per-name schema derived from the first descriptor
+     *             still describes only one of the two types. Both {@code type()} and {@code genericType()}
+     *             are compared, since both are handed to a {@code ParamConverterProvider}.</li>
      *         <li><em>Collection pair</em> — the descriptor decides multiplicity <em>only</em>:
      *             {@code wrapValues} wraps the raw values into one {@code JsonArray} without converting,
      *             and {@code ParameterExtractor.coerceCollection} converts each element and materializes

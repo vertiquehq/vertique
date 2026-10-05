@@ -51,6 +51,25 @@ public interface SecurityRuntime {
     ContextHolder.Scope bindCurrent(SecurityContext context);
 
     /**
+     * Removes any currently bound {@link SecurityContext} from the per-request holder without
+     * restoring a prior binding.
+     *
+     * <p>Idempotent when no context is bound. Must be called on a Vert.x duplicated context — the
+     * same write invariant as {@link #bindCurrent(SecurityContext)}.
+     *
+     * <p>Intended for trust-boundary clears that must discard ambient holder state before a
+     * transport binds its own identity (for example MCP's no-scheme admit path). Prefer
+     * {@link #bindCurrent(SecurityContext)} with lifecycle-owned scopes for ordinary bind/unbind.
+     *
+     * <p>Default is a no-op so test doubles remain source-compatible; production implementations
+     * override.
+     *
+     * @throws IllegalStateException if a production implementation is called outside a Vert.x
+     *     duplicated context
+     */
+    default void clearCurrent() {}
+
+    /**
      * Creates a JAX-RS {@link jakarta.ws.rs.core.SecurityContext} bridge
      * from the framework's {@link SecurityContext}.
      *
