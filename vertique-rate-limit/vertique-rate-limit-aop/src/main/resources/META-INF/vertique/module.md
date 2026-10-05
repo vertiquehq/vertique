@@ -84,12 +84,11 @@ Dagger-resolved proxy are intercepted.
 `AnonymousRateLimitPolicy.SHARED_BUCKET`), `cost()` (default `1`).
 
 The annotation is `@Target(ElementType.METHOD)` only and carries
-`@Aspect(ordering = 300)`. Place it on methods of Dagger-provided classes. Interface-method
-weaving is not supported: consistent with the `vertique-codegen-aop` rule that only trigger
-methods enclosed by an `ElementKind.CLASS` are collected for proxy generation, a
-`@RateLimited` on an interface method (for example a service-contract or REST-client
-interface method) is ignored — no proxy is generated for it and no admission occurs. Put the
-annotation on the implementing class's method.
+`@Aspect(ordering = 300)`. Place it on methods of Dagger-provided classes, or on an interface
+method (including an inherited `default`) that a concrete implementing class inherits or
+overrides in the same compilation — `vertique-codegen-aop` weaves the trigger onto that
+implementor's `$AopProxy`. An interface alone is not a proxy bean; without a concrete
+implementor in the compilation, no proxy is generated and no admission occurs.
 
 ### RateLimitAopModule
 

@@ -7,6 +7,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import javax.lang.model.element.Element;
+import javax.lang.model.element.ElementKind;
 import javax.lang.model.element.ExecutableElement;
 import javax.lang.model.element.Modifier;
 import javax.lang.model.element.TypeElement;
@@ -39,11 +40,18 @@ public final class ProxyabilityValidator {
     /**
      * Reports proxyability violations and memoizes class-level checks per enclosing class.
      *
+     * <p>Interface-hosted methods are skipped: {@code vertique-codegen-aop} weaves aspect triggers
+     * onto concrete implementing classes and validates those beans when emitting proxies. Treating
+     * the interface as the proxy bean produced a misleading "@Inject constructor" diagnostic.
+     *
      * @param method method to validate
      * @return {@code true} when the enclosing class and method satisfy all proxyability checks
      */
     public boolean validate(ExecutableElement method) {
         if (!(method.getEnclosingElement() instanceof TypeElement bean)) {
+            return true;
+        }
+        if (bean.getKind() == ElementKind.INTERFACE) {
             return true;
         }
 

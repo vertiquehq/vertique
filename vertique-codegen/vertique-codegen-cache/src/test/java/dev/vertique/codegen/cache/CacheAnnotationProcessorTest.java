@@ -541,18 +541,17 @@ class CacheAnnotationProcessorTest {
                 .assertErrorMessage("can be overridden");
     }
 
-    // --- Interface placement (proxyability rejects it; unlike codegen-aop's silent ignore) ---
+    // --- Interface placement (cache-owned rule; generic AOP weaves interface triggers) ---
 
     /**
-     * {@code @Cacheable} on an abstract interface method is a compile error: the interface has no
-     * {@code @Inject} constructor and the method is abstract. This differs from the generic AOP
-     * processor, which silently ignores aspect triggers on interface methods.
+     * {@code @Cacheable} on an abstract interface method is a compile error: cache annotations must
+     * be declared on concrete class methods. Generic AOP weaves interface aspect triggers; this
+     * processor still rejects the cache-specific misplacement at build time.
      */
     @Test
     @DisplayName("rejects @Cacheable on an abstract interface method")
     void shouldRejectCacheableOnAnAbstractInterfaceMethod() {
-        var result = ProcessorTestHarness.run(
-                        new CacheAnnotationProcessor(), SourceFiles.inline("com.example.CacheablePort", """
+        ProcessorTestHarness.run(new CacheAnnotationProcessor(), SourceFiles.inline("com.example.CacheablePort", """
                                 package com.example;
 
                                 import dev.vertique.cache.aop.Cacheable;
@@ -563,12 +562,11 @@ class CacheAnnotationProcessorTest {
                                     String find(String id);
                                 }
                                 """))
-                .assertFailed();
-        result.assertErrorMessage("cacheable methods require exactly one @Inject constructor");
-        result.assertErrorMessage("cacheable methods must be instance methods that can be overridden");
+                .assertFailed()
+                .assertErrorMessage("cache annotations must be declared on concrete class methods");
     }
 
-    /** A {@code default} interface method is not abstract, but the interface still has no constructor. */
+    /** Default interface methods are likewise rejected by the cache placement rule. */
     @Test
     @DisplayName("rejects @Cacheable on a default interface method")
     void shouldRejectCacheableOnADefaultInterfaceMethod() {
@@ -587,14 +585,13 @@ class CacheAnnotationProcessorTest {
                                 }
                                 """))
                 .assertFailed()
-                .assertErrorMessage("cacheable methods require exactly one @Inject constructor");
+                .assertErrorMessage("cache annotations must be declared on concrete class methods");
     }
 
     @Test
     @DisplayName("rejects @CacheEvict on an abstract interface method")
     void shouldRejectCacheEvictOnAnAbstractInterfaceMethod() {
-        var result = ProcessorTestHarness.run(
-                        new CacheAnnotationProcessor(), SourceFiles.inline("com.example.CacheEvictPort", """
+        ProcessorTestHarness.run(new CacheAnnotationProcessor(), SourceFiles.inline("com.example.CacheEvictPort", """
                                 package com.example;
 
                                 import dev.vertique.cache.aop.CacheEvict;
@@ -605,9 +602,8 @@ class CacheAnnotationProcessorTest {
                                     void clearAll();
                                 }
                                 """))
-                .assertFailed();
-        result.assertErrorMessage("cacheable methods require exactly one @Inject constructor");
-        result.assertErrorMessage("cacheable methods must be instance methods that can be overridden");
+                .assertFailed()
+                .assertErrorMessage("cache annotations must be declared on concrete class methods");
     }
 
     @Test
@@ -626,6 +622,6 @@ class CacheAnnotationProcessorTest {
                                 }
                                 """))
                 .assertFailed()
-                .assertErrorMessage("cacheable methods require exactly one @Inject constructor");
+                .assertErrorMessage("cache annotations must be declared on concrete class methods");
     }
 }

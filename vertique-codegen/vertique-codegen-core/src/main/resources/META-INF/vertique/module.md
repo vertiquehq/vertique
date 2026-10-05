@@ -226,7 +226,8 @@ Validation requires a public, non-final enclosing class with exactly one constru
 overridden: final, private, static, and abstract methods are rejected. Each failure is reported as
 a family-prefixed compile-time diagnostic. Enclosing-class checks are memoized per class, so
 co-located annotations do not repeat the same class-level diagnostics; method-level checks still
-apply to each method.
+apply to each method. Methods enclosed by an interface are skipped — `vertique-codegen-aop` weaves
+those triggers onto concrete implementors and validates the implementor beans instead.
 
 ---
 
