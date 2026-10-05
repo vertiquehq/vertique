@@ -5,10 +5,10 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Micrometer REST Module
 
-> **Status:** Alpha
+> **Status:** Stable
 > **Package:** `dev.vertique.micrometer.rest`
 > **Artifact:** `vertique-micrometer-rest`
-> **Depends on:** io.micrometer:micrometer-core (library), vertique-micrometer-core, vertique-rest-core
+> **Depends on:** micrometer-core, rest-core, core, codegen-core
 
 Observe-only REST server metrics adapter. When installed alongside `RestCoreModule` (or `RestModule`)
 and `MicrometerModule`, it emits a per-request timer (`vertique.rest.server.requests`) that covers
@@ -19,7 +19,8 @@ The module compiles against `vertique-micrometer-core` for the `MetricsConfig` t
 without it (or another `MeterRegistry` provider) the component does not compile. Only the
 `metrics.enabled` *gate* is optional: the module declares `@BindsOptionalOf MetricsConfig`
 independently, so the gate defaults to enabled when `MicrometerModule` is absent. It never
-modifies the request or response, and it never submits audit records.
+modifies the request or response, and it never submits audit records. It owns no module-local
+configuration keys beyond following `metrics.enabled`.
 
 ---
 
@@ -36,8 +37,9 @@ is a no-op.
 ## Core Concepts
 
 **Observe-only.** The module contributes a `RestRequestCompletedListener` and a `RequestInterceptor`
-into their respective multibinding sets. Neither component touches the response or raises exceptions
-toward the caller — every callback body is wrapped in a try/catch that logs at WARN and swallows.
+into their respective multibinding sets. Neither contribution touches the response or raises
+exceptions toward the caller — every callback body is wrapped in a try/catch that logs at WARN and
+swallows.
 
 **Active gauge design (SP-5 rationale).** The original PRD design paired `onRequest` with
 `afterResponse`. That pairing leaks: WebSocket upgrades and bare-metal 500s where the error pipeline
@@ -71,7 +73,7 @@ exceed any fixed cap.
 
 **Zero-overhead when unconfigured.** Before `VertiqueApplication` bootstrap the injected
 `MeterRegistry` is an empty composite whose recording is a no-op (NFR-TEL-003). When the optional
-`MetricsConfig` binding is absent (i.e., `MicrometerModule` is not installed), both components
+`MetricsConfig` binding is absent (i.e., `MicrometerModule` is not installed), both contributions
 default to enabled — they record against whatever registry is injected.
 
 ---
@@ -80,17 +82,12 @@ default to enabled — they record against whatever registry is injected.
 
 ### MicrometerRestModule
 
-Dagger `@Module`. Contributes two bindings:
-
-- `RestServerRequestMetricsListener` into `Set<RestRequestCompletedListener>` — records the
-  per-request timer on each JAX-RS operation request.
-- `RestServerActiveRequestsInterceptor` into `Set<RequestInterceptor>` — maintains the
-  in-flight-requests gauge.
-
-Also declares `@BindsOptionalOf MetricsConfig metricsConfig()` so both
-components can inject `Optional<MetricsConfig>` without requiring `MicrometerModule` to be installed.
-When `MicrometerModule` is also installed its `@Provides MetricsConfig` binding satisfies
-the optional; when absent the optional is empty and both components default to enabled.
+Abstract Dagger module. Install it explicitly to contribute one `RestRequestCompletedListener` and
+one `RequestInterceptor` into their multibinding sets. The listener records the per-request timer on
+each JAX-RS operation completion; the interceptor maintains the in-flight-requests gauge. The module
+declares `@BindsOptionalOf MetricsConfig` so the `metrics.enabled` gate works with or without
+`MicrometerModule`; when that optional is empty, recording defaults to enabled. The application must
+still provide a `MeterRegistry` binding (normally from `MicrometerModule`).
 
 ```java
 @Component(modules = {
@@ -102,40 +99,6 @@ the optional; when absent the optional is empty and both components default to e
 })
 interface AppComponent { /* ... */ }
 ```
-
-### RestServerRequestMetricsListener
-
-`@Singleton` `RestRequestCompletedListener`. Records one timer sample per
-`RestRequestCompletedEvent`: JAX-RS operations and framework synthetic operations, such as
-protected API document reads. The `route` tag is the operation's route
-template and the `operation` tag its operationId, both read from `event.operation()`; neither falls
-back to `UNKNOWN`. Meter name: `vertique.rest.server.requests`. When `MetricsConfig.enabled()` is
-`false` (i.e., `metrics.enabled=false` in config), returns immediately without recording.
-
-### RestServerActiveRequestsInterceptor
-
-`@Singleton` `RequestInterceptor`. Maintains the in-flight-requests gauge. Meter name:
-`vertique.rest.server.active`. The gauge is backed by a `LongAdder` registered at construction time.
-
-On `onRequest`:
-
-1. Skips WebSocket upgrade requests (`Upgrade: websocket` header).
-2. Guards against double-increment using a routing-context key
-   (`vertique.micrometer.rest.activeRequestCounted`).
-3. Increments the `LongAdder`.
-4. Registers an idempotent `rc.addEndHandler` using a per-request `AtomicBoolean` that ensures the
-   decrement fires at most once, even if the end-handler is invoked multiple times.
-
-#### Invariants and Gotchas
-
-- The gauge is registered at construction time (not lazily); if the registry throws during
-  registration the exception is caught, logged at WARN, and the interceptor still starts (with the
-  gauge absent).
-- `onRequest` must be called from the `RequestInterceptor` multibinding hook in the router pipeline
-  (e.g., by `JaxRsRouterMount`). The method is not invoked by the framework outside the HTTP server
-  request path.
-- The double-entry guard exists because `onRequest` could theoretically be called more than once on
-  the same `RoutingContext`; the guard ensures the gauge is incremented at most once per context.
 
 ---
 
@@ -183,7 +146,7 @@ completion event was emitted, so `error.type` stays `none` for it even though th
 logs it. See `wireFailureCode` on `RestRequestCompletedEvent` in `vertique-rest-core`'s module
 reference for the derivation, the close-normalization predicate, and the late-`end()` carve-out.
 
-Outcome mapping (class `HttpOutcome`, package-private):
+Outcome mapping:
 
 | Status range | `outcome` value |
 |---|---|
@@ -204,22 +167,36 @@ Instantaneous count of in-flight HTTP server requests. Untagged. Backed by a `Lo
 Prometheus rendering: `vertique_rest_server_active`.
 
 ---
-The adapter's simple SPI contribution is declared on its injectable implementation with
+
+## Module Dagger Bindings
+
+| Type | Qualifier | Description |
+|---|---|---|
+| `MetricsConfig` | optional (`@BindsOptionalOf`) | Declared for the `metrics.enabled` gate |
+| `RestRequestCompletedListener` | `@IntoSet` | Per-request timer contribution |
+| `RequestInterceptor` | `@IntoSet` | In-flight gauge contribution |
+
+The adapter's SPI contributions are declared on their injectable implementations with
 `@RegisterIntoSet`. During the provider build, `vertique-codegen-dagger` emits
 `GeneratedRegistrationsModule`, which this module includes explicitly. The generated module contains
-only this type adaptation; configuration, registry, and optional bindings remain hand-written.
+only those type adaptations; the optional `MetricsConfig` binding remains hand-written.
+
+---
+
+## Verification
+
+```bash
+./mvnw -ntp -pl vertique-micrometer/vertique-micrometer-rest -am test
+```
+
+---
 
 ## Dependencies
 
-- `io.micrometer:micrometer-core` — `MeterRegistry`, `Timer`, `Gauge`, `Tags`; no Vert.x Micrometer
-  integration types. This is the only third-party Micrometer artifact on the compile classpath.
-- `dev.vertique:vertique-micrometer-core` — `MetricsConfig`, the `metrics.enabled` gate both
-  components inject as `Optional<MetricsConfig>`.
-- `dev.vertique:vertique-rest-core` — `RestRequestCompletedListener`, `RestRequestCompletedEvent`,
-  `RequestInterceptor`, `RestRequestCompletionEmitter` constants. `io.vertx.ext.web.RoutingContext`
-  (the `RequestInterceptor` callback parameter) arrives transitively through this dependency.
-- `dev.vertique:vertique-core` — `OrderedExtension`, the `RequestInterceptor` supertype.
-- `io.vertx:vertx-core` — `Handler`/`AsyncResult` for the `rc.addEndHandler` callback, and `Future`,
-  the return type of the async `RequestInterceptor` callbacks this module inherits as no-ops.
-- `com.google.dagger:dagger`, `jakarta.inject:jakarta.inject-api`
-- `org.slf4j:slf4j-api`, `org.projectlombok:lombok` (provided)
+| Artifact | Purpose |
+|---|---|
+| `vertique-micrometer-core` | `MetricsConfig` / `metrics.enabled` gate |
+| `vertique-rest-core` | Completion listener and request interceptor SPIs |
+| `vertique-core` | `OrderedExtension` |
+| `vertique-codegen-core` | Codegen support for generated registrations |
+| `io.micrometer:micrometer-core` | `MeterRegistry`, `Timer`, `Gauge`, `Tags` |
