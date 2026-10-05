@@ -420,6 +420,8 @@ class RequestOriginCapturerTest {
         @Test
         @DisplayName("hex-word, short, oversized-octet and hostname entries are rejected without any resolver call")
         void hostileEntriesNeverReachResolver() {
+            int lookupsBefore = RecordingInetAddressResolverProvider.lookupCount();
+
             // A trusted peer, so an accepted entry would also become the derived clientIp.
             String xff = String.join(", ", HOSTILE.subList(0, 16));
             RequestOrigin origin = capturerWithTrustedProxies("10.0.0.0/8")
@@ -438,14 +440,16 @@ class RequestOriginCapturerTest {
             }
 
             List<String> lookedUp = RecordingInetAddressResolverProvider.lookedUpHosts();
-            for (String entry : HOSTILE) {
-                assertFalse(lookedUp.contains(entry), entry + " reached the DNS resolver");
+            for (int i = lookupsBefore; i < lookedUp.size(); i++) {
+                String resolved = lookedUp.get(i);
+                assertFalse(HOSTILE.contains(resolved), resolved + " reached the DNS resolver");
             }
         }
 
         @Test
         @DisplayName("a hostile entry as the direct peer address is not resolved either")
         void hostilePeerAddressNeverReachesResolver() {
+            int lookupsBefore = RecordingInetAddressResolverProvider.lookupCount();
             RequestOriginCapturer capturer = capturerWithTrustedProxies("10.0.0.0/8");
 
             for (String peer : List.of("deadbeef", "999.1.1.1", "1234")) {
@@ -453,7 +457,14 @@ class RequestOriginCapturerTest {
 
                 assertEquals(peer, origin.remoteIp(), "a non-literal peer is passed through unchanged");
                 assertEquals(peer, origin.clientIp(), "a non-literal peer is never trusted");
-                assertFalse(RecordingInetAddressResolverProvider.lookedUpHosts().contains(peer), peer);
+            }
+
+            List<String> lookedUp = RecordingInetAddressResolverProvider.lookedUpHosts();
+            for (int i = lookupsBefore; i < lookedUp.size(); i++) {
+                String resolved = lookedUp.get(i);
+                assertFalse(
+                        List.of("deadbeef", "999.1.1.1", "1234").contains(resolved),
+                        resolved + " reached the DNS resolver");
             }
         }
 

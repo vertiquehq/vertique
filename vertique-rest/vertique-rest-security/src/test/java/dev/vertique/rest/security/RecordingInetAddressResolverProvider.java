@@ -31,6 +31,11 @@ public final class RecordingInetAddressResolverProvider extends InetAddressResol
         return List.copyOf(LOOKED_UP);
     }
 
+    /** Number of recorded lookups so far; use with {@link #lookedUpHosts()} for delta assertions. */
+    public static int lookupCount() {
+        return LOOKED_UP.size();
+    }
+
     @Override
     public InetAddressResolver get(Configuration configuration) {
         InetAddressResolver builtin = configuration.builtinResolver();
