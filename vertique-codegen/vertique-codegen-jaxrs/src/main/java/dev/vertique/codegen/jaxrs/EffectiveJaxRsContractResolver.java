@@ -319,12 +319,12 @@ public final class EffectiveJaxRsContractResolver {
                 && !"java.lang.Object".equals(current.getQualifiedName().toString())) {
             EffectiveSecurityContract sc = buildSecurityContract(current);
             if (!sc.isEmpty()) {
-                if (found == null) {
-                    found = sc;
-                } else if (!securityContractsCompatible(found, sc)) {
+                EffectiveSecurityContract merged = accumulateSecurity(found, sc);
+                if (merged == null) {
                     emitCrossDeclarationSecurityConflict(concreteClass, concreteClass, true, found, sc);
                     return EffectiveSecurityContract.NONE;
                 }
+                found = merged;
             }
             current = JaxRsHierarchy.superClass(ctx, current);
         }
@@ -536,12 +536,12 @@ public final class EffectiveJaxRsContractResolver {
                 if (superMethod != null) {
                     EffectiveSecurityContract sc = buildSecurityContract(superMethod);
                     if (!sc.isEmpty()) {
-                        if (found == null) {
-                            found = sc;
-                        } else if (!securityContractsCompatible(found, sc)) {
+                        EffectiveSecurityContract merged = accumulateSecurity(found, sc);
+                        if (merged == null) {
                             emitCrossDeclarationSecurityConflict(method, resourceClass, false, found, sc);
                             return EffectiveSecurityContract.NONE;
                         }
+                        found = merged;
                     }
                 }
                 current = JaxRsHierarchy.superClass(ctx, current);
@@ -1126,30 +1126,88 @@ public final class EffectiveJaxRsContractResolver {
                 continue;
             }
 
-            if (found == null) {
-                found = sc;
-            } else if (!securityContractsCompatible(found, sc)) {
+            EffectiveSecurityContract merged = accumulateSecurity(found, sc);
+            if (merged == null) {
                 emitCrossDeclarationSecurityConflict(element, resourceClass, classLevel, found, sc);
                 return EffectiveSecurityContract.NONE;
             }
-            // identical or compatible — keep the first-found contract
+            found = merged;
         }
         return found != null ? found : EffectiveSecurityContract.NONE;
     }
 
     /**
-     * Returns {@code true} if the two security contracts are compatible (i.e. represent the same
-     * effective kind set and values — no conflict).
+     * Folds {@code next} into the accumulated contract {@code found}, or returns {@code null}
+     * when the two conflict. Mirrors the runtime path, where {@code AnnotationResolver} keeps
+     * every declaration's annotations and {@code AnnotationSecurityPolicyResolver} combines the
+     * {@code @RolesAllowed} and {@code @Authorized} axes into one {@code Constrained} policy.
      *
-     * @param a first security contract
-     * @param b second security contract
-     * @return {@code true} if compatible
+     * @param found the contract accumulated so far, or {@code null} when none yet
+     * @param next  the non-empty contract from the next declaration
+     * @return the merged contract, {@code next} when {@code found} is {@code null}, or
+     *         {@code null} on conflict
      */
-    private boolean securityContractsCompatible(EffectiveSecurityContract a, EffectiveSecurityContract b) {
-        return a.kinds().equals(b.kinds())
-                && a.rolesAllowed().equals(b.rolesAllowed())
-                && a.authorizedScopes().equals(b.authorizedScopes())
-                && a.authorizedMatchAll() == b.authorizedMatchAll();
+    private EffectiveSecurityContract accumulateSecurity(
+            EffectiveSecurityContract found, EffectiveSecurityContract next) {
+        return found == null ? next : mergeSecurityContracts(found, next);
+    }
+
+    /**
+     * Merges two non-empty security contracts per security axis.
+     *
+     * <ul>
+     *   <li>{@code @DenyAll}/{@code @PermitAll} never combine with a different kind set; only an
+     *       identical declaration is accepted.
+     *   <li>{@code @RolesAllowed} and {@code @Authorized} are independent axes: a contract that
+     *       carries only one axis merges with one that carries the other, preserving both roles
+     *       and scopes/{@code matchAll} (an AND-constrained policy).
+     *   <li>When both contracts specify the same axis, its values must be identical.
+     * </ul>
+     *
+     * @param a first contract
+     * @param b second contract
+     * @return the merged contract, or {@code null} when the contracts conflict
+     */
+    private EffectiveSecurityContract mergeSecurityContracts(EffectiveSecurityContract a, EffectiveSecurityContract b) {
+        Set<EffectiveSecurityContract.SecurityKind> aKinds = a.kinds();
+        Set<EffectiveSecurityContract.SecurityKind> bKinds = b.kinds();
+        boolean aTerminal = aKinds.contains(EffectiveSecurityContract.SecurityKind.DENY_ALL)
+                || aKinds.contains(EffectiveSecurityContract.SecurityKind.PERMIT_ALL);
+        boolean bTerminal = bKinds.contains(EffectiveSecurityContract.SecurityKind.DENY_ALL)
+                || bKinds.contains(EffectiveSecurityContract.SecurityKind.PERMIT_ALL);
+        if (aTerminal || bTerminal) {
+            return aKinds.equals(bKinds)
+                            && a.rolesAllowed().equals(b.rolesAllowed())
+                            && a.authorizedScopes().equals(b.authorizedScopes())
+                            && a.authorizedMatchAll() == b.authorizedMatchAll()
+                    ? a
+                    : null;
+        }
+
+        boolean aRoles = aKinds.contains(EffectiveSecurityContract.SecurityKind.ROLES_ALLOWED);
+        boolean bRoles = bKinds.contains(EffectiveSecurityContract.SecurityKind.ROLES_ALLOWED);
+        if (aRoles && bRoles && !a.rolesAllowed().equals(b.rolesAllowed())) {
+            return null;
+        }
+        boolean aAuthorized = aKinds.contains(EffectiveSecurityContract.SecurityKind.AUTHORIZED);
+        boolean bAuthorized = bKinds.contains(EffectiveSecurityContract.SecurityKind.AUTHORIZED);
+        if (aAuthorized
+                && bAuthorized
+                && (!a.authorizedScopes().equals(b.authorizedScopes())
+                        || a.authorizedMatchAll() != b.authorizedMatchAll())) {
+            return null;
+        }
+
+        Set<EffectiveSecurityContract.SecurityKind> kinds =
+                EnumSet.noneOf(EffectiveSecurityContract.SecurityKind.class);
+        kinds.addAll(aKinds);
+        kinds.addAll(bKinds);
+        EffectiveSecurityContract authorizedSource = aAuthorized ? a : b;
+        return new EffectiveSecurityContract(
+                Set.copyOf(kinds),
+                aRoles ? a.rolesAllowed() : b.rolesAllowed(),
+                authorizedSource.authorizedScopes(),
+                authorizedSource.authorizedMatchAll());
     }
 
     /**
