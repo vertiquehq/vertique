@@ -35,6 +35,7 @@ import javax.lang.model.element.Modifier;
 import javax.lang.model.element.TypeElement;
 import javax.lang.model.element.VariableElement;
 import javax.lang.model.type.DeclaredType;
+import javax.lang.model.type.ExecutableType;
 import javax.lang.model.type.TypeKind;
 import javax.lang.model.type.TypeMirror;
 import javax.lang.model.type.WildcardType;
@@ -133,23 +134,16 @@ public final class AopProcessor extends AbstractProcessor {
             return false;
         }
 
-        // Identify the aspect trigger annotations available this round (meta-annotated with @Aspect).
-        Set<TypeElement> triggers = new LinkedHashSet<>();
-        for (TypeElement annotation : annotations) {
-            if (annotation.getKind() == ElementKind.ANNOTATION_TYPE && isAspectTrigger(annotation)) {
-                triggers.add(annotation);
-            }
-        }
-        Set<String> aspectFqns = triggers.stream()
-                .map(t -> t.getQualifiedName().toString())
-                .collect(Collectors.toCollection(LinkedHashSet::new));
+        // Aspect trigger FQNs from this round's annotation types plus inherited/interface methods on
+        // classpath types that getElementsAnnotatedWith does not re-report.
+        Set<String> aspectFqns = discoverAspectTriggerFqns(annotations, roundEnv);
 
-        if (!triggers.isEmpty()) {
+        if (!aspectFqns.isEmpty()) {
             // Collect the FQNs of bean types supplied by a user @Provides in this compilation unit.
             Set<String> userProvidedTypes = collectUserProvidedTypes(roundEnv);
 
             // Group aspect-annotated methods by their declaring bean.
-            Map<TypeElement, List<ExecutableElement>> beans = collectBeans(triggers, roundEnv);
+            Map<TypeElement, List<ExecutableElement>> beans = collectBeans(aspectFqns, roundEnv);
             for (Map.Entry<TypeElement, List<ExecutableElement>> entry : beans.entrySet()) {
                 TypeElement bean = entry.getKey();
 
@@ -256,7 +250,7 @@ public final class AopProcessor extends AbstractProcessor {
     private boolean hasUnsupportedFutureReturn(TypeElement bean, List<ExecutableElement> methods) {
         boolean rejected = false;
         for (ExecutableElement method : methods) {
-            TypeMirror returnType = method.getReturnType();
+            TypeMirror returnType = asMemberExecutableType(bean, method).getReturnType();
             if (!(returnType instanceof DeclaredType declared)) {
                 continue;
             }
@@ -427,15 +421,74 @@ public final class AopProcessor extends AbstractProcessor {
      * classpath interfaces that {@link RoundEnvironment#getElementsAnnotatedWith} does not
      * re-report.
      */
+    private Set<String> discoverAspectTriggerFqns(
+            Set<? extends TypeElement> annotations, RoundEnvironment roundEnv) {
+        Set<String> triggerFqns = new LinkedHashSet<>();
+        for (TypeElement annotation : annotations) {
+            if (annotation.getKind() == ElementKind.ANNOTATION_TYPE && isAspectTrigger(annotation)) {
+                triggerFqns.add(annotation.getQualifiedName().toString());
+            }
+        }
+        for (Element root : roundEnv.getRootElements()) {
+            collectAspectTriggerFqnsFromType(root, triggerFqns);
+        }
+        return triggerFqns;
+    }
+
+    private void collectAspectTriggerFqnsFromType(Element element, Set<String> triggerFqns) {
+        if (!(element instanceof TypeElement type)) {
+            return;
+        }
+        if (type.getKind() == ElementKind.CLASS) {
+            for (TypeElement iface : allInterfaces(type)) {
+                for (ExecutableElement method : ElementFilter.methodsIn(iface.getEnclosedElements())) {
+                    collectAspectTriggerFqnsFromElement(method, triggerFqns);
+                }
+            }
+        }
+        for (ExecutableElement method : ElementFilter.methodsIn(type.getEnclosedElements())) {
+            collectAspectTriggerFqnsFromElement(method, triggerFqns);
+        }
+        for (Element enclosed : type.getEnclosedElements()) {
+            if (enclosed.getKind() == ElementKind.CLASS) {
+                collectAspectTriggerFqnsFromType(enclosed, triggerFqns);
+            }
+        }
+    }
+
+    private void collectAspectTriggerFqnsFromElement(Element element, Set<String> triggerFqns) {
+        for (AnnotationMirror mirror : element.getAnnotationMirrors()) {
+            Element annElement = mirror.getAnnotationType().asElement();
+            if (annElement instanceof TypeElement annType && isAspectTrigger(annType)) {
+                triggerFqns.add(annType.getQualifiedName().toString());
+            }
+            for (var entry : mirror.getElementValues().entrySet()) {
+                if (!(entry.getValue().getValue() instanceof List<?> values)) {
+                    continue;
+                }
+                for (Object value : values) {
+                    if (value instanceof javax.lang.model.element.AnnotationValue annotationValue
+                            && annotationValue.getValue() instanceof AnnotationMirror nested) {
+                        Element nestedElement = nested.getAnnotationType().asElement();
+                        if (nestedElement instanceof TypeElement nestedType && isAspectTrigger(nestedType)) {
+                            triggerFqns.add(nestedType.getQualifiedName().toString());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     private Map<TypeElement, List<ExecutableElement>> collectBeans(
-            Set<TypeElement> triggers, RoundEnvironment roundEnv) {
+            Set<String> triggerFqns, RoundEnvironment roundEnv) {
         Map<TypeElement, List<ExecutableElement>> beans = new LinkedHashMap<>();
-        Set<String> triggerFqns = triggers.stream()
-                .map(t -> t.getQualifiedName().toString())
-                .collect(Collectors.toCollection(LinkedHashSet::new));
         // De-duplicate annotated elements that carry more than one trigger type.
         Set<ExecutableElement> seenAnnotated = new LinkedHashSet<>();
-        for (TypeElement trigger : triggers) {
+        for (String triggerFqn : triggerFqns) {
+            TypeElement trigger = ctx.elements().getTypeElement(triggerFqn);
+            if (trigger == null) {
+                continue;
+            }
             for (Element annotated : roundEnv.getElementsAnnotatedWith(trigger)) {
                 if (annotated.getKind() != ElementKind.METHOD) {
                     continue;
@@ -446,11 +499,11 @@ public final class AopProcessor extends AbstractProcessor {
                 }
                 Element enclosing = method.getEnclosingElement();
                 if (enclosing.getKind() == ElementKind.CLASS && enclosing instanceof TypeElement bean) {
-                    addInterceptedMethod(beans, bean, method);
+                    addInterceptedMethod(beans, bean, methodForWeaving(bean, method));
                 } else if (enclosing.getKind() == ElementKind.INTERFACE && enclosing instanceof TypeElement iface) {
                     for (TypeElement impl : implementingClasses(iface, roundEnv)) {
                         if (isConcreteMember(impl, method)) {
-                            addInterceptedMethod(beans, impl, method);
+                            addInterceptedMethod(beans, impl, methodForWeaving(impl, method));
                         }
                     }
                 }
@@ -459,16 +512,7 @@ public final class AopProcessor extends AbstractProcessor {
         // Classpath interface methods are not re-reported by getElementsAnnotatedWith; walk each
         // class root's interface hierarchy so inherited triggers still weave onto the implementor.
         for (Element root : roundEnv.getRootElements()) {
-            if (!(root instanceof TypeElement bean) || bean.getKind() != ElementKind.CLASS) {
-                continue;
-            }
-            for (TypeElement iface : allInterfaces(bean)) {
-                for (ExecutableElement method : ElementFilter.methodsIn(iface.getEnclosedElements())) {
-                    if (hasAspectTrigger(method, triggerFqns) && isConcreteMember(bean, method)) {
-                        addInterceptedMethod(beans, bean, method);
-                    }
-                }
-            }
+            collectInterfaceTriggersFromType(root, triggerFqns, beans);
         }
         // Stable order: class-declared methods by declaration index, then inherited by signature.
         for (Map.Entry<TypeElement, List<ExecutableElement>> e : beans.entrySet()) {
@@ -563,21 +607,72 @@ public final class AopProcessor extends AbstractProcessor {
         return false;
     }
 
+    private void collectInterfaceTriggersFromType(
+            Element element, Set<String> triggerFqns, Map<TypeElement, List<ExecutableElement>> beans) {
+        if (!(element instanceof TypeElement type) || type.getKind() != ElementKind.CLASS) {
+            return;
+        }
+        for (TypeElement iface : allInterfaces(type)) {
+            for (ExecutableElement method : ElementFilter.methodsIn(iface.getEnclosedElements())) {
+                if (hasAspectTrigger(method, triggerFqns) && isConcreteMember(type, method)) {
+                    addInterceptedMethod(beans, type, methodForWeaving(type, method));
+                }
+            }
+        }
+        for (Element enclosed : type.getEnclosedElements()) {
+            if (enclosed.getKind() == ElementKind.CLASS) {
+                collectInterfaceTriggersFromType(enclosed, triggerFqns, beans);
+            }
+        }
+    }
+
     /**
-     * Returns every concrete {@code class} root in the round that is assignable to {@code iface}.
+     * Returns every concrete {@code class} in the round (including nested) that is assignable to
+     * {@code iface}.
      */
     private List<TypeElement> implementingClasses(TypeElement iface, RoundEnvironment roundEnv) {
         List<TypeElement> result = new ArrayList<>();
+        Set<String> seen = new LinkedHashSet<>();
         TypeMirror ifaceType = ctx.types().erasure(iface.asType());
         for (Element root : roundEnv.getRootElements()) {
-            if (!(root instanceof TypeElement type) || type.getKind() != ElementKind.CLASS) {
-                continue;
-            }
-            if (ctx.types().isAssignable(ctx.types().erasure(type.asType()), ifaceType)) {
-                result.add(type);
-            }
+            collectImplementingClasses(root, ifaceType, result, seen);
         }
         return result;
+    }
+
+    private void collectImplementingClasses(
+            Element element, TypeMirror ifaceType, List<TypeElement> result, Set<String> seen) {
+        if (element instanceof TypeElement type && type.getKind() == ElementKind.CLASS) {
+            if (ctx.types().isAssignable(ctx.types().erasure(type.asType()), ifaceType)) {
+                String fqn = type.getQualifiedName().toString();
+                if (seen.add(fqn)) {
+                    result.add(type);
+                }
+            }
+            for (Element enclosed : type.getEnclosedElements()) {
+                if (enclosed.getKind() == ElementKind.CLASS) {
+                    collectImplementingClasses(enclosed, ifaceType, result, seen);
+                }
+            }
+        }
+    }
+
+    /**
+     * Prefers the bean's own override when present; otherwise keeps the interface declaration for
+     * inherited {@code default} methods.
+     */
+    private ExecutableElement methodForWeaving(TypeElement bean, ExecutableElement method) {
+        for (ExecutableElement candidate :
+                ElementFilter.methodsIn(ctx.elements().getAllMembers(bean))) {
+            if (ctx.elements().overrides(candidate, method, bean)) {
+                return candidate;
+            }
+        }
+        return method;
+    }
+
+    private ExecutableType asMemberExecutableType(TypeElement bean, ExecutableElement method) {
+        return (ExecutableType) ctx.types().asMemberOf((DeclaredType) bean.asType(), method);
     }
 
     /**

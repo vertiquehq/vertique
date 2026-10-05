@@ -51,6 +51,24 @@ class InterfaceTriggerMethodWeaveTest {
                 .assertGeneratedSourceContains(IMPL_PROXY_FQN, "super.delete(");
     }
 
+    @Test
+    @DisplayName("a nested implementor of an annotated interface receives a proxy")
+    void weavesOntoNestedImplementor() {
+        ProcessorTestHarness.run(new AopProcessor(), interfaceTrigger(), crudAbstract(), nestedImplementor())
+                .assertSuccess()
+                .assertGeneratedSourceContains("com.example.Container_Bean$AopProxy", "extends Container.Bean")
+                .assertGeneratedSourceContains("com.example.Container_Bean$AopProxy", "super.delete(");
+    }
+
+    @Test
+    @DisplayName("a parameterized interface trigger weaves with specialized member types on the implementor")
+    void weavesGenericInterfaceWithSpecializedSignature() {
+        ProcessorTestHarness.run(new AopProcessor(), interfaceTrigger(), genericContract(), genericBean())
+                .assertSuccess()
+                .assertGeneratedSourceContains("com.example.GenericBean$AopProxy", "Future<String> echo(String value)")
+                .assertGeneratedSourceContains("com.example.GenericBean$AopProxy", "super.echo(");
+    }
+
     private static javax.tools.JavaFileObject interfaceTrigger() {
         return SourceFiles.inline("com.example.InterfaceTrigger", """
                 package com.example;
@@ -108,6 +126,48 @@ class InterfaceTriggerMethodWeaveTest {
                 public class UserResource implements Crud {
                     @Inject
                     public UserResource() {}
+                }
+                """);
+    }
+
+    private static javax.tools.JavaFileObject nestedImplementor() {
+        return SourceFiles.inline("com.example.Container", """
+                package com.example;
+                import io.vertx.core.Future;
+                import jakarta.inject.Inject;
+                public class Container {
+                    public static class Bean implements Crud {
+                        @Inject
+                        public Bean() {}
+                        @Override
+                        public Future<String> delete(String id) {
+                            return Future.succeededFuture(id);
+                        }
+                    }
+                }
+                """);
+    }
+
+    private static javax.tools.JavaFileObject genericContract() {
+        return SourceFiles.inline("com.example.GenericContract", """
+                package com.example;
+                import io.vertx.core.Future;
+                public interface GenericContract<T> {
+                    @InterfaceTrigger
+                    default Future<T> echo(T value) {
+                        return Future.succeededFuture(value);
+                    }
+                }
+                """);
+    }
+
+    private static javax.tools.JavaFileObject genericBean() {
+        return SourceFiles.inline("com.example.GenericBean", """
+                package com.example;
+                import jakarta.inject.Inject;
+                public class GenericBean implements GenericContract<String> {
+                    @Inject
+                    public GenericBean() {}
                 }
                 """);
     }
