@@ -41,7 +41,7 @@ finer-grained attribution is required.
 | `org.slf4j:slf4j-api` | 2.0.17 | MIT | |
 | `com.github.ben-manes.caffeine:caffeine` | 3.2.4 | Apache-2.0 | |
 | `com.bucket4j:bucket4j_jdk17-core` / `bucket4j_jdk17-vertx` | 8.19.0 | Apache-2.0 | Isolated to `vertique-rate-limit-core`/`-redis` |
-| `org.flywaydb:flyway-core` / `flyway-database-postgresql` | 12.0.2 | Apache-2.0 | Community edition; Redgate's paid-tier features are license-key gated but do not change this artifact's license |
+| `org.flywaydb:flyway-core` / `flyway-database-postgresql` | 13.9.0 | Apache-2.0 | Community edition; Redgate's paid-tier features are license-key gated but do not change this artifact's license |
 | `org.postgresql:postgresql` | 42.7.13 | BSD-2-Clause | |
 | `org.apache.avro:avro` | 1.12.1 | Apache-2.0 | |
 | `io.apicurio:apicurio-registry-avro-serde-kafka` | 3.3.3 | Apache-2.0 | |
