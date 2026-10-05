@@ -77,7 +77,7 @@ public final class CacheAnnotationProcessor extends AbstractProcessor {
                     error(element, "@Cacheable and @CacheEvict must be declared on different methods");
                     continue;
                 }
-                proxyabilityValidator.validate((ExecutableElement) element);
+                validateCacheProxyability((ExecutableElement) element);
                 for (EvictionDeclaration declaration : evictionDeclarations(element)) {
                     if (declaration.clear() && declaration.keyExplicit()) {
                         error(element, "cache eviction must specify exactly one of clear=true or an explicit key");
@@ -97,7 +97,7 @@ public final class CacheAnnotationProcessor extends AbstractProcessor {
     }
 
     private void validateMethod(ExecutableElement method, String[] paths, boolean resultRequired) {
-        proxyabilityValidator.validate(method);
+        validateCacheProxyability(method);
         if (resultRequired && method.getReturnType().getKind() == TypeKind.VOID) {
             error(method, "@Cacheable methods must return a value");
         }
@@ -106,6 +106,18 @@ public final class CacheAnnotationProcessor extends AbstractProcessor {
         }
         validateRestResult(method);
         validateSelector(method, paths);
+    }
+
+    /**
+     * Cache annotations must stay on concrete class methods even though shared AOP proxyability
+     * now allows interface-hosted aspect triggers.
+     */
+    private void validateCacheProxyability(ExecutableElement method) {
+        if (method.getEnclosingElement().getKind() == ElementKind.INTERFACE) {
+            error(method, "cache annotations must be declared on concrete class methods");
+            return;
+        }
+        proxyabilityValidator.validate(method);
     }
 
     private void validateSelector(ExecutableElement method, String[] paths) {
