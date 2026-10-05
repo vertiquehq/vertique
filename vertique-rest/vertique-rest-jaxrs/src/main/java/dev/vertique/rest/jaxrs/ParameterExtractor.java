@@ -141,18 +141,28 @@ final class ParameterExtractor {
     private final String resourceMethodName;
 
     /**
-     * Per-bean-type cache of effective input policies for {@code @BeanParam} field arrays
-     * passed through {@link #materializeBean}. The route-level baseline is constant for the
-     * lifetime of this {@code ParameterExtractor} instance (one per route), so caching by
-     * {@code Class<?>} is sound: the same bean type always produces the same per-field policy
-     * array under the same route baseline. Without this cache, a route that materialises a
-     * bean with N fields on every request would re-walk N annotation lists per request.
+     * Cache of effective per-field input policies for {@code @BeanParam} materialization. Keyed by
+     * bean class <em>and</em> the parameter's effective baseline: two {@code @BeanParam} parameters
+     * of the same type on one route can declare different baselines ({@code @Sanitize} vs
+     * {@code @SkipSanitization}), so a class-only key would permanently reuse the first parameter's
+     * resolved field policies for the second. Without this cache, a route that materialises a bean
+     * with N fields on every request would re-walk N annotation lists per request.
      *
      * <p>Warmed at construction by {@link #warmBeanFieldPolicies} for every {@code BEAN_PARAM}
      * parameter this route declares, so a conflicting field declaration surfaces while the route is
      * being registered instead of on the first request that materialises the bean.
      */
-    private final Map<Class<?>, EffectiveInputPolicies[]> beanFieldPoliciesCache = new ConcurrentHashMap<>();
+    private final Map<BeanFieldPolicyKey, EffectiveInputPolicies[]> beanFieldPoliciesCache =
+            new ConcurrentHashMap<>();
+
+    /**
+     * Cache key pairing a {@code @BeanParam} bean class with the invocation-policy baseline used to
+     * derive its per-field chains.
+     *
+     * @param beanType the bean class whose fields were resolved
+     * @param baseline the {@code @BeanParam} parameter's effective policies (route plus parameter-level)
+     */
+    private record BeanFieldPolicyKey(Class<?> beanType, EffectiveInputPolicies baseline) {}
 
     /**
      * Route-scoped cache of the scalar {@link ConversionContext} for each parameter, keyed by the
@@ -1490,7 +1500,9 @@ final class ParameterExtractor {
             // Seed with this @BeanParam parameter's own resolved policies (route + param-level),
             // matching extractArguments / materializeBean — not the bare route chains alone.
             EffectiveInputPolicies baseline = cachedParamPolicies[i];
-            beanFieldPoliciesCache.computeIfAbsent(beanType, t -> resolveBeanFieldPolicies(t, fields, baseline));
+            BeanFieldPolicyKey key = new BeanFieldPolicyKey(beanType, baseline);
+            beanFieldPoliciesCache.computeIfAbsent(
+                    key, k -> resolveBeanFieldPolicies(k.beanType(), fields, k.baseline()));
         }
     }
 
@@ -1505,18 +1517,19 @@ final class ParameterExtractor {
      * the generated-companion path, maintaining parity with the reflective path.
      *
      * <p>The overall processing contract is identical to {@link #extractBeanParam}: per-field
-     * extraction happens first, then the assembled intermediate {@link LinkedHashMap} is submitted
-     * to the {@link dev.vertique.input.processing.InputObjectProcessor} with {@code routePolicies}
-     * before final Jackson conversion.
+     * extraction happens first (applying the parameter baseline and field overrides), then the
+     * assembled intermediate {@link LinkedHashMap} is submitted to the
+     * {@link dev.vertique.input.processing.InputObjectProcessor} when the bean type declares
+     * object-level policies — with {@link EffectiveInputPolicies#NONE} so invocation chains are
+     * not applied twice.
      *
      * @param fields           ordered array of bean field metadata; must not be {@code null};
      *                         each {@code meta().annotations()} should carry the field's declared
      *                         annotations so per-field policies can be derived
-     * @param routePolicies    baseline policies for per-field derivation and the intermediate-map
-     *                         processing step — the {@code @BeanParam} parameter's own resolved
-     *                         chain (route plus parameter-level annotations) on both the reflective
-     *                         and generated paths; pass {@link EffectiveInputPolicies#NONE} for
-     *                         empty chains
+     * @param routePolicies    baseline policies for per-field derivation — the {@code @BeanParam}
+     *                         parameter's own resolved chain (route plus parameter-level annotations)
+     *                         on both the reflective and generated paths; pass
+     *                         {@link EffectiveInputPolicies#NONE} for empty chains
      * @param boundRequest     the bound request exposing parameter values as {@link RequestValue}s
      * @param ctx              the routing context (for form params)
      * @param beanType         the bean class to materialise via Jackson
@@ -1528,8 +1541,9 @@ final class ParameterExtractor {
             BoundRequest boundRequest,
             RoutingContext ctx,
             Class<?> beanType) {
+        BeanFieldPolicyKey key = new BeanFieldPolicyKey(beanType, routePolicies);
         EffectiveInputPolicies[] perFieldPolicies = beanFieldPoliciesCache.computeIfAbsent(
-                beanType, t -> resolveBeanFieldPolicies(t, fields, routePolicies));
+                key, k -> resolveBeanFieldPolicies(k.beanType(), fields, k.baseline()));
         // A length match is sufficient (not just necessary) to trust index-for-index correspondence:
         // both the cached array and fields derive from the same bean-param companion's field list, in
         // the same declaration order.
@@ -1555,10 +1569,19 @@ final class ParameterExtractor {
             }
         }
 
-        // Apply route-level input processing to the intermediate map before materialization
-        if (objectProcessor != null && !routePolicies.isEmpty()) {
+        // Per-field extraction already applied the parameter/route baseline and field overrides.
+        // Do not re-submit those invocation chains here — that would double-apply additive
+        // sanitizers/canonicalizers. Still submit when the bean type itself declares object-level
+        // @Sanitize/@Canonicalize: EffectiveInputPolicies.isEmpty() only describes the invocation
+        // baseline, and gating on it drops type-only metadata (issue #533 review W2). Pass NONE so
+        // the walk applies type metadata without replaying the invocation chains.
+        if (objectProcessor != null && declaresObjectLevelInputPolicies(beanType)) {
             Object processed = objectProcessor.processInput(
-                    values, beanType, routePolicies, InputLocation.BEAN_PARAM, InputFieldNameResolver.IDENTITY);
+                    values,
+                    beanType,
+                    EffectiveInputPolicies.NONE,
+                    InputLocation.BEAN_PARAM,
+                    InputFieldNameResolver.IDENTITY);
             if (processed instanceof Map<?, ?> processedMap) {
                 values = new LinkedHashMap<>();
                 for (Map.Entry<?, ?> entry : processedMap.entrySet()) {
@@ -1569,6 +1592,18 @@ final class ParameterExtractor {
         }
 
         return VertiqueJson.mapper().convertValue(values, beanType);
+    }
+
+    /**
+     * Returns whether {@code beanType} declares an object-level {@code @Sanitize} or
+     * {@code @Canonicalize} (not merely field-level or skip annotations).
+     *
+     * @param beanType the {@code @BeanParam} target class
+     * @return {@code true} when type-level additive processing must still run after per-field extraction
+     */
+    private static boolean declaresObjectLevelInputPolicies(Class<?> beanType) {
+        return AnnotationResolver.findMetaAnnotation(beanType, Sanitize.class) != null
+                || AnnotationResolver.findMetaAnnotation(beanType, Canonicalize.class) != null;
     }
 
     /**

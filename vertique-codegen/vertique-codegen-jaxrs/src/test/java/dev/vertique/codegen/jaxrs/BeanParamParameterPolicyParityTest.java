@@ -62,4 +62,54 @@ class BeanParamParameterPolicyParityTest {
         result.assertGeneratedSourceContains(planFqn, "POL0,");
         result.assertGeneratedSourceDoesNotContain(planFqn, "ROUTE_POL");
     }
+
+    @Test
+    @DisplayName("two same-class @BeanParam baselines emit distinct POL0 and POL1")
+    void dualBeanParamBaselines_emitDistinctPolConstants() {
+        var result = ProcessorTestHarness.run(
+                new JaxRsPipelineProcessor(),
+                SourceFiles.inline("dev.vertique.test.bpp.PlainBean", """
+                        package dev.vertique.test.bpp;
+
+                        import jakarta.ws.rs.QueryParam;
+
+                        public class PlainBean {
+                            @QueryParam("page")
+                            public String page;
+                        }
+                        """),
+                SourceFiles.inline("dev.vertique.test.bpp.DualBeanParamResource", """
+                        package dev.vertique.test.bpp;
+
+                        import dev.vertique.core.sanitization.Sanitize;
+                        import dev.vertique.core.sanitization.SkipSanitization;
+                        import dev.vertique.input.processing.testkit.B;
+                        import jakarta.annotation.security.PermitAll;
+                        import jakarta.ws.rs.BeanParam;
+                        import jakarta.ws.rs.GET;
+                        import jakarta.ws.rs.Path;
+
+                        @Path("/dual-bpp")
+                        @PermitAll
+                        public class DualBeanParamResource {
+                            public DualBeanParamResource() {}
+
+                            @GET
+                            public String search(
+                                    @BeanParam @Sanitize(B.class) PlainBean sanitized,
+                                    @BeanParam @SkipSanitization PlainBean skipped) {
+                                return sanitized.page + ":" + skipped.page;
+                            }
+                        }
+                        """));
+
+        result.assertSuccess();
+        String planFqn = "dev.vertique.test.bpp.DualBeanParamResource_search_0_ExecutionPlan";
+        result.assertGeneratedSourceContains(
+                planFqn, PolicyLiteralAssertions.effectiveInputPolicies(List.of(), List.of("B")));
+        result.assertGeneratedSourceContains(planFqn, "POL0,");
+        result.assertGeneratedSourceContains(planFqn, "POL1,");
+        result.assertGeneratedSourceContains(planFqn, "EffectiveInputPolicies.NONE");
+        result.assertGeneratedSourceDoesNotContain(planFqn, "ROUTE_POL");
+    }
 }

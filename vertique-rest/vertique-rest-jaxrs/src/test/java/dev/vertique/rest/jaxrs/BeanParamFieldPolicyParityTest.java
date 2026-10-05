@@ -152,6 +152,43 @@ class BeanParamFieldPolicyParityTest {
         public void search(@BeanParam @Sanitize(StubSanit.class) PlainBean bean) {}
     }
 
+    /** Sanitizer that prefixes {@code clean:} — used by real-engine regression probes. */
+    static final class PrefixSanitizer implements Sanitizer {
+        @Override
+        public String sanitize(String value, InputValueContext ctx) {
+            return value == null ? null : "clean:" + value;
+        }
+    }
+
+    /** Bean with a type-level {@code @Sanitize} and no field-level / parameter-level policy. */
+    @Sanitize(PrefixSanitizer.class)
+    static class TypeSanitizedBean {
+        @QueryParam("page")
+        public String page;
+    }
+
+    @Path("/type-sanitized-bean")
+    static class TypeSanitizedBeanResource {
+        @GET
+        public void search(@BeanParam TypeSanitizedBean bean) {}
+    }
+
+    @Path("/dual-sanitize-then-skip")
+    static class DualSanitizeThenSkipResource {
+        @GET
+        public void search(
+                @BeanParam @Sanitize(PrefixSanitizer.class) PlainBean sanitized,
+                @BeanParam @SkipSanitization PlainBean skipped) {}
+    }
+
+    @Path("/dual-skip-then-sanitize")
+    static class DualSkipThenSanitizeResource {
+        @GET
+        public void search(
+                @BeanParam @SkipSanitization PlainBean skipped,
+                @BeanParam @Sanitize(PrefixSanitizer.class) PlainBean sanitized) {}
+    }
+
     // --- Tests ---
 
     @Nested
@@ -340,14 +377,18 @@ class BeanParamFieldPolicyParityTest {
             assertTrue(fieldPolicies.isPresent(), "plain field must inherit the @BeanParam parameter sanitize chain");
             assertEquals(List.of(StubSanit.class), fieldPolicies.get().sanitizers());
 
+            // PlainBean declares no object-level policies — the intermediate map is not re-submitted
+            // (invocation chains already applied per-field; replaying them would double-apply).
             Optional<EffectiveInputPolicies> beanPolicies =
                     capturePerFieldPolicies(processor, InputLocation.BEAN_PARAM);
-            assertTrue(beanPolicies.isPresent(), "intermediate map must use the @BeanParam parameter policies");
-            assertEquals(List.of(StubSanit.class), beanPolicies.get().sanitizers());
+            assertTrue(
+                    beanPolicies.isEmpty(),
+                    "intermediate map must not replay the parameter sanitize chain when the bean "
+                            + "type has no object-level policies");
         }
 
         @Test
-        @DisplayName("codegen materializeBean: same baseline as reflective — [StubSanit] reaches the field and map")
+        @DisplayName("codegen materializeBean: same baseline as reflective — [StubSanit] reaches the field")
         void codegen_parameterSanitize_baselineMatchesReflective() throws Exception {
             // Direct materializeBean call with the parameter's resolved policies (what POL_i carries).
             EffectiveInputPolicies paramPolicies = new EffectiveInputPolicies(List.of(), List.of(StubSanit.class));
@@ -371,8 +412,74 @@ class BeanParamFieldPolicyParityTest {
 
             Optional<EffectiveInputPolicies> beanPolicies =
                     capturePerFieldPolicies(processor, InputLocation.BEAN_PARAM);
-            assertTrue(beanPolicies.isPresent());
-            assertEquals(List.of(StubSanit.class), beanPolicies.get().sanitizers());
+            assertTrue(beanPolicies.isEmpty(), "PlainBean has no object-level policies — map stage skipped");
+        }
+    }
+
+    @Nested
+    @DisplayName("real-engine regressions — cache isolation and type-only metadata (#533 review)")
+    class RealEngineRegressions {
+
+        @Test
+        @DisplayName("two same-class @BeanParam baselines stay isolated (sanitize then skip)")
+        void dualBeanParams_sanitizeThenSkip_isolated() throws Exception {
+            Object[] args = extractWithRealEngine(new DualSanitizeThenSkipResource(), "raw");
+            PlainBean sanitized = (PlainBean) args[0];
+            PlainBean skipped = (PlainBean) args[1];
+            assertEquals("clean:raw", sanitized.page, "first parameter's @Sanitize must apply");
+            assertEquals("raw", skipped.page, "second parameter's @SkipSanitization must not reuse the first baseline");
+        }
+
+        @Test
+        @DisplayName("two same-class @BeanParam baselines stay isolated (skip then sanitize)")
+        void dualBeanParams_skipThenSanitize_isolated() throws Exception {
+            Object[] args = extractWithRealEngine(new DualSkipThenSanitizeResource(), "raw");
+            PlainBean skipped = (PlainBean) args[0];
+            PlainBean sanitized = (PlainBean) args[1];
+            assertEquals("raw", skipped.page, "first parameter's @SkipSanitization must apply");
+            assertEquals("clean:raw", sanitized.page, "second parameter's @Sanitize must not reuse the first baseline");
+        }
+
+        @Test
+        @DisplayName("type-only @Sanitize still runs when the @BeanParam parameter has an empty invocation chain")
+        void typeOnlySanitize_emptyInvocationBaseline_stillProcesses() throws Exception {
+            Object[] args = extractWithRealEngine(new TypeSanitizedBeanResource(), "raw");
+            TypeSanitizedBean bean = (TypeSanitizedBean) args[0];
+            assertEquals("clean:raw", bean.page, "bean-type @Sanitize must run even with EffectiveInputPolicies.NONE");
+        }
+
+        @Test
+        @DisplayName("policy-free control bean is unchanged when no type or invocation chain is declared")
+        void policyFreeControl_unchanged() throws Exception {
+            @Path("/plain")
+            class PlainResource {
+                @GET
+                public void search(@BeanParam PlainBean bean) {}
+            }
+            Object[] args = extractWithRealEngine(new PlainResource(), "raw");
+            PlainBean bean = (PlainBean) args[0];
+            assertEquals("raw", bean.page);
+        }
+
+        private static Object[] extractWithRealEngine(Object resource, String pageValue) {
+            List<ResourceMethodMeta> metas =
+                    new ResourceScanner(new SecurityPolicyBuilder()).scanResource(resource);
+            assertEquals(1, metas.size());
+            ResourceMethodMeta meta = metas.get(0);
+            InputObjectProcessor processor = InputObjectProcessor.createDefault(
+                    type -> {
+                        throw new AssertionError("no canonicalizer declared: " + type);
+                    },
+                    type -> {
+                        if (type == PrefixSanitizer.class) {
+                            return new PrefixSanitizer();
+                        }
+                        throw new AssertionError("unresolvable sanitizer: " + type);
+                    });
+            ParameterExtractor extractor =
+                    new ParameterExtractor(meta, List.of(), new RestContextResolution(Set.of()), processor);
+            BoundRequest request = stubBoundRequestWithQuery("page", pageValue);
+            return extractor.extractArguments(mock(RoutingContext.class), request);
         }
     }
 
