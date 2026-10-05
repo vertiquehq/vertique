@@ -80,4 +80,27 @@ class InvocationOriginPolicyTest {
 
         assertTrue(decision.permitted(), "a rest-origin request must be permitted by the policy");
     }
+
+    /**
+     * A policy that allowlists only interactive REST — the shape an origin-aware narrower must use
+     * after DEF-007 so {@link InvocationOrigin#unspecified()} does not inherit REST allowances.
+     */
+    private static final AuthorizationPolicy REST_ALLOWLIST_POLICY =
+            request -> "rest".equals(request.origin().kind())
+                    ? AuthorizationDecision.permit("INTERACTIVE_ORIGIN")
+                    : AuthorizationDecision.deny("NON_INTERACTIVE_ORIGIN");
+
+    @Test
+    @DisplayName("restAllowlistDeniesUnspecified: InvocationOrigin.unspecified() must not inherit REST allowances")
+    void restAllowlistDeniesUnspecified() {
+        AuthorizationRequest unspecifiedRequest =
+                new AuthorizationRequest(STUB_CTX, "READ", STUB_RESOURCE, InvocationOrigin.unspecified(), Map.of());
+
+        AuthorizationDecision decision = REST_ALLOWLIST_POLICY.decide(unspecifiedRequest);
+
+        assertFalse(
+                decision.permitted(),
+                "an unspecified-origin request must be denied by a REST-allowlist policy — never treated"
+                        + " as privileged rest ingress");
+    }
 }
