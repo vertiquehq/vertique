@@ -524,21 +524,14 @@ do not drift.
 | `CLIENT_ID` | `clientId` | identity resolution in `vertique-rest-security` |
 | `AUTH_METHOD` | `authMethod` | identity resolution in `vertique-rest-security` |
 
-### `@Authorized`
+### `@Authorized` ownership
 
-Scope-based authorization, complementing JAX-RS `@RolesAllowed`. Valid on a method or a type;
-method-level overrides class-level.
-
-```java
-public @interface Authorized {
-    String[] scopes() default {};   // empty = authentication only
-    boolean matchAll() default true;
-}
-```
-
-**`matchAll` defaults to `true`** — the principal must hold *every* listed scope. Set
-`matchAll = false` for any-of semantics. Combining `@Authorized` with `@RolesAllowed` is AND: both
-must pass.
+The `@Authorized` annotation is now owned by `vertique-security-core` as
+`dev.vertique.security.authz.Authorized`; use that import for supported REST and WebSocket
+declarations. Its existing scope matching and role-composition behavior is unchanged. This
+owner-authorized 0.x move is a source and binary break for the former
+`dev.vertique.rest.core.security.Authorized` import. No deprecated REST alias is provided; update
+imports and clean-rebuild with aligned framework and processor versions.
 
 The resolved shape is a `SecurityPolicy` — a sealed interface with `None`, `PermitAll`, `DenyAll`,
 `AuthenticatedOnly`, and `Constrained(requiredRoles, requiredScopes, requireAllScopes)` — reachable

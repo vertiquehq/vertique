@@ -4,6 +4,7 @@
 package dev.vertique.rest.core.security;
 
 import dev.vertique.core.util.AnnotationResolver;
+import dev.vertique.security.authz.Authorized;
 import jakarta.annotation.Nullable;
 import jakarta.annotation.security.DenyAll;
 import jakarta.annotation.security.PermitAll;

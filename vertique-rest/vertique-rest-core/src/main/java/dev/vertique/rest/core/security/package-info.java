@@ -11,8 +11,8 @@
  * {@link dev.vertique.rest.core.security.SecurityRuntime} is the DI-managed service for
  * accessing and storing the per-request {@link dev.vertique.security.SecurityContext}.
  *
- * <p>Authorization is declared via the {@link dev.vertique.rest.core.security.Authorized}
- * annotation on JAX-RS resource methods and enforced by
+ * <p>Authorization is declared via the {@link dev.vertique.security.authz.Authorized}
+ * annotation on supported resource methods and enforced by
  * {@link dev.vertique.rest.core.security.SecurityPolicyValidator}, which evaluates
  * {@link dev.vertique.rest.core.security.SecurityPolicy} implementations and throws
  * {@link dev.vertique.rest.core.security.SecurityPolicyViolationException} (wrapping a

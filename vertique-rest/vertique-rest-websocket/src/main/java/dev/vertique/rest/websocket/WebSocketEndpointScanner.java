@@ -5,13 +5,13 @@ package dev.vertique.rest.websocket;
 
 import dev.vertique.core.exception.ConfigurationException;
 import dev.vertique.rest.core.security.AnnotationSecurityPolicyResolver;
-import dev.vertique.rest.core.security.Authorized;
 import dev.vertique.rest.core.security.RequiresActionResolver;
 import dev.vertique.rest.core.security.SecurityPolicy;
 import dev.vertique.rest.core.security.SecurityPolicyResolver;
 import dev.vertique.security.SecurityContext;
 import dev.vertique.security.authz.ActionRef;
 import dev.vertique.security.authz.ActionRegistry;
+import dev.vertique.security.authz.Authorized;
 import dev.vertique.security.authz.RequiresAction;
 import io.vertx.core.Future;
 import io.vertx.core.buffer.Buffer;

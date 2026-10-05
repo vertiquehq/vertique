@@ -8,11 +8,11 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 
 import dev.vertique.codegen.test.ProcessorTestHarness;
 import dev.vertique.codegen.test.fixtures.SourceFiles;
-import dev.vertique.rest.core.security.Authorized;
 import dev.vertique.rest.core.security.SecurityPolicy;
 import dev.vertique.rest.jaxrs.JaxRsRouteRegistrar;
 import dev.vertique.rest.jaxrs.ResourceMethodMeta;
 import dev.vertique.rest.jaxrs.runtime.GeneratedJaxRsDescriptorSupport;
+import dev.vertique.security.authz.Authorized;
 import jakarta.annotation.security.RolesAllowed;
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.Path;
@@ -127,7 +127,7 @@ class GeneratedSecurityPolicyParityTest {
                 new JaxRsPipelineProcessor(), SourceFiles.inline(fqn, """
                 package %s;
 
-                import dev.vertique.rest.core.security.Authorized;
+                import dev.vertique.security.authz.Authorized;
                 import jakarta.annotation.security.RolesAllowed;
                 import jakarta.ws.rs.GET;
                 import jakarta.ws.rs.Path;

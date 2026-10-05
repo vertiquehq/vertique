@@ -357,6 +357,9 @@ substrate. They are public because sibling framework processors in other artifac
 package boundaries, and their Javadoc marks them INTERNAL. They are outside this module's
 compatibility promise.
 
+Within this internal namespace, `JaxRsAnnotations.AUTHORIZED` identifies
+`dev.vertique.security.authz.Authorized`, owned by `vertique-security-core`.
+
 What this module promises an application is the wiring annotations above and the Dagger graph they
 generate: the binding kind, scope, qualifier and set membership, whether a conditioned binding is
 present, where generated artifacts are named and placed, and that a violation fails the build.

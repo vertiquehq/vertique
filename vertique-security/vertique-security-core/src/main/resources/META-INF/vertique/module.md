@@ -23,6 +23,7 @@ Include `vertique-security-core` when a module needs to:
 - Read the typed security model from a `SecurityContext` (identity, authentication state, authorization claims, network origin)
 - Implement a custom `SecurityIdentityResolver`, `Authorizer`, `PolicyDefinitionSource`, `RolePolicyResolver`, `ActionContributor`, `AuthorizationNarrower`, `DelegationGrantValidator`, `PrincipalAuthorityResolver`, or `ChannelIdentityManager`
 - Declare or reference an `ActionRef` for `@RequiresAction` enforcement
+- Declare authentication and scope requirements with `@Authorized` on supported framework surfaces
 - Observe security lifecycle events by implementing `SecurityEventObserver`
 - Embed a `VerificationSource` discriminator in a credential-accepted event
 
@@ -433,6 +434,19 @@ public @interface RequiresAction {
 **AND-composition:** `@RequiresAction` AND-composes with `@RolesAllowed` and `@Authorized` — both the role/scope gate and the action gate must pass. Combining with `@PermitAll` or `@DenyAll` is a conflict rejected at compile time and at startup.
 
 **Fail-closed invariant:** any surface that does not enforce `@RequiresAction` must reject its presence at startup. An unenforceable annotation is a startup error, never silently ignored.
+
+### @Authorized
+
+`@Authorized` declares an authentication and scope requirement on a type or method. Empty scopes
+require authentication only; with scopes present, `matchAll` selects all-of (the default) or any-of
+matching. A method-level declaration overrides a type-level declaration on surfaces that support it.
+
+The annotation is now owned by `vertique-security-core` as
+`dev.vertique.security.authz.Authorized`; REST and WebSocket consumers retain the existing inline
+semantics. Moving it from `vertique-rest-core` is an owner-authorized source and binary break for
+old imports, without a deprecated REST alias. Applications must update imports and clean-rebuild
+with aligned framework and processor versions. Other transports do not gain inline support from the
+relocation alone.
 
 ---
 
