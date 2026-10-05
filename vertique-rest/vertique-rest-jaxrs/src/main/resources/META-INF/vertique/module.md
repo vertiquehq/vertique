@@ -896,6 +896,8 @@ setters are single-slot: replacing them cuts off every routing-context end handl
 including completion emission and `RequestContextLifecycle` cleanup. Application code that needs to
 observe the request ending must register through `addEndHandler` or
 `RequestContextLifecycle.Handle.onClose` — never through those three response setters.
+The disconnect callback isolates failures: if a custom `ReadStream` throws while being cancelled, the
+exception is logged and completion emission and lifecycle cleanup still run exactly once.
 
 Each event is written as lines terminated by `\n`, followed by a blank line:
 

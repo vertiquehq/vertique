@@ -221,8 +221,14 @@ class SseReadStream implements ReadStream<Buffer> {
         }
         log.debug("SSE client disconnected");
         cancelKeepAlive();
-        // Cancel the source stream — triggers DefaultSseChannel.onClose callbacks
-        source.handler(null);
+        // Cancel the source stream — triggers DefaultSseChannel.onClose callbacks. A custom
+        // ReadStream may throw here; isolate it so terminal delivery still runs and this callback
+        // returns normally to Vert.x Web's end-handler fan-out (completion, lifecycle cleanup).
+        try {
+            source.handler(null);
+        } catch (Exception e) {
+            log.warn("SSE source cancellation threw on client disconnect", e);
+        }
         fireEndHandler();
     }
 
@@ -250,12 +256,20 @@ class SseReadStream implements ReadStream<Buffer> {
         return true;
     }
 
-    /** Fires {@link #endHandler} once, if registered. */
+    /**
+     * Fires {@link #endHandler} once, if registered. A thrown {@link Exception} is logged rather
+     * than propagated so earlier and later Vert.x end handlers keep running; fatal
+     * {@link Error}s are left to propagate.
+     */
     private void fireEndHandler() {
         Handler<Void> handler = endHandler;
         endHandler = null;
         if (handler != null) {
-            handler.handle(null);
+            try {
+                handler.handle(null);
+            } catch (Exception e) {
+                log.warn("SSE end handler threw", e);
+            }
         }
     }
 

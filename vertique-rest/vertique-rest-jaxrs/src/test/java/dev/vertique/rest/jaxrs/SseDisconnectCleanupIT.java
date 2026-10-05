@@ -16,6 +16,7 @@ import dev.vertique.rest.core.sse.BufferOverflowPolicy;
 import dev.vertique.rest.core.sse.SseEvent;
 import dev.vertique.rest.jaxrs.validation.NoneValidationStrategy;
 import io.swagger.v3.oas.annotations.Operation;
+import io.vertx.core.Handler;
 import io.vertx.core.Vertx;
 import io.vertx.core.http.HttpServer;
 import io.vertx.core.streams.ReadStream;
@@ -78,6 +79,9 @@ public class SseDisconnectCleanupIT {
     /** Request path served by {@link SseResource}. */
     private static final String STREAM_PATH = "/sse/stream";
 
+    /** Request path whose source stream throws when the SSE adapter cancels it on disconnect. */
+    private static final String THROWING_CANCEL_PATH = "/sse/stream-throwing-cancel";
+
     // --- Class-scoped resources ---
 
     private static Vertx vertx;
@@ -114,6 +118,23 @@ public class SseDisconnectCleanupIT {
     @Test
     @DisplayName("An SSE client disconnect mid-stream emits one completion and closes the request lifecycle")
     void shouldEmitCompletionAndCloseLifecycleWhenSseClientDisconnects() throws Exception {
+        assertDisconnectEmitsOneCompletionAndOneLifecycleClose(STREAM_PATH);
+    }
+
+    @Test
+    @DisplayName("An SSE disconnect whose source cancellation throws still emits one completion and one close")
+    void shouldEmitCompletionAndCloseLifecycleWhenSourceCancellationThrows() throws Exception {
+        assertDisconnectEmitsOneCompletionAndOneLifecycleClose(THROWING_CANCEL_PATH);
+    }
+
+    /**
+     * Drives a hard client reset against {@code path} and asserts exactly one completion event and
+     * one lifecycle close.
+     *
+     * @param path the SSE resource path to connect to
+     * @throws Exception if any asynchronous step fails or times out
+     */
+    private void assertDisconnectEmitsOneCompletionAndOneLifecycleClose(String path) throws Exception {
         CompletableFuture<Void> firstEventSent = new CompletableFuture<>();
         CompletableFuture<Void> lifecycleClosed = new CompletableFuture<>();
         List<RestRequestCompletedEvent> completed = new CopyOnWriteArrayList<>();
@@ -123,7 +144,7 @@ public class SseDisconnectCleanupIT {
 
         try (Socket socket = new Socket(LOOPBACK, port)) {
             socket.setSoTimeout((int) TimeUnit.SECONDS.toMillis(ASYNC_TIMEOUT_SECONDS));
-            writeRawGetRequest(socket, STREAM_PATH);
+            writeRawGetRequest(socket, path);
 
             int firstBodyByte = readFirstResponseBodyByte(socket);
             assertTrue(firstBodyByte >= 0, "the client must receive SSE body bytes before the disconnect");
@@ -319,6 +340,69 @@ public class SseDisconnectCleanupIT {
                     new DefaultSseChannel(Vertx.currentContext().owner(), 16, BufferOverflowPolicy.FAIL);
             channel.send(SseEvent.of("ping")).onSuccess(v -> firstEventSent.complete(null));
             return channel.stream();
+        }
+
+        /**
+         * Opens a hanging SSE stream whose {@code handler(null)} cancellation throws, modelling a
+         * custom {@link ReadStream} with a faulty cancel path.
+         *
+         * @return the open SSE event stream with a throwing cancellation
+         */
+        @GET
+        @Path("/stream-throwing-cancel")
+        @Produces("text/event-stream")
+        @Operation(operationId = "getSseStreamThrowingCancel")
+        public ReadStream<SseEvent> streamThrowingCancel() {
+            return new ThrowingCancelStream(stream());
+        }
+    }
+
+    /** Delegating {@link ReadStream} whose {@code handler(null)} cancellation always throws. */
+    private static final class ThrowingCancelStream implements ReadStream<SseEvent> {
+
+        private final ReadStream<SseEvent> delegate;
+
+        ThrowingCancelStream(ReadStream<SseEvent> delegate) {
+            this.delegate = delegate;
+        }
+
+        @Override
+        public ReadStream<SseEvent> exceptionHandler(Handler<Throwable> handler) {
+            delegate.exceptionHandler(handler);
+            return this;
+        }
+
+        @Override
+        public ReadStream<SseEvent> handler(Handler<SseEvent> handler) {
+            if (handler == null) {
+                throw new IllegalStateException("custom stream cancellation failed");
+            }
+            delegate.handler(handler);
+            return this;
+        }
+
+        @Override
+        public ReadStream<SseEvent> pause() {
+            delegate.pause();
+            return this;
+        }
+
+        @Override
+        public ReadStream<SseEvent> resume() {
+            delegate.resume();
+            return this;
+        }
+
+        @Override
+        public ReadStream<SseEvent> fetch(long amount) {
+            delegate.fetch(amount);
+            return this;
+        }
+
+        @Override
+        public ReadStream<SseEvent> endHandler(Handler<Void> endHandler) {
+            delegate.endHandler(endHandler);
+            return this;
         }
     }
 }

@@ -20,6 +20,7 @@ import io.vertx.junit5.VertxTestContext;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -314,9 +315,92 @@ class SseReadStreamTest {
             when(failed.succeeded()).thenReturn(false);
             stub.registeredEndHandler().handle(failed);
         }
+
+        @Test
+        @DisplayName("Should still fire end handler once and return normally when source cancellation throws")
+        void shouldFireEndHandlerWhenSourceCancellationThrows(Vertx vertx) {
+            SimpleEventStream source = new SimpleEventStream();
+            StubContext stub = stubContext();
+            SseReadStream stream = new SseReadStream(source, vertx, noKeepAlive(), stub.ctx());
+            stream.handler(buf -> {});
+            source.throwOnCancel();
+
+            AtomicInteger endCalls = new AtomicInteger();
+            stream.endHandler(v -> endCalls.incrementAndGet());
+
+            assertDoesNotThrow(() -> stub.registeredEndHandler().handle(failedOutcome()));
+            assertDoesNotThrow(() -> stub.registeredEndHandler().handle(failedOutcome()));
+
+            assertEquals(1, endCalls.get(), "terminal handler must run exactly once");
+        }
+
+        @Test
+        @DisplayName("Should cancel keep-alive timer even when source cancellation throws")
+        void shouldCancelKeepAliveWhenSourceCancellationThrows(Vertx vertx) {
+            SimpleEventStream source = new SimpleEventStream();
+            StubContext stub = stubContext();
+            SseConfig config = SseConfig.builder()
+                    .keepAliveEnabled(true)
+                    .keepAliveIntervalMs(20)
+                    .build();
+            SseReadStream stream = new SseReadStream(source, vertx, config, stub.ctx());
+            AtomicInteger keepAlives = new AtomicInteger();
+            stream.handler(buf -> keepAlives.incrementAndGet());
+            source.throwOnCancel();
+
+            assertDoesNotThrow(() -> stub.registeredEndHandler().handle(failedOutcome()));
+            int afterCancel = keepAlives.get();
+            try {
+                Thread.sleep(100);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+
+            assertEquals(afterCancel, keepAlives.get(), "keep-alive timer must be cancelled");
+        }
+
+        @Test
+        @DisplayName("Should isolate a throwing terminal handler so the callback returns normally")
+        void shouldIsolateThrowingEndHandler(Vertx vertx) {
+            SimpleEventStream source = new SimpleEventStream();
+            StubContext stub = stubContext();
+            SseReadStream stream = new SseReadStream(source, vertx, noKeepAlive(), stub.ctx());
+            stream.handler(buf -> {});
+            stream.endHandler(v -> {
+                throw new IllegalStateException("terminal handler failure");
+            });
+
+            assertDoesNotThrow(() -> stub.registeredEndHandler().handle(failedOutcome()));
+        }
+
+        @Test
+        @DisplayName("Should isolate a throwing terminal handler on source end")
+        void shouldIsolateThrowingEndHandlerOnSourceEnd(Vertx vertx) {
+            SimpleEventStream source = new SimpleEventStream();
+            StubContext stub = stubContext();
+            SseReadStream stream = new SseReadStream(source, vertx, noKeepAlive(), stub.ctx());
+            stream.handler(buf -> {});
+            stream.endHandler(v -> {
+                throw new IllegalStateException("terminal handler failure");
+            });
+
+            assertDoesNotThrow(source::end);
+        }
     }
 
     // --- Helpers ---
+
+    /**
+     * Returns a failed routing-context end outcome, as delivered on client disconnect or reset.
+     *
+     * @return a failed {@link AsyncResult}
+     */
+    @SuppressWarnings("unchecked")
+    private static AsyncResult<Void> failedOutcome() {
+        AsyncResult<Void> failed = mock(AsyncResult.class);
+        when(failed.succeeded()).thenReturn(false);
+        return failed;
+    }
 
     /**
      * Returns an {@link SseConfig} with keep-alive disabled for deterministic tests.
@@ -377,6 +461,12 @@ class SseReadStreamTest {
         private Handler<SseEvent> dataHandler;
         private Handler<Void> endHandler;
         private Handler<Throwable> exceptionHandler;
+        private boolean throwOnCancel;
+
+        /** Makes every subsequent {@code handler(null)} cancellation throw. */
+        void throwOnCancel() {
+            this.throwOnCancel = true;
+        }
 
         /**
          * Emits a single event to the registered data handler.
@@ -415,6 +505,9 @@ class SseReadStreamTest {
 
         @Override
         public ReadStream<SseEvent> handler(Handler<SseEvent> handler) {
+            if (handler == null && throwOnCancel) {
+                throw new IllegalStateException("cancellation failed");
+            }
             this.dataHandler = handler;
             return this;
         }
