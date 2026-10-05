@@ -183,7 +183,6 @@ class ApiSurfaceTest {
                     InputObjectProcessor.class,
                     "createDefault(Function,Function)",
                     "declaresPolicies(Type)",
-                    "collectionElementType(Type)",
                     "precomputeFieldNameResolution(Type,InputFieldNameResolver)",
                     "processInput(Object,Type,EffectiveInputPolicies,InputLocation,InputFieldNameResolver)");
             assertNoPublicFields(InputObjectProcessor.class);
