@@ -106,6 +106,7 @@ public class ErrorPipeline {
      *       request path if the response entity is a {@link ProblemDetail} and
      *       {@code instance} is not already set</li>
      *   <li>{@link ErrorInterceptor#afterMapping} async chain (transforms the response)</li>
+     *   <li>Framework catch-all logging, once, using the status of the response leaving the chain</li>
      * </ol>
      *
      * <p>The Vert.x failure-status hint ({@code VertxFailureStatus.KEY}) and the failure-cycle
@@ -166,22 +167,63 @@ public class ErrorPipeline {
                     Object vertxFailureStatus = ctx.data().remove(VertxFailureStatus.KEY);
                     VertxFailureStatus.consumeObservation(ctx);
                     Throwable translated = restExceptionMapper.translate(mappedCause);
+                    boolean frameworkCatchAll =
+                            exceptionMapperRegistry.handledByFrameworkCatchAll(translated.getClass());
                     Response response = exceptionMapperRegistry.toResponse(translated);
                     if (!exceptionMapperRegistry.hasSpecificMapper(translated.getClass())) {
                         response = applyVertxStatusCodeFallback(response, vertxFailureStatus, translated);
                     }
-                    return enrichProblemDetail(ctx, response);
+                    return new MappingOutcome(enrichProblemDetail(ctx, response), translated, frameworkCatchAll);
                 })
-                .compose(response -> Combinators.foldSequential(
-                        errorInterceptors, response, (interceptor, r) -> Future.<Response>succeededFuture()
-                                .compose(v -> interceptor.afterMapping(ctx, r))
-                                .recover(mf -> {
-                                    log.warn(
-                                            "ErrorInterceptor.afterMapping failed in interceptor[{}] — passing response unchanged",
-                                            errorInterceptors.indexOf(interceptor),
-                                            mf);
-                                    return Future.succeededFuture(r);
-                                })));
+                .compose(outcome -> Combinators.foldSequential(
+                                errorInterceptors,
+                                outcome.response(),
+                                (interceptor, r) -> Future.<Response>succeededFuture()
+                                        .compose(v -> interceptor.afterMapping(ctx, r))
+                                        .recover(mf -> {
+                                            log.warn(
+                                                    "ErrorInterceptor.afterMapping failed in interceptor[{}] — passing response unchanged",
+                                                    errorInterceptors.indexOf(interceptor),
+                                                    mf);
+                                            return Future.succeededFuture(r);
+                                        }))
+                        .map(finalResponse -> {
+                            // The afterMapping chain may replace the response and its status, so the
+                            // level is decided once, here, from the response that will actually be sent.
+                            if (outcome.frameworkCatchAll()) {
+                                int status = finalResponse != null ? finalResponse.getStatus() : 500;
+                                logUnhandledAfterMapping(outcome.translated(), status);
+                            }
+                            return finalResponse;
+                        }));
+    }
+
+    /**
+     * Per-invocation result of the mapping step carried into the {@code afterMapping} chain.
+     *
+     * @param response         the mapped (fallback-applied, enriched) response entering the chain
+     * @param translated       the cause after {@link RestExceptionMapper#translate}
+     * @param frameworkCatchAll whether the framework {@code Throwable} catch-all produced the response
+     */
+    private record MappingOutcome(Response response, Throwable translated, boolean frameworkCatchAll) {}
+
+    // --- Unhandled-exception logging ---
+
+    /**
+     * Logs after the framework {@code Throwable} catch-all produced a response and the Vert.x
+     * status-code fallback and the {@link ErrorInterceptor#afterMapping} chain have settled. A final 4xx is a deliberate client rejection (for
+     * example a multipart decoder limit) and must not look like an unhandled server fault; genuine
+     * 5xx outcomes keep the ERROR stack.
+     *
+     * @param cause  the throwable the catch-all mapped
+     * @param status the HTTP status of the response leaving the {@code afterMapping} chain
+     */
+    private static void logUnhandledAfterMapping(Throwable cause, int status) {
+        if (status >= 400 && status < 500) {
+            log.debug("Unhandled exception mapped to client error {}", status, cause);
+            return;
+        }
+        log.error("Unhandled exception", cause);
     }
 
     // --- ProblemDetail enrichment ---

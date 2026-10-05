@@ -490,7 +490,7 @@ The framework's `ExceptionMapper<Throwable>`, pre-configured by `RestModule`:
 | `ConflictException` (core.exception) | 409 | `ProblemDetail` |
 | `NotFoundException` (core.exception) | 404 | `ProblemDetail` |
 | `UnavailableException` (core.exception) | 503 | `ProblemDetail` |
-| `Throwable` (catch-all) | 500 | `ProblemDetail` with the fixed detail `"Internal Server Error"` — the exception message is never echoed |
+| `Throwable` (catch-all) | 500 | `ProblemDetail` with the fixed detail `"Internal Server Error"` — the exception message is never echoed. Logging is deferred to `ErrorPipeline` (see below) so a Vert.x 4xx fallback is not recorded as an unhandled server fault |
 
 `UnauthorizedException` and `ForbiddenException` are registered by fully-qualified name to avoid
 ambiguity with `jakarta.ws.rs.NotAuthorizedException` and `jakarta.ws.rs.ForbiddenException`.
@@ -528,12 +528,23 @@ RequestInterceptor.onError sync observers, with the original cause
   → Vert.x status-code fallback (only when no specific mapper matched)
   → ProblemDetail instance enrichment from the request path
   → ErrorInterceptor.afterMapping (async chain, Response → Response)
+  → unhandled-exception logging (framework Throwable catch-all only; level follows the final status)
 ```
 
 The original cause stays on the routing context for the whole of error processing, so audit and
 diagnostic interceptors can still see the root cause after mapping. A `beforeMapping` or
 `afterMapping` handler that fails is logged at WARN and its input passes through unchanged — one bad
 interceptor cannot break the error path.
+
+**Unhandled-exception logging.** The framework `Throwable` catch-all no longer logs inside the mapper:
+the catch-all has no routing context and cannot see a Vert.x 4xx status that will replace its 500.
+`ErrorPipeline` logs once, after mapping, fallback and the `afterMapping` chain have settled, using the
+status of the response that will be sent (an `afterMapping` interceptor can change it), and only when the framework catch-all actually
+produced the response (not a typed default such as `IllegalArgumentException`, and not an application
+`ExceptionMapper`). Final status **400–499** is logged at DEBUG (`Unhandled exception mapped to client
+error {status}`); other outcomes keep ERROR (`Unhandled exception`) with the stack. That keeps a
+multipart part-count rejection (or any other `ctx.fail(4xx, cause)` decoder limit) out of ERROR
+alerting while genuine unhandled server faults still page.
 
 **Vert.x status-code fallback.** The router-level failure handler records the status the Vert.x layer
 authoritatively decided for a failure, and the error pipeline reconciles it with the mapper's status.
