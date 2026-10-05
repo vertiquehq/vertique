@@ -144,6 +144,16 @@ SPDX-License-Identifier: EUPL-1.2
                         <groupId>dev.vertique</groupId>
                         <artifactId>vertique-rest-openapi-plugin</artifactId>
                         <version>${project.version}</version>
+                        <!-- Realm salt (do not remove): matches no artifact and excludes nothing. Maven keys
+                             the plugin ClassRealm cache on the dependency list including exclusions; this
+                             per-module value gives each example its own realm, so Swagger's static
+                             ModelConverters singleton is not shared under -T1C. See vertique-dev#400. -->
+                        <exclusions>
+                            <exclusion>
+                                <groupId>dev.vertique.build.plugin-realm-salt</groupId>
+                                <artifactId>vertique-example-websocket</artifactId>
+                            </exclusion>
+                        </exclusions>
                     </dependency>
                 </dependencies>
                 <executions>
