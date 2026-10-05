@@ -912,7 +912,7 @@ public class WebSocketSecurityPipelineIT {
      * user). Captures the {@link SecurityContext} visible in {@link OnOpen} and {@link OnMessage}.
      */
     @WebSocketEndpoint("/ws/auth-user")
-    @dev.vertique.rest.core.security.Authorized
+    @dev.vertique.security.authz.Authorized
     static class AuthUserEndpoint {
 
         /** {@link SecurityContext} captured in {@link OnOpen}. */
@@ -1019,7 +1019,7 @@ public class WebSocketSecurityPipelineIT {
      * {@link AuthorizationDecisionEvent} whose {@link InvocationOrigin} the test inspects.
      */
     @WebSocketEndpoint("/ws/origin")
-    @dev.vertique.rest.core.security.Authorized
+    @dev.vertique.security.authz.Authorized
     static class OriginEndpoint {
 
         /** Invoked on connection open — no-op; the test asserts on the emitted event only. */
@@ -1039,7 +1039,7 @@ public class WebSocketSecurityPipelineIT {
      * {@link ChannelIdentityManager#closeChannel} with it.
      */
     @WebSocketEndpoint("/ws/server-close")
-    @dev.vertique.rest.core.security.Authorized
+    @dev.vertique.security.authz.Authorized
     static class ServerCloseEndpoint {
 
         /** Session id captured in {@link OnOpen} — used as the channel id for server-close. */

@@ -1323,7 +1323,7 @@ second policy resolution.
 An operation **restricts callers** when any of these holds:
 
 - its effective policy is `DenyAll`, `AuthenticatedOnly`, or `Constrained` — the `SecurityPolicy`
-  variants `@DenyAll`, `@RolesAllowed`, and `@Authorized` (`dev.vertique:vertique-rest-core`)
+  variants `@DenyAll`, `@RolesAllowed`, and `@Authorized` (`dev.vertique:vertique-security-core`)
   resolve to; an `@Authorized` with no scopes resolves to `AuthenticatedOnly` (authentication
   only), and one with scopes, or `@RolesAllowed`, resolves to `Constrained`;
 - it declares one or more `@SecurityRequirement`s and none of its alternatives is anonymous (an

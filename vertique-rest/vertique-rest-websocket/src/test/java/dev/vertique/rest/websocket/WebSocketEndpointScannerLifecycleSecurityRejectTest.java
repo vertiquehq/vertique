@@ -6,7 +6,7 @@ package dev.vertique.rest.websocket;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import dev.vertique.rest.core.security.Authorized;
+import dev.vertique.security.authz.Authorized;
 import jakarta.annotation.security.DenyAll;
 import jakarta.annotation.security.PermitAll;
 import jakarta.annotation.security.RolesAllowed;

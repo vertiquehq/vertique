@@ -185,8 +185,8 @@ type-level one, and several interface candidates in one tier must agree.
 | `@DenyAll` | `DENY_ALL` |
 | `@RolesAllowed` and/or `@RequiresAction` | `RESTRICTED`, composed with AND when both are present |
 
-`@RequiresAction` conflicts with `@PermitAll` and `@DenyAll`, exactly as in REST. `@Authorized` is
-REST-specific and is rejected on a tool.
+`@RequiresAction` conflicts with `@PermitAll` and `@DenyAll`, exactly as in REST. Inline
+`@Authorized` declarations are unsupported on MCP tools and are rejected, including when inherited.
 
 ---
 

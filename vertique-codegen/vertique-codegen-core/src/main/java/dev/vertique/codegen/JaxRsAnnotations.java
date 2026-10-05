@@ -90,8 +90,8 @@ public final class JaxRsAnnotations {
 
     // --- Framework ---
 
-    /** FQN of {@code dev.vertique.rest.core.security.Authorized}. */
-    public static final String AUTHORIZED = "dev.vertique.rest.core.security.Authorized";
+    /** FQN of {@code dev.vertique.security.authz.Authorized}. */
+    public static final String AUTHORIZED = "dev.vertique.security.authz.Authorized";
 
     /** FQN of {@code dev.vertique.security.authz.RequiresAction}. */
     public static final String REQUIRES_ACTION = "dev.vertique.security.authz.RequiresAction";

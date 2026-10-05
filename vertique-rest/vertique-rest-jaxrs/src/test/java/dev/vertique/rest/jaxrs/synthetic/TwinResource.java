@@ -3,7 +3,7 @@
 
 package dev.vertique.rest.jaxrs.synthetic;
 
-import dev.vertique.rest.core.security.Authorized;
+import dev.vertique.security.authz.Authorized;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.vertx.ext.web.RoutingContext;

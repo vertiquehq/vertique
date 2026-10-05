@@ -26,6 +26,8 @@
  *       every possible decision reason code</li>
  *   <li>{@link dev.vertique.security.authz.RequiresAction} — transport-neutral annotation
  *       declaring the action required to invoke a method or type</li>
+ *   <li>{@link dev.vertique.security.authz.Authorized} — shared authentication and scope
+ *       declaration for framework surfaces that support it</li>
  *   <li>{@link dev.vertique.security.authz.AuthorizationRequest} — immutable request value
  *       type (reused from the existing model)</li>
  *   <li>{@link dev.vertique.security.authz.AuthorizationDecision} — immutable decision value

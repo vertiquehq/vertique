@@ -5,9 +5,9 @@ package dev.vertique.rest.jaxrs;
 
 import dev.vertique.rest.core.routing.RestOperationDescriptor;
 import dev.vertique.rest.core.routing.SecurityRequirementSet;
-import dev.vertique.rest.core.security.Authorized;
 import dev.vertique.rest.core.security.SecurityPolicy;
 import dev.vertique.rest.jaxrs.synthetic.SyntheticOperation;
+import dev.vertique.security.authz.Authorized;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.security.SecurityRequirementEntry;
 import jakarta.annotation.security.RolesAllowed;

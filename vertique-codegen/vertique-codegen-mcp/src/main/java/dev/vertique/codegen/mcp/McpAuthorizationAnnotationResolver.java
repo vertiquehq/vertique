@@ -51,11 +51,11 @@ import javax.lang.model.type.TypeMirror;
  * generated invoker emits {@code ActionRef.parse(<value>)}: a value outside that grammar would
  * otherwise compile into source that always throws at composition.
  *
- * <p>{@code @Authorized} is REST-specific and is rejected on MCP tools. That rejection runs over
- * <em>every</em> source tier, not only the direct method and declaring type — an {@code @Authorized}
- * inherited from an overridden interface method or a superclass type resolves exactly like the
- * policy families do, so accepting it would silently publish a REST-annotated declaration as an MCP
- * tool.
+ * <p>Inline {@code @Authorized} placement is unsupported on MCP tools and is rejected. That check
+ * runs over <em>every</em> source tier, not only the direct method and declaring type — an
+ * {@code @Authorized} inherited from an overridden interface method or a superclass type resolves
+ * exactly like the policy families do, so accepting it would publish an unsupported declaration as
+ * an MCP tool.
  */
 final class McpAuthorizationAnnotationResolver {
 
@@ -105,7 +105,7 @@ final class McpAuthorizationAnnotationResolver {
             ctx.diagnostics()
                     .error(
                             method,
-                            "@Authorized is REST-specific and is not supported on the @McpTool method %s.%s();"
+                            "@Authorized is not supported on the @McpTool method %s.%s();"
                                     + " it is declared on %s — declare @RolesAllowed and/or @RequiresAction instead",
                             declaringType.getSimpleName(),
                             method.getSimpleName(),

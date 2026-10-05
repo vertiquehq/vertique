@@ -54,7 +54,7 @@ public record EffectiveSecurityContract(
         PERMIT_ALL,
         /** {@code @jakarta.annotation.security.RolesAllowed}. */
         ROLES_ALLOWED,
-        /** {@code @dev.vertique.rest.core.security.Authorized}. */
+        /** {@code @dev.vertique.security.authz.Authorized}. */
         AUTHORIZED
     }
 }

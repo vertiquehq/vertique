@@ -776,14 +776,14 @@ class McpToolProcessorCompileTest {
 
         // Mutation — @Authorized inherited from an overridden interface method. The rejection must run
         // over every policy source tier, exactly as the base-policy and action families do; a tier-blind
-        // check accepts this tool and generates an invoker for a REST-annotated declaration. Valid
+        // check accepts this tool and generates an invoker for an Authorized declaration. Valid
         // control: drop @Authorized from the interface method.
         JavaFileObject interfaceAuthorized = SourceFiles.inline(TOOLS_PACKAGE + ".InterfaceAuthorizedTools", """
                 package com.example.tools;
 
                 import dev.vertique.mcp.annotation.McpTool;
                 import dev.vertique.mcp.annotation.McpToolParam;
-                import dev.vertique.rest.core.security.Authorized;
+                import dev.vertique.security.authz.Authorized;
                 import io.vertx.core.Future;
                 import jakarta.inject.Inject;
 
@@ -806,8 +806,7 @@ class McpToolProcessorCompileTest {
                     }
                 }
                 """);
-        try (McpToolCompilation inherited =
-                McpToolCompilation.of(authorizedAnnotation(), weatherReport(), interfaceAuthorized)) {
+        try (McpToolCompilation inherited = McpToolCompilation.of(weatherReport(), interfaceAuthorized)) {
             inherited.result().assertFailed();
             assertEquals(
                     1,
@@ -823,7 +822,7 @@ class McpToolProcessorCompileTest {
 
                 import dev.vertique.mcp.annotation.McpTool;
                 import dev.vertique.mcp.annotation.McpToolParam;
-                import dev.vertique.rest.core.security.Authorized;
+                import dev.vertique.security.authz.Authorized;
                 import io.vertx.core.Future;
                 import jakarta.inject.Inject;
 
@@ -842,8 +841,7 @@ class McpToolProcessorCompileTest {
                     }
                 }
                 """);
-        try (McpToolCompilation inheritedType =
-                McpToolCompilation.of(authorizedAnnotation(), weatherReport(), superclassAuthorized)) {
+        try (McpToolCompilation inheritedType = McpToolCompilation.of(weatherReport(), superclassAuthorized)) {
             inheritedType.result().assertFailed();
             assertEquals(
                     1,
@@ -862,7 +860,7 @@ class McpToolProcessorCompileTest {
 
                 import dev.vertique.mcp.annotation.McpTool;
                 import dev.vertique.mcp.annotation.McpToolParam;
-                import dev.vertique.rest.core.security.Authorized;
+                import dev.vertique.security.authz.Authorized;
                 import io.vertx.core.Future;
                 import jakarta.inject.Inject;
 
@@ -889,7 +887,7 @@ class McpToolProcessorCompileTest {
                 }
                 """);
         try (McpToolCompilation inheritedSuperclassMethod =
-                McpToolCompilation.of(authorizedAnnotation(), weatherReport(), superclassMethodAuthorized)) {
+                McpToolCompilation.of(weatherReport(), superclassMethodAuthorized)) {
             inheritedSuperclassMethod.result().assertFailed();
             assertEquals(
                     1,
@@ -907,7 +905,7 @@ class McpToolProcessorCompileTest {
 
                 import dev.vertique.mcp.annotation.McpTool;
                 import dev.vertique.mcp.annotation.McpToolParam;
-                import dev.vertique.rest.core.security.Authorized;
+                import dev.vertique.security.authz.Authorized;
                 import io.vertx.core.Future;
                 import jakarta.inject.Inject;
 
@@ -927,7 +925,7 @@ class McpToolProcessorCompileTest {
                 }
                 """);
         try (McpToolCompilation inheritedInterfaceType =
-                McpToolCompilation.of(authorizedAnnotation(), weatherReport(), interfaceTypeAuthorized)) {
+                McpToolCompilation.of(weatherReport(), interfaceTypeAuthorized)) {
             inheritedInterfaceType.result().assertFailed();
             assertEquals(
                     1,
@@ -1430,35 +1428,6 @@ class McpToolProcessorCompileTest {
     }
 
     /**
-     * The REST-specific {@code @Authorized} annotation, declared as a fixture source under its real
-     * fully-qualified name.
-     *
-     * <p>The processor matches this annotation by FQN ({@code JaxRsAnnotations.AUTHORIZED}), and
-     * {@code vertique-rest-core} is deliberately not on this module's classpath — MCP codegen must not
-     * depend on REST. Declaring the annotation in the compiled source set is therefore the only way to
-     * author a fixture that carries it, and it exercises exactly the FQN the processor looks for.
-     *
-     * @return the {@code dev.vertique.rest.core.security.Authorized} source
-     */
-    private static JavaFileObject authorizedAnnotation() {
-        return SourceFiles.inline("dev.vertique.rest.core.security.Authorized", """
-                package dev.vertique.rest.core.security;
-
-                import java.lang.annotation.ElementType;
-                import java.lang.annotation.Retention;
-                import java.lang.annotation.RetentionPolicy;
-                import java.lang.annotation.Target;
-
-                @Target({ElementType.METHOD, ElementType.TYPE})
-                @Retention(RetentionPolicy.RUNTIME)
-                public @interface Authorized {
-
-                    String[] scopes() default {};
-                }
-                """);
-    }
-
-    /**
      * The valid {@code WeatherTools} baseline: a Dagger-managed type with one public, uniquely named
      * tool method returning a structured result. This is also the control declaration the
      * sensitivity proof restores.
@@ -1555,11 +1524,10 @@ class McpToolProcessorCompileTest {
          * <p>{@code vertique-mcp-server} is deliberately not a dependency of this module (T006/T008:
          * "{@code vertique-mcp-server} is not a dependency and must not become one") and must not
          * become one even at test scope — it test-depends on this module's own output (T012), so the
-         * reverse edge would be a reactor cycle, not merely an unwanted coupling — so this mirrors the
-         * existing {@code authorizedAnnotation()} pattern: the only way to let {@code compile-testing}
-         * actually compile generated source that references a runtime type outside this module's
-         * dependency graph is to declare a stub of that exact type, under its exact FQN, in the
-         * compiled source set.
+         * reverse edge would be a reactor cycle, not merely an unwanted coupling — so this test
+         * declares a stub of that exact runtime type, under its exact FQN, in the compiled source set.
+         * This lets {@code compile-testing} compile generated source that references the runtime type
+         * even though it is outside this module's dependency graph.
          *
          * @return the {@code dev.vertique.mcp.server.runtime.McpToolParameterMetadata} stub source
          */
