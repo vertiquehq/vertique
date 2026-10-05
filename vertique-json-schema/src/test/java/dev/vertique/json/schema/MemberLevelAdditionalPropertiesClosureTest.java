@@ -619,6 +619,65 @@ class MemberLevelAdditionalPropertiesClosureTest {
                         + " true nor false; document: " + document);
     }
 
+    // ==================================================================================================
+    // Issue #624 — class-level FALSE on the plain case-insensitive inline path.
+    // ==================================================================================================
+
+    /**
+     * Carried follow-up from rest-023 T005 (vertiquehq/vertique-dev#624): a value type closed at the
+     * <strong>class</strong> level with {@code @Schema(additionalProperties = FALSE)}, reached only
+     * through the plain case-insensitive inline path (member-level {@code @JsonFormat} only — no
+     * member-level {@code FALSE}), must still publish {@code additionalProperties: false}. The hand-built
+     * inline node never takes the standard {@code CustomDefinition}/{@code AttributeInclusion.YES} path
+     * that applies the class-level closure elsewhere.
+     */
+    @Test
+    @DisplayName("Issue #624: a class-level FALSE on a value type reached through the plain"
+            + " case-insensitive inline path publishes additionalProperties: false")
+    void classLevelFalseOnPlainCaseInsensitiveInlinePathIsPreserved() {
+        JsonNode document = inputDocument(CiClassLevelFalseHolder.class);
+        JsonNode child = document.path("properties").path("child");
+
+        assertFalse(
+                child.has("$ref"),
+                "a member bound case-insensitively only through its own contextual annotation must be"
+                        + " described inline, never a bare $ref; document: " + document);
+        assertTrue(
+                child.path("patternProperties").isObject()
+                        && !child.path("patternProperties").isEmpty(),
+                "the plain case-insensitive inline description must keep its own patternProperties;" + " document: "
+                        + document);
+        assertEquals(
+                "{\"maxLength\":3,\"type\":\"string\"}",
+                child.path("properties").path("name").toString(),
+                "the value type's own properties must still render; document: " + document);
+        assertTrue(
+                child.path("additionalProperties").isBoolean()
+                        && !child.path("additionalProperties").asBoolean(),
+                "the class-level @Schema(additionalProperties = FALSE) must survive the plain"
+                        + " case-insensitive inline path — additionalProperties: false, never dropped;"
+                        + " document: " + document);
+    }
+
+    /**
+     * Same shape as {@link #classLevelFalseOnPlainCaseInsensitiveInlinePathIsPreserved()}, with the
+     * class-level closure inherited rather than declared on the value type itself.
+     */
+    @Test
+    @DisplayName(
+            "Issue #624: an inherited class-level FALSE is preserved on the plain" + " case-insensitive inline path")
+    void inheritedClassLevelFalseOnPlainCaseInsensitiveInlinePathIsPreserved() {
+        JsonNode document = inputDocument(CiInheritedClassLevelFalseHolder.class);
+        JsonNode child = document.path("properties").path("child");
+
+        assertFalse(child.has("$ref"), "must be described inline; document: " + document);
+        assertTrue(
+                child.path("additionalProperties").isBoolean()
+                        && !child.path("additionalProperties").asBoolean(),
+                "an inherited class-level FALSE must stay closed on the plain CI inline path;" + " document: "
+                        + document);
+    }
+
     // --- Fixtures: TP-001 (M10) ---
 
     /** M10 value type: carries its own any-setter. */
@@ -894,5 +953,35 @@ class MemberLevelAdditionalPropertiesClosureTest {
         /** FALSE, but Plain carries no any-setter anywhere — left to the type's own default rendering. */
         @Schema(additionalProperties = Schema.AdditionalPropertiesValue.FALSE)
         public Plain child;
+    }
+
+    // --- Fixtures: issue #624 — class-level FALSE on the plain CI inline path ---
+
+    /** Value type closed at class level; no member-level FALSE, no any-setter. */
+    @Schema(additionalProperties = Schema.AdditionalPropertiesValue.FALSE)
+    static class ClassLevelFalseCiChild {
+
+        /** Kept by the inline description beside the class-level closure. */
+        @Size(max = 3)
+        public String name;
+    }
+
+    /** Holder: plain case-insensitive inline only — no member-level {@code FALSE}. */
+    static final class CiClassLevelFalseHolder {
+
+        /** Bound case-insensitively only through this member's own contextual annotation. */
+        @JsonFormat(with = JsonFormat.Feature.ACCEPT_CASE_INSENSITIVE_PROPERTIES)
+        public ClassLevelFalseCiChild child;
+    }
+
+    /** Subclass inheriting {@link ClassLevelFalseCiChild}'s class-level closure. */
+    static final class InheritedClassLevelFalseCiChild extends ClassLevelFalseCiChild {}
+
+    /** Holder for the inherited class-level FALSE shape. */
+    static final class CiInheritedClassLevelFalseHolder {
+
+        /** Bound case-insensitively only through this member's own contextual annotation. */
+        @JsonFormat(with = JsonFormat.Feature.ACCEPT_CASE_INSENSITIVE_PROPERTIES)
+        public InheritedClassLevelFalseCiChild child;
     }
 }

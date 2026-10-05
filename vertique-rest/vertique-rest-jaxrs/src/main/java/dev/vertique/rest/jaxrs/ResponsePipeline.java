@@ -72,6 +72,9 @@ class ResponsePipeline {
     private static final String FALLBACK_500_BODY =
             "{\"type\":\"about:blank\",\"status\":500,\"title\":\"Internal Server Error\"}";
 
+    /** Cap for exception messages interpolated into {@link #sendFallback500} log lines. */
+    private static final int LOG_MESSAGE_MAX_CHARS = 512;
+
     /**
      * Routing-context data key marking a response as an <em>error</em> / {@code ProblemDetail} response.
      * Set by {@link ErrorPipeline#mapToResponse} for every error it maps, so the wire-writing path can
@@ -333,12 +336,25 @@ class ResponsePipeline {
      * @param cause the pipeline failure that triggered this fallback
      */
     void sendFallback500(RoutingContext ctx, Throwable cause) {
-        log.error("Response pipeline failed — sending bare-metal 500", cause);
+        // Jackson WRAP_EXCEPTIONS (and similar) append caller-controlled map keys into encode-failure
+        // messages. Never attach the raw Throwable: Logback renders exception messages with their
+        // original CR/LF, which would forge additional log lines even at DEBUG. Both ERROR and DEBUG
+        // interpolate only sanitised class/message text.
+        log.error(
+                "Response pipeline failed — sending bare-metal 500 — {} — {}",
+                cause.getClass().getSimpleName(),
+                sanitizeLogMessage(cause.getMessage()));
+        if (log.isDebugEnabled()) {
+            log.debug("Response pipeline failure detail — {}", sanitizeFailureChain(cause));
+        }
         Response synthetic = Response.status(500).build();
         Combinators.forEachSwallowSync(
                 hooks,
                 hook -> hook.afterResponse(ctx, synthetic),
-                (hook, e) -> log.warn("afterResponse observer threw during fallback-500: {}", e.getMessage(), e));
+                (hook, e) -> log.warn(
+                        "afterResponse observer threw during fallback-500: {} — {}",
+                        e.getClass().getSimpleName(),
+                        sanitizeLogMessage(e.getMessage())));
         if (!ctx.response().ended() && !ctx.response().headWritten()) {
             ctx.response()
                     .setStatusCode(500)
@@ -346,6 +362,44 @@ class ResponsePipeline {
                     // The response is already terminal here — record and log only; no cleanup end().
                     .onFailure(wireFailure -> recordWireFailure(ctx, wireFailure));
         }
+    }
+
+    /**
+     * Neutralises control characters and caps length so a caller-influenced exception message cannot
+     * forge log lines or dominate the log stream when interpolated into a format string.
+     *
+     * @param message the raw exception message; may be {@code null}
+     * @return a single-line, length-capped stand-in safe to interpolate into a log format string
+     */
+    static String sanitizeLogMessage(String message) {
+        if (message == null || message.isEmpty()) {
+            return "";
+        }
+        String cleaned = message.replaceAll("\\p{Cntrl}", "?");
+        return cleaned.length() <= LOG_MESSAGE_MAX_CHARS ? cleaned : cleaned.substring(0, LOG_MESSAGE_MAX_CHARS);
+    }
+
+    /**
+     * Renders {@code cause} and its causal chain as a single-line diagnostic: each link is
+     * {@code ClassName: sanitised-message}, joined with {@code | caused by }. Caps chain depth so a
+     * pathological cycle cannot dominate the log stream.
+     *
+     * @param cause the failure that triggered fallback-500; must not be {@code null}
+     * @return a single-line, sanitised cause-chain stand-in safe to interpolate into a log format string
+     */
+    static String sanitizeFailureChain(Throwable cause) {
+        StringBuilder sb = new StringBuilder();
+        Throwable current = cause;
+        int depth = 0;
+        while (current != null && depth < 8) {
+            if (depth > 0) {
+                sb.append(" | caused by ");
+            }
+            sb.append(current.getClass().getName()).append(": ").append(sanitizeLogMessage(current.getMessage()));
+            current = current.getCause();
+            depth++;
+        }
+        return sb.toString();
     }
 
     // --- Wire-completion observation ---

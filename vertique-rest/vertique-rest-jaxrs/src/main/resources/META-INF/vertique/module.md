@@ -424,6 +424,16 @@ public interface BoundRequest {
 
 `DefaultBoundRequest` is the shared implementation every bundled strategy constructs; binding is
 deliberately independent of validation, so a value binds even when a gate would have rejected it.
+Declared parameter shapes drive the bound representation:
+
+- **Scalar** path/query/header/cookie parameters bind as the **raw transport string** (first value
+  only for multi-maps). Conversion to the declared type runs later in `ParameterExtractor`, after
+  input policies.
+- **Collection-declared** query/header/cookie parameters (`List`/`Set`/`SortedSet`/`NavigableSet`/
+  `Collection`/`T[]`) bind as a `JsonArray` of raw strings — every submitted value for the name,
+  or a single-entry array for a present cookie. Element conversion and materialization also run in
+  `ParameterExtractor`.
+- **Undeclared** keys bind as their raw first-value string.
 
 ### `ExceptionMapperRegistry`
 
@@ -558,10 +568,11 @@ above.
 `ValidationProblemDetail.errors[]` and any RFC 9457 extension members — only `instance` carries over. Everything the superseded body held was written for a status that no
 longer applies, and on the `ctx.fail(4xx, cause)` path the detail is an arbitrary application
 exception's message that must not reach the client. A mapped response carrying a **non-`ProblemDetail`
-entity** is left exactly as the mapper authored it, body and `Content-Type` included, so only the
-status is reconciled. Register your own `ExceptionMapper` for the cause's type when a specific detail
-is required — it outranks the Vert.x status entirely. When the recorded status *agrees* with the mapped
-one nothing changes, so a 415 whose detail names the offending content type keeps it.
+entity** is fail-closed the same way: replaced with a fresh `ProblemDetail` for the winning status and
+`application/problem+json`, so a 500 diagnostic body cannot ride under an overriding 401. Register your
+own `ExceptionMapper` for the cause's type when a specific detail is required — it outranks the Vert.x
+status entirely. When the recorded status *agrees* with the mapped one nothing changes, so a 415 whose
+detail names the offending content type keeps it.
 
 **Headers when the body is rebuilt.** Rebuilding the body — by this override, or by the `instance`
 enrichment every `ProblemDetail` gets — drops the headers your mapper set that describe the *octets*
@@ -762,18 +773,38 @@ Parameters are matched in this order:
 **Type coercion** for `PATH`, `QUERY`, `HEADER`, `COOKIE`, and text `FORM` values goes through the
 shared `dev.vertique.rest.core.convert.ParamConversionResolver`, not a fixed scalar table:
 
-- `String` and `JsonObject` keep identity fast paths.
+- Every transport string — including a declared `String` parameter — is converted through the
+  resolver after input policies. The built-in `String` converter is identity; a native
+  `ParamConverterBinding<String>` replaces it. JAX-RS `ParamConverterProvider`s are fallback for
+  types the native registry does not resolve — they never override the built-in `String` entry.
+  A converter that returns `null` for a present value (including a `@DefaultValue`) fails closed
+  with `ParamConversionException` (400).
+- `JsonObject` keeps an identity fast path when the binder already holds one.
 - Everything else — boxed and primitive numerics, `boolean`, `UUID`, `java.time` types, `BigDecimal`,
-  enums, and any application-registered `ParamConverterBinding` or JAX-RS `ParamConverterProvider` —
-  is converted through the resolver.
+  enums, and any other application-registered converter — is converted through the resolver.
 - A collection-valued parameter — `List<T>`, `Set<T>`, `SortedSet<T>`, `NavigableSet<T>`, `Collection<T>`,
   or `T[]` on `@QueryParam`, `@HeaderParam`, `@CookieParam`, or `@FormParam` — coerces each submitted
-  value individually against the declared component type; a malformed element fails closed with
-  `ParamConversionException` rather than leaving the whole collection as raw strings. See
+  value individually against the declared component type; a malformed element, a null element, or a
+  converter that returns null for a present value fails closed with `ParamConversionException`
+  rather than inserting null or leaving the whole collection as raw strings. The message omits the
+  submitted value. See
   [Collection parameter shapes](#collection-parameter-shapes) for the absence/default/read-only contract.
 - A value that fails conversion raises `ParamConversionException` (400). A declared type with no
   resolvable converter raises `ParamConverterNotFoundException` (500) — a wiring gap that startup
   validation is meant to catch first.
+
+**Absent scalar parameters** on those same sources (`PATH`, `QUERY`, `HEADER`, `COOKIE`, and text
+`FORM` / `@FormParam`) follow Jakarta REST:
+
+- **`@DefaultValue` wins** — when present, the annotation value is coerced through the same resolver
+  and bound; the request need not supply the name.
+- **Otherwise, primitives receive their Java language defaults** (`0`, `0L`, `0.0`, `false`, `'\0'`, …)
+  so reflective invocation never unboxes `null`.
+- **Otherwise, reference types (including boxed numerics) receive `null`.**
+
+The BoundRequest scalar path (reflective and generated resource invocation) and the text `@FormParam`
+path share this rule so the two never diverge. Collection-shaped parameters use the separate absence
+contract under [Collection parameter shapes](#collection-parameter-shapes).
 
 ### Collection parameter shapes
 
@@ -792,10 +823,13 @@ does not — a path segment is always single-valued.
 - **Read-only.** An injected collection is unmodifiable; mutation throws `UnsupportedOperationException`.
   This includes the native `@FormParam List<FileUpload>` / `List<EntityPart>` targets and the unannotated
   aggregates. Arrays stay mutable — no read-only array wrapper exists.
-- **Input policies** run per element at the position a scalar parameter of that source would use: for
-  `@FormParam` the raw submitted string is canonicalized/sanitized **before** conversion; for
-  `@QueryParam`, `@HeaderParam`, and `@CookieParam` the **converted** element is processed, and only
-  while it is still a `String`.
+- **Input policies** run on each **raw string** element **before** conversion, for every source
+  (`@QueryParam`, `@HeaderParam`, `@CookieParam`, and `@FormParam`), at the same
+  `InputLocation` a scalar parameter of that source would use. Policy order is therefore uniform
+  with scalars: policy → convert → materialize. A non-string element that is already an instance of
+  the declared component type is kept (no `toString()` round-trip). A null element, or a value that
+  is neither a string nor the element type, fails closed with `ParamConversionException` (400).
+  `@DefaultValue` strings are converted but not policy-processed.
 - **Ordering** is whatever the transport reported for repeated values — neither Vert.x nor Jakarta REST
   guarantees one, and the framework makes none.
 - **Case sensitivity follows the transport.** `@HeaderParam`/`@CookieParam` names match

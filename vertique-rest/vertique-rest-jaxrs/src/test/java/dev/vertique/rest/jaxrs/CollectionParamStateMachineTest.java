@@ -12,6 +12,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
@@ -29,6 +30,11 @@ import dev.vertique.core.sanitization.Sanitizer;
 import dev.vertique.input.processing.EffectiveInputPolicies;
 import dev.vertique.input.processing.InputObjectProcessor;
 import dev.vertique.rest.core.context.RestContextResolution;
+import dev.vertique.rest.core.convert.ParamConversionException;
+import dev.vertique.rest.core.convert.ParamConversionResolver;
+import dev.vertique.rest.core.convert.ParamConverter;
+import dev.vertique.rest.core.convert.ParamConverterBinding;
+import dev.vertique.rest.core.convert.ParamConverterRegistry;
 import dev.vertique.rest.core.request.RequestValue;
 import dev.vertique.rest.core.security.SecurityPolicy;
 import dev.vertique.rest.jaxrs.request.BoundRequest;
@@ -50,6 +56,7 @@ import java.util.Map;
 import java.util.NavigableSet;
 import java.util.Set;
 import java.util.SortedSet;
+import java.util.UUID;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -143,6 +150,52 @@ class CollectionParamStateMachineTest {
         public String scalarInt(Integer id) {
             return String.valueOf(id);
         }
+
+        @SuppressWarnings("unused")
+        public String intList(List<Integer> ids) {
+            return String.valueOf(ids);
+        }
+
+        @SuppressWarnings("unused")
+        public String uuidList(List<UUID> ids) {
+            return String.valueOf(ids);
+        }
+
+        @SuppressWarnings("unused")
+        public String tokenList(List<NullableToken> tags) {
+            return String.valueOf(tags);
+        }
+
+        @SuppressWarnings("unused")
+        public String tokenSorted(SortedSet<NullableToken> tags) {
+            return String.valueOf(tags);
+        }
+
+        @SuppressWarnings("unused")
+        public String keepList(List<KeepMe> tags) {
+            return String.valueOf(tags);
+        }
+    }
+
+    /** Element type whose converter returns null for every present string. */
+    static final class NullableToken {}
+
+    /** Element type kept as-is. {@link #toString()} is not a valid converter input. */
+    static final class KeepMe {
+        private final int n;
+
+        KeepMe(int n) {
+            this.n = n;
+        }
+
+        int value() {
+            return n;
+        }
+
+        @Override
+        public String toString() {
+            return "not-a-token";
+        }
     }
 
     // --- Test doubles for the input-policy-chain test ---
@@ -169,6 +222,27 @@ class CollectionParamStateMachineTest {
                 InputFieldNameResolver nameResolver) {
             if (intermediateBody instanceof String s) {
                 return s.toUpperCase(Locale.ROOT);
+            }
+            return intermediateBody;
+        }
+
+        @Override
+        public void precomputeFieldNameResolution(Type declaredType, InputFieldNameResolver resolver) {
+            // This double resolves no per-type metadata, so there is nothing to precompute.
+        }
+    }
+
+    /** Strips surrounding whitespace so {@code " 5 "} becomes {@code "5"} before conversion. */
+    static final class TrimmingProcessor implements InputObjectProcessor {
+        @Override
+        public Object processInput(
+                Object intermediateBody,
+                Type targetType,
+                EffectiveInputPolicies policies,
+                InputLocation location,
+                InputFieldNameResolver nameResolver) {
+            if (intermediateBody instanceof String s) {
+                return s.strip();
             }
             return intermediateBody;
         }
@@ -253,6 +327,11 @@ class CollectionParamStateMachineTest {
 
     private static ParameterExtractor extractorFor(ResourceMethodMeta meta, InputObjectProcessor processor) {
         return new ParameterExtractor(meta, List.of(), new RestContextResolution(Set.of()), processor);
+    }
+
+    private static ParameterExtractor extractorFor(ResourceMethodMeta meta, ParamConversionResolver resolver) {
+        return new ParameterExtractor(
+                meta, List.of(), new RestContextResolution(Set.of()), null, resolver, InputFieldNameResolver.IDENTITY);
     }
 
     /**
@@ -634,6 +713,177 @@ class CollectionParamStateMachineTest {
                 "collection elements must traverse the input-policy chain identically to scalars (today: they don't)");
     }
 
+    // --- 9b. Policies before conversion, null converter, no toString fallback ---
+
+    @Test
+    @DisplayName("A scalar Integer query value is trimmed before conversion")
+    void scalarInteger_trimsBeforeConversion() throws Exception {
+        Method method = CollectionResource.class.getMethod("scalarInt", Integer.class);
+        ResourceMethodMeta.ParamMeta param = paramMeta("id", QUERY, Integer.class, null, null);
+        ResourceMethodMeta meta = metaFor(method, List.of(param), List.of(MarkerCanonicalizer.class), List.of());
+
+        Object[] args = extractorFor(meta, new TrimmingProcessor())
+                .extractArguments(null, boundRequest(QUERY, Map.of("id", RequestValue.of(" 5 "))));
+
+        assertEquals(5, args[0]);
+    }
+
+    @Test
+    @DisplayName("Whitespace on an Integer query value fails when no policy trims it")
+    void scalarInteger_withoutPolicy_rejectsWhitespace() throws Exception {
+        Method method = CollectionResource.class.getMethod("scalarInt", Integer.class);
+        ResourceMethodMeta.ParamMeta param = paramMeta("id", QUERY, Integer.class, null, null);
+        ParameterExtractor extractor = extractorFor(metaFor(method, List.of(param)));
+
+        assertThrows(
+                ParamConversionException.class,
+                () -> extractor.extractArguments(null, boundRequest(QUERY, Map.of("id", RequestValue.of(" 5 ")))));
+    }
+
+    @Test
+    @DisplayName("A scalar Integer @DefaultValue is not trimmed by the input-policy chain")
+    void scalarIntegerDefault_isNotPolicyProcessed() throws Exception {
+        Method method = CollectionResource.class.getMethod("scalarInt", Integer.class);
+        ResourceMethodMeta.ParamMeta param = paramMeta("id", QUERY, Integer.class, null, " 5 ");
+        ResourceMethodMeta meta = metaFor(method, List.of(param), List.of(MarkerCanonicalizer.class), List.of());
+        ParameterExtractor extractor = extractorFor(meta, new TrimmingProcessor());
+
+        assertThrows(
+                ParamConversionException.class,
+                () -> extractor.extractArguments(null, boundRequest(QUERY, Map.of())),
+                "a @DefaultValue must bypass policies, so the untrimmed default still fails Integer conversion");
+    }
+
+    @ParameterizedTest(name = "source={0}")
+    @MethodSource("collectionSources")
+    @DisplayName("List<Integer> elements are trimmed before conversion, for every source")
+    void collectionInteger_trimsBeforeConversion(ResourceMethodMeta.ParamSource source) throws Exception {
+        Method method = CollectionResource.class.getMethod("intList", List.class);
+        ResourceMethodMeta.ParamMeta param = paramMeta("ids", source, List.class, Integer.class, null);
+        ResourceMethodMeta meta = metaFor(method, List.of(param), List.of(MarkerCanonicalizer.class), List.of());
+
+        JsonArray bound = new JsonArray().add(" 5 ");
+        Object[] args = extractorFor(meta, new TrimmingProcessor())
+                .extractArguments(null, boundRequest(source, Map.of("ids", RequestValue.of(bound))));
+
+        List<?> list = assertInstanceOf(List.class, args[0]);
+        assertEquals(List.of(5), list);
+    }
+
+    @Test
+    @DisplayName("A null collection element fails the request, including SortedSet")
+    void nullCollectionElement_failsClosed() throws Exception {
+        Method method = CollectionResource.class.getMethod("sortedSet", SortedSet.class);
+        ResourceMethodMeta.ParamMeta param = paramMeta("tags", QUERY, SortedSet.class, String.class, null);
+        ParameterExtractor extractor = extractorFor(metaFor(method, List.of(param)));
+        JsonArray bound = new JsonArray().addNull();
+
+        ParamConversionException ex = assertThrows(
+                ParamConversionException.class,
+                () -> extractor.extractArguments(null, boundRequest(QUERY, Map.of("tags", RequestValue.of(bound)))));
+        assertTrue(ex.getMessage().contains("null element"));
+        assertNull(ex.getCause());
+    }
+
+    @Test
+    @DisplayName("A converter that returns null for a present element fails the request")
+    void nullConverterResult_forPresentElement_failsClosed() throws Exception {
+        Method method = CollectionResource.class.getMethod("tokenList", List.class);
+        ResourceMethodMeta.ParamMeta param = paramMeta("tags", QUERY, List.class, NullableToken.class, null);
+        ParameterExtractor extractor = extractorFor(metaFor(method, List.of(param)), nullTokenResolver());
+        JsonArray bound = new JsonArray().add("secret-value");
+
+        ParamConversionException ex = assertThrows(
+                ParamConversionException.class,
+                () -> extractor.extractArguments(null, boundRequest(QUERY, Map.of("tags", RequestValue.of(bound)))));
+        assertTrue(ex.getMessage().contains("returned null"));
+        assertFalse(ex.getMessage().contains("secret-value"));
+        assertNull(ex.getCause());
+        assertEquals(NullableToken.class, ex.targetType());
+    }
+
+    @Test
+    @DisplayName("A converter that returns null for a collection @DefaultValue fails the request")
+    void nullConverterResult_forCollectionDefault_failsClosed() throws Exception {
+        Method method = CollectionResource.class.getMethod("tokenSorted", SortedSet.class);
+        ResourceMethodMeta.ParamMeta param =
+                paramMeta("tags", QUERY, SortedSet.class, NullableToken.class, "secret-value");
+        ParameterExtractor extractor = extractorFor(metaFor(method, List.of(param)), nullTokenResolver());
+
+        ParamConversionException ex = assertThrows(
+                ParamConversionException.class, () -> extractor.extractArguments(null, boundRequest(QUERY, Map.of())));
+        assertTrue(ex.getMessage().contains("returned null"));
+        assertFalse(ex.getMessage().contains("secret-value"));
+        assertNull(ex.getCause());
+    }
+
+    @Test
+    @DisplayName("A non-string value of the wrong element type fails closed, with no toString round-trip")
+    void wrongElementType_failsClosedWithoutToString() throws Exception {
+        Method method = CollectionResource.class.getMethod("uuidList", List.class);
+        ResourceMethodMeta.ParamMeta param = paramMeta("ids", QUERY, List.class, UUID.class, null);
+        ParameterExtractor extractor = extractorFor(metaFor(method, List.of(param)));
+
+        ParamConversionException ex = assertThrows(
+                ParamConversionException.class,
+                () -> extractor.extractArguments(
+                        null, boundRequest(QUERY, Map.of("ids", RequestValue.of(Integer.valueOf(5))))));
+        assertTrue(ex.getMessage().contains("neither a string nor the element type"));
+        assertFalse(ex.getMessage().contains("5"));
+        assertNull(ex.getCause());
+    }
+
+    @Test
+    @DisplayName("A value that is already the element type is kept, and is not converted via toString")
+    void elementAlreadyOfComponentType_isKept() throws Exception {
+        Method method = CollectionResource.class.getMethod("keepList", List.class);
+        ResourceMethodMeta.ParamMeta param = paramMeta("tags", QUERY, List.class, KeepMe.class, null);
+        ParameterExtractor extractor = extractorFor(metaFor(method, List.of(param)), keepMeResolver());
+        KeepMe kept = new KeepMe(7);
+
+        Object[] args = extractor.extractArguments(null, boundRequest(QUERY, Map.of("tags", RequestValue.of(kept))));
+
+        List<?> list = assertInstanceOf(List.class, args[0]);
+        assertEquals(1, list.size());
+        assertSame(kept, list.get(0), "the bound instance must be kept, not rebuilt from toString()");
+    }
+
+    private static ParamConversionResolver nullTokenResolver() {
+        return ParamConversionResolver.of(
+                ParamConverterRegistry.of(
+                        Set.of(new ParamConverterBinding<>(NullableToken.class, new ParamConverter<>() {
+                            @Override
+                            public NullableToken fromString(String value) {
+                                return null;
+                            }
+
+                            @Override
+                            public String toString(NullableToken value) {
+                                return "";
+                            }
+                        }))),
+                Set.of());
+    }
+
+    private static ParamConversionResolver keepMeResolver() {
+        return ParamConversionResolver.of(
+                ParamConverterRegistry.of(Set.of(new ParamConverterBinding<>(KeepMe.class, new ParamConverter<>() {
+                    @Override
+                    public KeepMe fromString(String value) {
+                        if (!value.startsWith("keep:")) {
+                            throw new IllegalArgumentException("unusable");
+                        }
+                        return new KeepMe(Integer.parseInt(value.substring("keep:".length())));
+                    }
+
+                    @Override
+                    public String toString(KeepMe value) {
+                        return "keep:" + value.value();
+                    }
+                }))),
+                Set.of());
+    }
+
     // --- 10. Real-binder seam ---
 
     /**
@@ -724,7 +974,7 @@ class CollectionParamStateMachineTest {
          *
          * <p>This assertion — on the <em>binder's</em> output, before extraction — is what makes the
          * cookie rows below able to fail. A cookie is single-valued, so reverting {@code bindCookies} to
-         * {@code wrapScalar}, or reverting {@code findDescriptor}'s {@code COOKIE} match to
+         * a scalar wrap, or reverting {@code findDescriptor}'s {@code COOKIE} match to
          * case-sensitive (which leaves no descriptor, hence a scalar wrap), both leave a bare
          * {@link String} here — and the singleton fallback in
          * {@code ParameterExtractor.extractScalarValue} then turns that bare {@code String} into the very
@@ -743,8 +993,8 @@ class CollectionParamStateMachineTest {
                     JsonArray.class,
                     bound.get(),
                     "bindCookies must wrap a collection-declared cookie's value in a JsonArray so it reaches "
-                            + "coerceCollection as a collection; a bare String means the binder regressed to "
-                            + "wrapScalar (or the COOKIE descriptor match regressed to case-sensitive) and only the "
+                            + "coerceCollection as a collection; a bare String means the binder used the scalar "
+                            + "branch (or the COOKIE descriptor match regressed to case-sensitive) and only the "
                             + "extractScalarValue singleton fallback is masking it");
         }
 
@@ -861,7 +1111,7 @@ class CollectionParamStateMachineTest {
                     List.class,
                     args[0],
                     "bindCookies must bind a collection-declared cookie as a JsonArray so it reaches "
-                            + "coerceCollection; wrapScalar leaves a bare String that 500s");
+                            + "coerceCollection; a bare String is only the one-element fallback");
             assertEquals(List.of("a"), list, "a cookie is single-valued, so the collection has exactly one entry");
         }
 
@@ -985,9 +1235,9 @@ class CollectionParamStateMachineTest {
             BoundRequest req = realBoundRequest(meta, null, null, Set.of(cookie("id", "42")));
 
             assertEquals(
-                    42,
-                    req.cookies().get("id").getInteger(),
-                    "the descriptor-scoped scalar coercion must survive the wrapValues first-value fallback");
+                    "42",
+                    req.cookies().get("id").getString(),
+                    "the binder stores the raw cookie string; conversion happens at extraction");
 
             Object[] args = extractorFor(meta).extractArguments(null, req);
             assertEquals(42, args[0]);

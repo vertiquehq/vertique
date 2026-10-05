@@ -601,6 +601,161 @@ class ResponsePipelineTest {
         }
     }
 
+    /**
+     * The fallback-500 ERROR line interpolates a sanitised cause message so Jackson
+     * {@code WRAP_EXCEPTIONS} reference chains (caller-controlled map keys with CR/LF) cannot forge
+     * additional log lines. The raw throwable stays at DEBUG only.
+     */
+    @Nested
+    @DisplayName("sendFallback500 log boundary")
+    class Fallback500LogBoundary {
+
+        private Logger pipelineLogger;
+        private Level previousLevel;
+        private ListAppender<ILoggingEvent> appender;
+
+        @BeforeEach
+        void capturePipelineLogs() {
+            pipelineLogger = (Logger) LoggerFactory.getLogger(ResponsePipeline.class);
+            previousLevel = pipelineLogger.getLevel();
+            // DEBUG so regressions cover both the ERROR summary and the DEBUG diagnostic sink.
+            pipelineLogger.setLevel(Level.DEBUG);
+            appender = new ListAppender<>();
+            appender.start();
+            pipelineLogger.addAppender(appender);
+        }
+
+        @AfterEach
+        void releasePipelineLogs() {
+            pipelineLogger.detachAppender(appender);
+            appender.stop();
+            pipelineLogger.setLevel(previousLevel);
+        }
+
+        @Test
+        @DisplayName("sanitizeLogMessage neutralises control characters and caps length")
+        void sanitizeLogMessageNeutralisesControlsAndCapsLength() {
+            assertEquals("", ResponsePipeline.sanitizeLogMessage(null));
+            assertEquals("", ResponsePipeline.sanitizeLogMessage(""));
+            assertEquals("evil?INFO forged line", ResponsePipeline.sanitizeLogMessage("evil\nINFO forged line"));
+            assertEquals("a?b?c", ResponsePipeline.sanitizeLogMessage("a\rb\nc"));
+            String longMessage = "x".repeat(600);
+            String sanitised = ResponsePipeline.sanitizeLogMessage(longMessage);
+            assertEquals(512, sanitised.length());
+            assertTrue(sanitised.chars().allMatch(ch -> ch == 'x'));
+        }
+
+        @Test
+        @DisplayName("sanitizeFailureChain walks causes and neutralises CR/LF in every link")
+        void sanitizeFailureChainWalksAndSanitises() {
+            Throwable nested =
+                    new IllegalStateException("inner\nINFO forged", new EncodeException("leaf\rWARN forged"));
+            Throwable root = new RuntimeException("outer\nERROR forged", nested);
+            String rendered = ResponsePipeline.sanitizeFailureChain(root);
+            assertTrue(rendered.contains("java.lang.RuntimeException: outer?ERROR forged"), rendered);
+            assertTrue(rendered.contains("java.lang.IllegalStateException: inner?INFO forged"), rendered);
+            assertTrue(rendered.contains("io.vertx.core.json.EncodeException: leaf?WARN forged"), rendered);
+            assertFalse(rendered.contains("\n"), "chain must be a single line: " + rendered);
+            assertFalse(rendered.contains("\r"), "chain must not retain CR: " + rendered);
+        }
+
+        @Test
+        @DisplayName("fallback-500 ERROR line carries sanitised message, never raw CR/LF")
+        void fallback500ErrorLineSanitisesCauseMessage() {
+            when(httpResponse.ended()).thenReturn(false);
+            when(httpResponse.end(anyString())).thenReturn(Future.succeededFuture());
+            String forged = "Failed to encode as JSON: evil\nINFO forged line";
+            RequestInterceptor failingTransform = new RequestInterceptor() {
+                @Override
+                public Future<Response> transformResponse(RoutingContext rc, Response response) {
+                    return Future.failedFuture(new EncodeException(forged));
+                }
+            };
+            ResponsePipeline p = new ResponsePipeline(Set.of(), List.of(failingTransform), serializer);
+
+            p.sendResponse(ctx, Response.ok("body").build());
+
+            List<ILoggingEvent> errors = appender.list.stream()
+                    .filter(event -> event.getLevel() == Level.ERROR)
+                    .filter(event -> event.getFormattedMessage().contains("bare-metal 500"))
+                    .toList();
+            assertEquals(1, errors.size(), "exactly one ERROR must report the fallback-500");
+            String rendered = renderCompleteEvent(errors.get(0));
+            assertTrue(rendered.contains("EncodeException"), "ERROR must name the cause class: " + rendered);
+            assertTrue(
+                    rendered.contains("evil?INFO forged line"), "ERROR must carry the sanitised message: " + rendered);
+            assertFalse(rendered.contains("\n"), "ERROR complete render must not contain a raw newline: " + rendered);
+            assertNull(errors.get(0).getThrowableProxy(), "ERROR must not attach a throwable proxy");
+        }
+
+        @Test
+        @DisplayName("fallback-500 DEBUG diagnostic sanitises cause chain; no throwable proxy, no raw CR/LF")
+        void fallback500DebugDiagnosticSanitisesCauseChain() {
+            when(httpResponse.ended()).thenReturn(false);
+            when(httpResponse.end(anyString())).thenReturn(Future.succeededFuture());
+            String forgedLeaf = "leaf\nINFO forged line";
+            String forgedOuter = "Failed to encode as JSON: evil\nWARN forged line";
+            RequestInterceptor failingTransform = new RequestInterceptor() {
+                @Override
+                public Future<Response> transformResponse(RoutingContext rc, Response response) {
+                    return Future.failedFuture(new EncodeException(forgedOuter, new IllegalStateException(forgedLeaf)));
+                }
+            };
+            ResponsePipeline p = new ResponsePipeline(Set.of(), List.of(failingTransform), serializer);
+
+            p.sendResponse(ctx, Response.ok("body").build());
+
+            List<ILoggingEvent> debugs = appender.list.stream()
+                    .filter(event -> event.getLevel() == Level.DEBUG)
+                    .filter(event -> event.getFormattedMessage().contains("Response pipeline failure detail"))
+                    .toList();
+            assertEquals(1, debugs.size(), "exactly one DEBUG diagnostic expected, got: " + appender.list);
+            ILoggingEvent debug = debugs.get(0);
+            assertNull(debug.getThrowableProxy(), "DEBUG must not attach the raw throwable");
+            String rendered = renderCompleteEvent(debug);
+            assertTrue(
+                    rendered.contains(
+                            "io.vertx.core.json.EncodeException: Failed to encode as JSON: evil?WARN forged line"),
+                    "DEBUG must carry the sanitised outer link: " + rendered);
+            assertTrue(
+                    rendered.contains("java.lang.IllegalStateException: leaf?INFO forged line"),
+                    "DEBUG must carry the sanitised cause link: " + rendered);
+            assertFalse(
+                    rendered.contains("\n"),
+                    "DEBUG complete render (message + throwable) must not contain a raw newline: " + rendered);
+            assertFalse(rendered.contains("\r"), "DEBUG complete render must not retain CR: " + rendered);
+            // ERROR behaviour is unchanged when DEBUG is enabled.
+            assertEquals(
+                    1,
+                    appender.list.stream()
+                            .filter(event -> event.getLevel() == Level.ERROR)
+                            .filter(event -> event.getFormattedMessage().contains("bare-metal 500"))
+                            .count());
+        }
+
+        /**
+         * Renders the complete logging event as Logback would for console output: formatted message
+         * plus any attached throwable proxy messages (causal chain). Used to assert the DEBUG sink
+         * cannot retain attacker-controlled CR/LF even when a throwable is attached.
+         *
+         * @param event the captured logging event
+         * @return message text concatenated with throwable proxy messages, separated by newlines when
+         *     a proxy is present (matching console rendering)
+         */
+        private static String renderCompleteEvent(ILoggingEvent event) {
+            StringBuilder sb = new StringBuilder(event.getFormattedMessage());
+            var proxy = event.getThrowableProxy();
+            while (proxy != null) {
+                sb.append('\n')
+                        .append(proxy.getClassName())
+                        .append(": ")
+                        .append(proxy.getMessage() == null ? "" : proxy.getMessage());
+                proxy = proxy.getCause();
+            }
+            return sb.toString();
+        }
+    }
+
     // --- Wire-completion observation (post-handoff) ---
 
     /**

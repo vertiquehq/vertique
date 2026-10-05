@@ -65,22 +65,19 @@ public final class ParamConversionResolver {
      *
      * @param value the raw transport string; never {@code null}
      * @param ctx   the per-parameter conversion context; never {@code null}
-     * @return the parsed typed value
-     * @throws ParamConversionException        if a resolved converter cannot parse {@code value}
+     * @return the parsed typed value; never {@code null}
+     * @throws ParamConversionException        if a resolved converter cannot parse {@code value}, or
+     *                                         returns {@code null} for this present value
      * @throws ParamConverterNotFoundException if no converter or provider can satisfy the target type
      */
     public Object fromString(String value, ConversionContext ctx) {
         ParamConverter<?> native_ = registry.find(ctx.rawType()).orElse(null);
         if (native_ != null) {
-            return parseWithNative(native_, value, ctx);
+            return requirePresent(parseWithNative(native_, value, ctx), ctx);
         }
         jakarta.ws.rs.ext.ParamConverter<?> jaxrs = resolveJaxRs(ctx);
         if (jaxrs != null) {
-            try {
-                return jaxrs.fromString(value);
-            } catch (RuntimeException e) {
-                throw contextualize(e, ctx);
-            }
+            return requirePresent(parseWithJaxRs(jaxrs, value, ctx), ctx);
         }
         throw notFound(ctx);
     }
@@ -153,15 +150,55 @@ public final class ParamConversionResolver {
     }
 
     /**
+     * Parses {@code value} with a JAX-RS converter, re-contextualizing any parse failure the same way
+     * {@link #parseWithNative} does.
+     *
+     * @param converter the resolved JAX-RS converter
+     * @param value     the raw transport string
+     * @param ctx       the per-parameter conversion context
+     * @return the parsed value, which may be {@code null} when the converter returns {@code null}
+     */
+    private Object parseWithJaxRs(jakarta.ws.rs.ext.ParamConverter<?> converter, String value, ConversionContext ctx) {
+        try {
+            return converter.fromString(value);
+        } catch (RuntimeException e) {
+            throw contextualize(e, ctx);
+        }
+    }
+
+    /**
+     * Rejects a {@code null} converter result for a present transport string. A null result is not
+     * absence and is not a value a collection may contain: callers would otherwise insert a null
+     * element, and a {@code SortedSet} materialization then throws {@link NullPointerException}.
+     * The raw value is not included in the message. A null or wrong-typed collection element is
+     * rejected in {@code ParameterExtractor} with the same exception type and the same omission.
+     *
+     * @param parsed the converter result
+     * @param ctx    the per-parameter conversion context
+     * @return {@code parsed} when it is non-{@code null}
+     */
+    private Object requirePresent(Object parsed, ConversionContext ctx) {
+        if (parsed == null) {
+            throw new ParamConversionException(
+                    "Converter for parameter '" + ctx.paramName() + "' returned null for a present value",
+                    ctx.paramName(),
+                    ctx.source(),
+                    ctx.rawType());
+        }
+        return parsed;
+    }
+
+    /**
      * Wraps a converter failure as a {@link ParamConversionException} carrying the resolver-supplied
      * context (the real parameter name, source, and target type). The resolver is the <em>sole</em>
-     * builder of {@link ParamConversionException}: every converter — built-in, enum-synth, or a JAX-RS
+     * builder of {@link ParamConversionException} for converter failures: every converter — built-in, enum-synth, or a JAX-RS
      * provider — throws a raw {@link RuntimeException} on a parse failure (a {@link NumberFormatException},
      * a {@link java.time.format.DateTimeParseException}, an {@link IllegalArgumentException}, or a
      * provider's {@link jakarta.ws.rs.WebApplicationException}), and that raw failure becomes the cause
-     * here, yielding the uniform conversion-failure contract (FR-015-08a). The raw value is never
-     * included in the message. {@link ParamConverterNotFoundException} is raised separately (via
-     * {@link #notFound}) and is never routed through this method, so it is never wrapped.
+     * here, yielding the uniform conversion-failure contract (FR-015-08a). A converter that returns
+     * {@code null} for a present value is rejected by {@link #requirePresent} with no cause. The raw
+     * value is never included in the message. {@link ParamConverterNotFoundException} is raised
+     * separately (via {@link #notFound}) and is never routed through this method, so it is never wrapped.
      *
      * @param e   the raw converter failure
      * @param ctx the per-parameter conversion context

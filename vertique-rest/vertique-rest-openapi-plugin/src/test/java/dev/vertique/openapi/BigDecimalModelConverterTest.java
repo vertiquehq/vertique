@@ -11,6 +11,7 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 
 import io.swagger.v3.core.converter.AnnotatedType;
 import io.swagger.v3.core.converter.ModelConverter;
+import io.swagger.v3.core.converter.ModelConverterContextImpl;
 import io.swagger.v3.oas.models.media.Schema;
 import io.swagger.v3.oas.models.media.StringSchema;
 import java.math.BigDecimal;
@@ -26,8 +27,8 @@ import org.junit.jupiter.api.Test;
  * return/field types to the {@code vertique-strict} string wire-form schema, delegates unrelated
  * types (including {@code Map<BigDecimal, ?>}, whose keys this converter never bounds — see the
  * module doc's map-key caveat) unchanged to the next converter in the chain, terminates gracefully
- * when it is last in an empty chain, and composes correctly when chained after
- * {@link FutureModelConverter}.
+ * when it is last in an empty chain, and composes correctly with {@link FutureModelConverter}
+ * regardless of registration order.
  */
 class BigDecimalModelConverterTest {
 
@@ -74,36 +75,27 @@ class BigDecimalModelConverterTest {
     }
 
     /**
-     * Exercises the {@code [FutureModelConverter, BigDecimalModelConverter]} chain — the order a
-     * {@code <modelConverterClasses>} block <em>declares</em>, not the order the plugin registers.
-     * {@code ModelConverters#addConverter} prepends, so a declared order composes back-to-front and
-     * the registered chain puts {@link BigDecimalModelConverter} <em>ahead</em> of the
-     * {@code Future} unwrap, where it can no longer see the unwrapped {@link BigDecimal}.
-     *
-     * <p>This is therefore a converter-contract test — it proves {@link BigDecimalModelConverter}
-     * resolves a {@link BigDecimal} handed to it by an upstream unwrapping converter — and not a
-     * model of the production chain. What the production chain actually produces for
-     * {@code Future<BigDecimal>} is pinned by
-     * {@code OpenApiSchemaCompositionTest.RegistrationOrder}, and it is a bare {@code number}
-     * (see {@code vertiquehq/vertique-dev#395}).
+     * {@link FutureModelConverter} restarts resolution after unwrap, so {@link
+     * BigDecimalModelConverter} sees the inner {@link BigDecimal} whether it sits ahead of or
+     * behind Future in the chain (see {@code vertiquehq/vertique-dev#395}).
      */
     @Test
-    @DisplayName(
-            "BigDecimal nested inside Future<T> resolves to the decimal string schema when chained after FutureModelConverter")
-    void bigDecimalInsideFuture_resolvedWhenChainedAfterFutureConverter() {
-        FutureModelConverter futureConverter = new FutureModelConverter();
-        BigDecimalModelConverter bigDecimalConverter = new BigDecimalModelConverter();
-        Iterator<ModelConverter> chain =
-                List.<ModelConverter>of(bigDecimalConverter).iterator();
-
+    @DisplayName("BigDecimal nested inside Future<T> resolves to the decimal string schema in either chain order")
+    void bigDecimalInsideFuture_resolvedRegardlessOfConverterOrder() {
         var futureOfBigDecimal = io.swagger.v3.core.util.Json.mapper()
                 .getTypeFactory()
                 .constructParametricType(io.vertx.core.Future.class, BigDecimal.class);
         AnnotatedType type = new AnnotatedType().type(futureOfBigDecimal);
 
-        Schema<?> result = futureConverter.resolve(type, null, chain);
+        Schema<?> futureFirst = new ModelConverterContextImpl(
+                        List.of(new FutureModelConverter(), new BigDecimalModelConverter()))
+                .resolve(type);
+        Schema<?> bigDecimalFirst = new ModelConverterContextImpl(
+                        List.of(new BigDecimalModelConverter(), new FutureModelConverter()))
+                .resolve(type);
 
-        assertDecimalStringSchema(result);
+        assertDecimalStringSchema(futureFirst);
+        assertDecimalStringSchema(bigDecimalFirst);
     }
 
     @Test

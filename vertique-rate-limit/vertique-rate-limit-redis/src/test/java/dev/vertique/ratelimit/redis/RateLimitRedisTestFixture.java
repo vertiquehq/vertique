@@ -14,6 +14,7 @@ import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.json.JsonObject;
 import io.vertx.redis.client.Redis;
+import io.vertx.redis.client.RedisAPI;
 import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
@@ -147,6 +148,34 @@ final class RateLimitRedisTestFixture {
      */
     static Future<Void> settle(Vertx vertx, long ms) {
         return Future.future(promise -> vertx.setTimer(ms, ignored -> promise.complete()));
+    }
+
+    /**
+     * Waits until {@code PTTL} reports a finite TTL ({@code > 0}) for {@code physicalKey}.
+     *
+     * <p>{@link Bucket4jRedisRateLimitBackend#consume} settles the admission decision before the
+     * fire-and-forget {@code PEXPIRE} is applied, so a single immediate {@code PTTL} can observe
+     * {@code -1} (key present, no expire yet). Polling preserves the TTL-bound contract without
+     * requiring consume to await the TTL write.
+     */
+    static long awaitPositivePttl(Vertx vertx, RedisAPI redis, String physicalKey) throws Exception {
+        return await(pollUntilPositivePttl(vertx, redis, physicalKey, 40, 50L));
+    }
+
+    private static Future<Long> pollUntilPositivePttl(
+            Vertx vertx, RedisAPI redis, String physicalKey, int maxAttempts, long delayMs) {
+        return redis.pttl(physicalKey).compose(ttl -> {
+            long observed = ttl == null ? Long.MIN_VALUE : ttl.toLong();
+            if (observed > 0L) {
+                return Future.succeededFuture(observed);
+            }
+            if (maxAttempts <= 1) {
+                return Future.failedFuture(new AssertionError(
+                        "Timed out waiting for positive PTTL after committed consume; lastObserved=" + observed));
+            }
+            return settle(vertx, delayMs)
+                    .compose(ignored -> pollUntilPositivePttl(vertx, redis, physicalKey, maxAttempts - 1, delayMs));
+        });
     }
 
     static <T> T await(Future<T> future) throws Exception {

@@ -78,17 +78,16 @@ class RateLimitRedisTtlMaintenanceIT {
                 backend.consume(RateLimitRedisTestFixture.request(storageKey, algorithm, 1)));
         assertTrue(result.consumed(), "the first consume against a fresh full bucket must commit");
 
-        // Then: the physical key's TTL, read via PTTL, is present and consistent with the
-        // independently computed worstCaseTimeToFullMs + expirationSlackMs bound.
+        // Then: the physical key's TTL, read via PTTL once the fire-and-forget PEXPIRE has applied,
+        // is present and consistent with the independently computed worstCaseTimeToFullMs +
+        // expirationSlackMs bound.
         String physicalKey = IndependentRedisReference.physicalKey(
                 RateLimitRedisTestFixture.NAMESPACE, RateLimitRedisTestFixture.SECRET, storageKey);
-        Response ttl = RateLimitRedisTestFixture.await(rawCommands.pttl(physicalKey));
-        assertThat(ttl).isNotNull();
+        long observedTtlMs = RateLimitRedisTestFixture.awaitPositivePttl(vertx, rawCommands, physicalKey);
         long expectedTtlMs = IndependentRedisReference.worstCaseTimeToFullMs(capacity, tokensPerPeriod, periodMs)
                 + expirationSlackMs;
-        assertThat(ttl.toLong())
+        assertThat(observedTtlMs)
                 .as("PTTL must reflect Vertique's own PEXPIRE bound, not a Bucket4j-written TTL")
-                .isGreaterThan(0L)
                 .isLessThanOrEqualTo(expectedTtlMs)
                 .isGreaterThan(expectedTtlMs - 5_000L);
     }
@@ -112,11 +111,11 @@ class RateLimitRedisTtlMaintenanceIT {
 
         String physicalKey = IndependentRedisReference.physicalKey(
                 RateLimitRedisTestFixture.NAMESPACE, RateLimitRedisTestFixture.SECRET, storageKey);
-        Response ttl = RateLimitRedisTestFixture.await(rawCommands.pttl(physicalKey));
+        long observedTtlMs = RateLimitRedisTestFixture.awaitPositivePttl(vertx, rawCommands, physicalKey);
         long expectedTtlMs = IndependentRedisReference.worstCaseTimeToFullMs(smallCapacity, tokensPerPeriod, periodMs)
                 + expirationSlackMs;
-        assertThat(ttl.toLong()).isLessThan(60_000L + expirationSlackMs);
-        assertThat(ttl.toLong()).isLessThanOrEqualTo(expectedTtlMs).isGreaterThan(expectedTtlMs - 5_000L);
+        assertThat(observedTtlMs).isLessThan(60_000L + expirationSlackMs);
+        assertThat(observedTtlMs).isLessThanOrEqualTo(expectedTtlMs).isGreaterThan(expectedTtlMs - 5_000L);
     }
 
     @Test

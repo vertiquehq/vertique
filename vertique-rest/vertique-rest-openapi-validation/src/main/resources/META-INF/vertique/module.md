@@ -185,7 +185,7 @@ module, the startup contract-load check fails the router of every mount bound to
 startup. Driven directly, without that check, the failure surfaces as HTTP 500 when a request reaches
 one of that mount's gates, while other mounts keep working.
 
-The strategy also injects the framework's `ParamConversionResolver` (`vertique-rest-core`) and threads it into the `DefaultBoundRequest` it constructs to trigger the JSON-profile first-parse, so this strategy's parameter coercion goes through the same shared conversion chain as the `web-validation` strategy and the `rest-jaxrs` dispatch path rather than a separate one.
+The strategy still passes the framework's `ParamConversionResolver` (`vertique-rest-core`) into the `DefaultBoundRequest` it constructs. Constructing that binder triggers the JSON-profile first-parse of the body. The binder stores declared scalars as raw strings and does not coerce them. `ParameterExtractor` converts after input policies, through the same resolver as dispatch.
 
 ---
 

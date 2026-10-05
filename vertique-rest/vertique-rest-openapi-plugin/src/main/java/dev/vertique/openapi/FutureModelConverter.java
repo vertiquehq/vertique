@@ -20,17 +20,25 @@ import java.util.Iterator;
  * with it, the spec reflects the actual response payload type (e.g. a resource record or list) so
  * generated client code and API documentation are accurate.
  *
+ * <p>After unwrapping, this converter restarts schema resolution via {@link
+ * ModelConverterContext#resolve(AnnotatedType)} so every registered converter — including ones that
+ * already ran before this one — sees the inner type. That makes composition with {@link
+ * SseModelConverter}, {@link BigDecimalModelConverter}, and {@link ScalarOptionalModelConverter}
+ * independent of {@code <modelConverterClasses>} declaration order. Swagger's plugin path loses
+ * that order anyway: {@code GenericOpenApiContext} deep-copies configuration through Jackson into a
+ * {@code HashSet} before {@code buildModelConverters} / {@code ModelConverters#addConverter}.
+ *
  * <p>Register this converter in the {@code swagger-maven-plugin} configuration:
  *
  * <pre>{@code
  * <modelConverterClasses>
- *     dev.vertique.openapi.FutureModelConverter
+ *     <modelConverterClass>dev.vertique.openapi.FutureModelConverter</modelConverterClass>
  * </modelConverterClasses>
  * }</pre>
  *
- * <p><strong>Chain-end contract:</strong> delegates to the next converter via {@link
- * ConverterChain#delegate}, which returns {@code null} rather than throwing when this converter is
- * last in the configured chain.
+ * <p><strong>Chain-end contract:</strong> when the type is not a {@code Future}, delegates to the
+ * next converter via {@link ConverterChain#delegate}, which returns {@code null} rather than
+ * throwing when this converter is last in the configured chain.
  */
 public class FutureModelConverter implements ModelConverter {
 
@@ -66,18 +74,23 @@ public class FutureModelConverter implements ModelConverter {
 
     /**
      * Resolves the schema for the given type. If the type is {@code Future<T>}, it is unwrapped to
-     * {@code T} before delegating to the next converter in {@code chain}. Otherwise the type is
-     * passed through unchanged.
+     * {@code T} and resolution restarts at the head of the converter chain via {@code context}.
+     * Otherwise the type is passed through unchanged to the next converter in {@code chain}.
      *
      * @param type the annotated type being resolved
      * @param context the current model converter context
      * @param chain the remaining converters in the resolution chain
-     * @return the schema produced by the next converter in {@code chain}, or {@code null} if the
-     *     chain is exhausted
+     * @return the schema for the unwrapped type, the schema from the next converter in {@code
+     *     chain}, or {@code null} if the chain is exhausted
      */
     @Override
     public Schema<?> resolve(AnnotatedType type, ModelConverterContext context, Iterator<ModelConverter> chain) {
         AnnotatedType unwrapped = futureValue(type);
-        return ConverterChain.delegate(unwrapped, context, chain);
+        if (unwrapped != type) {
+            // Restart at the chain head so converters that already ran (or sit ahead after an
+            // unordered HashSet registration) still see the payload type.
+            return context.resolve(unwrapped);
+        }
+        return ConverterChain.delegate(type, context, chain);
     }
 }

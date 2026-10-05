@@ -34,8 +34,10 @@ import io.vertx.junit5.VertxTestContext;
 import io.vertx.openapi.validation.SchemaValidationException;
 import io.vertx.openapi.validation.ValidatorErrorType;
 import io.vertx.openapi.validation.ValidatorException;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -62,9 +64,43 @@ class OpenApiContractStrategyTest {
     /** A second contract fixture (disjoint operationId, disjoint schema) used to prove per-mount binding. */
     private static final String MOUNT_B_CONTRACT_PATH = "openapi-contract-mount-b.json";
 
+    /** Bound for awaiting in-flight {@code OpenAPIContract.from} loads before VertxExtension reclaim. */
+    private static final long AWAIT_SECONDS = 5;
+
     private OpenApiContractValidationStrategy strategy(Vertx vertx) {
-        return new OpenApiContractValidationStrategy(
+        OpenApiContractValidationStrategy strategy = new OpenApiContractValidationStrategy(
                 vertx, JaxRsConfig.builder().openapiPath(CONTRACT_PATH).build());
+        // Construction pre-warms CONTRACT_PATH via executeBlocking; settle it before the injected Vertx
+        // is reclaimed or the completion task races loop shutdown (issue #340).
+        awaitContractLoads(strategy, CONTRACT_PATH);
+        return strategy;
+    }
+
+    /**
+     * Awaits every cached contract load for {@code paths} so VertxExtension does not close the injected
+     * {@link Vertx} while {@code OpenAPIContract.from}'s {@code executeBlocking} is still completing.
+     * Leaving that work in flight surfaces as {@code RejectedExecutionException: event executor
+     * terminated} on {@code vert.x-internal-blocking-*} (issue #340).
+     *
+     * @param strategy the strategy whose cached loads to drain
+     * @param paths    contract paths whose loads must settle; missing cache entries are skipped
+     */
+    private static void awaitContractLoads(OpenApiContractValidationStrategy strategy, String... paths) {
+        List<Future<?>> loads = new ArrayList<>();
+        for (String path : paths) {
+            Future<?> load = strategy.contractLoad(path);
+            if (load != null) {
+                loads.add(load);
+            }
+        }
+        if (loads.isEmpty()) {
+            return;
+        }
+        try {
+            Future.join(loads).toCompletionStage().toCompletableFuture().get(AWAIT_SECONDS, TimeUnit.SECONDS);
+        } catch (Exception e) {
+            throw new AssertionError("outstanding OpenAPI contract load did not settle before Vertx teardown", e);
+        }
     }
 
     /**
@@ -149,6 +185,7 @@ class OpenApiContractStrategyTest {
         OpenApiContractValidationStrategy s = strategy(vertx);
         s.bindToMount(mountMeta("jaxrs:/a/*", "/a/*", CONTRACT_PATH));
         s.bindToMount(mountMeta("jaxrs:/b/*", "/b/*", MOUNT_B_CONTRACT_PATH));
+        awaitContractLoads(s, CONTRACT_PATH, MOUNT_B_CONTRACT_PATH);
 
         IllegalStateException ex = assertThrows(
                 IllegalStateException.class,
@@ -177,6 +214,7 @@ class OpenApiContractStrategyTest {
                     s.bindToMount(mountB);
                 },
                 "binding two mounts with distinct openapiPaths, each bound twice, must not throw");
+        awaitContractLoads(s, CONTRACT_PATH, MOUNT_B_CONTRACT_PATH);
 
         JaxRsOperationDescriptor createWidget = op("POST", "/widgets", "createWidget");
         JaxRsOperationDescriptor createGadget = op("POST", "/gadgets", "createGadget");
@@ -206,24 +244,26 @@ class OpenApiContractStrategyTest {
         // must accept it.
         String bodyValidOnlyUnderB = new JsonObject().put("sku", "s").encode();
 
-        vertx.createHttpServer().requestHandler(router).listen(0, "127.0.0.1").onComplete(ctx.succeeding(server -> {
-            WebClient client = WebClient.create(vertx);
-            runGate(client, server.actualPort(), "/a", bodyValidOnlyUnderB)
-                    .compose(aStatus -> runGate(client, server.actualPort(), "/b", bodyValidOnlyUnderB)
-                            .map(bStatus -> new int[] {aStatus, bStatus}))
-                    .onComplete(ctx.succeeding(statuses -> ctx.verify(() -> {
-                        try {
-                            assertEquals(400, statuses[0], "A's gate must reject a body valid only under B's contract");
-                            assertTrue(
-                                    statuses[1] >= 200 && statuses[1] < 300,
-                                    "B's gate must accept a body valid under its own contract; was " + statuses[1]);
-                        } finally {
-                            client.close();
-                            server.close();
-                        }
-                        ctx.completeNow();
-                    })));
-        }));
+        vertx.createHttpServer()
+                .requestHandler(router)
+                .listen(0, "127.0.0.1")
+                .compose(server -> {
+                    WebClient client = WebClient.create(vertx);
+                    return runGate(client, server.actualPort(), "/a", bodyValidOnlyUnderB)
+                            .compose(aStatus -> runGate(client, server.actualPort(), "/b", bodyValidOnlyUnderB)
+                                    .map(bStatus -> new int[] {aStatus, bStatus}))
+                            .eventually(() -> {
+                                client.close();
+                                return server.close();
+                            });
+                })
+                .onComplete(ctx.succeeding(statuses -> ctx.verify(() -> {
+                    assertEquals(400, statuses[0], "A's gate must reject a body valid only under B's contract");
+                    assertTrue(
+                            statuses[1] >= 200 && statuses[1] < 300,
+                            "B's gate must accept a body valid under its own contract; was " + statuses[1]);
+                    ctx.completeNow();
+                })));
     }
 
     @Test
@@ -253,6 +293,7 @@ class OpenApiContractStrategyTest {
         MountMeta mountB = mountMeta("jaxrs:/b/*", "/b/*", MOUNT_B_CONTRACT_PATH);
         divergent.bindToMount(mountA);
         divergent.bindToMount(mountB);
+        awaitContractLoads(divergent, CONTRACT_PATH, MOUNT_B_CONTRACT_PATH);
 
         JaxRsOperationDescriptor createWidget = op("POST", "/widgets", "createWidget");
         IllegalStateException legacyEx = assertThrows(

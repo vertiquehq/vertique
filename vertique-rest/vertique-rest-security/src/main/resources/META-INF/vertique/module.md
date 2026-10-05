@@ -90,9 +90,12 @@ emitted event carry the caller's address even when authentication fails.
 
 Inject it into any resource method (see [JAX-RS integration](#jax-rs-integration)), or read it
 anywhere in the request through `SecurityRuntime.current()`. The binding unwinds with the request
-lifecycle. The same context is captured onto outbound `vertique-services` dispatches automatically,
-so a downstream service handler observes the caller's identity without threading it through the
-contract.
+lifecycle. `SecurityRuntime.clearCurrent()` discards the current holder binding without restoring a
+prior value — reserved for trust-boundary clears (MCP's no-scheme admit path) that must not leave a
+foreign ambient identity visible before the transport binds its own. Prefer `bindCurrent` with
+lifecycle-owned scopes for ordinary bind/unbind. The same context is captured onto outbound
+`vertique-services` dispatches automatically, so a downstream service handler observes the caller's
+identity without threading it through the contract.
 
 ### Authorization model: OR of AND, with scopes
 
@@ -321,6 +324,12 @@ from `AuthorizationClaims` — no decision point talks to a provider.
 Builds the `Handler<RoutingContext>` that enforces a `SecurityPolicy`, optionally AND-composed with
 a `@RequiresAction` gate. `AuthorizationContributor` uses it for JAX-RS routes; reuse it directly
 when registering non-JAX-RS routes (for example a WebSocket upgrade) that need the same enforcement.
+The enforcer is transport-neutral: when no ambient `InvocationOrigin` is bound it falls back to
+`InvocationOrigin.unspecified()`, never to a privileged `rest` origin (DEF-007). Each transport's
+identity step must bind its own origin before authorization — REST via
+`IdentityResolutionMiddleware`, non-REST via `IdentityPipelineFactory.identityResolutionHandler`.
+Origin-aware policies and narrowers that allowlist interactive ingress must treat `unspecified` as
+deny, not as REST.
 
 | Method | Purpose |
 |---|---|

@@ -262,9 +262,9 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
     private final boolean failFast;
 
     /**
-     * The framework conversion resolver, threaded into every {@link DefaultBoundRequest} this strategy's
-     * gate constructs so the gate binds through the same conversion chain as dispatch (the 3-site
-     * propagation contract).
+     * The framework conversion resolver, passed into every {@link DefaultBoundRequest} this strategy's
+     * gate constructs. The binder stores declared scalars as raw strings; parameter conversion
+     * happens in {@code ParameterExtractor}.
      */
     private final ParamConversionResolver paramConversionResolver;
 

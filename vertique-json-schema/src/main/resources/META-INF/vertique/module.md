@@ -631,7 +631,9 @@ same class used elsewhere without the annotation stays case-sensitive there. Bef
 inline, the same delegating/array-delegating refusal the type would face at any other position still
 runs, and a profile override declared for the member's type still applies — resolved through the
 ordinary reference lookup, which re-enters the full provider chain — in preference to the inline
-description.
+description. A class-level `@Schema(additionalProperties = FALSE)` on the value type, declared or
+inherited, is preserved on that inline description exactly as on a shared definition — the hand-built
+node does not drop the closure.
 
 ### How an alias spelling is described
 

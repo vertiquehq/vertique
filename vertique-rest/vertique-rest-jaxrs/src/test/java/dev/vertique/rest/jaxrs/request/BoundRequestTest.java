@@ -156,7 +156,7 @@ class BoundRequestTest {
     }
 
     @Test
-    @DisplayName("Path param is bound from the RoutingContext and coerced to the declared Integer type")
+    @DisplayName("Path param is bound from the RoutingContext as the raw string")
     void boundRequestPathParamBoundFromRoutingContext() {
         ParamDescriptor idParam =
                 new ParamDescriptor("id", ParamLocation.PATH, Integer.class, null, null, null, List.of());
@@ -164,7 +164,8 @@ class BoundRequestTest {
 
         BoundRequest bound = new DefaultBoundRequest(ctx, opWithParams(idParam));
 
-        assertEquals(42, bound.pathParameters().get("id").getInteger());
+        assertEquals("42", bound.pathParameters().get("id").getString());
+        assertNull(bound.pathParameters().get("id").getInteger(), "binding must not parse the declared type");
     }
 
     @Test
@@ -399,7 +400,7 @@ class BoundRequestTest {
     }
 
     @Test
-    @DisplayName("Non-coercible scalar retains the raw string instead of throwing during binding")
+    @DisplayName("A non-numeric scalar is stored as the raw string and binding does not throw")
     void boundRequestRetainsRawStringOnNonCoercibleScalar() {
         ParamDescriptor idParam =
                 new ParamDescriptor("id", ParamLocation.PATH, Integer.class, null, null, null, List.of());
@@ -412,7 +413,7 @@ class BoundRequestTest {
     }
 
     @Test
-    @DisplayName("Coercible scalar still parses to the declared Integer type after the lenient change")
+    @DisplayName("A numeric scalar is stored as the raw string, including a value that parses")
     void boundRequestCoercibleScalarStillCoerces() {
         ParamDescriptor idParam =
                 new ParamDescriptor("id", ParamLocation.PATH, Integer.class, null, null, null, List.of());
@@ -420,7 +421,8 @@ class BoundRequestTest {
 
         BoundRequest bound = new DefaultBoundRequest(ctx, opWithParams(idParam));
 
-        assertEquals(42, bound.pathParameters().get("id").getInteger());
+        assertEquals("42", bound.pathParameters().get("id").getString());
+        assertNull(bound.pathParameters().get("id").getInteger(), "binding must not parse the declared type");
     }
 
     @Test

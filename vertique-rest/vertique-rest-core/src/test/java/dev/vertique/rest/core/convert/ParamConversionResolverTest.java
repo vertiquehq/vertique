@@ -118,6 +118,48 @@ class ParamConversionResolverTest {
         }
     }
 
+    /** A type with no built-in converter, used to prove a null native result fails closed. */
+    private record NullableType(String value) {}
+
+    /** Native converter that returns null for every present string. */
+    private static final class NullNativeConverter implements ParamConverter<NullableType> {
+        @Override
+        public NullableType fromString(String value) {
+            return null;
+        }
+
+        @Override
+        public String toString(NullableType value) {
+            return "";
+        }
+    }
+
+    /** Provider whose {@link MyType} converter returns null. */
+    private static final class NullReturningProvider implements ParamConverterProvider {
+        @Override
+        @SuppressWarnings("unchecked")
+        public <T> jakarta.ws.rs.ext.ParamConverter<T> getConverter(
+                Class<T> rawType, Type genericType, Annotation[] annotations) {
+            if (rawType.equals(MyType.class)) {
+                return (jakarta.ws.rs.ext.ParamConverter<T>) new NullJaxRsConverter();
+            }
+            return null;
+        }
+    }
+
+    /** JAX-RS converter that returns null for a present string. */
+    private static final class NullJaxRsConverter implements jakarta.ws.rs.ext.ParamConverter<MyType> {
+        @Override
+        public MyType fromString(String value) {
+            return null;
+        }
+
+        @Override
+        public String toString(MyType value) {
+            return null;
+        }
+    }
+
     // --- Context helpers ---
 
     /** A supplier that flips a flag (and records call count) when materialized. */
@@ -320,6 +362,47 @@ class ParamConversionResolverTest {
     }
 
     // --- Missing converter ---
+
+    @Test
+    @DisplayName("A native converter that returns null for a present value fails closed, without the raw value")
+    void nativeConverterReturningNullFailsClosed() {
+        ParamConversionResolver resolver = ParamConversionResolver.of(
+                ParamConverterRegistry.of(
+                        Set.of(new ParamConverterBinding<>(NullableType.class, new NullNativeConverter()))),
+                Set.of());
+        ConversionContext ctx = new ConversionContext(
+                "tags", ParamSource.QUERY, NullableType.class, NullableType.class, null, throwingSupplier());
+
+        assertThatThrownBy(() -> resolver.fromString("secret-value", ctx))
+                .isInstanceOf(ParamConversionException.class)
+                .hasMessageNotContaining("secret-value")
+                .satisfies(t -> {
+                    ParamConversionException ex = (ParamConversionException) t;
+                    assertThat(ex.paramName()).isEqualTo("tags");
+                    assertThat(ex.source()).isEqualTo(ParamSource.QUERY);
+                    assertThat(ex.targetType()).isEqualTo(NullableType.class);
+                    assertThat(ex.getCause()).isNull();
+                });
+    }
+
+    @Test
+    @DisplayName("A JAX-RS converter that returns null for a present value fails closed, without the raw value")
+    void jaxrsConverterReturningNullFailsClosed() {
+        ParamConversionResolver resolver = resolverWith(Set.of(new NullReturningProvider()));
+        ConversionContext ctx = new ConversionContext(
+                "p", ParamSource.HEADER, MyType.class, MyType.class, null, new RecordingSupplier());
+
+        assertThatThrownBy(() -> resolver.fromString("secret-value", ctx))
+                .isInstanceOf(ParamConversionException.class)
+                .hasMessageNotContaining("secret-value")
+                .satisfies(t -> {
+                    ParamConversionException ex = (ParamConversionException) t;
+                    assertThat(ex.paramName()).isEqualTo("p");
+                    assertThat(ex.source()).isEqualTo(ParamSource.HEADER);
+                    assertThat(ex.targetType()).isEqualTo(MyType.class);
+                    assertThat(ex.getCause()).isNull();
+                });
+    }
 
     @Test
     @DisplayName("fromString for an unknown type with no provider throws carrying name + source + targetType")

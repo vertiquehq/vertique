@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Cache Codegen
 
-> **Status:** Alpha
+> **Status:** Stable
 > **Package:** `dev.vertique.codegen.cache`
 > **Artifact:** `vertique-codegen-cache`
 > **Depends on:** `vertique-cache-aop`, `vertique-codegen-core`
@@ -79,8 +79,38 @@ validated method belongs to its declaring class. Self-invocation is not diagnose
 interception occurs only when a call enters the generated AOP override, so direct
 construction and calls that bypass the proxy are not intercepted.
 
+### `@Cacheable` / `@CacheEvict` on an interface method
+
+`@Cacheable` or `@CacheEvict` on an interface method is a **compile error**. An interface is not a
+class with an `@Inject` constructor, so the declaration fails the proxyability preconditions
+(*"cacheable methods require exactly one @Inject constructor"*), and an abstract interface method
+additionally fails *"cacheable methods must be instance methods that can be overridden"*. Move the
+annotation to the implementing class's method.
+
+This differs deliberately from the generic AOP processor (`vertique-codegen-aop`), which silently
+ignores aspect triggers placed on interface methods for proxy generation. This processor does not
+follow that behavior: the misplacement is rejected at build time rather than ignored.
+
 The generic AOP processor must be present on the application's annotation-processor path
 alongside this artifact for the validated annotations to produce proxies and metadata.
+
+## Key Classes
+
+### `CacheAnnotationProcessor`
+
+`AbstractProcessor` registered via `META-INF/services/javax.annotation.processing.Processor`.
+
+```
+@SupportedAnnotationTypes({
+  "dev.vertique.cache.aop.Cacheable",
+  "dev.vertique.cache.aop.CacheEvict"
+})
+@SupportedSourceVersion(SourceVersion.RELEASE_21)
+```
+
+Validates every `@Cacheable` / `@CacheEvict` method as described under Validation boundary.
+`process()` always returns `false`, so other processors still see the annotations, and the
+processor generates no sources.
 
 ## Verification
 

@@ -924,8 +924,8 @@ public class SecurityPolicyEnforcer {
                 // here. This callback runs after the role/scope gate's async hop (a remote/async
                 // AuthorizationDecisionPoint may resolve its Future off this Vert.x context), where a
                 // fresh currentOrigin() read could observe a different (or absent, falling back to
-                // "rest") ambient origin than the one the inbound request actually carried — mirrors
-                // captureCorrelation()'s entry-capture-once pattern above. Not the
+                // unspecified) ambient origin than the one the inbound request actually carried —
+                // mirrors captureCorrelation()'s entry-capture-once pattern above. Not the
                 // 3-arg authorize(SecurityContext, ActionRef, ResourceRef) convenience overload, which
                 // internally seeds InvocationOrigin.unspecified() — so an origin-aware narrower
                 // evaluates the SAME origin the emitted event records (mirrors
@@ -1190,19 +1190,22 @@ public class SecurityPolicyEnforcer {
 
     /**
      * Returns the ambient {@link InvocationOrigin} bound on {@link #contextHolder} for the current
-     * request, falling back to {@link IdentityResolutionMiddleware#REST_ORIGIN} when nothing is
-     * ambient.
+     * request, falling back to {@link InvocationOrigin#unspecified()} when nothing is ambient.
      *
-     * <p>This enforcer is unconditionally the REST authorization boundary, so a missing ambient
-     * origin — before {@link IdentityResolutionMiddleware} has installed one, or in a unit test that
-     * does not wire the middleware chain — still yields a real REST origin on the emitted
-     * {@link AuthorizationRequest} rather than degrading to {@link InvocationOrigin#unspecified()}.
+     * <p>This enforcer is transport-neutral and is shared by REST, WebSocket, and MCP through
+     * {@link IdentityPipelineFactory}. Each transport's identity step must bind its own origin
+     * before authorization runs ({@link IdentityResolutionMiddleware} for REST;
+     * {@link IdentityPipelineFactory#identityResolutionHandler} for non-REST). An unbound origin is
+     * therefore a missing ingress label, not an implied REST call — falling back to a privileged
+     * {@code rest} origin would fail <em>open</em> for origin-aware narrowers that grant the
+     * broadest allowances to REST. {@link InvocationOrigin#unspecified()} keeps the audit/event
+     * record distinguishable from a real REST bind and lets those narrowers deny.
      *
-     * @return the ambient invocation origin, or {@link IdentityResolutionMiddleware#REST_ORIGIN};
-     *         never {@code null}
+     * @return the ambient invocation origin, or {@link InvocationOrigin#unspecified()}; never
+     *         {@code null}
      */
     private InvocationOrigin currentOrigin() {
-        return contextHolder.current(InvocationOrigin.class).orElse(IdentityResolutionMiddleware.REST_ORIGIN);
+        return contextHolder.current(InvocationOrigin.class).orElse(InvocationOrigin.unspecified());
     }
 
     /**

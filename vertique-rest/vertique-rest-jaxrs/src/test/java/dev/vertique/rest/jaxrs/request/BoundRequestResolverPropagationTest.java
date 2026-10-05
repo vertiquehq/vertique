@@ -4,6 +4,7 @@
 package dev.vertique.rest.jaxrs.request;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -27,23 +28,13 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Proves that {@link DefaultBoundRequest} binds scalar parameters through a
- * {@link ParamConversionResolver} rather than the legacy {@code ScalarCoercion} path
- * (PRD-REST-018 slice 1.3, the 3-site propagation contract).
- *
- * <p><b>RED rationale (compile-RED):</b> this test is written against the <em>intended</em>
- * resolver-backed {@code DefaultBoundRequest(RoutingContext, JaxRsOperationDescriptor,
- * ParamConversionResolver)} constructor, which does not exist yet — today {@code DefaultBoundRequest}
- * has only the two-arg constructor and coerces via {@code ScalarCoercion} directly. It therefore
- * compile-fails now. Once the resolver is threaded into the binding facade (and into all three
- * {@code DefaultBoundRequest} construction sites), this becomes a behavior assertion: an
- * app-contributed {@link ParamConverterBinding} override is honored on the binding path, which is
- * something the {@code ScalarCoercion} path can never do (it has no notion of app converters).
+ * Proves that {@link DefaultBoundRequest} stores declared scalars as raw strings. The resolver
+ * argument stays on the constructor so existing callers keep compiling, and a null resolver is
+ * rejected. Application converters run later, in {@code ParameterExtractor}, after input policies.
  *
  * <p>The override is a {@code UUID} converter that ignores its input and always yields a fixed
- * sentinel UUID. If binding routes through the resolver, the bound value equals the sentinel; if it
- * routes through {@code ScalarCoercion} (which has no UUID support and returns the raw string), it
- * does not. This single behavioral signal proves the resolver — not the legacy path — drove the bind.
+ * sentinel UUID. If binding applied that converter, the bound value would be the sentinel. It must
+ * stay the transport string.
  */
 class BoundRequestResolverPropagationTest {
 
@@ -98,21 +89,23 @@ class BoundRequestResolverPropagationTest {
     }
 
     @Test
-    @DisplayName("DefaultBoundRequest binds a scalar through the supplied resolver, honoring an app converter override")
-    void boundRequestBindsThroughResolverHonoringOverride() {
+    @DisplayName("DefaultBoundRequest keeps the raw string even when the supplied resolver would rewrite it")
+    void boundRequestKeepsRawStringWhenResolverWouldRewriteIt() {
         ParamDescriptor idParam =
                 new ParamDescriptor("id", ParamLocation.PATH, UUID.class, null, null, null, List.of());
-        RoutingContext ctx = mockContext(Map.of("id", "11111111-1111-1111-1111-111111111111"));
+        String raw = "11111111-1111-1111-1111-111111111111";
+        RoutingContext ctx = mockContext(Map.of("id", raw));
 
-        // INTENDED-but-not-yet-existing 3-arg constructor threading the resolver into the binding facade.
         BoundRequest bound = new DefaultBoundRequest(ctx, opWithParams(idParam), resolverWithUuidOverride());
 
-        // The override converter ignores the input and yields the sentinel; ScalarCoercion (the legacy
-        // path) has no UUID support and would retain the raw string, so this proves the resolver drove
-        // the bind, not the legacy path.
-        assertEquals(
-                SENTINEL,
-                bound.pathParameters().get("id").get(),
-                "the bound value must come from the app converter override via the resolver path");
+        assertEquals(raw, bound.pathParameters().get("id").get());
+    }
+
+    @Test
+    @DisplayName("DefaultBoundRequest rejects a null resolver")
+    void boundRequestRejectsNullResolver() {
+        RoutingContext ctx = mockContext(Map.of());
+
+        assertThrows(NullPointerException.class, () -> new DefaultBoundRequest(ctx, opWithParams(), null));
     }
 }
