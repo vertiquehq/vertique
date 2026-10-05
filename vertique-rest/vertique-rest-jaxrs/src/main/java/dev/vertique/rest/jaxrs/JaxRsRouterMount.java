@@ -386,13 +386,14 @@ public class JaxRsRouterMount implements RouterMount {
         Router apiRouter = Router.router(vertx);
 
         // Install BodyHandler with lowest order so the body is materialised before any operation
-        // handler (gate, contributors, invoker) reads routingContext.body().
-        apiRouter
-                .route()
-                .order(Integer.MIN_VALUE)
-                .handler(BodyHandler.create()
-                        .setBodyLimit(factory.httpConfig.maxBodySize())
-                        .setUploadsDirectory(factory.httpConfig.uploadsDirectory()));
+        // handler (gate, contributors, invoker) reads routingContext.body(). Multipart/form-data
+        // uses the tighter of maxBodySize and maxMultipartBodySizeBytes so pre-auth spooling cannot
+        // exceed the dedicated admission ceiling (413 fail-closed, including Content-Length early
+        // reject before upload files are created).
+        apiRouter.route().order(Integer.MIN_VALUE).handler(ctx -> BodyHandler.create()
+                .setBodyLimit(factory.httpConfig.bodyLimitBytes(ctx.request().getHeader("Content-Type")))
+                .setUploadsDirectory(factory.httpConfig.uploadsDirectory())
+                .handle(ctx));
 
         // Register always-on cleanup after BodyHandler has materialised multipart uploads. Routing
         // context end handlers cover normal completion, failures, and connection/stream resets.
@@ -903,7 +904,9 @@ public class JaxRsRouterMount implements RouterMount {
          *                                     annotations have proper runtime support
          * @param sortedDecoders               priority-sorted request body decoders
          * @param sortedEncoders               priority-sorted response body encoders
-         * @param httpConfig                   HTTP server configuration, used to apply {@code maxBodySize}
+         * @param httpConfig                   HTTP server configuration, used to apply body limits
+         *                                     ({@code maxBodySize} / {@code maxMultipartBodySizeBytes})
+         *                                     and {@code uploadsDirectory} to the mount BodyHandler
          *                                     and {@code uploadsDirectory} to the body handler
          * @param jaxRsConfig                  JAX-RS routing configuration (operationId strictness, media type validation mode)
          * @param jsonMapperProfileRegistry    registry of named JSON mapper profiles, used to resolve the
@@ -1029,7 +1032,9 @@ public class JaxRsRouterMount implements RouterMount {
          *                                     annotations have proper runtime support
          * @param sortedDecoders               priority-sorted request body decoders
          * @param sortedEncoders               priority-sorted response body encoders
-         * @param httpConfig                   HTTP server configuration, used to apply {@code maxBodySize}
+         * @param httpConfig                   HTTP server configuration, used to apply body limits
+         *                                     ({@code maxBodySize} / {@code maxMultipartBodySizeBytes})
+         *                                     and {@code uploadsDirectory} to the mount BodyHandler
          *                                     and {@code uploadsDirectory} to the body handler
          * @param jaxRsConfig                  JAX-RS routing configuration (operationId strictness, media type validation mode)
          * @param jsonMapperProfileRegistry    registry of named JSON mapper profiles, used to resolve the

@@ -32,9 +32,11 @@ import java.lang.annotation.Target;
  * rejected. Entries are parsed and lowercase-canonicalized once at descriptor creation.
  *
  * <p>Size constraints are <b>post-spool validation</b>: parts are already written to the uploads
- * directory (within the global body limit) before validation runs. Ingress protection comes from
- * {@code HttpConfig.maxBodySize}, which bounds the total request body, and
- * {@code HttpConfig.maxFormFields}, which bounds how many parts the body may carry at all.
+ * directory (within the configured body limits) before validation runs. Ingress protection comes
+ * from {@code HttpConfig.maxBodySize} (every request) and
+ * {@code HttpConfig.maxMultipartBodySizeBytes} (multipart/form-data admission — effective limit is
+ * the tighter of the two, returning 413 before expensive spool when {@code Content-Length} exceeds
+ * it), plus {@code HttpConfig.maxFormFields}, which bounds how many parts the body may carry at all.
  */
 @Target(ElementType.PARAMETER)
 @Retention(RetentionPolicy.RUNTIME)

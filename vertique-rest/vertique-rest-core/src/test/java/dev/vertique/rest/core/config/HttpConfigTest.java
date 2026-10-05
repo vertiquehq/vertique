@@ -4,8 +4,10 @@
 package dev.vertique.rest.core.config;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonMappingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -15,7 +17,7 @@ import java.util.List;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
-/** Verifies multipart upload-directory defaults, overrides, and validation. */
+/** Verifies multipart upload-directory and admission-limit defaults, overrides, and validation. */
 class HttpConfigTest {
 
     @Test
@@ -50,5 +52,84 @@ class HttpConfigTest {
                     () -> "Expected JSON deserialization to reject " + json);
             assertInstanceOf(RestConfigurationException.class, failure.getCause());
         }
+    }
+
+    @Test
+    @DisplayName("maxMultipartBodySizeBytes defaults to 2 MiB and supports builder and JSON overrides")
+    void maxMultipartBodySizeBytesDefaultAndOverride() throws Exception {
+        HttpConfig defaults = HttpConfig.builder().build();
+        HttpConfig builderOverride =
+                HttpConfig.builder().maxMultipartBodySizeBytes(1024).build();
+        HttpConfig jsonOverride =
+                new ObjectMapper().readValue("{\"maxMultipartBodySizeBytes\":2048}", HttpConfig.class);
+
+        assertEquals(2_097_152, defaults.maxMultipartBodySizeBytes());
+        assertEquals(1024, builderOverride.maxMultipartBodySizeBytes());
+        assertEquals(2048, jsonOverride.maxMultipartBodySizeBytes());
+    }
+
+    @Test
+    @DisplayName("non-positive maxMultipartBodySizeBytes values fail configuration")
+    void nonPositiveMaxMultipartBodySizeBytesRejected() {
+        for (long invalid : new long[] {0L, -1L, Long.MIN_VALUE}) {
+            assertThrows(
+                    RestConfigurationException.class,
+                    () -> HttpConfig.builder()
+                            .maxMultipartBodySizeBytes(invalid)
+                            .build(),
+                    () -> "Expected builder to reject maxMultipartBodySizeBytes=" + invalid);
+        }
+
+        for (String json : List.of(
+                "{\"maxMultipartBodySizeBytes\":0}",
+                "{\"maxMultipartBodySizeBytes\":-1}",
+                "{\"maxMultipartBodySizeBytes\":-9223372036854775808}")) {
+            JsonMappingException failure = assertThrows(
+                    JsonMappingException.class,
+                    () -> new ObjectMapper().readValue(json, HttpConfig.class),
+                    () -> "Expected JSON deserialization to reject " + json);
+            assertInstanceOf(RestConfigurationException.class, failure.getCause());
+        }
+    }
+
+    @Test
+    @DisplayName("bodyLimitBytes applies the tighter multipart admission ceiling only to multipart/form-data")
+    void bodyLimitBytesUsesMultipartAdmissionCeiling() {
+        HttpConfig config = HttpConfig.builder()
+                .maxBodySize(10_000_000)
+                .maxMultipartBodySizeBytes(4_096)
+                .build();
+
+        assertEquals(10_000_000, config.bodyLimitBytes(null));
+        assertEquals(10_000_000, config.bodyLimitBytes("application/json"));
+        assertEquals(4_096, config.bodyLimitBytes("multipart/form-data"));
+        assertEquals(4_096, config.bodyLimitBytes("Multipart/Form-Data; boundary=abc"));
+        assertEquals(
+                4_096,
+                config.bodyLimitBytes("multipart/form-data; boundary=x"),
+                "parameters must not defeat the multipart admission match");
+    }
+
+    @Test
+    @DisplayName("bodyLimitBytes never exceeds maxBodySize even when the multipart ceiling is higher")
+    void bodyLimitBytesClampsToMaxBodySize() {
+        HttpConfig config = HttpConfig.builder()
+                .maxBodySize(1_024)
+                .maxMultipartBodySizeBytes(10_000_000)
+                .build();
+
+        assertEquals(1_024, config.bodyLimitBytes("multipart/form-data"));
+        assertEquals(1_024, config.bodyLimitBytes("application/json"));
+    }
+
+    @Test
+    @DisplayName("isMultipartFormData matches Vert.x BodyHandler's multipart prefix rule")
+    void isMultipartFormDataPrefixMatch() {
+        assertFalse(HttpConfig.isMultipartFormData(null));
+        assertFalse(HttpConfig.isMultipartFormData(""));
+        assertFalse(HttpConfig.isMultipartFormData("application/json"));
+        assertFalse(HttpConfig.isMultipartFormData("multipart/mixed"));
+        assertTrue(HttpConfig.isMultipartFormData("multipart/form-data"));
+        assertTrue(HttpConfig.isMultipartFormData("MULTIPART/FORM-DATA; boundary=z"));
     }
 }
