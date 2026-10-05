@@ -30,7 +30,7 @@ Measures clean Maven compilation for three representative applications using:
   1. their manually selected Vertique processor leaves; and
   2. dev.vertique:vertique-codegen-all.
 
-The benchmark always uses Maven 3.9.9, two unrecorded warmups, seven measured
+The benchmark always uses Maven 3.10.0, two unrecorded warmups, seven measured
 samples per configuration, and a 15% facade-median overhead gate.
 
 Options:
@@ -239,8 +239,8 @@ verify_maven_version() {
 
     version_output="$("$maven_wrapper" -v 2>&1)"
     detected_version="$(printf '%s\n' "$version_output" | awk '/^Apache Maven / { print $3; exit }')"
-    if [[ "$detected_version" != "3.9.9" ]]; then
-        echo "CODEGEN-014 benchmark requires Maven 3.9.9; detected '${detected_version:-unknown}'" >&2
+    if [[ "$detected_version" != "3.10.0" ]]; then
+        echo "CODEGEN-014 benchmark requires Maven 3.10.0; detected '${detected_version:-unknown}'" >&2
         printf '%s\n' "$version_output" >&2
         exit 1
     fi
