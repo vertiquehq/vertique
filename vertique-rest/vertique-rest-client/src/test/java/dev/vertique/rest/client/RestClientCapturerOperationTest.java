@@ -94,7 +94,7 @@ class RestClientCapturerOperationTest {
         vertx = Vertx.vertx();
         server = vertx.createHttpServer()
                 .requestHandler(request -> request.response().end("\"ok\""))
-                .listen(0)
+                .listen(0, "127.0.0.1")
                 .toCompletionStage()
                 .toCompletableFuture()
                 .get(10, TimeUnit.SECONDS);
