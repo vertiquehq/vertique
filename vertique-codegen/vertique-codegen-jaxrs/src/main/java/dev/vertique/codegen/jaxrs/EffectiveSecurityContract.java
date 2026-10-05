@@ -10,10 +10,11 @@ import java.util.Set;
  * Immutable compile-time representation of the resolved security policy for a JAX-RS resource
  * class or method.
  *
- * <p>Built by {@link EffectiveJaxRsContractResolver} using the same precedence rule as the
- * runtime {@code AnnotationSecurityPolicyResolver}: (1) direct annotations, (2) superclass chain,
- * (3) BFS-ordered interfaces. Conflict detection is performed at the resolver level; this record
- * always carries a valid (non-conflicting) security specification.
+ * <p>Built by {@link EffectiveJaxRsContractResolver} by merging security annotations across every
+ * declaration of the class or method (concrete, superclass chain, BFS-ordered interfaces), matching
+ * the runtime {@code AnnotationResolver} + {@code AnnotationSecurityPolicyResolver} path.
+ * Cross-declaration conflicts are rejected at the resolver level; this record always carries a
+ * valid (non-conflicting) security specification, or is {@link #NONE} when a conflict was reported.
  *
  * <p>The {@code kinds} set drives conflict detection and {@code SecurityPolicy} precomputation.
  * The {@code rolesAllowed}, {@code authorizedScopes}, and {@code authorizedMatchAll} fields carry

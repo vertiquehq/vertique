@@ -38,8 +38,16 @@ import javax.lang.model.type.TypeMirror;
  * resolved contract. Identical values across interfaces are not a conflict.
  *
  * <p>When a direct annotation on the concrete class or method disagrees with an interface
- * declaration, the direct annotation wins (precedence rule 1) and a compiler warning is emitted
- * so the developer notices the silent override.
+ * declaration for non-security kinds (for example {@code @Path}), the direct annotation wins
+ * (precedence rule 1) and a compiler warning is emitted so the developer notices the silent
+ * override.
+ *
+ * <p><strong>Security is fail-closed.</strong> Method- and class-level security annotations are
+ * merged across every declaration of the same element (concrete, superclass chain, and
+ * interfaces), matching the runtime {@code AnnotationResolver} +
+ * {@code AnnotationSecurityPolicyResolver} path. Incompatible kinds or differing
+ * {@code @RolesAllowed}/{@code @Authorized} member values across those declarations are a
+ * compile-time error — a nearer declaration does not win.
  */
 public final class EffectiveJaxRsContractResolver {
 
@@ -290,33 +298,38 @@ public final class EffectiveJaxRsContractResolver {
     }
 
     /**
-     * Resolves the effective class-level security contract using the precedence rule.
+     * Resolves the effective class-level security contract by merging every declaration of the
+     * class (concrete, superclass chain, then BFS interfaces), matching the runtime
+     * {@code AnnotationResolver.resolveClassAnnotations} merge. Incompatible security across
+     * those declarations is a compile-time error (fail-closed); a nearer declaration does not win.
      *
      * @param concreteClass the concrete class
      * @return the effective security contract; never {@code null}
      */
     private EffectiveSecurityContract resolveClassSecurity(TypeElement concreteClass) {
-        // Precedence 1: direct security annotations on the concrete class
+        EffectiveSecurityContract found = null;
+
         EffectiveSecurityContract direct = buildSecurityContract(concreteClass);
         if (!direct.isEmpty()) {
-            // Warn if any interface also carries conflicting security
-            warnSecurityOverride(concreteClass, direct, JaxRsHierarchy.allInterfaces(ctx, concreteClass), true);
-            return direct;
+            found = direct;
         }
 
-        // Precedence 2: superclass chain
         TypeElement current = JaxRsHierarchy.superClass(ctx, concreteClass);
         while (current != null
                 && !"java.lang.Object".equals(current.getQualifiedName().toString())) {
             EffectiveSecurityContract sc = buildSecurityContract(current);
             if (!sc.isEmpty()) {
-                return sc;
+                if (found == null) {
+                    found = sc;
+                } else if (!securityContractsCompatible(found, sc)) {
+                    emitCrossDeclarationSecurityConflict(concreteClass, concreteClass, true, found, sc);
+                    return EffectiveSecurityContract.NONE;
+                }
             }
             current = JaxRsHierarchy.superClass(ctx, current);
         }
 
-        // Precedence 3: BFS interfaces
-        return resolveSecurityFromInterfaces(concreteClass, concreteClass, true);
+        return mergeSecurityFromInterfaces(found, concreteClass, concreteClass, true);
     }
 
     // --- Method-level resolution helpers ---
@@ -496,21 +509,46 @@ public final class EffectiveJaxRsContractResolver {
     }
 
     /**
-     * Resolves the effective method-level security contract using the precedence rule.
+     * Resolves the effective method-level security contract by merging every declaration of the
+     * method (concrete, superclass overrides, then BFS interfaces), matching the runtime
+     * {@code AnnotationResolver.resolveMethodAnnotations} merge. Incompatible security across
+     * those declarations is a compile-time error (fail-closed); a nearer declaration does not win.
      *
      * @param method        the concrete method
      * @param resourceClass the resource class
      * @return the effective security contract; never {@code null}
      */
     private EffectiveSecurityContract resolveMethodSecurity(ExecutableElement method, TypeElement resourceClass) {
-        // Precedence 1: direct on method
+        EffectiveSecurityContract found = null;
+
         EffectiveSecurityContract direct = buildSecurityContract(method);
         if (!direct.isEmpty()) {
-            warnSecurityOverride(method, direct, JaxRsHierarchy.interfacesForMethod(ctx, method, resourceClass), false);
-            return direct;
+            found = direct;
         }
-        // Precedence 3: BFS interfaces
-        return resolveSecurityFromInterfaces(method, resourceClass, false);
+
+        // Superclass overrides — skipped for an inherited interface default, whose declaring type
+        // is an interface (AnnotationResolver also walks from the method's declaring type).
+        if (method.getEnclosingElement() instanceof TypeElement owner && owner.getKind() != ElementKind.INTERFACE) {
+            TypeElement current = JaxRsHierarchy.superClass(ctx, owner);
+            while (current != null
+                    && !"java.lang.Object".equals(current.getQualifiedName().toString())) {
+                ExecutableElement superMethod = JaxRsHierarchy.findMatchingMethod(ctx, method, current);
+                if (superMethod != null) {
+                    EffectiveSecurityContract sc = buildSecurityContract(superMethod);
+                    if (!sc.isEmpty()) {
+                        if (found == null) {
+                            found = sc;
+                        } else if (!securityContractsCompatible(found, sc)) {
+                            emitCrossDeclarationSecurityConflict(method, resourceClass, false, found, sc);
+                            return EffectiveSecurityContract.NONE;
+                        }
+                    }
+                }
+                current = JaxRsHierarchy.superClass(ctx, current);
+            }
+        }
+
+        return mergeSecurityFromInterfaces(found, method, resourceClass, false);
     }
 
     /**
@@ -1052,10 +1090,11 @@ public final class EffectiveJaxRsContractResolver {
     // --- Security resolution helpers ---
 
     /**
-     * Resolves security annotations from BFS-ordered interfaces for a given element (class or
-     * method). Returns {@link EffectiveSecurityContract#NONE} when no security is found.
-     * Emits a compile-time error when two interfaces carry conflicting security kinds.
+     * Merges security annotations from BFS-ordered interfaces into {@code found}, emitting a
+     * compile-time error when any interface declaration is incompatible with the contract already
+     * collected from the concrete element or superclass chain.
      *
+     * @param found         the contract already collected, or {@code null} when none yet
      * @param element       the element whose matching interface declaration to look up (for methods,
      *                      the corresponding interface method; for classes, the interface itself)
      * @param resourceClass the resource class used as the BFS root for interface discovery; for an
@@ -1064,11 +1103,11 @@ public final class EffectiveJaxRsContractResolver {
      * @param classLevel    {@code true} when resolving class-level security
      * @return the effective security contract; never {@code null}
      */
-    private EffectiveSecurityContract resolveSecurityFromInterfaces(
-            javax.lang.model.element.Element element, TypeElement resourceClass, boolean classLevel) {
-        EffectiveSecurityContract found = null;
-        String foundInterfaceName = null;
-
+    private EffectiveSecurityContract mergeSecurityFromInterfaces(
+            EffectiveSecurityContract found,
+            javax.lang.model.element.Element element,
+            TypeElement resourceClass,
+            boolean classLevel) {
         List<TypeElement> interfaces = classLevel
                 ? JaxRsHierarchy.allInterfaces(ctx, resourceClass)
                 : JaxRsHierarchy.interfacesForMethod(ctx, (ExecutableElement) element, resourceClass);
@@ -1078,33 +1117,22 @@ public final class EffectiveJaxRsContractResolver {
                 target = iface;
             } else {
                 target = JaxRsHierarchy.findMatchingMethod(ctx, (ExecutableElement) element, iface);
-                if (target == null) continue;
+                if (target == null) {
+                    continue;
+                }
             }
             EffectiveSecurityContract sc = buildSecurityContract(target);
-            if (sc.isEmpty()) continue;
+            if (sc.isEmpty()) {
+                continue;
+            }
 
             if (found == null) {
                 found = sc;
-                foundInterfaceName = iface.getQualifiedName().toString();
             } else if (!securityContractsCompatible(found, sc)) {
-                // Conflict: emit error
-                String contextName = classLevel
-                        ? resourceClass.getSimpleName().toString()
-                        : ((ExecutableElement) element).getSimpleName().toString() + "()";
-                String level = classLevel ? "class-level" : "method-level";
-                ctx.diagnostics()
-                        .error(
-                                resourceClass,
-                                Diagnostics.classContractConflict(
-                                        contextName,
-                                        level + " security",
-                                        foundInterfaceName,
-                                        describeSecurityKinds(found.kinds()),
-                                        iface.getQualifiedName().toString(),
-                                        describeSecurityKinds(sc.kinds())));
+                emitCrossDeclarationSecurityConflict(element, resourceClass, classLevel, found, sc);
                 return EffectiveSecurityContract.NONE;
             }
-            // identical or compatible — continue (first-found wins)
+            // identical or compatible — keep the first-found contract
         }
         return found != null ? found : EffectiveSecurityContract.NONE;
     }
@@ -1125,44 +1153,51 @@ public final class EffectiveJaxRsContractResolver {
     }
 
     /**
-     * Emits a warning when a direct security annotation overrides an interface declaration with a
-     * different security kind.
+     * Emits the fail-closed compile-time error for incompatible security across declarations of
+     * the same class or method.
      *
-     * @param element     the element carrying the direct annotation
-     * @param direct      the direct security contract
-     * @param interfaces  the BFS-ordered interfaces to check
-     * @param classLevel  {@code true} for class-level warnings
+     * @param element       the element to attach the diagnostic to (method or class)
+     * @param resourceClass the resource class (diagnostic fallback target for class-level)
+     * @param classLevel    {@code true} for class-level security
+     * @param a             one of the conflicting contracts
+     * @param b             the other conflicting contract
      */
-    private void warnSecurityOverride(
+    private void emitCrossDeclarationSecurityConflict(
             javax.lang.model.element.Element element,
-            EffectiveSecurityContract direct,
-            List<TypeElement> interfaces,
-            boolean classLevel) {
-        for (TypeElement iface : interfaces) {
-            javax.lang.model.element.Element target;
-            if (classLevel) {
-                target = iface;
-            } else {
-                if (!(element instanceof ExecutableElement method)) continue;
-                target = JaxRsHierarchy.findMatchingMethod(ctx, method, iface);
-                if (target == null) continue;
-            }
-            EffectiveSecurityContract ifaceSc = buildSecurityContract(target);
-            if (!ifaceSc.isEmpty() && !securityContractsCompatible(direct, ifaceSc)) {
-                String contextName = classLevel
-                        ? ((TypeElement) element).getSimpleName().toString()
-                        : ((ExecutableElement) element).getSimpleName().toString() + "()";
-                ctx.diagnostics()
-                        .warning(
-                                element,
-                                Diagnostics.directOverridesInterfaceWarning(
-                                        contextName,
-                                        "security",
-                                        describeSecurityKinds(direct.kinds()),
-                                        iface.getQualifiedName().toString(),
-                                        describeSecurityKinds(ifaceSc.kinds())));
-            }
+            TypeElement resourceClass,
+            boolean classLevel,
+            EffectiveSecurityContract a,
+            EffectiveSecurityContract b) {
+        String level = classLevel ? "class-level" : "method-level";
+        String combination = describeSecurityContract(a) + " vs " + describeSecurityContract(b);
+        ctx.diagnostics()
+                .error(
+                        classLevel ? resourceClass : element,
+                        Diagnostics.securityAnnotationConflict(level, combination));
+    }
+
+    /**
+     * Returns a human-readable description of a security contract including member values when
+     * present (for example {@code @RolesAllowed[admin]}).
+     *
+     * @param contract the security contract
+     * @return a description string
+     */
+    private String describeSecurityContract(EffectiveSecurityContract contract) {
+        String kinds = describeSecurityKinds(contract.kinds());
+        if (contract.kinds().contains(EffectiveSecurityContract.SecurityKind.ROLES_ALLOWED)) {
+            kinds = kinds.replace("@RolesAllowed", "@RolesAllowed[" + String.join(",", contract.rolesAllowed()) + "]");
         }
+        if (contract.kinds().contains(EffectiveSecurityContract.SecurityKind.AUTHORIZED)) {
+            kinds = kinds.replace(
+                    "@Authorized",
+                    "@Authorized[scopes="
+                            + String.join(",", contract.authorizedScopes())
+                            + ",matchAll="
+                            + contract.authorizedMatchAll()
+                            + "]");
+        }
+        return kinds;
     }
 
     /**
@@ -1224,7 +1259,13 @@ public final class EffectiveJaxRsContractResolver {
     private String describeSecurityKinds(Set<EffectiveSecurityContract.SecurityKind> kinds) {
         List<String> names = new ArrayList<>();
         for (EffectiveSecurityContract.SecurityKind k : kinds) {
-            names.add("@" + k.name().replace("_", ""));
+            names.add(
+                    switch (k) {
+                        case DENY_ALL -> "@DenyAll";
+                        case PERMIT_ALL -> "@PermitAll";
+                        case ROLES_ALLOWED -> "@RolesAllowed";
+                        case AUTHORIZED -> "@Authorized";
+                    });
         }
         return String.join(" + ", names);
     }

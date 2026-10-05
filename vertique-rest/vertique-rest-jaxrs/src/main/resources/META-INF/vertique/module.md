@@ -368,7 +368,10 @@ A 16-component convenience constructor omits `executionPlan`. The compact constr
 `validationGroups` and copies the four lists, so every component is immutable regardless of what the
 caller passes. `methodAnnotations` and `classAnnotations` are resolved through
 `dev.vertique.core.util.AnnotationResolver`, which walks the superclass chain and interfaces — an
-annotation on an interface method is visible here. For a route backed by an inherited interface
+annotation on an interface method is visible here. Security annotations from every declaration of
+the same method or class are merged and then checked for conflicts (incompatible kinds, or
+differing `@RolesAllowed` / `@Authorized` member values); a nearer declaration does not win. The
+codegen path applies the same fail-closed rule. For a route backed by an inherited interface
 `default` method, `method()` is the interface's `Method`, so `method().getDeclaringClass()` is the
 interface; `resourceInstance().getClass()` is the resource class.
 
