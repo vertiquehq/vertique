@@ -25,6 +25,7 @@ import dev.vertique.rest.client.exception.RestClientConfigurationException;
 import dev.vertique.rest.client.exception.RestClientException;
 import dev.vertique.rest.client.interceptor.RestClientContextCapturer;
 import dev.vertique.rest.client.interceptor.RestClientInterceptor;
+import dev.vertique.rest.client.interceptor.RestClientOperation;
 import dev.vertique.rest.client.meta.ClientInterfaceScanner;
 import dev.vertique.rest.client.meta.ClientMethodMeta;
 import dev.vertique.rest.client.meta.ClientParamMeta;
@@ -829,6 +830,19 @@ public final class RestClientBuilder {
         Map<Method, ClientMethodMeta> methodMetas =
                 META_CACHE.computeIfAbsent(clientInterface, ClientInterfaceScanner::scan);
 
+        // --- Capturer operation validation ---
+        // Each system capturer vets every operation before anything is built, so a configuration
+        // error it detects (e.g. an unknown audit policy id) fails startup instead of surfacing on a
+        // later attempt. An exception propagates out of build().
+        List<RestClientContextCapturer<?>> sortedContextCapturers = sortedCapturers(List.copyOf(contextCapturers));
+        for (ClientMethodMeta method : methodMetas.values()) {
+            RestClientOperation operation =
+                    new RestClientOperation(clientInterface, clientName, method.methodMetadata());
+            for (RestClientContextCapturer<?> capturer : sortedContextCapturers) {
+                capturer.validateOperation(operation);
+            }
+        }
+
         // --- Compute effective ParamConversionResolver ---
         // If an override was set (either by RestClientFactory.builder() seeding the Dagger singleton
         // or by an explicit builder.paramConversionResolver() call), use it as-is. Otherwise build
@@ -923,7 +937,8 @@ public final class RestClientBuilder {
                     resilienceFactory,
                     beanValidator,
                     clientName,
-                    sortedCapturers(List.copyOf(contextCapturers)),
+                    clientInterface,
+                    sortedContextCapturers,
                     effectiveResolver);
 
             // --- Try generated proxy first, fall back to JDK reflective proxy ---
