@@ -16,14 +16,12 @@ import dev.vertique.rest.core.sse.BufferOverflowPolicy;
 import dev.vertique.rest.core.sse.SseEvent;
 import dev.vertique.rest.jaxrs.validation.NoneValidationStrategy;
 import io.swagger.v3.oas.annotations.Operation;
-import io.vertx.core.Future;
 import io.vertx.core.Vertx;
-import io.vertx.core.http.HttpClient;
 import io.vertx.core.http.HttpServer;
 import io.vertx.core.streams.ReadStream;
 import io.vertx.ext.web.Router;
+import io.vertx.ext.web.RoutingContext;
 import io.vertx.junit5.VertxExtension;
-import io.vertx.junit5.VertxTestContext;
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.Produces;
@@ -38,7 +36,6 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
-import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
@@ -63,9 +60,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * {@link SseReadStream} to {@code response.closeHandler} turns it red.
  *
  * <p><strong>Raw {@link Socket} exemption.</strong> Only a hard RST ({@code SO_LINGER(0)}) reproduces
- * a client abort mid-stream; a buffered {@code WebClient} exchange cannot express that. The shared
- * {@link HttpClient} is retained only so the class follows the client-lifecycle convention; the
- * decisive exchange uses the raw socket.
+ * a client abort mid-stream; a buffered {@code WebClient} exchange cannot express that. The decisive
+ * exchange uses the raw socket only — no Vert.x {@code HttpClient} is involved.
  */
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
@@ -85,37 +81,23 @@ public class SseDisconnectCleanupIT {
     // --- Class-scoped resources ---
 
     private static Vertx vertx;
-    private static HttpClient client;
 
     // --- Per-test resources ---
 
     private HttpServer server;
 
     /**
-     * Creates the single {@link HttpClient} shared by every test in the class.
+     * Captures the class-scoped Vert.x instance injected by vertx-junit5.
      *
-     * @param injectedVertx the class-scoped Vert.x instance injected by vertx-junit5
+     * @param injectedVertx the class-scoped Vert.x instance
      */
     @BeforeAll
-    static void setUpClient(Vertx injectedVertx) {
+    static void setUpVertx(Vertx injectedVertx) {
         vertx = injectedVertx;
-        client = vertx.createHttpClient();
     }
 
     /**
-     * Closes the shared {@link HttpClient} and awaits the close before the class completes.
-     *
-     * @param ctx the test context used to signal teardown completion
-     */
-    @AfterAll
-    static void tearDownClient(VertxTestContext ctx) {
-        Future<?> close = client != null ? client.close() : Future.succeededFuture();
-        close.onComplete(ar -> ctx.completeNow());
-    }
-
-    /**
-     * Closes the per-test {@link HttpServer}; the shared client is closed only in
-     * {@link #tearDownClient(VertxTestContext)}.
+     * Closes the per-test {@link HttpServer}.
      *
      * @throws Exception if the server close does not complete within the async bound
      */
