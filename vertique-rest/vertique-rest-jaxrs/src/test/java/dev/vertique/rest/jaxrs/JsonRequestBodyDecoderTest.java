@@ -539,15 +539,25 @@ class JsonRequestBodyDecoderTest {
     }
 
     @Test
-    @DisplayName("Should reject owner-bound inner-class collection bodies that cannot be assigned to the declared parameter")
+    @DisplayName(
+            "Should reject owner-bound inner-class collection bodies that cannot be assigned to the declared parameter")
     void ownerBoundInnerClassBodyIsRejected() {
         RoutingContext ctx = mock(RoutingContext.class);
         RequestValue body = RequestValue.of(pojoArray());
         Type declared = declaredShape("ownerBoundOfPojo");
 
-        assertThrows(
-                dev.vertique.core.exception.ValidationException.class,
-                () -> decoder.decode(ctx, body, rawTypeOf(declared), declared));
+        assertThrows(ValidationException.class, () -> decoder.decode(ctx, body, rawTypeOf(declared), declared));
+    }
+
+    @Test
+    @DisplayName(
+            "Should reject owner-bound Inner extending ArrayList<Object> before falling through to raw materialization")
+    void ownerBoundInnerClassOfObjectBodyIsRejected() {
+        RoutingContext ctx = mock(RoutingContext.class);
+        RequestValue body = RequestValue.of(pojoArray());
+        Type declared = declaredShape("ownerBoundOfObject");
+
+        assertThrows(ValidationException.class, () -> decoder.decode(ctx, body, rawTypeOf(declared), declared));
     }
 
     @Test
@@ -670,5 +680,6 @@ class JsonRequestBodyDecoderTest {
         Fixed<SamplePojo> fixedOfPojo;
         Dtos dtosOfPojo;
         Outer<SamplePojo>.Inner ownerBoundOfPojo;
+        Outer<Object>.Inner ownerBoundOfObject;
     }
 }
