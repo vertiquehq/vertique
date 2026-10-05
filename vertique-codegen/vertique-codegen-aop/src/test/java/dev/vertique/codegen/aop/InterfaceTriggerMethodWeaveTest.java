@@ -48,7 +48,9 @@ class InterfaceTriggerMethodWeaveTest {
         ProcessorTestHarness.run(new AopProcessor(), interfaceTrigger(), crudAbstract(), userResourceOverride())
                 .assertSuccess()
                 .assertGeneratedSourceContains(IMPL_PROXY_FQN, "extends UserResource")
-                .assertGeneratedSourceContains(IMPL_PROXY_FQN, "super.delete(");
+                .assertGeneratedSourceContains(IMPL_PROXY_FQN, "super.delete(")
+                .assertGeneratedSourceContains(IMPL_PROXY_FQN, "AspectProvider")
+                .assertGeneratedSourceDoesNotContain(IMPL_PROXY_FQN, "new MethodInterceptor[] {}");
     }
 
     @Test
@@ -57,7 +59,10 @@ class InterfaceTriggerMethodWeaveTest {
         ProcessorTestHarness.run(new AopProcessor(), interfaceTrigger(), crudAbstract(), nestedImplementor())
                 .assertSuccess()
                 .assertGeneratedSourceContains("com.example.Container_Bean$AopProxy", "extends Container.Bean")
-                .assertGeneratedSourceContains("com.example.Container_Bean$AopProxy", "super.delete(");
+                .assertGeneratedSourceContains("com.example.Container_Bean$AopProxy", "super.delete(")
+                .assertGeneratedSourceContains("com.example.Container_Bean$AopProxy", "AspectProvider")
+                .assertGeneratedSourceDoesNotContain(
+                        "com.example.Container_Bean$AopProxy", "new MethodInterceptor[] {}");
     }
 
     @Test
@@ -66,7 +71,20 @@ class InterfaceTriggerMethodWeaveTest {
         ProcessorTestHarness.run(new AopProcessor(), interfaceTrigger(), genericContract(), genericBean())
                 .assertSuccess()
                 .assertGeneratedSourceContains("com.example.GenericBean$AopProxy", "Future<String> echo(String value)")
-                .assertGeneratedSourceContains("com.example.GenericBean$AopProxy", "super.echo(");
+                .assertGeneratedSourceContains("com.example.GenericBean$AopProxy", "super.echo(")
+                .assertGeneratedSourceContains("com.example.GenericBean$AopProxy", "AspectProvider");
+    }
+
+    @Test
+    @DisplayName("an inherited interface method type parameter is declared on the proxy override")
+    void weavesInheritedMethodTypeParameter() {
+        ProcessorTestHarness.run(
+                        new AopProcessor(), interfaceTrigger(), methodTypeParamContract(), methodTypeParamBean())
+                .assertSuccess()
+                .assertGeneratedSourceContains(
+                        "com.example.MethodTypeParamBean$AopProxy", "<U> Future<U> echo(U value)")
+                .assertGeneratedSourceContains("com.example.MethodTypeParamBean$AopProxy", "super.echo(")
+                .assertGeneratedSourceContains("com.example.MethodTypeParamBean$AopProxy", "AspectProvider");
     }
 
     private static javax.tools.JavaFileObject interfaceTrigger() {
@@ -168,6 +186,30 @@ class InterfaceTriggerMethodWeaveTest {
                 public class GenericBean implements GenericContract<String> {
                     @Inject
                     public GenericBean() {}
+                }
+                """);
+    }
+
+    private static javax.tools.JavaFileObject methodTypeParamContract() {
+        return SourceFiles.inline("com.example.MethodTypeParamContract", """
+                package com.example;
+                import io.vertx.core.Future;
+                public interface MethodTypeParamContract {
+                    @InterfaceTrigger
+                    default <U> Future<U> echo(U value) {
+                        return Future.succeededFuture(value);
+                    }
+                }
+                """);
+    }
+
+    private static javax.tools.JavaFileObject methodTypeParamBean() {
+        return SourceFiles.inline("com.example.MethodTypeParamBean", """
+                package com.example;
+                import jakarta.inject.Inject;
+                public class MethodTypeParamBean implements MethodTypeParamContract {
+                    @Inject
+                    public MethodTypeParamBean() {}
                 }
                 """);
     }

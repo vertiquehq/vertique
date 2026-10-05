@@ -19,7 +19,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
-import java.util.stream.Collectors;
 import javax.annotation.processing.AbstractProcessor;
 import javax.annotation.processing.ProcessingEnvironment;
 import javax.annotation.processing.RoundEnvironment;
@@ -421,8 +420,7 @@ public final class AopProcessor extends AbstractProcessor {
      * classpath interfaces that {@link RoundEnvironment#getElementsAnnotatedWith} does not
      * re-report.
      */
-    private Set<String> discoverAspectTriggerFqns(
-            Set<? extends TypeElement> annotations, RoundEnvironment roundEnv) {
+    private Set<String> discoverAspectTriggerFqns(Set<? extends TypeElement> annotations, RoundEnvironment roundEnv) {
         Set<String> triggerFqns = new LinkedHashSet<>();
         for (TypeElement annotation : annotations) {
             if (annotation.getKind() == ElementKind.ANNOTATION_TYPE && isAspectTrigger(annotation)) {
@@ -479,8 +477,7 @@ public final class AopProcessor extends AbstractProcessor {
         }
     }
 
-    private Map<TypeElement, List<ExecutableElement>> collectBeans(
-            Set<String> triggerFqns, RoundEnvironment roundEnv) {
+    private Map<TypeElement, List<ExecutableElement>> collectBeans(Set<String> triggerFqns, RoundEnvironment roundEnv) {
         Map<TypeElement, List<ExecutableElement>> beans = new LinkedHashMap<>();
         // De-duplicate annotated elements that carry more than one trigger type.
         Set<ExecutableElement> seenAnnotated = new LinkedHashSet<>();
@@ -499,11 +496,11 @@ public final class AopProcessor extends AbstractProcessor {
                 }
                 Element enclosing = method.getEnclosingElement();
                 if (enclosing.getKind() == ElementKind.CLASS && enclosing instanceof TypeElement bean) {
-                    addInterceptedMethod(beans, bean, methodForWeaving(bean, method));
+                    addInterceptedMethod(beans, bean, methodForWeaving(bean, method, triggerFqns));
                 } else if (enclosing.getKind() == ElementKind.INTERFACE && enclosing instanceof TypeElement iface) {
                     for (TypeElement impl : implementingClasses(iface, roundEnv)) {
                         if (isConcreteMember(impl, method)) {
-                            addInterceptedMethod(beans, impl, methodForWeaving(impl, method));
+                            addInterceptedMethod(beans, impl, methodForWeaving(impl, method, triggerFqns));
                         }
                     }
                 }
@@ -615,7 +612,7 @@ public final class AopProcessor extends AbstractProcessor {
         for (TypeElement iface : allInterfaces(type)) {
             for (ExecutableElement method : ElementFilter.methodsIn(iface.getEnclosedElements())) {
                 if (hasAspectTrigger(method, triggerFqns) && isConcreteMember(type, method)) {
-                    addInterceptedMethod(beans, type, methodForWeaving(type, method));
+                    addInterceptedMethod(beans, type, methodForWeaving(type, method, triggerFqns));
                 }
             }
         }
@@ -658,13 +655,14 @@ public final class AopProcessor extends AbstractProcessor {
     }
 
     /**
-     * Prefers the bean's own override when present; otherwise keeps the interface declaration for
-     * inherited {@code default} methods.
+     * Keeps the annotation-bearing method discovered for weaving. Prefer a bean override only when
+     * that override itself carries an aspect trigger; otherwise an unannotated override would drop
+     * interface-declared aspects from the generated chain.
      */
-    private ExecutableElement methodForWeaving(TypeElement bean, ExecutableElement method) {
+    private ExecutableElement methodForWeaving(TypeElement bean, ExecutableElement method, Set<String> triggerFqns) {
         for (ExecutableElement candidate :
                 ElementFilter.methodsIn(ctx.elements().getAllMembers(bean))) {
-            if (ctx.elements().overrides(candidate, method, bean)) {
+            if (ctx.elements().overrides(candidate, method, bean) && hasAspectTrigger(candidate, triggerFqns)) {
                 return candidate;
             }
         }

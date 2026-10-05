@@ -450,23 +450,21 @@ final class AopProxyEmitter {
      */
     private MethodSpec buildOverride(TypeElement bean, ExecutableElement method, int ordinal, String metaField) {
         String name = method.getSimpleName().toString();
-        ExecutableType member =
-                (ExecutableType) ctx.types().asMemberOf((DeclaredType) bean.asType(), method);
+        ExecutableType member = (ExecutableType) ctx.types().asMemberOf((DeclaredType) bean.asType(), method);
         TypeMirror returnMirror = member.getReturnType();
         TypeName returnType = TypeName.get(returnMirror);
-        boolean methodDeclaredOnBean = method.getEnclosingElement().equals(bean);
 
         MethodSpec.Builder override = MethodSpec.methodBuilder(name)
                 .addAnnotation(Override.class)
-                .addModifiers(Modifier.PUBLIC);
-        if (methodDeclaredOnBean) {
-            // Declare the method's own type parameters (e.g. <T>) so its T-referencing param and
-            // return types resolve in the override (Bug N3).
-            override.addTypeVariables(method.getTypeParameters().stream()
-                    .map(TypeVariableName::get)
-                    .toList());
-        }
-        override.returns(returnType)
+                .addModifiers(Modifier.PUBLIC)
+                // Declare the method's own type parameters (e.g. <U> on an inherited interface
+                // default) so T-referencing param/return types resolve even when the method is not
+                // redeclared on the bean. asMemberOf substitutes class/interface type arguments but
+                // does not remove method type variables.
+                .addTypeVariables(method.getTypeParameters().stream()
+                        .map(TypeVariableName::get)
+                        .toList())
+                .returns(returnType)
                 // Replicate the bean method's checked-exception declaration so the override signature
                 // matches (Bug N2); the Future-returning case never throws synchronously, but the
                 // declaration must still mirror the overridden method.
@@ -539,11 +537,7 @@ final class AopProxyEmitter {
                     catchVar);
             // Map back to Future<T> via an unchecked cast on the element type.
             override.addStatement(
-                    "return $N.map($N -> ($T) $N)",
-                    resultVar,
-                    backCastVar,
-                    elementType(returnMirror),
-                    backCastVar);
+                    "return $N.map($N -> ($T) $N)", resultVar, backCastVar, elementType(returnMirror), backCastVar);
         } else {
             // Non-Future return (sync): run the chain — the terminal wraps the synchronous super call
             // in a succeeded future — then unwrap the result. Because a sync-returning method has no
