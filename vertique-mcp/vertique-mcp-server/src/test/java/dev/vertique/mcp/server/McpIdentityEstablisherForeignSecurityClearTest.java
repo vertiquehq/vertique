@@ -14,6 +14,8 @@ import dev.vertique.rest.core.security.RouteAuthHandler;
 import dev.vertique.rest.core.security.SecurityRuntime;
 import dev.vertique.rest.security.IdentityResolutionMiddleware;
 import dev.vertique.security.SecurityContext;
+import io.vertx.core.Future;
+import io.vertx.core.http.HttpServerResponse;
 import io.vertx.ext.web.RoutingContext;
 import io.vertx.ext.web.impl.UserContextInternal;
 import java.util.Optional;
@@ -52,6 +54,48 @@ class McpIdentityEstablisherForeignSecurityClearTest {
         assertThat(cleared.get()).isTrue();
         assertThat(bound.get()).isNull();
         assertThat(advanced.get()).isTrue();
+    }
+
+    @Test
+    @DisplayName("no-scheme admit fails closed when SecurityRuntime clearCurrent is a no-op")
+    void noSchemeAdmitRejectsWhenClearCurrentRetainsForeignContext() {
+        SecurityContext foreign = mock(SecurityContext.class);
+        SecurityRuntime securityRuntime = new SecurityRuntime() {
+            @Override
+            public SecurityContext current() {
+                return foreign;
+            }
+
+            @Override
+            public ContextHolder.Scope bindCurrent(SecurityContext context) {
+                return () -> {};
+            }
+
+            @Override
+            public jakarta.ws.rs.core.SecurityContext toJaxRs(SecurityContext context, boolean secure) {
+                return null;
+            }
+        };
+        McpIdentityEstablisher establisher = establisher(null, securityRuntime);
+
+        RoutingContext context = routingContextWithClearableUser();
+        HttpServerResponse response = mock(HttpServerResponse.class);
+        when(context.response()).thenReturn(response);
+        when(response.headWritten()).thenReturn(false);
+        when(response.end()).thenReturn(Future.succeededFuture());
+        when(response.end(org.mockito.ArgumentMatchers.anyString())).thenReturn(Future.succeededFuture());
+        AtomicBoolean advanced = new AtomicBoolean();
+        doAnswer(invocation -> {
+                    advanced.set(true);
+                    return null;
+                })
+                .when(context)
+                .next();
+
+        establisher.admit(context);
+
+        assertThat(advanced.get()).isFalse();
+        assertThat(foreign).isSameAs(securityRuntime.current());
     }
 
     @Test

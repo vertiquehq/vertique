@@ -64,7 +64,10 @@ final class McpIdentityEstablisher {
                 return;
             }
         } else {
-            clearAmbientAuthenticationState(context);
+            if (!clearAmbientAuthenticationState(context)) {
+                reject(context);
+                return;
+            }
         }
         context.next();
     }
@@ -129,7 +132,11 @@ final class McpIdentityEstablisher {
      * ambient {@link SecurityRuntime} holder binding so the no-scheme canonical-anonymous path binds
      * an identity without consulting ambient Router or holder state.
      */
-    private void clearAmbientAuthenticationState(RoutingContext context) {
+    /**
+     * @return {@code false} when a foreign {@link SecurityRuntime} binding could not be cleared (fail
+     *     closed); {@code true} when ambient authentication state was reset
+     */
+    private boolean clearAmbientAuthenticationState(RoutingContext context) {
         // Relies on the Vert.x-internal UserContextInternal because Vert.x 5.1.6 exposes no public
         // "clear user" API — a Vert.x upgrade must re-verify this security-critical clear still works
         // (exercised by the McpDiscoverIT no-scheme rows).
@@ -140,6 +147,7 @@ final class McpIdentityEstablisher {
         // transport settlement that fires before MCP identity resolution would snapshot that foreign
         // context via McpRequestDispatcher.establishedSecurity() instead of null.
         securityRuntime.clearCurrent();
+        return securityRuntime.current() == null;
     }
 
     private static void reject(RoutingContext context) {
