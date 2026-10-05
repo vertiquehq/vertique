@@ -153,9 +153,11 @@ field is rejected as well, a step later: it fails while the route's parameter ex
 during route registration. Both are startup failures — declaring both `@Sanitize` and
 `@SkipSanitization` (or both `@Canonicalize` and `@SkipCanonicalization`) on one parameter or one bean
 field never reaches a request. A `@Canonicalize`/`@Sanitize`/`@Skip*` written on the `@BeanParam`
-parameter itself is the baseline for that bean's fields and for the intermediate-map processing step
-on both the reflective and generated paths (field-level annotations still override it); the startup
-gate that refuses an unbound engine when a route declares processing counts that parameter chain,
+parameter itself is the composition baseline for that bean's fields on both the reflective and
+generated paths: parameter, bean-type, and field metadata are composed once into each field's
+effective chain and applied on the transport string before conversion (field-level annotations still
+override). There is no second intermediate-map processing pass. The startup gate that refuses an
+unbound engine when a route declares processing counts that parameter chain,
 so a declared parameter policy cannot fail startup for work that would never run.
 
 **Which body shapes step 3 reaches.** A DTO body, a collection or array body, a `String` body, a

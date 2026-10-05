@@ -817,24 +817,7 @@ class DefaultInputObjectProcessor implements InputObjectProcessor {
      */
     private static List<Class<? extends Canonicalizer>> buildCanonicalizerChain(
             InputTraversalContext ctx, InputPolicyMetadata typeMeta, @Nullable FieldPolicyMetadata fieldMeta) {
-
-        if (ctx.inheritedSkipCanonicalization()) {
-            return List.of();
-        }
-        if (fieldMeta != null && fieldMeta.skipCanonicalization()) {
-            return List.of();
-        }
-        boolean fieldHasOwnChain =
-                fieldMeta != null && !fieldMeta.canonicalizerChain().isEmpty();
-        if (typeMeta.skipCanonicalization() && !fieldHasOwnChain) {
-            return List.of();
-        }
-        return ctx.compose(
-                ctx.inheritedCanonicalizerChain(),
-                typeMeta.ownerType(),
-                fieldMeta != null ? fieldMeta.fieldName() : null,
-                typeMeta.objectCanonicalizerChain(),
-                fieldMeta != null ? fieldMeta.canonicalizerChain() : List.of());
+        return PropertyPolicyComposer.buildCanonicalizerChain(ctx, typeMeta, fieldMeta);
     }
 
     /**
@@ -849,24 +832,7 @@ class DefaultInputObjectProcessor implements InputObjectProcessor {
      */
     private static List<Class<? extends Sanitizer>> buildSanitizerChain(
             InputTraversalContext ctx, InputPolicyMetadata typeMeta, @Nullable FieldPolicyMetadata fieldMeta) {
-
-        if (ctx.inheritedSkipSanitization()) {
-            return List.of();
-        }
-        if (fieldMeta != null && fieldMeta.skipSanitization()) {
-            return List.of();
-        }
-        boolean fieldHasOwnChain =
-                fieldMeta != null && !fieldMeta.sanitizerChain().isEmpty();
-        if (typeMeta.skipSanitization() && !fieldHasOwnChain) {
-            return List.of();
-        }
-        return ctx.compose(
-                ctx.inheritedSanitizerChain(),
-                typeMeta.ownerType(),
-                fieldMeta != null ? fieldMeta.fieldName() : null,
-                typeMeta.objectSanitizerChain(),
-                fieldMeta != null ? fieldMeta.sanitizerChain() : List.of());
+        return PropertyPolicyComposer.buildSanitizerChain(ctx, typeMeta, fieldMeta);
     }
 
     // --- Chain application ---

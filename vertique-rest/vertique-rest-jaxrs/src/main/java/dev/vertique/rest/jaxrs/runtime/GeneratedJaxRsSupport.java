@@ -82,21 +82,15 @@ public interface GeneratedJaxRsSupport {
     Object deserializeBody(ResourceMethodMeta.ParamMeta meta, EffectiveInputPolicies policies, RoutingContext ctx);
 
     /**
-     * Materializes a {@code @BeanParam} composite using the parameter's effective policies as the
-     * baseline. Per-field policies are derived internally from each {@link BeanParamFieldMeta#meta()}'s
-     * {@link dev.vertique.rest.jaxrs.ResourceMethodMeta.ParamMeta#annotations()} array, which
-     * carries the field's declared input-policy annotations ({@code @Canonicalize},
-     * {@code @Sanitize}, {@code @SkipCanonicalization}, {@code @SkipSanitization}).
-     * {@code routePolicies} is the {@code @BeanParam} parameter's own resolved chain (route baseline
-     * plus any parameter-level annotations), used as the per-field baseline. Object-level bean-type
-     * {@code @Sanitize}/{@code @Canonicalize} still run on the intermediate map even when that chain
-     * is empty; invocation chains are not replayed there.
+     * Materializes a {@code @BeanParam} composite. Per-field policies are composed once from the
+     * parameter baseline ({@code routePolicies}), bean-type metadata, and field metadata via
+     * {@link InputObjectProcessor#resolvePropertyPolicies}, then applied during scalar/form
+     * extraction before conversion. There is no second intermediate-map processing pass.
      *
      * @param fields        the bean field entries (one per source field/component); each
-     *                      {@code meta().annotations()} must carry the field's declared annotations
-     *                      so per-field policies can be derived at materialisation time
-     * @param routePolicies the parameter's effective policies used as field baseline and for the
-     *                      intermediate-map processing step
+     *                      {@code meta().annotations()} should carry the field's declared annotations
+     *                      so warming can reject field-level additive/skip conflicts
+     * @param routePolicies the parameter's effective policies used as the composition baseline
      * @param request       the neutral bound request
      * @param ctx           the routing context
      * @param beanType      the bean class to materialize

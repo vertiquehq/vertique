@@ -106,6 +106,9 @@ static InputObjectProcessor createDefault(
 
 static boolean declaresPolicies(Type targetType);
 
+static EffectiveInputPolicies resolvePropertyPolicies(
+        Class<?> beanType, String propertyName, EffectiveInputPolicies baseline);
+
 Object processInput(
         Object input,
         Type targetType,
@@ -119,6 +122,8 @@ Object processInput(
 The engine memoizes each resolver function's result **per processor class** and reuses the returned instance for every value it processes, so a resolver need not cache anything itself and is not called once per string value. A resolution that fails is memoized too and rethrown on every later use of that class, so an unresolvable processor still fails the request but costs one lookup rather than one per value. Both caches are owned by the engine instance and die with it.
 
 Memoization is not mutual exclusion: threads racing on a cold class may each run the resolver, and one result wins while the others are discarded. Once per class is the steady state, not a guarantee. A resolver function must therefore be safe to call concurrently, must return an instance safe to share across requests and threads, and must not depend on being invoked exactly once.
+
+`resolvePropertyPolicies(...)` returns the effective chains `processInput` would apply to one named property of `beanType` under the given invocation baseline, without transforming a value. Transports that extract flat bean properties before conversion (for example JAX-RS `@BeanParam` fields) call it so parameter, type, and field metadata compose exactly once and are then applied on the transport string before conversion — the same skip and append order as a structured `processInput` walk, without a second metadata walk over already-processed values.
 
 `processInput(...)` accepts the decoded intermediate (`Map<String, Object>` for objects, `List<Object>` for arrays, or a raw value; `null` is returned unchanged) and returns a new structure with string values transformed.
 

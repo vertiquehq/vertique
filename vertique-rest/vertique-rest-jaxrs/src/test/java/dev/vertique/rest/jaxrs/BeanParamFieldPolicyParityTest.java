@@ -46,6 +46,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -160,6 +162,66 @@ class BeanParamFieldPolicyParityTest {
         }
     }
 
+    /** Type-level sanitizer that prefixes {@code clean:} (non-idempotent with {@link FieldPrefixSanitizer}). */
+    static final class TypePrefixSanitizer implements Sanitizer {
+        static final AtomicInteger CALLS = new AtomicInteger();
+
+        @Override
+        public String sanitize(String value, InputValueContext ctx) {
+            CALLS.incrementAndGet();
+            return value == null ? null : "clean:" + value;
+        }
+    }
+
+    /** Field-level sanitizer that prefixes {@code field:} (non-idempotent with {@link TypePrefixSanitizer}). */
+    static final class FieldPrefixSanitizer implements Sanitizer {
+        static final AtomicInteger CALLS = new AtomicInteger();
+
+        @Override
+        public String sanitize(String value, InputValueContext ctx) {
+            CALLS.incrementAndGet();
+            return value == null ? null : "field:" + value;
+        }
+    }
+
+    /** Canonicalizer that strips commas so a numeric field can convert after the wire string is normalized. */
+    static final class StripCommasCanon implements Canonicalizer {
+        static final AtomicInteger CALLS = new AtomicInteger();
+
+        @Override
+        public String canonicalize(String value, InputValueContext ctx) {
+            CALLS.incrementAndGet();
+            return value == null ? null : value.replace(",", "");
+        }
+    }
+
+    /** Bean with type-level and field-level {@code @Sanitize} — must compose once, not replay. */
+    @Sanitize(TypePrefixSanitizer.class)
+    static class TypeAndFieldSanitizedBean {
+        @QueryParam("page")
+        @Sanitize(FieldPrefixSanitizer.class)
+        public String page;
+    }
+
+    @Path("/type-and-field-sanitized-bean")
+    static class TypeAndFieldSanitizedBeanResource {
+        @GET
+        public void search(@BeanParam TypeAndFieldSanitizedBean bean) {}
+    }
+
+    /** Bean whose type-level canonicalizer must run on the wire string before int conversion. */
+    @Canonicalize(StripCommasCanon.class)
+    static class NumericCanonBean {
+        @QueryParam("n")
+        public int n;
+    }
+
+    @Path("/numeric-canon-bean")
+    static class NumericCanonBeanResource {
+        @GET
+        public void search(@BeanParam NumericCanonBean bean) {}
+    }
+
     /** Bean with a type-level {@code @Sanitize} and no field-level / parameter-level policy. */
     @Sanitize(PrefixSanitizer.class)
     static class TypeSanitizedBean {
@@ -226,10 +288,9 @@ class BeanParamFieldPolicyParityTest {
         @Test
         @DisplayName("@SkipCanonicalization field with non-empty route chain — processor NOT invoked for the field")
         void skipCanonField_codegenPath_clearsRouteChain() throws Exception {
-            // @SkipCanonicalization must clear the per-field chain. With route sanit also empty,
-            // isEmpty()=true and extractScalarParam never reaches the processor for the
-            // per-field call. (The route-level BEAN_PARAM intermediate-map call still happens because
-            // routePolicies has a non-empty canon chain — that's a separate invocation we filter out.)
+            // @SkipCanonicalization clears the composed per-field chain (shared owner skip rules).
+            // With route sanit also empty, isEmpty()=true and extractScalarParam never reaches the
+            // processor for the per-field call. There is no intermediate-map second walk.
             Optional<EffectiveInputPolicies> captured = invokeMaterializeBean(
                     BeanWithSkipCanon.class, "q", true /* with annotations */, List.of(RouteCanon.class), List.of());
 
@@ -254,36 +315,25 @@ class BeanParamFieldPolicyParityTest {
     }
 
     @Nested
-    @DisplayName("pre-fix shape — BeanParamFieldMeta with annotations=null (regression pin)")
+    @DisplayName("pre-fix shape — BeanParamFieldMeta with annotations=null")
     class PreFixShape {
 
         @Test
-        @DisplayName("@Canonicalize field but annotations=null — processor NOT invoked for the field")
-        void canonicalizeField_butAnnotationsNull_dropsFieldCanon() throws Exception {
-            // Pre-fix shape: BeanParamFieldMeta carries annotations=null. The field-level @Canonicalize
-            // cannot be derived from a null annotation array. The per-field policies fall back to
-            // the route baseline (empty here), and extractScalarParam skips the processor.
-            // If a regression ever reverted the round-4 fix back to passing empty per-field policies,
-            // this assertion would still hold — but the codegenPath assertions above would FAIL,
-            // which is the actual regression signal. This test is a complementary sanity pin: when
-            // annotations are absent, NO field-level policy is applied.
+        @DisplayName("annotations=null still applies Class field metadata via resolvePropertyPolicies")
+        void canonicalizeField_annotationsNull_stillUsesClassMetadata() throws Exception {
+            // Single-pass composition reads bean-type/field metadata from the Class, not from
+            // ParamMeta.annotations(). Stripping annotations on the companion meta must not drop
+            // the field's declared @Canonicalize — that would reintroduce a reflective/codegen split.
             Optional<EffectiveInputPolicies> captured = invokeMaterializeBean(
                     BeanWithCanon.class, "name", false /* annotations stripped */, List.of(), List.of());
 
-            assertTrue(
-                    captured.isEmpty(),
-                    "When BeanParamFieldMeta.meta().annotations() is null and route chain is empty, "
-                            + "the per-field processor invocation must not happen — proving the "
-                            + "@Canonicalize annotation cannot leak through despite being on the bean class");
+            assertTrue(captured.isPresent(), "Class field @Canonicalize must still reach the processor");
+            assertEquals(List.of(StubCanon.class), captured.get().canonicalizers());
         }
 
         @Test
-        @DisplayName("@Canonicalize field but annotations=null — route chain is preserved (only field-level dropped)")
-        void canonicalizeField_butAnnotationsNull_preservesRouteChain() throws Exception {
-            // With route chain non-empty AND annotations=null, the per-field policies degrade to the
-            // route baseline only — no [StubCanon] from the bean's @Canonicalize. The route chain still
-            // applies (the codegen fix is precisely about preserving field-level policies when present;
-            // when absent, route baseline propagates as-is).
+        @DisplayName("annotations=null composes route baseline with Class field metadata")
+        void canonicalizeField_annotationsNull_composesRouteAndField() throws Exception {
             Optional<EffectiveInputPolicies> captured = invokeMaterializeBean(
                     BeanWithCanon.class,
                     "name",
@@ -291,11 +341,11 @@ class BeanParamFieldPolicyParityTest {
                     List.of(RouteCanon.class),
                     List.of());
 
-            assertTrue(captured.isPresent(), "Per-field processor invocation must occur (route chain is non-empty)");
+            assertTrue(captured.isPresent());
             assertEquals(
-                    List.of(RouteCanon.class),
+                    List.of(RouteCanon.class, StubCanon.class),
                     captured.get().canonicalizers(),
-                    "Per-field chain must equal the route baseline (NOT contain [StubCanon] — annotations are null)");
+                    "baseline + field metadata compose once (route then field)");
         }
     }
 
@@ -377,14 +427,11 @@ class BeanParamFieldPolicyParityTest {
             assertTrue(fieldPolicies.isPresent(), "plain field must inherit the @BeanParam parameter sanitize chain");
             assertEquals(List.of(StubSanit.class), fieldPolicies.get().sanitizers());
 
-            // PlainBean declares no object-level policies — the intermediate map is not re-submitted
-            // (invocation chains already applied per-field; replaying them would double-apply).
+            // PlainBean declares no object-level policies beyond the parameter baseline already
+            // applied per-field; there is no intermediate-map second walk.
             Optional<EffectiveInputPolicies> beanPolicies =
                     capturePerFieldPolicies(processor, InputLocation.BEAN_PARAM);
-            assertTrue(
-                    beanPolicies.isEmpty(),
-                    "intermediate map must not replay the parameter sanitize chain when the bean "
-                            + "type has no object-level policies");
+            assertTrue(beanPolicies.isEmpty(), "intermediate map must not be re-submitted after per-field processing");
         }
 
         @Test
@@ -412,7 +459,7 @@ class BeanParamFieldPolicyParityTest {
 
             Optional<EffectiveInputPolicies> beanPolicies =
                     capturePerFieldPolicies(processor, InputLocation.BEAN_PARAM);
-            assertTrue(beanPolicies.isEmpty(), "PlainBean has no object-level policies — map stage skipped");
+            assertTrue(beanPolicies.isEmpty(), "no second map-stage processInput call");
         }
     }
 
@@ -420,10 +467,17 @@ class BeanParamFieldPolicyParityTest {
     @DisplayName("real-engine regressions — cache isolation and type-only metadata (#533 review)")
     class RealEngineRegressions {
 
+        @BeforeEach
+        void resetCounters() {
+            TypePrefixSanitizer.CALLS.set(0);
+            FieldPrefixSanitizer.CALLS.set(0);
+            StripCommasCanon.CALLS.set(0);
+        }
+
         @Test
         @DisplayName("two same-class @BeanParam baselines stay isolated (sanitize then skip)")
         void dualBeanParams_sanitizeThenSkip_isolated() throws Exception {
-            Object[] args = extractWithRealEngine(new DualSanitizeThenSkipResource(), "raw");
+            Object[] args = extractWithRealEngine(new DualSanitizeThenSkipResource(), "page", "raw");
             PlainBean sanitized = (PlainBean) args[0];
             PlainBean skipped = (PlainBean) args[1];
             assertEquals("clean:raw", sanitized.page, "first parameter's @Sanitize must apply");
@@ -433,7 +487,7 @@ class BeanParamFieldPolicyParityTest {
         @Test
         @DisplayName("two same-class @BeanParam baselines stay isolated (skip then sanitize)")
         void dualBeanParams_skipThenSanitize_isolated() throws Exception {
-            Object[] args = extractWithRealEngine(new DualSkipThenSanitizeResource(), "raw");
+            Object[] args = extractWithRealEngine(new DualSkipThenSanitizeResource(), "page", "raw");
             PlainBean skipped = (PlainBean) args[0];
             PlainBean sanitized = (PlainBean) args[1];
             assertEquals("raw", skipped.page, "first parameter's @SkipSanitization must apply");
@@ -443,9 +497,57 @@ class BeanParamFieldPolicyParityTest {
         @Test
         @DisplayName("type-only @Sanitize still runs when the @BeanParam parameter has an empty invocation chain")
         void typeOnlySanitize_emptyInvocationBaseline_stillProcesses() throws Exception {
-            Object[] args = extractWithRealEngine(new TypeSanitizedBeanResource(), "raw");
+            Object[] args = extractWithRealEngine(new TypeSanitizedBeanResource(), "page", "raw");
             TypeSanitizedBean bean = (TypeSanitizedBean) args[0];
             assertEquals("clean:raw", bean.page, "bean-type @Sanitize must run even with EffectiveInputPolicies.NONE");
+        }
+
+        @Test
+        @DisplayName("reflective: type+field @Sanitize compose once — order and call count")
+        void typeAndFieldSanitize_reflective_composeOnce_orderAndCount() throws Exception {
+            Object[] args = extractWithRealEngine(new TypeAndFieldSanitizedBeanResource(), "page", "raw");
+            TypeAndFieldSanitizedBean bean = (TypeAndFieldSanitizedBean) args[0];
+            // TypePrefix then FieldPrefix exactly once: field:clean:raw — not field:clean:field:raw.
+            assertEquals(
+                    "field:clean:raw",
+                    bean.page,
+                    "type then field must compose once; replaying the map walk double-applies the field sanitizer");
+            assertEquals(1, TypePrefixSanitizer.CALLS.get(), "type sanitizer must run exactly once");
+            assertEquals(1, FieldPrefixSanitizer.CALLS.get(), "field sanitizer must run exactly once");
+        }
+
+        @Test
+        @DisplayName("codegen materializeBean: type+field @Sanitize compose once — order and call count")
+        void typeAndFieldSanitize_codegenMaterializeBean_composeOnce_orderAndCount() throws Exception {
+            Field f = TypeAndFieldSanitizedBean.class.getDeclaredField("page");
+            ParamMeta pm = new ParamMeta("page", ParamSource.QUERY, String.class, null, null, null, f.getAnnotations());
+            BeanParamFieldMeta[] fields = new BeanParamFieldMeta[] {new BeanParamFieldMeta("page", pm)};
+
+            ResourceMethodMeta meta = stubMeta(List.of(), List.of());
+            InputObjectProcessor processor = realProcessor();
+            ParameterExtractor extractor =
+                    new ParameterExtractor(meta, List.of(), new RestContextResolution(Set.of()), processor);
+
+            BoundRequest request = stubBoundRequestWithQuery("page", "raw");
+            Object result = extractor.materializeBean(
+                    fields,
+                    EffectiveInputPolicies.NONE,
+                    request,
+                    mock(RoutingContext.class),
+                    TypeAndFieldSanitizedBean.class);
+
+            assertEquals("field:clean:raw", ((TypeAndFieldSanitizedBean) result).page);
+            assertEquals(1, TypePrefixSanitizer.CALLS.get(), "type sanitizer must run exactly once on codegen path");
+            assertEquals(1, FieldPrefixSanitizer.CALLS.get(), "field sanitizer must run exactly once on codegen path");
+        }
+
+        @Test
+        @DisplayName("type-level @Canonicalize runs on the wire string before numeric conversion")
+        void typeCanonicalize_numericField_beforeConversion() throws Exception {
+            Object[] args = extractWithRealEngine(new NumericCanonBeanResource(), "n", "1,234");
+            NumericCanonBean bean = (NumericCanonBean) args[0];
+            assertEquals(1234, bean.n, "commas must be stripped before int conversion");
+            assertEquals(1, StripCommasCanon.CALLS.get(), "canonicalizer must run exactly once before conversion");
         }
 
         @Test
@@ -456,28 +558,40 @@ class BeanParamFieldPolicyParityTest {
                 @GET
                 public void search(@BeanParam PlainBean bean) {}
             }
-            Object[] args = extractWithRealEngine(new PlainResource(), "raw");
+            Object[] args = extractWithRealEngine(new PlainResource(), "page", "raw");
             PlainBean bean = (PlainBean) args[0];
             assertEquals("raw", bean.page);
         }
 
-        private static Object[] extractWithRealEngine(Object resource, String pageValue) {
-            List<ResourceMethodMeta> metas = new ResourceScanner(new SecurityPolicyBuilder()).scanResource(resource);
-            assertEquals(1, metas.size());
-            ResourceMethodMeta meta = metas.get(0);
-            InputObjectProcessor processor = InputObjectProcessor.createDefault(
+        private static InputObjectProcessor realProcessor() {
+            return InputObjectProcessor.createDefault(
                     type -> {
+                        if (type == StripCommasCanon.class) {
+                            return new StripCommasCanon();
+                        }
                         throw new AssertionError("no canonicalizer declared: " + type);
                     },
                     type -> {
                         if (type == PrefixSanitizer.class) {
                             return new PrefixSanitizer();
                         }
+                        if (type == TypePrefixSanitizer.class) {
+                            return new TypePrefixSanitizer();
+                        }
+                        if (type == FieldPrefixSanitizer.class) {
+                            return new FieldPrefixSanitizer();
+                        }
                         throw new AssertionError("unresolvable sanitizer: " + type);
                     });
+        }
+
+        private static Object[] extractWithRealEngine(Object resource, String queryName, String queryValue) {
+            List<ResourceMethodMeta> metas = new ResourceScanner(new SecurityPolicyBuilder()).scanResource(resource);
+            assertEquals(1, metas.size());
+            ResourceMethodMeta meta = metas.get(0);
             ParameterExtractor extractor =
-                    new ParameterExtractor(meta, List.of(), new RestContextResolution(Set.of()), processor);
-            BoundRequest request = stubBoundRequestWithQuery("page", pageValue);
+                    new ParameterExtractor(meta, List.of(), new RestContextResolution(Set.of()), realProcessor());
+            BoundRequest request = stubBoundRequestWithQuery(queryName, queryValue);
             return extractor.extractArguments(mock(RoutingContext.class), request);
         }
     }

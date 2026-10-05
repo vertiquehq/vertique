@@ -1464,7 +1464,12 @@ final class ParameterExtractor {
         EffectiveInputPolicies[] resolved = new EffectiveInputPolicies[fields.length];
         for (int i = 0; i < fields.length; i++) {
             String site = beanType.getSimpleName() + "." + fields[i].name();
-            resolved[i] = resolveParamMetaPolicies(fields[i].meta(), routeCanon, routeSanit, site, "field " + site);
+            // ParamMeta conflict check (additive+skip on the same field) — fail at warming/startup.
+            resolveParamMetaPolicies(fields[i].meta(), routeCanon, routeSanit, site, "field " + site);
+            // Complete pipeline: parameter baseline + bean-type metadata + field metadata, composed
+            // by the shared input-processing owner (same rules as processInput). Applied once at
+            // scalar/form extraction before conversion — no second metadata walk over the map.
+            resolved[i] = InputObjectProcessor.resolvePropertyPolicies(beanType, fields[i].name(), routePolicies);
         }
         return resolved;
     }
@@ -1516,18 +1521,15 @@ final class ParameterExtractor {
      * the generated-companion path, maintaining parity with the reflective path.
      *
      * <p>The overall processing contract is identical to {@link #extractBeanParam}: per-field
-     * extraction happens first (applying the parameter baseline and field overrides), then the
-     * assembled intermediate {@link LinkedHashMap} is submitted to the
-     * {@link dev.vertique.input.processing.InputObjectProcessor} when the bean type declares
-     * object-level policies — with {@link EffectiveInputPolicies#NONE} so invocation chains are
-     * not applied twice.
+     * policies are composed once from the parameter baseline, bean-type metadata, and field
+     * metadata via {@link InputObjectProcessor#resolvePropertyPolicies}, then applied during
+     * scalar/form extraction <em>before</em> conversion. The intermediate map is not walked again.
      *
      * @param fields           ordered array of bean field metadata; must not be {@code null};
      *                         each {@code meta().annotations()} should carry the field's declared
-     *                         annotations so per-field policies can be derived
-     * @param routePolicies    baseline policies for per-field derivation — the {@code @BeanParam}
-     *                         parameter's own resolved chain (route plus parameter-level annotations)
-     *                         on both the reflective and generated paths; pass
+     *                         annotations so per-field conflict checks can run at warming
+     * @param routePolicies    the {@code @BeanParam} parameter's own resolved chain (route plus
+     *                         parameter-level annotations), used as the composition baseline; pass
      *                         {@link EffectiveInputPolicies#NONE} for empty chains
      * @param boundRequest     the bound request exposing parameter values as {@link RequestValue}s
      * @param ctx              the routing context (for form params)
@@ -1568,41 +1570,10 @@ final class ParameterExtractor {
             }
         }
 
-        // Per-field extraction already applied the parameter/route baseline and field overrides.
-        // Do not re-submit those invocation chains here — that would double-apply additive
-        // sanitizers/canonicalizers. Still submit when the bean type itself declares object-level
-        // @Sanitize/@Canonicalize: EffectiveInputPolicies.isEmpty() only describes the invocation
-        // baseline, and gating on it drops type-only metadata (issue #533 review W2). Pass NONE so
-        // the walk applies type metadata without replaying the invocation chains.
-        if (objectProcessor != null && declaresObjectLevelInputPolicies(beanType)) {
-            Object processed = objectProcessor.processInput(
-                    values,
-                    beanType,
-                    EffectiveInputPolicies.NONE,
-                    InputLocation.BEAN_PARAM,
-                    InputFieldNameResolver.IDENTITY);
-            if (processed instanceof Map<?, ?> processedMap) {
-                values = new LinkedHashMap<>();
-                for (Map.Entry<?, ?> entry : processedMap.entrySet()) {
-                    // Null values are intentional (absent fields); Jackson's convertValue handles them.
-                    values.put(String.valueOf(entry.getKey()), (Object) entry.getValue());
-                }
-            }
-        }
-
+        // Policies already applied once per field before conversion (parameter baseline + type +
+        // field metadata). Do not walk the intermediate map again — that would replay field
+        // sanitizers on already-processed strings.
         return VertiqueJson.mapper().convertValue(values, beanType);
-    }
-
-    /**
-     * Returns whether {@code beanType} declares an object-level {@code @Sanitize} or
-     * {@code @Canonicalize} (not merely field-level or skip annotations).
-     *
-     * @param beanType the {@code @BeanParam} target class
-     * @return {@code true} when type-level additive processing must still run after per-field extraction
-     */
-    private static boolean declaresObjectLevelInputPolicies(Class<?> beanType) {
-        return AnnotationResolver.findMetaAnnotation(beanType, Sanitize.class) != null
-                || AnnotationResolver.findMetaAnnotation(beanType, Canonicalize.class) != null;
     }
 
     /**
