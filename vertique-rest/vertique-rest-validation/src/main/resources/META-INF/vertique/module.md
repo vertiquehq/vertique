@@ -36,9 +36,11 @@ are exempt from aggregate file constraints; their ordinary form schema validatio
 **Deep file verification** is optional. `FileContentVerifier` implementations are Dagger
 multibindings consumed only by `web-validation`. Every verifier runs in `OrderedExtension` order for
 each applicable physical upload, sequentially and fail-fast. A verifier rejection is a 400 file
-validation error; a synchronous throw, failed future, null future, or null result is a 500
-infrastructure error. The built-in magic-byte verifier is opt-in through
-`MagicBytesVerifierModule`.
+validation error; a synchronous throw, failed future, null future, null result, or wait-deadline
+timeout is a 500 infrastructure error. Each verifier invocation is bounded by
+`jaxrs.fileContentVerifierDeadlineMs` (per call, not an overall chain budget); the framework stops
+waiting on timeout but does not cancel verifier-owned work — see [FileContentVerifier](#filecontentverifier-multibinding).
+The built-in magic-byte verifier is opt-in through `MagicBytesVerifierModule`.
 
 **Schema synthesis** happens at router construction: `AnnotationSchemaSource` reads JAX-RS (`@PathParam`, `@QueryParam`, `@NotNull`, `@Pattern`, `@Size`, etc.) and Bean Validation annotations from each resource method and emits JSON Schema fragments. Body-type generation is **always profiled**: every route's body schema is produced by `dev.vertique:vertique-json-schema`'s `AnnotationJsonSchemaGenerator.forInputProfile(profile)` for the effective JSON profile the registrar resolved for that operation, so the synthesized document describes the wire shape that profile's mapper actually parses and the profile's input type overrides land in the schema the gate enforces. There is no profile-agnostic generation path and no fallback to a default generator. This module holds **no profile-selection rule**: the effective profile arrives as the `schemasFor(op, profile)` argument, and nothing here reads a profile id, a mapper identity, or configuration to choose one. Loose-parameter schema assembly remains owned by this module: the generator introspects types and fields, not individual method parameters, and loose parameters are not profiled. A body the profile's generator cannot represent fails router construction with a `RestConfigurationException` naming the operation id and carrying the generator's failure as cause — the mount is never installed and none of its routes serve traffic; request-validation outcomes and error categories for bodies that do generate are unaffected. Each operation's schemas are synthesized once at registration — no per-request reflection. There is deliberately no per-operationId schema cache: duplicate-operationId is enforced only within a single mount, so two mounts may legitimately reuse an operationId for different operations, and an operationId-keyed cache would hand the second mount the first mount's schema.
 
@@ -617,6 +619,17 @@ may be retained: the file is valid only until the request ends. Rejection fields
 application response content and are not sanitized; do not include secrets, filenames, temporary
 paths, raw headers, or submitted content.
 
+**Wait deadline (per verifier invocation).** The gate races every verifier future against
+`jaxrs.fileContentVerifierDeadlineMs` (must be `> 0`; default `5000`). The bound is per call: after
+one verifier settles, the next gets a fresh deadline. When the deadline elapses first the request
+fails closed with 500 and the sequential chain stops. A timeout-only race bounds the HTTP wait; it
+does **not** cancel underlying scanner or client work. Remote or scanner-backed implementors must
+therefore configure their own transport/client deadlines at or below this wait bound, and must
+release sessions, clients, handles, and offloaded workers when their future completes or when they
+observe request end / connection close / stream reset. Request-end upload cleanup deletes the
+temporary file regardless of a still-running verifier; a hung scan that still reads the path must
+tolerate that and release resources.
+
 A verifier that does not apply returns an already-completed
 `FileVerificationResult.accepted()`. Applications can opt into the dependency-free leading-byte
 check by adding `MagicBytesVerifierModule.class` to their component. Its bounded catalog recognizes
@@ -634,6 +647,7 @@ validation; unmapped declared types are accepted without I/O.
 | `jaxrs.validationMode` | `"aggregate"` | `"aggregate"` (collect all violations, default) or `"failFast"` (stop on first); any other value fails startup |
 | `jaxrs.validationPatternMaxChars` | `4096` | Most UTF-16 code units one string value or object key may have at a pattern or bounded-format check (see [WebValidationStrategy](#webvalidationstrategy)); a longer one is rejected with 400; at least `1`, else startup fails |
 | `jaxrs.validationPatternMaxTotalChars` | `262144` | Most UTF-16 code units the strings and keys at those checks may add up to in one request; a request over it is rejected with 400; at least `1` and no smaller than `jaxrs.validationPatternMaxChars`, else startup fails |
+| `jaxrs.fileContentVerifierDeadlineMs` | `5000` | Per-invocation wait deadline for each bound `FileContentVerifier` future; must be `> 0`, else startup fails; timeout fails closed (500) without cancelling verifier-owned work |
 | `http.maxBodySize` | `2097152` | Global ingress body limit; the only pre-validation upload-size limit |
 | `http.maxFormFields` | `256` | Pre-validation ingress limit on part count, shared across multipart file parts, multipart text parts, and URL-encoded attributes |
 | `http.uploadsDirectory` | `"file-uploads"` | Non-blank Vert.x multipart spool directory; temporary files are always deleted at request end |
