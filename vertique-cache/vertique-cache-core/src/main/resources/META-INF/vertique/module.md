@@ -11,14 +11,9 @@ SPDX-License-Identifier: EUPL-1.2
 > **Depends on:** `vertique-core`, `vertique-context`, `vertique-security-core`
 
 `vertique-cache-core` is the provider-neutral foundation for programmatic method-result caching.
-Injected `CacheBuilder` creates immutable `Cache<K,V>` handles; annotation support is layered in
-`vertique-cache-aop` and no provider implementation is exposed.
-
-**Maturity split.** This module is Stable. `vertique-cache-aop` (annotations),
-`vertique-cache-caffeine` (local provider), and `vertique-cache-redis` (clustered provider)
-remain Alpha: the programmatic API, configuration, and provider SPI documented here are frozen
-under the evolution rules of a Stable module, while those adapters and providers may still change
-without notice.
+Injected `CacheBuilder` creates immutable `Cache<K,V>` handles. Annotation support is layered in
+`vertique-cache-aop`; local storage in `vertique-cache-caffeine`; clustered storage in
+`vertique-cache-redis` — none of that is exposed here.
 
 ## When To Use It
 
