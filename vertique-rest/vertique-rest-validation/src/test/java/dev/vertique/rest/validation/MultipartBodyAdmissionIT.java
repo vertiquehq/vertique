@@ -12,10 +12,13 @@ import dev.vertique.rest.core.interceptor.RequestInterceptor;
 import dev.vertique.rest.test.RestTestContributions;
 import dev.vertique.rest.test.RestTestMounts;
 import io.swagger.v3.oas.annotations.Operation;
+import io.vertx.core.Future;
+import io.vertx.core.Handler;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.http.HttpServer;
 import io.vertx.core.json.JsonObject;
+import io.vertx.core.streams.ReadStream;
 import io.vertx.ext.web.FileUpload;
 import io.vertx.ext.web.RoutingContext;
 import io.vertx.ext.web.client.WebClient;
@@ -33,6 +36,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
@@ -213,29 +217,52 @@ public class MultipartBodyAdmissionIT {
         byte[] payload = new byte[(int) MULTIPART_ADMISSION_BYTES * 4];
         Arrays.fill(payload, (byte) 'x');
         Buffer body = MultipartBodies.singleFile("upload", "big.bin", "application/octet-stream", payload);
-        int split = (int) MULTIPART_ADMISSION_BYTES / 2;
+        // First chunk stays under the multipart ceiling so BodyHandler can open a spool file; the
+        // remainder pushes the cumulative total over the limit. A gated stream pauses between the
+        // two writes so the test can observe that spool before cleanup.
+        int firstLen = Math.min(body.length() / 2, (int) MULTIPART_ADMISSION_BYTES / 2);
+        Buffer first = body.getBuffer(0, firstLen);
+        Buffer rest = body.getBuffer(firstLen, body.length());
+        assertTrue(first.length() < MULTIPART_ADMISSION_BYTES);
+        assertTrue(first.length() + rest.length() > MULTIPART_ADMISSION_BYTES);
 
-        io.vertx.core.http.HttpClient httpClient = vertx.createHttpClient();
-        try {
-            int status = httpClient
-                    .request(io.vertx.core.http.HttpMethod.POST, server.actualPort(), "127.0.0.1", "/admission/upload")
-                    .compose(req -> {
-                        req.setChunked(true);
-                        req.putHeader("Content-Type", MultipartBodies.contentType());
-                        return req.send(body.getBuffer(0, split).appendBuffer(body.getBuffer(split, body.length())));
-                    })
-                    .map(io.vertx.core.http.HttpClientResponse::statusCode)
-                    .toCompletionStage()
-                    .toCompletableFuture()
-                    .get(ASYNC_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+        CountDownLatch firstChunkDelivered = new CountDownLatch(1);
+        CountDownLatch releaseRemainder = new CountDownLatch(1);
+        GatedTwoChunkStream stream = new GatedTwoChunkStream(vertx, first, rest, firstChunkDelivered, releaseRemainder);
 
-            assertEquals(413, status, "chunked over-limit multipart must fail closed with 413");
-        } finally {
-            httpClient.close();
-        }
+        Future<HttpResult> pending = client.post(server.actualPort(), "127.0.0.1", "/admission/upload")
+                .putHeader("Content-Type", MultipartBodies.contentType())
+                .sendStream(stream)
+                .map(response -> new HttpResult(response.statusCode(), String.valueOf(response.bodyAsString())));
+
+        assertTrue(
+                firstChunkDelivered.await(ASYNC_TIMEOUT_SECONDS, TimeUnit.SECONDS),
+                "first under-limit chunk must leave the client before the remainder is released");
+        awaitSpooledFilePresent();
+        releaseRemainder.countDown();
+
+        HttpResult result =
+                pending.toCompletionStage().toCompletableFuture().get(ASYNC_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+
+        assertEquals(413, result.statusCode(), "chunked over-limit multipart must fail closed with 413");
         assertFalse(resourceInvoked.get(), "BodyHandler must reject before the resource method");
         assertNull(interceptorSawRequest.get(), "request interceptors must not run after a body-limit failure");
         assertNoSpooledUploads();
+    }
+
+    /** Waits until at least one regular file appears under the spool directory (upload started). */
+    private void awaitSpooledFilePresent() throws Exception {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(ASYNC_TIMEOUT_SECONDS);
+        long present;
+        do {
+            present = countSpooledFiles();
+            if (present > 0) {
+                return;
+            }
+            Thread.sleep(20);
+        } while (System.nanoTime() < deadline);
+        assertTrue(
+                present > 0, "under-limit first chunk must produce a spooled upload before the over-limit remainder");
     }
 
     /** Waits briefly for end-handler cleanup, then asserts no regular files remain in the spool directory. */
@@ -336,4 +363,142 @@ public class MultipartBodyAdmissionIT {
     }
 
     private record HttpResult(int statusCode, String body) {}
+
+    /**
+     * Emits {@code first} immediately, signals {@code firstDelivered}, waits for {@code releaseRest},
+     * then emits {@code rest} and ends. Used so the test can observe spool state between chunks while
+     * {@link WebClient#sendStream} still omits {@code Content-Length} (chunked upload).
+     */
+    private static final class GatedTwoChunkStream implements ReadStream<Buffer> {
+        private final Vertx vertx;
+        private final Buffer first;
+        private final Buffer rest;
+        private final CountDownLatch firstDelivered;
+        private final CountDownLatch releaseRest;
+
+        private Handler<Buffer> dataHandler;
+        private Handler<Void> endHandler;
+        private Handler<Throwable> exceptionHandler;
+        private boolean paused;
+        private boolean firstSent;
+        private boolean restSent;
+        private boolean ended;
+        private long demand;
+
+        private GatedTwoChunkStream(
+                Vertx vertx, Buffer first, Buffer rest, CountDownLatch firstDelivered, CountDownLatch releaseRest) {
+            this.vertx = vertx;
+            this.first = first;
+            this.rest = rest;
+            this.firstDelivered = firstDelivered;
+            this.releaseRest = releaseRest;
+        }
+
+        @Override
+        public ReadStream<Buffer> exceptionHandler(Handler<Throwable> handler) {
+            this.exceptionHandler = handler;
+            return this;
+        }
+
+        @Override
+        public ReadStream<Buffer> handler(Handler<Buffer> handler) {
+            this.dataHandler = handler;
+            if (handler != null) {
+                scheduleDrain();
+            }
+            return this;
+        }
+
+        @Override
+        public ReadStream<Buffer> pause() {
+            paused = true;
+            demand = 0;
+            return this;
+        }
+
+        @Override
+        public ReadStream<Buffer> resume() {
+            paused = false;
+            demand = Long.MAX_VALUE;
+            scheduleDrain();
+            return this;
+        }
+
+        @Override
+        public ReadStream<Buffer> fetch(long amount) {
+            if (amount < 0) {
+                throw new IllegalArgumentException("amount must be >= 0");
+            }
+            demand = demand == Long.MAX_VALUE ? Long.MAX_VALUE : demand + amount;
+            paused = false;
+            scheduleDrain();
+            return this;
+        }
+
+        @Override
+        public ReadStream<Buffer> endHandler(Handler<Void> handler) {
+            this.endHandler = handler;
+            return this;
+        }
+
+        private void scheduleDrain() {
+            vertx.runOnContext(v -> drain());
+        }
+
+        private void drain() {
+            try {
+                if (paused || dataHandler == null || ended) {
+                    return;
+                }
+                if (!firstSent && demand > 0) {
+                    firstSent = true;
+                    if (demand != Long.MAX_VALUE) {
+                        demand--;
+                    }
+                    dataHandler.handle(first);
+                    firstDelivered.countDown();
+                    vertx.executeBlocking(
+                                    () -> {
+                                        if (!releaseRest.await(ASYNC_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+                                            throw new IllegalStateException("remainder release timed out");
+                                        }
+                                        return null;
+                                    },
+                                    false)
+                            .onComplete(ar -> {
+                                if (ar.failed()) {
+                                    Handler<Throwable> failure = exceptionHandler;
+                                    if (failure != null) {
+                                        failure.handle(ar.cause());
+                                    }
+                                    return;
+                                }
+                                scheduleDrain();
+                            });
+                    return;
+                }
+                if (firstSent && !restSent && demand > 0 && releaseRest.getCount() == 0) {
+                    restSent = true;
+                    if (demand != Long.MAX_VALUE) {
+                        demand--;
+                    }
+                    dataHandler.handle(rest);
+                    scheduleDrain();
+                    return;
+                }
+                if (firstSent && restSent && !ended) {
+                    ended = true;
+                    Handler<Void> end = endHandler;
+                    if (end != null) {
+                        end.handle(null);
+                    }
+                }
+            } catch (Throwable error) {
+                Handler<Throwable> failure = exceptionHandler;
+                if (failure != null) {
+                    failure.handle(error);
+                }
+            }
+        }
+    }
 }
