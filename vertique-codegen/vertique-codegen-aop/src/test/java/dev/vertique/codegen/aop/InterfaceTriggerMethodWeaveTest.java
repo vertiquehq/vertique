@@ -87,6 +87,21 @@ class InterfaceTriggerMethodWeaveTest {
                 .assertGeneratedSourceContains("com.example.MethodTypeParamBean$AopProxy", "AspectProvider");
     }
 
+    @Test
+    @DisplayName("a method type parameter bound to an interface type argument specializes on the implementor")
+    void weavesMethodTypeParameterBoundToInterfaceTypeArgument() {
+        ProcessorTestHarness.run(
+                        new AopProcessor(),
+                        interfaceTrigger(),
+                        boundedMethodTypeParamContract(),
+                        boundedMethodTypeParamBean())
+                .assertSuccess()
+                .assertGeneratedSourceContains(
+                        "com.example.BoundedMethodTypeParamBean$AopProxy", "<U extends String> Future<U> echo(U value)")
+                .assertGeneratedSourceContains("com.example.BoundedMethodTypeParamBean$AopProxy", "super.echo(")
+                .assertGeneratedSourceDoesNotContain("com.example.BoundedMethodTypeParamBean$AopProxy", "extends T");
+    }
+
     private static javax.tools.JavaFileObject interfaceTrigger() {
         return SourceFiles.inline("com.example.InterfaceTrigger", """
                 package com.example;
@@ -210,6 +225,30 @@ class InterfaceTriggerMethodWeaveTest {
                 public class MethodTypeParamBean implements MethodTypeParamContract {
                     @Inject
                     public MethodTypeParamBean() {}
+                }
+                """);
+    }
+
+    private static javax.tools.JavaFileObject boundedMethodTypeParamContract() {
+        return SourceFiles.inline("com.example.BoundedMethodTypeParamContract", """
+                package com.example;
+                import io.vertx.core.Future;
+                public interface BoundedMethodTypeParamContract<T> {
+                    @InterfaceTrigger
+                    default <U extends T> Future<U> echo(U value) {
+                        return Future.succeededFuture(value);
+                    }
+                }
+                """);
+    }
+
+    private static javax.tools.JavaFileObject boundedMethodTypeParamBean() {
+        return SourceFiles.inline("com.example.BoundedMethodTypeParamBean", """
+                package com.example;
+                import jakarta.inject.Inject;
+                public class BoundedMethodTypeParamBean implements BoundedMethodTypeParamContract<String> {
+                    @Inject
+                    public BoundedMethodTypeParamBean() {}
                 }
                 """);
     }

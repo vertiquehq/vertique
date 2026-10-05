@@ -35,8 +35,10 @@ import javax.lang.model.element.TypeElement;
 import javax.lang.model.element.VariableElement;
 import javax.lang.model.type.DeclaredType;
 import javax.lang.model.type.ExecutableType;
+import javax.lang.model.type.IntersectionType;
 import javax.lang.model.type.TypeKind;
 import javax.lang.model.type.TypeMirror;
+import javax.lang.model.type.TypeVariable;
 
 /**
  * Emits a reflection-free {@code <Bean>$AopProxy extends <Bean>} subclass proxy for a bean carrying
@@ -457,19 +459,17 @@ final class AopProxyEmitter {
         MethodSpec.Builder override = MethodSpec.methodBuilder(name)
                 .addAnnotation(Override.class)
                 .addModifiers(Modifier.PUBLIC)
-                // Declare the method's own type parameters (e.g. <U> on an inherited interface
-                // default) so T-referencing param/return types resolve even when the method is not
-                // redeclared on the bean. asMemberOf substitutes class/interface type arguments but
-                // does not remove method type variables.
-                .addTypeVariables(method.getTypeParameters().stream()
-                        .map(TypeVariableName::get)
+                // Declare method type parameters from the asMemberOf-resolved executable. Bounds are
+                // taken from TypeVariable.getUpperBound() (not TypeParameterElement.getBounds()) so a
+                // source bound like <U extends T> on Contract<String> emits <U extends String>.
+                .addTypeVariables(member.getTypeVariables().stream()
+                        .map(AopProxyEmitter::resolvedTypeVariableName)
                         .toList())
                 .returns(returnType)
-                // Replicate the bean method's checked-exception declaration so the override signature
-                // matches (Bug N2); the Future-returning case never throws synchronously, but the
-                // declaration must still mirror the overridden method.
+                // Replicate the resolved throws clause so any specialized type names match the
+                // override signature (Bug N2).
                 .addExceptions(
-                        method.getThrownTypes().stream().map(TypeName::get).toList());
+                        member.getThrownTypes().stream().map(TypeName::get).toList());
 
         // Seed a NameAllocator with the override's parameter names (already in scope) so every
         // generated local/lambda variable gets suffixed (e.g. args_) when a user parameter shares its
@@ -711,6 +711,33 @@ final class AopProxyEmitter {
 
     private TypeName elementType(TypeMirror futureType) {
         return TypeName.get(ctx.unwrapFuture(futureType)).box();
+    }
+
+    /**
+     * Builds a {@link TypeVariableName} from an {@link Types#asMemberOf}-resolved {@link TypeVariable},
+     * using {@link TypeVariable#getUpperBound()} so enclosing type-argument substitutions appear in
+     * emitted bounds (nested intersections and interdependent method variables included).
+     */
+    private static TypeVariableName resolvedTypeVariableName(TypeVariable typeVariable) {
+        String name = typeVariable.asElement().getSimpleName().toString();
+        List<TypeName> bounds = new ArrayList<>();
+        TypeMirror upper = typeVariable.getUpperBound();
+        if (upper.getKind() == TypeKind.INTERSECTION) {
+            for (TypeMirror bound : ((IntersectionType) upper).getBounds()) {
+                if (!isPlainObject(bound)) {
+                    bounds.add(TypeName.get(bound));
+                }
+            }
+        } else if (!isPlainObject(upper)) {
+            bounds.add(TypeName.get(upper));
+        }
+        return bounds.isEmpty()
+                ? TypeVariableName.get(name)
+                : TypeVariableName.get(name, bounds.toArray(TypeName[]::new));
+    }
+
+    private static boolean isPlainObject(TypeMirror type) {
+        return type.getKind() == TypeKind.DECLARED && type.toString().equals("java.lang.Object");
     }
 
     private static FieldSpec buildStaticConstant(TypeName type, String name, CodeBlock initializer) {
