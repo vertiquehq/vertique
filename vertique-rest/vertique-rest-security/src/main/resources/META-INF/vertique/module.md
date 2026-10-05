@@ -772,7 +772,10 @@ Resolution rules:
 
 - `X-Forwarded-For` is always parsed and exposed for observability, trusted peer or not.
 - Each `X-Forwarded-For` entry must be an IP address literal. Hostnames and malformed addresses are
-  dropped and counted in `forwardedForRejectedCount`; they are never looked up in DNS.
+  dropped and counted in `forwardedForRejectedCount`; they are never looked up in DNS. Entries are
+  parsed syntactically and never passed to the JDK resolver, so hex-only words (`deadbeef`), short
+  forms (`1234`), dotted quads with an octet above `255` and IPv4 octets with leading zeros
+  (`010.1.1.1`) are rejected, not resolved or reinterpreted.
 - `clientIp` uses the forwarded chain **only** when the direct peer matches a trusted CIDR;
   otherwise it is the direct peer address.
 - Forwarded scheme and host are honoured only when both the corresponding flag is set and the direct
