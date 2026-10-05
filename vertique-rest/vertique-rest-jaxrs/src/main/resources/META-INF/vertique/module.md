@@ -508,9 +508,9 @@ RequestInterceptor.onError sync observers, with the original cause
   → RestExceptionMapper.translate(cause)
   → ExceptionMapperRegistry.toResponse(translated)
   → Vert.x status-code fallback (only when no specific mapper matched)
-  → unhandled-exception logging (framework Throwable catch-all only; level follows final status)
   → ProblemDetail instance enrichment from the request path
   → ErrorInterceptor.afterMapping (async chain, Response → Response)
+  → unhandled-exception logging (framework Throwable catch-all only; level follows the final status)
 ```
 
 The original cause stays on the routing context for the whole of error processing, so audit and
@@ -520,7 +520,8 @@ interceptor cannot break the error path.
 
 **Unhandled-exception logging.** The framework `Throwable` catch-all no longer logs inside the mapper:
 the catch-all has no routing context and cannot see a Vert.x 4xx status that will replace its 500.
-`ErrorPipeline` logs after mapping and fallback, and only when the framework catch-all actually
+`ErrorPipeline` logs once, after mapping, fallback and the `afterMapping` chain have settled, using the
+status of the response that will be sent (an `afterMapping` interceptor can change it), and only when the framework catch-all actually
 produced the response (not a typed default such as `IllegalArgumentException`, and not an application
 `ExceptionMapper`). Final status **400–499** is logged at DEBUG (`Unhandled exception mapped to client
 error {status}`); other outcomes keep ERROR (`Unhandled exception`) with the stack. That keeps a

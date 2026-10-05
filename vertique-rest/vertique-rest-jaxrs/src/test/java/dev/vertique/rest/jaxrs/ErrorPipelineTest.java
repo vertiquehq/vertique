@@ -13,7 +13,9 @@ import ch.qos.logback.core.read.ListAppender;
 import dev.vertique.rest.core.ProblemDetail;
 import dev.vertique.rest.core.ValidationErrorDetail;
 import dev.vertique.rest.core.ValidationProblemDetail;
+import dev.vertique.rest.core.interceptor.ErrorInterceptor;
 import io.vertx.core.Future;
+import io.vertx.core.Promise;
 import io.vertx.core.http.HttpServerRequest;
 import io.vertx.ext.web.RoutingContext;
 import jakarta.ws.rs.core.Response;
@@ -685,6 +687,135 @@ class ErrorPipelineTest {
             assertEquals(422, future.result().getStatus());
 
             assertTrue(unhandledEvents().isEmpty(), "a specific application mapper owns the outcome");
+        }
+
+        private ErrorPipeline pipelineWithAfterMapping(ErrorInterceptor... interceptors) {
+            ExceptionMapperRegistry registry =
+                    new ExceptionMapperRegistry(RestModule.defaultExceptionMapper(), Set.of());
+            return new ErrorPipeline(List.of(interceptors), List.of(), new RestExceptionMapper(), registry);
+        }
+
+        private ErrorInterceptor afterMapping(java.util.function.Function<Response, Future<Response>> fn) {
+            return new ErrorInterceptor() {
+                @Override
+                public Future<Response> afterMapping(RoutingContext rc, Response response) {
+                    return fn.apply(response);
+                }
+            };
+        }
+
+        @Test
+        @DisplayName("afterMapping interceptor turning the catch-all 500 into 4xx logs DEBUG, not ERROR")
+        void afterMappingChangesCatchAll500To4xxLogsDebug() {
+            ErrorPipeline customPipeline = pipelineWithAfterMapping(afterMapping(r -> Future.succeededFuture(
+                    Response.status(409).entity(r.getEntity()).build())));
+
+            Future<Response> future = customPipeline.mapToResponse(ctx, new RuntimeException("boom"));
+            assertTrue(future.succeeded());
+            assertEquals(409, future.result().getStatus());
+
+            List<ILoggingEvent> events = unhandledEvents();
+            assertEquals(1, events.size());
+            assertEquals(Level.DEBUG, events.getFirst().getLevel());
+            assertEquals(
+                    "Unhandled exception mapped to client error 409",
+                    events.getFirst().getFormattedMessage());
+        }
+
+        @Test
+        @DisplayName("afterMapping interceptor turning a hinted 4xx into 500 logs ERROR, not DEBUG")
+        void afterMappingChangesHinted4xxTo500LogsError() {
+            ctxData.put(VertxFailureStatus.KEY, 400);
+            ErrorPipeline customPipeline =
+                    pipelineWithAfterMapping(afterMapping(r -> Future.succeededFuture(Response.status(500)
+                            .entity(ProblemDetail.of(500, "Internal Server Error"))
+                            .build())));
+
+            Future<Response> future = customPipeline.mapToResponse(ctx, new RuntimeException("boom"));
+            assertTrue(future.succeeded());
+            assertEquals(500, future.result().getStatus());
+
+            List<ILoggingEvent> events = unhandledEvents();
+            assertEquals(1, events.size());
+            assertEquals(Level.ERROR, events.getFirst().getLevel());
+            assertEquals("Unhandled exception", events.getFirst().getFormattedMessage());
+        }
+
+        @Test
+        @DisplayName("Asynchronously completed afterMapping interceptor is awaited before the catch-all is logged")
+        void asyncAfterMappingLogsOnlyAfterChainSettles() {
+            Promise<Response> gate = Promise.promise();
+            ErrorPipeline customPipeline = pipelineWithAfterMapping(afterMapping(r -> gate.future()));
+
+            Future<Response> future = customPipeline.mapToResponse(ctx, new RuntimeException("boom"));
+            assertFalse(future.isComplete());
+            assertTrue(unhandledEvents().isEmpty(), "nothing is logged while the interceptor is pending");
+
+            gate.complete(Response.status(422)
+                    .entity(ProblemDetail.of(422, "rejected"))
+                    .build());
+            assertTrue(future.succeeded());
+            assertEquals(422, future.result().getStatus());
+
+            List<ILoggingEvent> events = unhandledEvents();
+            assertEquals(1, events.size());
+            assertEquals(Level.DEBUG, events.getFirst().getLevel());
+            assertEquals(
+                    "Unhandled exception mapped to client error 422",
+                    events.getFirst().getFormattedMessage());
+        }
+
+        @Test
+        @DisplayName("Failed afterMapping interceptor is recovered and the catch-all is logged once from its input")
+        void failedAfterMappingInterceptorStillLogsOnce() {
+            ErrorPipeline customPipeline = pipelineWithAfterMapping(
+                    afterMapping(r -> Future.failedFuture(new IllegalStateException("interceptor broke"))));
+
+            Future<Response> future = customPipeline.mapToResponse(ctx, new RuntimeException("boom"));
+            assertTrue(future.succeeded());
+            assertEquals(500, future.result().getStatus());
+
+            List<ILoggingEvent> events = unhandledEvents();
+            assertEquals(1, events.size());
+            assertEquals(Level.ERROR, events.getFirst().getLevel());
+        }
+
+        @Test
+        @DisplayName("afterMapping status change on a typed default does not produce a framework unhandled log")
+        void afterMappingOnTypedDefaultDoesNotLogUnhandled() {
+            ErrorPipeline customPipeline = pipelineWithAfterMapping(afterMapping(r -> Future.succeededFuture(
+                    Response.status(500).entity(r.getEntity()).build())));
+
+            Future<Response> future = customPipeline.mapToResponse(ctx, new IllegalArgumentException("bad"));
+            assertTrue(future.succeeded());
+            assertEquals(500, future.result().getStatus());
+
+            assertTrue(unhandledEvents().isEmpty(), "typed defaults never carry the catch-all flag");
+        }
+
+        @Test
+        @DisplayName("Concurrent invocations keep their catch-all flag and status independent")
+        void concurrentInvocationsDoNotShareLoggingState() {
+            Promise<Response> gate = Promise.promise();
+            ErrorPipeline customPipeline = pipelineWithAfterMapping(afterMapping(r -> {
+                if (r.getStatus() == 500) {
+                    return gate.future();
+                }
+                return Future.succeededFuture(r);
+            }));
+
+            Future<Response> pendingCatchAll = customPipeline.mapToResponse(ctx, new RuntimeException("slow"));
+            Future<Response> typed = customPipeline.mapToResponse(ctx, new IllegalArgumentException("typed"));
+            assertTrue(typed.succeeded());
+            assertFalse(pendingCatchAll.isComplete());
+            assertTrue(unhandledEvents().isEmpty(), "the typed invocation must not log for the pending catch-all");
+
+            gate.complete(
+                    Response.status(404).entity(ProblemDetail.of(404, "gone")).build());
+
+            List<ILoggingEvent> events = unhandledEvents();
+            assertEquals(1, events.size());
+            assertEquals(Level.DEBUG, events.getFirst().getLevel());
         }
     }
 
