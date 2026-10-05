@@ -539,33 +539,24 @@ class JsonRequestBodyDecoderTest {
     }
 
     @Test
-    @DisplayName("Should bind an owner-bound inner-class body's element through the classifier, not the raw fallback")
-    void ownerBoundInnerClassBodyBindsItsElementThroughTheClassifier() {
-        // Jackson's TypeFactory.constructType(Outer<SamplePojo>.Inner) reports content Object with
-        // empty bindings — the same signal as a raw List — because it does not fold getOwnerType()
-        // into the collection content type. The shared classifier resolves SamplePojo; the decoder
-        // must rebuild via TypeFactory.constructCollectionType rather than return the JsonArray's
-        // own backing list of Maps.
+    @DisplayName("Should reject owner-bound inner-class collection bodies that cannot be assigned to the declared parameter")
+    void ownerBoundInnerClassBodyIsRejected() {
         RoutingContext ctx = mock(RoutingContext.class);
-        JsonArray jsonArray = pojoArray();
-        RequestValue body = RequestValue.of(jsonArray);
+        RequestValue body = RequestValue.of(pojoArray());
         Type declared = declaredShape("ownerBoundOfPojo");
 
-        Object result = decoder.decode(ctx, body, rawTypeOf(declared), declared);
+        assertThrows(
+                dev.vertique.core.exception.ValidationException.class,
+                () -> decoder.decode(ctx, body, rawTypeOf(declared), declared));
+    }
 
-        assertInstanceOf(List.class, result);
-        List<?> elements = (List<?>) result;
-        assertEquals(2, elements.size());
-        assertInstanceOf(
-                SamplePojo.class,
-                elements.get(0),
-                "Outer<T> { class Inner extends ArrayList<T> {} } used as Outer<SamplePojo>.Inner must "
-                        + "bind SamplePojo elements — Jackson leaves the shape unbound, so the decoder "
-                        + "asks InputObjectProcessor.collectionElementType and rebuilds the JavaType");
-        assertEquals("Alice", ((SamplePojo) elements.get(0)).name());
-        assertEquals("Bob", ((SamplePojo) elements.get(1)).name());
-        assertNotSame(
-                jsonArray.getList(), result, "an owner-bound body must not alias the JsonArray's own backing list");
+    @Test
+    @DisplayName("Should not materialize owner-bound inner collections as a plain ArrayList")
+    void ownerBoundInnerClassIsNotSatisfiedByArrayListMaterialization() {
+        Type declared = declaredShape("ownerBoundOfPojo");
+        assertFalse(
+                rawTypeOf(declared).isInstance(new ArrayList<>()),
+                "decoded ArrayList must not be assignable to the declared inner-class parameter type");
     }
 
     @Test

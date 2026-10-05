@@ -6,6 +6,7 @@ package dev.vertique.rest.jaxrs;
 import com.fasterxml.jackson.databind.JavaType;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.type.TypeFactory;
+import dev.vertique.core.exception.ValidationException;
 import dev.vertique.core.json.VertiqueJson;
 import dev.vertique.input.processing.InputObjectProcessor;
 import dev.vertique.rest.core.request.RequestBodyDecoder;
@@ -182,10 +183,11 @@ class JsonRequestBodyDecoder implements RequestBodyDecoder {
      * looks identical to a raw {@code List}. The reflective classifier
      * ({@link InputObjectProcessor#collectionElementType(Type)}) and the APT collector both resolve
      * {@code Dto} for that shape. When Jackson reports the empty combination, this decoder asks the
-     * classifier; a resolvable element is rebuilt through {@link TypeFactory#constructCollectionType}
-     * on an instantiable container ({@link ArrayList} / {@link LinkedHashSet}), because a non-static
-     * inner collection cannot be constructed without an enclosing instance. Only when the classifier
-     * also finds nothing does the gate fall through to the untyped branch.
+     * classifier. When the declared raw type is a non-static member collection, decoding fails closed
+     * with {@link ValidationException} (HTTP 400): only an instantiable top-level {@link ArrayList} /
+     * {@link LinkedHashSet} could be built, which is not assignable to the declared inner type, so
+     * the resource method could never receive the decoded value. Only when the classifier finds nothing
+     * does the gate fall through to the untyped branch.
      *
      * <p>The {@link JavaType} is built the same way regardless of profile; the element binding then
      * routes through {@code profileMapper} when the route's profile differs from the process codec's
@@ -269,6 +271,12 @@ class JsonRequestBodyDecoder implements RequestBodyDecoder {
             return jacksonType;
         }
         Class<?> raw = rawClassOf(genericType);
+        if (raw.isMemberClass() && !java.lang.reflect.Modifier.isStatic(raw.getModifiers())) {
+            throw new ValidationException(
+                    "Cannot decode request body to owner-bound inner collection type "
+                            + raw.getName()
+                            + ": no enclosing instance is available at decode time");
+        }
         @SuppressWarnings({"unchecked", "rawtypes"})
         Class<? extends Collection> materialization =
                 Set.class.isAssignableFrom(raw) ? LinkedHashSet.class : ArrayList.class;
