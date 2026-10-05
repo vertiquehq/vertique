@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Kafka Module
 
-> **Status:** Alpha
+> **Status:** Stable
 > **Package:** `dev.vertique.kafka`
 > **Artifact:** `vertique-kafka-core`
 > **Depends on:** core, resilience, context, logging, deploy, services
@@ -780,8 +780,8 @@ further positional parameters. Read type-level annotations from `operation.produ
 `@KafkaProducer` interface the application injected — not from `method.getDeclaringClass()`, which
 is the super-interface when the send method is inherited. The protected
 `KafkaProducerFactory.sendWire`/`fireHooks` funnel carries the same `KafkaProducerOperation` in place
-of the bare `Method` it took before (an Alpha-tier break: a subclass overriding the old signature
-fails to compile rather than silently no longer being called).
+of a bare `Method`; a subclass that still overrides an older signature fails to compile rather than
+silently no longer being called.
 
 | Parameter | Notes |
 |---|---|
