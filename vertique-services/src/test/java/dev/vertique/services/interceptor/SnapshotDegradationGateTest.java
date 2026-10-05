@@ -6,6 +6,7 @@ package dev.vertique.services.interceptor;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -197,8 +198,8 @@ class SnapshotDegradationGateTest {
         }
 
         @Test
-        @DisplayName("sentinel correlation is used on the emitted event when no correlation is bound")
-        void sentinelCorrelation_emitted_whenUnbound() {
+        @DisplayName("generated joinable correlation is used on the emitted event when no correlation is bound")
+        void generatedCorrelation_emitted_whenUnbound() {
             ContextHolder holder = mock(ContextHolder.class);
             SnapshotDegradationMarker marker =
                     new SnapshotDegradationMarker(SnapshotDegradationReason.DECODE_FAILED.name(), Optional.empty());
@@ -215,10 +216,15 @@ class SnapshotDegradationGateTest {
             ArgumentCaptor<IdentitySnapshotDegradationEvent> captor =
                     ArgumentCaptor.forClass(IdentitySnapshotDegradationEvent.class);
             verify(emitter, times(1)).emit(captor.capture());
-            assertEquals(
+            var correlation = captor.getValue().correlation();
+            assertNotEquals(
                     UnboundCorrelationContext.SENTINEL_ID_VALUE,
-                    captor.getValue().correlation().correlationId().value(),
-                    "unbound correlation must use the sentinel id");
+                    correlation.requestId().value(),
+                    "degradation audit must mint a real joinable requestId");
+            assertEquals(
+                    "generated:snapshot-degradation",
+                    correlation.requestId().source(),
+                    "generated fallback must tag its source for observability");
         }
 
         @Test

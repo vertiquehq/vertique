@@ -114,7 +114,7 @@ public class VertxAuthorizationImportIT {
         SecurityEventEmitter emitter = new SecurityEventEmitter(Set.of());
 
         // No CorrelationContext is bound in this harness; the middleware tolerates its absence and
-        // the enforcer builds its decision event with CorrelationContext.unbound().
+        // the enforcer builds its decision event with a generated joinable CorrelationContext.
         ContextHolder contextHolder = new ContextHolder() {
             @Override
             public <T> Optional<T> current(Class<T> type) {

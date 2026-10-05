@@ -6,6 +6,7 @@ package dev.vertique.services.interceptor;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -408,8 +409,8 @@ class ServiceAuthorizationInterceptorTest {
         }
 
         @Test
-        @DisplayName("sentinel correlation is used on the emitted event when no correlation is bound")
-        void sentinelCorrelation_emitted_whenUnbound() {
+        @DisplayName("generated joinable correlation is used on the emitted event when no correlation is bound")
+        void generatedCorrelation_emitted_whenUnbound() {
             Authorizer authorizer = mock(Authorizer.class);
             when(authorizer.authorize(any(AuthorizationRequest.class)))
                     .thenReturn(
@@ -430,10 +431,19 @@ class ServiceAuthorizationInterceptorTest {
             ArgumentCaptor<AuthorizationDecisionEvent> captor =
                     ArgumentCaptor.forClass(AuthorizationDecisionEvent.class);
             verify(emitter, times(1)).emit(captor.capture());
-            assertEquals(
+            var correlation = captor.getValue().correlation();
+            assertNotEquals(
                     UnboundCorrelationContext.SENTINEL_ID_VALUE,
-                    captor.getValue().correlation().correlationId().value(),
-                    "unbound correlation must use the sentinel id");
+                    correlation.requestId().value(),
+                    "fail-closed authorization must mint a real joinable requestId");
+            assertEquals(
+                    "generated:service-authorization",
+                    correlation.requestId().source(),
+                    "generated fallback must tag its source for observability");
+            assertNotEquals(
+                    UnboundCorrelationContext.SENTINEL_ID_VALUE,
+                    correlation.correlationId().value(),
+                    "correlationId must also be joinable, not the unbound sentinel");
         }
 
         @Test
