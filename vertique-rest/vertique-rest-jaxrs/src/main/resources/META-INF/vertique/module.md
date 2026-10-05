@@ -308,9 +308,13 @@ static Set<RouterMount> mounts(
 
 **Multipart temp files are request-owned.** `BodyHandler` spools uploads under `http.uploadsDirectory`
 (default `file-uploads`) and cleanup is registered immediately after it, covering normal completion,
-failure, connection close, and stream reset. The file stays readable while the response streams, but
-an application that needs it afterwards must move or copy it **before** the response completes.
-Retaining a `FileUpload` or a file-backed `EntityPart` does not extend the path's lifetime.
+failure, connection close, and stream reset. Pre-auth spool admission for `multipart/form-data` is
+bounded by `http.maxMultipartBodySizeBytes` (effective limit
+`min(http.maxBodySize, http.maxMultipartBodySizeBytes)`); exceeding it returns 413, and when
+`Content-Length` is present Vert.x rejects before creating upload files. The file stays readable while
+the response streams, but an application that needs it afterwards must move or copy it **before** the
+response completes. Retaining a `FileUpload` or a file-backed `EntityPart` does not extend the path's
+lifetime.
 
 ### The application name on descriptors and interceptor contexts
 
@@ -1748,8 +1752,10 @@ as proof of a complete body.
   chain phases act on string values, and a raw binary body has none — use `FileContentVerifier` on a
   multipart `FileUpload` part when the intent is to inspect uploaded content.
 - **Expecting `@FilePart.maxSizeBytes` to prevent a disk write.** It is checked post-spool and returns
-  400. The ingress limits are `http.maxBodySize` (total bytes, returns 413) and `http.maxFormFields`
-  (part count).
+  400. The ingress limits are `http.maxBodySize` (every request, 413),
+  `http.maxMultipartBodySizeBytes` (multipart/form-data admission — effective
+  `min(maxBodySize, maxMultipartBodySizeBytes)`, 413, with Content-Length early reject before spool
+  when present), and `http.maxFormFields` (part count).
 - **Expecting `afterResponse` to mean "the client has the bytes".** It fires at handoff; a streamed
   body may still be in flight. Observe the wire-completion channel for the delivery outcome.
 - **Setting `@JsonProfile` on a resource method and expecting the response to keep the class

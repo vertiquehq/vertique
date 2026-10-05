@@ -377,10 +377,12 @@ unannotated aggregate `List<FileUpload>`. `EntityPart` is excluded because a par
 the upload gate cannot observe. Invalid placement, invalid allowed-type grammar, a size other than
 `-1` or positive, and overlapping constrained declarations all fail route startup.
 
-Size enforcement is **post-spool**: `http.maxBodySize` is the ingress size limit that returns 413,
-while `maxSizeBytes` is checked after Vert.x has written the part under `http.uploadsDirectory`.
-Part *count* is bounded separately at ingress by `http.maxFormFields`, so a request with more parts
-than that is rejected during decoding whatever their individual sizes.
+Size enforcement is **post-spool**: ingress body size is bounded by `http.maxBodySize` for every
+request and by `http.maxMultipartBodySizeBytes` for `multipart/form-data` (effective limit is the
+tighter of the two; exceeding it returns 413, and when `Content-Length` is present Vert.x rejects
+before creating upload files). `maxSizeBytes` is checked after Vert.x has written the part under
+`http.uploadsDirectory`. Part *count* is bounded separately at ingress by `http.maxFormFields`, so a
+request with more parts than that is rejected during decoding whatever their individual sizes.
 
 ### Pagination
 
@@ -1396,6 +1398,7 @@ configuration, not those types, and their shape can change while the keys stay a
 | `http.port` | `8080` | |
 | `http.host` | `"0.0.0.0"` | |
 | `http.maxBodySize` | `2097152` | total request-body bytes — exceeding it returns 413 |
+| `http.maxMultipartBodySizeBytes` | `2097152` | must be positive; pre-auth `multipart/form-data` admission ceiling — BodyHandler uses `min(maxBodySize, maxMultipartBodySizeBytes)` (just `maxMultipartBodySizeBytes` when `maxBodySize` is the `-1` unlimited sentinel, which leaves non-multipart unlimited) and returns 413 when exceeded (Content-Length early reject before spool when present). Raise `maxBodySize` for large non-multipart payloads without widening multipart spool by keeping this tight. Residual: when `http.decompressionSupported` is true, compressed-request expansion is not yet separately bounded beyond this BodyHandler limit |
 | `http.uploadsDirectory` | `"file-uploads"` | must be non-blank; multipart spool directory |
 | `http.compressionSupported` | `false` | gzip/deflate responses |
 | `http.compressionLevel` | `6` | 1–9 |
@@ -1541,6 +1544,7 @@ covers protected documents).
   "http": {
     "port": 8443,
     "maxBodySize": 4194304,
+    "maxMultipartBodySizeBytes": 2097152,
     "idleTimeoutSeconds": 30,
     "ssl": {
       "enabled": true,
@@ -1583,7 +1587,7 @@ root of this module's wiring failures.
 | Failure | Cause |
 |---|---|
 | `IllegalStateException` failing the start promise | one or more invalid mount paths, reported as a single aggregated message |
-| `RestConfigurationException` | invalid `ssl.clientAuth`, blank `http.uploadsDirectory`, an unsupported security declaration shape, an unknown `jaxrs.validationStrategy` |
+| `RestConfigurationException` | invalid `ssl.clientAuth`, blank `http.uploadsDirectory`, non-positive `http.maxMultipartBodySizeBytes`, an unsupported security declaration shape, an unknown `jaxrs.validationStrategy` |
 | `ConfigurationException` | an invalid pattern-input limit; the per-string limit is checked first, with the message `jaxrs.validationPatternMaxChars must be at least 1`, then the total, with `jaxrs.validationPatternMaxTotalChars must be at least 1 and no smaller than the per-string pattern limit`; or a non-positive `jaxrs.fileContentVerifierDeadlineMs`, with the message `jaxrs.fileContentVerifierDeadlineMs must be > 0`; none of these messages echo a configured value |
 | `SecurityPolicyViolationException` | security-policy validation found violations; `violations()` lists each with its `operationId` and `ViolationType` |
 | `IllegalStateException` at component construction | two `ParamConverterBinding`s claim the same target type |
