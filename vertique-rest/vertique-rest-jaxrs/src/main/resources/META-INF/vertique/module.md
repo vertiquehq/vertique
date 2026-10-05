@@ -571,8 +571,18 @@ exception's message that must not reach the client. A mapped response carrying a
 entity** is fail-closed the same way: replaced with a fresh `ProblemDetail` for the winning status and
 `application/problem+json`, so a 500 diagnostic body cannot ride under an overriding 401. Register your
 own `ExceptionMapper` for the cause's type when a specific detail is required — it outranks the Vert.x
-status entirely. When the recorded status *agrees* with the mapped one nothing changes, so a 415 whose
-detail names the offending content type keeps it.
+status entirely.
+
+**Equal-status detail sanitization.** When the recorded status *agrees* with the mapped one, the status
+is left alone but a `ProblemDetail` `detail` synthesized from an arbitrary exception message is still
+dropped — the same disclosure rule as the override path. That closes the leak where
+`ctx.fail(401, new UnauthorizedException("…"))` (or any other semantic type whose own mapping already
+equals the Vert.x status) would otherwise publish the cause message verbatim. A
+`jakarta.ws.rs.WebApplicationException` whose `Response` already carries an entity is treated as
+deliberately authored client output and keeps its body; the framework's own 415 producers
+(`JaxRsRouteRegistrar`'s `@Consumes` check and `ContentTypeValidationMiddleware`) author a
+`ProblemDetail` on that response before failing the context, so their content-type diagnostics still
+reach the client.
 
 **Headers when the body is rebuilt.** Rebuilding the body — by this override, or by the `instance`
 enrichment every `ProblemDetail` gets — drops the headers your mapper set that describe the *octets*

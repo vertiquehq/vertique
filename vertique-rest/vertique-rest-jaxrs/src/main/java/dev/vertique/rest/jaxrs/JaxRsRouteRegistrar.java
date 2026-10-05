@@ -13,6 +13,7 @@ import dev.vertique.input.processing.EffectiveInputPolicies;
 import dev.vertique.input.processing.InputObjectProcessor;
 import dev.vertique.json.JacksonFieldNameResolver;
 import dev.vertique.json.JsonConfig;
+import dev.vertique.rest.core.ProblemDetail;
 import dev.vertique.rest.core.RestConfigurationException;
 import dev.vertique.rest.core.config.JaxRsConfig;
 import dev.vertique.rest.core.context.RestContextResolution;
@@ -64,6 +65,7 @@ import io.vertx.ext.web.handler.AuthenticationHandler;
 import io.vertx.ext.web.handler.ChainAuthHandler;
 import jakarta.annotation.Nullable;
 import jakarta.ws.rs.core.EntityPart;
+import jakarta.ws.rs.core.Response;
 import java.lang.annotation.Annotation;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
@@ -1294,10 +1296,13 @@ public class JaxRsRouteRegistrar {
      * by {@code Content-Length: 0} and no {@code Transfer-Encoding}) is never checked, consistent
      * with the broad {@code ContentTypeValidationMiddleware} safety net.
      *
-     * <p>On mismatch the handler delegates to {@code ctx.fail(415, NotSupportedException)} —
-     * exactly mirroring the broad {@link dev.vertique.rest.core.middleware.ContentTypeValidationMiddleware}
+     * <p>On mismatch the handler delegates to {@code ctx.fail(415, NotSupportedException)} carrying a
+     * JAX-RS {@link Response} whose entity is already the diagnostic {@link ProblemDetail} — exactly
+     * mirroring the broad {@link dev.vertique.rest.core.middleware.ContentTypeValidationMiddleware}
      * approach — so both paths produce the same canonical {@code application/problem+json} response
-     * shape via the router-level failure handler and the REST error pipeline.
+     * shape via the router-level failure handler and the REST error pipeline. Authoring the entity on
+     * the exception's response (rather than relying on {@code ex.getMessage()}) keeps the diagnostic
+     * through equal-status detail sanitization.
      *
      * @param consumes the non-empty list of declared {@code @Consumes} media types
      * @return the per-route 415-check handler
@@ -1337,13 +1342,17 @@ public class JaxRsRouteRegistrar {
             }
 
             // Delegate to ctx.fail() so the failure routes through the router-level failure handler
-            // and the REST error pipeline — the same path as ContentTypeValidationMiddleware. This
-            // produces a canonical application/problem+json 415 body via WebApplicationException
-            // mapping in DefaultExceptionMapper, with no divergent direct-write path.
+            // and the REST error pipeline — the same path as ContentTypeValidationMiddleware. The
+            // NotSupportedException carries an authored ProblemDetail entity so equal-status
+            // sanitization (which drops synthesized ex.getMessage() details) leaves the diagnostic.
             String message = "Unsupported Content-Type: "
                     + (rawContentType != null ? rawContentType : "(none)")
                     + "; expected one of " + consumes;
-            ctx.fail(415, new jakarta.ws.rs.NotSupportedException(message));
+            Response unsupported = Response.status(415)
+                    .entity(ProblemDetail.of(415, message))
+                    .type("application/problem+json")
+                    .build();
+            ctx.fail(415, new jakarta.ws.rs.NotSupportedException(unsupported));
         };
     }
 

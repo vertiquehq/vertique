@@ -558,15 +558,15 @@ Registered as a per-operation handler by `JwtClaimsValidatorContributor` at cont
 **50** — after authentication, before authorization (100). Throwing any exception emits a
 `JWT_CLAIMS_INVALID` rejection and fails the request with 401; returning normally lets it through.
 
-The `detail` is dropped only where the rejection's 401 *overrides* the status the validator's own
-exception would have produced — a plain `SecurityException` hitting the 500 catch-all, say, or a bean
-validation failure mapping to 400. An exception that already maps to 401 —
-`dev.vertique.core.exception.UnauthorizedException`, or a JAX-RS `NotAuthorizedException` — keeps its
-message, and that message reaches the client as the `detail`; treat every validator exception message
-as publishable and never name tenants, revocation state, or other internals in one. An application
-that needs a specific detail on every rejection registers its own `ExceptionMapper` for the exception
-type the validator throws; an application-contributed mapper outranks the framework's rejection status
-and owns the whole response body.
+The rejection always answers **401**. A `detail` synthesized from the validator exception's message is
+never published on this path: when the rejection's 401 *overrides* the status the validator's own
+exception would have produced (a plain `SecurityException` hitting the 500 catch-all, or a bean
+validation failure mapping to 400), the body is rebuilt without `detail`; when the exception already
+maps to 401 — `dev.vertique.core.exception.UnauthorizedException`, or a JAX-RS `NotAuthorizedException`
+without an authored entity — equal-status sanitization drops the synthesized `detail` the same way.
+An application that needs a specific client-facing detail on every rejection registers its own
+`ExceptionMapper` for the exception type the validator throws; an application-contributed mapper
+outranks the framework's rejection status and owns the whole response body.
 
 **Invariants and gotchas:**
 

@@ -425,6 +425,81 @@ class ErrorPipelineTest {
         }
 
         @Test
+        @DisplayName("Equal-status UnauthorizedException drops the synthesized detail (claims-validator leak)")
+        void equalStatusUnauthorizedExceptionDropsSynthesizedDetail() {
+            // JwtClaimsValidatorContributor calls ctx.fail(401, e). When e is UnauthorizedException the
+            // mapped status already equals 401 — the equal-status arm must still drop ex.getMessage(),
+            // otherwise whether a validator message reaches the client depends on which exception type
+            // it happens to throw.
+            ExceptionMapperRegistry registry =
+                    new ExceptionMapperRegistry(RestModule.defaultExceptionMapper(), Set.of());
+            ErrorPipeline customPipeline = new ErrorPipeline(List.of(), List.of(), new RestExceptionMapper(), registry);
+
+            ctxData.put(VertxFailureStatus.KEY, 401);
+
+            Future<Response> future = customPipeline.mapToResponse(
+                    ctx, new dev.vertique.core.exception.UnauthorizedException("tenant 4711 revoked"));
+            assertTrue(future.succeeded());
+
+            Response response = future.result();
+            assertEquals(401, response.getStatus());
+            ProblemDetail pd = assertInstanceOf(ProblemDetail.class, response.getEntity());
+            assertEquals(401, pd.status());
+            assertEquals("Unauthorized", pd.title());
+            assertNull(pd.detail(), "equal-status must not publish UnauthorizedException.getMessage() as detail");
+        }
+
+        @Test
+        @DisplayName("Equal-status NotFoundException drops the synthesized detail")
+        void equalStatusNotFoundExceptionDropsSynthesizedDetail() {
+            ExceptionMapperRegistry registry =
+                    new ExceptionMapperRegistry(RestModule.defaultExceptionMapper(), Set.of());
+            ErrorPipeline customPipeline = new ErrorPipeline(List.of(), List.of(), new RestExceptionMapper(), registry);
+
+            ctxData.put(VertxFailureStatus.KEY, 404);
+
+            Future<Response> future = customPipeline.mapToResponse(
+                    ctx, new dev.vertique.core.exception.NotFoundException("order 99 is soft-deleted"));
+            assertTrue(future.succeeded());
+
+            Response response = future.result();
+            assertEquals(404, response.getStatus());
+            ProblemDetail pd = assertInstanceOf(ProblemDetail.class, response.getEntity());
+            assertEquals(404, pd.status());
+            assertEquals("Not Found", pd.title());
+            assertNull(pd.detail(), "equal-status must not publish NotFoundException.getMessage() as detail");
+        }
+
+        @Test
+        @DisplayName("Equal-status WebApplicationException with an authored entity keeps its detail")
+        void equalStatusAuthoredWebApplicationExceptionKeepsDetail() {
+            // Framework 415 producers author a ProblemDetail on the NotSupportedException's Response
+            // before ctx.fail(415, …). That entity is deliberate client output and must survive.
+            ExceptionMapperRegistry registry =
+                    new ExceptionMapperRegistry(RestModule.defaultExceptionMapper(), Set.of());
+            ErrorPipeline customPipeline = new ErrorPipeline(List.of(), List.of(), new RestExceptionMapper(), registry);
+
+            ctxData.put(VertxFailureStatus.KEY, 415);
+
+            Response authored = Response.status(415)
+                    .entity(ProblemDetail.of(
+                            415, "Unsupported Content-Type: text/xml; expected one of [application/json]"))
+                    .type("application/problem+json")
+                    .build();
+            Future<Response> future =
+                    customPipeline.mapToResponse(ctx, new jakarta.ws.rs.NotSupportedException(authored));
+            assertTrue(future.succeeded());
+
+            Response response = future.result();
+            assertEquals(415, response.getStatus());
+            ProblemDetail pd = assertInstanceOf(ProblemDetail.class, response.getEntity());
+            assertEquals(
+                    "Unsupported Content-Type: text/xml; expected one of [application/json]",
+                    pd.detail(),
+                    "an authored WAE entity must survive equal-status sanitization");
+        }
+
+        @Test
         @DisplayName("ProblemDetail instance field is populated from request path")
         void problemDetailInstanceIsPopulated() {
             ctxData.put(VertxFailureStatus.KEY, 401);
