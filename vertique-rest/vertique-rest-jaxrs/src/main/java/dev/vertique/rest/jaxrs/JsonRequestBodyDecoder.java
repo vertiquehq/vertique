@@ -8,7 +8,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.type.TypeFactory;
 import dev.vertique.core.exception.ValidationException;
 import dev.vertique.core.json.VertiqueJson;
-import dev.vertique.input.processing.InputObjectProcessor;
 import dev.vertique.rest.core.request.RequestBodyDecoder;
 import dev.vertique.rest.core.request.RequestValue;
 import dev.vertique.rest.jaxrs.request.BoundRequest;
@@ -17,7 +16,6 @@ import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.RoutingContext;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
-import java.util.ArrayList;
 import java.util.Collection;
 import java.util.LinkedHashSet;
 import java.util.Set;
@@ -176,19 +174,12 @@ class JsonRequestBodyDecoder implements RequestBodyDecoder {
      * generic signature at all — whose content type also resolves to {@code Object} the same way a raw
      * {@code Collection} does — leaves {@code getBindings()} empty.
      *
-     * <p>One residual shape also leaves content {@code Object} and empty bindings even though an
-     * element <em>is</em> bound: an owner-bound inner class ({@code Outer<Dto>.Inner} where
-     * {@code Inner extends ArrayList<T>}). Jackson's {@link TypeFactory#constructType(Type)} does not
-     * fold {@link ParameterizedType#getOwnerType()} into the collection content type, so the probe
-     * looks identical to a raw {@code List}. The reflective classifier
-     * ({@link InputObjectProcessor#collectionElementType(Type)}) and the APT collector both resolve
-     * {@code Dto} for that shape. When Jackson reports the empty combination, this decoder asks the
-     * {@code Dto} for that shape. Unsupported non-static inner collection body types are rejected
-     * with {@link ValidationException} (HTTP 400) before classification or materialization: only an
-     * instantiable top-level container could be built, which would not be assignable to the declared
-     * inner type. Prefer a top-level {@code List}/{@code Set} or a static collection subtype. Only
-     * when the classifier also finds nothing for a constructible shape does the gate fall through
-     * to the untyped branch.
+     * <p>A non-static (owner-bound) inner collection body type — for example {@code Outer<Dto>.Inner}
+     * where {@code Inner extends ArrayList<T>} — cannot be constructed without an enclosing instance.
+     * That shape is rejected with {@link ValidationException} (HTTP 400) before Jackson materialization;
+     * prefer a top-level {@code List}/{@code Set} or a static collection subtype. The gate therefore
+     * falls through to the untyped branch only when content type is {@code Object} <em>and</em>
+     * bindings are empty together on a constructible target.
      *
      * <p>The {@link JavaType} is built the same way regardless of profile; the element binding then
      * routes through {@code profileMapper} when the route's profile differs from the process codec's
@@ -216,8 +207,8 @@ class JsonRequestBodyDecoder implements RequestBodyDecoder {
         }
 
         // List<T>, Set<T>, or other Collection<T> with declared type info. The full declared type
-        // goes to Jackson first, which binds the element from the Collection<E> supertype binding —
-        // a declared type argument is not the element type (class Weird<A, B> extends ArrayList<B>
+        // goes to Jackson, which binds the element from the Collection<E> supertype binding — a
+        // declared type argument is not the element type (class Weird<A, B> extends ArrayList<B>
         // declared Weird<Other, Dto> has element Dto, and no argument position is reliably the
         // element). The gate is genericType != null, not "is a ParameterizedType": a non-generic
         // fixed subtype (Dtos extends ArrayList<Dto>, used as the plain type Dtos) reflects as a
@@ -226,14 +217,12 @@ class JsonRequestBodyDecoder implements RequestBodyDecoder {
         //
         // A content type of plain Object is NOT by itself "no binding to report" — List<Object>,
         // List<?>, and Bag<Object> all legitimately resolve to Object and must still convert. The
-        // discriminator is content type == Object AND getBindings().isEmpty() together. That pair
-        // also matches Jackson's miss on an owner-bound inner class; resolveDeclaredCollectionType
-        // asks the shared classifier for that residual and rebuilds via TypeFactory when an element
-        // is found. Only a genuinely raw target (classifier also finds nothing) falls through to
-        // the untyped branch below unconverted.
+        // discriminator is content type == Object AND getBindings().isEmpty() together. Owner-bound
+        // non-static inner collection types are rejected before this gate (see
+        // {@link #rejectOwnerBoundInnerCollection}).
         if (genericType != null) {
-            JavaType declaredType =
-                    declaredCollectionTypes.computeIfAbsent(genericType, t -> resolveDeclaredCollectionType(tf, t));
+            rejectOwnerBoundInnerCollection(genericType);
+            JavaType declaredType = declaredCollectionTypes.computeIfAbsent(genericType, tf::constructType);
             if (isConvertibleCollectionType(declaredType)) {
                 return convertList(jsonArray.getList(), declaredType, profileMapper);
             }
@@ -249,38 +238,26 @@ class JsonRequestBodyDecoder implements RequestBodyDecoder {
     }
 
     /**
-     * Resolves a declared collection body's {@link JavaType}, preferring Jackson's
-     * {@link TypeFactory#constructType(Type)} and falling back to the shared classifier when Jackson
-     * reports an unbound owner-bound shape.
+     * Fails closed when {@code genericType} erases to a non-static member class. Such a collection
+     * cannot be constructed without an enclosing instance, and materializing a plain
+     * {@link LinkedHashSet} / {@code ArrayList} would not be assignable to the declared parameter.
      *
-     * @param tf          the process codec's type factory
      * @param genericType the declared collection body type
-     * @return a {@link JavaType} suitable for {@link #convertList}, or Jackson's unbound probe when
-     *     neither Jackson nor the classifier finds an element
+     * @throws ValidationException when the erased raw type is a non-static member class
      */
-    private static JavaType resolveDeclaredCollectionType(TypeFactory tf, Type genericType) {
-        Class<?> raw = rawClassOf(genericType);
-        if (raw.isMemberClass() && !java.lang.reflect.Modifier.isStatic(raw.getModifiers())) {
+    private static void rejectOwnerBoundInnerCollection(Type genericType) {
+        Class<?> raw = null;
+        if (genericType instanceof Class<?> cls) {
+            raw = cls;
+        } else if (genericType instanceof ParameterizedType parameterized
+                && parameterized.getRawType() instanceof Class<?> parameterizedRaw) {
+            raw = parameterizedRaw;
+        }
+        if (raw != null && raw.isMemberClass() && !java.lang.reflect.Modifier.isStatic(raw.getModifiers())) {
             throw new ValidationException("Cannot decode request body to owner-bound inner collection type "
                     + raw.getName()
                     + ": no enclosing instance is available at decode time");
         }
-        JavaType jacksonType = tf.constructType(genericType);
-        if (isConvertibleCollectionType(jacksonType)) {
-            return jacksonType;
-        }
-        // Jackson left content Object with empty bindings — either a raw List, or an owner-bound
-        // inner class whose element arrives only through ParameterizedType.getOwnerType(). Ask the
-        // shared classifier (the same rule the reflective walker and APT collector use) before
-        // treating the shape as raw.
-        Class<?> element = InputObjectProcessor.collectionElementType(genericType);
-        if (element == null) {
-            return jacksonType;
-        }
-        @SuppressWarnings({"unchecked", "rawtypes"})
-        Class<? extends Collection> materialization =
-                Set.class.isAssignableFrom(raw) ? LinkedHashSet.class : ArrayList.class;
-        return tf.constructCollectionType(materialization, element);
     }
 
     /**
@@ -297,23 +274,6 @@ class JsonRequestBodyDecoder implements RequestBodyDecoder {
                 && declaredType.getContentType() != null
                 && (declaredType.getContentType().getRawClass() != Object.class
                         || !declaredType.getBindings().isEmpty());
-    }
-
-    /**
-     * Returns the erased class of a declared type, or {@code Object.class} when the type does not
-     * erase to a class.
-     *
-     * @param type the declared type
-     * @return the raw class
-     */
-    private static Class<?> rawClassOf(Type type) {
-        if (type instanceof Class<?> cls) {
-            return cls;
-        }
-        if (type instanceof ParameterizedType parameterized && parameterized.getRawType() instanceof Class<?> raw) {
-            return raw;
-        }
-        return Object.class;
     }
 
     /**
