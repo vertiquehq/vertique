@@ -79,6 +79,7 @@ public class FileContentVerifierDeadlineIT {
     private static final byte[] PAYLOAD = {1, 2, 3};
 
     private static Vertx vertx;
+    private static io.vertx.core.http.HttpClient transport;
     private static WebClient client;
 
     private HttpServer server;
@@ -87,13 +88,16 @@ public class FileContentVerifierDeadlineIT {
     @BeforeAll
     static void setUp() {
         vertx = Vertx.vertx(new VertxOptions().setEventLoopPoolSize(1));
-        client = WebClient.create(vertx, new WebClientOptions().setFollowRedirects(false));
+        transport = vertx.createHttpClient();
+        client = WebClient.wrap(transport, new WebClientOptions().setFollowRedirects(false));
     }
 
     @AfterAll
     static void tearDownAll() throws Exception {
-        if (client != null) {
-            client.close();
+        if (transport != null) {
+            transport.close().toCompletionStage().toCompletableFuture().get(ASYNC_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            transport = null;
+            client = null;
         }
         if (vertx != null) {
             vertx.close().toCompletionStage().toCompletableFuture().get(ASYNC_TIMEOUT_SECONDS, TimeUnit.SECONDS);
