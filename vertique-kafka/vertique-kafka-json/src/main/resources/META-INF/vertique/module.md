@@ -5,10 +5,10 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Kafka JSON Module
 
-> **Status:** Alpha
+> **Status:** Stable
 > **Package:** `dev.vertique.kafka.json`
 > **Artifact:** `vertique-kafka-json`
-> **Depends on:** kafka-core
+> **Depends on:** kafka-core, json
 
 Opt-in Jackson JSON value-format provider for `vertique-kafka`. JSON is the default/reference format for Kafka producers and consumers but is not built into the core runtime — applications include this module (and `KafkaJsonModule`) to activate the `"json"` format. Symmetric with `vertique-kafka-avro`: both are first-class `KafkaSerdeProvider` implementations under the `vertique-kafka` family aggregator.
 
@@ -247,6 +247,38 @@ interface AppComponent { ... }
 This module is itself an extension of the `KafkaSerdeProvider` SPI declared in `vertique-kafka-core`. There are no additional extension points declared here.
 
 The JSON provider is the reference implementation of the SPI. To implement a custom format provider, depend only on `vertique-kafka-core` (which declares the SPI), implement `KafkaSerdeProvider`, and contribute it via `@Provides @Singleton @IntoSet` in a Dagger module — no dependency on `vertique-kafka-json` is required or appropriate.
+
+---
+
+## Configuration
+
+This module owns no configuration keys. Format and profile selection are consumed from Stable
+`vertique-kafka-core` and Stable `vertique-json`:
+
+| Key | Owner | Role for this provider |
+|---|---|---|
+| Bag `jsonProfile` (non-blank) | kafka-core serde bag | Resolved through `JsonMapperProfileRegistry`; unknown id ⇒ `JsonProfileConfigurationException` |
+| `kafka.jsonProfile` | kafka-core | Per-boundary default validated at startup by `KafkaDefaultProfileValidator` |
+| `json.jsonProfile` | json | Global default when the bag carries no explicit id (vertique floor unless configured) |
+
+---
+
+## Module Dagger Bindings
+
+`KafkaJsonModule` includes `JsonRuntimeModule`.
+
+| Binding | Kind | Description |
+|---|---|---|
+| `KafkaSerdeProvider` | `@Provides` `@Singleton` `@IntoSet` | `JsonSerdeProvider` for format id `"json"` |
+| `ComposeValidator` | `@Provides` `@Singleton` `@IntoSet` | `KafkaDefaultProfileValidator` (unknown `kafka.jsonProfile` fails startup) |
+
+---
+
+## Verification
+
+```bash
+./mvnw -ntp -pl :vertique-kafka-json -am test
+```
 
 ---
 

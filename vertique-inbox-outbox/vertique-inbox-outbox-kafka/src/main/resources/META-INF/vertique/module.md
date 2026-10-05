@@ -5,12 +5,25 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Inbox/Outbox Kafka Module
 
-> **Status:** Beta
+> **Status:** Stable
 > **Package:** `dev.vertique.inboxoutbox.kafka`
 > **Artifact:** `vertique-inbox-outbox-kafka`
-> **Depends on:** inbox-outbox-core, kafka
+> **Depends on:** inbox-outbox-core, kafka-core
 
 Kafka adapter for Transactional Messaging. Provides `KafkaOutboxDestinationHandler`, which publishes committed outbox rows to Kafka topics using `KafkaProducerFactory`. The relay uses `aggregateId` as the default Kafka record key, ensuring ordering within a partition for the same aggregate.
+
+---
+
+## When To Use It
+
+Add this module when:
+
+- The application uses transactional outbox (Stable `vertique-inbox-outbox-core`) and needs
+  `DestinationType.KAFKA` delivery.
+- A shared `KafkaProducerFactory` from Stable `vertique-kafka-core` is already on the component.
+
+Do not use when outbox destinations are only PostgreSQL/internal, or when Kafka publish is done
+outside the outbox relay.
 
 ---
 
@@ -79,7 +92,7 @@ Throwing implementations are caught, warn-logged, and discarded; the publish res
 
 ---
 
-## Dagger Wiring
+## Module Dagger Bindings
 
 The module ships three bindings. The handler is built by an explicit `@Provides` method rather than
 from its `@Inject` constructor, because that is what injects the capture-hook set:
@@ -138,3 +151,11 @@ The dependency required is `vertique-kafka-core` (provides `KafkaModule` and `Ka
 ## Configuration
 
 No Kafka-specific configuration in this module. Kafka producer settings (bootstrap servers, serializers, acks, etc.) are configured in the `kafka` module: connection scalars at the `kafka` root (e.g. `kafka.bootstrap.servers`), global properties under `kafka.properties`, and the global producer bag under `kafka.producer.properties`. Per-named-producer overrides live under `kafka.producers.{name}.*`. See `dev.vertique:vertique-kafka-core` for the full configuration reference.
+
+---
+
+## Verification
+
+```bash
+./mvnw -ntp -pl :vertique-inbox-outbox-kafka -am test
+```

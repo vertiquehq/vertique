@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Kafka Avro Module
 
-> **Status:** Alpha
+> **Status:** Stable
 > **Package:** `dev.vertique.kafka.avro`
 > **Artifact:** `vertique-kafka-avro`
 > **Depends on:** kafka-core
@@ -241,6 +241,22 @@ This module is itself an extension of the `KafkaSerdeProvider` SPI. There are no
 2. Global `kafka.format`
 3. Auto-detect: `ApicurioAvroSerdeProvider.autoDetects(valueType)` — `true` for `SpecificRecord` subtypes
 4. `"json"` (built-in fallback)
+
+---
+
+## Module Dagger Bindings
+
+| Binding | Kind | Description |
+|---|---|---|
+| `KafkaSerdeProvider` | `@Provides` `@Singleton` `@IntoSet` | `ApicurioAvroSerdeProvider` for format id `"avro"` |
+
+---
+
+## Verification
+
+```bash
+./mvnw -ntp -pl :vertique-kafka-avro -am test
+```
 
 ---
 
