@@ -180,10 +180,14 @@ claim, so the rerouted target decides it, and the event keeps the first pass's s
 `DEBUG`, `RestRequestCompletionEmitter` logs one line for each request it skips because another
 transport claimed it.
 
-The completion state is framework-owned. No `RoutingContext.data()` key exposes it, and writing the
-retired `rest.events.*` keys has no effect on the event. `RestRequestCompletionEmitter` holds the
-state in its own end handler and emits exactly once whether or not `RequestContextLifecycle` is
-mounted.
+The completion state is framework-owned. No `RoutingContext.data()` key exposes the start time,
+emitted flag, claim, operation identity, or post-handoff wire-failure marker, and writing the
+retired `rest.events.*` keys or the retired `vertique.rest.core.events.wireFailure` key has no
+effect on the event. `RestRequestCompletionEmitter` holds the state in its own end handler and
+emits exactly once whether or not `RequestContextLifecycle` is mounted. A sibling framework module
+records a post-handoff wire failure through `RequestCompletionRecorder.recordWireFailure` (first
+writer wins); the emitter still consults a failed response end-handler result when no marker was
+recorded, including the documented late-`end()` carve-out.
 
 Two deliberate properties:
 
@@ -443,7 +447,10 @@ expired token raises `InvalidCursorException`.
 
 `SseChannelFactory` is injectable; the resource method returns `channel.stream()`. The framework
 detects a `ReadStream<SseEvent>` return type at startup and installs the SSE encoder — no extra
-configuration.
+configuration. Client disconnect mid-stream is observed through `RoutingContext.addEndHandler`
+(multicast), so completion emission and `RequestContextLifecycle` cleanup still run; do not register
+on the response's single-slot `closeHandler` / `endHandler` / `exceptionHandler` for the same purpose
+(see Common mistakes).
 
 ```java
 @Path("/jobs")
@@ -1453,6 +1460,7 @@ When `enabled` is `false` (the default) no CORS handler is installed and every o
 | `jaxrs.validationMode` | `"aggregate"` | `aggregate` or `failFast` |
 | `jaxrs.validationPatternMaxChars` | `4096` | at least `1`, else startup fails; the most UTF-16 code units one string value or object key may have when it reaches a `pattern`, `patternProperties`, or pattern-bearing `propertyNames` position, or an `idn-hostname`, `idn-email`, or `regex` format, under the `web-validation` strategy — a longer one is rejected with 400 before that check runs |
 | `jaxrs.validationPatternMaxTotalChars` | `262144` | at least `1` and no smaller than `jaxrs.validationPatternMaxChars`, else startup fails; the most UTF-16 code units the strings and keys reaching those positions may add up to in one request — the request is rejected with 400 once the total exceeds it |
+| `jaxrs.fileContentVerifierDeadlineMs` | `5000` | must be `> 0`, else startup fails; per-invocation wait deadline for each bound `FileContentVerifier` future under `web-validation` — timeout fails closed (500) and stops the sequential chain; does not cancel verifier-owned work (see `vertique-rest-validation`) |
 | `jaxrs.autoEtag` | `false` | attach a weak ETag derived from the serialized body when none is set |
 | `jaxrs.jsonProfile` | *(none)* | must name a registered JSON mapper profile; resolution is method `@JsonProfile` → class `@JsonProfile` → this key → `json.jsonProfile` → the `vertique` floor |
 | `jaxrs.security.requireExplicitPolicy` | `false` | boolean; when `true`, every JAX-RS operation must declare an explicit security policy, else startup fails — details in the `vertique-rest-jaxrs` reference |
@@ -1480,6 +1488,12 @@ so a body with none of them — dates, timestamps, or identifiers alone — is n
 limits. Both values are validated where `RestCoreModule` provides the `jaxrs` configuration, so an
 invalid value fails startup whichever validation strategy is selected. The positions, the rejection
 details, and the formats left unbounded are described in the `vertique-rest-validation` reference.
+
+`jaxrs.fileContentVerifierDeadlineMs` bounds each `FileContentVerifier` wait under `web-validation`
+(per invocation, default `5000` ms, must be `> 0`). A hanging verifier fails closed with 500 within
+that bound; the framework does not cancel verifier-owned scanner or client work. The cancellation
+and resource-release contract for implementors is documented in the `vertique-rest-validation`
+reference. The value is validated where `RestCoreModule` provides the `jaxrs` configuration.
 
 ### `jaxrs.defaultHeaders`
 
@@ -1574,7 +1588,7 @@ root of this module's wiring failures.
 |---|---|
 | `IllegalStateException` failing the start promise | one or more invalid mount paths, reported as a single aggregated message |
 | `RestConfigurationException` | invalid `ssl.clientAuth`, blank `http.uploadsDirectory`, non-positive `http.maxMultipartBodySizeBytes`, an unsupported security declaration shape, an unknown `jaxrs.validationStrategy` |
-| `ConfigurationException` | an invalid pattern-input limit; the per-string limit is checked first, with the message `jaxrs.validationPatternMaxChars must be at least 1`, then the total, with `jaxrs.validationPatternMaxTotalChars must be at least 1 and no smaller than the per-string pattern limit`; neither message echoes a configured value |
+| `ConfigurationException` | an invalid pattern-input limit; the per-string limit is checked first, with the message `jaxrs.validationPatternMaxChars must be at least 1`, then the total, with `jaxrs.validationPatternMaxTotalChars must be at least 1 and no smaller than the per-string pattern limit`; or a non-positive `jaxrs.fileContentVerifierDeadlineMs`, with the message `jaxrs.fileContentVerifierDeadlineMs must be > 0`; none of these messages echo a configured value |
 | `SecurityPolicyViolationException` | security-policy validation found violations; `violations()` lists each with its `operationId` and `ViolationType` |
 | `IllegalStateException` at component construction | two `ParamConverterBinding`s claim the same target type |
 | `RestContextUnavailableException` | a declared `@Context` parameter has no resolver; carries `type()`, `resourceClass()`, `methodName()` |
@@ -1601,6 +1615,14 @@ multi-scheme AND requirement, scopes declared on an OR alternative, and scopes d
 - **Registering your own end handler for cleanup.** `ctx.addEndHandler(...)` for scope teardown
   breaks the reverse-order guarantee that keeps bound values readable. Use
   `RequestContextLifecycle.Handle.onClose(...)` / `afterClose(...)`.
+- **Calling `response().endHandler` / `exceptionHandler` / `closeHandler`.** Those three setters are
+  single-slot: last writer wins. Vert.x Web installs its own handlers there the first time anything
+  calls `ctx.addEndHandler` — which `RequestContextLifecycle` does for every request — so a later
+  call silently replaces them. On that exit path no routing-context end handler fires: the completion
+  event (and with it metrics and audit), `Handle.closeAll()`, and every other `addEndHandler`
+  registration are skipped. Observe disconnects, resets, and normal ends through
+  `ctx.addEndHandler(...)` (multicast), never through the response setters. Framework code that needs
+  disconnect notification (SSE, MCP settlement) already follows this rule; application code must too.
 - **Registering on the `Handle` after completion.** `onClose`, `afterClose`, and `bindMdc` throw
   `IllegalStateException` once the lifecycle has closed. Leaks are loud, not silent.
 - **Giving a middleware `API` scope on a non-JAX-RS mount.** It is dropped without warning. Only the

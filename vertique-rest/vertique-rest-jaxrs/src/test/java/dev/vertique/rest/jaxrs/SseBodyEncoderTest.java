@@ -4,6 +4,7 @@
 package dev.vertique.rest.jaxrs;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 import dev.vertique.rest.core.config.SseConfig;
@@ -102,10 +103,15 @@ class SseBodyEncoderTest {
             HttpServerResponse response = mock(HttpServerResponse.class);
             when(ctx.vertx()).thenReturn(vertx);
             when(ctx.response()).thenReturn(response);
-            when(response.closeHandler(any())).thenReturn(response);
+            when(ctx.addEndHandler(any())).thenReturn(0);
+            when(response.putHeader(anyString(), anyString())).thenReturn(response);
+            when(response.setChunked(anyBoolean())).thenReturn(response);
 
             SseEventReadStream stream = new SseEventReadStream();
             SerializedBody body = encoder.encode(ctx, null, stream);
+
+            verify(ctx).addEndHandler(any());
+            verify(response, never()).closeHandler(any());
 
             assertInstanceOf(StreamingBody.class, body);
             StreamingBody streaming = (StreamingBody) body;

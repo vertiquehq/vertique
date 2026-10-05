@@ -62,10 +62,11 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * </ol>
  *
  * <p>The last two cases pin the <em>equal-status</em> arm of the Vert.x failure-status fallback. Both 415
- * producers call {@code ctx.fail(415, new NotSupportedException(msg))}, so the Vert.x failure status and
- * the mapped status agree and the fallback must leave the representation alone. The fallback clears
- * {@code detail} only when it <em>overrides</em> the mapped status — a message authored for the status
- * that survives is a deliberate diagnostic, not a foreign one.
+ * producers call {@code ctx.fail(415, new NotSupportedException(authoredResponse))}, so the Vert.x
+ * failure status and the mapped status agree. Equal-status sanitization drops a {@code detail}
+ * synthesized from {@code ex.getMessage()}, but an entity already present on the
+ * {@link jakarta.ws.rs.WebApplicationException}'s {@link jakarta.ws.rs.core.Response} is deliberate
+ * client output and must survive — that is how these producers keep naming the offending content type.
  *
  * <p>Requests are issued through a {@link WebClient} rather than a raw {@code HttpClient} deliberately:
  * a raw {@code HttpClientResponse} discards body buffers that arrive before a body handler is attached,
@@ -283,9 +284,10 @@ public class ConsumesEnforcementIT {
     @Test
     @DisplayName("PerRoute415KeepsItsAuthoredDetail — the Vert.x failure status equals the mapped status → detail kept")
     void perRoute415KeepsItsAuthoredDetail(Vertx vertx, VertxTestContext ctx) {
-        // ctx.fail(415, new NotSupportedException(...)) stores 415 as the Vert.x failure status AND maps
-        // to 415, so the status is not overridden — the framework authored both the status and the
-        // message, and the diagnostic it deliberately wrote must survive to the client.
+        // ctx.fail(415, new NotSupportedException(authoredResponse)) stores 415 as the Vert.x failure
+        // status AND maps to 415. Equal-status sanitization would drop a detail synthesized from
+        // ex.getMessage(); the per-route handler authors the ProblemDetail on the JAX-RS Response so
+        // the diagnostic survives.
         deploy(vertx, ctx, Set.of(new JsonOnlyResource()), (port, c) -> {
             c.post(port, "127.0.0.1", "/echo")
                     .putHeader("Content-Type", "text/xml")

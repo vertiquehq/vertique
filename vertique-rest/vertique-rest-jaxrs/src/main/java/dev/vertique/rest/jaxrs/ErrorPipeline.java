@@ -9,6 +9,7 @@ import dev.vertique.rest.core.interceptor.ErrorInterceptor;
 import dev.vertique.rest.core.interceptor.RequestInterceptor;
 import io.vertx.core.Future;
 import io.vertx.ext.web.RoutingContext;
+import jakarta.ws.rs.WebApplicationException;
 import jakarta.ws.rs.core.Response;
 import java.util.List;
 import java.util.Locale;
@@ -105,6 +106,7 @@ public class ErrorPipeline {
      *       request path if the response entity is a {@link ProblemDetail} and
      *       {@code instance} is not already set</li>
      *   <li>{@link ErrorInterceptor#afterMapping} async chain (transforms the response)</li>
+     *   <li>Framework catch-all logging, once, using the status of the response leaving the chain</li>
      * </ol>
      *
      * <p>The Vert.x failure-status hint ({@code VertxFailureStatus.KEY}) and the failure-cycle
@@ -165,22 +167,63 @@ public class ErrorPipeline {
                     Object vertxFailureStatus = ctx.data().remove(VertxFailureStatus.KEY);
                     VertxFailureStatus.consumeObservation(ctx);
                     Throwable translated = restExceptionMapper.translate(mappedCause);
+                    boolean frameworkCatchAll =
+                            exceptionMapperRegistry.handledByFrameworkCatchAll(translated.getClass());
                     Response response = exceptionMapperRegistry.toResponse(translated);
                     if (!exceptionMapperRegistry.hasSpecificMapper(translated.getClass())) {
-                        response = applyVertxStatusCodeFallback(response, vertxFailureStatus);
+                        response = applyVertxStatusCodeFallback(response, vertxFailureStatus, translated);
                     }
-                    return enrichProblemDetail(ctx, response);
+                    return new MappingOutcome(enrichProblemDetail(ctx, response), translated, frameworkCatchAll);
                 })
-                .compose(response -> Combinators.foldSequential(
-                        errorInterceptors, response, (interceptor, r) -> Future.<Response>succeededFuture()
-                                .compose(v -> interceptor.afterMapping(ctx, r))
-                                .recover(mf -> {
-                                    log.warn(
-                                            "ErrorInterceptor.afterMapping failed in interceptor[{}] — passing response unchanged",
-                                            errorInterceptors.indexOf(interceptor),
-                                            mf);
-                                    return Future.succeededFuture(r);
-                                })));
+                .compose(outcome -> Combinators.foldSequential(
+                                errorInterceptors,
+                                outcome.response(),
+                                (interceptor, r) -> Future.<Response>succeededFuture()
+                                        .compose(v -> interceptor.afterMapping(ctx, r))
+                                        .recover(mf -> {
+                                            log.warn(
+                                                    "ErrorInterceptor.afterMapping failed in interceptor[{}] — passing response unchanged",
+                                                    errorInterceptors.indexOf(interceptor),
+                                                    mf);
+                                            return Future.succeededFuture(r);
+                                        }))
+                        .map(finalResponse -> {
+                            // The afterMapping chain may replace the response and its status, so the
+                            // level is decided once, here, from the response that will actually be sent.
+                            if (outcome.frameworkCatchAll()) {
+                                int status = finalResponse != null ? finalResponse.getStatus() : 500;
+                                logUnhandledAfterMapping(outcome.translated(), status);
+                            }
+                            return finalResponse;
+                        }));
+    }
+
+    /**
+     * Per-invocation result of the mapping step carried into the {@code afterMapping} chain.
+     *
+     * @param response         the mapped (fallback-applied, enriched) response entering the chain
+     * @param translated       the cause after {@link RestExceptionMapper#translate}
+     * @param frameworkCatchAll whether the framework {@code Throwable} catch-all produced the response
+     */
+    private record MappingOutcome(Response response, Throwable translated, boolean frameworkCatchAll) {}
+
+    // --- Unhandled-exception logging ---
+
+    /**
+     * Logs after the framework {@code Throwable} catch-all produced a response and the Vert.x
+     * status-code fallback and the {@link ErrorInterceptor#afterMapping} chain have settled. A final 4xx is a deliberate client rejection (for
+     * example a multipart decoder limit) and must not look like an unhandled server fault; genuine
+     * 5xx outcomes keep the ERROR stack.
+     *
+     * @param cause  the throwable the catch-all mapped
+     * @param status the HTTP status of the response leaving the {@code afterMapping} chain
+     */
+    private static void logUnhandledAfterMapping(Throwable cause, int status) {
+        if (status >= 400 && status < 500) {
+            log.debug("Unhandled exception mapped to client error {}", status, cause);
+            return;
+        }
+        log.error("Unhandled exception", cause);
     }
 
     // --- ProblemDetail enrichment ---
@@ -217,12 +260,20 @@ public class ErrorPipeline {
      * <p>The fallback does not activate when:
      * <ul>
      *   <li>No status was recorded under {@link VertxFailureStatus#KEY} (the Vert.x layer decided none)</li>
-     *   <li>The response already has the correct status (matches the stored code)</li>
      *   <li>The mapper produced 403 and the stored status is 401 — a hint never downgrades an
      *       authorization outcome into an authentication challenge</li>
      * </ul>
      *
-     * <p>That last guard keys on the <em>mapped status</em>, never on the exception type that produced
+     * <p>When the recorded status <em>agrees</em> with the mapped one, the status is left alone but a
+     * {@link ProblemDetail} {@code detail} synthesized from an arbitrary exception message is still
+     * dropped — see {@link #sanitizeEqualStatusDetail}. That closes the equal-status disclosure where
+     * {@code ctx.fail(401, new UnauthorizedException(...))} (or any other semantic type whose own
+     * mapping already equals the Vert.x status) would otherwise publish the cause message verbatim.
+     * A {@link WebApplicationException} whose {@link Response} already carries an entity is treated as
+     * deliberately authored client output and keeps its body (the framework's own 415 producers use this
+     * shape).
+     *
+     * <p>The 403←401 guard keys on the <em>mapped status</em>, never on the exception type that produced
      * it: any 403 survives a 401 hint, whether it came from the framework's own
      * {@code ForbiddenException} mapping or from an application {@code ExceptionMapper<Throwable>}
      * catch-all that chose 403 for its own denial type. Keying on a list of authorization exception
@@ -243,9 +294,7 @@ public class ErrorPipeline {
      * are dropped with it, so only {@code instance} — request-scoped and status-independent — survives.
      * A non-{@code ProblemDetail} entity is fail-closed the same way: replaced with a fresh
      * {@link ProblemDetail} for the winning status and {@code application/problem+json}, rather than
-     * shipping the superseded body under a new status line. A body the mapper authored <em>for the
-     * status that survives</em> is untouched, which is what the equal-status early return above
-     * protects.
+     * shipping the superseded body under a new status line.
      *
      * <p>This method is only called when no specific (user-contributed) {@code ExceptionMapper}
      * matched the unwrapped cause — the caller checks
@@ -255,15 +304,18 @@ public class ErrorPipeline {
      * @param storedStatus the status the Vert.x layer recorded for this failure, already consumed from
      *                     the routing context by {@link #mapToResponse}; {@code null} (or any
      *                     non-{@link Integer}) when no status was recorded
+     * @param cause        the throwable that produced {@code response}, used on the equal-status arm to
+     *                     tell an authored {@link WebApplicationException} entity from a synthesized
+     *                     {@code detail}
      * @return the response with the status overridden and its problem body rebuilt, or the original
-     *         response unchanged
+     *         response with equal-status detail sanitization applied
      */
-    private static Response applyVertxStatusCodeFallback(Response response, Object storedStatus) {
+    private static Response applyVertxStatusCodeFallback(Response response, Object storedStatus, Throwable cause) {
         if (!(storedStatus instanceof Integer vertxStatus)) {
             return response;
         }
         if (response.getStatus() == vertxStatus) {
-            return response;
+            return sanitizeEqualStatusDetail(response, cause);
         }
         if (response.getStatus() == 403 && vertxStatus == 401) {
             // Directional guard, deliberately narrow. 403 is an authorization decision the cause itself
@@ -296,6 +348,42 @@ public class ErrorPipeline {
                 .entity(ProblemDetail.of(vertxStatus, null))
                 .type("application/problem+json");
         return rebuildWithHeaders(response, rb, true, true);
+    }
+
+    /**
+     * Drops a synthesized {@link ProblemDetail} {@code detail} when the Vert.x failure status already
+     * equals the mapped status.
+     *
+     * <p>On {@code ctx.fail(4xx, cause)} the cause is often an arbitrary application exception — a JWT
+     * claims validator's {@code UnauthorizedException}, for example. {@code DefaultExceptionMapper}
+     * still publishes {@code ex.getMessage()} as {@code detail} for those semantic types, and the
+     * equal-status arm used to return that body untouched, so whether the message reached the client
+     * depended on whether the exception's own mapping happened to equal the Vert.x status. Clearing
+     * the detail here makes the equal-status path match the override path's disclosure rule.
+     *
+     * <p>A {@link WebApplicationException} whose {@link Response} already carries an entity is left
+     * alone: that entity is deliberate client output (the framework's {@code @Consumes} / content-type
+     * 415 producers author a {@link ProblemDetail} on the JAX-RS response before failing the context).
+     * Hint presence alone is not a foreignness discriminator; an authored entity is.
+     *
+     * @param response the equal-status response from the exception mapper
+     * @param cause    the throwable that produced {@code response}
+     * @return {@code response} with {@code detail} cleared, or unchanged when there is nothing to
+     *         sanitize
+     */
+    private static Response sanitizeEqualStatusDetail(Response response, Throwable cause) {
+        if (cause instanceof WebApplicationException wae && wae.getResponse().getEntity() != null) {
+            return response;
+        }
+        Object entity = response.getEntity();
+        if (!(entity instanceof ProblemDetail pd) || pd.detail() == null) {
+            return response;
+        }
+        // Fresh ProblemDetail — same rebuild rule as the override arm — so a ValidationProblemDetail
+        // (or any extension members) that rode along with a synthesized detail cannot survive either.
+        Response.ResponseBuilder rb = Response.status(response.getStatus())
+                .entity(ProblemDetail.of(response.getStatus(), null, pd.instance()));
+        return rebuildWithHeaders(response, rb, true);
     }
 
     /**

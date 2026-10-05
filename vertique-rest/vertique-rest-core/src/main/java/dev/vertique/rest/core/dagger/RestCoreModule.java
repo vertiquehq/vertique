@@ -251,13 +251,13 @@ public abstract class RestCoreModule {
      *       {@link JaxRsSecurityConfig}'s record component names.
      * </ul>
      *
-     * <p>Immediately after parsing, the two pattern-input limits of the {@code web-validation} gate
-     * are validated, so every composition that provides {@link JaxRsConfig} fails at startup on
-     * invalid limits, whichever validation strategy it selects: {@link
-     * JaxRsConfig#validationPatternMaxChars()} must be at least {@code 1}, and {@link
+     * <p>Immediately after parsing, the {@code web-validation} gate's pattern-input limits and the
+     * {@code FileContentVerifier} wait deadline are validated, so every composition that provides
+     * {@link JaxRsConfig} fails at startup on invalid values, whichever validation strategy it
+     * selects: {@link JaxRsConfig#validationPatternMaxChars()} must be at least {@code 1}; {@link
      * JaxRsConfig#validationPatternMaxTotalChars()} must be at least {@code 1} and no smaller than the
-     * per-string limit. The per-string limit is checked first, and a failure names only the failing
-     * setting.
+     * per-string limit; and {@link JaxRsConfig#fileContentVerifierDeadlineMs()} must be positive. Each
+     * check names only its failing setting.
      *
      * <p>After parsing, when {@link JaxRsSecurityConfig#requireExplicitPolicy()} resolves to
      * {@code true}, exactly one INFO line announces the opt-in; a missing section or a
@@ -268,8 +268,9 @@ public abstract class RestCoreModule {
      * @return the deserialized JAX-RS routing configuration
      * @throws ConfigurationException when the raw-key check rejects the {@code "jaxrs"} or
      *     {@code "jaxrs.security"} shape; when {@code jaxrs.validationPatternMaxChars} is below
-     *     {@code 1}; or, otherwise, when {@code jaxrs.validationPatternMaxTotalChars} is below
-     *     {@code 1} or below {@code jaxrs.validationPatternMaxChars}
+     *     {@code 1}; when {@code jaxrs.validationPatternMaxTotalChars} is below {@code 1} or below
+     *     {@code jaxrs.validationPatternMaxChars}; or when {@code jaxrs.fileContentVerifierDeadlineMs}
+     *     is not positive
      */
     @Provides
     @Singleton
@@ -278,6 +279,7 @@ public abstract class RestCoreModule {
         checkSecurityKeys(jaxrs);
         JaxRsConfig result = parser.parse(jaxrs, JaxRsConfig.class);
         checkPatternInputLimits(result);
+        checkFileContentVerifierDeadline(result);
         if (result.security().requireExplicitPolicy()) {
             log.info(REQUIRE_EXPLICIT_POLICY_ENABLED_MESSAGE);
         }
@@ -344,6 +346,19 @@ public abstract class RestCoreModule {
         if (maxTotalChars < 1 || maxTotalChars < maxChars) {
             throw new ConfigurationException("jaxrs.validationPatternMaxTotalChars must be at least 1 and no smaller"
                     + " than the per-string pattern limit");
+        }
+    }
+
+    /**
+     * Validates the {@code web-validation} gate's per-verifier wait deadline. The message names the
+     * failing setting only and echoes no configured value.
+     *
+     * @param jaxRsConfig the parsed JAX-RS configuration
+     * @throws ConfigurationException when {@code jaxrs.fileContentVerifierDeadlineMs} is not positive
+     */
+    private static void checkFileContentVerifierDeadline(JaxRsConfig jaxRsConfig) {
+        if (jaxRsConfig.fileContentVerifierDeadlineMs() <= 0) {
+            throw new ConfigurationException("jaxrs.fileContentVerifierDeadlineMs must be > 0");
         }
     }
 

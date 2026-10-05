@@ -81,12 +81,13 @@ import javax.lang.model.util.Types;
  * {@link dev.vertique.input.processing.ReflectiveInvocationPolicies} derives at runtime for the same
  * declarations, so the emitted constant faithfully carries the plan's policies.
  *
- * <p>For {@code BEAN_PARAM} parameters, only the route-level {@code ROUTE_POL} constant is
- * emitted. Per-field policies are derived at materialisation time inside
- * {@code ParameterExtractor.materializeBean} from each field's
- * {@link dev.vertique.rest.jaxrs.ResourceMethodMeta.ParamMeta#annotations()} array, which is
- * populated by the generated {@code _BeanParamModel} companion via
- * {@code loadFieldAnnotations} / {@code loadRecordComponentAnnotations}.
+ * <p>{@code BEAN_PARAM} parameters also emit a {@code POL_i} constant and pass it to
+ * {@code support.materializeBean(...)} as the baseline for per-field derivation and the
+ * intermediate-map processing step. Field-level annotations still override that baseline inside
+ * {@code ParameterExtractor.materializeBean}, using each field's
+ * {@link dev.vertique.rest.jaxrs.ResourceMethodMeta.ParamMeta#annotations()} array populated by the
+ * generated {@code _BeanParamModel} companion via {@code loadFieldAnnotations} /
+ * {@code loadRecordComponentAnnotations}.
  */
 public final class ExecutionPlanEmitter {
 
@@ -179,31 +180,25 @@ public final class ExecutionPlanEmitter {
         ClassName planClass = ClassName.get(pkg, planSimpleName);
 
         List<EffectiveParamContract> params = method.params();
-        boolean hasBeanParam = params.stream().anyMatch(p -> p.source() == JaxRsParamSource.BEAN_PARAM);
 
-        // Declaring class FQN — used as the resourceClass argument in resolveContext calls so
-        // error messages match what the runtime passes via meta.method().getDeclaringClass().getName().
-        String declaringClassFqn = ((TypeElement) method.concreteMethod().getEnclosingElement())
-                .getQualifiedName()
-                .toString();
+        // Declaring class binary name — used as the resourceClass argument in resolveContext calls so
+        // error messages match what the runtime passes via meta.method().getDeclaringClass().getName()
+        // (Outer$Inner, not Outer.Inner; vertiquehq/vertique-dev#636).
+        TypeElement declaringType = (TypeElement) method.concreteMethod().getEnclosingElement();
+        String declaringClassFqn = ctx.elements().getBinaryName(declaringType).toString();
 
         // --- Static ParamMeta constants per extractable parameter ---
         List<FieldSpec> staticFields =
                 buildParamMetaConstants(params, method.concreteMethod(), planClass, emittedLiteralFqns);
 
-        // --- Static EffectiveInputPolicies constants ---
+        // --- Static EffectiveInputPolicies constants (including BEAN_PARAM baselines) ---
         staticFields.addAll(buildPoliciesConstants(params));
 
         // --- Static Class<?> constants for CONTEXT parameters ---
         staticFields.addAll(buildContextClassConstants(params));
 
-        // --- Static route-level EffectiveInputPolicies constant for BEAN_PARAM materialization ---
-        if (hasBeanParam) {
-            staticFields.add(buildRoutePoliciesConstant(method));
-        }
-
         // --- extractArguments(...) method ---
-        MethodSpec extractArguments = buildExtractArguments(params, hasBeanParam, methodName, declaringClassFqn);
+        MethodSpec extractArguments = buildExtractArguments(params, methodName, declaringClassFqn);
 
         // --- invoke(...) method ---
         MethodSpec invoke = buildInvoke(method, resourceClass);
@@ -656,17 +651,16 @@ public final class ExecutionPlanEmitter {
      * Builds the {@code extractArguments(RoutingContext, BoundRequest, GeneratedJaxRsSupport)}
      * override that dispatches each parameter to the appropriate typed support helper call.
      *
-     * @param params              the parameter contracts in declaration order
-     * @param hasBeanParam        whether any parameter is a {@code BEAN_PARAM}
-     * @param methodName          the simple name of the resource method, passed to
-     *                            {@code resolveContext} for diagnostic messages
-     * @param declaringClassFqn   the fully-qualified name of the declaring class, passed to
-     *                            {@code resolveContext} for diagnostic messages; must match
-     *                            {@code meta.method().getDeclaringClass().getName()} at runtime
+     * @param params            the parameter contracts in declaration order
+     * @param methodName        the simple name of the resource method, passed to
+     *                          {@code resolveContext} for diagnostic messages
+     * @param declaringClassFqn the fully-qualified name of the declaring class, passed to
+     *                          {@code resolveContext} for diagnostic messages; must match
+     *                          {@code meta.method().getDeclaringClass().getName()} at runtime
      * @return the method spec
      */
     private MethodSpec buildExtractArguments(
-            List<EffectiveParamContract> params, boolean hasBeanParam, String methodName, String declaringClassFqn) {
+            List<EffectiveParamContract> params, String methodName, String declaringClassFqn) {
         CodeBlock.Builder body = CodeBlock.builder();
 
         body.add("return new $T[] {\n", Object.class);
@@ -756,7 +750,7 @@ public final class ExecutionPlanEmitter {
 
             case ENTITY_PARTS -> cb.add("support.extractEntityParts(P$L, ctx)", index);
 
-            case BEAN_PARAM -> cb.add(buildBeanParamExtraction(pc));
+            case BEAN_PARAM -> cb.add(buildBeanParamExtraction(pc, index));
         }
 
         if (!last) {
@@ -772,17 +766,19 @@ public final class ExecutionPlanEmitter {
      *
      * <p>Fetches the {@code BeanParamFieldMeta[]} array from the
      * {@link dev.vertique.rest.jaxrs.runtime.GeneratedJaxRsBeanParamRegistry} and passes it to
-     * {@code support.materializeBean(...)} along with the pre-computed route-level policies
-     * constant ({@code ROUTE_POL}). Per-field policies are derived inside
-     * {@code ParameterExtractor.materializeBean} from each field's
-     * {@link dev.vertique.rest.jaxrs.ResourceMethodMeta.ParamMeta#annotations()} array, which is
-     * populated by the generated {@code _BeanParamModel} companion at class-load time via
+     * {@code support.materializeBean(...)} along with the pre-computed per-parameter policies
+     * constant ({@code POL{i}}). That constant already embeds the route baseline plus any
+     * {@code @BeanParam}-parameter-level {@code @Canonicalize}/{@code @Sanitize}/{@code @Skip*}.
+     * Per-field policies are derived inside {@code ParameterExtractor.materializeBean} from each
+     * field's {@link dev.vertique.rest.jaxrs.ResourceMethodMeta.ParamMeta#annotations()} array,
+     * which is populated by the generated {@code _BeanParamModel} companion at class-load time via
      * {@code loadFieldAnnotations} / {@code loadRecordComponentAnnotations}.
      *
-     * @param pc the BEAN_PARAM parameter contract
+     * @param pc    the BEAN_PARAM parameter contract
+     * @param index zero-based parameter index; selects {@code POL{index}}
      * @return the code block for bean materialization
      */
-    private CodeBlock buildBeanParamExtraction(EffectiveParamContract pc) {
+    private CodeBlock buildBeanParamExtraction(EffectiveParamContract pc, int index) {
         TypeMirror beanType = pc.beanParamType() != null ? pc.beanParamType() : pc.type();
         // Resolve the bean ClassName via TypeElement so nested classes emit the source-form
         // (Outer.Inner), not the binary form (Outer$Inner) which is only valid in Class.forName.
@@ -806,41 +802,11 @@ public final class ExecutionPlanEmitter {
         cb.add("support.materializeBean(\n");
         cb.indent();
         cb.add("$L,\n", fieldsExpr);
-        // Route-level policies for bean-as-structured-body — use pre-computed constant.
-        // Per-field policies are computed inside materializeBean from field annotations.
-        cb.add("ROUTE_POL,\n");
+        // Parameter's own resolved policies (route + @BeanParam-parameter annotations).
+        cb.add("POL$L,\n", index);
         cb.add("req, ctx, $T.class)", beanClass);
         cb.unindent();
         return cb.build();
-    }
-
-    /**
-     * Builds the {@code private static final EffectiveInputPolicies ROUTE_POL} constant holding
-     * the route-level input policies for this execution plan. Used by bean-param materialization
-     * as the {@code routePolicies} argument to {@code support.materializeBean(...)}.
-     *
-     * @param method the method contract carrying route-level chains
-     * @return the field spec
-     */
-    private FieldSpec buildRoutePoliciesConstant(EffectiveMethodContract method) {
-        List<TypeMirror> canonChain = method.routeCanonicalizers();
-        List<TypeMirror> sanitChain = method.routeSanitizers();
-        CodeBlock initializer;
-        if (canonChain.isEmpty() && sanitChain.isEmpty()) {
-            initializer = CodeBlock.of("$T.NONE", EFFECTIVE_INPUT_POLICIES);
-        } else {
-            CodeBlock.Builder cb = CodeBlock.builder();
-            cb.add("new $T(", EFFECTIVE_INPUT_POLICIES);
-            cb.add(buildClassList(canonChain));
-            cb.add(", ");
-            cb.add(buildClassList(sanitChain));
-            cb.add(")");
-            initializer = cb.build();
-        }
-        return FieldSpec.builder(
-                        EFFECTIVE_INPUT_POLICIES, "ROUTE_POL", Modifier.PRIVATE, Modifier.STATIC, Modifier.FINAL)
-                .initializer(initializer)
-                .build();
     }
 
     /**
@@ -965,7 +931,7 @@ public final class ExecutionPlanEmitter {
      */
     private static boolean paramNeedsPolicies(JaxRsParamSource source) {
         return switch (source) {
-            case PATH, QUERY, HEADER, COOKIE, FORM, BODY -> true;
+            case PATH, QUERY, HEADER, COOKIE, FORM, BODY, BEAN_PARAM -> true;
             default -> false;
         };
     }

@@ -75,6 +75,7 @@ class ApiSurfaceTest {
     /** Types that implement the engine but are deliberately not part of the surface. */
     private static final Set<String> INTERNAL_TYPES = Set.of(
             "DefaultInputObjectProcessor",
+            "PropertyPolicyComposer",
             "InputPolicyMetadata",
             "InputPolicyMetadataResolver",
             "OwnerTypeWalk",
@@ -183,6 +184,7 @@ class ApiSurfaceTest {
                     InputObjectProcessor.class,
                     "createDefault(Function,Function)",
                     "declaresPolicies(Type)",
+                    "resolvePropertyPolicies(Class,String,EffectiveInputPolicies)",
                     "precomputeFieldNameResolution(Type,InputFieldNameResolver)",
                     "processInput(Object,Type,EffectiveInputPolicies,InputLocation,InputFieldNameResolver)");
             assertNoPublicFields(InputObjectProcessor.class);
@@ -417,7 +419,8 @@ class ApiSurfaceTest {
             assertMethods(
                     ReflectiveInvocationPolicies.class,
                     "resolveRoute(Method,Class)",
-                    "resolveParameter(Method,int,EffectiveInputPolicies)");
+                    "resolveParameter(Method,int,EffectiveInputPolicies)",
+                    "resolveParameter(Method,int,Class,EffectiveInputPolicies)");
             assertNoPublicFields(ReflectiveInvocationPolicies.class);
             assertNoPublicConstructors(ReflectiveInvocationPolicies.class);
         }

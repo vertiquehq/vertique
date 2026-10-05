@@ -9,15 +9,19 @@ import static org.mockito.Mockito.*;
 
 import dev.vertique.rest.core.config.SseConfig;
 import dev.vertique.rest.core.sse.SseEvent;
+import io.vertx.core.AsyncResult;
 import io.vertx.core.Handler;
 import io.vertx.core.Vertx;
 import io.vertx.core.http.HttpServerResponse;
 import io.vertx.core.streams.ReadStream;
+import io.vertx.ext.web.RoutingContext;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -27,8 +31,9 @@ import org.junit.jupiter.api.extension.ExtendWith;
 /**
  * Unit tests for {@link SseReadStream}.
  *
- * <p>Verifies the SSE wire-format encoding for all event field combinations and header injection
- * on the first handler attachment.
+ * <p>Verifies the SSE wire-format encoding for all event field combinations, header injection
+ * on the first handler attachment, and disconnect detection through multicast
+ * {@link RoutingContext#addEndHandler} rather than the response's single-slot {@code closeHandler}.
  */
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 10, unit = TimeUnit.SECONDS)
@@ -44,8 +49,8 @@ class SseReadStreamTest {
         @DisplayName("Should emit data-only event as 'data: <value>\\n\\n'")
         void shouldEmitDataOnlyEvent(Vertx vertx, VertxTestContext testContext) {
             SimpleEventStream source = new SimpleEventStream();
-            HttpServerResponse response = stubResponse();
-            SseReadStream stream = new SseReadStream(source, vertx, noKeepAlive(), response);
+            StubContext stub = stubContext();
+            SseReadStream stream = new SseReadStream(source, vertx, noKeepAlive(), stub.ctx());
 
             List<String> emitted = new ArrayList<>();
             stream.handler(buf -> {
@@ -61,8 +66,8 @@ class SseReadStreamTest {
         @DisplayName("Should emit event with id, event type, and data")
         void shouldEmitEventWithAllFields(Vertx vertx, VertxTestContext testContext) {
             SimpleEventStream source = new SimpleEventStream();
-            HttpServerResponse response = stubResponse();
-            SseReadStream stream = new SseReadStream(source, vertx, noKeepAlive(), response);
+            StubContext stub = stubContext();
+            SseReadStream stream = new SseReadStream(source, vertx, noKeepAlive(), stub.ctx());
 
             List<String> emitted = new ArrayList<>();
             stream.handler(buf -> {
@@ -79,8 +84,8 @@ class SseReadStreamTest {
         @DisplayName("Should emit retry field when retryMs is set")
         void shouldEmitRetryField(Vertx vertx, VertxTestContext testContext) {
             SimpleEventStream source = new SimpleEventStream();
-            HttpServerResponse response = stubResponse();
-            SseReadStream stream = new SseReadStream(source, vertx, noKeepAlive(), response);
+            StubContext stub = stubContext();
+            SseReadStream stream = new SseReadStream(source, vertx, noKeepAlive(), stub.ctx());
 
             List<String> emitted = new ArrayList<>();
             stream.handler(buf -> {
@@ -96,8 +101,8 @@ class SseReadStreamTest {
         @DisplayName("Should emit comment-only event as ': <text>\\n\\n'")
         void shouldEmitCommentOnlyEvent(Vertx vertx, VertxTestContext testContext) {
             SimpleEventStream source = new SimpleEventStream();
-            HttpServerResponse response = stubResponse();
-            SseReadStream stream = new SseReadStream(source, vertx, noKeepAlive(), response);
+            StubContext stub = stubContext();
+            SseReadStream stream = new SseReadStream(source, vertx, noKeepAlive(), stub.ctx());
 
             List<String> emitted = new ArrayList<>();
             stream.handler(buf -> {
@@ -113,8 +118,8 @@ class SseReadStreamTest {
         @DisplayName("Should split multi-line data across multiple data: lines")
         void shouldSplitMultiLineData(Vertx vertx, VertxTestContext testContext) {
             SimpleEventStream source = new SimpleEventStream();
-            HttpServerResponse response = stubResponse();
-            SseReadStream stream = new SseReadStream(source, vertx, noKeepAlive(), response);
+            StubContext stub = stubContext();
+            SseReadStream stream = new SseReadStream(source, vertx, noKeepAlive(), stub.ctx());
 
             List<String> emitted = new ArrayList<>();
             stream.handler(buf -> {
@@ -130,8 +135,8 @@ class SseReadStreamTest {
         @DisplayName("Should JSON-serialize structured object data")
         void shouldJsonSerializeStructuredData(Vertx vertx, VertxTestContext testContext) {
             SimpleEventStream source = new SimpleEventStream();
-            HttpServerResponse response = stubResponse();
-            SseReadStream stream = new SseReadStream(source, vertx, noKeepAlive(), response);
+            StubContext stub = stubContext();
+            SseReadStream stream = new SseReadStream(source, vertx, noKeepAlive(), stub.ctx());
 
             List<String> emitted = new ArrayList<>();
             stream.handler(buf -> {
@@ -153,8 +158,8 @@ class SseReadStreamTest {
         @DisplayName("Should emit all fields in field-order: id, event, retry, comment, data")
         void shouldEmitAllFieldsInOrder(Vertx vertx, VertxTestContext testContext) {
             SimpleEventStream source = new SimpleEventStream();
-            HttpServerResponse response = stubResponse();
-            SseReadStream stream = new SseReadStream(source, vertx, noKeepAlive(), response);
+            StubContext stub = stubContext();
+            SseReadStream stream = new SseReadStream(source, vertx, noKeepAlive(), stub.ctx());
 
             List<String> emitted = new ArrayList<>();
             stream.handler(buf -> {
@@ -194,42 +199,42 @@ class SseReadStreamTest {
         @DisplayName("Should write Cache-Control and Connection headers on first handler set")
         void shouldWriteSseHeadersOnFirstHandlerSet(Vertx vertx) {
             SimpleEventStream source = new SimpleEventStream();
-            HttpServerResponse response = stubResponse();
-            SseReadStream stream = new SseReadStream(source, vertx, noKeepAlive(), response);
+            StubContext stub = stubContext();
+            SseReadStream stream = new SseReadStream(source, vertx, noKeepAlive(), stub.ctx());
 
             stream.handler(buf -> {});
 
-            verify(response).putHeader("Cache-Control", "no-cache");
-            verify(response).putHeader("Connection", "keep-alive");
+            verify(stub.response()).putHeader("Cache-Control", "no-cache");
+            verify(stub.response()).putHeader("Connection", "keep-alive");
         }
 
         @Test
         @DisplayName("Should enable chunked transfer encoding on first handler set")
         void shouldEnableChunkedEncoding(Vertx vertx) {
             SimpleEventStream source = new SimpleEventStream();
-            HttpServerResponse response = stubResponse();
-            SseReadStream stream = new SseReadStream(source, vertx, noKeepAlive(), response);
+            StubContext stub = stubContext();
+            SseReadStream stream = new SseReadStream(source, vertx, noKeepAlive(), stub.ctx());
 
             stream.handler(buf -> {});
 
             // HTTP/1.1 requires either Content-Length or chunked encoding for streaming responses.
             // Without this flag, every response.write(...) throws IllegalStateException.
-            verify(response).setChunked(true);
+            verify(stub.response()).setChunked(true);
         }
 
         @Test
         @DisplayName("Should write headers only once even if handler is called multiple times")
         void shouldWriteHeadersOnlyOnce(Vertx vertx) {
             SimpleEventStream source = new SimpleEventStream();
-            HttpServerResponse response = stubResponse();
-            SseReadStream stream = new SseReadStream(source, vertx, noKeepAlive(), response);
+            StubContext stub = stubContext();
+            SseReadStream stream = new SseReadStream(source, vertx, noKeepAlive(), stub.ctx());
 
             stream.handler(buf -> {});
             stream.handler(buf -> {}); // second call
 
-            verify(response, times(1)).putHeader("Cache-Control", "no-cache");
-            verify(response, times(1)).putHeader("Connection", "keep-alive");
-            verify(response, times(1)).setChunked(true);
+            verify(stub.response(), times(1)).putHeader("Cache-Control", "no-cache");
+            verify(stub.response(), times(1)).putHeader("Connection", "keep-alive");
+            verify(stub.response(), times(1)).setChunked(true);
         }
     }
 
@@ -243,12 +248,12 @@ class SseReadStreamTest {
         @DisplayName("Should emit keep-alive comments at configured interval")
         void shouldEmitKeepAliveComments(Vertx vertx, VertxTestContext testContext) {
             SimpleEventStream source = new SimpleEventStream();
-            HttpServerResponse response = stubResponse();
+            StubContext stub = stubContext();
             SseConfig config = SseConfig.builder()
                     .keepAliveEnabled(true)
                     .keepAliveIntervalMs(50)
                     .build();
-            SseReadStream stream = new SseReadStream(source, vertx, config, response);
+            SseReadStream stream = new SseReadStream(source, vertx, config, stub.ctx());
 
             List<String> emitted = new ArrayList<>();
             stream.handler(buf -> {
@@ -260,7 +265,7 @@ class SseReadStreamTest {
         }
     }
 
-    // --- End handler ---
+    // --- End handler / disconnect ---
 
     @Nested
     @DisplayName("End handler")
@@ -270,17 +275,132 @@ class SseReadStreamTest {
         @DisplayName("Should fire end handler when source stream ends")
         void shouldFireEndHandlerOnSourceEnd(Vertx vertx, VertxTestContext testContext) {
             SimpleEventStream source = new SimpleEventStream();
-            HttpServerResponse response = stubResponse();
-            SseReadStream stream = new SseReadStream(source, vertx, noKeepAlive(), response);
+            StubContext stub = stubContext();
+            SseReadStream stream = new SseReadStream(source, vertx, noKeepAlive(), stub.ctx());
 
             stream.handler(buf -> {});
             stream.endHandler(v -> testContext.completeNow());
 
             source.end();
         }
+
+        @Test
+        @DisplayName("Should register disconnect detection through addEndHandler, not closeHandler")
+        void shouldRegisterThroughAddEndHandlerNotCloseHandler(Vertx vertx) {
+            SimpleEventStream source = new SimpleEventStream();
+            StubContext stub = stubContext();
+            new SseReadStream(source, vertx, noKeepAlive(), stub.ctx());
+
+            verify(stub.ctx(), times(1)).addEndHandler(any());
+            verify(stub.response(), never()).closeHandler(any());
+            verify(stub.response(), never()).endHandler(any());
+            verify(stub.response(), never()).exceptionHandler(any());
+        }
+
+        @Test
+        @DisplayName("Should cancel the source and fire end handler on a failed routing-context end")
+        void shouldCancelSourceOnFailedEndHandler(Vertx vertx, VertxTestContext testContext) {
+            SimpleEventStream source = new SimpleEventStream();
+            StubContext stub = stubContext();
+            SseReadStream stream = new SseReadStream(source, vertx, noKeepAlive(), stub.ctx());
+
+            stream.handler(buf -> {});
+            stream.endHandler(v -> {
+                testContext.verify(() -> assertNull(source.dataHandler(), "source must be cancelled on disconnect"));
+                testContext.completeNow();
+            });
+
+            @SuppressWarnings("unchecked")
+            AsyncResult<Void> failed = mock(AsyncResult.class);
+            when(failed.succeeded()).thenReturn(false);
+            stub.registeredEndHandler().handle(failed);
+        }
+
+        @Test
+        @DisplayName("Should still fire end handler once and return normally when source cancellation throws")
+        void shouldFireEndHandlerWhenSourceCancellationThrows(Vertx vertx) {
+            SimpleEventStream source = new SimpleEventStream();
+            StubContext stub = stubContext();
+            SseReadStream stream = new SseReadStream(source, vertx, noKeepAlive(), stub.ctx());
+            stream.handler(buf -> {});
+            source.throwOnCancel();
+
+            AtomicInteger endCalls = new AtomicInteger();
+            stream.endHandler(v -> endCalls.incrementAndGet());
+
+            assertDoesNotThrow(() -> stub.registeredEndHandler().handle(failedOutcome()));
+            assertDoesNotThrow(() -> stub.registeredEndHandler().handle(failedOutcome()));
+
+            assertEquals(1, endCalls.get(), "terminal handler must run exactly once");
+        }
+
+        @Test
+        @DisplayName("Should cancel keep-alive timer even when source cancellation throws")
+        void shouldCancelKeepAliveWhenSourceCancellationThrows(Vertx vertx) {
+            SimpleEventStream source = new SimpleEventStream();
+            StubContext stub = stubContext();
+            SseConfig config = SseConfig.builder()
+                    .keepAliveEnabled(true)
+                    .keepAliveIntervalMs(20)
+                    .build();
+            SseReadStream stream = new SseReadStream(source, vertx, config, stub.ctx());
+            AtomicInteger keepAlives = new AtomicInteger();
+            stream.handler(buf -> keepAlives.incrementAndGet());
+            source.throwOnCancel();
+
+            assertDoesNotThrow(() -> stub.registeredEndHandler().handle(failedOutcome()));
+            int afterCancel = keepAlives.get();
+            try {
+                Thread.sleep(100);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+
+            assertEquals(afterCancel, keepAlives.get(), "keep-alive timer must be cancelled");
+        }
+
+        @Test
+        @DisplayName("Should isolate a throwing terminal handler so the callback returns normally")
+        void shouldIsolateThrowingEndHandler(Vertx vertx) {
+            SimpleEventStream source = new SimpleEventStream();
+            StubContext stub = stubContext();
+            SseReadStream stream = new SseReadStream(source, vertx, noKeepAlive(), stub.ctx());
+            stream.handler(buf -> {});
+            stream.endHandler(v -> {
+                throw new IllegalStateException("terminal handler failure");
+            });
+
+            assertDoesNotThrow(() -> stub.registeredEndHandler().handle(failedOutcome()));
+        }
+
+        @Test
+        @DisplayName("Should isolate a throwing terminal handler on source end")
+        void shouldIsolateThrowingEndHandlerOnSourceEnd(Vertx vertx) {
+            SimpleEventStream source = new SimpleEventStream();
+            StubContext stub = stubContext();
+            SseReadStream stream = new SseReadStream(source, vertx, noKeepAlive(), stub.ctx());
+            stream.handler(buf -> {});
+            stream.endHandler(v -> {
+                throw new IllegalStateException("terminal handler failure");
+            });
+
+            assertDoesNotThrow(source::end);
+        }
     }
 
     // --- Helpers ---
+
+    /**
+     * Returns a failed routing-context end outcome, as delivered on client disconnect or reset.
+     *
+     * @return a failed {@link AsyncResult}
+     */
+    @SuppressWarnings("unchecked")
+    private static AsyncResult<Void> failedOutcome() {
+        AsyncResult<Void> failed = mock(AsyncResult.class);
+        when(failed.succeeded()).thenReturn(false);
+        return failed;
+    }
 
     /**
      * Returns an {@link SseConfig} with keep-alive disabled for deterministic tests.
@@ -292,16 +412,42 @@ class SseReadStreamTest {
     }
 
     /**
-     * Creates a stub {@link HttpServerResponse} that accepts headers and close-handler registration.
+     * Creates a stub {@link RoutingContext} whose response accepts headers and whose
+     * {@code addEndHandler} captures the registered handler for disconnect proofs.
      *
-     * @return lenient mock response
+     * @return the stub context and its captured end handler
      */
-    private static HttpServerResponse stubResponse() {
+    private static StubContext stubContext() {
+        RoutingContext ctx = mock(RoutingContext.class);
         HttpServerResponse response = mock(HttpServerResponse.class);
+        AtomicReference<Handler<AsyncResult<Void>>> endHandler = new AtomicReference<>();
+        when(ctx.response()).thenReturn(response);
         when(response.putHeader(anyString(), anyString())).thenReturn(response);
         when(response.setChunked(anyBoolean())).thenReturn(response);
-        when(response.closeHandler(any())).thenReturn(response);
-        return response;
+        when(ctx.addEndHandler(any())).thenAnswer(invocation -> {
+            endHandler.set(invocation.getArgument(0));
+            return 0;
+        });
+        return new StubContext(ctx, response, endHandler);
+    }
+
+    /**
+     * Captured routing-context stub used by every constructor call under test.
+     *
+     * @param ctx            the mocked routing context
+     * @param response       the mocked HTTP response returned by {@code ctx.response()}
+     * @param endHandlerRef  holder for the handler passed to {@code addEndHandler}
+     */
+    private record StubContext(
+            RoutingContext ctx,
+            HttpServerResponse response,
+            AtomicReference<Handler<AsyncResult<Void>>> endHandlerRef) {
+
+        Handler<AsyncResult<Void>> registeredEndHandler() {
+            Handler<AsyncResult<Void>> handler = endHandlerRef.get();
+            assertNotNull(handler, "SseReadStream must register an addEndHandler");
+            return handler;
+        }
     }
 
     // --- Test doubles ---
@@ -315,6 +461,12 @@ class SseReadStreamTest {
         private Handler<SseEvent> dataHandler;
         private Handler<Void> endHandler;
         private Handler<Throwable> exceptionHandler;
+        private boolean throwOnCancel;
+
+        /** Makes every subsequent {@code handler(null)} cancellation throw. */
+        void throwOnCancel() {
+            this.throwOnCancel = true;
+        }
 
         /**
          * Emits a single event to the registered data handler.
@@ -336,6 +488,15 @@ class SseReadStreamTest {
             }
         }
 
+        /**
+         * Returns the current data handler, or {@code null} when cancelled.
+         *
+         * @return the data handler
+         */
+        Handler<SseEvent> dataHandler() {
+            return dataHandler;
+        }
+
         @Override
         public ReadStream<SseEvent> exceptionHandler(Handler<Throwable> handler) {
             this.exceptionHandler = handler;
@@ -344,6 +505,9 @@ class SseReadStreamTest {
 
         @Override
         public ReadStream<SseEvent> handler(Handler<SseEvent> handler) {
+            if (handler == null && throwOnCancel) {
+                throw new IllegalStateException("cancellation failed");
+            }
             this.dataHandler = handler;
             return this;
         }

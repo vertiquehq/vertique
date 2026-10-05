@@ -73,7 +73,12 @@ Jakarta REST implementations such as Jersey and RESTEasy. A method declared by a
 interface default, and a default in a more specific interface wins over the one it overrides, so an
 override never adds a second route. A superclass's `private` method with the same signature is not
 inherited and does not hide the default. (A package-private one in another package does: the JVM
-dispatches the interface call to it and fails, so such a default is not routed.) The route takes the resource class's class-level annotations
+dispatches the interface call to it and fails, so such a default is not routed.) A public (or
+otherwise inherited) method declared by a superclass inherits method- and parameter-level JAX-RS
+annotations from the interfaces the *resource class* implements — not only from interfaces of the
+declaring superclass — so a `Base.delete` that implements `Crud.delete` for `R extends Base
+implements Crud` is routed with `Crud`'s `@DELETE` / `@Path` / `@PathParam` even when `Base`
+implements nothing. The route takes the resource class's class-level annotations
 (`@Path`, security, media types) together with the default method's merged method annotations.
 Inherited annotations are matched by erased signature, and type variables are not resolved against
 the implementing class: a generic interface method (`Crud<ID>`) overridden with a concrete parameter
@@ -108,7 +113,11 @@ interceptors → status and headers onto the wire → `ResponseSerializer` for t
 Two consequences matter to application code. `afterResponse` fires at **handoff**, while a streamed
 body may still be in flight, because observers need the routing context and tracing span still
 active. And status plus headers are already on the wire before a `ResponseSerializer` runs — a
-serializer owns the body only.
+serializer owns the body only. A post-handoff wire failure is recorded on the framework-owned
+completion state through `RequestCompletionRecorder.recordWireFailure` (first writer wins), not
+through a public `RoutingContext.data()` key; the completion event's `wireFailureCode` reads that
+marker, with a failed response end-handler result as the fallback, including the late-`end()`
+carve-out documented on `RestRequestCompletedEvent`.
 
 ### Per-request processing order
 
@@ -152,7 +161,13 @@ class/method case, instead of silently resolving to an empty chain. A conflict o
 field is rejected as well, a step later: it fails while the route's parameter extractor is built
 during route registration. Both are startup failures — declaring both `@Sanitize` and
 `@SkipSanitization` (or both `@Canonicalize` and `@SkipCanonicalization`) on one parameter or one bean
-field never reaches a request.
+field never reaches a request. A `@Canonicalize`/`@Sanitize`/`@Skip*` written on the `@BeanParam`
+parameter itself is the composition baseline for that bean's fields on both the reflective and
+generated paths: parameter, bean-type, and field metadata are composed once into each field's
+effective chain and applied on the transport string before conversion (field chains append; field
+skips suppress the corresponding axis). There is no second intermediate-map processing pass. The
+startup gate that refuses an unbound engine when a route declares processing counts that parameter
+chain, so a declared parameter policy cannot fail startup for work that would never run.
 
 **Which body shapes step 3 reaches.** A DTO body, a collection or array body, a `String` body, a
 form-urlencoded body bound to a POJO, and the schema-free `JsonObject` / `JsonArray` bodies all pass
@@ -372,9 +387,15 @@ A 16-component convenience constructor omits `executionPlan`. The compact constr
 `validationGroups` and copies the four lists, so every component is immutable regardless of what the
 caller passes. `methodAnnotations` and `classAnnotations` are resolved through
 `dev.vertique.core.util.AnnotationResolver`, which walks the superclass chain and interfaces — an
-annotation on an interface method is visible here. For a route backed by an inherited interface
-`default` method, `method()` is the interface's `Method`, so `method().getDeclaringClass()` is the
-interface; `resourceInstance().getClass()` is the resource class.
+annotation on an interface method is visible here. For a class-declared method (including one
+inherited from a superclass) the interface walk uses the resource class, so interfaces the resource
+implements contribute annotations even when the declaring superclass does not. For a route backed by
+an inherited interface `default` method, `method()` is the interface's `Method`, so
+`method().getDeclaringClass()` is the interface and the interface walk starts there;
+`resourceInstance().getClass()` is the resource class. Security annotations from every declaration
+of the same method or class are merged and then checked for conflicts (incompatible kinds, or
+differing `@RolesAllowed` / `@Authorized` member values); a nearer declaration does not win. The
+codegen path applies the same fail-closed rule.
 
 `ParamMeta` describes one declared parameter:
 
@@ -476,7 +497,7 @@ The framework's `ExceptionMapper<Throwable>`, pre-configured by `RestModule`:
 | `ConflictException` (core.exception) | 409 | `ProblemDetail` |
 | `NotFoundException` (core.exception) | 404 | `ProblemDetail` |
 | `UnavailableException` (core.exception) | 503 | `ProblemDetail` |
-| `Throwable` (catch-all) | 500 | `ProblemDetail` with the fixed detail `"Internal Server Error"` — the exception message is never echoed |
+| `Throwable` (catch-all) | 500 | `ProblemDetail` with the fixed detail `"Internal Server Error"` — the exception message is never echoed. Logging is deferred to `ErrorPipeline` (see below) so a Vert.x 4xx fallback is not recorded as an unhandled server fault |
 
 `UnauthorizedException` and `ForbiddenException` are registered by fully-qualified name to avoid
 ambiguity with `jakarta.ws.rs.NotAuthorizedException` and `jakarta.ws.rs.ForbiddenException`.
@@ -514,12 +535,23 @@ RequestInterceptor.onError sync observers, with the original cause
   → Vert.x status-code fallback (only when no specific mapper matched)
   → ProblemDetail instance enrichment from the request path
   → ErrorInterceptor.afterMapping (async chain, Response → Response)
+  → unhandled-exception logging (framework Throwable catch-all only; level follows the final status)
 ```
 
 The original cause stays on the routing context for the whole of error processing, so audit and
 diagnostic interceptors can still see the root cause after mapping. A `beforeMapping` or
 `afterMapping` handler that fails is logged at WARN and its input passes through unchanged — one bad
 interceptor cannot break the error path.
+
+**Unhandled-exception logging.** The framework `Throwable` catch-all no longer logs inside the mapper:
+the catch-all has no routing context and cannot see a Vert.x 4xx status that will replace its 500.
+`ErrorPipeline` logs once, after mapping, fallback and the `afterMapping` chain have settled, using the
+status of the response that will be sent (an `afterMapping` interceptor can change it), and only when the framework catch-all actually
+produced the response (not a typed default such as `IllegalArgumentException`, and not an application
+`ExceptionMapper`). Final status **400–499** is logged at DEBUG (`Unhandled exception mapped to client
+error {status}`); other outcomes keep ERROR (`Unhandled exception`) with the stack. That keeps a
+multipart part-count rejection (or any other `ctx.fail(4xx, cause)` decoder limit) out of ERROR
+alerting while genuine unhandled server faults still page.
 
 **Vert.x status-code fallback.** The router-level failure handler records the status the Vert.x layer
 authoritatively decided for a failure, and the error pipeline reconciles it with the mapper's status.
@@ -575,8 +607,18 @@ exception's message that must not reach the client. A mapped response carrying a
 entity** is fail-closed the same way: replaced with a fresh `ProblemDetail` for the winning status and
 `application/problem+json`, so a 500 diagnostic body cannot ride under an overriding 401. Register your
 own `ExceptionMapper` for the cause's type when a specific detail is required — it outranks the Vert.x
-status entirely. When the recorded status *agrees* with the mapped one nothing changes, so a 415 whose
-detail names the offending content type keeps it.
+status entirely.
+
+**Equal-status detail sanitization.** When the recorded status *agrees* with the mapped one, the status
+is left alone but a `ProblemDetail` `detail` synthesized from an arbitrary exception message is still
+dropped — the same disclosure rule as the override path. That closes the leak where
+`ctx.fail(401, new UnauthorizedException("…"))` (or any other semantic type whose own mapping already
+equals the Vert.x status) would otherwise publish the cause message verbatim. A
+`jakarta.ws.rs.WebApplicationException` whose `Response` already carries an entity is treated as
+deliberately authored client output and keeps its body; the framework's own 415 producers
+(`JaxRsRouteRegistrar`'s `@Consumes` check and `ContentTypeValidationMiddleware`) author a
+`ProblemDetail` on that response before failing the context, so their content-type diagnostics still
+reach the client.
 
 **Headers when the body is rebuilt.** Rebuilding the body — by this override, or by the `instance`
 enrichment every `ProblemDetail` gets — drops the headers your mapper set that describe the *octets*
@@ -893,6 +935,15 @@ An SSE endpoint returns `ReadStream<SseEvent>` from a method annotated
 `dev.vertique:vertique-rest-core`, bound by `RestModule`) and create a channel inside the method; the
 framework handles buffering, wire formatting, keepalive, and connection lifecycle. Defaults come from
 `jaxrs.sse`.
+
+Disconnect detection uses `RoutingContext.addEndHandler` (multicast), not
+`response().closeHandler(...)`. The response's `endHandler` / `exceptionHandler` / `closeHandler`
+setters are single-slot: replacing them cuts off every routing-context end handler on that exit path,
+including completion emission and `RequestContextLifecycle` cleanup. Application code that needs to
+observe the request ending must register through `addEndHandler` or
+`RequestContextLifecycle.Handle.onClose` — never through those three response setters.
+The disconnect callback isolates failures: if a custom `ReadStream` throws while being cancelled, the
+exception is logged and completion emission and lifecycle cleanup still run exactly once.
 
 Each event is written as lines terminated by `\n`, followed by a blank line:
 

@@ -184,7 +184,41 @@ class AnnotationResolverTest {
 
             assertThrows(UnsupportedOperationException.class, () -> annotations.add(null));
         }
+
+        @Test
+        @DisplayName("view type includes interfaces the declaring class does not implement")
+        void viewTypeIncludesResourceInterfaces() throws NoSuchMethodException {
+            // SuperclassBase.delete is declared by a class that implements nothing; ResourceView
+            // implements AnnotatedApi. Resolving with the declaring class misses @TestMethodAnno;
+            // resolving with the resource view finds it (vertiquehq/vertique-dev#636).
+            Method inherited = SuperclassBase.class.getMethod("delete", String.class);
+
+            List<java.lang.annotation.Annotation> fromDeclaring =
+                    AnnotationResolver.resolveMethodAnnotations(inherited);
+            assertTrue(
+                    fromDeclaring.stream().noneMatch(a -> a instanceof TestMethodAnno),
+                    "declaring-class view must not see AnnotatedApi");
+
+            List<java.lang.annotation.Annotation> fromResource =
+                    AnnotationResolver.resolveMethodAnnotations(inherited, ResourceView.class);
+            assertTrue(
+                    fromResource.stream().anyMatch(a -> a instanceof TestMethodAnno),
+                    "resource view must inherit @TestMethodAnno from AnnotatedApi");
+        }
     }
+
+    interface AnnotatedApi {
+        @TestMethodAnno
+        String delete(String id);
+    }
+
+    static class SuperclassBase {
+        public String delete(String id) {
+            return id;
+        }
+    }
+
+    static class ResourceView extends SuperclassBase implements AnnotatedApi {}
 
     // --- Class annotation tests ---
 

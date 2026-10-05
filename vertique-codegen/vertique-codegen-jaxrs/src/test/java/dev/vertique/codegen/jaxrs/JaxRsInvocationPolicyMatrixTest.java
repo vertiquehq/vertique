@@ -21,7 +21,7 @@ import org.junit.jupiter.params.provider.MethodSource;
  * apt.ElementInvocationPolicies}, resolves the same IP-01..IP-19 matrix as {@code
  * ElementInvocationPoliciesTest} (TP-001) and {@code ReflectiveInvocationPoliciesTest} (T016
  * TP-002) — end-to-end through the real {@link JaxRsPipelineProcessor} pipeline, asserting the
- * generated {@code POL0}/{@code ROUTE_POL} literal content (not the adapter's return value
+ * generated {@code POL0} literal content (not the adapter's return value
  * directly).
  *
  * <p>Every fixture reuses the exact class/method names of {@link InvocationPolicyScenarios}'s
