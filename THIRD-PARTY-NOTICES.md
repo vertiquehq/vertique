@@ -62,7 +62,7 @@ review since test code, fixtures, and CI images redistribute them.
 
 | Coordinate | Version | License |
 | --- | --- | --- |
-| `org.junit.jupiter:junit-jupiter` (+ `-api`) | 5.14.4 | EPL-2.0 |
+| `org.junit.jupiter:junit-jupiter` (+ `-api`) | 6.1.3 | EPL-2.0 |
 | `io.rest-assured:rest-assured` | 6.0.0 | Apache-2.0 |
 | `com.atlassian.oai:swagger-request-validator-restassured` | 2.46.0 | Apache-2.0 |
 | `org.mockito:mockito-core` / `mockito-junit-jupiter` | 5.23.0 | MIT |

@@ -137,7 +137,7 @@ SPDX-License-Identifier: EUPL-1.2
         <bucket4j.version>8.19.0</bucket4j.version>
 
         <!-- Test -->
-        <junit.jupiter.version>5.14.4</junit.jupiter.version>
+        <junit.jupiter.version>6.1.3</junit.jupiter.version>
         <rest-assured.version>6.0.0</rest-assured.version>
         <atlassian.swagger-validator.version>3.0.0</atlassian.swagger-validator.version>
         <mockito.version>5.23.0</mockito.version>
@@ -208,6 +208,16 @@ SPDX-License-Identifier: EUPL-1.2
 
     <dependencyManagement>
         <dependencies>
+            <!-- JUnit BOM — declared before vertx-dependencies so every JUnit Jupiter and
+                 Platform artifact resolves to one version. vertx-junit5 otherwise brings an
+                 older junit-jupiter-engine that cannot load against a newer junit-jupiter-api. -->
+            <dependency>
+                <groupId>org.junit</groupId>
+                <artifactId>junit-bom</artifactId>
+                <version>${junit.jupiter.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
             <!-- Micrometer BOM — declared before vertx-dependencies so 1.16.6 wins over any
                  version that vertx-dependencies transitively manages. -->
             <dependency>
