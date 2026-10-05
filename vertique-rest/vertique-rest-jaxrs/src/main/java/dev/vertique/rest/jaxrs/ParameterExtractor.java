@@ -1449,8 +1449,10 @@ final class ParameterExtractor {
      *
      * <p>The single derivation both the warming pass ({@link #warmBeanFieldPolicies}) and the request
      * path ({@link #materializeBean}) use, so a warmed entry is by construction the value the request
-     * path would otherwise have computed. Each field goes through {@link #resolveParamMetaPolicies},
-     * which rejects a field declaring both an additive and a skip annotation on the same axis.
+     * path would otherwise have computed. Each field first runs {@link #resolveParamMetaPolicies} for
+     * additive/skip conflict validation (returned chains discarded), then
+     * {@link InputObjectProcessor#resolvePropertyPolicies} for the effective chains that are stored
+     * and applied.
      *
      * @param beanType      the bean type the fields belong to; names the conflict site
      * @param fields        the bean's fields in declaration order
@@ -1514,18 +1516,22 @@ final class ParameterExtractor {
 
     /**
      * Materializes a bean-param object from an explicit ordered field list, bypassing the
-     * {@link #BEAN_PARAM_CACHE} reflective walk. Per-field
-     * {@link EffectiveInputPolicies} are derived internally from each field's
-     * {@link ResourceMethodMeta.ParamMeta#annotations()} using the supplied route-level baseline,
-     * through the same shared resolver {@link #resolveParamMetaPolicies} drives for every {@code pm}
-     * without a {@link Method}+index pair. This ensures field-level input-policy annotations ({@code @Canonicalize},
-     * {@code @Sanitize}, {@code @SkipCanonicalization}, {@code @SkipSanitization}) are honoured on
-     * the generated-companion path, maintaining parity with the reflective path.
+     * {@link #BEAN_PARAM_CACHE} reflective walk.
      *
-     * <p>The overall processing contract is identical to {@link #extractBeanParam}: per-field
-     * policies are composed once from the parameter baseline, bean-type metadata, and field
-     * metadata via {@link InputObjectProcessor#resolvePropertyPolicies}, then applied during
-     * scalar/form extraction <em>before</em> conversion. The intermediate map is not walked again.
+     * <p>Two responsibilities stay distinct at warming and on the request path:
+     * <ul>
+     *   <li>{@link #resolveParamMetaPolicies} validates additive/skip conflicts on each field's
+     *       {@link ResourceMethodMeta.ParamMeta#annotations()} (the same bridge every {@code pm}
+     *       without a {@link Method}+index pair uses) — its returned chains are discarded;</li>
+     *   <li>{@link InputObjectProcessor#resolvePropertyPolicies} owns the effective chains actually
+     *       applied: parameter baseline, bean-type metadata, and field metadata composed once.</li>
+     * </ul>
+     * That split keeps the generated-companion path in parity with the reflective path for both
+     * startup conflict rejection and single-pass processing.
+     *
+     * <p>The overall processing contract is identical to {@link #extractBeanParam}: the composed
+     * per-field policies are applied during scalar/form extraction <em>before</em> conversion. The
+     * intermediate map is not walked again.
      *
      * @param fields           ordered array of bean field metadata; must not be {@code null};
      *                         each {@code meta().annotations()} should carry the field's declared
