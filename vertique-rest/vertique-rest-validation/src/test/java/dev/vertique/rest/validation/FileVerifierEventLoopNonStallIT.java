@@ -18,6 +18,7 @@ import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
 import io.vertx.core.VertxOptions;
 import io.vertx.core.buffer.Buffer;
+import io.vertx.core.http.HttpClient;
 import io.vertx.core.http.HttpServer;
 import io.vertx.ext.web.FileUpload;
 import io.vertx.ext.web.client.WebClient;
@@ -66,20 +67,24 @@ import org.junit.jupiter.api.extension.ExtendWith;
 public class FileVerifierEventLoopNonStallIT {
 
     private static Vertx vertx;
+    /** Awaitable close handle; {@link WebClient#close()} discards the underlying future. */
+    private static HttpClient transport;
+
     private static WebClient client;
 
     private HttpServer server;
 
     /**
      * Creates the single-event-loop {@link Vertx} instance this class owns and the class-scoped
-     * {@link WebClient}. The client is bound to a static field so {@link #tearDownClient} can close it;
-     * an unbound client can never be closed at all.
+     * {@link WebClient} wrapped around a raw {@link HttpClient}. The raw client is bound so
+     * {@link #tearDownClient} can await its close before {@link Vertx#close()}.
      */
     @BeforeAll
     static void setUpClient() {
         vertx = Vertx.vertx(new VertxOptions().setEventLoopPoolSize(1));
         // Redirects off: parity with the raw client; WebClient forwards Authorization across 3xx.
-        client = WebClient.create(vertx, new WebClientOptions().setFollowRedirects(false));
+        transport = vertx.createHttpClient();
+        client = WebClient.wrap(transport, new WebClientOptions().setFollowRedirects(false));
     }
 
     @AfterEach
@@ -89,22 +94,20 @@ public class FileVerifierEventLoopNonStallIT {
     }
 
     /**
-     * Closes the {@link WebClient} and then the class-owned {@link Vertx} instance — the client first,
-     * so it is never left dangling on an already-closed Vert.x.
-     *
-     * <p>{@link WebClient#close()} is {@code void}, unlike {@code HttpClient.close()}: it returns once
-     * the underlying client has been asked to close, so there is no future to join here and the Vert.x
-     * close alone carries the completion.
-     *
-     * @param ctx the test context used for async teardown assertion
+     * Awaits the raw {@link HttpClient} close, then the class-owned {@link Vertx} instance — the
+     * client first, so it is never left closing on an already-shut event loop.
      */
     @AfterAll
-    static void tearDownClient(VertxTestContext ctx) {
-        if (client != null) {
-            client.close();
+    static void tearDownClient() throws Exception {
+        if (transport != null) {
+            transport.close().toCompletionStage().toCompletableFuture().get(20, TimeUnit.SECONDS);
+            transport = null;
+            client = null;
         }
-        Future<Void> vertxClose = vertx != null ? vertx.close() : Future.succeededFuture();
-        vertxClose.onComplete(ctx.succeeding(v -> ctx.completeNow()));
+        if (vertx != null) {
+            vertx.close().toCompletionStage().toCompletableFuture().get(20, TimeUnit.SECONDS);
+            vertx = null;
+        }
     }
 
     @Test

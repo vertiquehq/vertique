@@ -22,7 +22,9 @@ import dev.vertique.rest.test.RestTestFixtureModule;
 import dev.vertique.rest.test.RestTestMount;
 import dev.vertique.rest.test.RestTestMounts;
 import dev.vertique.rest.test.RestTestNoSecurityModule;
+import io.vertx.core.Future;
 import io.vertx.core.Vertx;
+import io.vertx.core.http.HttpClient;
 import io.vertx.core.http.HttpServer;
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
@@ -75,6 +77,9 @@ class AbsentBodyGateCharacterizationTest {
 
     private Vertx vertx;
     private HttpServer server;
+    /** Awaitable close handle; {@link WebClient#close()} discards the underlying future. */
+    private HttpClient transport;
+
     private WebClient client;
 
     @BeforeEach
@@ -84,12 +89,12 @@ class AbsentBodyGateCharacterizationTest {
 
     @AfterEach
     void tearDown() throws Exception {
-        if (client != null) {
-            client.close();
-        }
-        if (server != null) {
-            server.close().toCompletionStage().toCompletableFuture().get(WAIT_SECONDS, TimeUnit.SECONDS);
-        }
+        Future<Void> clientClose = transport != null ? transport.close() : Future.succeededFuture();
+        Future<Void> serverClose = server != null ? server.close() : Future.succeededFuture();
+        Future.join(clientClose, serverClose)
+                .toCompletionStage()
+                .toCompletableFuture()
+                .get(WAIT_SECONDS, TimeUnit.SECONDS);
         vertx.close().toCompletionStage().toCompletableFuture().get(WAIT_SECONDS, TimeUnit.SECONDS);
     }
 
@@ -203,7 +208,8 @@ class AbsentBodyGateCharacterizationTest {
         OrderResource resource = new OrderResource();
         server = RestTestMounts.startServerBlocking(
                 vertx, mount.apply(vertx), Set.of(resource), Duration.ofSeconds(WAIT_SECONDS));
-        client = WebClient.create(vertx, new WebClientOptions().setFollowRedirects(false));
+        transport = vertx.createHttpClient();
+        client = WebClient.wrap(transport, new WebClientOptions().setFollowRedirects(false));
 
         // When: a POST with no body and no Content-Type is sent
         HttpResponse<?> response = client.post(server.actualPort(), "127.0.0.1", "/orders")
