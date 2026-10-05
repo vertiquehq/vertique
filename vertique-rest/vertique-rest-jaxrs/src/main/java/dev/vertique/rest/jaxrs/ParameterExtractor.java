@@ -152,8 +152,7 @@ final class ParameterExtractor {
      * parameter this route declares, so a conflicting field declaration surfaces while the route is
      * being registered instead of on the first request that materialises the bean.
      */
-    private final Map<BeanFieldPolicyKey, EffectiveInputPolicies[]> beanFieldPoliciesCache =
-            new ConcurrentHashMap<>();
+    private final Map<BeanFieldPolicyKey, EffectiveInputPolicies[]> beanFieldPoliciesCache = new ConcurrentHashMap<>();
 
     /**
      * Cache key pairing a {@code @BeanParam} bean class with the invocation-policy baseline used to

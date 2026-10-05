@@ -462,8 +462,7 @@ class BeanParamFieldPolicyParityTest {
         }
 
         private static Object[] extractWithRealEngine(Object resource, String pageValue) {
-            List<ResourceMethodMeta> metas =
-                    new ResourceScanner(new SecurityPolicyBuilder()).scanResource(resource);
+            List<ResourceMethodMeta> metas = new ResourceScanner(new SecurityPolicyBuilder()).scanResource(resource);
             assertEquals(1, metas.size());
             ResourceMethodMeta meta = metas.get(0);
             InputObjectProcessor processor = InputObjectProcessor.createDefault(
