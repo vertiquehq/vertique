@@ -117,4 +117,18 @@ public interface KafkaProducerCaptureHook extends OrderedExtension {
                 send.operation() != null ? send.operation().method() : null,
                 send.result());
     }
+
+    /**
+     * Validates a {@link KafkaProducer @KafkaProducer} interface when {@link KafkaProducerFactory}
+     * creates its proxy, so a configuration error fails application startup instead of surfacing,
+     * or being swallowed, on a later send.
+     *
+     * <p>{@link KafkaProducerFactory#create(Class)} calls this once per hook, before the proxy is
+     * built. An exception thrown here propagates out of {@code create} and stops the producer from
+     * being created; unlike {@link #onSend}, this callback may throw. The default accepts every
+     * producer interface.
+     *
+     * @param producerInterface the {@code @KafkaProducer} interface being created; never {@code null}
+     */
+    default void validateProducer(Class<?> producerInterface) {}
 }

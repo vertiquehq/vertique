@@ -175,6 +175,7 @@ class DefaultRestClientDispatcherTest {
                         Map.of()),
                 null,
                 "test-client",
+                Object.class,
                 List.of(),
                 resolver);
     }

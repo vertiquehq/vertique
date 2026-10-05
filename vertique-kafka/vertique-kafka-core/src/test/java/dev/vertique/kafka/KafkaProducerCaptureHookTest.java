@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.config.parser.DefaultConfigMapper;
@@ -244,6 +245,71 @@ class KafkaProducerCaptureHookTest {
 
             assertSame(low, hooks.get(0), "lower priority must sort first");
             assertSame(high, hooks.get(1));
+        }
+    }
+
+    // --- Producer validation ---
+
+    @Nested
+    @DisplayName("validateProducer contract")
+    class ProducerValidation {
+
+        /** Hook recording the producer interfaces it was asked to validate. */
+        final class ValidatingHook implements KafkaProducerCaptureHook {
+
+            final List<Class<?>> validated = new ArrayList<>();
+            RuntimeException failure;
+
+            @Override
+            public void validateProducer(Class<?> producerInterface) {
+                validated.add(producerInterface);
+                if (failure != null) {
+                    throw failure;
+                }
+            }
+        }
+
+        @Test
+        @DisplayName("default validateProducer accepts every producer interface")
+        void defaultAccepts() {
+            new KafkaProducerCaptureHook() {}.validateProducer(TestMsgProducer.class);
+        }
+
+        @Test
+        @DisplayName("create validates the producer interface once per hook")
+        void createValidatesOncePerHook() {
+            ValidatingHook first = new ValidatingHook();
+            ValidatingHook second = new ValidatingHook();
+
+            capturingFactory(first, second).create(DerivedMsgProducer.class);
+
+            assertEquals(List.of(DerivedMsgProducer.class), first.validated);
+            assertEquals(List.of(DerivedMsgProducer.class), second.validated);
+        }
+
+        @Test
+        @DisplayName("a rejecting hook fails create instead of the first send")
+        void rejectionFailsCreate() {
+            ValidatingHook hook = new ValidatingHook();
+            hook.failure = new IllegalStateException("policy 'nope' is not defined");
+            OriginCapturingFactory factory = capturingFactory(hook);
+
+            IllegalStateException thrown =
+                    assertThrows(IllegalStateException.class, () -> factory.create(TestMsgProducer.class));
+
+            assertTrue(thrown.getMessage().contains("nope"), thrown.getMessage());
+            assertTrue(factory.capturedOrigins.isEmpty(), "nothing is sent while creating");
+        }
+
+        @Test
+        @DisplayName("an interface without @KafkaProducer is rejected before any hook validates it")
+        void notAProducerIsNotValidated() {
+            ValidatingHook hook = new ValidatingHook();
+            OriginCapturingFactory factory = capturingFactory(hook);
+
+            assertThrows(IllegalArgumentException.class, () -> factory.create(BaseMsgProducer.class));
+
+            assertTrue(hook.validated.isEmpty());
         }
     }
 

@@ -148,6 +148,8 @@ public class KafkaProducerFactory {
      * @return a proxy instance implementing {@code producerInterface}
      * @throws IllegalArgumentException if the interface is not annotated with {@link KafkaProducer}
      *     or a method is missing a {@link Topic} annotation
+     * @throws RuntimeException if a {@link KafkaProducerCaptureHook} rejects the interface in
+     *     {@link KafkaProducerCaptureHook#validateProducer(Class)}
      */
     @SuppressWarnings("unchecked")
     public <T> T create(Class<T> producerInterface) {
@@ -156,6 +158,10 @@ public class KafkaProducerFactory {
             throw new IllegalArgumentException(producerInterface.getName() + " is not annotated with @KafkaProducer");
         }
         String producerName = annotation.name().isEmpty() ? producerInterface.getSimpleName() : annotation.name();
+
+        for (KafkaProducerCaptureHook hook : captureHooks) {
+            hook.validateProducer(producerInterface);
+        }
 
         KafkaProducerConfig producerConfig = producerIndex.get(producerName);
 
