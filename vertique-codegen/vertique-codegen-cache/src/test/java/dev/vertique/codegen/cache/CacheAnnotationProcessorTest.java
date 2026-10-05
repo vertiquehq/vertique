@@ -552,8 +552,7 @@ class CacheAnnotationProcessorTest {
     @DisplayName("rejects @Cacheable on an abstract interface method")
     void shouldRejectCacheableOnAnAbstractInterfaceMethod() {
         var result = ProcessorTestHarness.run(
-                        new CacheAnnotationProcessor(),
-                        SourceFiles.inline("com.example.CacheablePort", """
+                        new CacheAnnotationProcessor(), SourceFiles.inline("com.example.CacheablePort", """
                                 package com.example;
 
                                 import dev.vertique.cache.aop.Cacheable;
@@ -574,8 +573,7 @@ class CacheAnnotationProcessorTest {
     @DisplayName("rejects @Cacheable on a default interface method")
     void shouldRejectCacheableOnADefaultInterfaceMethod() {
         ProcessorTestHarness.run(
-                        new CacheAnnotationProcessor(),
-                        SourceFiles.inline("com.example.DefaultCacheablePort", """
+                        new CacheAnnotationProcessor(), SourceFiles.inline("com.example.DefaultCacheablePort", """
                                 package com.example;
 
                                 import dev.vertique.cache.aop.Cacheable;
@@ -596,8 +594,7 @@ class CacheAnnotationProcessorTest {
     @DisplayName("rejects @CacheEvict on an abstract interface method")
     void shouldRejectCacheEvictOnAnAbstractInterfaceMethod() {
         var result = ProcessorTestHarness.run(
-                        new CacheAnnotationProcessor(),
-                        SourceFiles.inline("com.example.CacheEvictPort", """
+                        new CacheAnnotationProcessor(), SourceFiles.inline("com.example.CacheEvictPort", """
                                 package com.example;
 
                                 import dev.vertique.cache.aop.CacheEvict;
@@ -617,8 +614,7 @@ class CacheAnnotationProcessorTest {
     @DisplayName("rejects @CacheEvict on a default interface method")
     void shouldRejectCacheEvictOnADefaultInterfaceMethod() {
         ProcessorTestHarness.run(
-                        new CacheAnnotationProcessor(),
-                        SourceFiles.inline("com.example.DefaultCacheEvictPort", """
+                        new CacheAnnotationProcessor(), SourceFiles.inline("com.example.DefaultCacheEvictPort", """
                                 package com.example;
 
                                 import dev.vertique.cache.aop.CacheEvict;
