@@ -9,6 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
+import dev.vertique.core.exception.ConfigurationException;
 import dev.vertique.core.sanitization.Canonicalize;
 import dev.vertique.core.sanitization.InputFieldNameResolver;
 import dev.vertique.core.sanitization.InputLocation;
@@ -36,6 +37,7 @@ import java.util.Set;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
@@ -102,6 +104,16 @@ class WebSocketInvocationPolicyMatrixTest {
     }
 
     // --- Test ---
+
+    @Test
+    @DisplayName("registerAll rejects @OnMessage with a second payload-eligible parameter")
+    void rejectsSecondPayloadParameterAtStartup() {
+        ConfigurationException failure = assertThrows(ConfigurationException.class, () -> registrar()
+                .registerAll(Set.of(new MultiPayloadEndpoint()), router));
+        assertTrue(
+                failure.getMessage().contains("MultiPayloadEndpoint.onMessage"),
+                "message must name the method: " + failure.getMessage());
+    }
 
     @ParameterizedTest(name = "{0}")
     @DisplayName("registerAll caches route/parameter policies matching the matrix")
@@ -206,6 +218,13 @@ class WebSocketInvocationPolicyMatrixTest {
     // Every carrier's @OnMessage is onMessage(String message, @PathParam("id") String id), declared on
     // the concrete class the scanner discovers via getDeclaredMethods(); only the policy annotation
     // itself is placed per the row (interface/superclass carriers, or the message parameter).
+
+    /** Residual R1 (#531): two payload-eligible parameters — rejected at scan/startup. */
+    @WebSocketEndpoint("/ws/multi-payload")
+    static class MultiPayloadEndpoint {
+        @OnMessage
+        public void onMessage(String a, @Sanitize(A.class) String b) {}
+    }
 
     /** IP-01: nothing declared anywhere. */
     @WebSocketEndpoint("/ws/ip01/{id}")

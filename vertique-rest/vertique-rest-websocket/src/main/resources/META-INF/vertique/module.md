@@ -251,9 +251,9 @@ placeholder in the endpoint's path template fails startup.
 
 The `@OnMessage` message parameter is the first parameter that is not a `WebSocketSession`, a
 `Throwable`, a `SecurityContext`, or `@PathParam`-annotated. Its declared type selects the wire
-handling. Declare exactly one such parameter: a second one receives the same decoded payload without
-its own policy chain being honored (the message parameter's policies govern the decode), so put the
-chain on the message parameter or on the method:
+handling. Exactly one such parameter is allowed: a second payload-eligible parameter is rejected at
+startup with a `ConfigurationException` naming the method. Put the sanitize/canonicalize chain on
+the message parameter or on the method:
 
 | Declared type | Handling |
 |---|---|
@@ -672,6 +672,7 @@ All of these are raised while the router is built, so a misconfigured endpoint n
 | A type in a message type's owner set declares conflicting policy annotations (checked only when an `InputObjectProcessor` is bound) | `IllegalStateException` |
 | An endpoint class, lifecycle method, or lifecycle-method parameter declares both a policy annotation and the matching skip annotation anywhere in its type hierarchy | `InvocationPolicyConflictException` (an `IllegalStateException`) |
 | An endpoint declares a canonicalizer or sanitizer chain — on the class, a lifecycle method, or a lifecycle-method parameter, directly or through a composed annotation — or the message type declares field-level policies, while no `InputObjectProcessor` is bound | `ConfigurationException` |
+| `@OnMessage` declares more than one payload-eligible parameter | `ConfigurationException` |
 
 Every `@RequiresAction` failure mode above is deliberately fail-closed: an action gate that cannot
 be enforced refuses to boot rather than serving traffic with the gate silently missing. The
