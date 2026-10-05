@@ -1092,6 +1092,13 @@ carries `dev.vertique.rest.core.convert.ParamSource`, whose five constants are `
 `HEADER`, `COOKIE`, and `FORM` — the string-ish transport kinds. Do not confuse it with the
 same-named but unrelated parameter-source enums in the JAX-RS and REST-client modules.
 
+**Non-null converter-result contract.** `fromString` never returns `null` for a present transport
+string. A native or JAX-RS converter that returns `null` for that present value fails closed with
+`ParamConversionException` (400) — the same rule for a submitted value and for a `@DefaultValue`
+string routed through the resolver. Absence of a parameter is a caller concern (empty collection,
+`null` scalar, or applying a default); it is not expressed by a converter returning `null`. The
+exception message names the parameter and target type and never echoes the raw value.
+
 ### `RestRequestCompletedListener`, `HttpRequestCompletedListener`, and `RequestCompletionScope`
 
 `RestRequestCompletedListener` observes JAX-RS operations, and `HttpRequestCompletedListener`

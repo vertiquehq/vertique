@@ -290,7 +290,7 @@ class JaxRsDescriptorArrayParamTest {
         result.assertSuccess();
 
         String descriptorFqn = "dev.vertique.test.NestedArrayBodyOuter_JaxRsDescriptor";
-        // Source position: the TypeReference generic argument, dotted, with a null componentType slot.
+        // Null componentType slot + TypeReference generic argument (dotted source form).
         result.assertGeneratedSourceContains(
                 descriptorFqn,
                 "null, new com.fasterxml.jackson.core.type.TypeReference<"

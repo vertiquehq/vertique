@@ -424,6 +424,16 @@ public interface BoundRequest {
 
 `DefaultBoundRequest` is the shared implementation every bundled strategy constructs; binding is
 deliberately independent of validation, so a value binds even when a gate would have rejected it.
+Declared parameter shapes drive the bound representation:
+
+- **Scalar** path/query/header/cookie parameters bind as the **raw transport string** (first value
+  only for multi-maps). Conversion to the declared type runs later in `ParameterExtractor`, after
+  input policies.
+- **Collection-declared** query/header/cookie parameters (`List`/`Set`/`SortedSet`/`NavigableSet`/
+  `Collection`/`T[]`) bind as a `JsonArray` of raw strings — every submitted value for the name,
+  or a single-entry array for a present cookie. Element conversion and materialization also run in
+  `ParameterExtractor`.
+- **Undeclared** keys bind as their raw first-value string.
 
 ### `ExceptionMapperRegistry`
 
@@ -763,10 +773,14 @@ Parameters are matched in this order:
 **Type coercion** for `PATH`, `QUERY`, `HEADER`, `COOKIE`, and text `FORM` values goes through the
 shared `dev.vertique.rest.core.convert.ParamConversionResolver`, not a fixed scalar table:
 
-- `String` and `JsonObject` keep identity fast paths.
+- Every transport string — including a declared `String` parameter — is converted through the
+  resolver after input policies. The built-in `String` converter is identity; an application
+  `ParamConverterBinding` or JAX-RS `ParamConverterProvider` for `String` replaces it. A converter
+  that returns `null` for a present value (including a `@DefaultValue`) fails closed with
+  `ParamConversionException` (400).
+- `JsonObject` keeps an identity fast path when the binder already holds one.
 - Everything else — boxed and primitive numerics, `boolean`, `UUID`, `java.time` types, `BigDecimal`,
-  enums, and any application-registered `ParamConverterBinding` or JAX-RS `ParamConverterProvider` —
-  is converted through the resolver.
+  enums, and any other application-registered converter — is converted through the resolver.
 - A collection-valued parameter — `List<T>`, `Set<T>`, `SortedSet<T>`, `NavigableSet<T>`, `Collection<T>`,
   or `T[]` on `@QueryParam`, `@HeaderParam`, `@CookieParam`, or `@FormParam` — coerces each submitted
   value individually against the declared component type; a malformed element, a null element, or a
@@ -808,8 +822,13 @@ does not — a path segment is always single-valued.
 - **Read-only.** An injected collection is unmodifiable; mutation throws `UnsupportedOperationException`.
   This includes the native `@FormParam List<FileUpload>` / `List<EntityPart>` targets and the unannotated
   aggregates. Arrays stay mutable — no read-only array wrapper exists.
-- **Input policies** run on the raw submitted string before conversion, for every source and for
-  each collection element. `@DefaultValue` stays off the policy chain.
+- **Input policies** run on each **raw string** element **before** conversion, for every source
+  (`@QueryParam`, `@HeaderParam`, `@CookieParam`, and `@FormParam`), at the same
+  `InputLocation` a scalar parameter of that source would use. Policy order is therefore uniform
+  with scalars: policy → convert → materialize. A non-string element that is already an instance of
+  the declared component type is kept (no `toString()` round-trip). A null element, or a value that
+  is neither a string nor the element type, fails closed with `ParamConversionException` (400).
+  `@DefaultValue` strings are converted but not policy-processed.
 - **Ordering** is whatever the transport reported for repeated values — neither Vert.x nor Jakarta REST
   guarantees one, and the framework makes none.
 - **Case sensitivity follows the transport.** `@HeaderParam`/`@CookieParam` names match
