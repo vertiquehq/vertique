@@ -67,16 +67,11 @@ definition resolution through the core's public `CacheAdapterSupport` seam.
 Programmatic callers should depend only on `vertique-cache-core` and use `CacheBuilder`
 and `Cache<K,V>` directly.
 
-When `@Cacheable` is composed with `@RateLimited`, the rate-limit aspect is
-outermost (`@RateLimited` ordering 300 versus `@Cacheable` ordering 200), so
-admission occurs before the cache lookup. A cache hit therefore still consumes
-one quota unit; a cache miss consumes one unit for the complete logical call,
-regardless of how many retries the nested resilience pipeline performs.
-
-**Aspect ordering.** `@Cacheable` carries `@Aspect(ordering = 200)` and `@CacheEvict` carries
-`@Aspect(ordering = 100)`; higher values are outermost. In the generated interceptor chain
-`@RateLimited` (300) wraps `@Cacheable` (200), which wraps `@CacheEvict` (100), and timed
-instrumentation sits outside all of them. These values are frozen.
+`@Aspect(ordering = 300)` on `@RateLimited`, `200` on `@Cacheable`, and `100` on `@CacheEvict`
+places rate limiting outermost, then cacheable, then cache evict, with timed instrumentation
+outside all of them. When `@Cacheable` is composed with `@RateLimited`, admission occurs before
+the cache lookup: a cache hit still consumes one quota unit; a cache miss consumes one unit for
+the complete logical call, regardless of how many retries the nested resilience pipeline performs.
 
 **Self-invocation bypass.** Only calls that arrive through the Dagger-resolved generated proxy
 are intercepted. Calling a `@Cacheable` or `@CacheEvict` method on `this` from inside the same
