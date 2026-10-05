@@ -15,6 +15,7 @@ import io.vertx.core.Vertx;
 import io.vertx.core.http.HttpServer;
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
@@ -88,6 +89,7 @@ class RestClientCapturerOperationTest {
 
     private static Vertx vertx;
     private static HttpServer server;
+    private static final List<RestClientBuilder> builders = new CopyOnWriteArrayList<>();
 
     @BeforeAll
     static void start() throws Exception {
@@ -102,14 +104,27 @@ class RestClientCapturerOperationTest {
 
     @AfterAll
     static void stop() throws Exception {
-        server.close().toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS);
-        vertx.close().toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS);
+        List<Future<?>> closes = new ArrayList<>();
+        for (RestClientBuilder builder : builders) {
+            closes.add(builder.close());
+        }
+        if (server != null) {
+            closes.add(server.close());
+        }
+        if (!closes.isEmpty()) {
+            Future.join(closes).toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS);
+        }
+        if (vertx != null) {
+            vertx.close().toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS);
+        }
     }
 
     private RestClientBuilder builder(RecordingCapturer capturer) {
-        return new RestClientBuilder(vertx)
+        RestClientBuilder builder = new RestClientBuilder(vertx)
                 .baseUrl("http://127.0.0.1:" + server.actualPort())
                 .registerCapturer(capturer);
+        builders.add(builder);
+        return builder;
     }
 
     @Test
