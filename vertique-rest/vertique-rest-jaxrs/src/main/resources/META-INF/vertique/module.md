@@ -108,7 +108,11 @@ interceptors → status and headers onto the wire → `ResponseSerializer` for t
 Two consequences matter to application code. `afterResponse` fires at **handoff**, while a streamed
 body may still be in flight, because observers need the routing context and tracing span still
 active. And status plus headers are already on the wire before a `ResponseSerializer` runs — a
-serializer owns the body only.
+serializer owns the body only. A post-handoff wire failure is recorded on the framework-owned
+completion state through `RequestCompletionRecorder.recordWireFailure` (first writer wins), not
+through a public `RoutingContext.data()` key; the completion event's `wireFailureCode` reads that
+marker, with a failed response end-handler result as the fallback, including the late-`end()`
+carve-out documented on `RestRequestCompletedEvent`.
 
 ### Per-request processing order
 

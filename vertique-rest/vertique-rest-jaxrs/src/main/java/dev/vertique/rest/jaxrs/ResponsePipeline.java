@@ -6,7 +6,7 @@ package dev.vertique.rest.jaxrs;
 import dev.vertique.core.async.Combinators;
 import dev.vertique.core.util.TypeResolver;
 import dev.vertique.rest.core.ProblemDetail;
-import dev.vertique.rest.core.events.RestRequestCompletionEmitter;
+import dev.vertique.rest.core.events.RequestCompletionRecorder;
 import dev.vertique.rest.core.interceptor.RequestInterceptor;
 import dev.vertique.rest.core.request.AcceptNegotiator;
 import dev.vertique.rest.core.request.RequestPreconditions;
@@ -44,7 +44,7 @@ import lombok.extern.slf4j.Slf4j;
  *       hooks, hand the response off to the wire, fire {@link RequestInterceptor#afterResponse} sync
  *       observers exactly once with the outcome written (or, on a serialization failure, the synthetic
  *       500 via {@code sendFallback500}), then observe the wire-completion future and record any
- *       post-handoff failure under {@link RestRequestCompletionEmitter#KEY_WIRE_FAILURE}.</li>
+ *       post-handoff failure through {@link RequestCompletionRecorder#recordWireFailure}.</li>
  *   <li>{@link #handle(RoutingContext, Object)} — convenience: {@code produce()} then
  *       {@code sendResponse()}; re-throws any exception from {@code produce()} so callers can
  *       route to the error pipeline.</li>
@@ -230,7 +230,7 @@ class ResponsePipeline {
      * </ul>
      * "Wire handoff" means the write was <em>initiated</em>: for a streamed body the bytes may still
      * be in flight when the hooks run. Wire completion is reported separately, through the
-     * completion event (see {@link RestRequestCompletionEmitter#KEY_WIRE_FAILURE}) — never by
+     * completion event (see {@link RequestCompletionRecorder#recordWireFailure}) — never by
      * delaying or re-firing this hook, because observers must see the outcome while the routing
      * context and the tracing span are still active. Because {@code afterResponse} is an
      * observe-only hook (FR-CORE-001.3 — it does not mutate the response), firing it at handoff is
@@ -328,7 +328,7 @@ class ResponsePipeline {
      *
      * <p>Like the normal path, the hooks fire at <em>wire handoff</em>: the bare-metal write is
      * initiated after them and its own completion future is observed, so a 500 that never reaches
-     * the client is logged and recorded under {@link RestRequestCompletionEmitter#KEY_WIRE_FAILURE}.
+     * the client is logged and recorded through {@link RequestCompletionRecorder#recordWireFailure}.
      * On this path the marker may land <em>after</em> the completion event was emitted (the end
      * handler can fire first), so the logging is guaranteed while event enrichment is best-effort.
      *
@@ -436,8 +436,9 @@ class ResponsePipeline {
     }
 
     /**
-     * Records a post-handoff wire failure under {@link RestRequestCompletionEmitter#KEY_WIRE_FAILURE}
-     * (first writer wins, so the first observed failure is the one reported) and logs it at WARN.
+     * Records a post-handoff wire failure on the request's framework-owned completion state via
+     * {@link RequestCompletionRecorder#recordWireFailure} (first writer wins, so the first observed
+     * failure is the one reported) and logs it at WARN.
      *
      * <p>The WARN carries the request method, path, status, and the cause's <em>class simple
      * name</em> only: a wire failure message may echo peer or payload detail, so the full throwable
@@ -447,7 +448,7 @@ class ResponsePipeline {
      * @param cause the failure the wire-completion future settled with
      */
     private void recordWireFailure(RoutingContext ctx, Throwable cause) {
-        ctx.data().putIfAbsent(RestRequestCompletionEmitter.KEY_WIRE_FAILURE, cause);
+        RequestCompletionRecorder.recordWireFailure(ctx, cause);
         String method = ctx.request().method().name();
         String path = ctx.request().path();
         log.warn(
