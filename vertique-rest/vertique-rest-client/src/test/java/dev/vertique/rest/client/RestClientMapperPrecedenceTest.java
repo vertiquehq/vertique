@@ -154,13 +154,6 @@ class RestClientMapperPrecedenceTest {
     }
 
     /**
-     * Builds a {@link RestClientConfig} carrying the given {@code jsonProfile} via the boundary
-     * parser, exactly as the Dagger provider does.
-     *
-     * @param jsonProfile the profile id value to set on the config, or {@code null}
-     * @return a parsed config for client name {@code "svc"}
-     */
-    /**
      * Creates a lenient {@link ConfigParser} instance for test-side config parsing.
      *
      * @return a {@link DefaultConfigParser} backed by a lenient {@link DefaultConfigMapper}
@@ -169,6 +162,13 @@ class RestClientMapperPrecedenceTest {
         return new DefaultConfigParser(DefaultConfigMapper.lenient());
     }
 
+    /**
+     * Builds a {@link RestClientConfig} carrying the given {@code jsonProfile} via the boundary
+     * parser, exactly as the Dagger provider does.
+     *
+     * @param jsonProfile the profile id value to set on the config, or {@code null}
+     * @return a parsed config for client name {@code "svc"}
+     */
     private static RestClientConfig configWithProfile(String jsonProfile) {
         JsonObject svc = new JsonObject().put("baseUrl", "http://svc");
         if (jsonProfile != null) {

@@ -131,8 +131,8 @@ final class McpIdentityEstablisher {
      * Strips any ambient {@code RoutingContext.user()}, accumulated authentication evidence, and
      * ambient {@link SecurityRuntime} holder binding so the no-scheme canonical-anonymous path binds
      * an identity without consulting ambient Router or holder state.
-     */
-    /**
+     *
+     * @param context the routing context to clear
      * @return {@code false} when a foreign {@link SecurityRuntime} binding could not be cleared (fail
      *     closed); {@code true} when ambient authentication state was reset
      */

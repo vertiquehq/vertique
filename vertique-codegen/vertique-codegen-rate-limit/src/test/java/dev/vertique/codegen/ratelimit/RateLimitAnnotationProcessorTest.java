@@ -191,14 +191,6 @@ class RateLimitAnnotationProcessorTest {
                 .assertErrorMessage("instance methods that can be overridden");
     }
 
-    // --- Supplementary: root-text-equal non-root segment (not part of the frozen TP-001 matrix) ---
-
-    /**
-     * {@code key = {"0.0"}}: the root segment {@code "0"} resolves to parameter 0, and the second
-     * segment is textually {@code "0"} too but is not a valid identifier for that position — it must
-     * still be validated as a property-path segment rather than being waved through because it
-     * happens to equal the root's text.
-     */
     /**
      * P02/P03 review repair (T017, item 4): a bare-name (fluent, no {@code get}/{@code is} prefix)
      * zero-arg accessor is only a valid property-path segment when its declaring type is a record —
@@ -243,6 +235,14 @@ class RateLimitAnnotationProcessorTest {
                 .assertErrorMessage("rate-limit key property is not an accessible record or bean accessor");
     }
 
+    // --- Supplementary: root-text-equal non-root segment (not part of the frozen TP-001 matrix) ---
+
+    /**
+     * {@code key = {"0.0"}}: the root segment {@code "0"} resolves to parameter 0, and the second
+     * segment is textually {@code "0"} too but is not a valid identifier for that position — it must
+     * still be validated as a property-path segment rather than being waved through because it
+     * happens to equal the root's text.
+     */
     @Test
     @DisplayName(
             "rejects a non-root selector segment that is textually equal to the root but is not a valid identifier")

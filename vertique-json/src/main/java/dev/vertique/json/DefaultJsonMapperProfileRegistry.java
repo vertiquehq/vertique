@@ -186,14 +186,6 @@ public final class DefaultJsonMapperProfileRegistry implements JsonMapperProfile
     // --- Application-profile guards ---
 
     /**
-     * Reports whether Jackson polymorphic <em>default typing</em> is active on {@code mapper}.
-     * Annotation-driven {@code @JsonTypeInfo} is unaffected — only a blanket
-     * {@code activateDefaultTyping(...)} installs a default typer.
-     *
-     * @param mapper the profile mapper to inspect
-     * @return {@code true} when the mapper resolves a default typer for an untyped base
-     */
-    /**
      * Seeds one built-in profile, refusing it when its mapper carries Jackson default typing. The
      * built-ins are probe-exempt (trusted recipes), but the {@code system} recipe copies the
      * process-global mapper, so the default-typing rule is enforced on every profile role.
@@ -209,6 +201,14 @@ public final class DefaultJsonMapperProfileRegistry implements JsonMapperProfile
         byId.put(builtIn.id(), builtIn);
     }
 
+    /**
+     * Reports whether Jackson polymorphic <em>default typing</em> is active on {@code mapper}.
+     * Annotation-driven {@code @JsonTypeInfo} is unaffected — only a blanket
+     * {@code activateDefaultTyping(...)} installs a default typer.
+     *
+     * @param mapper the profile mapper to inspect
+     * @return {@code true} when the mapper resolves a default typer for an untyped base
+     */
     private static boolean hasDefaultTypingActive(ObjectMapper mapper) {
         return mapper.getDeserializationConfig().getDefaultTyper(null) != null;
     }

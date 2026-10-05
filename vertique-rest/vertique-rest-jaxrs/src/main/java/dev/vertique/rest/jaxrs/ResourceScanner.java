@@ -748,6 +748,23 @@ class ResourceScanner {
     }
 
     /**
+     * Returns the type whose interface hierarchy supplies inherited method annotations for
+     * {@code method} when resolved as a member of {@code resourceClass}.
+     *
+     * <p>Matches codegen {@code JaxRsHierarchy.interfacesForMethod}: an inherited interface
+     * {@code default} keeps its declaring-interface view; a class-declared method (including one
+     * inherited from a superclass) uses the resource class.
+     *
+     * @param method        the candidate resource method
+     * @param resourceClass the resource class being scanned
+     * @return the annotation-view type
+     */
+    private static Class<?> annotationViewType(Method method, Class<?> resourceClass) {
+        Class<?> declaring = method.getDeclaringClass();
+        return declaring.isInterface() ? declaring : resourceClass;
+    }
+
+    /**
      * Collects methods from the class hierarchy, starting with the most specific class and walking
      * up through superclasses (stopping at {@link Object}), then adding the interface
      * {@code default} methods the class inherits.
@@ -766,23 +783,6 @@ class ResourceScanner {
      * @param clazz the class to scan
      * @return collected methods with subclass overrides taking precedence
      */
-    /**
-     * Returns the type whose interface hierarchy supplies inherited method annotations for
-     * {@code method} when resolved as a member of {@code resourceClass}.
-     *
-     * <p>Matches codegen {@code JaxRsHierarchy.interfacesForMethod}: an inherited interface
-     * {@code default} keeps its declaring-interface view; a class-declared method (including one
-     * inherited from a superclass) uses the resource class.
-     *
-     * @param method        the candidate resource method
-     * @param resourceClass the resource class being scanned
-     * @return the annotation-view type
-     */
-    private static Class<?> annotationViewType(Method method, Class<?> resourceClass) {
-        Class<?> declaring = method.getDeclaringClass();
-        return declaring.isInterface() ? declaring : resourceClass;
-    }
-
     private List<Method> collectMethods(Class<?> clazz) {
         Map<String, Method> seen = new LinkedHashMap<>();
         Class<?> current = clazz;

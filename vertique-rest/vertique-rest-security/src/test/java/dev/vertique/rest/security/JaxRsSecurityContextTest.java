@@ -160,18 +160,6 @@ class JaxRsSecurityContextTest {
         return new JaxRsSecurityContext(frameworkCtx, false);
     }
 
-    /**
-     * Creates a test {@link SecurityContext} using the new typed identity model.
-     *
-     * <p>The actor is a USER principal with the given {@code userId}. Roles are mapped to
-     * {@link AuthorityKind#ROLE} claims and scopes to {@link AuthorityKind#SCOPE} claims.
-     *
-     * @param userId     the user ID (actor id)
-     * @param authMethod the authentication method
-     * @param roles      the role values to include as ROLE claims
-     * @param scopes     the scope values to include as SCOPE claims
-     * @return a minimal {@link SecurityContext} backed by the new typed model
-     */
     /** Creates an anonymous {@link SecurityContext} (NONE auth method, empty claims). */
     private SecurityContext anonymousContext() {
         return anonymousContextWith(AuthorizationClaims.empty());
@@ -205,6 +193,18 @@ class JaxRsSecurityContextTest {
         };
     }
 
+    /**
+     * Creates a test {@link SecurityContext} using the new typed identity model.
+     *
+     * <p>The actor is a USER principal with the given {@code userId}. Roles are mapped to
+     * {@link AuthorityKind#ROLE} claims and scopes to {@link AuthorityKind#SCOPE} claims.
+     *
+     * @param userId     the user ID (actor id)
+     * @param authMethod the authentication method
+     * @param roles      the role values to include as ROLE claims
+     * @param scopes     the scope values to include as SCOPE claims
+     * @return a minimal {@link SecurityContext} backed by the new typed model
+     */
     private SecurityContext createContext(String userId, AuthMethod authMethod, Set<String> roles, Set<String> scopes) {
         SecurityIdentity identity = SecurityIdentity.user(new PrincipalRef(PrincipalType.USER, userId, Map.of()));
         AuthenticationState authState =
