@@ -539,10 +539,9 @@ public class RouteStartupValidationTest {
     /**
      * Resource declaring one <em>scalar</em> name twice with two <em>different declared types</em>
      * ({@link Integer} and {@link UUID}). Multiplicity agrees, so the two declarations share one
-     * descriptor — and {@code DefaultBoundRequest.wrapScalar} converts the raw value <em>once</em> with
-     * that descriptor's context, so the second parameter receives an {@link Integer} its declared
-     * {@link UUID} type cannot accept and every request carrying {@code id} fails in
-     * {@code Method.invoke} (an opaque 500).
+     * descriptor. The binder stores the raw string and each parameter would convert it with its own
+     * type, so a value can satisfy one declaration and fail the other, while the single per-name
+     * schema still describes only one of the two types.
      */
     @Path("/duplicate-scalar-type")
     public static class DuplicateScalarTypeResource {
@@ -813,9 +812,8 @@ public class RouteStartupValidationTest {
         RouteRegistrationException thrown = assertThrows(
                 RouteRegistrationException.class,
                 () -> mount.createRouter(vertx),
-                "the two declarations share one descriptor and wrapScalar converts the raw value once with "
-                        + "it, so the second parameter receives the first's type and every request carrying "
-                        + "'id' fails in Method.invoke");
+                "the two declarations share one descriptor, so one request name would convert as two types "
+                        + "and the derived schema can describe only one of them");
         String message = String.valueOf(thrown.getMessage());
         assertTrue(
                 message.contains("DUPLICATE_PARAM_NAME_MULTIPLICITY_CONFLICT"),

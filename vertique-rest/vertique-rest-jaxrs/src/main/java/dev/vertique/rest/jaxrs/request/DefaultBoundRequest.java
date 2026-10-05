@@ -4,7 +4,6 @@
 package dev.vertique.rest.jaxrs.request;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import dev.vertique.rest.core.convert.ConversionContext;
 import dev.vertique.rest.core.convert.ParamConversionResolver;
 import dev.vertique.rest.core.request.RequestValue;
 import dev.vertique.rest.jaxrs.ProfileBodyMaterialization;
@@ -27,8 +26,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Default {@link BoundRequest} implementation that binds the values of a Vert.x
@@ -42,9 +41,9 @@ import java.util.concurrent.ConcurrentHashMap;
  *       values as a {@link JsonArray}; a scalar parameter binds only the <em>first</em> value. The rule
  *       applies uniformly to query parameters, headers, and cookies; because a cookie is single-valued,
  *       a collection-declared {@code @CookieParam} binds a single-entry {@link JsonArray}.
- *   <li><b>Declared scalar parameters are coerced</b> to their declared type via the
- *       {@link ParamConversionResolver} before being wrapped, because {@link RequestValue} does not
- *       parse strings.
+ *   <li><b>Declared scalar parameters stay raw strings.</b> Conversion runs later, in
+ *       {@code ParameterExtractor}, after input policies see the transport string. {@link RequestValue}
+ *       does not parse strings, and this facade does not either.
  *   <li><b>Undeclared keys</b> (no matching descriptor) bind as their raw first-value
  *       {@link String}.
  *   <li><b>Headers and cookies are case-insensitive</b>: their maps are keyed by lower-cased name,
@@ -60,18 +59,6 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 public final class DefaultBoundRequest implements BoundRequest {
 
-    /**
-     * Route-scoped cache of the scalar {@link ConversionContext} per declared {@link ParamDescriptor}.
-     * {@code DefaultBoundRequest} is allocated per request, so caching on the instance saves nothing;
-     * this static, JVM-wide cache (mirroring {@code ParameterExtractor.BEAN_PARAM_CACHE}) is keyed by
-     * the {@code ParamDescriptor} instances of an operation — which are built once at route
-     * registration and reused across requests — so the per-descriptor {@code ConversionContext} (and
-     * its {@code Annotation[]} closure) is allocated at most once instead of on every {@link #wrapScalar}
-     * call. The {@code Supplier<Annotation[]>} closes over a per-descriptor array and is safe to share
-     * across requests.
-     */
-    private static final Map<ParamDescriptor, ConversionContext> SCALAR_CONTEXT_CACHE = new ConcurrentHashMap<>();
-
     private final HttpServerRequest raw;
     private final Map<String, RequestValue> pathParameters;
     private final Map<String, RequestValue> query;
@@ -80,14 +67,15 @@ public final class DefaultBoundRequest implements BoundRequest {
     private final RequestValue body;
 
     /**
-     * Binds the request carried by {@code ctx} against the declared parameter model of {@code op},
-     * coercing declared scalars through the framework built-ins-only resolver
-     * ({@link ConversionContexts#defaultResolver()}).
+     * Binds the request carried by {@code ctx} against the declared parameter model of {@code op}.
+     * Declared scalars are stored as raw strings. This overload delegates to the three-arg constructor
+     * with {@link ConversionContexts#defaultResolver()} so existing callers keep compiling.
      *
      * <p>This overload is visible for testing: it preserves the legacy two-arg construction used by test
      * fixtures and any caller that does not have a Dagger-managed resolver. Production dispatch uses the
-     * three-arg overload so application converter bindings and JAX-RS providers participate in binding.
-     * (The project has no {@code @VisibleForTesting} annotation; this note records the intent.)
+     * three-arg overload. Conversion, including application converter bindings, happens in
+     * {@code ParameterExtractor}. (The project has no {@code @VisibleForTesting} annotation; this note
+     * records the intent.)
      *
      * @param ctx the current routing context; must not be {@code null}
      * @param op  the operation descriptor whose declared parameters drive multiplicity and coercion;
@@ -98,23 +86,26 @@ public final class DefaultBoundRequest implements BoundRequest {
     }
 
     /**
-     * Binds the request carried by {@code ctx} against the declared parameter model of {@code op},
-     * coercing declared scalars through the supplied {@link ParamConversionResolver}.
+     * Binds the request carried by {@code ctx} against the declared parameter model of {@code op}.
+     * Declared scalars are stored as raw strings. {@code resolver} is retained so existing callers
+     * keep compiling; it is not used to coerce values. {@code ParameterExtractor} converts after
+     * input policies, with the resolver it was given.
      *
      * @param ctx      the current routing context; must not be {@code null}
-     * @param op       the operation descriptor whose declared parameters drive multiplicity and
-     *                 coercion; must not be {@code null}
-     * @param resolver the conversion resolver used to coerce declared scalar parameters to their
-     *                 declared types; must not be {@code null}
+     * @param op       the operation descriptor whose declared parameters drive multiplicity; must not
+     *                 be {@code null}
+     * @param resolver accepted for source compatibility and rejected when {@code null}; not used for
+     *                 coercion
      */
     public DefaultBoundRequest(RoutingContext ctx, JaxRsOperationDescriptor op, ParamConversionResolver resolver) {
+        Objects.requireNonNull(resolver, "resolver");
         this.raw = ctx.request();
         List<ParamDescriptor> params = op.parameters();
 
-        this.pathParameters = bindPath(ctx.pathParams(), params, resolver);
-        this.query = bindMultiMap(ctx.queryParams(), params, ParamLocation.QUERY, false, resolver);
-        this.headers = bindMultiMap(raw.headers(), params, ParamLocation.HEADER, true, resolver);
-        this.cookies = bindCookies(raw.cookies(), params, resolver);
+        this.pathParameters = bindPath(ctx.pathParams());
+        this.query = bindMultiMap(ctx.queryParams(), params, ParamLocation.QUERY, false);
+        this.headers = bindMultiMap(raw.headers(), params, ParamLocation.HEADER, true);
+        this.cookies = bindCookies(raw.cookies(), params);
 
         // FR-JSON-024/024A: a JSON profile other than the process codec's resolved for this method (slice 2.1) is
         // stashed
@@ -129,20 +120,17 @@ public final class DefaultBoundRequest implements BoundRequest {
 
     /**
      * Binds path parameters from the {@code RoutingContext.pathParams()} map. Path values are always
-     * single-valued; a declared scalar descriptor coerces the value to its type.
+     * single-valued raw strings. The declared parameter model is not consulted: a path parameter is
+     * never multi-valued, and conversion happens in {@code ParameterExtractor}.
      *
      * @param pathParams the raw path parameter map (name to single value)
-     * @param params     the operation's declared parameters
-     * @param resolver   the conversion resolver used to coerce declared scalars
      * @return an immutable map of bound path parameter values
      */
-    private static Map<String, RequestValue> bindPath(
-            Map<String, String> pathParams, List<ParamDescriptor> params, ParamConversionResolver resolver) {
+    private static Map<String, RequestValue> bindPath(Map<String, String> pathParams) {
         Map<String, RequestValue> result = new LinkedHashMap<>();
         if (pathParams != null) {
             for (Map.Entry<String, String> entry : pathParams.entrySet()) {
-                ParamDescriptor descriptor = findDescriptor(params, entry.getKey(), ParamLocation.PATH);
-                result.put(entry.getKey(), wrapScalar(entry.getValue(), descriptor, resolver));
+                result.put(entry.getKey(), RequestValue.of(entry.getValue()));
             }
         }
         return Map.copyOf(result);
@@ -158,22 +146,17 @@ public final class DefaultBoundRequest implements BoundRequest {
      * @param params          the operation's declared parameters
      * @param location        the parameter source the keys belong to
      * @param caseInsensitive whether to lower-case keys (headers) for case-insensitive lookup
-     * @param resolver        the conversion resolver used to coerce declared scalars
      * @return an immutable map of bound values
      */
     private static Map<String, RequestValue> bindMultiMap(
-            MultiMap source,
-            List<ParamDescriptor> params,
-            ParamLocation location,
-            boolean caseInsensitive,
-            ParamConversionResolver resolver) {
+            MultiMap source, List<ParamDescriptor> params, ParamLocation location, boolean caseInsensitive) {
         Map<String, RequestValue> result = new LinkedHashMap<>();
         if (source != null) {
             for (String name : source.names()) {
                 List<String> values = source.getAll(name);
                 ParamDescriptor descriptor = findDescriptor(params, name, location);
                 String key = caseInsensitive ? name.toLowerCase(Locale.ROOT) : name;
-                result.put(key, wrapValues(values, descriptor, resolver));
+                result.put(key, wrapValues(values, descriptor));
             }
         }
         return Map.copyOf(result);
@@ -191,31 +174,28 @@ public final class DefaultBoundRequest implements BoundRequest {
      *       single-entry {@link JsonArray}, exactly as QUERY and HEADER already do, so the downstream
      *       collection state machine materializes a single-entry collection instead of receiving a bare
      *       {@link String} it has no converter for (which failed the request);
-     *   <li>a <b>scalar</b> descriptor takes {@link #wrapValues}' first-value fallback to
-     *       {@link #wrapScalar}, so scalar cookie binding is unchanged.
+     *   <li>a <b>scalar</b> descriptor takes {@link #wrapValues}' first-value fallback, so the cookie
+     *       is stored as its raw string.
      * </ul>
      *
      * <p>A {@code null} cookie value is bound as {@code RequestValue.of(null)} directly rather than
-     * routed through {@link #wrapValues}, which keeps the previous {@link #wrapScalar} outcome for the
-     * scalar shape byte-for-byte and lets a collection-declared parameter apply its absence contract
+     * routed through {@link #wrapValues}, which stores the same null a scalar would and lets a
+     * collection-declared parameter apply its absence contract
      * (empty collection, or the single-entry {@code @DefaultValue}) instead of binding a single-entry
      * array holding {@code null}.
      *
      * @param cookieSet the request cookies
      * @param params    the operation's declared parameters
-     * @param resolver  the conversion resolver used to coerce declared scalars
      * @return an immutable map of bound cookie values
      */
-    private static Map<String, RequestValue> bindCookies(
-            Set<Cookie> cookieSet, List<ParamDescriptor> params, ParamConversionResolver resolver) {
+    private static Map<String, RequestValue> bindCookies(Set<Cookie> cookieSet, List<ParamDescriptor> params) {
         Map<String, RequestValue> result = new LinkedHashMap<>();
         if (cookieSet != null) {
             for (Cookie cookie : cookieSet) {
                 ParamDescriptor descriptor = findDescriptor(params, cookie.getName(), ParamLocation.COOKIE);
                 String key = cookie.getName().toLowerCase(Locale.ROOT);
                 String value = cookie.getValue();
-                result.put(
-                        key, value == null ? RequestValue.of(null) : wrapValues(List.of(value), descriptor, resolver));
+                result.put(key, value == null ? RequestValue.of(null) : wrapValues(List.of(value), descriptor));
             }
         }
         return Map.copyOf(result);
@@ -516,15 +496,13 @@ public final class DefaultBoundRequest implements BoundRequest {
     /**
      * Wraps a list of raw string values according to the matching descriptor's multiplicity: a
      * collection descriptor ({@code componentType != null}) wraps all values as a {@link JsonArray};
-     * otherwise the first value is wrapped as a coerced scalar.
+     * otherwise the first value is wrapped as a raw string.
      *
      * @param values     all raw values for this key (never {@code null}, may be empty)
      * @param descriptor the matching declared parameter, or {@code null} when undeclared
-     * @param resolver   the conversion resolver used to coerce a declared scalar
      * @return the wrapped {@link RequestValue}
      */
-    private static RequestValue wrapValues(
-            List<String> values, ParamDescriptor descriptor, ParamConversionResolver resolver) {
+    private static RequestValue wrapValues(List<String> values, ParamDescriptor descriptor) {
         if (descriptor != null && descriptor.componentType() != null) {
             JsonArray array = new JsonArray();
             for (String value : values) {
@@ -533,44 +511,7 @@ public final class DefaultBoundRequest implements BoundRequest {
             return RequestValue.of(array);
         }
         String first = values.isEmpty() ? null : values.get(0);
-        return wrapScalar(first, descriptor, resolver);
-    }
-
-    /**
-     * Wraps a single raw string value, coercing it to the descriptor's declared scalar type when a
-     * descriptor is present, or wrapping the raw string when the key is undeclared.
-     *
-     * <p>Coercion is <em>lenient</em> at this binding facade: when the
-     * {@link ParamConversionResolver} cannot convert the value to the declared type (e.g. {@code "abc"}
-     * for a declared {@code Integer}, or {@code "not-a-uuid"} for a {@code UUID}), the raw
-     * {@link String} is retained instead of propagating the failure. Binding therefore never throws on
-     * a non-coercible scalar; the downstream {@code ParameterExtractor} re-converts through the same
-     * resolver and fails closed there (a clean 400 {@code ParamConversionException}) so the failure
-     * carries the parameter diagnostics rather than surfacing as an opaque {@code Method.invoke} 500.
-     *
-     * @param value      the raw string value, possibly {@code null}
-     * @param descriptor the matching declared parameter, or {@code null} when undeclared
-     * @param resolver   the conversion resolver used to coerce the declared scalar
-     * @return the wrapped {@link RequestValue}; the raw string when coercion fails or no converter applies
-     */
-    private static RequestValue wrapScalar(String value, ParamDescriptor descriptor, ParamConversionResolver resolver) {
-        if (value == null) {
-            return RequestValue.of(null);
-        }
-        if (descriptor != null) {
-            try {
-                ConversionContext context =
-                        SCALAR_CONTEXT_CACHE.computeIfAbsent(descriptor, ConversionContexts::forDescriptor);
-                return RequestValue.of(resolver.fromString(value, context));
-            } catch (RuntimeException coercionFailure) {
-                // Non-coercible value, or no converter for the declared type: retain the raw string so
-                // binding never throws; ParameterExtractor re-converts through the resolver and fails
-                // closed there with parameter diagnostics (a 400), or Method.invoke surfaces the type
-                // mismatch.
-                return RequestValue.of(value);
-            }
-        }
-        return RequestValue.of(value);
+        return RequestValue.of(first);
     }
 
     /**

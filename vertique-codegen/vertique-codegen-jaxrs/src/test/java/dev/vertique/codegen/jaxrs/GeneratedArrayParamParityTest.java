@@ -7,6 +7,8 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 
 import dev.vertique.codegen.test.ProcessorTestHarness;
 import dev.vertique.codegen.test.fixtures.SourceFiles;
@@ -37,6 +39,8 @@ import jakarta.ws.rs.Path;
 import jakarta.ws.rs.PathParam;
 import jakarta.ws.rs.QueryParam;
 import jakarta.ws.rs.core.MediaType;
+import java.lang.reflect.ParameterizedType;
+import java.lang.reflect.Type;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
@@ -1081,6 +1085,69 @@ class GeneratedArrayParamParityTest {
                     generated.componentType(),
                     label + ": parity breach on componentType() exact value");
         }
+    }
+
+    @Path("/body-string-list")
+    @PermitAll
+    static class StringListBodyReflective {
+        @POST
+        @Consumes(MediaType.APPLICATION_JSON)
+        public String handle(List<String> body) {
+            return "";
+        }
+    }
+
+    @Test
+    @DisplayName("unannotated List<String> body has null componentType and a preserved genericType on both paths")
+    void bodyList_componentTypeNull_genericTypePreserved() throws Exception {
+        ResourceMethodMeta.ParamMeta reflective = new JaxRsRouteRegistrar()
+                .scanResource(new StringListBodyReflective())
+                .get(0)
+                .params()
+                .get(0);
+
+        var result = ProcessorTestHarness.run(
+                new JaxRsPipelineProcessor(),
+                SourceFiles.inline("dev.vertique.test.matrix.StringListBodyGenerated", """
+                        package dev.vertique.test.matrix;
+
+                        import jakarta.ws.rs.Consumes;
+                        import jakarta.ws.rs.POST;
+                        import jakarta.ws.rs.Path;
+                        import jakarta.ws.rs.core.MediaType;
+                        import java.util.List;
+
+                        @Path("/body-string-list")
+                        public class StringListBodyGenerated {
+                            public StringListBodyGenerated() {}
+
+                            @POST
+                            @Consumes(MediaType.APPLICATION_JSON)
+                            public String handle(List<String> body) { return ""; }
+                        }
+                        """));
+        result.assertSuccess();
+        ResourceMethodMeta.ParamMeta generated = callDescribe(
+                        result,
+                        "dev.vertique.test.matrix.StringListBodyGenerated",
+                        "dev.vertique.test.matrix.StringListBodyGenerated_JaxRsDescriptor")
+                .get(0)
+                .params()
+                .get(0);
+
+        assertEquals(ResourceMethodMeta.ParamSource.BODY, reflective.source());
+        assertEquals(ResourceMethodMeta.ParamSource.BODY, generated.source());
+        assertNull(reflective.componentType(), "reflective BODY collections hard-code a null componentType");
+        assertNull(generated.componentType(), "generated BODY collections must match that null componentType");
+        assertListOfString(reflective.genericType(), "reflective");
+        assertListOfString(generated.genericType(), "generated");
+    }
+
+    private static void assertListOfString(Type type, String label) {
+        assertNotNull(type, label + " genericType must stay populated for List<String>");
+        ParameterizedType parameterized = assertInstanceOf(ParameterizedType.class, type, label);
+        assertEquals(List.class, parameterized.getRawType(), label);
+        assertEquals(String.class, parameterized.getActualTypeArguments()[0], label);
     }
 
     // --- Helper: load and call describe() (mirrors JaxRsDescriptorArrayParamTest#callDescribe) ---

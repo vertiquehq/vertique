@@ -22,6 +22,7 @@ import dev.vertique.input.processing.PolicyAxis;
 import dev.vertique.input.processing.ReflectiveInvocationPolicies;
 import dev.vertique.rest.core.context.RestContextResolution;
 import dev.vertique.rest.core.convert.ConversionContext;
+import dev.vertique.rest.core.convert.ParamConversionException;
 import dev.vertique.rest.core.convert.ParamConversionResolver;
 import dev.vertique.rest.core.request.RequestBodyDecoder;
 import dev.vertique.rest.core.request.RequestPreconditions;
@@ -98,8 +99,9 @@ final class ParameterExtractor {
 
     /**
      * The framework conversion resolver used to coerce every inbound scalar (and collection element)
-     * to its declared Java type, so the reflective dispatch path, the binding facade, and the outbound
-     * client share one symmetric conversion chain.
+     * to its declared Java type. Declared scalars are still raw strings on the bound request;
+     * conversion happens here, after input policies, so the reflective path and the outbound client
+     * share one conversion chain.
      */
     private final ParamConversionResolver paramConversionResolver;
     /**
@@ -606,8 +608,10 @@ final class ParameterExtractor {
      * reflective and generated paths (both now read from a {@link BoundRequest}) so the two
      * never diverge. Applies the absent-scalar contract ({@code @DefaultValue}, else the Java
      * default for a primitive, else {@code null}), routes an absent collection-valued parameter
-     * through {@link #absentCollectionValue}, coerces the present value to the declared scalar
-     * type, and runs the input processor for String values when a route chain is active.
+     * through {@link #absentCollectionValue}, runs input policies on a present transport string
+     * before conversion (including for {@link String} targets so a native
+     * {@code ParamConverterBinding<String>} still runs), and keeps a bound value that is already a
+     * non-string.
      *
      * <p>A parameter whose {@code componentType()} is non-{@code null} is <em>always</em> handled by one
      * of the two collection branches — {@link #absentCollectionValue} when the request supplied nothing,
@@ -674,14 +678,19 @@ final class ParameterExtractor {
             return coerceCollection(rawValues, paramMeta, policies);
         }
 
-        Object value = coerce(rv, paramMeta);
-
-        if (value instanceof String s && objectProcessor != null && !policies.isEmpty()) {
-            value = objectProcessor.processInput(
-                    s, String.class, policies, toInputLocation(paramMeta.source()), InputFieldNameResolver.IDENTITY);
+        // A transport string is policied before conversion, for every source — including String, so a
+        // native ParamConverterBinding<String> override still runs (and a null-returning override fails
+        // closed). JAX-RS ParamConverterProviders do not override the built-in String entry; they are
+        // fallback for types the native registry does not resolve. A non-String scalar (Integer, UUID,
+        // …) sees trim/canonicalize on " 5 " before parse, matching FORM. A value the binder already
+        // holds as a non-string is kept: there is no raw string left, and toString() would be a lossy
+        // round-trip.
+        Object raw = rv.get();
+        if (raw instanceof String s) {
+            return paramConversionResolver.fromString(
+                    applyStringPolicy(s, policies, paramMeta), scalarContext(paramMeta));
         }
-
-        return value;
+        return coerce(rv, paramMeta);
     }
 
     /**
@@ -693,13 +702,11 @@ final class ParameterExtractor {
      * {@link dev.vertique.rest.core.convert.ParamConversionException} (mapped to 400) rather than
      * silently retaining the raw string, so a single bad element fails the whole collection cleanly.
      *
-     * <p>Every element also traverses the input-policy chain exactly as its own source's scalar value
-     * does — same guard ({@code objectProcessor != null && !policies.isEmpty()}), same
-     * {@link InputObjectProcessor#processInput} call, same {@link InputLocation} derived from
-     * the parameter source, and the same position relative to conversion (before it for FORM, after it
-     * for QUERY/HEADER/COOKIE — see {@link #convertElements}). Without this a
-     * {@code @QueryParam List<String>} would bypass the canonicalization/sanitization chain that the
-     * equivalent {@code @QueryParam String} traverses.
+     * <p>Every string element traverses the input-policy chain before conversion, for every source,
+     * using the same guard ({@code objectProcessor != null && !policies.isEmpty()}), the same
+     * {@link InputObjectProcessor#processInput} call, and the same {@link InputLocation} as the
+     * scalar path. A non-string value that is already the element type is kept. Anything else fails
+     * the request. See {@link #convertElements}.
      *
      * <p>Element conversion and policy processing are delegated to {@link #convertElements};
      * materialization (declared-type selection and the read-only guarantee) to
@@ -722,69 +729,67 @@ final class ParameterExtractor {
 
     /**
      * Converts every raw request value of a collection-valued parameter to its declared component
-     * type and runs each converted {@link String} element through the input-policy chain.
+     * type. String elements run the input-policy chain <em>before</em> conversion, for every source.
      *
      * <p>Shared by every multi-value source: both the QUERY/HEADER/COOKIE path (whose values arrive as
      * a bound {@code JsonArray}) and the FORM path (whose values arrive as
      * {@code formAttributes().getAll(name)}) reach it through {@link #coerceCollection}. One
-     * implementation keeps the sources from diverging in either conversion or policy semantics.
+     * implementation keeps the sources from diverging. FORM scalars already policy the raw form
+     * string in {@link #extractFormParam} before {@link #coerceString}; this method is the only
+     * policy pass for a collection element, so a form element is not processed twice.
      *
-     * <p>Conversion is <em>fail-closed</em> per element: a malformed element propagates the
-     * resolver's {@link dev.vertique.rest.core.convert.ParamConversionException} (mapped to 400)
-     * rather than silently retaining the raw string. Policy processing uses the same guard the scalar
-     * path uses ({@code objectProcessor != null && !policies.isEmpty()}) and the
-     * {@link InputLocation} derived from the parameter source.
-     *
-     * <p><strong>The chain's position relative to conversion is per source</strong>, because each
-     * source's own scalar rule differs and an element must traverse exactly the chain its scalar
-     * equivalent traverses:
-     * <ul>
-     *   <li><b>FORM</b> — the <em>raw</em> form string is processed <em>before</em> conversion, and the
-     *       post-conversion pass is skipped. This mirrors {@link #extractFormParam}'s scalar text-field
-     *       branch, which processes {@code getFormAttribute(name)} and only then calls
-     *       {@code coerceString}. Without it a canonicalizer that <em>normalizes</em> a value (say,
-     *       stripping whitespace) would fix {@code @FormParam Integer} but not
-     *       {@code @FormParam List<Integer>}: the raw {@code " 5"} would reach the {@code Integer}
-     *       converter and 400 while the scalar succeeded — an asymmetry inside one source.</li>
-     *   <li><b>QUERY / HEADER / COOKIE</b> — the <em>converted</em> element is processed, and only when
-     *       it is still a {@link String}. This mirrors {@link #extractScalarValue}, which coerces the
-     *       bound value first and processes only a {@code String} result.</li>
-     * </ul>
-     *
-     * <p>Defaults are not processed on either path, mirroring the scalar rule (see
-     * {@link #absentCollectionValue}).
+     * <p>The element decision, in order, is load-bearing:
+     * <ol>
+     *   <li>a {@code null} raw element fails the request — it is not absence and it is not inserted,
+     *       because a {@code SortedSet} materialization throws {@link NullPointerException} on null;</li>
+     *   <li>a {@link String} is policied, then converted. The string check precedes
+     *       {@code componentType.isInstance} so {@code List<String>} still runs policies (string
+     *       conversion is identity);</li>
+     *   <li>a value that is already an instance of the element type, and is not a string, is kept.
+     *       There is no {@code toString()} round-trip;</li>
+     *   <li>anything else fails the request. {@code toString()} is not a conversion.</li>
+     * </ol>
+     * A converter that returns {@code null} for a present string fails inside
+     * {@link ParamConversionResolver#fromString}, including a {@code @DefaultValue} (see
+     * {@link #absentCollectionValue}). Defaults themselves are not policy-processed.
      *
      * @param rawValues the raw request values, in whatever order the transport reported them (F8 —
-     *                  ordering is not a framework guarantee); {@code null} entries are preserved
+     *                  ordering is not a framework guarantee)
      * @param paramMeta the collection parameter metadata (its {@code componentType()} is non-{@code null})
      * @param policies  the effective input policies applied to each {@link String} element
-     * @return the converted, policy-processed elements, in the order given
+     * @return the converted elements, in the order given
+     * @throws ParamConversionException when an element is null, the wrong type, or the converter
+     *                                  returns null or cannot parse the value
      */
     private List<Object> convertElements(
             List<?> rawValues, ResourceMethodMeta.ParamMeta paramMeta, EffectiveInputPolicies policies) {
-        ConversionContext elementContext = componentContext(paramMeta, paramMeta.componentType());
-        // Hoisted out of the loop: all of these are per-route constants.
-        boolean processElements = objectProcessor != null && !policies.isEmpty();
-        boolean processBeforeConversion = paramMeta.source() == ResourceMethodMeta.ParamSource.FORM;
-        InputLocation location = processElements ? toInputLocation(paramMeta.source()) : null;
+        Class<?> componentType = paramMeta.componentType();
+        ConversionContext elementContext = componentContext(paramMeta, componentType);
         List<Object> coerced = new ArrayList<>(rawValues.size());
         for (Object raw : rawValues) {
             if (raw == null) {
-                coerced.add(null);
+                throw new ParamConversionException(
+                        "Collection parameter '" + elementContext.paramName() + "' received a null element",
+                        elementContext.paramName(),
+                        elementContext.source(),
+                        componentType);
+            }
+            if (raw instanceof String s) {
+                coerced.add(
+                        paramConversionResolver.fromString(applyStringPolicy(s, policies, paramMeta), elementContext));
                 continue;
             }
-            String rawValue = raw.toString();
-            if (processElements && processBeforeConversion) {
-                // Same cast as the FORM scalar branch: a String target must yield a String.
-                rawValue = (String) objectProcessor.processInput(
-                        rawValue, String.class, policies, location, InputFieldNameResolver.IDENTITY);
+            if (componentType.isInstance(raw)) {
+                coerced.add(raw);
+                continue;
             }
-            Object element = paramConversionResolver.fromString(rawValue, elementContext);
-            if (processElements && !processBeforeConversion && element instanceof String s) {
-                element = objectProcessor.processInput(
-                        s, String.class, policies, location, InputFieldNameResolver.IDENTITY);
-            }
-            coerced.add(element);
+            throw new ParamConversionException(
+                    "Collection parameter '" + elementContext.paramName()
+                            + "' received a value that is neither a string nor the element type "
+                            + componentType.getName(),
+                    elementContext.paramName(),
+                    elementContext.source(),
+                    componentType);
         }
         return coerced;
     }
@@ -811,6 +816,26 @@ final class ParameterExtractor {
     }
 
     /**
+     * Runs the input-policy chain on one transport string, or returns the string unchanged when no
+     * processor or no policies are active. Callers use this <em>before</em> conversion. It is not
+     * used for {@code @DefaultValue} or for a form scalar that {@link #extractFormParam} has already
+     * processed.
+     *
+     * @param value     the raw transport string
+     * @param policies  the effective input policies for the parameter
+     * @param paramMeta the parameter metadata supplying the source location
+     * @return the processed string, which a {@link String} target must still be
+     */
+    private String applyStringPolicy(
+            String value, EffectiveInputPolicies policies, ResourceMethodMeta.ParamMeta paramMeta) {
+        if (objectProcessor == null || policies.isEmpty()) {
+            return value;
+        }
+        return (String) objectProcessor.processInput(
+                value, String.class, policies, toInputLocation(paramMeta.source()), InputFieldNameResolver.IDENTITY);
+    }
+
+    /**
      * Applies the absence contract for a collection-valued parameter — a parameter whose
      * {@code componentType()} is non-{@code null} — when the request supplied no value for its name.
      *
@@ -829,7 +854,8 @@ final class ParameterExtractor {
      * <p>A {@code @DefaultValue} on an array is not covered by the spec; the framework materialises a
      * single-element array by analogy with the single-entry collection rule (ADR-0191). Defaults are
      * <em>not</em> submitted to the input-policy chain, mirroring the scalar rule in
-     * {@link #extractScalarValue}.
+     * {@link #extractScalarValue}. A converter that returns null for the default fails the request;
+     * the result is not a one-element collection holding null.
      *
      * @param paramMeta the collection-valued parameter metadata (its {@code componentType()} is
      *                  non-{@code null})
@@ -931,15 +957,16 @@ final class ParameterExtractor {
     }
 
     /**
-     * Converts a bound {@link RequestValue} to the declared parameter type, routing string-shaped
-     * values through the {@link ParamConversionResolver}.
+     * Converts a bound {@link RequestValue} that is <em>not</em> a transport string.
+     * {@link #extractScalarValue} policies a string and converts it before calling this method, so
+     * input policies are not applied here. {@link #coerceString} is the same unpolicied conversion
+     * for a string the caller has already policied ({@link #extractFormParam}) or must not policy
+     * (a {@code @DefaultValue}).
      *
-     * <p>{@link String} and {@link JsonObject} targets keep their identity fast-paths. For every other
-     * target: a declared scalar is already coerced to its type at bind time (the binding facade ran the
-     * same resolver), so a non-{@link String} bound value is returned as-is; a value still shaped as a
-     * raw {@link String} — a declared scalar whose lenient bind retained the raw string, or an
-     * UNDECLARED {@code @BeanParam} field bound as its raw string — is converted here through the
-     * resolver, failing closed (a 400 {@code ParamConversionException}) on a malformed value.
+     * <p>{@link String} and {@link JsonObject} targets keep their identity fast-paths for a non-string
+     * bound value. Any other non-string value is returned as-is: the binder no longer converts
+     * declared scalars, so a non-string here is a body scalar or a value a custom binder already
+     * typed. A string that still reaches this method is converted without a second policy pass.
      *
      * @param rv        the request value to convert
      * @param paramMeta the parameter metadata supplying the declared type and conversion context
@@ -947,13 +974,12 @@ final class ParameterExtractor {
      */
     private Object coerce(RequestValue rv, ResourceMethodMeta.ParamMeta paramMeta) {
         Class<?> targetType = paramMeta.type();
-        if (targetType == String.class) return rv.getString();
-        if (targetType == JsonObject.class) return rv.getJsonObject();
-
         Object raw = rv.get();
         if (raw instanceof String s) {
             return paramConversionResolver.fromString(s, scalarContext(paramMeta));
         }
+        if (targetType == String.class) return rv.getString();
+        if (targetType == JsonObject.class) return rv.getJsonObject();
         return raw;
     }
 

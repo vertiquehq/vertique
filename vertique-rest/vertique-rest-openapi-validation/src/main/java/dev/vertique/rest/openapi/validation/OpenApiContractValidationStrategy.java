@@ -163,9 +163,9 @@ public final class OpenApiContractValidationStrategy implements RequestValidatio
     private final ConcurrentMap<String, Set<String>> mountContractPaths = new ConcurrentHashMap<>();
 
     /**
-     * The framework conversion resolver, threaded into the {@link DefaultBoundRequest} this strategy
-     * builds when triggering the profile first-parse so the gate binds through the same conversion
-     * chain as dispatch (the 3-site propagation contract).
+     * The framework conversion resolver, passed into the {@link DefaultBoundRequest} this strategy
+     * builds when triggering the profile first-parse. The binder stores declared scalars as raw
+     * strings and does not coerce them; parameter conversion happens in {@code ParameterExtractor}.
      */
     private final ParamConversionResolver paramConversionResolver;
 

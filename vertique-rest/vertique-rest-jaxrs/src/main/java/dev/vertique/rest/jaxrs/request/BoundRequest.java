@@ -14,7 +14,8 @@ import java.util.Map;
  * <p>The four parameter maps expose path, query, header, and cookie values. Header and cookie
  * lookups are case-insensitive. Multiplicity is type-driven by the operation's declared parameters:
  * a parameter whose declared type is a collection binds all values as a {@code JsonArray}, while a
- * scalar parameter binds only the first value (and is coerced to its declared scalar type).
+ * scalar parameter binds only the first value, as the raw transport string. Conversion to the
+ * declared type happens in {@code ParameterExtractor}, after input policies.
  * Undeclared keys bind as their raw first-value string.
  *
  * <p>{@link #body()} never returns {@code null}; when the request has no body it returns a
