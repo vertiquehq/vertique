@@ -774,10 +774,11 @@ Parameters are matched in this order:
 shared `dev.vertique.rest.core.convert.ParamConversionResolver`, not a fixed scalar table:
 
 - Every transport string — including a declared `String` parameter — is converted through the
-  resolver after input policies. The built-in `String` converter is identity; an application
-  `ParamConverterBinding` or JAX-RS `ParamConverterProvider` for `String` replaces it. A converter
-  that returns `null` for a present value (including a `@DefaultValue`) fails closed with
-  `ParamConversionException` (400).
+  resolver after input policies. The built-in `String` converter is identity; a native
+  `ParamConverterBinding<String>` replaces it. JAX-RS `ParamConverterProvider`s are fallback for
+  types the native registry does not resolve — they never override the built-in `String` entry.
+  A converter that returns `null` for a present value (including a `@DefaultValue`) fails closed
+  with `ParamConversionException` (400).
 - `JsonObject` keeps an identity fast path when the binder already holds one.
 - Everything else — boxed and primitive numerics, `boolean`, `UUID`, `java.time` types, `BigDecimal`,
   enums, and any other application-registered converter — is converted through the resolver.

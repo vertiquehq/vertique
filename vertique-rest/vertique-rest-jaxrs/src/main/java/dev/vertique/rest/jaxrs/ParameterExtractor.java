@@ -609,8 +609,9 @@ final class ParameterExtractor {
      * never diverge. Applies the absent-scalar contract ({@code @DefaultValue}, else the Java
      * default for a primitive, else {@code null}), routes an absent collection-valued parameter
      * through {@link #absentCollectionValue}, runs input policies on a present transport string
-     * before conversion (including for {@link String} targets so application converters still
-     * run), and keeps a bound value that is already a non-string.
+     * before conversion (including for {@link String} targets so a native
+     * {@code ParamConverterBinding<String>} still runs), and keeps a bound value that is already a
+     * non-string.
      *
      * <p>A parameter whose {@code componentType()} is non-{@code null} is <em>always</em> handled by one
      * of the two collection branches — {@link #absentCollectionValue} when the request supplied nothing,
@@ -677,11 +678,13 @@ final class ParameterExtractor {
             return coerceCollection(rawValues, paramMeta, policies);
         }
 
-        // A transport string is policied before conversion, for every source — including String, so an
-        // application ParamConverterBinding/ParamConverterProvider override for String still runs (and
-        // a null-returning override fails closed). A non-String scalar (Integer, UUID, …) sees
-        // trim/canonicalize on " 5 " before parse, matching FORM. A value the binder already holds as a
-        // non-string is kept: there is no raw string left, and toString() would be a lossy round-trip.
+        // A transport string is policied before conversion, for every source — including String, so a
+        // native ParamConverterBinding<String> override still runs (and a null-returning override fails
+        // closed). JAX-RS ParamConverterProviders do not override the built-in String entry; they are
+        // fallback for types the native registry does not resolve. A non-String scalar (Integer, UUID,
+        // …) sees trim/canonicalize on " 5 " before parse, matching FORM. A value the binder already
+        // holds as a non-string is kept: there is no raw string left, and toString() would be a lossy
+        // round-trip.
         Object raw = rv.get();
         if (raw instanceof String s) {
             return paramConversionResolver.fromString(
