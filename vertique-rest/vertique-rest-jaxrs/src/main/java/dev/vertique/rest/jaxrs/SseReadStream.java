@@ -7,11 +7,13 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import dev.vertique.core.json.VertiqueJson;
 import dev.vertique.rest.core.config.SseConfig;
 import dev.vertique.rest.core.sse.SseEvent;
+import io.vertx.core.AsyncResult;
 import io.vertx.core.Handler;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.http.HttpServerResponse;
 import io.vertx.core.streams.ReadStream;
+import io.vertx.ext.web.RoutingContext;
 import lombok.extern.slf4j.Slf4j;
 
 /**
@@ -34,8 +36,12 @@ import lombok.extern.slf4j.Slf4j;
  * a {@code ": keep-alive\n\n"} comment is emitted every {@link SseConfig#keepAliveIntervalMs()}
  * milliseconds to prevent idle proxies from closing the connection.
  *
- * <p>Disconnect detection: a {@link HttpServerResponse#closeHandler(Handler)} is registered
- * to cancel the keep-alive timer and close the source stream when the client disconnects.
+ * <p>Disconnect detection uses {@link RoutingContext#addEndHandler(Handler)}, which Vert.x Web
+ * multicasts. That leaves the response's single-slot {@code endHandler}/{@code exceptionHandler}/
+ * {@code closeHandler} — installed by Vert.x Web on the first {@code addEndHandler} call — intact, so
+ * completion emission and {@code RequestContextLifecycle} cleanup still run when the client vanishes.
+ * Registering through {@link HttpServerResponse#closeHandler(Handler)} would silently replace those
+ * handlers and cut every routing-context end handler off for that exit path.
  *
  * <p>On the first call to {@link #handler(Handler)}, the required SSE response headers
  * ({@code Cache-Control: no-cache} and {@code Connection: keep-alive}) are written to the
@@ -63,22 +69,24 @@ class SseReadStream implements ReadStream<Buffer> {
 
     private long keepAliveTimerId = -1;
     private boolean headersWritten = false;
+    /** Guards against double terminal delivery from source end and response end. */
+    private boolean terminated = false;
 
     // --- Constructor ---
 
     /**
      * Creates a new SSE read stream that wraps the given source stream.
      *
-     * @param source   the upstream {@link ReadStream} of {@link SseEvent} values
-     * @param vertx    the Vert.x instance used for the keep-alive timer
-     * @param config   the SSE configuration controlling keep-alive behaviour
-     * @param response the HTTP server response used for disconnect detection and header injection
+     * @param source the upstream {@link ReadStream} of {@link SseEvent} values
+     * @param vertx  the Vert.x instance used for the keep-alive timer
+     * @param config the SSE configuration controlling keep-alive behaviour
+     * @param ctx    the routing context used for multicast disconnect detection and header injection
      */
-    SseReadStream(ReadStream<SseEvent> source, Vertx vertx, SseConfig config, HttpServerResponse response) {
+    SseReadStream(ReadStream<SseEvent> source, Vertx vertx, SseConfig config, RoutingContext ctx) {
         this.source = source;
         this.vertx = vertx;
         this.config = config;
-        this.response = response;
+        this.response = ctx.response();
 
         // Wire source exception → our exception handler
         source.exceptionHandler(cause -> {
@@ -89,16 +97,8 @@ class SseReadStream implements ReadStream<Buffer> {
             }
         });
 
-        // Disconnect detection: client closed the connection
-        response.closeHandler(v -> {
-            log.debug("SSE client disconnected");
-            cancelKeepAlive();
-            // Cancel the source stream — triggers DefaultSseChannel.onClose callbacks
-            source.handler(null);
-            if (endHandler != null) {
-                endHandler.handle(null);
-            }
-        });
+        // Multicast disconnect detection — never response.closeHandler (single-slot; last writer wins).
+        ctx.addEndHandler(this::onResponseEnded);
     }
 
     // --- ReadStream ---
@@ -120,12 +120,7 @@ class SseReadStream implements ReadStream<Buffer> {
             startKeepAlive();
             // Register endHandler BEFORE handler to avoid missing terminal signals
             // that replay synchronously when the source is already closed
-            source.endHandler(v -> {
-                cancelKeepAlive();
-                if (endHandler != null) {
-                    endHandler.handle(null);
-                }
-            });
+            source.endHandler(v -> onSourceEnded());
             source.handler(event -> {
                 Buffer buf = formatEvent(event);
                 try {
@@ -200,6 +195,69 @@ class SseReadStream implements ReadStream<Buffer> {
     }
 
     // --- Internal helpers ---
+
+    /**
+     * Handles the multicast routing-context end signal. A succeeded outcome is a normal response
+     * end (source already drove terminal delivery); a failed outcome is a disconnect or reset and
+     * cancels the keep-alive timer and source stream.
+     *
+     * @param outcome the Vert.x Web end-handler result
+     */
+    private void onResponseEnded(AsyncResult<Void> outcome) {
+        if (outcome.succeeded()) {
+            cancelKeepAlive();
+            return;
+        }
+        onClientDisconnected();
+    }
+
+    /**
+     * Cancels keep-alive and the source when the client vanishes mid-stream, then fires this
+     * stream's end handler exactly once.
+     */
+    private void onClientDisconnected() {
+        if (!markTerminated()) {
+            return;
+        }
+        log.debug("SSE client disconnected");
+        cancelKeepAlive();
+        // Cancel the source stream — triggers DefaultSseChannel.onClose callbacks
+        source.handler(null);
+        fireEndHandler();
+    }
+
+    /**
+     * Drives normal terminal delivery when the upstream source ends.
+     */
+    private void onSourceEnded() {
+        if (!markTerminated()) {
+            return;
+        }
+        cancelKeepAlive();
+        fireEndHandler();
+    }
+
+    /**
+     * Marks this stream terminated. Returns {@code true} on the first call only.
+     *
+     * @return {@code true} when this call claimed termination
+     */
+    private boolean markTerminated() {
+        if (terminated) {
+            return false;
+        }
+        terminated = true;
+        return true;
+    }
+
+    /** Fires {@link #endHandler} once, if registered. */
+    private void fireEndHandler() {
+        Handler<Void> handler = endHandler;
+        endHandler = null;
+        if (handler != null) {
+            handler.handle(null);
+        }
+    }
 
     /**
      * Writes the mandatory SSE response headers ({@code Cache-Control} and

@@ -890,6 +890,13 @@ An SSE endpoint returns `ReadStream<SseEvent>` from a method annotated
 framework handles buffering, wire formatting, keepalive, and connection lifecycle. Defaults come from
 `jaxrs.sse`.
 
+Disconnect detection uses `RoutingContext.addEndHandler` (multicast), not
+`response().closeHandler(...)`. The response's `endHandler` / `exceptionHandler` / `closeHandler`
+setters are single-slot: replacing them cuts off every routing-context end handler on that exit path,
+including completion emission and `RequestContextLifecycle` cleanup. Application code that needs to
+observe the request ending must register through `addEndHandler` or
+`RequestContextLifecycle.Handle.onClose` — never through those three response setters.
+
 Each event is written as lines terminated by `\n`, followed by a blank line:
 
 ```

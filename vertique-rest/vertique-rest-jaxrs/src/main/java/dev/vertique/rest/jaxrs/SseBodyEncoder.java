@@ -104,7 +104,7 @@ class SseBodyEncoder implements ResponseBodyEncoder {
         }
         ReadStream<SseEvent> source = (ReadStream<SseEvent>) entity;
         Vertx vertx = ctx.vertx();
-        SseReadStream sseStream = new SseReadStream(source, vertx, config, ctx.response());
+        SseReadStream sseStream = new SseReadStream(source, vertx, config, ctx);
         return new StreamingBody(sseStream, SSE_CONTENT_TYPE, null);
     }
 }
