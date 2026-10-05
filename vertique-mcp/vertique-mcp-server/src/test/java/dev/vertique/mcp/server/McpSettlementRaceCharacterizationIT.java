@@ -507,6 +507,11 @@ public class McpSettlementRaceCharacterizationIT {
         }
 
         @Override
+        public void clearCurrent() {
+            bound = null;
+        }
+
+        @Override
         public jakarta.ws.rs.core.SecurityContext toJaxRs(SecurityContext context, boolean secure) {
             return null;
         }

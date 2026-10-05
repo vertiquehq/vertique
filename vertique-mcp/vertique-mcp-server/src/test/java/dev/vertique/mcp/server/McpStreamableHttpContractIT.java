@@ -503,6 +503,11 @@ public class McpStreamableHttpContractIT {
         }
 
         @Override
+        public void clearCurrent() {
+            bound.set(null);
+        }
+
+        @Override
         public jakarta.ws.rs.core.SecurityContext toJaxRs(SecurityContext context, boolean secure) {
             return null;
         }
