@@ -137,7 +137,7 @@ SPDX-License-Identifier: EUPL-1.2
         <bucket4j.version>8.19.0</bucket4j.version>
 
         <!-- Test -->
-        <junit.jupiter.version>5.14.4</junit.jupiter.version>
+        <junit.jupiter.version>6.1.3</junit.jupiter.version>
         <rest-assured.version>6.0.0</rest-assured.version>
         <atlassian.swagger-validator.version>2.46.0</atlassian.swagger-validator.version>
         <mockito.version>5.23.0</mockito.version>
