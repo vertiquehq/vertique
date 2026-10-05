@@ -34,6 +34,9 @@ import javax.lang.model.type.TypeMirror;
  * @param routeSanitizers     ordered list of sanitizer class type mirrors for the route-level chain
  *                            (method-level {@code @Sanitize}/{@code @SkipSanitization} overrides
  *                            class-level; empty when none apply); never {@code null}
+ * @param methodPolicyReplacesClass {@code true} when a method {@code @RequiresPolicy} was selected.
+ *                            An action-only policy has an empty role/scope contract and still
+ *                            replaces the type policy
  */
 public record EffectiveMethodContract(
         ExecutableElement concreteMethod,
@@ -46,4 +49,5 @@ public record EffectiveMethodContract(
         List<TypeMirror> validationGroups,
         List<EffectiveParamContract> params,
         List<TypeMirror> routeCanonicalizers,
-        List<TypeMirror> routeSanitizers) {}
+        List<TypeMirror> routeSanitizers,
+        boolean methodPolicyReplacesClass) {}

@@ -448,6 +448,24 @@ old imports, without a deprecated REST alias. Applications must update imports a
 with aligned framework and processor versions. Other transports do not gain inline support from the
 relocation alone.
 
+### AccessPolicy and @RequiresPolicy
+
+`AccessPolicy` is an empty public interface. A policy is a public, non-generic interface that
+extends only `AccessPolicy` and declares no fields, methods, or nested types. Its direct
+requirements are `@PermitAll`, `@DenyAll`, `@RolesAllowed`, `@Authorized`, and `@RequiresAction`.
+`@PermitAll` and `@DenyAll` are each exclusive. Roles, scopes, and one action may combine.
+
+`@RequiresPolicy` names one such policy on a type or method. A method reference replaces a type
+reference, and identical references coalesce. Distinct references, or a policy mixed with an inline
+security annotation, are rejected. REST expands the selected policy into the existing
+`SecurityPolicy` and action metadata. The policy is not instantiated, and its decision is not
+cached.
+
+Enforcement today covers REST routes only, generated and reflective. Services, MCP tools, and
+WebSocket endpoints do not evaluate `@RequiresPolicy` yet: a policy on a service or MCP type is not
+enforced, and a method-level `@RequiresPolicy` on a WebSocket lifecycle method is ignored. Use the
+inline annotations there until those adapters support policies.
+
 ---
 
 ### Event Records

@@ -98,6 +98,11 @@ the Caffeine and Redis provider modules depend on that neutral core. Shared Redi
 connection profiles and client lifecycle belong to `vertique-redis-core`, which is
 independent of cache-specific behavior so other Redis-backed capabilities can reuse it.
 
+`vertique-security-core` owns `AccessPolicy` and `@RequiresPolicy`. A policy is a public interface
+of direct security requirements. REST and the JAX-RS processor expand a selected policy into the
+existing `SecurityPolicy` and action metadata. The codegen mirror selects the same policy without
+a dependency on the security module.
+
 Rate limiting follows the same one-way boundary: `vertique-rate-limit-core` owns the
 programmatic quota-admission API, the policy and key models, and the in-process
 LOCAL engine, and depends only on `vertique-core`, `vertique-context`, and

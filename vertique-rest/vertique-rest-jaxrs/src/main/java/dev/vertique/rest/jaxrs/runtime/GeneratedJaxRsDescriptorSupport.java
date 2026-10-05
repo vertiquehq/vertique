@@ -6,6 +6,9 @@ package dev.vertique.rest.jaxrs.runtime;
 import dev.vertique.core.sanitization.Canonicalizer;
 import dev.vertique.core.sanitization.Sanitizer;
 import dev.vertique.core.util.AnnotationResolver;
+import dev.vertique.rest.core.security.SecurityPolicyViolation;
+import dev.vertique.rest.core.security.SecurityPolicyViolationException;
+import dev.vertique.security.authz.AccessPolicyResolver;
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
@@ -224,5 +227,29 @@ public final class GeneratedJaxRsDescriptorSupport {
         Class<?> declaring = method.getDeclaringClass();
         Class<?> annotationView = declaring.isInterface() ? declaring : viewType;
         return AnnotationResolver.resolveMethodAnnotations(method, annotationView);
+    }
+
+    /**
+     * Applies typed-policy collection rooted at the resource type to the merged annotation list of
+     * a generated descriptor, failing registration the way the reflective scanner does.
+     *
+     * @param resourceType the resource class the descriptor describes; must not be {@code null}
+     * @param method       the resource method; must not be {@code null}
+     * @param legacy       the merged annotation list from {@link #effectiveMethodAnnotations}
+     * @return the legacy list, or its non-security annotations plus the selected policy
+     * @throws SecurityPolicyViolationException if a policy declaration is invalid or conflicting
+     */
+    public List<Annotation> collectPolicyAnnotations(Class<?> resourceType, Method method, List<Annotation> legacy) {
+        try {
+            return AccessPolicyResolver.collectMethodAnnotations(resourceType, method, legacy);
+        } catch (IllegalArgumentException | TypeNotPresentException ex) {
+            SecurityPolicyViolationException failure =
+                    new SecurityPolicyViolationException(List.of(new SecurityPolicyViolation(
+                            method.getName(),
+                            SecurityPolicyViolation.ViolationType.CONFLICTING_SECURITY_ANNOTATIONS,
+                            "Invalid or conflicting security policy at RequiresPolicy: " + ex.getMessage())));
+            failure.initCause(ex);
+            throw failure;
+        }
     }
 }

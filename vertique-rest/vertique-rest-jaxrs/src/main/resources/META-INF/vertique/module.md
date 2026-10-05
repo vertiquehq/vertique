@@ -1380,7 +1380,13 @@ An operation **restricts callers** when any of these holds:
 - its effective policy is `DenyAll`, `AuthenticatedOnly`, or `Constrained` — the `SecurityPolicy`
   variants `@DenyAll`, `@RolesAllowed`, and `@Authorized` (`dev.vertique:vertique-security-core`)
   resolve to; an `@Authorized` with no scopes resolves to `AuthenticatedOnly` (authentication
-  only), and one with scopes, or `@RolesAllowed`, resolves to `Constrained`;
+  only), and one with scopes, or `@RolesAllowed`, resolves to `Constrained`. A `@RequiresPolicy`
+  reference is expanded to those same variants before this classification. The scanner collects
+  the reference from the resource hierarchy, including an interface the consumer adds. A generated
+  companion's method-annotation list is that same collection, not `Class.getMethod`, so a generic
+  override and a same-package non-public override keep the action. An unknown
+  action remains `REQUIRES_ACTION_INVALID`, and restrictive security without an auth module
+  remains `SECURITY_ANNOTATIONS_WITHOUT_AUTH_MODULE`;
 - it declares one or more `@SecurityRequirement`s and none of its alternatives is anonymous (an
   empty requirement, which annotations cannot currently express); a scopeless
   `@SecurityRequirement` still restricts callers;
