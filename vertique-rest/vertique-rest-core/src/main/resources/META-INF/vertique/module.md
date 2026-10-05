@@ -1259,6 +1259,10 @@ credentials through the same verification path as its required handler.
 implemented in `vertique-rest-security`. Bind your own only to replace framework behavior wholesale.
 `SecurityRuntime.bindCurrent(SecurityContext)` returns a `ContextHolder.Scope` that **must** be
 registered with `RequestContextLifecycle.Handle.onClose(...)`.
+`SecurityRuntime.clearCurrent()` removes any currently bound `SecurityContext` without restoring a
+prior binding — used by trust-boundary clears such as MCP's no-scheme admit path that must discard
+ambient holder state before the transport binds its own identity. Prefer `bindCurrent` with
+lifecycle-owned scopes for ordinary bind/unbind.
 
 #### Describing a scheme for OpenAPI
 

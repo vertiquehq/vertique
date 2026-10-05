@@ -414,6 +414,16 @@ final class McpRequestDispatcher {
     }
 
     /**
+     * Package accessor so {@link McpRouterMount} can hand the same runtime to
+     * {@link McpIdentityEstablisher} for the no-scheme ambient holder clear.
+     *
+     * @return this dispatcher's {@link SecurityRuntime}; never {@code null}
+     */
+    SecurityRuntime securityRuntime() {
+        return securityRuntime;
+    }
+
+    /**
      * Sorts {@code interceptors} by {@link OrderedExtension#comparator()} — phase, then priority,
      * then {@code orderKey} — and validates that no two share the same {@code (phase, priority,
      * orderKey)} triple (contract §4.4). Ordering never falls back to Dagger set iteration: this is
@@ -3273,10 +3283,14 @@ final class McpRequestDispatcher {
     }
 
     /**
-     * Snapshots the security context identity establishment bound for this request.
+     * Snapshots the security context MCP identity establishment bound for this request.
      *
-     * @return the established snapshot, or {@code null} when no context is bound — i.e. the request
-     *         terminated before identity establishment completed
+     * <p>Returns {@code null} when no context is bound — i.e. the request terminated before MCP
+     * identity establishment completed. The no-scheme admit path clears any ambient
+     * {@link SecurityRuntime} holder binding before identity resolution, so a foreign ROOT-middleware
+     * snapshot cannot be mistaken for an MCP-established identity here.
+     *
+     * @return the established snapshot, or {@code null} when no context is bound
      */
     private @Nullable SecurityContextSnapshot establishedSecurity() {
         SecurityContext current = securityRuntime.current();

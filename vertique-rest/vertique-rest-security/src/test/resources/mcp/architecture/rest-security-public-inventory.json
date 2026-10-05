@@ -67,7 +67,8 @@
       "public dev.vertique.core.context.ContextHolder$Scope dev.vertique.rest.security.HolderBackedSecurityRuntime.bindCurrent(dev.vertique.security.SecurityContext)",
       "public dev.vertique.rest.security.HolderBackedSecurityRuntime(dev.vertique.rest.security.JaxRsSecurityContextFactory)",
       "public dev.vertique.security.SecurityContext dev.vertique.rest.security.HolderBackedSecurityRuntime.current()",
-      "public jakarta.ws.rs.core.SecurityContext dev.vertique.rest.security.HolderBackedSecurityRuntime.toJaxRs(dev.vertique.security.SecurityContext,boolean)"
+      "public jakarta.ws.rs.core.SecurityContext dev.vertique.rest.security.HolderBackedSecurityRuntime.toJaxRs(dev.vertique.security.SecurityContext,boolean)",
+      "public void dev.vertique.rest.security.HolderBackedSecurityRuntime.clearCurrent()"
     ],
     "dev.vertique.rest.security.IdentityPipelineFactory": [
       "public dev.vertique.rest.core.security.SecurityRuntime dev.vertique.rest.security.IdentityPipelineFactory.securityRuntime()",

@@ -69,6 +69,19 @@ public class HolderBackedSecurityRuntime implements SecurityRuntime {
     /**
      * {@inheritDoc}
      *
+     * <p>Delegates to {@link ContextValues#remove(Class)}, which enforces the duplicated-context
+     * write invariant. Idempotent when no {@link SecurityContext} is bound.
+     *
+     * @throws IllegalStateException if called outside a Vert.x duplicated context
+     */
+    @Override
+    public void clearCurrent() {
+        ContextValues.remove(SecurityContext.class);
+    }
+
+    /**
+     * {@inheritDoc}
+     *
      * <p>Delegates to the injected {@link JaxRsSecurityContextFactory}, which is always present
      * because {@link SecurityModule} provides the binding as part of the runtime graph.
      */

@@ -93,7 +93,8 @@ final class McpRouterMount implements RouterMount {
                             + "setups that do not depend on vertique-codegen-all)",
                     config.mountPath());
         }
-        this.identityEstablisher = new McpIdentityEstablisher(config, routeAuthHandlers, identityResolutionMiddleware);
+        this.identityEstablisher = new McpIdentityEstablisher(
+                config, routeAuthHandlers, identityResolutionMiddleware, dispatcher.securityRuntime());
     }
 
     /** {@inheritDoc} */
