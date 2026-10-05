@@ -1032,7 +1032,7 @@ class RestRequestCompletionEmitterTest {
                     Set.of());
             RouterWithBarrier rb = unclaimedRouterWithBarrier(vertx, em, rc -> {
                 bound.bindCorrelation(rc);
-                rc.put(RestRequestCompletionEmitter.KEY_WIRE_FAILURE, new IOException());
+                RequestCompletionRecorder.recordWireFailure(rc, new IOException());
                 rc.fail(500, new IllegalStateException(RAW));
             });
             rb.router().errorHandler(500, rc -> rc.response().setStatusCode(500).end());
@@ -2731,12 +2731,12 @@ class RestRequestCompletionEmitterTest {
     class WireFailureEnrichment {
 
         @Test
-        @DisplayName("KEY_WIRE_FAILURE marker present on an otherwise-clean completion populates wireFailureCode")
+        @DisplayName("Framework-owned wire-failure marker on an otherwise-clean completion populates wireFailureCode")
         void emitPopulatesWireFailureCodeFromMarker(VertxTestContext ctx) {
             List<RestRequestCompletedEvent> captured = new ArrayList<>();
             RestRequestCompletionEmitter em = emitter(Set.of(captured::add));
             RouterWithBarrier rb = routerWithBarrier(vertx, em, rc -> {
-                rc.put(RestRequestCompletionEmitter.KEY_WIRE_FAILURE, new IllegalStateException("truncated stream"));
+                RequestCompletionRecorder.recordWireFailure(rc, new IllegalStateException("truncated stream"));
                 rc.response().setStatusCode(200).end();
             });
 
@@ -2802,6 +2802,35 @@ class RestRequestCompletionEmitterTest {
                     "the marker's cause must win over the end-handler failure, regardless of either message");
         }
 
+        @Test
+        @DisplayName("recordWireFailure is first-writer-wins: a second cause does not replace the first")
+        void recordWireFailureFirstWriterWins(VertxTestContext ctx) {
+            List<RestRequestCompletedEvent> captured = new ArrayList<>();
+            RestRequestCompletionEmitter em = emitter(Set.of(captured::add));
+            RouterWithBarrier rb = routerWithBarrier(vertx, em, rc -> {
+                RequestCompletionRecorder.recordWireFailure(rc, new IllegalStateException("first"));
+                RequestCompletionRecorder.recordWireFailure(rc, new IOException("second-ignored"));
+                rc.response().setStatusCode(200).end();
+            });
+
+            startServer(rb.router())
+                    .compose(port -> client.get(port, "127.0.0.1", "/test").send())
+                    .compose(resp -> {
+                        ctx.verify(() -> assertEquals(200, resp.statusCode()));
+                        return awaitBarrier(vertx, rb.barrier());
+                    })
+                    .onComplete(ctx.succeeding(v -> {
+                        ctx.verify(() -> {
+                            assertEquals(1, captured.size(), "exactly one event must be emitted");
+                            assertEquals(
+                                    "IllegalStateException",
+                                    captured.get(0).wireFailureCode(),
+                                    "the first recorded cause must win");
+                        });
+                        ctx.completeNow();
+                    }));
+        }
+
         /**
          * Pins the connection-close normalization, and doubles as the upgrade tripwire for it.
          *
@@ -2850,11 +2879,11 @@ class RestRequestCompletionEmitterTest {
         void emitPopulatesWireFailureCodeFromFailedEndHandlerWiring(VertxTestContext ctx) {
             List<RestRequestCompletedEvent> captured = new ArrayList<>();
             RestRequestCompletionEmitter em = emitter(Set.of(captured::add));
-            // No KEY_WIRE_FAILURE marker is set here — only the endResult channel carries a failure,
-            // proving emit(ctx, state, endResult) actually threads that argument into the emitted event
-            // (the seam markerWinsOverEndHandlerFailure above no longer exercises end-to-end). The shared
-            // router's identity handler has already claimed /test for REST when this handler runs, so the
-            // direct emit publishes a RestRequestCompletedEvent.
+            // No framework-owned wire-failure marker is set here — only the endResult channel carries a
+            // failure, proving emit(ctx, state, endResult) actually threads that argument into the
+            // emitted event (the seam markerWinsOverEndHandlerFailure above no longer exercises
+            // end-to-end). The shared router's identity handler has already claimed /test for REST when
+            // this handler runs, so the direct emit publishes a RestRequestCompletedEvent.
             RouterWithBarrier rb = routerWithBarrier(
                     vertx,
                     em,
@@ -3070,9 +3099,9 @@ class RestRequestCompletionEmitterTest {
     }
 
     /**
-     * Writes the four retired {@code rest.events.*} keys with forged values (TP-004, AC-006.1). The keys are
-     * deliberate string literals: the constants that named them are removed (FR-012), and writing the keys
-     * must have no effect on the event.
+     * Writes the four retired {@code rest.events.*} keys with forged values (TP-004, AC-006.1), plus the
+     * retired wire-failure key removed by GH-648. The keys are deliberate string literals: the constants
+     * that named them are removed, and writing the keys must have no effect on the event.
      *
      * @param rc the routing context to forge the keys on
      */
@@ -3081,6 +3110,7 @@ class RestRequestCompletionEmitterTest {
         rc.put("rest.events.routeTemplate", "/forged");
         rc.put("rest.events.startTime", Instant.EPOCH);
         rc.put("rest.events.emitted", Boolean.TRUE);
+        rc.put("vertique.rest.core.events.wireFailure", new IOException("forged-wire-failure"));
     }
 
     /**
@@ -3145,7 +3175,64 @@ class RestRequestCompletionEmitterTest {
                                     () -> assertFalse(
                                             event.startTime().isBefore(before),
                                             "a forged start time must be ignored: startTime=" + event.startTime()
-                                                    + ", test start=" + before));
+                                                    + ", test start=" + before),
+                                    () -> assertNull(
+                                            event.wireFailureCode(),
+                                            "a forged retired wireFailure key must not populate wireFailureCode"));
+                        });
+                        ctx.completeNow();
+                    }));
+        }
+
+        /**
+         * GH-648: writing the retired public wire-failure key cannot forge a truncated-response signature
+         * onto a clean 200, and cannot suppress a real framework-recorded classification.
+         */
+        @Test
+        @DisplayName("Forging the retired wireFailure RoutingContext key neither sets nor suppresses wireFailureCode")
+        void forgedWireFailureKeyNeitherSetsNorSuppressesWireFailureCode(VertxTestContext ctx) {
+            List<RestRequestCompletedEvent> events = new CopyOnWriteArrayList<>();
+            Wired wired = subRouterWith(emitter(Set.of(events::add)), api -> {
+                operationRoute(api, "/clean", LIST_ITEMS).handler(rc -> {
+                    rc.put("vertique.rest.core.events.wireFailure", new IllegalStateException("forged"));
+                    respondOk(rc);
+                });
+                operationRoute(api, "/real", OPERATION_A).handler(rc -> {
+                    rc.put("vertique.rest.core.events.wireFailure", new IllegalStateException("forged-first"));
+                    RequestCompletionRecorder.recordWireFailure(rc, new IOException("real-wire-failure"));
+                    respondOk(rc);
+                });
+            });
+
+            startServer(wired.root())
+                    .compose(port -> sendCase(port, "/api/clean", "clean")
+                            .compose(resp -> {
+                                ctx.verify(() -> assertEquals(200, resp.statusCode()));
+                                return awaitFirstPassEnd(wired, "clean");
+                            })
+                            .compose(v -> sendCase(port, "/api/real", "real"))
+                            .compose(resp -> {
+                                ctx.verify(() -> assertEquals(200, resp.statusCode()));
+                                return awaitFirstPassEnd(wired, "real");
+                            }))
+                    .onComplete(ctx.succeeding(v -> {
+                        ctx.verify(() -> {
+                            assertEquals(2, events.size(), "exactly one event per request");
+                            RestRequestCompletedEvent clean = events.stream()
+                                    .filter(e -> "/api/clean".equals(e.path()))
+                                    .findFirst()
+                                    .orElseThrow();
+                            RestRequestCompletedEvent real = events.stream()
+                                    .filter(e -> "/api/real".equals(e.path()))
+                                    .findFirst()
+                                    .orElseThrow();
+                            assertNull(
+                                    clean.wireFailureCode(),
+                                    "forging the retired key alone must leave wireFailureCode null");
+                            assertEquals(
+                                    "IOException",
+                                    real.wireFailureCode(),
+                                    "a forged retired key must not suppress a real framework-recorded cause");
                         });
                         ctx.completeNow();
                     }));

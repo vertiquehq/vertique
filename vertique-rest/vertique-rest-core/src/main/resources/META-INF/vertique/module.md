@@ -180,10 +180,14 @@ claim, so the rerouted target decides it, and the event keeps the first pass's s
 `DEBUG`, `RestRequestCompletionEmitter` logs one line for each request it skips because another
 transport claimed it.
 
-The completion state is framework-owned. No `RoutingContext.data()` key exposes it, and writing the
-retired `rest.events.*` keys has no effect on the event. `RestRequestCompletionEmitter` holds the
-state in its own end handler and emits exactly once whether or not `RequestContextLifecycle` is
-mounted.
+The completion state is framework-owned. No `RoutingContext.data()` key exposes the start time,
+emitted flag, claim, operation identity, or post-handoff wire-failure marker, and writing the
+retired `rest.events.*` keys or the retired `vertique.rest.core.events.wireFailure` key has no
+effect on the event. `RestRequestCompletionEmitter` holds the state in its own end handler and
+emits exactly once whether or not `RequestContextLifecycle` is mounted. A sibling framework module
+records a post-handoff wire failure through `RequestCompletionRecorder.recordWireFailure` (first
+writer wins); the emitter still consults a failed response end-handler result when no marker was
+recorded, including the documented late-`end()` carve-out.
 
 Two deliberate properties:
 
