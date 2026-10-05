@@ -606,6 +606,16 @@ SPDX-License-Identifier: EUPL-1.2
                 <version>${project.version}</version>
             </dependency>
 
+            <!-- JUnit BOM — declared before vertx-dependencies so every JUnit Jupiter and
+                 Platform artifact resolves to one version. vertx-junit5 otherwise brings an
+                 older junit-jupiter-engine that cannot load against a newer junit-jupiter-api. -->
+            <dependency>
+                <groupId>org.junit</groupId>
+                <artifactId>junit-bom</artifactId>
+                <version>${junit.jupiter.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
             <!-- Micrometer BOM — declared before vertx-dependencies so micrometer versions win
                  over any transitive micrometer pinning from vertx-dependencies -->
             <dependency>
