@@ -5,84 +5,68 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Cache Redis
 
-> **Status:** Alpha
+> **Status:** Stable
 > **Package:** `dev.vertique.cache.redis`
 > **Artifact:** `vertique-cache-redis`
-> **Depends on:** `vertique-cache-core`, `vertique-cache-aop`, `vertique-json`, `vertique-redis-core`
+> **Depends on:** `vertique-cache-core`, `vertique-json`, `vertique-redis-core`, `vertique-job-cron`
 
-`vertique-cache-redis` is the asynchronous clustered provider for the provider-neutral
-cache contracts. It stores JSON values in Redis through the shared Redis client
-infrastructure and returns Vert.x futures for every cache operation. It also contains the
-bounded physical cleanup policy for unreachable old generations. It does not own named Redis
-profile parsing or shared-client lifecycle.
+`vertique-cache-redis` is the asynchronous clustered provider for the provider-neutral cache
+contracts. It stores JSON values in Redis through the shared Redis client infrastructure and
+returns Vert.x futures for every cache operation. It also contains the bounded physical cleanup
+policy for unreachable old generations. It does not own named Redis profile parsing or
+shared-client lifecycle. Annotation apps install `CacheAopModule` themselves; `vertique-cache-aop`
+is test-scope here only.
 
 ## When To Use It
 
 Use this provider when cache state must be shared across application instances. Install
-`vertique-cache-redis` explicitly in the application composition and configure the
-connection profile through `vertique-redis-core`; do not duplicate connection settings
-in cache annotations.
-
-The provider-specific `cache.redis` section contains the selected profile, a physical
-key namespace, and a positive provider format-version field:
-
-```json
-{
-  "cache": {
-    "redis": {
-      "connection": "primary",
-      "namespace": "shared",
-      "formatVersion": 1
-    }
-  }
-}
-```
+`CacheRedisModule` in the application composition and configure the connection profile through
+`vertique-redis-core`; do not duplicate connection settings in cache annotations. Apps using
+`@Cacheable` / `@CacheEvict` also install `CacheAopModule` and put `vertique-codegen-cache` on the
+compiler's annotation-processor path.
 
 ## Core Concepts
 
-Cache-specific storage behavior belongs here, while named Redis profiles and client
-lifecycle belong to the shared Redis module. `CacheRedisModule` contributes the `CLUSTERED`
-`CacheStore` binding and provider identity to the cache-core mode map, and includes the cache
-core, JSON runtime, and Redis connection modules. Its included `JsonRuntimeModule` supplies the
+Cache-specific storage behavior belongs here, while named Redis profiles and client lifecycle
+belong to the shared Redis module. `CacheRedisModule` contributes the `CLUSTERED` `CacheStore`
+binding and provider identity to the cache-core mode map, and includes the cache core, JSON
+runtime, and Redis connection modules. Its included `JsonRuntimeModule` supplies the
 `JsonMapperProfileRegistry` wiring used for cache value conversion.
 
-Redis operations are asynchronous and do not block the Vert.x event loop. The provider
-uses a generation marker for each logical region. A physical entry key has the form
+Redis operations are asynchronous and do not block the Vert.x event loop. The provider uses a
+generation marker for each logical region. A physical entry key has the form
 `<redis namespace>:v<Redis keyspace format version>:<region namespace>:v<region format version>:<region name>:g<generation>:<identity>:<selector>`;
-the generation marker is the same prefix followed by `:generation`. The Redis keyspace
-version is `CacheRedisConfig.formatVersion`; the remaining region components are the
-`CacheRegion.canonicalPrefix()` grammar. The first operation
-initializes a missing marker with an opaque token. Whole-region clear replaces the
-marker with a new opaque token, so lookups that start afterward use a new logical
-keyspace without scanning Redis in the request path.
+the generation marker is the same prefix followed by `:generation`. The Redis keyspace version is
+`CacheRedisConfig.formatVersion`; the remaining region components are the
+`CacheRegion.canonicalPrefix()` grammar. The first operation initializes a missing marker with an
+opaque token. Whole-region clear replaces the marker with a new opaque token, so lookups that
+start afterward use a new logical keyspace without scanning Redis in the request path.
 
-Values are serialized with the per-cache `jsonProfile` when one is configured, or the
-global cache JSON profile otherwise. Reads deserialize with the declared result
-`Type`, which preserves generic value shapes. A missing value, JSON `null`, or a JSON
-codec failure is a cache miss. Write-side serialization and size failures are reported
-by the provider and remain subject to the cache core's fail-open behavior.
+Values are serialized with the per-cache `jsonProfile` when one is configured, or the global cache
+JSON profile otherwise. Reads deserialize with the declared result `Type`, which preserves generic
+value shapes. A missing value, JSON `null`, or a JSON codec failure is a cache miss. Write-side
+serialization and size failures are reported by the provider and remain subject to the cache
+core's fail-open behavior.
 
-The `CacheStore` duration passed to a write is interpreted explicitly: `Duration.ZERO`
-writes with `SET` and no expiration; a positive duration writes with a millisecond
-`PX` expiration. A negative duration is ignored as a successful no-op. Finite old
-generations therefore expire normally. Clear is logically immediate but physically
-weak: an in-flight lookup may still return a value from the old generation, and old
-physical keys are not deleted by the clear operation.
+The `CacheStore` duration passed to a write is interpreted explicitly: `Duration.ZERO` writes with
+`SET` and no expiration; a positive duration writes with a millisecond `PX` expiration. A negative
+duration is ignored as a successful no-op. Finite old generations therefore expire normally. Clear
+is logically immediate but physically weak: an in-flight lookup may still return a value from the
+old generation, and old physical keys are not deleted by the clear operation.
 
-This store owns no settlement fence: the shared cache runtime alone bounds every
-composed Redis operation — generation lookup and client-pool wait included — with
-`cache.backendTimeoutMs`. On the runtime's timeout or a Redis failure, the cache core
-preserves the business result. The backend future is not assumed to be cancellable;
-when it settles after the runtime deadline, the runtime emits its single late
-observation event while the backend side effect may still complete.
+This store owns no settlement fence: the shared cache runtime alone bounds every composed Redis
+operation — generation lookup and client-pool wait included — with `cache.backendTimeoutMs`. On
+the runtime's timeout or a Redis failure, the cache core preserves the business result. The backend
+future is not assumed to be cancellable; when it settles after the runtime deadline, the runtime
+emits its single late observation event while the backend side effect may still complete.
 
 ## Physical old-generation cleanup
 
-Whole-region clear leaves old physical generations for background maintenance. `RedisCleanupJob`
-uses the `vertique-redis-core` topology seam and an ordinary Vert.x command client for marker
-reads; it is not part of a cache request, readiness future, or business future. The normal cache
-request path therefore remains on Vert.x Redis operations, while the internal Lettuce topology
-client is reserved for maintenance.
+Whole-region clear leaves old physical generations for background maintenance. Cleanup uses the
+`vertique-redis-core` topology seam and an ordinary Vert.x command client for marker reads; it is
+not part of a cache request, readiness future, or business future. The normal cache request path
+therefore remains on Vert.x Redis operations, while the internal Lettuce topology client is
+reserved for maintenance.
 
 The cleanup definition has the stable id `cache-redis-old-generation-cleanup` and the six-field
 cron expression `0 */15 * * * *` (every 15 minutes, UTC). It runs with `EVERY_INSTANCE`, skips
@@ -99,34 +83,75 @@ generation marker itself is never a candidate; unreadable markers are protected 
 failed/backlogged outcome instead of deletion.
 
 Failures are retained for the next run and use capped exponential retry backoff: 15 minutes,
-30 minutes, then up to a one-hour ceiling. Each sweep sends a bounded `CacheCleanupObservation`
-through the provider-neutral `CacheObserver` seam as sealed `CacheCleanupCompleted` events. The event contains the
-connection profile, namespace, success/error outcome, scanned count, deleted count, backlog
-indicator, and failure flag. An observer failure does not fail the maintenance operation. A
-metrics adapter may translate this observation into backend-specific counters without adding a
-Micrometer dependency to this module.
+30 minutes, then up to a one-hour ceiling. Each sweep sends a bounded cleanup observation through
+the provider-neutral `CacheObserver` seam as sealed `CacheCleanupCompleted` events. The event
+contains the connection profile, namespace, success/error outcome, scanned count, deleted count,
+backlog indicator, and failure flag. An observer failure does not fail the maintenance operation.
 
-The `RedisCleanupLifecycle` step runs in `INFRA` at one priority above
-`RedisClientShutdownStep`. During reverse teardown it unregisters cleanup dispatch first, then
-closes the shared Redis clients. When an application provides `CronScheduler`, this module also
-registers the bounded cleanup job and its event-bus dispatch handler. Cleanup policy and metrics
-remain owned by the cache runtime; this module only composes their lifecycle with the shared client.
+When an application provides `CronScheduler`, this module registers the bounded cleanup job and its
+event-bus dispatch handler. The cleanup shutdown contribution runs in `INFRA` at one priority above
+`RedisClientShutdownStep`: during reverse teardown it unregisters cleanup dispatch first, then
+closes the shared Redis clients.
 
-## Conformance and verification
+## Key Classes
 
-The Redis edge runs the same provider-neutral `CacheStoreContractTest` as the in-process provider,
-including hit, miss, TTL, clear, failure, declared-type, value-isolation, and repeatable-eviction
-semantics. Redis integration uses the pinned Testcontainers image
+### CacheRedisModule
+
+Dagger `@Module` that includes `CacheCoreModule`, `JsonRuntimeModule`, and `RedisConnectionModule`.
+It contributes the `CLUSTERED` `CacheStore`, provider id `"redis"`, optional `CronScheduler`
+binding, and the cleanup shutdown step. Install it for clustered caching.
+
+### CacheRedisConfig
+
+Typed `cache.redis` configuration: `connection` (Redis profile name), `namespace` (physical key
+prefix), and `formatVersion` (positive Redis keyspace format version).
+
+### RedisCacheStore
+
+`CacheStore` backed by Redis through the shared client registry. Public constructors support
+module wiring and direct test construction.
+
+## Configuration
+
+| Key | Type | Required | Constraints |
+|---|---|---|---|
+| `cache.redis.connection` | string | yes | Non-blank; names a `redis.connections.<name>` profile |
+| `cache.redis.namespace` | string | yes | Non-blank physical key namespace |
+| `cache.redis.formatVersion` | int | yes | ≥ 1 |
+
+Example:
+
+```json
+{
+  "cache": {
+    "redis": {
+      "connection": "primary",
+      "namespace": "shared",
+      "formatVersion": 1
+    }
+  }
+}
+```
+
+## Module Dagger Bindings
+
+| Binding | Kind | Description |
+|---|---|---|
+| `CacheRedisConfig` | `@Provides` `@Singleton` | Parsed `cache.redis` section |
+| `CacheStore` | `@Provides` `@IntoMap` `@CacheModeKey(CLUSTERED)` | Clustered Redis store |
+| `String` | `@Provides` `@IntoMap` `@CacheProviderIdKey(CLUSTERED)` | Provider id `"redis"` |
+| `CronScheduler` | `@BindsOptionalOf` | Optional cron for cleanup registration |
+| `ApplicationShutdownStep` | `@Provides` `@IntoSet` | Cleanup unregister then Redis client close (`INFRA`) |
+
+## Verification
+
+The Redis edge runs the same provider-neutral `CacheStoreContractTest` as the in-process provider.
+Redis integration uses the pinned Testcontainers image
 `redis:7.2.4-alpine@sha256:c8bb255c3559b3e458766db810aa7b3c7af1235b204cfdb304e79ff388fe1a5a`.
-
-Run the Redis provider proof with:
 
 ```text
 ./mvnw -ntp -pl vertique-cache/vertique-cache-redis -am verify
 ```
-
-The package-level clean verification also checks dependency/BOM parity, forbidden implementation
-dependencies, packaged module-documentation parity, and clean generated-code regeneration.
 
 ## Dependencies
 
@@ -135,3 +160,4 @@ dependencies, packaged module-documentation parity, and clean generated-code reg
 | `vertique-cache-core` | Provider-neutral cache contracts |
 | `vertique-json` | JSON mapper profiles and `JsonMapperProfileRegistry` runtime wiring |
 | `vertique-redis-core` | Shared Redis connection and lifecycle boundary |
+| `vertique-job-cron` | Optional cron registration for old-generation cleanup |
