@@ -1391,7 +1391,7 @@ configuration, not those types, and their shape can change while the keys stay a
 | `http.port` | `8080` | |
 | `http.host` | `"0.0.0.0"` | |
 | `http.maxBodySize` | `2097152` | total request-body bytes — exceeding it returns 413 |
-| `http.maxMultipartBodySizeBytes` | `2097152` | must be positive; pre-auth `multipart/form-data` admission ceiling — BodyHandler uses `min(maxBodySize, maxMultipartBodySizeBytes)` and returns 413 when exceeded (Content-Length early reject before spool when present). Raise `maxBodySize` for large non-multipart payloads without widening multipart spool by keeping this tight. Residual: when `http.decompressionSupported` is true, compressed-request expansion is not yet separately bounded beyond this BodyHandler limit |
+| `http.maxMultipartBodySizeBytes` | `2097152` | must be positive; pre-auth `multipart/form-data` admission ceiling — BodyHandler uses `min(maxBodySize, maxMultipartBodySizeBytes)` (just `maxMultipartBodySizeBytes` when `maxBodySize` is the `-1` unlimited sentinel, which leaves non-multipart unlimited) and returns 413 when exceeded (Content-Length early reject before spool when present). Raise `maxBodySize` for large non-multipart payloads without widening multipart spool by keeping this tight. Residual: when `http.decompressionSupported` is true, compressed-request expansion is not yet separately bounded beyond this BodyHandler limit |
 | `http.uploadsDirectory` | `"file-uploads"` | must be non-blank; multipart spool directory |
 | `http.compressionSupported` | `false` | gzip/deflate responses |
 | `http.compressionLevel` | `6` | 1–9 |

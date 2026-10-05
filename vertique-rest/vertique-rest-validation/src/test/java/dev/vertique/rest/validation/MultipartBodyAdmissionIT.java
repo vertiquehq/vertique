@@ -153,7 +153,119 @@ public class MultipartBodyAdmissionIT {
         assertTrue(resourceInvoked.get());
     }
 
+    @Test
+    @DisplayName("maxBodySize=-1 keeps the multipart ceiling: over-limit multipart is 413 before the resource runs")
+    void unlimitedGlobalOverLimitMultipartRejectedBeforeResource() throws Exception {
+        startServer("unlimitedGlobalOverLimit", -1L);
+
+        byte[] payload = new byte[(int) MULTIPART_ADMISSION_BYTES * 4];
+        Arrays.fill(payload, (byte) 'x');
+        Buffer body = MultipartBodies.singleFile("upload", "big.bin", "application/octet-stream", payload);
+        assertTrue(body.length() > MULTIPART_ADMISSION_BYTES, "fixture must exceed the multipart ceiling");
+
+        HttpResult result = postMultipart(body);
+
+        assertEquals(413, result.statusCode(), "global -1 must not disable the multipart ceiling");
+        assertFalse(resourceInvoked.get(), "BodyHandler must reject before the resource method");
+        assertNull(interceptorSawRequest.get(), "request interceptors must not run after a body-limit failure");
+        assertNoSpooledUploads();
+    }
+
+    @Test
+    @DisplayName("maxBodySize=-1 still admits under-ceiling multipart")
+    void unlimitedGlobalUnderLimitMultipartAccepted() throws Exception {
+        startServer("unlimitedGlobalUnderLimit", -1L);
+
+        Buffer body = MultipartBodies.singleFile(
+                "upload", "small.bin", "application/octet-stream", "small-enough".getBytes(StandardCharsets.US_ASCII));
+        assertTrue(body.length() <= MULTIPART_ADMISSION_BYTES);
+
+        HttpResult result = postMultipart(body);
+
+        assertEquals(200, result.statusCode());
+        assertTrue(resourceInvoked.get());
+    }
+
+    @Test
+    @DisplayName("maxBodySize=-1 leaves non-multipart bodies unlimited")
+    void unlimitedGlobalTextBodyAdmitted() throws Exception {
+        startServer("unlimitedGlobalText", -1L);
+
+        String text = "y".repeat((int) MULTIPART_ADMISSION_BYTES * 4);
+
+        HttpResult result = client.post(server.actualPort(), "127.0.0.1", "/admission/text")
+                .putHeader("Content-Type", "text/plain")
+                .sendBuffer(Buffer.buffer(text, StandardCharsets.UTF_8.name()))
+                .map(response -> new HttpResult(response.statusCode(), String.valueOf(response.bodyAsString())))
+                .toCompletionStage()
+                .toCompletableFuture()
+                .get(ASYNC_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+
+        assertEquals(200, result.statusCode(), "non-multipart must stay unlimited under maxBodySize=-1");
+        assertEquals("text-ok", result.body());
+    }
+
+    @Test
+    @DisplayName("Chunked multipart without Content-Length over the ceiling is 413 and leaves no spooled uploads")
+    void chunkedOverLimitMultipartRejectedAndSpoolCleaned() throws Exception {
+        startServer("chunkedOverLimit", -1L);
+
+        byte[] payload = new byte[(int) MULTIPART_ADMISSION_BYTES * 4];
+        Arrays.fill(payload, (byte) 'x');
+        Buffer body = MultipartBodies.singleFile("upload", "big.bin", "application/octet-stream", payload);
+        int split = (int) MULTIPART_ADMISSION_BYTES / 2;
+
+        io.vertx.core.http.HttpClient httpClient = vertx.createHttpClient();
+        try {
+            int status = httpClient
+                    .request(io.vertx.core.http.HttpMethod.POST, server.actualPort(), "127.0.0.1", "/admission/upload")
+                    .compose(req -> {
+                        req.setChunked(true);
+                        req.putHeader("Content-Type", MultipartBodies.contentType());
+                        return req.send(body.getBuffer(0, split).appendBuffer(body.getBuffer(split, body.length())));
+                    })
+                    .map(io.vertx.core.http.HttpClientResponse::statusCode)
+                    .toCompletionStage()
+                    .toCompletableFuture()
+                    .get(ASYNC_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+
+            assertEquals(413, status, "chunked over-limit multipart must fail closed with 413");
+        } finally {
+            httpClient.close();
+        }
+        assertFalse(resourceInvoked.get(), "BodyHandler must reject before the resource method");
+        assertNull(interceptorSawRequest.get(), "request interceptors must not run after a body-limit failure");
+        assertNoSpooledUploads();
+    }
+
+    /** Waits briefly for end-handler cleanup, then asserts no regular files remain in the spool directory. */
+    private void assertNoSpooledUploads() throws Exception {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(ASYNC_TIMEOUT_SECONDS);
+        long remaining;
+        do {
+            remaining = countSpooledFiles();
+            if (remaining == 0) {
+                return;
+            }
+            Thread.sleep(50);
+        } while (System.nanoTime() < deadline);
+        assertEquals(0, remaining, "rejected multipart must not leave spooled upload files");
+    }
+
+    private long countSpooledFiles() throws java.io.IOException {
+        if (!java.nio.file.Files.isDirectory(uploadsDirectory)) {
+            return 0;
+        }
+        try (var files = java.nio.file.Files.walk(uploadsDirectory)) {
+            return files.filter(java.nio.file.Files::isRegularFile).count();
+        }
+    }
+
     private void startServer(String testName) {
+        startServer(testName, LARGE_MAX_BODY_SIZE);
+    }
+
+    private void startServer(String testName, long maxBodySize) {
         uploadsDirectory = java.nio.file.Path.of(
                 "target", "file-uploads", "MultipartBodyAdmissionIT", testName + "-" + UUID.randomUUID());
         resourceInvoked = new AtomicBoolean(false);
@@ -173,7 +285,7 @@ public class MultipartBodyAdmissionIT {
                         new JsonObject()
                                 .put("host", "127.0.0.1")
                                 .put("uploadsDirectory", uploadsDirectory.toString())
-                                .put("maxBodySize", LARGE_MAX_BODY_SIZE)
+                                .put("maxBodySize", maxBodySize)
                                 .put("maxMultipartBodySizeBytes", MULTIPART_ADMISSION_BYTES));
 
         server = RestTestMounts.startServerBlocking(

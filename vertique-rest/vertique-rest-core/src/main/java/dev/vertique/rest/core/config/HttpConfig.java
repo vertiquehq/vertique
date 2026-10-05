@@ -263,13 +263,17 @@ public class HttpConfig {
      * <p>Non-multipart requests use {@link #maxBodySize}. {@code multipart/form-data} uses the
      * tighter of {@link #maxBodySize} and {@link #maxMultipartBodySizeBytes}, so multipart spooling
      * cannot exceed the dedicated admission ceiling even when the global body limit is raised.
+     * A {@code maxBodySize} of {@code -1} (Vert.x "unlimited" sentinel) leaves non-multipart bodies
+     * unlimited but never disables the multipart ceiling: multipart then uses
+     * {@link #maxMultipartBodySizeBytes} alone.
      *
      * @param contentType the request {@code Content-Type} header, or {@code null}
-     * @return the positive body limit in bytes to pass to {@code BodyHandler#setBodyLimit}
+     * @return the body limit in bytes to pass to {@code BodyHandler#setBodyLimit}; {@code -1} only
+     *     for non-multipart requests when {@code maxBodySize} is {@code -1}
      */
     public long bodyLimitBytes(String contentType) {
         if (isMultipartFormData(contentType)) {
-            return Math.min(maxBodySize, maxMultipartBodySizeBytes);
+            return maxBodySize == -1 ? maxMultipartBodySizeBytes : Math.min(maxBodySize, maxMultipartBodySizeBytes);
         }
         return maxBodySize;
     }

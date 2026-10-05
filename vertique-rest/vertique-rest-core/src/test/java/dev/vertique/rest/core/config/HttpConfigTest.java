@@ -123,6 +123,31 @@ class HttpConfigTest {
     }
 
     @Test
+    @DisplayName("bodyLimitBytes keeps the multipart ceiling when maxBodySize is the -1 unlimited sentinel (builder)")
+    void bodyLimitBytesUnlimitedGlobalKeepsMultipartCeilingBuilder() {
+        HttpConfig config = HttpConfig.builder()
+                .maxBodySize(-1)
+                .maxMultipartBodySizeBytes(4_096)
+                .build();
+
+        assertEquals(4_096, config.bodyLimitBytes("multipart/form-data; boundary=x"));
+        assertEquals(4_096, config.bodyLimitBytes("MULTIPART/FORM-DATA"));
+        assertEquals(-1, config.bodyLimitBytes("application/json"), "non-multipart stays unlimited");
+        assertEquals(-1, config.bodyLimitBytes(null), "missing content type stays unlimited");
+    }
+
+    @Test
+    @DisplayName("bodyLimitBytes keeps the multipart ceiling when maxBodySize is the -1 unlimited sentinel (JSON)")
+    void bodyLimitBytesUnlimitedGlobalKeepsMultipartCeilingJson() throws Exception {
+        HttpConfig config = new ObjectMapper()
+                .readValue("{\"maxBodySize\":-1,\"maxMultipartBodySizeBytes\":4096}", HttpConfig.class);
+
+        assertEquals(-1, config.maxBodySize());
+        assertEquals(4_096, config.bodyLimitBytes("multipart/form-data; boundary=x"));
+        assertEquals(-1, config.bodyLimitBytes("text/plain"));
+    }
+
+    @Test
     @DisplayName("isMultipartFormData matches Vert.x BodyHandler's multipart prefix rule")
     void isMultipartFormDataPrefixMatch() {
         assertFalse(HttpConfig.isMultipartFormData(null));
