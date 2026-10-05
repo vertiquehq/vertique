@@ -540,4 +540,96 @@ class CacheAnnotationProcessorTest {
                 .assertFailed()
                 .assertErrorMessage("can be overridden");
     }
+
+    // --- Interface placement (proxyability rejects it; unlike codegen-aop's silent ignore) ---
+
+    /**
+     * {@code @Cacheable} on an abstract interface method is a compile error: the interface has no
+     * {@code @Inject} constructor and the method is abstract. This differs from the generic AOP
+     * processor, which silently ignores aspect triggers on interface methods.
+     */
+    @Test
+    @DisplayName("rejects @Cacheable on an abstract interface method")
+    void shouldRejectCacheableOnAnAbstractInterfaceMethod() {
+        var result = ProcessorTestHarness.run(
+                        new CacheAnnotationProcessor(),
+                        SourceFiles.inline("com.example.CacheablePort", """
+                                package com.example;
+
+                                import dev.vertique.cache.aop.Cacheable;
+
+                                public interface CacheablePort {
+
+                                    @Cacheable(name = "users", key = {"0"})
+                                    String find(String id);
+                                }
+                                """))
+                .assertFailed();
+        result.assertErrorMessage("cacheable methods require exactly one @Inject constructor");
+        result.assertErrorMessage("cacheable methods must be instance methods that can be overridden");
+    }
+
+    /** A {@code default} interface method is not abstract, but the interface still has no constructor. */
+    @Test
+    @DisplayName("rejects @Cacheable on a default interface method")
+    void shouldRejectCacheableOnADefaultInterfaceMethod() {
+        ProcessorTestHarness.run(
+                        new CacheAnnotationProcessor(),
+                        SourceFiles.inline("com.example.DefaultCacheablePort", """
+                                package com.example;
+
+                                import dev.vertique.cache.aop.Cacheable;
+
+                                public interface DefaultCacheablePort {
+
+                                    @Cacheable(name = "users", key = {"0"})
+                                    default String find(String id) {
+                                        return id;
+                                    }
+                                }
+                                """))
+                .assertFailed()
+                .assertErrorMessage("cacheable methods require exactly one @Inject constructor");
+    }
+
+    @Test
+    @DisplayName("rejects @CacheEvict on an abstract interface method")
+    void shouldRejectCacheEvictOnAnAbstractInterfaceMethod() {
+        var result = ProcessorTestHarness.run(
+                        new CacheAnnotationProcessor(),
+                        SourceFiles.inline("com.example.CacheEvictPort", """
+                                package com.example;
+
+                                import dev.vertique.cache.aop.CacheEvict;
+
+                                public interface CacheEvictPort {
+
+                                    @CacheEvict(name = "users", clear = true)
+                                    void clearAll();
+                                }
+                                """))
+                .assertFailed();
+        result.assertErrorMessage("cacheable methods require exactly one @Inject constructor");
+        result.assertErrorMessage("cacheable methods must be instance methods that can be overridden");
+    }
+
+    @Test
+    @DisplayName("rejects @CacheEvict on a default interface method")
+    void shouldRejectCacheEvictOnADefaultInterfaceMethod() {
+        ProcessorTestHarness.run(
+                        new CacheAnnotationProcessor(),
+                        SourceFiles.inline("com.example.DefaultCacheEvictPort", """
+                                package com.example;
+
+                                import dev.vertique.cache.aop.CacheEvict;
+
+                                public interface DefaultCacheEvictPort {
+
+                                    @CacheEvict(name = "users", clear = true)
+                                    default void clearAll() {}
+                                }
+                                """))
+                .assertFailed()
+                .assertErrorMessage("cacheable methods require exactly one @Inject constructor");
+    }
 }
