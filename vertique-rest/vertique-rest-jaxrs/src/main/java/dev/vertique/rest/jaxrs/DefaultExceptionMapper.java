@@ -67,6 +67,22 @@ public class DefaultExceptionMapper implements ExceptionMapper<Throwable> {
     }
 
     /**
+     * Returns {@code true} when {@link #toResponse} would dispatch to the handler registered for
+     * {@link Throwable} itself — no more-specific {@link #on} registration matched.
+     *
+     * <p>Used by {@link ErrorPipeline} to decide whether the framework catch-all logging decision
+     * applies: a typed default such as {@code IllegalArgumentException → 400} is not "unhandled".
+     *
+     * @param exceptionClass the exception class that would be mapped
+     * @return {@code true} when only the {@code Throwable} catch-all would handle it
+     */
+    boolean handledByCatchAll(Class<? extends Throwable> exceptionClass) {
+        ExceptionMapper<?> handler = findHandler(exceptionClass);
+        ExceptionMapper<?> catchAll = handlers.get(Throwable.class);
+        return handler != null && catchAll != null && handler == catchAll;
+    }
+
+    /**
      * Returns the cached handler for the given class, computing it via {@link #lookupHandler}
      * on first access.
      *

@@ -165,9 +165,14 @@ public class ErrorPipeline {
                     Object vertxFailureStatus = ctx.data().remove(VertxFailureStatus.KEY);
                     VertxFailureStatus.consumeObservation(ctx);
                     Throwable translated = restExceptionMapper.translate(mappedCause);
+                    boolean frameworkCatchAll =
+                            exceptionMapperRegistry.handledByFrameworkCatchAll(translated.getClass());
                     Response response = exceptionMapperRegistry.toResponse(translated);
                     if (!exceptionMapperRegistry.hasSpecificMapper(translated.getClass())) {
                         response = applyVertxStatusCodeFallback(response, vertxFailureStatus);
+                    }
+                    if (frameworkCatchAll) {
+                        logUnhandledAfterMapping(translated, response.getStatus());
                     }
                     return enrichProblemDetail(ctx, response);
                 })
@@ -181,6 +186,25 @@ public class ErrorPipeline {
                                             mf);
                                     return Future.succeededFuture(r);
                                 })));
+    }
+
+    // --- Unhandled-exception logging ---
+
+    /**
+     * Logs after the framework {@code Throwable} catch-all produced a response and any Vert.x
+     * status-code fallback has already run. A final 4xx is a deliberate client rejection (for
+     * example a multipart decoder limit) and must not look like an unhandled server fault; genuine
+     * 5xx outcomes keep the ERROR stack.
+     *
+     * @param cause  the throwable the catch-all mapped
+     * @param status the HTTP status that will be sent after fallback
+     */
+    private static void logUnhandledAfterMapping(Throwable cause, int status) {
+        if (status >= 400 && status < 500) {
+            log.debug("Unhandled exception mapped to client error {}", status, cause);
+            return;
+        }
+        log.error("Unhandled exception", cause);
     }
 
     // --- ProblemDetail enrichment ---

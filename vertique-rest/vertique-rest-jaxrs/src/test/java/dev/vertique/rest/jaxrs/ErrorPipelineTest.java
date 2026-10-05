@@ -6,6 +6,10 @@ package dev.vertique.rest.jaxrs;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import dev.vertique.rest.core.ProblemDetail;
 import dev.vertique.rest.core.ValidationErrorDetail;
 import dev.vertique.rest.core.ValidationProblemDetail;
@@ -13,14 +17,17 @@ import io.vertx.core.Future;
 import io.vertx.core.http.HttpServerRequest;
 import io.vertx.ext.web.RoutingContext;
 import jakarta.ws.rs.core.Response;
+import jakarta.ws.rs.ext.ExceptionMapper;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
 
 /**
  * Unit tests for {@link ErrorPipeline}.
@@ -581,6 +588,114 @@ class ErrorPipelineTest {
                             || response.getMediaType()
                                     .isCompatible(jakarta.ws.rs.core.MediaType.valueOf("application/problem+json")),
                     "superseded text/plain Content-Type must not ride along, got " + response.getMediaType());
+        }
+    }
+
+    @Nested
+    @DisplayName("Unhandled-exception logging after mapping")
+    class UnhandledExceptionLogging {
+
+        private Logger pipelineLogger;
+        private Level previousLevel;
+        private ListAppender<ILoggingEvent> appender;
+
+        @BeforeEach
+        void capturePipelineLogs() {
+            pipelineLogger = (Logger) LoggerFactory.getLogger(ErrorPipeline.class);
+            previousLevel = pipelineLogger.getLevel();
+            pipelineLogger.setLevel(Level.DEBUG);
+            appender = new ListAppender<>();
+            appender.start();
+            pipelineLogger.addAppender(appender);
+        }
+
+        @AfterEach
+        void releasePipelineLogs() {
+            pipelineLogger.detachAppender(appender);
+            appender.stop();
+            pipelineLogger.setLevel(previousLevel);
+        }
+
+        private ErrorPipeline pipelineWithFrameworkDefaults() {
+            ExceptionMapperRegistry registry =
+                    new ExceptionMapperRegistry(RestModule.defaultExceptionMapper(), Set.of());
+            return new ErrorPipeline(List.of(), List.of(), new RestExceptionMapper(), registry);
+        }
+
+        private List<ILoggingEvent> unhandledEvents() {
+            return appender.list.stream()
+                    .filter(e -> e.getFormattedMessage().contains("Unhandled exception"))
+                    .toList();
+        }
+
+        @Test
+        @DisplayName("Framework catch-all with no Vert.x hint stays 500 and logs ERROR")
+        void catchAllWithoutHintLogsError() {
+            ErrorPipeline customPipeline = pipelineWithFrameworkDefaults();
+
+            Future<Response> future = customPipeline.mapToResponse(ctx, new RuntimeException("boom"));
+            assertTrue(future.succeeded());
+            assertEquals(500, future.result().getStatus());
+
+            List<ILoggingEvent> events = unhandledEvents();
+            assertEquals(1, events.size());
+            assertEquals(Level.ERROR, events.getFirst().getLevel());
+            assertEquals("Unhandled exception", events.getFirst().getFormattedMessage());
+        }
+
+        @Test
+        @DisplayName("Framework catch-all overridden to 4xx by Vert.x hint logs DEBUG, not ERROR")
+        void catchAllOverriddenTo4xxLogsDebug() {
+            ErrorPipeline customPipeline = pipelineWithFrameworkDefaults();
+            ctxData.put(VertxFailureStatus.KEY, 400);
+
+            Future<Response> future = customPipeline.mapToResponse(ctx, new RuntimeException("too many form fields"));
+            assertTrue(future.succeeded());
+            assertEquals(400, future.result().getStatus());
+
+            List<ILoggingEvent> events = unhandledEvents();
+            assertEquals(1, events.size());
+            assertEquals(Level.DEBUG, events.getFirst().getLevel());
+            assertEquals(
+                    "Unhandled exception mapped to client error 400",
+                    events.getFirst().getFormattedMessage());
+        }
+
+        @Test
+        @DisplayName("Typed framework default (IllegalArgumentException → 400) emits no unhandled log")
+        void typedDefaultDoesNotLogUnhandled() {
+            ErrorPipeline customPipeline = pipelineWithFrameworkDefaults();
+
+            Future<Response> future = customPipeline.mapToResponse(ctx, new IllegalArgumentException("bad param"));
+            assertTrue(future.succeeded());
+            assertEquals(400, future.result().getStatus());
+
+            assertTrue(unhandledEvents().isEmpty(), "typed defaults are not the Throwable catch-all");
+        }
+
+        @Test
+        @DisplayName("Application ExceptionMapper for the cause type emits no framework unhandled log")
+        void specificApplicationMapperDoesNotLogUnhandled() {
+            ExceptionMapperRegistry registry = new ExceptionMapperRegistry(
+                    RestModule.defaultExceptionMapper(), Set.of(new MarkerRuntimeExceptionMapper()));
+            ErrorPipeline customPipeline = new ErrorPipeline(List.of(), List.of(), new RestExceptionMapper(), registry);
+
+            Future<Response> future = customPipeline.mapToResponse(ctx, new RuntimeException("app mapped"));
+            assertTrue(future.succeeded());
+            assertEquals(422, future.result().getStatus());
+
+            assertTrue(unhandledEvents().isEmpty(), "a specific application mapper owns the outcome");
+        }
+    }
+
+    /** Application mapper that outranks the framework catch-all for {@link RuntimeException}. */
+    private static final class MarkerRuntimeExceptionMapper implements ExceptionMapper<RuntimeException> {
+        @Override
+        public Response toResponse(RuntimeException exception) {
+            return Response.status(422)
+                    .entity(ProblemDetail.of(422, "marker"))
+                    .type("application/problem+json")
+                    .build();
         }
     }
 }
