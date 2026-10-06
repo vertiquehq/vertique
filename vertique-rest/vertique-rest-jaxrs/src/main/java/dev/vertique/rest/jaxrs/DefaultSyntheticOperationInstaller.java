@@ -6,12 +6,14 @@ package dev.vertique.rest.jaxrs;
 import dev.vertique.rest.core.RestConfigurationException;
 import dev.vertique.rest.core.events.RequestCompletionRecorder;
 import dev.vertique.rest.core.routing.SecurityRequirementSet;
+import dev.vertique.rest.core.security.RequiresActionResolver;
 import dev.vertique.rest.core.security.SecurityPolicy;
 import dev.vertique.rest.core.security.SecurityPolicyViolation;
 import dev.vertique.rest.core.security.SecurityPolicyViolationException;
 import dev.vertique.rest.core.security.SecuritySchemeHandler;
 import dev.vertique.rest.jaxrs.synthetic.SyntheticOperation;
 import dev.vertique.rest.jaxrs.synthetic.SyntheticOperationInstaller;
+import dev.vertique.security.authz.ActionRef;
 import io.netty.handler.codec.http.HttpResponseStatus;
 import io.vertx.core.Handler;
 import io.vertx.core.http.HttpMethod;
@@ -24,6 +26,7 @@ import io.vertx.ext.web.handler.HttpException;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
 import java.lang.annotation.Annotation;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
@@ -46,21 +49,24 @@ import org.slf4j.LoggerFactory;
  * resource method ({@link SyntheticOperationDescriptor#securityAnnotations}), resolves the security
  * policy from them through the scanner's own {@link SecurityPolicyBuilder} and the requirement sets
  * through the scanner's own {@link SecuritySchemeAnnotationScanner}, and hands contributors a {@link
- * SyntheticOperationDescriptor} that reports those same annotations. Every check a resource route
- * would fail on, plus a duplicate operation id on the same router, runs before the router gains any
- * route, and fails with a {@link RestConfigurationException} whose message starts with the
- * operation's origin. A contributor or Vert.x failing while the route is built fails the same way,
- * with that failure as the cause, after the partial route has been removed from the router again and
- * the operation id released, so the router is left exactly as before and a corrected installation of
- * the same id can succeed.
+ * SyntheticOperationDescriptor} that reports those same annotations. An operation governed by a typed
+ * policy is resolved from the requirements that policy declares, and the action it requires is
+ * validated by the same checks a manual resource route gets. Every check a resource route would fail
+ * on, plus a duplicate operation id on the same router, runs before the router gains any route, and
+ * fails with a {@link RestConfigurationException} whose message starts with the operation's origin. A
+ * contributor or Vert.x failing while the route is built fails the same way, with that failure as the
+ * cause, after the partial route has been removed from the router again and the operation id
+ * released, so the router is left exactly as before and a corrected installation of the same id can
+ * succeed.
  *
  * <p>The route then carries, in order: the completion recorder (a platform handler recording the
  * synthetic descriptor as the request's route identity, so a request rejected by authentication or
  * authorization still completes as a REST operation completion carrying that descriptor), the
  * scheme's authentication handler ({@link
- * JaxRsRouteRegistrar#applySecurity}), every registered contributor in {@link
+ * JaxRsRouteRegistrar#applySecurity}; none for a public typed operation that names no scheme), every
+ * registered contributor in {@link
  * JaxRsRouterMount.Factory#sortedOperationHandlerContributors() resource order} with the effective
- * policy and no required action ({@link JaxRsRouteRegistrar#contributeOperationHandlers}), the
+ * policy and the required action, if any ({@link JaxRsRouteRegistrar#contributeOperationHandlers}), the
  * caller's terminal handler, and a failure handler that ends every failure with a problem body and
  * {@code Cache-Control: no-store} and never continues. That body deliberately bypasses the
  * application's {@link ErrorPipeline}. Router lifecycle hooks, API-scoped middleware, request
@@ -75,6 +81,8 @@ import org.slf4j.LoggerFactory;
 final class DefaultSyntheticOperationInstaller implements SyntheticOperationInstaller {
 
     private static final Logger LOG = LoggerFactory.getLogger("dev.vertique.rest.jaxrs.SyntheticOperationInstaller");
+
+    private static final RequiresActionResolver REQUIRES_ACTION_RESOLVER = new RequiresActionResolver();
 
     private final JaxRsRouterMount.Factory factory;
     private final SecurityPolicyBuilder policyBuilder = new SecurityPolicyBuilder();
@@ -115,8 +123,14 @@ final class DefaultSyntheticOperationInstaller implements SyntheticOperationInst
         RouterState state = prefixed(origin, () -> stateFor(router));
 
         // The annotations an equally annotated resource method declares; the policy, the requirement
-        // sets, and the descriptor's reported annotations all come from this one list.
-        List<Annotation> annotations = SyntheticOperationDescriptor.securityAnnotations(operation);
+        // sets, and the descriptor's reported annotations all come from this one list. An invalid
+        // typed policy is refused here, before anything touches the router.
+        List<Annotation> annotations;
+        try {
+            annotations = SyntheticOperationDescriptor.securityAnnotations(operation);
+        } catch (IllegalArgumentException e) {
+            throw rejected(origin, e);
+        }
         if (policyBuilder.hasEmptyRolesAllowed(List.of(), annotations)) {
             throw rejected(
                     origin,
@@ -131,6 +145,10 @@ final class DefaultSyntheticOperationInstaller implements SyntheticOperationInst
             }
         }
         SecurityPolicy policy = policyBuilder.buildSecurityPolicy(List.of(), annotations);
+        // The policy resolver already parsed the policy's action, so this resolution cannot fail.
+        Optional<ActionRef> parsedAction = operation.accessPolicy().isPresent()
+                ? REQUIRES_ACTION_RESOLVER.resolve(annotations, List.of())
+                : Optional.empty();
         List<SecurityRequirementSet> requirementSets =
                 prefixed(origin, () -> SecuritySchemeAnnotationScanner.effectiveRequirements(annotations, List.of()));
         SyntheticOperationDescriptor descriptor = new SyntheticOperationDescriptor(
@@ -140,7 +158,8 @@ final class DefaultSyntheticOperationInstaller implements SyntheticOperationInst
                 annotations,
                 policy,
                 requirementSets,
-                operation.applicationName());
+                operation.applicationName(),
+                parsedAction);
 
         // The always-on policy-shape gate, exactly as for a resource route.
         SecurityPolicy effectivePolicy = prefixed(origin, descriptor::effectiveSecurityPolicy);
@@ -151,12 +170,30 @@ final class DefaultSyntheticOperationInstaller implements SyntheticOperationInst
                 throw rejected(origin, new SecurityPolicyViolationException(violations));
             }
         }
-        List<RouteRegistrationViolation> authViolations =
-                RouteValidator.checkSecurityWithoutAuth(Map.of(operationId, effectivePolicy), factory.authEnabled);
-        if (!authViolations.isEmpty()) {
-            throw rejected(origin, new RouteRegistrationException(authViolations));
+        // The required action is validated by the very checks a manual resource route gets, and its
+        // violations are reported together with the auth-absent ones, as a resource route reports them.
+        List<RouteRegistrationViolation> routeViolations = new ArrayList<>();
+        Optional<ActionRef> requiredAction = JaxRsRouteRegistrar.resolveRequiredAction(
+                operationId,
+                parsedAction,
+                policy,
+                factory.actionRegistry,
+                factory.authEnabled,
+                factory.authorizerAvailable,
+                routeViolations);
+        routeViolations.addAll(
+                RouteValidator.checkSecurityWithoutAuth(Map.of(operationId, effectivePolicy), factory.authEnabled));
+        if (!routeViolations.isEmpty()) {
+            throw rejected(origin, new RouteRegistrationException(routeViolations));
         }
-        requireAuthenticationHandler(origin, operation.schemeName(), state.securityHandlers());
+        // A typed public operation that names no scheme needs no authentication handler. The first term
+        // is redundant with the others on purpose: a legacy operation always needs one, fail-closed.
+        boolean needsAuthentication = operation.accessPolicy().isEmpty()
+                || !operation.schemeName().isEmpty()
+                || !(effectivePolicy instanceof SecurityPolicy.PermitAll);
+        if (needsAuthentication) {
+            requireAuthenticationHandler(origin, operation.schemeName(), state.securityHandlers());
+        }
         if (!state.operationIds().add(operationId)) {
             throw rejected(
                     origin,
@@ -185,7 +222,7 @@ final class DefaultSyntheticOperationInstaller implements SyntheticOperationInst
                     operationId,
                     descriptor,
                     effectivePolicy,
-                    Optional.empty(),
+                    requiredAction,
                     factory.sortedOperationHandlerContributors());
             route.handler(terminal);
             route.failureHandler(new ProblemFailureHandler(operationId));
