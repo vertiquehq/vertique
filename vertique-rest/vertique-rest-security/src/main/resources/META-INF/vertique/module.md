@@ -881,14 +881,6 @@ code, plus `rolesSatisfied`, `actionSatisfied`, and `actionEvaluated` in `safeAt
 
 ---
 
-## Verification
-
-```bash
-./mvnw -ntp -pl vertique-rest/vertique-rest-security -am test
-```
-
----
-
 ## Dependencies
 
 | Artifact | Why |
