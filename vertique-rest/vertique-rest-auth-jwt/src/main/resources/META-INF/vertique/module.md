@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # REST Auth JWT Module
 
-> **Status:** Beta
+> **Status:** Stable
 > **Package:** `dev.vertique.rest.auth.jwt`
 > **Artifact:** `vertique-rest-auth-jwt`
 > **Depends on:** rest-security, security-core, security-runtime
@@ -528,6 +528,26 @@ which the `SecurityClaimMapper` already preserves when mapping the same claims i
 [Claims become framework authorization claims](#claims-become-framework-authorization-claims-not-vertx-authorizations).
 
 ---
+
+
+## Module Dagger Bindings
+
+`JwtAuthModule` includes `AuthModule` and `SecurityModule` from `vertique-rest-security`. The
+application supplies exactly one `JWTAuth` binding; everything else below is provided by this
+module.
+
+| Binding | Kind | What it is |
+|---|---|---|
+| `Set<SecuritySchemeHandler>` | `@IntoSet` | A `JwtBearerSecuritySchemeHandler` registered under the effective scheme name, for OpenAPI-described operations |
+| `Set<RouteAuthHandler>` | `@IntoSet` | A route-level handler under the same scheme name, for transports with no OpenAPI description (WebSocket upgrades, action-only routes), including explicit optional-authentication support |
+| `Set<AuthorizationProvider>` | `@IntoSet` | `JwtClaimAuthorizationProvider` — feeds the Vert.x cache; the opt-in `VertxAuthorizationImportModule` import always excludes it |
+| `Set<OperationHandlerContributor>` | `@IntoSet` | `JwtClaimsValidatorContributor` at priority 50 when a `JwtClaimsValidator` is bound (otherwise a no-op), plus `JwtCorrelationSessionContributor` at priority 55 for token-derived `CorrelationContext.session()` enrichment |
+| `JwtAuthConfig` | `@BindsOptionalOf` | The application's optional whole-config override |
+| `JwtClaimsValidator` | `@BindsOptionalOf` | The application's optional custom claim check |
+| `@JwtEffective JwtAuthConfig` | `@Provides @Singleton` | The resolved config: the application override when bound, else the parsed `jwt` section |
+
+List `JwtAuthModule` **instead of** `AuthModule` / `SecurityModule`, not alongside them.
+
 
 ## Extension Points
 
