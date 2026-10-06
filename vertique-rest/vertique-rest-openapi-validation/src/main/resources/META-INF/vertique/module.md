@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # REST OpenAPI Validation Module
 
-> **Status:** Beta
+> **Status:** Stable
 > **Package:** `dev.vertique.rest.openapi.validation`
 > **Artifact:** `vertique-rest-openapi-validation`
 > **Depends on:** rest-jaxrs
@@ -235,6 +235,28 @@ The strategy still passes the framework's `ParamConversionResolver` (`vertique-r
   application that needs the bound selects `web-validation`.
 - **`vertx-openapi` is a preview artifact.** Its API shape may change across Vert.x minor versions. This module pins the `vertx-openapi` version via the parent BOM.
 - **Security semantics.** The active security model is OR-of-AND-with-scopes. The `openapi-contract` strategy inherits the same security handling as all other strategies — security is applied by `JaxRsRouteRegistrar`, not by the validation strategy itself. The validation gate runs after the auth/authorization chain and is unaffected by the security model shape.
+
+---
+
+## Module Dagger Bindings
+
+`OpenApiContractValidationModule` contributes:
+
+| Binding | Value |
+|---|---|
+| `RequestValidationStrategy` | `@Binds @IntoSet` → `OpenApiContractValidationStrategy` (`id` `openapi-contract`) |
+| `MountPublicationHook` | `@Binds @IntoSet` → startup contract-load check (INTERNAL; sibling-framework seam) |
+
+The strategy is selected by `jaxrs.validationStrategy: openapi-contract`. The publication hook is
+not an application SPI.
+
+---
+
+## Verification
+
+```bash
+./mvnw -ntp -pl vertique-rest/vertique-rest-openapi-validation -am test
+```
 
 ---
 
