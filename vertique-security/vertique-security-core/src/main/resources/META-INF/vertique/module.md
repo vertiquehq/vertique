@@ -458,16 +458,22 @@ extends only `AccessPolicy` and declares no fields, methods, or nested types. It
 requirements are `@PermitAll`, `@DenyAll`, `@RolesAllowed`, `@Authorized`, and `@RequiresAction`.
 `@PermitAll` and `@DenyAll` are each exclusive. Roles, scopes, and one action may combine.
 
-`@RequiresPolicy` names one such policy on a type or method. A method reference replaces a type
-reference, and identical references coalesce. Distinct references, or a policy mixed with an inline
+`@RequiresPolicy` names one such policy on a type or method, within the placement each surface
+below accepts. A method reference replaces a type reference, and identical references coalesce. Distinct references, or a policy mixed with an inline
 security annotation, are rejected. REST expands the selected policy into the existing
 `SecurityPolicy` and action metadata. The policy is not instantiated, and its decision is not
 cached.
 
-Enforcement today covers REST routes only, generated and reflective. Services, MCP tools, and
-WebSocket endpoints do not evaluate `@RequiresPolicy` yet: a policy on a service or MCP type is not
-enforced, and a method-level `@RequiresPolicy` on a WebSocket lifecycle method is ignored. Use the
-inline annotations there until those adapters support policies.
+Four surfaces evaluate `@RequiresPolicy`: REST routes (generated and reflective), service
+dispatch (the supported declaration is on the contract; collection starts at the registered contract
+interface, so a policy on an implementation class or handler method is not collected, except that
+a hand-built contract entry still reads class-level annotations from the service instance's class,
+a documented limit in the services reference), MCP tools, and WebSocket upgrade admission
+(declared on the endpoint class only). A policy on a WebSocket lifecycle method (`@OnOpen`, `@OnMessage`, `@OnClose`,
+`@OnError`) fails startup rather than being ignored. Each surface's contract is in its own
+`module.md`: the "Typed access policies" sections of `vertique-services` and `vertique-mcp-server`,
+and the "There is no per-message authorization" and "Typed policies gate admission only" sections of
+`vertique-rest-websocket`.
 
 ---
 

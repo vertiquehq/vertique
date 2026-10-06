@@ -332,36 +332,130 @@ public final class AccessPolicyResolver {
         return annotation.annotationType() == RequiresPolicy.class && ((RequiresPolicy) annotation).value() == policy;
     }
 
+    /**
+     * Resolves a bridge or synthetic method to the operation it forwards to; any other method
+     * resolves to itself.
+     *
+     * <p>The exact parameter search runs first, up the whole superclass chain. It is the only match
+     * that cannot be a different operation: a compiler visibility bridge, for example, shares its
+     * parameter types with the inherited method it forwards to, while a narrower overload declared
+     * on the bridge's class is a different operation that must never replace it. Only when no class
+     * in the chain declares an exact match does the search accept the assignable instance method a
+     * generic bridge erases to (see {@link #uniqueAssignable}). Both searches apply the same
+     * eligibility rule (see {@link #canBeBridgeTarget}): static, private, bridge and synthetic
+     * candidates never qualify.
+     *
+     * @param method the method being collected
+     * @return the non-bridge operation
+     * @throws IllegalArgumentException when no operation, or more than one, matches the bridge
+     */
     private static Method canonicalize(Method method) {
         if (!method.isBridge() && !method.isSynthetic()) {
             return method;
         }
         // The compiler puts the bridge on the class that implements the interface. The concrete
         // method can be declared on a superclass, so the search continues up that chain.
-        Class<?> type = method.getDeclaringClass();
-        while (type != null && type != Object.class) {
-            Method unique = null;
-            for (Method candidate : type.getDeclaredMethods()) {
-                if (candidate.isBridge() || candidate.isSynthetic() || candidate == method) {
-                    continue;
-                }
-                if (!candidate.getName().equals(method.getName())) {
-                    continue;
-                }
-                if (!Arrays.equals(candidate.getParameterTypes(), method.getParameterTypes())) {
-                    continue;
-                }
-                if (unique != null) {
-                    throw new IllegalArgumentException("no unique non-bridge operation for " + method);
-                }
-                unique = candidate;
+        for (Class<?> type = method.getDeclaringClass();
+                type != null && type != Object.class;
+                type = type.getSuperclass()) {
+            Method exact = uniqueExact(type, method);
+            if (exact != null) {
+                return exact;
+            }
+        }
+        return uniqueAssignable(method);
+    }
+
+    /**
+     * Finds the single eligible method on {@code type} whose name and parameter types equal the
+     * bridge's. A static, private, bridge or synthetic method is never a candidate.
+     *
+     * @param type the class whose declared methods are searched
+     * @param bridge the bridge or synthetic method being resolved
+     * @return the match, or {@code null} when the class declares none
+     * @throws IllegalArgumentException when several methods match
+     */
+    private static Method uniqueExact(Class<?> type, Method bridge) {
+        Method unique = null;
+        for (Method candidate : type.getDeclaredMethods()) {
+            if (!canBeBridgeTarget(candidate)
+                    || candidate == bridge
+                    || !candidate.getName().equals(bridge.getName())
+                    || !Arrays.equals(candidate.getParameterTypes(), bridge.getParameterTypes())) {
+                continue;
             }
             if (unique != null) {
-                return unique;
+                throw new IllegalArgumentException("no unique non-bridge operation for " + bridge);
             }
-            type = type.getSuperclass();
+            unique = candidate;
         }
-        throw new IllegalArgumentException("no unique non-bridge operation for " + method);
+        return unique;
+    }
+
+    /**
+     * Finds the one operation a generic bridge forwards to when no class declares its exact
+     * parameter types: a generic bridge erases to the bound, so the concrete method takes narrower
+     * types. Candidates are collected across the whole superclass chain, declaring class first, and
+     * an override repeats its overridden method's signature without adding a candidate.
+     *
+     * @param bridge the bridge or synthetic method being resolved
+     * @return the first declaration of the single matching signature
+     * @throws IllegalArgumentException when no signature, or more than one, matches
+     */
+    private static Method uniqueAssignable(Method bridge) {
+        Method unique = null;
+        for (Class<?> type = bridge.getDeclaringClass();
+                type != null && type != Object.class;
+                type = type.getSuperclass()) {
+            for (Method candidate : type.getDeclaredMethods()) {
+                if (!forwardsTo(bridge, candidate)) {
+                    continue;
+                }
+                if (unique == null) {
+                    unique = candidate;
+                } else if (!Arrays.equals(unique.getParameterTypes(), candidate.getParameterTypes())) {
+                    throw new IllegalArgumentException("no unique non-bridge operation for " + bridge);
+                }
+            }
+        }
+        if (unique == null) {
+            throw new IllegalArgumentException("no unique non-bridge operation for " + bridge);
+        }
+        return unique;
+    }
+
+    /**
+     * Tells whether {@code candidate} can be the target of {@code bridge}: an eligible, same-named,
+     * same-arity method that takes parameters assignable to the bridge's erased parameters and
+     * returns a type assignable to the bridge's return.
+     */
+    private static boolean forwardsTo(Method bridge, Method candidate) {
+        if (!canBeBridgeTarget(candidate) || !candidate.getName().equals(bridge.getName())) {
+            return false;
+        }
+        Class<?>[] erased = bridge.getParameterTypes();
+        Class<?>[] narrowed = candidate.getParameterTypes();
+        if (erased.length != narrowed.length || !bridge.getReturnType().isAssignableFrom(candidate.getReturnType())) {
+            return false;
+        }
+        for (int i = 0; i < erased.length; i++) {
+            if (!erased[i].isAssignableFrom(narrowed[i])) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * The one eligibility rule for the operation a bridge forwards to, shared by the exact and the
+     * assignable search: an instance method that is not private, bridge or synthetic.
+     */
+    private static boolean canBeBridgeTarget(Method candidate) {
+        int modifiers = candidate.getModifiers();
+        return !Modifier.isStatic(modifiers)
+                && !Modifier.isPrivate(modifiers)
+                && !candidate.isBridge()
+                && !candidate.isSynthetic();
     }
 
     private static boolean includeMethod(Method candidate, Class<?> consumer) {

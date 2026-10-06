@@ -1054,6 +1054,75 @@ class ServiceContractEntriesTest {
         }
     }
 
+    // --- Generic bridge operations on the hand-written contributor path ---
+
+    /** Generic contract whose implementation receives a compiler-generated bridge. */
+    interface BridgedOperation<T> {
+        Future<String> take(T value);
+    }
+
+    /** Implementation that declares no access policy anywhere. */
+    static class PlainBridgedImpl implements BridgedOperation<String> {
+        @Override
+        public Future<String> take(String value) {
+            return Future.succeededFuture(value);
+        }
+    }
+
+    @Nested
+    @DisplayName("generic bridge operations")
+    class GenericBridgeTests {
+
+        private Method givenBridgeMethod() throws NoSuchMethodException {
+            Method bridge = PlainBridgedImpl.class.getMethod("take", Object.class);
+            assertTrue(bridge.isBridge(), "the fixture must expose the compiler-generated bridge");
+            return bridge;
+        }
+
+        private ContractEntry<?> whenBuiltWithBridge(Class<?> contract, Method bridge) {
+            return ServiceContractEntries.deployable()
+                    .contract(contract)
+                    .serviceInstance(new PlainBridgedImpl())
+                    .namespace("test")
+                    .name("bridged-svc")
+                    .operation("take")
+                    .method(bridge)
+                    .payloadType(String.class)
+                    .returnType(String.class)
+                    .param("value", ParamSource.PAYLOAD, String.class)
+                    .done()
+                    .build();
+        }
+
+        private void thenEntryCarriesNoPolicy(ContractEntry<?> entry) {
+            ServiceMethodMeta meta = entry.operations().get("take");
+            assertNotNull(meta, "the bridged operation must be registered");
+            assertTrue(
+                    meta.methodAnnotations().stream().noneMatch(RequiresPolicy.class::isInstance),
+                    "no policy was declared: " + meta.methodAnnotations());
+        }
+
+        @Test
+        @DisplayName("a bridge method without any policy builds when keyed by the implementation class")
+        void bridgeWithoutPolicy_buildsWhenKeyedByImplementation() throws Exception {
+            Method bridge = givenBridgeMethod();
+
+            ContractEntry<?> entry = assertDoesNotThrow(() -> whenBuiltWithBridge(PlainBridgedImpl.class, bridge));
+
+            thenEntryCarriesNoPolicy(entry);
+        }
+
+        @Test
+        @DisplayName("a bridge method without any policy builds when keyed by the generic contract")
+        void bridgeWithoutPolicy_buildsWhenKeyedByContract() throws Exception {
+            Method bridge = givenBridgeMethod();
+
+            ContractEntry<?> entry = assertDoesNotThrow(() -> whenBuiltWithBridge(BridgedOperation.class, bridge));
+
+            thenEntryCarriesNoPolicy(entry);
+        }
+    }
+
     // --- Typed access policy collection on the hand-written contributor path ---
 
     /** Parent interface that declares an operation with no policy of its own. */

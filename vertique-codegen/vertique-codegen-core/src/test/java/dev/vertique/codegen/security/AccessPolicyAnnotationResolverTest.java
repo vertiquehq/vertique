@@ -137,6 +137,39 @@ class AccessPolicyAnnotationResolverTest {
         }
     }
 
+    @Test
+    @DisplayName("a static method corresponds to itself but not to a hidden static of the same name")
+    void shouldMatchStaticOperationOnlyWithItself() throws Exception {
+        Path dir = Files.createTempDirectory("policy-static-operation");
+        try {
+            givenStaticOperationProbe();
+            CompileResult result = whenStaticOperationsAreCompiled(dir.resolve("static-operation"));
+            thenStaticOperationCorrespondenceHolds(result);
+        } finally {
+            // The probe state is shared with the table test, so a finding must not leak into it.
+            Probe.failures.clear();
+            Probe.ran = false;
+            Probe.expect = Expect.FRESH;
+            delete(dir);
+        }
+    }
+
+    private static void givenStaticOperationProbe() {
+        Probe.failures.clear();
+        Probe.ran = false;
+        Probe.expect = Expect.STATIC_OPERATION;
+    }
+
+    private static CompileResult whenStaticOperationsAreCompiled(Path out) throws IOException {
+        return compile(out, false, frameworkSources(), List.of(source("fixture.StaticShapes", STATIC_FIXTURES)));
+    }
+
+    private static void thenStaticOperationCorrespondenceHolds(CompileResult result) {
+        assertTrue(result.success(), result.errors()::toString);
+        assertTrue(Probe.ran, "the probe must have run");
+        assertTrue(Probe.failures.isEmpty(), Probe.failures::toString);
+    }
+
     private static List<JavaFileObject> frameworkSources() {
         return List.of(
                 source("dev.vertique.security.authz.AccessPolicy", """
@@ -250,7 +283,8 @@ class AccessPolicyAnnotationResolverTest {
     private enum Expect {
         FRESH,
         CLASS_VISIBLE,
-        SOURCE_ERASED
+        SOURCE_ERASED,
+        STATIC_OPERATION
     }
 
     @SupportedAnnotationTypes("*")
@@ -274,6 +308,8 @@ class AccessPolicyAnnotationResolverTest {
                     checkFresh(resolver);
                 } else if (expect == Expect.CLASS_VISIBLE) {
                     checkClassVisible(resolver);
+                } else if (expect == Expect.STATIC_OPERATION) {
+                    checkStaticOperation(resolver);
                 } else {
                     checkSourceErased(resolver);
                 }
@@ -321,6 +357,32 @@ class AccessPolicyAnnotationResolverTest {
             if (declaringOnly.stream()
                     .anyMatch(mirror -> mirror.getAnnotationType().toString().endsWith("RequiresPolicy"))) {
                 failures.add("declaring class collected an interface policy it does not implement");
+            }
+        }
+
+        private void checkStaticOperation(AccessPolicyAnnotationResolver resolver) {
+            TypeElement shapes = type("fixture.StaticShapes");
+            TypeElement base = nested(shapes, "Base");
+            TypeElement sub = nested(shapes, "Sub");
+            ExecutableElement subStatic = method(sub, "op");
+            ExecutableElement baseStatic = method(base, "op");
+            if (!resolver.corresponds(sub, subStatic, subStatic)) {
+                failures.add("a static method must correspond to itself");
+            }
+            if (!resolver.corresponds(sub, baseStatic, baseStatic)) {
+                failures.add("an inherited static method must correspond to itself");
+            }
+            if (resolver.corresponds(sub, subStatic, baseStatic)) {
+                failures.add("a hidden static method of the same name must stay excluded");
+            }
+            if (resolver.corresponds(sub, baseStatic, subStatic)) {
+                failures.add("a hiding static method must not become the hidden method's operation");
+            }
+            ExecutableElement subInstance = method(sub, "inst");
+            ExecutableElement baseInstance = method(base, "inst");
+            if (!resolver.corresponds(sub, subInstance, subInstance)
+                    || !resolver.corresponds(sub, subInstance, baseInstance)) {
+                failures.add("an instance method must correspond to itself and to the method it overrides");
             }
         }
 
@@ -486,6 +548,20 @@ class AccessPolicyAnnotationResolverTest {
                 @RequiresPolicy(Shapes.Admin.class) String inherited();
               }
               @RolesAllowed("admin") public interface Admin extends AccessPolicy {}
+            }
+            """;
+
+    private static final String STATIC_FIXTURES = """
+            package fixture;
+            public class StaticShapes {
+              public static class Base {
+                public static String op() { return "base"; }
+                public String inst() { return "base"; }
+              }
+              public static class Sub extends Base {
+                public static String op() { return "sub"; }
+                @Override public String inst() { return "sub"; }
+              }
             }
             """;
 }

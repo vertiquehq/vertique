@@ -225,6 +225,44 @@ class GeneratedSecurityPolicyParityTest {
         }
     }
 
+    @jakarta.annotation.security.PermitAll
+    public interface StaticPermitPolicy extends AccessPolicy {}
+
+    @jakarta.annotation.security.DenyAll
+    public interface StaticDenyPolicy extends AccessPolicy {}
+
+    /** A static operation is its own operation, so its method policy replaces the permissive type policy. */
+    @Path("/static-own-deny")
+    @RequiresPolicy(StaticPermitPolicy.class)
+    static class StaticMethodOwnPolicy {
+        @GET
+        @RequiresPolicy(StaticDenyPolicy.class)
+        public static String get() {
+            return "";
+        }
+    }
+
+    /** A static operation's own permissive policy replaces the restrictive type policy. */
+    @Path("/static-own-permit")
+    @RequiresPolicy(StaticDenyPolicy.class)
+    static class StaticMethodOwnPermitPolicy {
+        @GET
+        @RequiresPolicy(StaticPermitPolicy.class)
+        public static String get() {
+            return "";
+        }
+    }
+
+    /** A static operation without a policy of its own inherits the type policy. */
+    @Path("/static-inherits")
+    @RequiresPolicy(StaticDenyPolicy.class)
+    static class StaticMethodInheritsTypePolicy {
+        @GET
+        public static String get() {
+            return "";
+        }
+    }
+
     @Path("/scopes-any")
     static class ScopesMatchAny {
         @GET
@@ -447,6 +485,62 @@ class GeneratedSecurityPolicyParityTest {
                         @Path("/generic-ancestor-method-policy")
                         public class GenericAncestorMethodPolicy extends GenericAncestorBase<String> {}
                         """),
+                Arguments.of(new StaticMethodOwnPolicy(), "StaticMethodOwnPolicy", """
+                        import dev.vertique.security.authz.AccessPolicy;
+                        import dev.vertique.security.authz.RequiresPolicy;
+
+                        class PolicyTypes {
+                            @jakarta.annotation.security.PermitAll
+                            public interface StaticPermitPolicy extends AccessPolicy {}
+
+                            @jakarta.annotation.security.DenyAll
+                            public interface StaticDenyPolicy extends AccessPolicy {}
+                        }
+
+                        @RequiresPolicy(PolicyTypes.StaticPermitPolicy.class)
+                        @Path("/static-own-deny")
+                        public class StaticMethodOwnPolicy {
+                            @GET
+                            @RequiresPolicy(PolicyTypes.StaticDenyPolicy.class)
+                            public static String get() { return ""; }
+                        }
+                        """),
+                Arguments.of(new StaticMethodOwnPermitPolicy(), "StaticMethodOwnPermitPolicy", """
+                        import dev.vertique.security.authz.AccessPolicy;
+                        import dev.vertique.security.authz.RequiresPolicy;
+
+                        class PolicyTypes {
+                            @jakarta.annotation.security.PermitAll
+                            public interface StaticPermitPolicy extends AccessPolicy {}
+
+                            @jakarta.annotation.security.DenyAll
+                            public interface StaticDenyPolicy extends AccessPolicy {}
+                        }
+
+                        @RequiresPolicy(PolicyTypes.StaticDenyPolicy.class)
+                        @Path("/static-own-permit")
+                        public class StaticMethodOwnPermitPolicy {
+                            @GET
+                            @RequiresPolicy(PolicyTypes.StaticPermitPolicy.class)
+                            public static String get() { return ""; }
+                        }
+                        """),
+                Arguments.of(new StaticMethodInheritsTypePolicy(), "StaticMethodInheritsTypePolicy", """
+                        import dev.vertique.security.authz.AccessPolicy;
+                        import dev.vertique.security.authz.RequiresPolicy;
+
+                        class PolicyTypes {
+                            @jakarta.annotation.security.DenyAll
+                            public interface StaticDenyPolicy extends AccessPolicy {}
+                        }
+
+                        @RequiresPolicy(PolicyTypes.StaticDenyPolicy.class)
+                        @Path("/static-inherits")
+                        public class StaticMethodInheritsTypePolicy {
+                            @GET
+                            public static String get() { return ""; }
+                        }
+                        """),
                 Arguments.of(new SamePackageActionReplaces(), "SamePackageActionReplaces", """
                         import dev.vertique.security.authz.AccessPolicy;
                         import dev.vertique.security.authz.RequiresAction;
@@ -509,6 +603,16 @@ class GeneratedSecurityPolicyParityTest {
                     new SecurityPolicy.Constrained(List.of("admin"), List.of(), false),
                     reflective.securityPolicy(),
                     "the selected policy must be the enforced policy");
+        }
+        if ("StaticMethodOwnPolicy".equals(simpleName) || "StaticMethodInheritsTypePolicy".equals(simpleName)) {
+            assertEquals(
+                    new SecurityPolicy.DenyAll(), reflective.securityPolicy(), "the static operation must be denied");
+        }
+        if ("StaticMethodOwnPermitPolicy".equals(simpleName)) {
+            assertEquals(
+                    new SecurityPolicy.PermitAll(),
+                    reflective.securityPolicy(),
+                    "the static operation's own policy must replace the type policy");
         }
         if ("ActionReplacesRolesPolicy".equals(simpleName) || "SamePackageActionReplaces".equals(simpleName)) {
             assertEquals(

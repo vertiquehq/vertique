@@ -3,6 +3,7 @@
 
 package dev.vertique.security.authz;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertSame;
@@ -282,6 +283,365 @@ class AccessPolicyResolverTest {
         assertThrows(
                 IllegalArgumentException.class,
                 () -> AccessPolicyResolver.collectMethodAnnotations(GenericConsumer.class, create, foreign));
+    }
+
+    @Test
+    @DisplayName("a generic bridge without any policy annotation never causes a rejection")
+    void shouldCollectNothingForABridgeWhoseOperationDeclaresNoPolicy() throws Exception {
+        Method bridge = givenBridgeOf(PlainTakeImpl.class);
+        List<Annotation> legacy = List.of();
+
+        List<Annotation> collected = whenCollected(PlainTakeImpl.class, bridge, legacy);
+
+        assertSame(legacy, collected, "no typed policy leaves the legacy result untouched");
+    }
+
+    @Test
+    @DisplayName("a generic bridge resolves to its concrete operation's own policy")
+    void shouldResolveABridgeToTheConcreteOperationPolicy() throws Exception {
+        Method bridge = givenBridgeOf(PolicyTakeImpl.class);
+
+        List<Annotation> collected = whenCollected(PolicyTakeImpl.class, bridge, List.of());
+
+        assertTrue(containsPolicy(collected, AdminPolicy.class), "the concrete operation's policy must be collected");
+        assertEquals(1, policyCount(collected));
+    }
+
+    @Test
+    @DisplayName("a generic bridge keeps the concrete operation's policy over the type policy")
+    void shouldLetTheConcreteOperationPolicyReplaceTheTypePolicyForABridge() throws Exception {
+        Method bridge = givenBridgeOf(TypedPolicyTakeImpl.class);
+
+        List<Annotation> collected = whenCollected(TypedPolicyTakeImpl.class, bridge, List.of());
+
+        assertTrue(containsPolicy(collected, DenyPolicy.class), "the concrete operation's own policy applies");
+        assertFalse(containsPolicy(collected, PermitPolicy.class), "the type policy must be replaced");
+    }
+
+    @Test
+    @DisplayName("a generic bridge under a type policy and no method policy inherits the type policy")
+    void shouldApplyTheTypePolicyToABridgeWithoutAMethodPolicy() throws Exception {
+        Method bridge = givenBridgeOf(TypeOnlyTakeImpl.class);
+
+        List<Annotation> collected = whenCollected(TypeOnlyTakeImpl.class, bridge, List.of());
+
+        assertTrue(containsPolicy(collected, PermitPolicy.class), "the type policy must be collected");
+        assertEquals(1, policyCount(collected));
+    }
+
+    @Test
+    @DisplayName("a bridge with several equally valid concrete operations is still rejected")
+    void shouldRejectABridgeWithSeveralEquallyValidConcreteOperations() throws Exception {
+        Method bridge = givenBridgeOf(AmbiguousTakeImpl.class);
+
+        IllegalArgumentException failure = assertThrows(
+                IllegalArgumentException.class, () -> whenCollected(AmbiguousTakeImpl.class, bridge, List.of()));
+
+        assertTrue(
+                failure.getMessage().contains("no unique non-bridge operation"),
+                "the rejection must keep its message: " + failure.getMessage());
+    }
+
+    @Test
+    @DisplayName("a bridge forwards to the inherited operation, never to a narrower overload on the derived class")
+    void shouldResolveAVisibilityBridgeToTheInheritedOperationAndNotAnOverload() throws Exception {
+        Method bridge = givenBridge(DistractedRes.class, "process", Number.class);
+
+        List<Annotation> collected = whenCollected(DistractedRes.class, bridge, List.of());
+
+        assertTrue(containsPolicy(collected, AdminPolicy.class), "the inherited operation's policy must apply");
+        assertFalse(containsPolicy(collected, PermitPolicy.class), "the overload's policy must not apply");
+        assertEquals(1, policyCount(collected));
+    }
+
+    @Test
+    @DisplayName("a bridge under a type policy never picks up an unrelated overload's weaker policy")
+    void shouldNotLetAnOverloadPolicyReplaceTheTypePolicyOfABridge() throws Exception {
+        Method bridge = givenBridge(FailOpenRes.class, "process", Number.class);
+
+        List<Annotation> collected = whenCollected(FailOpenRes.class, bridge, List.of());
+
+        assertEquals(Optional.of(DenyPolicy.class), AccessPolicyResolver.select(collected, List.of()));
+        assertFalse(containsPolicy(collected, PermitPolicy.class), "the overload's policy must never apply");
+    }
+
+    @Test
+    @DisplayName("an exact match higher in the class chain wins over an assignable overload on the derived class")
+    void shouldPreferAnExactMatchUpTheChainOverAnAssignableOverload() throws Exception {
+        Method bridge = givenBridge(OverloadedLeaf.class, "take", Object.class);
+
+        List<Annotation> collected = whenCollected(OverloadedLeaf.class, bridge, List.of());
+
+        assertTrue(containsPolicy(collected, AdminPolicy.class), "the operation the bridge forwards to applies");
+        assertFalse(containsPolicy(collected, PermitPolicy.class), "the overload's policy must not apply");
+    }
+
+    @Test
+    @DisplayName("an available exact match is never rejected because the derived class declares several overloads")
+    void shouldNotRejectABridgeWhoseExactMatchExistsUpTheChain() throws Exception {
+        Method bridge = givenBridge(ManyOverloadsLeaf.class, "take", Object.class);
+
+        List<Annotation> collected =
+                assertDoesNotThrow(() -> whenCollected(ManyOverloadsLeaf.class, bridge, List.of()));
+
+        assertTrue(containsPolicy(collected, AdminPolicy.class), "the operation the bridge forwards to applies");
+        assertEquals(1, policyCount(collected));
+    }
+
+    @Test
+    @DisplayName("static and private overloads never compete with the instance operation a bridge forwards to")
+    void shouldIgnoreStaticAndPrivateOverloadsWhenResolvingABridge() throws Exception {
+        Method bridge = givenBridge(DistractedByHiddenImpl.class, "take", Object.class);
+
+        List<Annotation> collected =
+                assertDoesNotThrow(() -> whenCollected(DistractedByHiddenImpl.class, bridge, List.of()));
+
+        assertTrue(containsPolicy(collected, AdminPolicy.class), "the instance operation's policy must apply");
+        assertEquals(1, policyCount(collected));
+    }
+
+    @Test
+    @DisplayName("a static overload is not mistaken for the inherited operation a bridge forwards to")
+    void shouldNotResolveABridgeToAStaticOverload() throws Exception {
+        Method bridge = givenBridge(StaticDistractedTake.class, "take", Object.class);
+
+        List<Annotation> collected =
+                assertDoesNotThrow(() -> whenCollected(StaticDistractedTake.class, bridge, List.of()));
+
+        assertTrue(containsPolicy(collected, AdminPolicy.class), "the inherited operation's policy must apply");
+        assertFalse(containsPolicy(collected, PermitPolicy.class), "the static overload's policy must not apply");
+    }
+
+    @Test
+    @DisplayName("a private overload is not mistaken for the inherited operation a bridge forwards to")
+    void shouldNotResolveABridgeToAPrivateOverload() throws Exception {
+        Method bridge = givenBridge(PrivateDistractedTake.class, "take", Object.class);
+
+        List<Annotation> collected =
+                assertDoesNotThrow(() -> whenCollected(PrivateDistractedTake.class, bridge, List.of()));
+
+        assertTrue(containsPolicy(collected, AdminPolicy.class), "the inherited operation's policy must apply");
+        assertFalse(containsPolicy(collected, DenyPolicy.class), "the private overload's policy must not apply");
+    }
+
+    @Test
+    @DisplayName("a private method with the bridge's exact parameters never replaces the type policy of a bridge")
+    void shouldNotResolveABridgeToAPrivateExactMatchUpTheChain() throws Exception {
+        Method bridge = givenBridge(PrivateExactImpl.class, "take", Object.class);
+
+        List<Annotation> collected = whenCollected(PrivateExactImpl.class, bridge, List.of());
+
+        assertEquals(Optional.of(DenyPolicy.class), AccessPolicyResolver.select(collected, List.of()));
+        assertFalse(containsPolicy(collected, PermitPolicy.class), "the private method's policy must never apply");
+    }
+
+    @Test
+    @DisplayName("a bridge resolves to the instance operation's policy and not to a private exact match up the chain")
+    void shouldResolveABridgeToTheInstanceOperationPastAPrivateExactMatch() throws Exception {
+        Method bridge = givenBridge(PrivateExactPolicyImpl.class, "take", Object.class);
+
+        List<Annotation> collected = whenCollected(PrivateExactPolicyImpl.class, bridge, List.of());
+
+        assertEquals(Optional.of(PermitPolicy.class), AccessPolicyResolver.select(collected, List.of()));
+        assertFalse(containsPolicy(collected, DenyPolicy.class), "the private method's policy must never apply");
+    }
+
+    @Test
+    @DisplayName("a public exact match up the chain still resolves a bridge ahead of the type policy")
+    void shouldStillResolveABridgeToAPublicExactMatchUpTheChain() throws Exception {
+        Method bridge = givenBridge(PublicExactImpl.class, "take", Object.class);
+
+        List<Annotation> collected = whenCollected(PublicExactImpl.class, bridge, List.of());
+
+        assertEquals(Optional.of(PermitPolicy.class), AccessPolicyResolver.select(collected, List.of()));
+        assertFalse(containsPolicy(collected, DenyPolicy.class), "the exact match replaces the type policy");
+    }
+
+    @Test
+    @DisplayName(
+            "a static method with the bridge's exact parameters up the chain is not an operation a bridge forwards to")
+    void shouldRejectABridgeWhoseOnlyExactMatchUpTheChainIsStatic() throws Exception {
+        Class<?> host = givenBridgeHost("StaticExactHost", StaticExactBase.class, false, false);
+        Method bridge = givenBridge(host, "take", Number.class);
+
+        IllegalArgumentException failure =
+                assertThrows(IllegalArgumentException.class, () -> whenCollected(host, bridge, List.of()));
+
+        assertTrue(failure.getMessage().contains("no unique non-bridge operation"), failure.getMessage());
+    }
+
+    @Test
+    @DisplayName("a bridge whose only same-named instance method takes an unrelated type is rejected")
+    void shouldRejectABridgeWithOnlyAnUnrelatedOverload() throws Exception {
+        Class<?> host = givenBridgeHost("UnrelatedOverloadHost", false, false);
+        Method bridge = givenBridge(host, "take", Number.class);
+
+        IllegalArgumentException failure =
+                assertThrows(IllegalArgumentException.class, () -> whenCollected(host, bridge, List.of()));
+
+        assertTrue(failure.getMessage().contains("no unique non-bridge operation"), failure.getMessage());
+    }
+
+    @Test
+    @DisplayName("a bridge whose only assignable candidate is static is rejected")
+    void shouldRejectABridgeWhoseOnlyAssignableCandidateIsStatic() throws Exception {
+        Class<?> host = givenBridgeHost("StaticOnlyHost", true, false);
+        Method bridge = givenBridge(host, "take", Number.class);
+
+        IllegalArgumentException failure =
+                assertThrows(IllegalArgumentException.class, () -> whenCollected(host, bridge, List.of()));
+
+        assertTrue(failure.getMessage().contains("no unique non-bridge operation"), failure.getMessage());
+    }
+
+    @Test
+    @DisplayName("a bridge whose only assignable candidate is private is rejected")
+    void shouldRejectABridgeWhoseOnlyAssignableCandidateIsPrivate() throws Exception {
+        Class<?> host = givenBridgeHost("PrivateOnlyHost", false, true);
+        Method bridge = givenBridge(host, "take", Number.class);
+
+        IllegalArgumentException failure =
+                assertThrows(IllegalArgumentException.class, () -> whenCollected(host, bridge, List.of()));
+
+        assertTrue(failure.getMessage().contains("no unique non-bridge operation"), failure.getMessage());
+    }
+
+    @Test
+    @DisplayName("a bridge through several generic levels resolves to the concrete operation's own policy")
+    void shouldResolveABridgeThroughSeveralGenericLevelsToTheConcretePolicy() throws Exception {
+        Method bridge = givenBridge(DeepImpl.class, "take", Object.class);
+
+        List<Annotation> collected = whenCollected(DeepImpl.class, bridge, List.of());
+
+        assertTrue(containsPolicy(collected, AdminPolicy.class));
+        assertEquals(1, policyCount(collected));
+    }
+
+    @Test
+    @DisplayName("a bridge through several generic levels without any policy collects nothing")
+    void shouldCollectNothingForABridgeThroughSeveralGenericLevelsWithoutPolicy() throws Exception {
+        Method bridge = givenBridge(DeepPlainImpl.class, "take", Object.class);
+        List<Annotation> legacy = List.of();
+
+        List<Annotation> collected = whenCollected(DeepPlainImpl.class, bridge, legacy);
+
+        assertSame(legacy, collected);
+    }
+
+    @Test
+    @DisplayName("a bridge through several generic levels keeps the policy declared on the generic ancestor")
+    void shouldResolveABridgeThroughSeveralGenericLevelsToTheAncestorPolicy() throws Exception {
+        Method bridge = givenBridge(DeepInheritedImpl.class, "take", Object.class);
+
+        List<Annotation> collected = whenCollected(DeepInheritedImpl.class, bridge, List.of());
+
+        assertTrue(containsPolicy(collected, AdminPolicy.class));
+        assertEquals(1, policyCount(collected));
+    }
+
+    @Test
+    @DisplayName("a bridge the compiler places on a generic interface resolves to its default method")
+    void shouldResolveAnInterfaceBridgeToTheDefaultMethodPolicy() throws Exception {
+        Method bridge = givenBridge(DefaultTakeHandler.class, "take", Object.class);
+
+        List<Annotation> collected = whenCollected(DefaultTakeImpl.class, bridge, List.of());
+
+        assertTrue(containsPolicy(collected, AdminPolicy.class), "the default method's policy must apply");
+        assertEquals(1, policyCount(collected));
+    }
+
+    private static Method givenBridge(Class<?> declaring, String name, Class<?>... parameters)
+            throws NoSuchMethodException {
+        Method bridge = declaring.getMethod(name, parameters);
+        assertTrue(bridge.isBridge(), "the fixture must expose a compiler-style bridge: " + bridge);
+        assertSame(declaring, bridge.getDeclaringClass(), "the bridge must be declared on the fixture");
+        return bridge;
+    }
+
+    /**
+     * Defines an abstract class whose synthetic bridge {@code take(Number)} has no counterpart the
+     * compiler would leave behind. The class always declares an instance {@code take(String)}; it
+     * optionally adds a static or a private {@code take(Integer)}.
+     */
+    private static Class<?> givenBridgeHost(String simpleName, boolean withStatic, boolean withPrivate)
+            throws Exception {
+        return givenBridgeHost(simpleName, Object.class, withStatic, withPrivate);
+    }
+
+    /** As above, but the generated class extends {@code superclass}, which must be loadable from this package. */
+    private static Class<?> givenBridgeHost(
+            String simpleName, Class<?> superclass, boolean withStatic, boolean withPrivate) throws Exception {
+        String internal = AccessPolicyResolverTest.class.getPackageName().replace('.', '/') + "/" + simpleName;
+        List<String> constants = new java.util.ArrayList<>(List.of(
+                internal,
+                superclass.getName().replace('.', '/'),
+                "take",
+                "(Ljava/lang/Number;)V",
+                "(Ljava/lang/String;)V",
+                "(Ljava/lang/Integer;)V",
+                "Code"));
+        java.io.ByteArrayOutputStream bytes = new java.io.ByteArrayOutputStream();
+        java.io.DataOutputStream out = new java.io.DataOutputStream(bytes);
+        out.writeInt(0xCAFEBABE);
+        out.writeShort(0);
+        out.writeShort(52);
+        // Pool: 1..7 Utf8, 8 Class(this), 9 Class(super).
+        out.writeShort(constants.size() + 3);
+        for (String constant : constants) {
+            out.writeByte(1);
+            out.writeUTF(constant);
+        }
+        out.writeByte(7);
+        out.writeShort(1);
+        out.writeByte(7);
+        out.writeShort(2);
+        out.writeShort(0x0421); // public, super, abstract
+        out.writeShort(8);
+        out.writeShort(9);
+        out.writeShort(0);
+        out.writeShort(0);
+        int methods = 2 + (withStatic ? 1 : 0) + (withPrivate ? 1 : 0);
+        out.writeShort(methods);
+        writeMethod(out, 0x1441, 4, false); // public abstract synthetic bridge take(Number)
+        writeMethod(out, 0x0001, 5, true); // public take(String)
+        if (withStatic) {
+            writeMethod(out, 0x0009, 6, true); // public static take(Integer)
+        }
+        if (withPrivate) {
+            writeMethod(out, 0x0002, 6, true); // private take(Integer)
+        }
+        out.writeShort(0);
+        return java.lang.invoke.MethodHandles.lookup().defineClass(bytes.toByteArray());
+    }
+
+    private static void writeMethod(java.io.DataOutputStream out, int access, int descriptor, boolean code)
+            throws java.io.IOException {
+        out.writeShort(access);
+        out.writeShort(3);
+        out.writeShort(descriptor);
+        if (!code) {
+            out.writeShort(0);
+            return;
+        }
+        out.writeShort(1);
+        out.writeShort(7);
+        out.writeInt(13);
+        out.writeShort(1);
+        out.writeShort(3);
+        out.writeInt(1);
+        out.writeByte(0xB1);
+        out.writeShort(0);
+        out.writeShort(0);
+    }
+
+    private static Method givenBridgeOf(Class<?> implementation) throws NoSuchMethodException {
+        Method bridge = implementation.getMethod("take", Object.class);
+        assertTrue(bridge.isBridge(), "the fixture must expose the compiler-generated bridge");
+        return bridge;
+    }
+
+    private static List<Annotation> whenCollected(Class<?> consumer, Method method, List<Annotation> legacy) {
+        return AccessPolicyResolver.collectMethodAnnotations(consumer, method, legacy);
     }
 
     private static void assertSingle(Class<? extends AccessPolicy> policy, Class<? extends Annotation> type) {
@@ -569,6 +929,179 @@ class AccessPolicyResolverTest {
             return "s";
         }
     }
+
+    public interface TakeHandler<T> {
+        void take(T value);
+    }
+
+    public static class PlainTakeImpl implements TakeHandler<String> {
+        @Override
+        public void take(String value) {}
+    }
+
+    public static class PolicyTakeImpl implements TakeHandler<String> {
+        @Override
+        @RequiresPolicy(AdminPolicy.class)
+        public void take(String value) {}
+    }
+
+    @RequiresPolicy(PermitPolicy.class)
+    public static class TypedPolicyTakeImpl implements TakeHandler<String> {
+        @Override
+        @RequiresPolicy(DenyPolicy.class)
+        public void take(String value) {}
+    }
+
+    @RequiresPolicy(PermitPolicy.class)
+    public static class TypeOnlyTakeImpl implements TakeHandler<String> {
+        @Override
+        public void take(String value) {}
+    }
+
+    /** The bridge accepts any object, and both overloads accept what the bridge forwards. */
+    public static class AmbiguousTakeImpl implements TakeHandler<Number> {
+        @Override
+        public void take(Number value) {}
+
+        public void take(Integer value) {}
+    }
+
+    /** Not public, so the compiler emits a visibility bridge for each public method in a public subclass. */
+    static class DistractedBase {
+        @RequiresPolicy(AdminPolicy.class)
+        public void process(Number value) {}
+    }
+
+    public static class DistractedRes extends DistractedBase {
+        @RequiresPolicy(PermitPolicy.class)
+        public void process(Integer value) {}
+    }
+
+    static class UnguardedBase {
+        public void process(Number value) {}
+    }
+
+    @RequiresPolicy(DenyPolicy.class)
+    public static class FailOpenRes extends UnguardedBase {
+        @RequiresPolicy(PermitPolicy.class)
+        public void process(Integer value) {}
+    }
+
+    static class HiddenMid<T> {
+        @RequiresPolicy(AdminPolicy.class)
+        public void take(T value) {}
+    }
+
+    public static class OverloadedLeaf extends HiddenMid<String> {
+        @RequiresPolicy(PermitPolicy.class)
+        public void take(Integer value) {}
+    }
+
+    public static class ManyOverloadsLeaf extends HiddenMid<String> {
+        public void take(Integer value) {}
+
+        public void take(Long value) {}
+    }
+
+    public static class DistractedByHiddenImpl implements TakeHandler<Number> {
+        @Override
+        @RequiresPolicy(AdminPolicy.class)
+        public void take(Number value) {}
+
+        @RequiresPolicy(PermitPolicy.class)
+        public static void take(Integer value) {}
+
+        @RequiresPolicy(DenyPolicy.class)
+        private void take(Long value) {}
+    }
+
+    public static class InheritedTake {
+        @RequiresPolicy(AdminPolicy.class)
+        public void take(String value) {}
+    }
+
+    public static class StaticDistractedTake extends InheritedTake implements TakeHandler<String> {
+        @RequiresPolicy(PermitPolicy.class)
+        public static void take(Integer value) {}
+    }
+
+    public static class PrivateDistractedTake extends InheritedTake implements TakeHandler<String> {
+        @RequiresPolicy(DenyPolicy.class)
+        private void take(Integer value) {}
+    }
+
+    static class PrivateExactBase {
+        @RequiresPolicy(PermitPolicy.class)
+        private void take(Object value) {}
+    }
+
+    @RequiresPolicy(DenyPolicy.class)
+    public static class PrivateExactImpl extends PrivateExactBase implements TakeHandler<String> {
+        @Override
+        public void take(String value) {}
+    }
+
+    static class PrivateExactDenyBase {
+        @RequiresPolicy(DenyPolicy.class)
+        private void take(Object value) {}
+    }
+
+    public static class PrivateExactPolicyImpl extends PrivateExactDenyBase implements TakeHandler<String> {
+        @Override
+        @RequiresPolicy(PermitPolicy.class)
+        public void take(String value) {}
+    }
+
+    /** Not public, so the compiler emits a visibility bridge on the public subclass. */
+    static class PublicExactBase {
+        @RequiresPolicy(PermitPolicy.class)
+        public void take(Object value) {}
+    }
+
+    @RequiresPolicy(DenyPolicy.class)
+    public static class PublicExactImpl extends PublicExactBase {}
+
+    public static class StaticExactBase {
+        @RequiresPolicy(PermitPolicy.class)
+        public static void take(Number value) {}
+    }
+
+    public static class Level1<T> {
+        public void take(T value) {}
+    }
+
+    public static class Level2<U> extends Level1<U> {}
+
+    public static class DeepImpl extends Level2<String> {
+        @Override
+        @RequiresPolicy(AdminPolicy.class)
+        public void take(String value) {}
+    }
+
+    public static class DeepPlainImpl extends Level2<String> {
+        @Override
+        public void take(String value) {}
+    }
+
+    public static class PolicyLevel1<T> {
+        @RequiresPolicy(AdminPolicy.class)
+        public void take(T value) {}
+    }
+
+    public static class PolicyLevel2<U> extends PolicyLevel1<U> {}
+
+    public static class DeepInheritedImpl extends PolicyLevel2<String> {
+        @Override
+        public void take(String value) {}
+    }
+
+    public interface DefaultTakeHandler extends TakeHandler<String> {
+        @Override
+        @RequiresPolicy(AdminPolicy.class)
+        default void take(String value) {}
+    }
+
+    public static class DefaultTakeImpl implements DefaultTakeHandler {}
 
     public static class ChildOfAncestor extends PackageAncestor {
         public void hidden() {}

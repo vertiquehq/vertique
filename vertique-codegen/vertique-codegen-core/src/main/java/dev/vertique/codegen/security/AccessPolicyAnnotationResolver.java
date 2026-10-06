@@ -271,10 +271,12 @@ public final class AccessPolicyAnnotationResolver {
     /**
      * Reports whether {@code candidate} is the same operation as {@code method} on {@code consumer}.
      *
-     * <p>The simple names must match. Viewed from {@code consumer}, either signature must be a
-     * subsignature of the other, so a type-variable parameter matches the type that binds it.
-     * {@code isSubsignature} ignores the name, so the name check stays. Static methods, private
-     * methods, and package-private methods declared in another package are not part of the operation.
+     * <p>A method always corresponds to itself, whatever its modifiers: it is the operation being
+     * scanned. For any other candidate the simple names must match. Viewed from {@code consumer},
+     * either signature must be a subsignature of the other, so a type-variable parameter matches
+     * the type that binds it. {@code isSubsignature} ignores the name, so the name check stays.
+     * Other static methods, other private methods, and other package-private methods declared in
+     * another package are not part of the operation.
      *
      * @param consumer the resource type collection starts from
      * @param method the operation to match
@@ -284,6 +286,9 @@ public final class AccessPolicyAnnotationResolver {
     public boolean corresponds(TypeElement consumer, ExecutableElement method, ExecutableElement candidate) {
         if (consumer == null || method == null || candidate == null) {
             return false;
+        }
+        if (candidate.equals(method)) {
+            return true;
         }
         if (!candidate.getSimpleName().contentEquals(method.getSimpleName())) {
             return false;
