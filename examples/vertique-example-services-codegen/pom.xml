@@ -105,6 +105,24 @@ SPDX-License-Identifier: EUPL-1.2
             <artifactId>vertique-application-test</artifactId>
             <scope>test</scope>
         </dependency>
+        <!-- Typed access-policy fixture application: JWT authentication and the REST security pipeline exist
+             only on the test classpath, so the shipped example stays unsecured. The security runtime and the
+             context module already arrive transitively at compile scope through vertique-services. -->
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-rest-auth-jwt</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-rest-security</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.vertx</groupId>
+            <artifactId>vertx-web-client</artifactId>
+            <scope>test</scope>
+        </dependency>
         <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter</artifactId>

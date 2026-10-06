@@ -408,10 +408,13 @@ Constants holder (not an enum, not instantiable) for machine-readable reason cod
 | `INTERNAL_AUTHZ_ERROR` | Default engine — unparseable action string, null context, or unexpected error; fails closed |
 | `AUTHENTICATION_REQUIRED` | Enforcement layer (reserved) |
 | `STEP_UP_REQUIRED` | Opt-in `AssuranceRequirementNarrower` (`dev.vertique:vertique-security-runtime`) — assurance-gated action, unmet minimum-assurance requirement |
+| `UNSUPPORTED_POLICY_CALLER` | Service authorization interceptor (`dev.vertique:vertique-services`) — a typed local predicate received a trusted context carrying a reconstruction, an identity subject, or a delegation. Not an authentication failure |
 | `DENY_ALL` | Enforcement layer (reserved) |
 | `SCOPE_MISSING` / `SCOPE_INSUFFICIENT` | Enforcement layer (reserved) |
 | `POLICY_INVALID` / `INSTANCE_ELIGIBILITY_FAILED` | Future evaluators (reserved) |
 | `AUTHORITY_RESOLUTION_FAILED` | Opt-in live authority re-resolution (Mode 2, `dev.vertique:vertique-security-runtime`) — `PrincipalAuthorityResolver` failed, timed out, or returned an ambiguous result |
+
+A local-only service decision event carries the operation's descriptive label in `request.action`. That string is audit context, not a registered action: it is never parsed as an `ActionRef` or submitted to an `Authorizer`, so an observer must not infer action registration or grant semantics from it, or from the reason code alone.
 
 A narrower may additionally surface a `DelegationReasonCodes` value as a decision's `reasonCode`.
 
