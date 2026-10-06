@@ -88,13 +88,25 @@ constructor bounds any resolved-tool-identity telemetry against it) can validate
 without duplicating the pattern.
 
 `McpToolInvoker`, `McpPreparedToolCall`, and `McpStructuredOutputWriter` are generated-runtime
-contracts: application code neither implements nor calls them. `prepare` is the fixed input
+contracts: application code does not call them. A hand-written invoker remains supported; one that
+declares a typed policy follows the hook contract described below. `prepare` is the fixed input
 boundary — the server validates arguments against the input schema, generated code then applies
 input policies, materializes typed parameters through the effective JSON profile, and performs Bean
 Validation. No prepared call exists for a failed stage. A generated invoker's
 `structuredOutputWriter()` exposes only the ability to stream a structured result through the same
 stable profile mapper into a server-owned destination; it does not expose the mapper or own output
 limits, validation, observation, or terminal encoding.
+
+`McpToolInvoker#accessPolicy()` is the typed-policy hook. It returns
+`Optional<Class<? extends AccessPolicy>>` and defaults to empty, which means the access record of the
+tool's `McpToolDescriptor` governs it; an invoker compiled before the hook existed therefore keeps
+linking and behaving as it did. A generated invoker for a tool that references a policy overrides the
+hook with that policy type and publishes a descriptor whose `McpToolAccess` is `DENY_ALL` with no
+roles and no action. The placeholder is deliberate: a runtime that reads only the descriptor and
+ignores the hook hides and refuses the tool instead of silently dropping requirements it cannot
+express. A hand-written invoker may take the same path: implement `accessPolicy()` to return a policy
+and publish the `DENY_ALL` descriptor; the server registry validates the returned policy at
+registration. An inline-only invoker emits no hook and keeps its descriptor access exactly.
 
 `McpBeanValidation`, `McpInputRejectionException`, and `McpValueTrees` are further generated-runtime
 support types, public for the same reason `McpToolInvoker` is: `prepare` is generated into an

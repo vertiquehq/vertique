@@ -18,6 +18,7 @@ import dev.vertique.rest.core.config.HttpConfig;
 import dev.vertique.rest.core.router.RouterMount;
 import dev.vertique.rest.core.security.RouteAuthHandler;
 import dev.vertique.rest.security.IdentityResolutionMiddleware;
+import dev.vertique.security.authz.ActionRegistry;
 import dev.vertique.security.authz.Authorizer;
 import jakarta.inject.Singleton;
 import jakarta.validation.Validator;
@@ -70,6 +71,15 @@ public abstract class McpServerModule {
     abstract Validator validator();
 
     /**
+     * Declares {@link ActionRegistry} as an optional binding, so mount validation can check that the
+     * action a typed access policy requires is registered without requiring {@code
+     * SecurityAuthzModule}. Another module may declare the same optional binding; Dagger merges the
+     * declarations.
+     */
+    @BindsOptionalOf
+    abstract ActionRegistry actionRegistry();
+
+    /**
      * Builds the one immutable, global-name-ordered tool registry {@link McpRequestDispatcher}'s {@code
      * tools/list} listing scans.
      */
@@ -101,11 +111,14 @@ public abstract class McpServerModule {
         return validator;
     }
 
-    /** Constructs the bounded configuration validator used before every MCP mount. */
+    /**
+     * Constructs the bounded configuration validator used before every MCP mount. The optional {@link
+     * ActionRegistry} lets it reject a typed action tool whose action is not registered.
+     */
     @Provides
     @Singleton
-    static McpServerConfigValidator configValidator() {
-        return new McpServerConfigValidator();
+    static McpServerConfigValidator configValidator(Optional<ActionRegistry> actionRegistry) {
+        return new McpServerConfigValidator(actionRegistry);
     }
 
     /**

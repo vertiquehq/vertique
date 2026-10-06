@@ -3,15 +3,29 @@
 
 package dev.vertique.codegen.mcp;
 
+import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.fail;
 
 import dev.vertique.codegen.test.ProcessorTestHarness;
 import dev.vertique.codegen.test.fixtures.SourceFiles;
+import java.lang.reflect.Constructor;
+import java.lang.reflect.Method;
+import java.lang.reflect.Proxy;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
+import java.util.Set;
 import java.util.stream.Stream;
+import javax.annotation.processing.AbstractProcessor;
+import javax.annotation.processing.RoundEnvironment;
+import javax.lang.model.SourceVersion;
+import javax.lang.model.element.TypeElement;
 import javax.tools.Diagnostic;
 import javax.tools.JavaFileObject;
 import org.junit.jupiter.api.DisplayName;
@@ -1398,6 +1412,1026 @@ class McpToolProcessorCompileTest {
         }
     }
 
+    // ==================================================================================
+    // Typed access policies — generated hook, fail-closed legacy descriptor, compile-time checks
+    // ==================================================================================
+
+    private static final String REQUIRES_POLICY = "@dev.vertique.security.authz.RequiresPolicy";
+
+    private static final String ACCESS_POLICY = "dev.vertique.security.authz.AccessPolicy";
+
+    /** Distinctive role literal that must never reach a typed tool's legacy descriptor. */
+    private static final String READER_ROLE = "ops-reader";
+
+    private static final String WRITER_ROLE = "ops-writer";
+
+    private static final String READER = "ReaderPolicy";
+
+    private static final String WRITER = "WriterPolicy";
+
+    private static final String OPEN = "OpenPolicy";
+
+    /**
+     * The rows of the typed access-policy matrix: each valid declaration form, the inline-only
+     * characterization, and every rejected declaration shape paired with its valid control.
+     *
+     * @return one row per boundary
+     */
+    static Stream<MatrixRow> typedPolicyMatrix() {
+        return Stream.of(
+                new MatrixRow(
+                        "shouldPublishRolesPolicyAsDenyAllWithHook",
+                        McpToolProcessorCompileTest::shouldPublishRolesPolicyAsDenyAllWithHook),
+                new MatrixRow(
+                        "shouldPublishPublicPolicyAsDenyAllWithHook",
+                        McpToolProcessorCompileTest::shouldPublishPublicPolicyAsDenyAllWithHook),
+                new MatrixRow(
+                        "shouldPublishActionOnlyPolicyAsDenyAllWithHook",
+                        McpToolProcessorCompileTest::shouldPublishActionOnlyPolicyAsDenyAllWithHook),
+                new MatrixRow(
+                        "shouldPublishScopedAuthorizedPolicyAsDenyAllWithHook",
+                        McpToolProcessorCompileTest::shouldPublishScopedAuthorizedPolicyAsDenyAllWithHook),
+                new MatrixRow(
+                        "shouldPreferMethodPolicyOverTypePolicy",
+                        McpToolProcessorCompileTest::shouldPreferMethodPolicyOverTypePolicy),
+                new MatrixRow(
+                        "shouldInheritPolicyFromInterfaceMethod",
+                        McpToolProcessorCompileTest::shouldInheritPolicyFromInterfaceMethod),
+                new MatrixRow(
+                        "shouldInheritPolicyFromSuperclassType",
+                        McpToolProcessorCompileTest::shouldInheritPolicyFromSuperclassType),
+                new MatrixRow(
+                        "shouldInheritPolicyThroughGenericSubstitution",
+                        McpToolProcessorCompileTest::shouldInheritPolicyThroughGenericSubstitution),
+                new MatrixRow(
+                        "shouldIgnoreDeclarationsThatDoNotCorrespondToTheToolMethod",
+                        McpToolProcessorCompileTest::shouldIgnoreDeclarationsThatDoNotCorrespondToTheToolMethod),
+                new MatrixRow(
+                        "shouldPreserveInlineOnlyDescriptorWithoutHook",
+                        McpToolProcessorCompileTest::shouldPreserveInlineOnlyDescriptorWithoutHook),
+                new MatrixRow(
+                        "shouldRejectDistinctMethodPolicyReferences",
+                        McpToolProcessorCompileTest::shouldRejectDistinctMethodPolicyReferences),
+                new MatrixRow(
+                        "shouldRejectDistinctTypePolicyReferences",
+                        McpToolProcessorCompileTest::shouldRejectDistinctTypePolicyReferences),
+                new MatrixRow(
+                        "shouldRejectTypeSetProblemsAMethodOverrideCannotHide",
+                        McpToolProcessorCompileTest::shouldRejectTypeSetProblemsAMethodOverrideCannotHide),
+                new MatrixRow(
+                        "shouldRejectPolicyMixedWithInlineSecurity",
+                        McpToolProcessorCompileTest::shouldRejectPolicyMixedWithInlineSecurity),
+                new MatrixRow(
+                        "shouldRejectMalformedPolicies", McpToolProcessorCompileTest::shouldRejectMalformedPolicies),
+                new MatrixRow(
+                        "shouldRejectConflictsThroughGenericSubstitution",
+                        McpToolProcessorCompileTest::shouldRejectConflictsThroughGenericSubstitution),
+                new MatrixRow(
+                        "shouldRejectPolicyInaccessibleFromTheGeneratedPackage",
+                        McpToolProcessorCompileTest::shouldRejectPolicyInaccessibleFromTheGeneratedPackage));
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("typedPolicyMatrix")
+    @DisplayName("generates complete typed policy metadata and rejects invalid declarations")
+    void shouldGenerateCompleteTypedPolicyMetadata(MatrixRow row) throws Throwable {
+        row.proof().execute();
+    }
+
+    // --- Valid declarations: hook plus fail-closed legacy descriptor ---
+
+    /**
+     * A method-level policy carrying roles: the generated invoker overrides {@code accessPolicy()}
+     * with the policy class, and its legacy descriptor is {@code DENY_ALL} with no roles and no
+     * action, so an old descriptor-only runtime hides the tool.
+     */
+    private static void shouldPublishRolesPolicyAsDenyAllWithHook() throws ReflectiveOperationException {
+        ToolClass tool = ToolClass.named("RolesPolicyTools").methodAnnotations(uses(READER));
+        try (McpToolCompilation compilation = McpToolCompilation.of(withWeather(readerPolicy(), tool.source()))) {
+            assertPublishesTypedPolicy(compilation, tool, READER, READER_ROLE);
+        }
+    }
+
+    /** A public ({@code @PermitAll}) policy still publishes {@code DENY_ALL}, never {@code PERMIT_ALL}. */
+    private static void shouldPublishPublicPolicyAsDenyAllWithHook() throws ReflectiveOperationException {
+        ToolClass tool = ToolClass.named("PublicPolicyTools").methodAnnotations(uses(OPEN));
+        try (McpToolCompilation compilation = McpToolCompilation.of(withWeather(openPolicy(), tool.source()))) {
+            assertPublishesTypedPolicy(compilation, tool, OPEN);
+        }
+    }
+
+    /** An action-only policy publishes no action in the legacy descriptor. */
+    private static void shouldPublishActionOnlyPolicyAsDenyAllWithHook() throws ReflectiveOperationException {
+        ToolClass tool = ToolClass.named("ActionPolicyTools").methodAnnotations(uses("ActionPolicy"));
+        JavaFileObject actionPolicy =
+                policy("ActionPolicy", "@dev.vertique.security.authz.RequiresAction(\"weather.city.read\")");
+        try (McpToolCompilation compilation = McpToolCompilation.of(withWeather(actionPolicy, tool.source()))) {
+            assertPublishesTypedPolicy(compilation, tool, "ActionPolicy", "weather.city.read", "ActionRef.parse");
+        }
+    }
+
+    /** A scoped {@code @Authorized} policy publishes no scope in the legacy descriptor. */
+    private static void shouldPublishScopedAuthorizedPolicyAsDenyAllWithHook() throws ReflectiveOperationException {
+        ToolClass tool = ToolClass.named("ScopedPolicyTools").methodAnnotations(uses("ScopedPolicy"));
+        JavaFileObject scopedPolicy =
+                policy("ScopedPolicy", "@dev.vertique.security.authz.Authorized(scopes = {\"weather:read\"})");
+        try (McpToolCompilation compilation = McpToolCompilation.of(withWeather(scopedPolicy, tool.source()))) {
+            assertPublishesTypedPolicy(compilation, tool, "ScopedPolicy", "weather:read");
+        }
+    }
+
+    /**
+     * A type-level policy applies to every tool of the type, and a method-level policy replaces the
+     * whole type policy for its own tool.
+     */
+    private static void shouldPreferMethodPolicyOverTypePolicy() throws ReflectiveOperationException {
+        ToolClass tool = ToolClass.named("TypeLevelTools")
+                .typeAnnotations(uses(READER))
+                .members(secondTool("lookupOverride", uses(WRITER)));
+        String overrideInvoker = TOOLS_PACKAGE + ".TypeLevelTools_lookupOverride_McpToolInvoker";
+        try (McpToolCompilation compilation =
+                McpToolCompilation.of(withWeather(readerPolicy(), writerPolicy(), tool.source()))) {
+            assertPublishesTypedPolicy(compilation, tool, READER, READER_ROLE, WRITER);
+            assertTypedInvoker(compilation, tool.fqn(), overrideInvoker, WRITER, WRITER_ROLE, READER);
+        }
+    }
+
+    /** A policy declared on the interface method the tool method implements is inherited. */
+    private static void shouldInheritPolicyFromInterfaceMethod() throws ReflectiveOperationException {
+        ToolClass tool = ToolClass.named("InterfacePolicyTools")
+                .supertypes("implements PolicyContract")
+                .withOverride();
+        JavaFileObject contract = lookupInterface("PolicyContract", "", uses(READER));
+        try (McpToolCompilation compilation =
+                McpToolCompilation.of(withWeather(readerPolicy(), contract, tool.source()))) {
+            assertPublishesTypedPolicy(compilation, tool, READER, READER_ROLE);
+        }
+    }
+
+    /** A policy declared on a superclass type is inherited by the tools of its subclass. */
+    private static void shouldInheritPolicyFromSuperclassType() throws ReflectiveOperationException {
+        ToolClass tool = ToolClass.named("SuperclassPolicyTools").supertypes("extends PolicyBase");
+        try (McpToolCompilation compilation = McpToolCompilation.of(
+                withWeather(readerPolicy(), typeOnlyClass("PolicyBase", uses(READER)), tool.source()))) {
+            assertPublishesTypedPolicy(compilation, tool, READER, READER_ROLE);
+        }
+    }
+
+    /**
+     * A policy declared on a generic parent method is inherited once the tool method's signature
+     * corresponds to it after type-argument substitution.
+     */
+    private static void shouldInheritPolicyThroughGenericSubstitution() throws ReflectiveOperationException {
+        ToolClass tool = ToolClass.named("GenericPolicyTools")
+                .supertypes("extends GenericBase<String>")
+                .withOverride();
+        try (McpToolCompilation compilation = McpToolCompilation.of(
+                withWeather(readerPolicy(), genericBase("GenericBase", uses(READER)), tool.source()))) {
+            assertPublishesTypedPolicy(compilation, tool, READER, READER_ROLE);
+        }
+    }
+
+    /**
+     * Declarations that only look like the tool method contribute nothing: an overload on a parent, a
+     * generic parent method whose substituted signature differs, a static interface method and a
+     * private static parent method. Their policies never conflict with the tool's own and never
+     * reach a tool that declares none.
+     */
+    private static void shouldIgnoreDeclarationsThatDoNotCorrespondToTheToolMethod()
+            throws ReflectiveOperationException {
+        JavaFileObject overloadBase = SourceFiles.inline(TOOLS_PACKAGE + ".OverloadBase", """
+                package com.example.tools;
+
+                import io.vertx.core.Future;
+
+                abstract class OverloadBase {
+                    %s
+                    public Future<WeatherReport> lookup(String city, int days) {
+                        return Future.succeededFuture(new WeatherReport(city, days));
+                    }
+                }
+                """.formatted(uses(OPEN)));
+        JavaFileObject privateStaticBase =
+                SourceFiles.inline(TOOLS_PACKAGE + ".PrivateStaticBase", """
+                package com.example.tools;
+
+                import io.vertx.core.Future;
+
+                abstract class PrivateStaticBase {
+                    %s
+                    private static Future<WeatherReport> lookup(String city) {
+                        return Future.succeededFuture(new WeatherReport(city, 0));
+                    }
+                }
+                """.formatted(uses(OPEN)));
+        JavaFileObject staticInterface = SourceFiles.inline(TOOLS_PACKAGE + ".StaticLookup", """
+                package com.example.tools;
+
+                import io.vertx.core.Future;
+
+                interface StaticLookup {
+                    %s
+                    static Future<WeatherReport> lookup(String city) {
+                        return Future.succeededFuture(new WeatherReport(city, 0));
+                    }
+                }
+                """.formatted(uses(OPEN)));
+        JavaFileObject otherArgumentBase =
+                SourceFiles.inline(TOOLS_PACKAGE + ".OtherArgumentBase", """
+                package com.example.tools;
+
+                import io.vertx.core.Future;
+
+                abstract class OtherArgumentBase<T> {
+                    %s
+                    public Future<WeatherReport> lookup(T key) {
+                        return Future.succeededFuture(new WeatherReport("none", 0));
+                    }
+                }
+                """.formatted(uses(OPEN)));
+        ToolClass overloadTool = ToolClass.named("OverloadTools")
+                .supertypes("extends OverloadBase")
+                .methodAnnotations(uses(READER));
+        ToolClass staticTool = ToolClass.named("StaticLookalikeTools")
+                .supertypes("implements StaticLookup")
+                .methodAnnotations(uses(READER));
+        ToolClass otherArgumentTool = ToolClass.named("OtherArgumentTools")
+                .supertypes("extends OtherArgumentBase<Integer>")
+                .methodAnnotations(uses(READER));
+        ToolClass bareTool = ToolClass.named("PrivateStaticLookalikeTools").supertypes("extends PrivateStaticBase");
+        try (McpToolCompilation compilation = McpToolCompilation.of(withWeather(
+                readerPolicy(),
+                openPolicy(),
+                overloadBase,
+                privateStaticBase,
+                staticInterface,
+                otherArgumentBase,
+                overloadTool.source(),
+                staticTool.source(),
+                otherArgumentTool.source(),
+                bareTool.source()))) {
+            assertPublishesTypedPolicy(compilation, overloadTool, READER, READER_ROLE, OPEN);
+            assertPublishesTypedPolicy(compilation, staticTool, READER, READER_ROLE, OPEN);
+            assertPublishesTypedPolicy(compilation, otherArgumentTool, READER, READER_ROLE, OPEN);
+            assertInlineOnlyInvoker(compilation, bareTool);
+            compilation
+                    .result()
+                    .assertGeneratedSourceContains(bareTool.invokerFqn(), "McpAccessMode.PERMIT_ALL")
+                    .assertGeneratedSourceDoesNotContain(bareTool.invokerFqn(), OPEN);
+        }
+    }
+
+    /**
+     * An inline-only tool keeps its descriptor and emits no policy hook, so its generated source is
+     * unchanged by the typed-policy contract.
+     */
+    private static void shouldPreserveInlineOnlyDescriptorWithoutHook() throws ReflectiveOperationException {
+        ToolClass tool = ToolClass.named("InlineOnlyTools")
+                .methodAnnotations("@jakarta.annotation.security.RolesAllowed(\"" + READER_ROLE + "\") "
+                        + "@dev.vertique.security.authz.RequiresAction(\"weather.city.read\")");
+        try (McpToolCompilation compilation = McpToolCompilation.of(withWeather(tool.source()))) {
+            compilation
+                    .result()
+                    .assertSuccess()
+                    .assertGeneratedSourceContains(tool.invokerFqn(), "McpAccessMode.RESTRICTED")
+                    .assertGeneratedSourceContains(tool.invokerFqn(), READER_ROLE)
+                    .assertGeneratedSourceContains(tool.invokerFqn(), "weather.city.read")
+                    .assertGeneratedSourceDoesNotContain(tool.invokerFqn(), "McpAccessMode.DENY_ALL");
+            assertInlineOnlyInvoker(compilation, tool);
+        }
+    }
+
+    // --- Rejected declarations: each diagnosed once, each with a valid control ---
+
+    /**
+     * Distinct policies in the complete method set — a parent method of a superclass or interface, or
+     * the two methods of an interface diamond — are rejected; the same policy repeated coalesces.
+     */
+    private static void shouldRejectDistinctMethodPolicyReferences() {
+        List<Rejection> cases = new ArrayList<>();
+        cases.add(methodConflict(
+                "interface parent method",
+                lookupInterface("PolicyContract", "", uses(READER)),
+                "implements PolicyContract"));
+        cases.add(methodConflict(
+                "superclass parent method", lookupBaseClass("PolicyContract", uses(READER)), "extends PolicyContract"));
+        cases.add(diamondConflict(
+                "interface diamond of methods",
+                lookupInterface("ReadContract", "", uses(READER)),
+                lookupInterface("WriteContract", "", uses(WRITER)),
+                lookupInterface("WriteContract", "", uses(READER)),
+                "implements ReadContract, WriteContract"));
+        assertEachRejectedOnce(cases);
+    }
+
+    /**
+     * Distinct policies in the complete type set — a superclass, or an interface diamond — are
+     * rejected, whether or not a method-level policy also exists.
+     */
+    private static void shouldRejectDistinctTypePolicyReferences() {
+        List<Rejection> cases = new ArrayList<>();
+        ToolClass childWriter = ToolClass.named("TypeConflictTools")
+                .typeAnnotations(uses(WRITER))
+                .supertypes("extends PolicyBase");
+        ToolClass childReader = ToolClass.named("TypeConflictTools")
+                .typeAnnotations(uses(READER))
+                .supertypes("extends PolicyBase");
+        JavaFileObject parent = typeOnlyClass("PolicyBase", uses(READER));
+        cases.add(new Rejection(
+                "superclass type policy",
+                fixture(readerPolicy(), writerPolicy(), parent, childWriter.source()),
+                fixture(readerPolicy(), writerPolicy(), parent, childReader.source()),
+                "TypeConflictTools",
+                List.of(READER, WRITER)));
+
+        ToolClass diamond = ToolClass.named("TypeDiamondTools").supertypes("implements ReadMarker, WriteMarker");
+        cases.add(new Rejection(
+                "interface diamond of type policies",
+                fixture(
+                        readerPolicy(),
+                        writerPolicy(),
+                        typeOnlyInterface("ReadMarker", uses(READER)),
+                        typeOnlyInterface("WriteMarker", uses(WRITER)),
+                        diamond.source()),
+                fixture(
+                        readerPolicy(),
+                        writerPolicy(),
+                        typeOnlyInterface("ReadMarker", uses(READER)),
+                        typeOnlyInterface("WriteMarker", uses(READER)),
+                        diamond.source()),
+                "TypeDiamondTools",
+                List.of(READER, WRITER)));
+        assertEachRejectedOnce(cases);
+    }
+
+    /**
+     * A method-level policy replaces the type policy, but it must not hide a conflicting or malformed
+     * type declaration: the complete type set is validated before selection.
+     */
+    private static void shouldRejectTypeSetProblemsAMethodOverrideCannotHide() {
+        List<Rejection> cases = new ArrayList<>();
+        JavaFileObject parent = typeOnlyClass("PolicyBase", uses(READER));
+        ToolClass conflicting = ToolClass.named("HiddenConflictTools")
+                .typeAnnotations(uses(WRITER))
+                .supertypes("extends PolicyBase")
+                .methodAnnotations(uses(OPEN));
+        ToolClass consistent = ToolClass.named("HiddenConflictTools")
+                .typeAnnotations(uses(READER))
+                .supertypes("extends PolicyBase")
+                .methodAnnotations(uses(OPEN));
+        cases.add(new Rejection(
+                "conflicting type policies beneath a method override",
+                fixture(readerPolicy(), writerPolicy(), openPolicy(), parent, conflicting.source()),
+                fixture(readerPolicy(), writerPolicy(), openPolicy(), parent, consistent.source()),
+                "HiddenConflictTools",
+                List.of(READER, WRITER)));
+
+        ToolClass malformedType = ToolClass.named("HiddenMalformedTools")
+                .typeAnnotations(uses("EmptyPolicy"))
+                .methodAnnotations(uses(READER));
+        ToolClass wellFormedType = ToolClass.named("HiddenMalformedTools")
+                .typeAnnotations(uses(READER))
+                .methodAnnotations(uses(READER));
+        cases.add(new Rejection(
+                "malformed type policy beneath a method override",
+                fixture(readerPolicy(), policy("EmptyPolicy", ""), malformedType.source()),
+                fixture(readerPolicy(), policy("EmptyPolicy", ""), wellFormedType.source()),
+                "HiddenMalformedTools",
+                List.of("EmptyPolicy")));
+        assertEachRejectedOnce(cases);
+    }
+
+    /**
+     * A policy reference beside an inline {@code @RolesAllowed}, {@code @RequiresAction},
+     * {@code @PermitAll} or {@code @Authorized} anywhere on the path is rejected, on the method or on
+     * the type.
+     */
+    private static void shouldRejectPolicyMixedWithInlineSecurity() {
+        Map<String, String> inline = new LinkedHashMap<>();
+        inline.put("RolesAllowed", "@jakarta.annotation.security.RolesAllowed(\"" + WRITER_ROLE + "\")");
+        inline.put("RequiresAction", "@dev.vertique.security.authz.RequiresAction(\"weather.city.read\")");
+        inline.put("PermitAll", "@jakarta.annotation.security.PermitAll");
+        inline.put("Authorized", "@dev.vertique.security.authz.Authorized");
+
+        List<Rejection> cases = new ArrayList<>();
+        ToolClass control = ToolClass.named("MixedInlineTools").methodAnnotations(uses(READER));
+        inline.forEach((label, annotation) -> {
+            ToolClass mixed = ToolClass.named("MixedInlineTools").methodAnnotations(uses(READER) + " " + annotation);
+            cases.add(new Rejection(
+                    "method policy beside inline @" + label,
+                    fixture(readerPolicy(), mixed.source()),
+                    fixture(readerPolicy(), control.source()),
+                    "MixedInlineTools",
+                    List.of(READER)));
+        });
+        ToolClass typeMixed = ToolClass.named("MixedInlineTools")
+                .typeAnnotations(inline.get("RolesAllowed"))
+                .methodAnnotations(uses(READER));
+        cases.add(new Rejection(
+                "method policy beside an inline type-level @RolesAllowed",
+                fixture(readerPolicy(), typeMixed.source()),
+                fixture(readerPolicy(), control.source()),
+                "MixedInlineTools",
+                List.of(READER)));
+        assertEachRejectedOnce(cases);
+    }
+
+    /**
+     * A policy must be a public, non-generic interface extending only {@code AccessPolicy}, declaring
+     * no members, carrying at least one well-formed direct requirement and no policy reference, scheme
+     * annotation or observable security composition.
+     */
+    private static void shouldRejectMalformedPolicies() {
+        String roles = "@jakarta.annotation.security.RolesAllowed(\"" + READER_ROLE + "\")";
+        JavaFileObject schemeStub =
+                SourceFiles.inline("io.swagger.v3.oas.annotations.security.SecurityRequirement", """
+                package io.swagger.v3.oas.annotations.security;
+
+                import java.lang.annotation.ElementType;
+                import java.lang.annotation.Retention;
+                import java.lang.annotation.RetentionPolicy;
+                import java.lang.annotation.Target;
+
+                @Retention(RetentionPolicy.RUNTIME)
+                @Target({ElementType.TYPE, ElementType.METHOD})
+                public @interface SecurityRequirement {
+                    String name();
+                }
+                """);
+        JavaFileObject adminOnly = SourceFiles.inline(TOOLS_PACKAGE + ".AdminOnly", """
+                package com.example.tools;
+
+                import java.lang.annotation.ElementType;
+                import java.lang.annotation.Retention;
+                import java.lang.annotation.RetentionPolicy;
+                import java.lang.annotation.Target;
+
+                @Retention(RetentionPolicy.CLASS)
+                @Target(ElementType.TYPE)
+                @jakarta.annotation.security.RolesAllowed("ops-reader")
+                public @interface AdminOnly {}
+                """);
+        JavaFileObject audited = SourceFiles.inline(TOOLS_PACKAGE + ".Audited", """
+                package com.example.tools;
+
+                import java.lang.annotation.Documented;
+                import java.lang.annotation.ElementType;
+                import java.lang.annotation.Retention;
+                import java.lang.annotation.RetentionPolicy;
+                import java.lang.annotation.Target;
+
+                @Documented
+                @Retention(RetentionPolicy.CLASS)
+                @Target(ElementType.TYPE)
+                public @interface Audited {}
+                """);
+
+        List<Rejection> cases = new ArrayList<>();
+        cases.add(malformedPolicy(
+                "policy that is not public",
+                "HiddenPolicy",
+                policyDeclaration("HiddenPolicy", roles, "interface HiddenPolicy extends " + ACCESS_POLICY + " {}")));
+        cases.add(malformedPolicy(
+                "policy that is a class",
+                "ClassPolicy",
+                policyDeclaration(
+                        "ClassPolicy",
+                        roles,
+                        "public abstract class ClassPolicy implements " + ACCESS_POLICY + " {}")));
+        cases.add(malformedPolicy(
+                "policy that extends another type",
+                "WideningPolicy",
+                policyDeclaration(
+                        "WideningPolicy",
+                        roles,
+                        "public interface WideningPolicy extends " + ACCESS_POLICY + ", java.io.Serializable {}")));
+        cases.add(malformedPolicy(
+                "generic policy",
+                "GenericPolicy",
+                policyDeclaration(
+                        "GenericPolicy", roles, "public interface GenericPolicy<T> extends " + ACCESS_POLICY + " {}")));
+        cases.add(malformedPolicy(
+                "policy that declares a method",
+                "MethodPolicy",
+                policyDeclaration(
+                        "MethodPolicy",
+                        roles,
+                        "public interface MethodPolicy extends " + ACCESS_POLICY + " { void check(); }")));
+        cases.add(malformedPolicy("policy with no requirement", "EmptyPolicy", policy("EmptyPolicy", "")));
+        cases.add(malformedPolicy(
+                "policy with an empty role list",
+                "EmptyRolesPolicy",
+                policy("EmptyRolesPolicy", "@jakarta.annotation.security.RolesAllowed({})")));
+        cases.add(malformedPolicy(
+                "policy with a blank role",
+                "BlankRolePolicy",
+                policy("BlankRolePolicy", "@jakarta.annotation.security.RolesAllowed(\" \")")));
+        cases.add(malformedPolicy(
+                "policy with a malformed action",
+                "BadActionPolicy",
+                policy("BadActionPolicy", "@dev.vertique.security.authz.RequiresAction(\"NOT_AN_ACTION\")")));
+        cases.add(malformedPolicyWith(
+                "policy that itself references a policy",
+                "ChainedPolicy",
+                List.of(readerPolicy()),
+                policy("ChainedPolicy", uses(READER)),
+                policy("ChainedPolicy", roles)));
+        cases.add(malformedPolicyWith(
+                "policy carrying a security-scheme annotation",
+                "SchemePolicy",
+                List.of(schemeStub),
+                policy(
+                        "SchemePolicy",
+                        roles + " @io.swagger.v3.oas.annotations.security.SecurityRequirement(name = \"bearer\")"),
+                policy("SchemePolicy", roles)));
+        cases.add(malformedPolicyWith(
+                "policy composing a CLASS-retained security annotation",
+                "ComposedPolicy",
+                List.of(adminOnly, audited),
+                policy("ComposedPolicy", "@jakarta.annotation.security.PermitAll @AdminOnly"),
+                policy("ComposedPolicy", "@jakarta.annotation.security.PermitAll @Audited")));
+        assertEachRejectedOnce(cases);
+    }
+
+    /**
+     * A tool method that implements a generic parent method corresponds to it only after type-argument
+     * substitution: a distinct policy on the substituted declaration is a method-set conflict.
+     */
+    private static void shouldRejectConflictsThroughGenericSubstitution() {
+        List<Rejection> cases = new ArrayList<>();
+        ToolClass writerTool = ToolClass.named("GenericConflictTools")
+                .supertypes("extends GenericBase<String>")
+                .methodAnnotations(uses(WRITER))
+                .withOverride();
+        ToolClass readerTool = ToolClass.named("GenericConflictTools")
+                .supertypes("extends GenericBase<String>")
+                .methodAnnotations(uses(READER))
+                .withOverride();
+        JavaFileObject base = genericBase("GenericBase", uses(READER));
+        cases.add(new Rejection(
+                "generic superclass method",
+                fixture(readerPolicy(), writerPolicy(), base, writerTool.source()),
+                fixture(readerPolicy(), writerPolicy(), base, readerTool.source()),
+                "GenericConflictTools",
+                List.of(READER, WRITER)));
+
+        ToolClass interfaceWriter = ToolClass.named("GenericContractTools")
+                .supertypes("implements GenericContract<String>")
+                .methodAnnotations(uses(WRITER))
+                .withOverride();
+        ToolClass interfaceReader = ToolClass.named("GenericContractTools")
+                .supertypes("implements GenericContract<String>")
+                .methodAnnotations(uses(READER))
+                .withOverride();
+        JavaFileObject contract = SourceFiles.inline(TOOLS_PACKAGE + ".GenericContract", """
+                package com.example.tools;
+
+                import io.vertx.core.Future;
+
+                interface GenericContract<T> {
+                    %s
+                    Future<WeatherReport> lookup(T key);
+                }
+                """.formatted(uses(READER)));
+        cases.add(new Rejection(
+                "generic interface method",
+                fixture(readerPolicy(), writerPolicy(), contract, interfaceWriter.source()),
+                fixture(readerPolicy(), writerPolicy(), contract, interfaceReader.source()),
+                "GenericContractTools",
+                List.of(READER, WRITER)));
+        assertEachRejectedOnce(cases);
+    }
+
+    /**
+     * A policy the generated invoker cannot name — public, but nested in a private holder of the tool
+     * class — is diagnosed at compile time, not as a javac error inside generated code.
+     */
+    private static void shouldRejectPolicyInaccessibleFromTheGeneratedPackage() {
+        Rejection inaccessible = new Rejection(
+                "policy nested in a private holder",
+                fixture(holderTool("private").source()),
+                fixture(holderTool("public").source()),
+                "InaccessibleTools",
+                List.of("GatedPolicy"));
+        assertEachRejectedOnce(List.of(inaccessible));
+    }
+
+    private static ToolClass holderTool(String holderAccess) {
+        String holder = holderAccess + " static class Holder {"
+                + " @jakarta.annotation.security.RolesAllowed(\"" + READER_ROLE + "\")"
+                + " public interface GatedPolicy extends " + ACCESS_POLICY + " {} }";
+        return ToolClass.named("InaccessibleTools")
+                .methodAnnotations(uses("Holder.GatedPolicy"))
+                .members(holder);
+    }
+
+    // --- Typed-policy fixture builders ---
+
+    /** A class literal reference to a policy: the declaration under test. */
+    private static String uses(String policy) {
+        return REQUIRES_POLICY + "(" + policy + ".class)";
+    }
+
+    private static JavaFileObject policy(String name, String annotations) {
+        return policyDeclaration(name, annotations, "public interface " + name + " extends " + ACCESS_POLICY + " {}");
+    }
+
+    private static JavaFileObject policyDeclaration(String name, String annotations, String declaration) {
+        return SourceFiles.inline(TOOLS_PACKAGE + "." + name, """
+                package com.example.tools;
+
+                %s
+                %s
+                """.formatted(annotations, declaration));
+    }
+
+    private static JavaFileObject readerPolicy() {
+        return policy(READER, "@jakarta.annotation.security.RolesAllowed(\"" + READER_ROLE + "\")");
+    }
+
+    private static JavaFileObject writerPolicy() {
+        return policy(WRITER, "@jakarta.annotation.security.RolesAllowed(\"" + WRITER_ROLE + "\")");
+    }
+
+    private static JavaFileObject openPolicy() {
+        return policy(OPEN, "@jakarta.annotation.security.PermitAll");
+    }
+
+    /** A package-private interface declaring the tool method signature with the given annotations. */
+    private static JavaFileObject lookupInterface(String name, String typeAnnotations, String methodAnnotations) {
+        return SourceFiles.inline(TOOLS_PACKAGE + "." + name, """
+                package com.example.tools;
+
+                import io.vertx.core.Future;
+
+                %s
+                interface %s {
+                    %s
+                    Future<WeatherReport> lookup(String city);
+                }
+                """.formatted(typeAnnotations, name, methodAnnotations));
+    }
+
+    /** A package-private abstract class declaring the tool method signature with the given annotations. */
+    private static JavaFileObject lookupBaseClass(String name, String methodAnnotations) {
+        return SourceFiles.inline(TOOLS_PACKAGE + "." + name, """
+                package com.example.tools;
+
+                import io.vertx.core.Future;
+
+                abstract class %s {
+                    %s
+                    public abstract Future<WeatherReport> lookup(String city);
+                }
+                """.formatted(name, methodAnnotations));
+    }
+
+    /** A package-private abstract class that only carries type-level annotations. */
+    private static JavaFileObject typeOnlyClass(String name, String typeAnnotations) {
+        return SourceFiles.inline(TOOLS_PACKAGE + "." + name, """
+                package com.example.tools;
+
+                %s
+                abstract class %s {}
+                """.formatted(typeAnnotations, name));
+    }
+
+    /** A package-private interface that only carries type-level annotations. */
+    private static JavaFileObject typeOnlyInterface(String name, String typeAnnotations) {
+        return SourceFiles.inline(TOOLS_PACKAGE + "." + name, """
+                package com.example.tools;
+
+                %s
+                interface %s {}
+                """.formatted(typeAnnotations, name));
+    }
+
+    /** A package-private generic abstract class declaring {@code lookup(T)} with the given annotations. */
+    private static JavaFileObject genericBase(String name, String methodAnnotations) {
+        return SourceFiles.inline(TOOLS_PACKAGE + "." + name, """
+                package com.example.tools;
+
+                import io.vertx.core.Future;
+
+                abstract class %s<T> {
+                    %s
+                    public abstract Future<WeatherReport> lookup(T key);
+                }
+                """.formatted(name, methodAnnotations));
+    }
+
+    /** A second tool method on the same type, so one type can declare a type policy and an override. */
+    private static String secondTool(String methodName, String methodAnnotations) {
+        return """
+                @McpTool(name = "policy.%s", description = "Look up the current weather.")
+                %s
+                public Future<WeatherReport> %s(
+                        @McpToolParam(name = "city", description = "The city to look up.") String city) {
+                    return Future.succeededFuture(new WeatherReport(city, 21));
+                }
+                """.formatted(methodName.toLowerCase(Locale.ROOT), methodAnnotations, methodName);
+    }
+
+    /**
+     * One public Dagger-managed tool type with a single {@code lookup} tool method; every typed-policy
+     * declaration under test is placed through its type annotations, supertypes, method annotations
+     * and extra members.
+     */
+    private record ToolClass(
+            String name,
+            String typeAnnotations,
+            String supertypes,
+            String methodAnnotations,
+            String members,
+            boolean overriding) {
+
+        static ToolClass named(String name) {
+            return new ToolClass(name, "", "", "", "", false);
+        }
+
+        ToolClass typeAnnotations(String value) {
+            return new ToolClass(name, value, supertypes, methodAnnotations, members, overriding);
+        }
+
+        ToolClass supertypes(String value) {
+            return new ToolClass(name, typeAnnotations, value, methodAnnotations, members, overriding);
+        }
+
+        ToolClass methodAnnotations(String value) {
+            return new ToolClass(name, typeAnnotations, supertypes, value, members, overriding);
+        }
+
+        ToolClass members(String value) {
+            return new ToolClass(name, typeAnnotations, supertypes, methodAnnotations, value, overriding);
+        }
+
+        ToolClass withOverride() {
+            return new ToolClass(name, typeAnnotations, supertypes, methodAnnotations, members, true);
+        }
+
+        String fqn() {
+            return TOOLS_PACKAGE + "." + name;
+        }
+
+        String invokerFqn() {
+            return fqn() + "_lookup_McpToolInvoker";
+        }
+
+        JavaFileObject source() {
+            return SourceFiles.inline(fqn(), """
+                    package com.example.tools;
+
+                    import dev.vertique.mcp.annotation.McpTool;
+                    import dev.vertique.mcp.annotation.McpToolParam;
+                    import io.vertx.core.Future;
+                    import jakarta.inject.Inject;
+
+                    %s
+                    public class %s %s {
+
+                        @Inject
+                        public %s() {}
+
+                        %s
+                        %s
+                        @McpTool(name = "policy.%s", description = "Look up the current weather.")
+                        public Future<WeatherReport> lookup(
+                                @McpToolParam(name = "city", description = "The city to look up.") String city) {
+                            return Future.succeededFuture(new WeatherReport(city, 21));
+                        }
+
+                        %s
+                    }
+                    """.formatted(
+                            typeAnnotations,
+                            name,
+                            supertypes,
+                            name,
+                            overriding ? "@Override" : "",
+                            methodAnnotations,
+                            name.toLowerCase(Locale.ROOT),
+                            members));
+        }
+    }
+
+    private static JavaFileObject[] withWeather(JavaFileObject... sources) {
+        return withWeather(List.of(sources));
+    }
+
+    private static JavaFileObject[] withWeather(List<JavaFileObject> sources) {
+        List<JavaFileObject> all = new ArrayList<>();
+        all.add(weatherReport());
+        all.addAll(sources);
+        return all.toArray(JavaFileObject[]::new);
+    }
+
+    private static List<JavaFileObject> fixture(JavaFileObject... sources) {
+        return List.of(sources);
+    }
+
+    // --- Rejection cases ---
+
+    /**
+     * One declaration the processor must reject exactly once, and the minimal valid control that
+     * compiles.
+     *
+     * @param label    what makes the declaration invalid
+     * @param invalid  the rejected source set
+     * @param control  the same source set with the offending declaration made valid
+     * @param tool     the tool type every diagnostic must name
+     * @param policies the policies of which every diagnostic must name at least one
+     */
+    private record Rejection(
+            String label,
+            List<JavaFileObject> invalid,
+            List<JavaFileObject> control,
+            String tool,
+            List<String> policies) {}
+
+    private static Rejection methodConflict(String label, JavaFileObject parent, String supertypes) {
+        ToolClass conflicting = ToolClass.named("MethodConflictTools")
+                .supertypes(supertypes)
+                .methodAnnotations(uses(WRITER))
+                .withOverride();
+        ToolClass identical = ToolClass.named("MethodConflictTools")
+                .supertypes(supertypes)
+                .methodAnnotations(uses(READER))
+                .withOverride();
+        return new Rejection(
+                label,
+                fixture(readerPolicy(), writerPolicy(), parent, conflicting.source()),
+                fixture(readerPolicy(), writerPolicy(), parent, identical.source()),
+                "MethodConflictTools",
+                List.of(READER, WRITER));
+    }
+
+    private static Rejection diamondConflict(
+            String label,
+            JavaFileObject first,
+            JavaFileObject conflictingSecond,
+            JavaFileObject identicalSecond,
+            String supertypes) {
+        ToolClass tool =
+                ToolClass.named("MethodDiamondTools").supertypes(supertypes).withOverride();
+        return new Rejection(
+                label,
+                fixture(readerPolicy(), writerPolicy(), first, conflictingSecond, tool.source()),
+                fixture(readerPolicy(), writerPolicy(), first, identicalSecond, tool.source()),
+                "MethodDiamondTools",
+                List.of(READER, WRITER));
+    }
+
+    private static Rejection malformedPolicy(String label, String policyName, JavaFileObject malformed) {
+        return malformedPolicyWith(label, policyName, List.of(), malformed, policy(policyName, validRoles()));
+    }
+
+    private static Rejection malformedPolicyWith(
+            String label,
+            String policyName,
+            List<JavaFileObject> shared,
+            JavaFileObject malformed,
+            JavaFileObject control) {
+        ToolClass tool = ToolClass.named("MalformedPolicyTools").methodAnnotations(uses(policyName));
+        List<JavaFileObject> invalid = new ArrayList<>(shared);
+        invalid.add(malformed);
+        invalid.add(tool.source());
+        List<JavaFileObject> valid = new ArrayList<>(shared);
+        valid.add(control);
+        valid.add(tool.source());
+        return new Rejection(label, invalid, valid, "MalformedPolicyTools", List.of(policyName));
+    }
+
+    private static String validRoles() {
+        return "@jakarta.annotation.security.RolesAllowed(\"" + READER_ROLE + "\")";
+    }
+
+    // --- Assertions ---
+
+    /**
+     * Asserts every case compiles on its own as plain Java, is rejected by the processor with exactly
+     * one error that names the tool and a policy, and that its control compiles with the processor.
+     */
+    private static void assertEachRejectedOnce(List<Rejection> cases) {
+        assertAll(cases.stream().map(rejection -> () -> assertRejectedOnce(rejection)));
+    }
+
+    private static void assertRejectedOnce(Rejection rejection) {
+        JavaFileObject[] invalidSources = withWeather(rejection.invalid());
+        ProcessorTestHarness.run(new ValidatesNothing(), invalidSources).assertSuccess();
+
+        try (McpToolCompilation control = McpToolCompilation.of(withWeather(rejection.control()))) {
+            control.result().assertSuccess();
+        }
+        try (McpToolCompilation rejected = McpToolCompilation.of(invalidSources)) {
+            rejected.result().assertFailed();
+            assertEquals(
+                    1,
+                    rejected.errorsNamingAnyOf(rejection.tool(), rejection.policies()),
+                    rejection.label() + ": must be diagnosed once, naming " + rejection.tool() + " and "
+                            + rejection.policies());
+        }
+    }
+
+    /**
+     * Asserts a typed tool's invoker: the policy hook source, the fail-closed legacy descriptor, no
+     * trace of the policy's requirements in that descriptor, and the loaded hook.
+     */
+    private static void assertPublishesTypedPolicy(
+            McpToolCompilation compilation, ToolClass tool, String policy, String... absentFromInvoker)
+            throws ReflectiveOperationException {
+        assertTypedInvoker(compilation, tool.fqn(), tool.invokerFqn(), policy, absentFromInvoker);
+    }
+
+    private static void assertTypedInvoker(
+            McpToolCompilation compilation,
+            String toolFqn,
+            String invokerFqn,
+            String policy,
+            String... absentFromInvoker)
+            throws ReflectiveOperationException {
+        ProcessorTestHarness.Result result = compilation
+                .result()
+                .assertSuccess()
+                .assertGeneratedSourceContains(invokerFqn, "accessPolicy()")
+                .assertGeneratedSourceContains(invokerFqn, "Optional.of(" + policy + ".class)")
+                .assertGeneratedSourceContains(invokerFqn, "McpAccessMode.DENY_ALL")
+                .assertGeneratedSourceDoesNotContain(invokerFqn, "McpAccessMode.RESTRICTED")
+                .assertGeneratedSourceDoesNotContain(invokerFqn, "McpAccessMode.PERMIT_ALL");
+        for (String absent : absentFromInvoker) {
+            result.assertGeneratedSourceDoesNotContain(invokerFqn, absent);
+        }
+
+        Class<?> invokerType = result.loadGeneratedClass(invokerFqn);
+        Method hook = declaredAccessPolicy(invokerType);
+        if (hook == null) {
+            fail(invokerFqn + " declares no accessPolicy() hook");
+        }
+        hook.setAccessible(true);
+        Object published = hook.invoke(instantiate(result, toolFqn, invokerType));
+        assertEquals(
+                Optional.of(result.loadGeneratedClass(TOOLS_PACKAGE + "." + policy)),
+                published,
+                invokerFqn + " must publish its policy through the hook");
+    }
+
+    /** Asserts an inline-only invoker emits no policy hook at all, in source or in the loaded class. */
+    private static void assertInlineOnlyInvoker(McpToolCompilation compilation, ToolClass tool) {
+        ProcessorTestHarness.Result result = compilation
+                .result()
+                .assertSuccess()
+                .assertGeneratedSourceDoesNotContain(tool.invokerFqn(), "accessPolicy");
+        assertNull(
+                declaredAccessPolicy(result.loadGeneratedClass(tool.invokerFqn())),
+                tool.invokerFqn() + " must not override the policy hook");
+    }
+
+    private static Method declaredAccessPolicy(Class<?> invokerType) {
+        try {
+            return invokerType.getDeclaredMethod("accessPolicy");
+        } catch (NoSuchMethodException e) {
+            return null;
+        }
+    }
+
+    /**
+     * Instantiates a generated invoker over the compiled runtime stubs, so its hook can be read from
+     * the loaded class: the stub factory hands back a bare runtime and the input processor is an inert
+     * proxy, which is all the constructor touches.
+     */
+    private static Object instantiate(ProcessorTestHarness.Result result, String toolFqn, Class<?> invokerType)
+            throws ReflectiveOperationException {
+        ClassLoader loader = result.generatedClassLoader();
+        Object tool = loader.loadClass(toolFqn).getDeclaredConstructor().newInstance();
+        Object factory = loader.loadClass("dev.vertique.mcp.server.runtime.McpToolRuntimeFactory")
+                .getDeclaredConstructor()
+                .newInstance();
+        Class<?> processorType = loader.loadClass("dev.vertique.input.processing.InputObjectProcessor");
+        Object processor =
+                Proxy.newProxyInstance(loader, new Class<?>[] {processorType}, (proxy, method, arguments) -> null);
+        Constructor<?> constructor = invokerType.getDeclaredConstructors()[0];
+        constructor.setAccessible(true);
+        return constructor.newInstance(tool, factory, processor, Optional.empty());
+    }
+
+    /** A processor that validates and generates nothing; proves a fixture is valid Java on its own. */
+    private static final class ValidatesNothing extends AbstractProcessor {
+
+        @Override
+        public Set<String> getSupportedAnnotationTypes() {
+            return Set.of("*");
+        }
+
+        @Override
+        public SourceVersion getSupportedSourceVersion() {
+            return SourceVersion.latestSupported();
+        }
+
+        @Override
+        public boolean process(Set<? extends TypeElement> annotations, RoundEnvironment roundEnv) {
+            return false;
+        }
+    }
+
     // --- Shared fixture sources ---
 
     /**
@@ -1570,7 +2604,7 @@ class McpToolProcessorCompileTest {
                                 List<McpToolParameterMetadata> parameters,
                                 JsonProfileId declaredJsonProfile,
                                 McpToolAccess access) {
-                            return null;
+                            return new McpToolRuntime<>();
                         }
                     }
                     """);
@@ -1710,6 +2744,26 @@ class McpToolProcessorCompileTest {
                     .map(message -> message.toLowerCase(Locale.ROOT))
                     .filter(message -> Stream.of(fragments)
                             .allMatch(fragment -> message.contains(fragment.toLowerCase(Locale.ROOT))))
+                    .count();
+        }
+
+        /**
+         * Counts the {@code ERROR} diagnostics whose message names the required fragment and at least
+         * one of the alternative fragments (case-insensitive substring matching).
+         *
+         * @param required the fragment every matching message must contain
+         * @param anyOf    the fragments of which a matching message must contain at least one
+         * @return the number of matching error diagnostics
+         */
+        int errorsNamingAnyOf(String required, List<String> anyOf) {
+            return (int) result().compilation().diagnostics().stream()
+                    .filter(d -> d.getKind() == Diagnostic.Kind.ERROR)
+                    .map(d -> d.getMessage(Locale.ROOT))
+                    .filter(Objects::nonNull)
+                    .map(message -> message.toLowerCase(Locale.ROOT))
+                    .filter(message -> message.contains(required.toLowerCase(Locale.ROOT)))
+                    .filter(message ->
+                            anyOf.stream().anyMatch(fragment -> message.contains(fragment.toLowerCase(Locale.ROOT))))
                     .count();
         }
 
