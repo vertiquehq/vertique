@@ -5,10 +5,10 @@ SPDX-License-Identifier: EUPL-1.2
 
 # REST JAX-RS Module
 
-> **Status:** Beta
+> **Status:** Stable
 > **Package:** `dev.vertique.rest.jaxrs`
 > **Artifact:** `vertique-rest-jaxrs`
-> **Depends on:** rest-core, security-core, json
+> **Depends on:** rest-core, security-core, input-processing, json
 
 The JAX-RS routing runtime. `vertique-rest-jaxrs` turns annotated resource classes into plain Vert.x
 routes, extracts and coerces method arguments, invokes the resource method, and dispatches whatever it
