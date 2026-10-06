@@ -4,7 +4,10 @@
 package dev.vertique.rest.openapi.docs.publication;
 
 import dev.vertique.rest.jaxrs.publication.MountPublication;
+import dev.vertique.rest.openapi.docs.document.PublishedDocument;
 import dev.vertique.rest.openapi.docs.metadata.OperationFacts;
+import io.vertx.core.Context;
+import io.vertx.core.Future;
 import java.util.Map;
 import java.util.Set;
 
@@ -46,5 +49,27 @@ public final class PublicationAccess {
      */
     public static Set<String> names(DocumentStore store) {
         return store.names();
+    }
+
+    /**
+     * Creates an empty document store, whose constructor is package-private.
+     *
+     * @return a new store
+     */
+    public static DocumentStore newStore() {
+        return new DocumentStore();
+    }
+
+    /**
+     * Stores a document under an application name, as the first composition to publish it does.
+     *
+     * @param store the document store
+     * @param name the application name
+     * @param caller the context the store assembles on and completes on
+     * @param document the document to store
+     * @return a future completing once the document is stored
+     */
+    public static Future<Void> store(DocumentStore store, String name, Context caller, PublishedDocument document) {
+        return store.publish(name, caller, () -> document, document::fingerprint);
     }
 }

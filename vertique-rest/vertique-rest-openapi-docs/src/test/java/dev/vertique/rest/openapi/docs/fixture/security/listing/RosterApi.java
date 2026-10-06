@@ -5,6 +5,8 @@ package dev.vertique.rest.openapi.docs.fixture.security.listing;
 
 import dev.vertique.rest.core.application.RestApplication;
 import dev.vertique.rest.openapi.docs.ApiDocs;
+import dev.vertique.security.authz.AccessPolicy;
+import jakarta.annotation.security.PermitAll;
 
 /**
  * The documented public application {@code roster} at {@code /api/roster}, listing {@link
@@ -13,7 +15,7 @@ import dev.vertique.rest.openapi.docs.ApiDocs;
  * sort differently from their paths, and one path carries two methods. Registered by hand through
  * {@link RosterRegistrationModule}; the annotation processor never sees it.
  */
-@ApiDocs(access = ApiDocs.Access.PUBLIC)
+@ApiDocs(policy = RosterApi.PublicDocsPolicy.class)
 @RestApplication(
         name = RosterApi.NAME,
         path = RosterApi.PATH,
@@ -25,4 +27,8 @@ public interface RosterApi {
 
     /** The application's path. */
     String PATH = "/api/roster";
+
+    /** Anyone may read the document. */
+    @PermitAll
+    public interface PublicDocsPolicy extends AccessPolicy {}
 }

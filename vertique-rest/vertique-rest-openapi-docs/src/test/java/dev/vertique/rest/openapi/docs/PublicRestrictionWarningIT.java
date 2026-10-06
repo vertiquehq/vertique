@@ -39,7 +39,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * resources logs one warning that names every published operation restricting callers.
  *
  * <p>The sole discovery application {@code catalog} at {@code /api} carries
- * {@code @ApiDocs(access = PUBLIC)}. Its mixed catalog holds one open operation ({@code @PermitAll}
+ * {@code @ApiDocs(policy = PublicDocsPolicy.class)}. Its mixed catalog holds one open operation ({@code @PermitAll}
  * {@code listCatalog}) and three that each restrict callers in a different way: a role
  * ({@code adminReport}), a scopeless security requirement ({@code scopelessGet}), and a required
  * action ({@code actionGet}). Three deployments are observed:

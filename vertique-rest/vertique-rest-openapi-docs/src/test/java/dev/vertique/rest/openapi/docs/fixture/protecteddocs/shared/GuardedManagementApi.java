@@ -5,20 +5,19 @@ package dev.vertique.rest.openapi.docs.fixture.protecteddocs.shared;
 
 import dev.vertique.rest.core.application.RestApplication;
 import dev.vertique.rest.openapi.docs.ApiDocs;
+import dev.vertique.security.authz.AccessPolicy;
 import io.swagger.v3.oas.annotations.OpenAPIDefinition;
 import io.swagger.v3.oas.annotations.info.Info;
+import jakarta.annotation.security.RolesAllowed;
 
 /**
  * The documented application {@value #NAME} at {@value #PATH}, listing {@link TwinResource}. Its
- * declaring interface carries {@code @ApiDocs(access = PROTECTED, securityScheme = "bearerAuth",
- * rolesAllowed = {"admin"})}: its document is guarded exactly as a resource method annotated
+ * declaring interface carries {@code @ApiDocs(policy = RolesDocsPolicy.class,
+ * securityScheme = "bearerAuth")}: its document is guarded exactly as a resource method annotated
  * {@code @SecurityRequirement(name = "bearerAuth")} and {@code @RolesAllowed("admin")}, which is how
  * {@link TwinResource#readTwin()} is annotated. The interface declares the document's {@code info}.
  */
-@ApiDocs(
-        access = ApiDocs.Access.PROTECTED,
-        securityScheme = GuardedManagementApi.SECURITY_SCHEME,
-        rolesAllowed = {GuardedManagementApi.ROLE})
+@ApiDocs(policy = GuardedManagementApi.RolesDocsPolicy.class, securityScheme = GuardedManagementApi.SECURITY_SCHEME)
 @OpenAPIDefinition(info = @Info(title = "Guarded Management", version = "1.0"))
 @RestApplication(name = GuardedManagementApi.NAME, path = GuardedManagementApi.PATH, resources = TwinResource.class)
 public interface GuardedManagementApi {
@@ -34,4 +33,8 @@ public interface GuardedManagementApi {
 
     /** The role allowed to read the document and the twin. */
     String ROLE = "admin";
+
+    /** Readers holding one of the listed roles may read the document. */
+    @RolesAllowed({GuardedManagementApi.ROLE})
+    public interface RolesDocsPolicy extends AccessPolicy {}
 }

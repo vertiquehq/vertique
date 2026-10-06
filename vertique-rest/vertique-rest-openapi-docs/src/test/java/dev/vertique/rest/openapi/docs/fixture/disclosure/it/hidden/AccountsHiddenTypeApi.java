@@ -5,15 +5,21 @@ package dev.vertique.rest.openapi.docs.fixture.disclosure.it.hidden;
 
 import dev.vertique.rest.core.application.RestApplication;
 import dev.vertique.rest.openapi.docs.ApiDocs;
+import dev.vertique.security.authz.AccessPolicy;
+import jakarta.annotation.security.PermitAll;
 
 /**
  * The application {@code accounts} at {@code /api/accounts} composed with {@link
  * HiddenTypeAccountsResource}, whose body is {@code AccountHiddenTypeZx}. Its document is public; its
  * {@code info} comes from configuration.
  */
-@ApiDocs(access = ApiDocs.Access.PUBLIC)
+@ApiDocs(policy = AccountsHiddenTypeApi.PublicDocsPolicy.class)
 @RestApplication(
         name = AccountsApplication.NAME,
         path = AccountsApplication.PATH,
         resources = HiddenTypeAccountsResource.class)
-public interface AccountsHiddenTypeApi {}
+public interface AccountsHiddenTypeApi {
+    /** Anyone may read the document. */
+    @PermitAll
+    public interface PublicDocsPolicy extends AccessPolicy {}
+}

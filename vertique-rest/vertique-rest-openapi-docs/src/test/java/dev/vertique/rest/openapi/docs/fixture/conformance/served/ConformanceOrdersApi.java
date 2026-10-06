@@ -6,6 +6,8 @@ package dev.vertique.rest.openapi.docs.fixture.conformance.served;
 import dev.vertique.rest.core.application.RestApplication;
 import dev.vertique.rest.openapi.docs.ApiDocs;
 import dev.vertique.rest.openapi.docs.fixture.contract.OrderResource;
+import dev.vertique.security.authz.AccessPolicy;
+import jakarta.annotation.security.PermitAll;
 
 /**
  * The documented application {@value #NAME} at {@value #PATH}, listing {@link OrderResource}. Its
@@ -13,7 +15,7 @@ import dev.vertique.rest.openapi.docs.fixture.contract.OrderResource;
  * comes only from configuration, {@code jaxrs.applications.orders.openapiPath} set to {@value
  * #CONFIGURED_OPENAPI_PATH}.
  */
-@ApiDocs(access = ApiDocs.Access.PUBLIC)
+@ApiDocs(policy = ConformanceOrdersApi.PublicDocsPolicy.class)
 @RestApplication(name = ConformanceOrdersApi.NAME, path = ConformanceOrdersApi.PATH, resources = OrderResource.class)
 public interface ConformanceOrdersApi {
 
@@ -28,4 +30,8 @@ public interface ConformanceOrdersApi {
 
     /** The contract location the configuration names, a test classpath resource (OpenAPI 3.0.3, JSON). */
     String CONFIGURED_OPENAPI_PATH = "contracts/conformance-orders-openapi.json";
+
+    /** Anyone may read the document. */
+    @PermitAll
+    public interface PublicDocsPolicy extends AccessPolicy {}
 }

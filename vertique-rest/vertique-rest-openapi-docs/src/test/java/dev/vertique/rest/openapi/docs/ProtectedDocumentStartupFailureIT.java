@@ -16,11 +16,13 @@ import dev.vertique.rest.core.router.MountCompositionValidator;
 import dev.vertique.rest.core.router.RouterMount;
 import dev.vertique.rest.openapi.docs.ProtectedStartupTestComponents.ProtectedStartupGraph;
 import dev.vertique.rest.openapi.docs.fixture.DocsConfigs;
+import dev.vertique.rest.openapi.docs.fixture.protecteddocs.typed.TypedStartupApis;
 import dev.vertique.rest.openapi.docs.fixture.support.StartupDeployments;
 import dev.vertique.rest.openapi.docs.fixture.support.StartupDeployments.Outcome;
 import dev.vertique.rest.openapi.docs.serving.DocsRouterMount;
 import dev.vertique.rest.openapi.docs.serving.ServingAccess;
 import io.vertx.core.Vertx;
+import io.vertx.core.http.HttpMethod;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.Route;
 import io.vertx.ext.web.Router;
@@ -29,11 +31,13 @@ import jakarta.annotation.Nullable;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.api.function.Executable;
@@ -83,16 +87,14 @@ public class ProtectedDocumentStartupFailureIT {
     private static final String ROLELESS_API =
             "dev.vertique.rest.openapi.docs.fixture.protecteddocs.startup.RolelessManagementApi";
 
-    /** The installer's origin of the protected document declared by the {@code emptyAuth} interface. */
-    private static final String HANDLERLESS_ORIGIN =
-            "Protected API document of application 'management' (access policy: @ApiDocs on "
-                    + "dev.vertique.rest.openapi.docs.fixture.protecteddocs.startup.HandlerlessSchemeManagementApi): ";
+    /**
+     * The start of the installer's origin of the protected document of {@code management}. Only the
+     * start is pinned: the rest of the origin names the declaration and may be reworded.
+     */
+    private static final String INSTALLER_ORIGIN = "Protected API document of application 'management' (";
 
     /** The attribute naming a protected document's security scheme. */
     private static final String SECURITY_SCHEME_ATTRIBUTE = "@ApiDocs.securityScheme";
-
-    /** The attribute declaring a document's access. */
-    private static final String ACCESS_ATTRIBUTE = "@ApiDocs.access";
 
     /** The unregistered scheme, quoted. */
     private static final String QUOTED_NOPE = "'nope'";
@@ -103,8 +105,11 @@ public class ProtectedDocumentStartupFailureIT {
     /** The rule of a scheme no registered handler has. */
     private static final String NO_HANDLER = "no registered SecuritySchemeHandler has that name";
 
-    /** The rule of a protected document without authentication enforcement. */
-    private static final String NO_ENFORCEMENT = "authentication enforcement is not installed";
+    /**
+     * The words of the rule of a restrictive document policy without authentication enforcement. Only
+     * these words are pinned: the rest of the sentence names the policy and may be reworded.
+     */
+    private static final String NO_ENFORCEMENT = "authentication enforcement";
 
     /** The rule of a scheme whose registered handler configured no authentication handler. */
     private static final String NO_AUTHENTICATION_HANDLER = "registered no authentication handler";
@@ -172,34 +177,201 @@ public class ProtectedDocumentStartupFailureIT {
                         "(2) securityScheme 'emptyAuth', whose handler configures no authentication handler",
                         graph(DaggerProtectedStartupTestComponents_HandlerlessSchemeComponent.factory()::create),
                         HANDLERLESS_SCHEME_API,
-                        HANDLERLESS_ORIGIN,
+                        INSTALLER_ORIGIN,
                         List.of(QUOTED_EMPTY_AUTH, NO_AUTHENTICATION_HANDLER)),
                 Arguments.of(
-                        "(3) no authentication enforcement, rolesAllowed {admin}",
+                        "(3) no authentication enforcement, a roles policy",
                         graph(DaggerProtectedStartupTestComponents_RoleWithoutEnforcementComponent.factory()::create),
                         ROLE_API,
                         null,
-                        List.of(ACCESS_ATTRIBUTE, NO_ENFORCEMENT)),
+                        List.of(NO_ENFORCEMENT)),
                 Arguments.of(
-                        "(4) no authentication enforcement, no rolesAllowed",
+                        "(4) no authentication enforcement, an authenticated-only policy",
                         graph(config ->
                                 DaggerProtectedStartupTestComponents_RolelessWithoutEnforcementComponent.factory()
                                         .create(config)),
                         ROLELESS_API,
                         null,
-                        List.of(ACCESS_ATTRIBUTE, NO_ENFORCEMENT)),
+                        List.of(NO_ENFORCEMENT)),
                 Arguments.of(
                         "(5, alpha) case (2) beside the valid protected document of 'alpha'",
                         graph(DaggerProtectedStartupTestComponents_AlphaBesideHandlerlessComponent.factory()::create),
                         HANDLERLESS_SCHEME_API,
-                        HANDLERLESS_ORIGIN,
+                        INSTALLER_ORIGIN,
                         List.of(QUOTED_EMPTY_AUTH, NO_AUTHENTICATION_HANDLER)),
                 Arguments.of(
                         "(5, zeta) case (2) beside the valid protected document of 'zeta'",
                         graph(DaggerProtectedStartupTestComponents_ZetaBesideHandlerlessComponent.factory()::create),
                         HANDLERLESS_SCHEME_API,
-                        HANDLERLESS_ORIGIN,
+                        INSTALLER_ORIGIN,
                         List.of(QUOTED_EMPTY_AUTH, NO_AUTHENTICATION_HANDLER)));
+    }
+
+    /**
+     * Every combination of document policy and security scheme, deployed one at a time on the real
+     * authentication modules: a public policy needs an empty scheme, every restrictive policy,
+     * deny included, needs a registered scheme, any unknown scheme refuses startup, and a composition
+     * without authentication enforcement refuses a restrictive document. Each row is a fresh
+     * deployment, so one failing row cannot mask another.
+     */
+    @Test
+    @DisplayName("Document policy and scheme combinations start or refuse startup; enforcement is required")
+    void shouldRejectInvalidSchemesAndMissingActualEnforcement(Vertx vertx) throws Exception {
+        List<Executable> checks = new ArrayList<>();
+
+        // Given: declarations the final contract refuses at startup, each naming a scheme problem
+        // When: each is deployed on the real JWT authentication modules
+        List<Refusal> refusals = List.of(
+                new Refusal("public policy with a registered scheme", TypedStartupApis.PublicWithScheme.class),
+                new Refusal("public policy with an unknown scheme", TypedStartupApis.PublicWithUnknownScheme.class),
+                new Refusal("deny policy with no scheme", TypedStartupApis.DenyWithoutScheme.class),
+                new Refusal("authenticated policy with no scheme", TypedStartupApis.AuthenticatedWithoutScheme.class),
+                new Refusal(
+                        "authenticated policy with a blank scheme",
+                        TypedStartupApis.AuthenticatedWithBlankScheme.class),
+                new Refusal(
+                        "authenticated policy with an unknown scheme",
+                        TypedStartupApis.AuthenticatedWithUnknownScheme.class),
+                new Refusal("deny policy with an unknown scheme", TypedStartupApis.DenyWithUnknownScheme.class));
+        for (Refusal refusal : refusals) {
+            Throwable failure = TypedDocumentDeployment.startupFailure(typedConfiguration(), refusal.declaration());
+
+            // Then: startup is refused, naming the application, its interface and the scheme attribute
+            checks.add(() -> assertNotNull(failure, refusal.label() + ": startup must be refused"));
+            if (failure != null) {
+                String message = String.valueOf(failure.getMessage());
+                checks.add(() -> assertTrue(
+                        message.contains(QUOTED_MANAGEMENT), refusal.label() + ": names " + QUOTED_MANAGEMENT));
+                checks.add(() -> assertTrue(
+                        message.contains(refusal.declaration().getName()),
+                        refusal.label() + ": names " + refusal.declaration().getName()));
+                checks.add(() -> assertTrue(
+                        message.contains(SECURITY_SCHEME_ATTRIBUTE),
+                        refusal.label() + ": names " + SECURITY_SCHEME_ATTRIBUTE + ": " + message));
+            }
+        }
+
+        // Given: the declaration naming an unknown scheme
+        // Then: the refusal names the scheme and the missing handler
+        Throwable unknown = TypedDocumentDeployment.startupFailure(
+                typedConfiguration(), TypedStartupApis.AuthenticatedWithUnknownScheme.class);
+        checks.add(() -> assertNotNull(unknown, "unknown scheme: startup must be refused"));
+        if (unknown != null) {
+            checks.add(() -> assertTrue(
+                    String.valueOf(unknown.getMessage()).contains(QUOTED_NOPE)
+                            && String.valueOf(unknown.getMessage()).contains(NO_HANDLER),
+                    "unknown scheme: names " + QUOTED_NOPE + " and the missing handler: " + unknown.getMessage()));
+        }
+
+        // Given: a composition without authentication enforcement: the bearer scheme handler is bound
+        // and neither the authentication nor the security module is
+        // When: a restrictive document is deployed on it
+        ProtectedStartupGraph unenforced =
+                DaggerProtectedStartupTestComponents_RoleWithoutEnforcementComponent.factory()
+                        .create(sentinelConfiguration());
+        Outcome refused = StartupDeployments.deploy(vertx, unenforced::httpVerticle);
+        try {
+            // Then: startup is refused before listening for the missing authentication enforcement
+            checks.add(() -> assertNotNull(refused.failure(), "no enforcement: startup must be refused"));
+            checks.add(() -> assertNull(refused.port(), "no enforcement: no port is published"));
+            if (refused.failure() != null) {
+                String message = String.valueOf(refused.failure().getMessage());
+                checks.add(() -> assertTrue(message.contains(QUOTED_MANAGEMENT), "no enforcement: names management"));
+                checks.add(() -> assertTrue(message.contains(ROLE_API), "no enforcement: names " + ROLE_API));
+                checks.add(() -> assertTrue(
+                        message.contains(NO_ENFORCEMENT), "no enforcement: names the missing enforcement: " + message));
+            }
+        } finally {
+            StartupDeployments.undeploy(vertx, refused);
+        }
+
+        // Given: a public policy with an empty scheme
+        // When: it is deployed and read anonymously, with GET and HEAD
+        try (TypedDocumentDeployment deployment =
+                TypedDocumentDeployment.startSingle(typedConfiguration(), TypedStartupApis.PublicWithoutScheme.class)) {
+            TypedDocumentDeployment.Reply get = deployment.request(HttpMethod.GET, DOCUMENT, null, Map.of());
+            TypedDocumentDeployment.Reply head = deployment.request(HttpMethod.HEAD, DOCUMENT, null, Map.of());
+
+            // Then: it is the public classification: served without credentials, no Vary, not private
+            checks.add(() -> assertEquals(200, get.status(), "public: GET status"));
+            checks.add(() -> assertEquals(200, head.status(), "public: HEAD status"));
+            checks.add(() ->
+                    assertEquals(List.of("no-cache"), get.headers().getAll("Cache-Control"), "public: Cache-Control"));
+            checks.add(() -> assertEquals(List.of(), get.headers().getAll("Vary"), "public: no Vary"));
+        }
+
+        // Given: a deny policy with a registered scheme
+        // When: it is deployed and read anonymously, by an authenticated caller, and conditionally
+        try (TypedDocumentDeployment deployment =
+                TypedDocumentDeployment.startSingle(typedConfiguration(), TypedStartupApis.DenyWithScheme.class)) {
+            String token = deployment.token("alice", List.of("admin"), null);
+            List<TypedDocumentDeployment.Reply> replies = new ArrayList<>();
+            List<Integer> expected = new ArrayList<>();
+            for (HttpMethod method : List.of(HttpMethod.GET, HttpMethod.HEAD)) {
+                for (Map<String, String> headers : List.of(Map.<String, String>of(), Map.of("If-None-Match", "*"))) {
+                    replies.add(deployment.request(method, DOCUMENT, null, headers));
+                    expected.add(401);
+                    replies.add(deployment.request(method, DOCUMENT, token, headers));
+                    expected.add(403);
+                }
+            }
+
+            // Then: it starts, authenticates and then denies, and never serves bytes or a 304
+            for (int index = 0; index < replies.size(); index++) {
+                TypedDocumentDeployment.Reply reply = replies.get(index);
+                int status = expected.get(index);
+                String row = "deny request " + index;
+                checks.add(() -> assertEquals(status, reply.status(), row + ": status"));
+                checks.add(() -> TypedDocumentExpectations.assertNeverServed(row, reply));
+            }
+        }
+
+        // Given: an authenticated-only policy with the real bearer scheme
+        // When: it is deployed and read with no credential, a forged one, and a valid one
+        try (TypedDocumentDeployment deployment = TypedDocumentDeployment.startSingle(
+                typedConfiguration(), TypedStartupApis.AuthenticatedWithScheme.class)) {
+            String token = deployment.token("alice", List.of("user"), null);
+            TypedDocumentDeployment.Reply missing = deployment.request(HttpMethod.GET, DOCUMENT, null, Map.of());
+            TypedDocumentDeployment.Reply forged =
+                    deployment.request(HttpMethod.GET, DOCUMENT, "forged.invalid.token", Map.of());
+            TypedDocumentDeployment.Reply forgedConditional =
+                    deployment.request(HttpMethod.GET, DOCUMENT, "forged.invalid.token", Map.of("If-None-Match", "*"));
+            TypedDocumentDeployment.Reply valid = deployment.request(HttpMethod.GET, DOCUMENT, token, Map.of());
+            String tag = valid.header("ETag");
+            TypedDocumentDeployment.Reply revalidated =
+                    deployment.request(HttpMethod.GET, DOCUMENT, token, Map.of("If-None-Match", String.valueOf(tag)));
+
+            // Then: missing and invalid credentials are 401 with no bytes and no 304; the valid caller
+            // is served privately and revalidated
+            checks.add(() -> assertEquals(401, missing.status(), "authenticated: missing credential"));
+            checks.add(() -> assertEquals(401, forged.status(), "authenticated: forged credential"));
+            checks.add(() -> assertEquals(401, forgedConditional.status(), "authenticated: forged conditional"));
+            for (TypedDocumentDeployment.Reply reply : List.of(missing, forged, forgedConditional)) {
+                checks.add(() -> TypedDocumentExpectations.assertNeverServed("authenticated denial", reply));
+            }
+            checks.add(() -> assertEquals(200, valid.status(), "authenticated: valid credential"));
+            checks.add(() -> assertNotNull(tag, "authenticated: the valid read carries an entity tag"));
+            checks.add(() -> assertEquals(
+                    List.of("private, no-store"),
+                    valid.headers().getAll("Cache-Control"),
+                    "authenticated: Cache-Control"));
+            checks.add(() ->
+                    assertEquals(List.of("Authorization"), valid.headers().getAll("Vary"), "authenticated: Vary"));
+            checks.add(() -> assertEquals(304, revalidated.status(), "authenticated: revalidation"));
+        }
+        assertAll(checks);
+    }
+
+    /** One refused combination. */
+    private record Refusal(String label, Class<?> declaration) {}
+
+    /** The path of the JSON document of {@code management}. */
+    private static final String DOCUMENT = "/apidocs/management/openapi.json";
+
+    /** The configuration of a typed single-document deployment: loopback, the JWT scheme, info. */
+    private static JsonObject typedConfiguration() {
+        return DocsConfigs.withDocumentInfo(
+                TypedDocumentDeployment.configuration(), "management", "Typed startup", "1");
     }
 
     /** Widens a component factory to the graph type the rows share. */

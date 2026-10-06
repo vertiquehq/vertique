@@ -9,6 +9,8 @@ import dev.vertique.rest.openapi.docs.fixture.responses.it.AccountResource;
 import dev.vertique.rest.openapi.docs.fixture.responses.it.FixedReceiptResource;
 import dev.vertique.rest.openapi.docs.fixture.responses.it.HiddenOperationResource;
 import dev.vertique.rest.openapi.docs.fixture.responses.it.ReportResource;
+import dev.vertique.security.authz.AccessPolicy;
+import dev.vertique.security.authz.Authorized;
 import io.swagger.v3.oas.annotations.OpenAPIDefinition;
 import io.swagger.v3.oas.annotations.info.Info;
 
@@ -17,7 +19,7 @@ import io.swagger.v3.oas.annotations.info.Info;
  * by {@value CorpusDocuments#BEARER_AUTH}, which any authenticated caller may read; {@link
  * PublicResponsesApi} declares it with a public one.
  */
-@ApiDocs(access = ApiDocs.Access.PROTECTED, securityScheme = CorpusDocuments.BEARER_AUTH)
+@ApiDocs(policy = ProtectedResponsesApi.AuthenticatedDocsPolicy.class, securityScheme = CorpusDocuments.BEARER_AUTH)
 @OpenAPIDefinition(info = @Info(title = "Conformance responses", version = CorpusDocuments.VERSION))
 @RestApplication(
         name = CorpusDocuments.RESPONSES,
@@ -28,4 +30,8 @@ import io.swagger.v3.oas.annotations.info.Info;
             FixedReceiptResource.class,
             HiddenOperationResource.class
         })
-public interface ProtectedResponsesApi {}
+public interface ProtectedResponsesApi {
+    /** Any authenticated reader may read the document. */
+    @Authorized
+    public interface AuthenticatedDocsPolicy extends AccessPolicy {}
+}

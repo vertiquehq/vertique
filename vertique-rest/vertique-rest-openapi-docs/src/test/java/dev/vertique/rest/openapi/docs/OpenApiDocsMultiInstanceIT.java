@@ -93,8 +93,8 @@ import org.slf4j.LoggerFactory;
  * below.
  *
  * <p>The sharing and divergence scenarios use the applications {@code public} at {@code /api/public}
- * ({@code @ApiDocs(access = PUBLIC)}) and {@code management} at {@code /api/mgmt} ({@code
- * @ApiDocs(access = PROTECTED, securityScheme = "bearerAuth", rolesAllowed = {"admin"})}); their
+ * ({@code @ApiDocs(policy = PublicDocsPolicy.class)}) and {@code management} at {@code /api/mgmt} ({@code
+ * @ApiDocs(policy = ..., securityScheme = "bearerAuth")} whose policy allows the role {@code admin}); their
  * resources have query, header, and path parameters, a JSON request body, inferred and declared
  * responses, and guarded operations. The management document is read with an {@code admin} bearer
  * token. A marker mount placed after every other mount answers any request the documentation mount

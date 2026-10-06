@@ -5,18 +5,17 @@ package dev.vertique.rest.openapi.docs.fixture.protecteddocs.root;
 
 import dev.vertique.rest.core.application.RestApplication;
 import dev.vertique.rest.openapi.docs.ApiDocs;
+import dev.vertique.security.authz.AccessPolicy;
 import io.swagger.v3.oas.annotations.OpenAPIDefinition;
 import io.swagger.v3.oas.annotations.info.Info;
+import jakarta.annotation.security.RolesAllowed;
 
 /**
  * The root application {@code internal} at {@code /}, with discovery membership, whose protected
  * document is readable only by a caller the {@value #SECURITY_SCHEME} scheme authenticates and who
  * holds the {@value #ROLE} role.
  */
-@ApiDocs(
-        access = ApiDocs.Access.PROTECTED,
-        securityScheme = InternalAdminApi.SECURITY_SCHEME,
-        rolesAllowed = {InternalAdminApi.ROLE})
+@ApiDocs(policy = InternalAdminApi.RolesDocsPolicy.class, securityScheme = InternalAdminApi.SECURITY_SCHEME)
 @OpenAPIDefinition(info = @Info(title = "Internal", version = "1.0"))
 @RestApplication(name = InternalAdminApi.NAME, path = InternalAdminApi.PATH, discover = true)
 public interface InternalAdminApi {
@@ -32,4 +31,8 @@ public interface InternalAdminApi {
 
     /** The role allowed to read the document. */
     String ROLE = "admin";
+
+    /** Readers holding one of the listed roles may read the document. */
+    @RolesAllowed({InternalAdminApi.ROLE})
+    public interface RolesDocsPolicy extends AccessPolicy {}
 }

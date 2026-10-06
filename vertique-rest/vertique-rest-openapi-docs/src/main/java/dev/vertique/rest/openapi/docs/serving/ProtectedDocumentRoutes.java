@@ -8,9 +8,11 @@ import dev.vertique.rest.core.security.SecuritySchemeHandler;
 import dev.vertique.rest.jaxrs.synthetic.SyntheticOperation;
 import dev.vertique.rest.jaxrs.synthetic.SyntheticOperationInstaller;
 import dev.vertique.rest.openapi.docs.ApiDocs;
+import dev.vertique.rest.openapi.docs.config.DocumentPolicies;
 import dev.vertique.rest.openapi.docs.config.EnabledDocuments;
 import dev.vertique.rest.openapi.docs.document.PublishedDocument;
 import dev.vertique.rest.openapi.docs.publication.DocumentStore;
+import dev.vertique.security.authz.AccessPolicy;
 import io.vertx.core.http.HttpMethod;
 import io.vertx.ext.web.Router;
 import io.vertx.ext.web.RoutingContext;
@@ -22,15 +24,21 @@ import java.util.function.Function;
 /**
  * Installs the routes of the protected documents as synthetic operations, so each document URL runs
  * the chain of an equally annotated resource method: the scheme's authentication handler, then every
- * registered operation handler contributor, then the document's terminal handler.
+ * registered operation handler contributor, then the document's terminal handler. A protected
+ * document is any document whose policy is not exactly one public requirement, so a document whose
+ * policy denies every reader is installed too: its readers are authenticated and then refused.
  *
  * <p>The access policy of a document comes only from the {@link ApiDocs} on its application's
- * declaring interface: its {@code securityScheme} guards both forms, and its {@code rolesAllowed}
- * restricts them to those roles, or, when empty, admits any caller the scheme authenticates. No
- * configuration value changes it. Each form is one operation, {@code apidocs:<name>:json} or
- * {@code apidocs:<name>:yaml}, answering {@code GET} and {@code HEAD}, whose application name is the
- * documented application's name. No authorization of its own is added, no contributor is selected,
- * and no required action is passed.
+ * declaring interface: its {@code securityScheme} guards both forms, and its {@code policy} is the
+ * typed access policy both forms are governed by. No configuration value changes it. Each form is
+ * one operation, {@code apidocs:<name>:json} or {@code apidocs:<name>:yaml}, answering {@code GET}
+ * and {@code HEAD}, whose application name is the documented application's name. No authorization
+ * of its own is added and no contributor is selected: the policy's requirements, including a
+ * required action, are enforced by the contributors registered for every operation.
+ *
+ * <p>The terminal handler of a document whose policy is a lone {@code @DenyAll} fails every request
+ * with {@code 403} itself, before it reads the store, so that document never depends on a contributor
+ * being in the chain to be refused.
  *
  * <p>The terminal handler never continues to another route or mount. A request whose normalized path
  * is not the exact document URL fails with {@code 404}, and a document the store does not hold yet
@@ -87,6 +95,8 @@ final class ProtectedDocumentRoutes {
         String scheme = apiDocs.securityScheme();
         String origin = "Protected API document of application '" + name + "' (access policy: @ApiDocs on "
                 + document.declaringType().getName() + ")";
+        Class<? extends AccessPolicy> policy = apiDocs.policy();
+        boolean denyAll = DocumentPolicies.isDenyAll(policy);
         Optional<String> vary = DocumentCachePolicy.protectedVary(securitySchemeHandlers.stream()
                 .filter(handler -> scheme.equals(handler.schemeName()))
                 .findFirst()
@@ -96,7 +106,8 @@ final class ProtectedDocumentRoutes {
                 name,
                 origin,
                 scheme,
-                apiDocs.rolesAllowed(),
+                policy,
+                denyAll,
                 "json",
                 DocumentResponses.JSON_TYPE,
                 PublishedDocument::json,
@@ -107,7 +118,8 @@ final class ProtectedDocumentRoutes {
                 name,
                 origin,
                 scheme,
-                apiDocs.rolesAllowed(),
+                policy,
+                denyAll,
                 "yaml",
                 DocumentResponses.YAML_TYPE,
                 PublishedDocument::yaml,
@@ -120,16 +132,15 @@ final class ProtectedDocumentRoutes {
             String name,
             String origin,
             String scheme,
-            String[] rolesAllowed,
+            Class<? extends AccessPolicy> policy,
+            boolean denyAll,
             String form,
             String contentType,
             Function<PublishedDocument, byte[]> bytes,
             Function<PublishedDocument, String> tag,
             Optional<String> vary) {
         String operationId = "apidocs:" + name + ":" + form;
-        SyntheticOperation operation = rolesAllowed.length == 0
-                ? SyntheticOperation.authenticated(origin, operationId, scheme, name)
-                : SyntheticOperation.withRoles(origin, operationId, scheme, name, List.of(rolesAllowed));
+        SyntheticOperation operation = SyntheticOperation.withPolicy(origin, operationId, scheme, name, policy);
         String relativePath = "/" + name + "/openapi." + form;
         String exactPath = prefix + relativePath;
         syntheticOperationInstaller.install(
@@ -137,17 +148,23 @@ final class ProtectedDocumentRoutes {
                 relativePath,
                 List.of(HttpMethod.GET, HttpMethod.HEAD),
                 operation,
-                ctx -> serve(ctx, name, exactPath, contentType, bytes, tag, vary));
+                ctx -> serve(ctx, name, exactPath, denyAll, contentType, bytes, tag, vary));
     }
 
     private void serve(
             RoutingContext ctx,
             String name,
             String exactPath,
+            boolean denyAll,
             String contentType,
             Function<PublishedDocument, byte[]> bytes,
             Function<PublishedDocument, String> tag,
             Optional<String> vary) {
+        // A policy that denies every reader never reaches the store, whatever the chain before it did.
+        if (denyAll) {
+            ctx.fail(403);
+            return;
+        }
         // An exact-path route also matches its trailing-slash variants, so the path is compared again.
         if (!exactPath.equals(ctx.normalizedPath())) {
             ctx.fail(404);

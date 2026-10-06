@@ -69,7 +69,8 @@ public record EnabledDocuments(List<EnabledDocument> all, String path) {
      *
      * @param name the application name
      * @param declaringType the declaring interface
-     * @param access the access policy of the document routes
+     * @param access the classification of the document routes, derived from the policy its {@code @ApiDocs}
+     *     declares: public exactly for one {@code @PermitAll}, else protected
      * @param mountPath the mount path of the application
      * @param contractOrigin where the application's contract comes from
      * @param info the {@code info} object of the document: its {@code title}, {@code version}, and
@@ -96,7 +97,8 @@ public record EnabledDocuments(List<EnabledDocument> all, String path) {
          *
          * @param name the application name
          * @param declaringType the declaring interface
-         * @param access the access policy of the document routes
+         * @param access the classification of the document routes, derived from the policy its {@code @ApiDocs}
+         *     declares: public exactly for one {@code @PermitAll}, else protected
          * @param mountPath the mount path of the application
          * @param contractOrigin where the application's contract comes from
          * @param info the {@code info} object of the document

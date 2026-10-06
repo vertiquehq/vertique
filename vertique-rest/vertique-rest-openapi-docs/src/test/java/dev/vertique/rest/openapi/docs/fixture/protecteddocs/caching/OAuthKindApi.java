@@ -5,11 +5,13 @@ package dev.vertique.rest.openapi.docs.fixture.protecteddocs.caching;
 
 import dev.vertique.rest.core.application.RestApplication;
 import dev.vertique.rest.openapi.docs.ApiDocs;
+import dev.vertique.security.authz.AccessPolicy;
+import dev.vertique.security.authz.Authorized;
 
 /**
  * The application {@code oauth}, whose document is protected by an OAuth 2 scheme.
  */
-@ApiDocs(access = ApiDocs.Access.PROTECTED, securityScheme = CachingSchemes.OAUTH2)
+@ApiDocs(policy = OAuthKindApi.AuthenticatedDocsPolicy.class, securityScheme = CachingSchemes.OAUTH2)
 @RestApplication(name = OAuthKindApi.NAME, path = OAuthKindApi.PATH, resources = CachingResources.OAuth.class)
 public interface OAuthKindApi {
 
@@ -18,4 +20,8 @@ public interface OAuthKindApi {
 
     /** The application's path. */
     String PATH = "/kinds/oauth";
+
+    /** Any authenticated reader may read the document. */
+    @Authorized
+    public interface AuthenticatedDocsPolicy extends AccessPolicy {}
 }

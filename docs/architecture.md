@@ -52,7 +52,8 @@ Dependency direction stays one-way into the schema module: neither `vertique-cor
 nor `vertique-json` depends on it.
 
 `vertique-rest-openapi-docs` is the opt-in runtime OpenAPI documentation module: it depends on
-`vertique-rest-jaxrs`, `vertique-rest-core`, `vertique-core`, and `vertique-json-schema`, while
+`vertique-rest-jaxrs`, `vertique-rest-core`, `vertique-security-core`, `vertique-core`, and
+`vertique-json-schema`, while
 `vertique-rest-jaxrs` recognizes its `@ApiDocs` annotation by fully qualified name and never
 depends on it.
 

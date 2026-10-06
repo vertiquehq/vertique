@@ -20,8 +20,8 @@ import jakarta.inject.Singleton;
  * The Dagger components of the protected root-document integration test. Each holds the root
  * application {@code internal} at {@code /} as its sole declaration, with discovery membership, and
  * {@code GET /status} as its only resource. They differ only in the declaration's {@code @ApiDocs}:
- * {@link RolesPresentComponent} lists the {@code admin} role, {@link RolesAbsentComponent} lists
- * none.
+ * {@link RoleRestrictedComponent} lists the {@code admin} role, {@link AuthenticatedOnlyComponent}
+ * lists none.
  *
  * <p>Both compose the real JWT authentication module (scheme {@code bearerAuth}), which brings the
  * framework's authentication and security modules and with them the real security policy validator,
@@ -60,9 +60,9 @@ final class ProtectedRootTestComponents {
                 ConfigParsingModule.class,
                 JwtAuthModule.class,
                 RootApplicationModule.class,
-                RootApplicationModule.RolesPresent.class
+                RootApplicationModule.RoleRestricted.class
             })
-    interface RolesPresentComponent extends Served {
+    interface RoleRestrictedComponent extends Served {
 
         /** Factory taking the Vert.x instance and the configuration. */
         @Component.Factory
@@ -75,7 +75,7 @@ final class ProtectedRootTestComponents {
              * @param config the application configuration
              * @return the component
              */
-            RolesPresentComponent create(@BindsInstance Vertx vertx, @BindsInstance @VertxConfig JsonObject config);
+            RoleRestrictedComponent create(@BindsInstance Vertx vertx, @BindsInstance @VertxConfig JsonObject config);
         }
     }
 
@@ -88,9 +88,9 @@ final class ProtectedRootTestComponents {
                 ConfigParsingModule.class,
                 JwtAuthModule.class,
                 RootApplicationModule.class,
-                RootApplicationModule.RolesAbsent.class
+                RootApplicationModule.AuthenticatedOnly.class
             })
-    interface RolesAbsentComponent extends Served {
+    interface AuthenticatedOnlyComponent extends Served {
 
         /** Factory taking the Vert.x instance and the configuration. */
         @Component.Factory
@@ -103,7 +103,8 @@ final class ProtectedRootTestComponents {
              * @param config the application configuration
              * @return the component
              */
-            RolesAbsentComponent create(@BindsInstance Vertx vertx, @BindsInstance @VertxConfig JsonObject config);
+            AuthenticatedOnlyComponent create(
+                    @BindsInstance Vertx vertx, @BindsInstance @VertxConfig JsonObject config);
         }
     }
 }

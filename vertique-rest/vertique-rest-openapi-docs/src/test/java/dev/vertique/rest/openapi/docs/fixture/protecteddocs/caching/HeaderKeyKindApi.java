@@ -5,12 +5,14 @@ package dev.vertique.rest.openapi.docs.fixture.protecteddocs.caching;
 
 import dev.vertique.rest.core.application.RestApplication;
 import dev.vertique.rest.openapi.docs.ApiDocs;
+import dev.vertique.security.authz.AccessPolicy;
+import dev.vertique.security.authz.Authorized;
 
 /**
  * The application {@code header-key}, whose document is protected by an API key carried in a request
  * header.
  */
-@ApiDocs(access = ApiDocs.Access.PROTECTED, securityScheme = CachingSchemes.HEADER_KEY)
+@ApiDocs(policy = HeaderKeyKindApi.AuthenticatedDocsPolicy.class, securityScheme = CachingSchemes.HEADER_KEY)
 @RestApplication(
         name = HeaderKeyKindApi.NAME,
         path = HeaderKeyKindApi.PATH,
@@ -22,4 +24,8 @@ public interface HeaderKeyKindApi {
 
     /** The application's path. */
     String PATH = "/kinds/header-key";
+
+    /** Any authenticated reader may read the document. */
+    @Authorized
+    public interface AuthenticatedDocsPolicy extends AccessPolicy {}
 }

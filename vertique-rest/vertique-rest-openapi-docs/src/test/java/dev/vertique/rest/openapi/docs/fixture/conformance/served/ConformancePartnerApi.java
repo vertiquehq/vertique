@@ -6,6 +6,8 @@ package dev.vertique.rest.openapi.docs.fixture.conformance.served;
 import dev.vertique.rest.core.application.RestApplication;
 import dev.vertique.rest.openapi.docs.ApiDocs;
 import dev.vertique.rest.openapi.docs.fixture.contract.PartnerOrderResource;
+import dev.vertique.security.authz.AccessPolicy;
+import jakarta.annotation.security.PermitAll;
 
 /**
  * The documented application {@value #NAME} at {@value #PATH}, listing {@link PartnerOrderResource},
@@ -13,7 +15,7 @@ import dev.vertique.rest.openapi.docs.fixture.contract.PartnerOrderResource;
  * that contract. It carries no {@code @OpenAPIDefinition}; no configuration gives it an {@code info}
  * or a server URL.
  */
-@ApiDocs(access = ApiDocs.Access.PUBLIC)
+@ApiDocs(policy = ConformancePartnerApi.PublicDocsPolicy.class)
 @RestApplication(
         name = ConformancePartnerApi.NAME,
         path = ConformancePartnerApi.PATH,
@@ -32,4 +34,8 @@ public interface ConformancePartnerApi {
 
     /** The application's own contract location, a test classpath resource (OpenAPI 3.1.0, YAML). */
     String OPENAPI_PATH = "contracts/conformance-partner-openapi.yaml";
+
+    /** Anyone may read the document. */
+    @PermitAll
+    public interface PublicDocsPolicy extends AccessPolicy {}
 }

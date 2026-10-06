@@ -85,11 +85,10 @@ class RestApplicationAllowListTest {
     private static final String INFO_ONLY_PHRASE = "only its info element may be set";
 
     private static final String API_DOCS_IMPORTS = """
-            import static dev.vertique.rest.openapi.docs.ApiDocs.Access.PROTECTED;
-            import static dev.vertique.rest.openapi.docs.ApiDocs.Access.PUBLIC;
-
             import dev.vertique.rest.openapi.docs.ApiDocs;
             """;
+
+    private static final String PUBLIC_DOCS_ANNOTATION = "@ApiDocs(policy = DocsPolicy.class)";
 
     // -----------------------------------------------------------------------------------------
     // Shared fixtures
@@ -193,6 +192,27 @@ class RestApplicationAllowListTest {
                 @Target(ElementType.TYPE)
                 @interface %s {}
                 """.formatted(packageName, retention, simpleName));
+    }
+
+    /**
+     * A public access policy {@code DocsPolicy} in {@code packageName} carrying the direct
+     * requirement {@code requirement}, with that requirement's {@code import} line.
+     */
+    private static JavaFileObject docsPolicyFixture(String packageName, String requirementImport, String requirement) {
+        return SourceFiles.inline(
+                packageName + ".DocsPolicy", """
+                package %s;
+
+                import dev.vertique.security.authz.AccessPolicy;
+                %s
+
+                %s
+                public interface DocsPolicy extends AccessPolicy {}
+                """.formatted(packageName, requirementImport, requirement));
+    }
+
+    private static JavaFileObject publicDocsPolicyFixture(String packageName) {
+        return docsPolicyFixture(packageName, "import jakarta.annotation.security.PermitAll;", "@PermitAll");
     }
 
     private static Fixture unit(String packageName, JavaFileObject... sources) {
@@ -307,10 +327,11 @@ class RestApplicationAllowListTest {
                         ownMarkerOnSuper + ".Marker"),
                 acceptedRow("Api alone", unit(apiAlone, apiFixture(apiAlone, "", "", ""))),
                 acceptedRow(
-                        "Api with @ApiDocs(access = PUBLIC)",
+                        "Api with @ApiDocs(policy = DocsPolicy.class), a public policy",
                         unit(
                                 apiDocsPublic,
-                                apiFixture(apiDocsPublic, API_DOCS_IMPORTS, "@ApiDocs(access = PUBLIC)", ""))),
+                                publicDocsPolicyFixture(apiDocsPublic),
+                                apiFixture(apiDocsPublic, API_DOCS_IMPORTS, PUBLIC_DOCS_ANNOTATION, ""))),
                 acceptedRow(
                         "Api with @OpenAPIDefinition(info = @Info(title = \"t\", version = \"1\"))",
                         unit(
@@ -415,6 +436,15 @@ class RestApplicationAllowListTest {
                 apiFixture(packageName, "", "", " extends Base"));
     }
 
+    /** A unit where {@code Api} extends a {@code Base} that carries a public {@code @ApiDocs}. */
+    private static Fixture baseCarryingApiDocs(String packageName) {
+        return unit(
+                packageName,
+                publicDocsPolicyFixture(packageName),
+                interfaceFixture(packageName, "Base", API_DOCS_IMPORTS, PUBLIC_DOCS_ANNOTATION, ""),
+                apiFixture(packageName, "", "", " extends Base"));
+    }
+
     private static Stream<Arguments> declarationOnlyCases() {
         String base = "dev.vertique.test.allowlist.superinterface.";
         String apiDocsOnSuper = base + "apidocs";
@@ -426,8 +456,8 @@ class RestApplicationAllowListTest {
         String conditionalContainerOnSuper = base + "conditionalcontainer";
         return Stream.of(
                 Arguments.of(
-                        "@ApiDocs(access = PUBLIC) on Base",
-                        baseCarrying(apiDocsOnSuper, API_DOCS_IMPORTS, "@ApiDocs(access = PUBLIC)"),
+                        "@ApiDocs(policy = DocsPolicy.class) on Base",
+                        baseCarryingApiDocs(apiDocsOnSuper),
                         apiDocsOnSuper + ".Base",
                         API_DOCS_FQN,
                         List.of()),
@@ -512,8 +542,6 @@ class RestApplicationAllowListTest {
         return SourceFiles.inline(packageName + ".Off", """
                 package %s;
 
-                import static dev.vertique.rest.openapi.docs.ApiDocs.Access.PROTECTED;
-
                 import dev.vertique.codegen.NoAutoWire;
                 import dev.vertique.rest.core.application.RestApplication;
                 import dev.vertique.rest.openapi.docs.ApiDocs;
@@ -521,10 +549,15 @@ class RestApplicationAllowListTest {
 
                 %s
                 @RolesAllowed("admin")
-                @ApiDocs(access = PROTECTED)
+                @ApiDocs(policy = DocsPolicy.class)
                 @RestApplication(name = "off", path = "/off", resources = PathResource.class)
                 interface Off {}
                 """.formatted(packageName, noAutoWire ? "@NoAutoWire" : ""));
+    }
+
+    /** A restrictive policy, so {@code Off}'s {@code @ApiDocs} without a scheme fails its check. */
+    private static JavaFileObject restrictiveDocsPolicyFixture(String packageName) {
+        return docsPolicyFixture(packageName, "import dev.vertique.security.authz.Authorized;", "@Authorized");
     }
 
     @TestFactory
@@ -541,8 +574,11 @@ class RestApplicationAllowListTest {
     private void noAutoWireIsUnchecked() {
         String pkg = "dev.vertique.test.allowlist.optout.noautowire";
         String off = pkg + ".Off";
-        var result =
-                ProcessorTestHarness.run(new JaxRsPipelineProcessor(), pathResourceFixture(pkg), offFixture(pkg, true));
+        var result = ProcessorTestHarness.run(
+                new JaxRsPipelineProcessor(),
+                pathResourceFixture(pkg),
+                restrictiveDocsPolicyFixture(pkg),
+                offFixture(pkg, true));
         logDiagnostics("@NoAutoWire declaration", result);
         result.assertSuccess();
         List<String> naming = result.compilation().diagnostics().stream()
@@ -569,6 +605,7 @@ class RestApplicationAllowListTest {
                 new JaxRsPipelineProcessor(),
                 Map.of("vertique.codegen.autoWire", "false"),
                 pathResourceFixture(pkg),
+                restrictiveDocsPolicyFixture(pkg),
                 offFixture(pkg, false));
         logDiagnostics("autoWire=false declaration", result);
         assertErrorContainingAll(result, off, ROLES_ALLOWED_FQN);

@@ -5,12 +5,14 @@ package dev.vertique.rest.openapi.docs.fixture.input.patterns;
 
 import dev.vertique.rest.core.application.RestApplication;
 import dev.vertique.rest.openapi.docs.ApiDocs;
+import dev.vertique.security.authz.AccessPolicy;
+import jakarta.annotation.security.PermitAll;
 
 /**
  * The documented application {@code patterns} at {@code /api/patterns}, listing {@link
  * PatternsResource}. Its document is public; its {@code info} comes from configuration.
  */
-@ApiDocs(access = ApiDocs.Access.PUBLIC)
+@ApiDocs(policy = PatternsApi.PublicDocsPolicy.class)
 @RestApplication(name = PatternsApi.NAME, path = PatternsApi.PATH, resources = PatternsResource.class)
 public interface PatternsApi {
 
@@ -19,4 +21,8 @@ public interface PatternsApi {
 
     /** The application's path. */
     String PATH = "/api/patterns";
+
+    /** Anyone may read the document. */
+    @PermitAll
+    public interface PublicDocsPolicy extends AccessPolicy {}
 }

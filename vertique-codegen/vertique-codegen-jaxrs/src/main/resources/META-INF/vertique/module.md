@@ -82,7 +82,7 @@ For a parameterized collection (`List<T>`, `Set<T>`, `SortedSet<T>`, `NavigableS
 | `HttpVerbValidator` | Tier-B guardrail: error on multiple HTTP verb annotations on a single method. |
 | `PathParamAlignmentValidator` | Bidirectional check between `@Path` placeholders and `@PathParam` declarations. Handles `@BeanParam` and `@RequestParams` composite types including record components. |
 | `BodyFormValidator` | Mirrors `RouteValidator.validateMethodParams`: at most one body parameter; body and form parameters mutually exclusive. |
-| `ApplicationAnnotationValidator` | Checks every `@RestApplication` declaration not annotated `@NoAutoWire` — the declaring interface and every superinterface, transitively — against the declaration annotation allow list, and the declaration's `@ApiDocs` against the documentation access rules; see "Declaration Annotation Allow List" and "`@ApiDocs` Checks" below. |
+| `ApplicationAnnotationValidator` | Checks every `@RestApplication` declaration not annotated `@NoAutoWire` — the declaring interface and every superinterface, transitively — against the declaration annotation allow list, and the declaration's `@ApiDocs` against the documentation policy rules; see "Declaration Annotation Allow List" and "`@ApiDocs` Checks" below. |
 
 `ContextParamValidator` runs first, before the remaining four resource-contract validators — see the short-circuit behavior noted under "Validation Rules" below. Those five validators take `EffectiveResourceContract`; `ApplicationAnnotationValidator` instead checks the `@RestApplication` declarations directly.
 
@@ -214,12 +214,13 @@ Each error names the declaration, the annotation, and the type carrying it, each
 
 A declaration's `@ApiDocs` is recognized by its fully qualified name, `dev.vertique.rest.openapi.docs.ApiDocs`, so this processor needs no dependency on the module that declares it. Its elements are checked at compile time:
 
-| `access` | `securityScheme` | `rolesAllowed` |
-|---|---|---|
-| `PROTECTED` | required, not blank | optional; every entry must be non-blank; empty admits any authenticated caller |
-| `PUBLIC` | must not be set | must not be set |
+| Rule | Outcome |
+|---|---|
+| `policy` must be a valid access policy | A public interface that extends only `AccessPolicy`, declares no members, and carries valid, non-conflicting requirements: no blank or empty `@RolesAllowed`, no `@PermitAll` mixed with another requirement. A class, bare `AccessPolicy`, an interface with extra parents or methods, or a non-public interface is an error, reported alone whatever `securityScheme` is. |
+| Public policy (exactly one direct `@PermitAll`) | `securityScheme` must not be supplied; any value, blank included, is an error. |
+| Any other valid policy (`@DenyAll` included) | `securityScheme` is required and must not be blank. |
 
-`access` has no default: an `@ApiDocs` without it is the compiler's own missing-element error. Elements are judged by value, so an explicit value equal to the default (`securityScheme = ""`, `rolesAllowed = {}`) counts as not set. Each violation is a compile error naming the declaration and the element (see "Diagnostics" below), and a declaration with any violation is not registered.
+`policy` has no default and `access` and `rolesAllowed` no longer exist: an `@ApiDocs` without `policy`, or one that sets a removed element, is the compiler's own error. A `policy` that is not an `AccessPolicy` type, or names a missing type, is also the compiler's own error. Elements are judged by value, so an explicit `securityScheme = ""` counts as not set. Each processor violation is a compile error naming the declaration and the element (see "Diagnostics" below), and a declaration with any violation is not registered.
 
 ### Diagnostics
 
@@ -243,14 +244,13 @@ A declaration's `@ApiDocs` is recognized by its fully qualified name, `dev.verti
 | Disallowed annotation on a superinterface (error) | `{Declaration} carries @{annotation} on its superinterface {Superinterface}, which a @RestApplication declaration's superinterface may not carry: a superinterface of a declaration may carry only java.lang and java.lang.annotation annotations` |
 | Declaration-only annotation on a superinterface (error) | `{Declaration} carries @{annotation} on its superinterface {Superinterface}, which is not allowed: that annotation is honored only on the @RestApplication declaring interface itself` |
 | `@OpenAPIDefinition` element other than `info` (error) | `{Declaration} carries @io.swagger.v3.oas.annotations.OpenAPIDefinition with an element other than info set, which is not allowed on a @RestApplication declaration: only its info element may be set` |
-| `@ApiDocs(access = PROTECTED)` without a scheme (error) | `{Declaration} declares @ApiDocs(access = PROTECTED) without a non-blank securityScheme; protected documentation needs securityScheme to name the security scheme that authenticates its readers` |
-| `@ApiDocs(access = PROTECTED)` with a blank role (error) | `{Declaration} declares @ApiDocs(access = PROTECTED) with a blank rolesAllowed entry; every rolesAllowed entry must name a role (leave rolesAllowed empty to admit any authenticated caller)` |
-| `@ApiDocs(access = PUBLIC)` with a scheme (error) | `{Declaration} declares @ApiDocs(access = PUBLIC) with a securityScheme; securityScheme is set only when access is PROTECTED` |
-| `@ApiDocs(access = PUBLIC)` with roles (error) | `{Declaration} declares @ApiDocs(access = PUBLIC) with rolesAllowed; rolesAllowed is set only when access is PROTECTED` |
+| `@ApiDocs` with an invalid policy (error) | `{Declaration} declares @ApiDocs with an invalid policy {Policy}: {reason}; policy must name a public interface that extends only AccessPolicy and declares valid, non-conflicting requirements` |
+| `@ApiDocs` with a public policy and a scheme (error) | `{Declaration} declares @ApiDocs(policy = {Policy}) with a securityScheme; securityScheme is set only when the policy is not public (a public policy is exactly one @PermitAll)` |
+| `@ApiDocs` with a policy that is not public and no scheme (error) | `{Declaration} declares @ApiDocs(policy = {Policy}) without a non-blank securityScheme; a policy that is not public needs securityScheme to name the security scheme that authenticates its readers` |
 | Declaration `@NoAutoWire` warning | `{Declaration} is annotated @NoAutoWire, so it is not registered as a REST application and is not validated.` |
 | Declaration `autoWire=false` warning | `{Declaration} is not registered as a REST application because -Avertique.codegen.autoWire=false is set.` |
 
-Every type in the messages — `{Application}`, `{Declaration}`, `{Superinterface}`, `{Resource}`, and `{annotation}` — is named by its binary name.
+Every type in the messages — `{Application}`, `{Declaration}`, `{Superinterface}`, `{Resource}`, `{Policy}`, and `{annotation}` — is named by its binary name.
 
 Every `@RestApplication` declaration not annotated `@NoAutoWire` is checked regardless of `-Avertique.codegen.autoWire=false` — the annotation allow list, the `@ApiDocs` checks, and the declaration checks (see "Declaration Checks" below) all still fail the build when violated; only the module write itself is skipped under that option (see "Extension Points" below). The `Application` subclass warning is the same with or without that option.
 
@@ -320,7 +320,7 @@ Every declaration is checked at compile time; each violation is a compile error 
 | Unique names (per compilation unit) | No two declarations of one compilation unit may share a name, active or not; the error names both. Uniqueness across compilation units is a startup check, outside this module. |
 | Sole discovery (per compilation unit) | `discover = true` fails when the compilation unit declares another `@RestApplication`, active or not. The cross-unit half of this rule, combined with startup composition, is also outside this module. |
 | Annotations | The declaring interface and its superinterfaces carry only allowed annotations; see "Declaration Annotation Allow List" above. |
-| `@ApiDocs` | `securityScheme` and `rolesAllowed` match `access`; see "`@ApiDocs` Checks" above. |
+| `@ApiDocs` | `policy` is a valid access policy and `securityScheme` is empty exactly when it is public; see "`@ApiDocs` Checks" above. |
 
 ### Emitted Registration
 

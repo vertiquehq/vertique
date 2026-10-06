@@ -19,6 +19,7 @@ import dev.vertique.rest.openapi.docs.fixture.DocsConfigs;
 import dev.vertique.rest.openapi.docs.fixture.protecteddocs.root.DecisionRecorder;
 import dev.vertique.rest.openapi.docs.fixture.protecteddocs.root.RootApplicationModule;
 import dev.vertique.rest.openapi.docs.fixture.protecteddocs.root.StatusResource;
+import dev.vertique.rest.openapi.docs.fixture.protecteddocs.typed.TypedDocumentApis;
 import dev.vertique.rest.openapi.docs.fixture.support.Futures;
 import dev.vertique.rest.openapi.docs.fixture.support.StartupDeployments;
 import dev.vertique.rest.openapi.docs.fixture.support.StartupDeployments.Outcome;
@@ -61,10 +62,11 @@ import org.slf4j.LoggerFactory;
  *
  * <p>Two components hold the root application {@code internal} as their sole declaration, with
  * {@code GET /status} (scheme {@code bearerAuth}, role {@code admin}) as its only resource and the
- * real JWT authentication module: {@code rolesPresent} declares {@code @ApiDocs(access = PROTECTED,
- * securityScheme = "bearerAuth", rolesAllowed = {"admin"})}, {@code rolesAbsent} the same without
- * {@code rolesAllowed}. The callers are anonymous, {@code alice} (role {@code admin}), and {@code
- * bob} (role {@code user}), with tokens signed by the key the component's JWT provider verifies.
+ * real JWT authentication module: {@code roleRestricted} declares {@code @ApiDocs(policy = ...,
+ * securityScheme = "bearerAuth")} with a policy allowing the role {@code admin}, {@code
+ * authenticatedOnly} the same with an authenticated-only policy. The callers are anonymous, {@code
+ * alice} (role {@code admin}), and {@code bob} (role {@code user}), with tokens signed by the key
+ * the component's JWT provider verifies.
  *
  * <p>Each test deploys its own component, so each outcome stands on its own. The class timeout is 30
  * seconds because one test deploys two compositions, each awaited for up to ten seconds. Cleanup
@@ -89,7 +91,7 @@ public class ProtectedRootDocumentIT {
     /** The configuration path every notice about the {@code internal} document starts with. */
     private static final String INTERNAL_DOCUMENT = "apidocs.documents.internal";
 
-    /** The statement of the notice about a protected document that lists no role. */
+    /** The statement of the notice about a protected document whose policy only requires authentication. */
     private static final String READABLE_BY_ANY_PRINCIPAL =
             "readable by any principal the 'bearerAuth' handler authenticates";
 
@@ -221,13 +223,13 @@ public class ProtectedRootDocumentIT {
     @DisplayName("A root application's protected document is served only to a caller holding the listed role")
     void rootApplicationDocumentProtectedAlike() throws Exception {
         // Given: the root application internal, its document guarded by bearerAuth and the admin role
-        ProtectedRootTestComponents.RolesPresentComponent component =
-                DaggerProtectedRootTestComponents_RolesPresentComponent.factory()
+        ProtectedRootTestComponents.RoleRestrictedComponent component =
+                DaggerProtectedRootTestComponents_RoleRestrictedComponent.factory()
                         .create(vertx, DocsConfigs.loopback());
-        Outcome rolesPresent = deploy(component::httpVerticle, new DeploymentOptions());
-        assertNull(rolesPresent.failure(), () -> "the deployment failed: " + rolesPresent.failure());
-        assertNotNull(rolesPresent.port(), "the deployment published no port");
-        int port = rolesPresent.port();
+        Outcome roleRestricted = deploy(component::httpVerticle, new DeploymentOptions());
+        assertNull(roleRestricted.failure(), () -> "the deployment failed: " + roleRestricted.failure());
+        assertNotNull(roleRestricted.port(), "the deployment published no port");
+        int port = roleRestricted.port();
         Map<Caller, String> tokens = tokens();
 
         // When: alice reads each form twice, which also yields this deployment's entity tags
@@ -311,13 +313,14 @@ public class ProtectedRootDocumentIT {
     @DisplayName("A protected document listing no role rejects anonymous callers and serves any authenticated one")
     void authenticatedOnlyDocumentRejectsAnonymous() throws Exception {
         // Given: the root application internal, its document guarded by bearerAuth with no role
-        ProtectedRootTestComponents.RolesAbsentComponent component =
-                DaggerProtectedRootTestComponents_RolesAbsentComponent.factory().create(vertx, DocsConfigs.loopback());
+        ProtectedRootTestComponents.AuthenticatedOnlyComponent component =
+                DaggerProtectedRootTestComponents_AuthenticatedOnlyComponent.factory()
+                        .create(vertx, DocsConfigs.loopback());
         DecisionRecorder recorder = component.decisionRecorder();
-        Outcome rolesAbsent = deploy(component::httpVerticle, new DeploymentOptions());
-        assertNull(rolesAbsent.failure(), () -> "the deployment failed: " + rolesAbsent.failure());
-        assertNotNull(rolesAbsent.port(), "the deployment published no port");
-        int port = rolesAbsent.port();
+        Outcome authenticatedOnly = deploy(component::httpVerticle, new DeploymentOptions());
+        assertNull(authenticatedOnly.failure(), () -> "the deployment failed: " + authenticatedOnly.failure());
+        assertNotNull(authenticatedOnly.port(), "the deployment published no port");
+        int port = authenticatedOnly.port();
         Map<Caller, String> tokens = tokens();
 
         List<Executable> checks = new ArrayList<>();
@@ -349,72 +352,109 @@ public class ProtectedRootDocumentIT {
                     bobDecisions.stream().allMatch(event -> event.decision().permitted()),
                     () -> label + ": a decision for bob is not a permit: " + bobDecisions));
         }
-        assertAll("the outcomes of the role-less internal document", checks.stream());
+        assertAll("the outcomes of the authenticated-only internal document", checks.stream());
     }
 
     /**
-     * A protected document listing no role logs one INFO notice, once per component even when the
-     * component is deployed as two instances, starting with its configuration path and naming the
-     * scheme that authenticates its readers; a protected document listing a role logs none.
+     * A protected document whose policy only requires authentication logs one INFO notice, once per
+     * component even when the component is deployed as two instances, starting with its configuration
+     * path and naming the scheme that authenticates its readers; a protected document whose policy
+     * requires a role logs none.
      */
     @Test
-    @DisplayName("A protected document listing no role logs one notice naming its scheme; one listing a role logs none")
-    void rolelessProtectedDocumentLogsOneInfo() throws Exception {
-        // Given: the role-less component
-        ProtectedRootTestComponents.RolesAbsentComponent absentComponent =
-                DaggerProtectedRootTestComponents_RolesAbsentComponent.factory().create(vertx, DocsConfigs.loopback());
+    @DisplayName("An authenticated-only document logs one notice naming its scheme; one requiring a role logs none")
+    void authenticatedOnlyDocumentLogsOneInfo() throws Exception {
+        // Given: the authenticated-only component
+        ProtectedRootTestComponents.AuthenticatedOnlyComponent authenticatedOnlyComponent =
+                DaggerProtectedRootTestComponents_AuthenticatedOnlyComponent.factory()
+                        .create(vertx, DocsConfigs.loopback());
 
         // When: it is deployed as two instances; its outcome is recorded and asserted after both deployments
         clearCapturedEvents();
-        Outcome rolesAbsent = deploy(absentComponent::httpVerticle, new DeploymentOptions().setInstances(2));
-        List<ILoggingEvent> absentEvents = capturedEvents();
-        undeployNow(rolesAbsent);
+        Outcome authenticatedOnly =
+                deploy(authenticatedOnlyComponent::httpVerticle, new DeploymentOptions().setInstances(2));
+        List<ILoggingEvent> authenticatedOnlyEvents = capturedEvents();
+        undeployNow(authenticatedOnly);
 
         // Given: the component whose document lists the admin role
-        ProtectedRootTestComponents.RolesPresentComponent presentComponent =
-                DaggerProtectedRootTestComponents_RolesPresentComponent.factory()
+        ProtectedRootTestComponents.RoleRestrictedComponent roleRestrictedComponent =
+                DaggerProtectedRootTestComponents_RoleRestrictedComponent.factory()
                         .create(vertx, DocsConfigs.loopback());
 
         // When: it is deployed once
         clearCapturedEvents();
-        Outcome rolesPresent = deploy(presentComponent::httpVerticle, new DeploymentOptions());
-        List<ILoggingEvent> presentEvents = capturedEvents();
-        undeployNow(rolesPresent);
+        Outcome roleRestricted = deploy(roleRestrictedComponent::httpVerticle, new DeploymentOptions());
+        List<ILoggingEvent> roleRestrictedEvents = capturedEvents();
+        undeployNow(roleRestricted);
 
         // Then: both deployments started, so a missing line cannot stem from a failed deployment
         assertAll(
                 "both deployments started",
                 () -> assertNull(
-                        rolesAbsent.failure(), () -> "rolesAbsent: the deployment failed: " + rolesAbsent.failure()),
-                () -> assertNotNull(rolesAbsent.port(), "rolesAbsent: the deployment published no port"),
+                        authenticatedOnly.failure(),
+                        () -> "authenticatedOnly: the deployment failed: " + authenticatedOnly.failure()),
+                () -> assertNotNull(authenticatedOnly.port(), "authenticatedOnly: the deployment published no port"),
                 () -> assertNull(
-                        rolesPresent.failure(), () -> "rolesPresent: the deployment failed: " + rolesPresent.failure()),
-                () -> assertNotNull(rolesPresent.port(), "rolesPresent: the deployment published no port"));
+                        roleRestricted.failure(),
+                        () -> "roleRestricted: the deployment failed: " + roleRestricted.failure()),
+                () -> assertNotNull(roleRestricted.port(), "roleRestricted: the deployment published no port"));
 
-        // Then: the role-less deployment logged exactly one such line, an INFO starting with the
+        // Then: the authenticated-only deployment logged exactly one such line, an INFO starting with the
         // document's configuration path; the deployment with a role logged none
-        List<ILoggingEvent> absentNotices = notices(absentEvents);
-        List<ILoggingEvent> presentNotices = notices(presentEvents);
+        List<ILoggingEvent> authenticatedOnlyNotices = notices(authenticatedOnlyEvents);
+        List<ILoggingEvent> roleRestrictedNotices = notices(roleRestrictedEvents);
         assertAll(
-                "the role-less notices (rolesAbsent deployment failure: " + rolesAbsent.failure()
-                        + "; rolesPresent deployment failure: " + rolesPresent.failure() + ")",
+                "the authenticated-only notices (authenticatedOnly deployment failure: " + authenticatedOnly.failure()
+                        + "; roleRestricted deployment failure: " + roleRestricted.failure() + ")",
                 () -> assertEquals(
                         1,
-                        absentNotices.size(),
-                        () -> "rolesAbsent: lines stating '" + READABLE_BY_ANY_PRINCIPAL + "': "
-                                + messages(absentNotices)),
+                        authenticatedOnlyNotices.size(),
+                        () -> "authenticatedOnly: lines stating '" + READABLE_BY_ANY_PRINCIPAL + "': "
+                                + messages(authenticatedOnlyNotices)),
                 () -> assertTrue(
-                        absentNotices.stream().allMatch(event -> event.getLevel() == Level.INFO),
-                        () -> "rolesAbsent: a notice is not INFO: " + levelsAndMessages(absentNotices)),
+                        authenticatedOnlyNotices.stream().allMatch(event -> event.getLevel() == Level.INFO),
+                        () -> "authenticatedOnly: a notice is not INFO: "
+                                + levelsAndMessages(authenticatedOnlyNotices)),
                 () -> assertTrue(
-                        absentNotices.stream()
+                        authenticatedOnlyNotices.stream()
                                 .allMatch(event -> event.getFormattedMessage().startsWith(INTERNAL_DOCUMENT)),
-                        () -> "rolesAbsent: a notice does not start with " + INTERNAL_DOCUMENT + ": "
-                                + messages(absentNotices)),
+                        () -> "authenticatedOnly: a notice does not start with " + INTERNAL_DOCUMENT + ": "
+                                + messages(authenticatedOnlyNotices)),
                 () -> assertEquals(
                         List.of(),
-                        messages(presentNotices),
-                        "rolesPresent: lines stating '" + READABLE_BY_ANY_PRINCIPAL + "'"));
+                        messages(roleRestrictedNotices),
+                        "roleRestricted: lines stating '" + READABLE_BY_ANY_PRINCIPAL + "'"));
+    }
+
+    /**
+     * Only an authenticated-only policy, exactly a lone {@code @Authorized} without scopes, makes the
+     * document readable by any principal its scheme authenticates, so only it logs the notice: public,
+     * deny, role, scope, action and combined policies log none.
+     */
+    @Test
+    @DisplayName("Only an authenticated-only document policy logs the readable-by-any-principal notice")
+    void onlyAnAuthenticatedOnlyPolicyLogsTheNotice() throws Exception {
+        // Given: a component serving a document per typed policy, started with the log captured
+        clearCapturedEvents();
+        List<ILoggingEvent> events;
+
+        // When: it is deployed
+        try (TypedDocumentDeployment deployment = TypedDocumentDeployment.startAll()) {
+            events = capturedEvents();
+        }
+
+        // Then: exactly one INFO notice, for the authenticated-only document and no other
+        List<ILoggingEvent> notices = notices(events);
+        assertAll(
+                "the notices of the typed policies: " + levelsAndMessages(notices),
+                () -> assertEquals(1, notices.size(), () -> "notices: " + messages(notices)),
+                () -> assertTrue(
+                        notices.stream().allMatch(event -> event.getLevel() == Level.INFO),
+                        () -> "a notice is not INFO: " + levelsAndMessages(notices)),
+                () -> assertTrue(
+                        notices.stream().allMatch(event -> event.getFormattedMessage()
+                                .startsWith("apidocs.documents." + TypedDocumentApis.Authenticated.NAME)),
+                        () -> "the notice is not about the authenticated-only document: " + messages(notices)));
     }
 
     // --- Helpers ---
@@ -522,7 +562,7 @@ public class ProtectedRootDocumentIT {
                 .toList();
     }
 
-    /** Returns the captured events, at any level, that state the role-less notice. */
+    /** Returns the captured events, at any level, that state the authenticated-only notice. */
     private static List<ILoggingEvent> notices(List<ILoggingEvent> events) {
         return events.stream()
                 .filter(event -> event.getFormattedMessage().contains(READABLE_BY_ANY_PRINCIPAL))
