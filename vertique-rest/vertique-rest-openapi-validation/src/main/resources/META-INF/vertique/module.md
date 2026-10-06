@@ -252,14 +252,6 @@ not an application SPI.
 
 ---
 
-## Verification
-
-```bash
-./mvnw -ntp -pl vertique-rest/vertique-rest-openapi-validation -am test
-```
-
----
-
 ## Dependencies
 
 - `dev.vertique:vertique-rest-jaxrs` (for `RequestValidationStrategy`, descriptors, config, and REST error types)

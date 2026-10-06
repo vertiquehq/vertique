@@ -272,14 +272,6 @@ Dagger module in the component instead, so the graph never carries two strategie
 
 ---
 
-## Verification
-
-```bash
-./mvnw -ntp -pl vertique-rest/vertique-rest-test -am test
-```
-
----
-
 ## Dependencies
 
 - `dev.vertique:vertique-rest-jaxrs` — the real `JaxRsRouterMount.Factory` and `RestModule` the
