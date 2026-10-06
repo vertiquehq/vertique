@@ -3,6 +3,7 @@
 
 package dev.vertique.rest.websocket;
 
+import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -15,9 +16,21 @@ import dev.vertique.core.exception.ConfigurationException;
 import dev.vertique.core.sanitization.Sanitize;
 import dev.vertique.core.validation.ValidateWith;
 import dev.vertique.input.processing.testkit.A;
+import dev.vertique.rest.core.security.SecurityPolicy;
+import dev.vertique.security.authz.AccessPolicy;
+import dev.vertique.security.authz.ActionRef;
+import dev.vertique.security.authz.Authorized;
+import dev.vertique.security.authz.RequiresAction;
+import dev.vertique.security.authz.RequiresPolicy;
 import io.vertx.core.Future;
 import io.vertx.core.buffer.Buffer;
+import jakarta.annotation.security.DenyAll;
+import jakarta.annotation.security.PermitAll;
+import jakarta.annotation.security.RolesAllowed;
 import jakarta.ws.rs.PathParam;
+import java.util.List;
+import java.util.Optional;
+import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -154,7 +167,358 @@ class WebSocketEndpointScannerTest {
         void onMessage(String payload, Throwable error) {}
     }
 
+    // --- Typed access policies ---
+
+    private static final ActionRef CONTENT_READ = ActionRef.parse("cms.content.read");
+
+    /** Local role predicate. */
+    @RolesAllowed("editor")
+    public interface EditorRolePolicy extends AccessPolicy {}
+
+    /** A different local role predicate, used to build distinct policy references. */
+    @RolesAllowed("viewer")
+    public interface ViewerRolePolicy extends AccessPolicy {}
+
+    /** Authenticated caller only. */
+    @Authorized
+    public interface AuthenticatedPolicy extends AccessPolicy {}
+
+    /** Deny every caller. */
+    @DenyAll
+    public interface DenyEveryonePolicy extends AccessPolicy {}
+
+    /** Public: no authentication or authorization. */
+    @PermitAll
+    public interface PublicPolicy extends AccessPolicy {}
+
+    /** Registered action only. */
+    @RequiresAction("cms.content.read")
+    public interface ContentReadActionPolicy extends AccessPolicy {}
+
+    /** Local role predicate plus the registered action. */
+    @RolesAllowed("editor")
+    @RequiresAction("cms.content.read")
+    public interface EditorAndActionPolicy extends AccessPolicy {}
+
+    /** Action that parses but is not registered. */
+    @RequiresAction("cms.unknown.read")
+    public interface UnregisteredActionPolicy extends AccessPolicy {}
+
+    @WebSocketEndpoint("/ws/policy-roles")
+    @RequiresPolicy(EditorRolePolicy.class)
+    static class RolePolicyEndpoint {
+
+        @OnOpen
+        void onOpen(WebSocketSession session) {}
+    }
+
+    @WebSocketEndpoint("/ws/policy-authenticated")
+    @RequiresPolicy(AuthenticatedPolicy.class)
+    static class AuthenticatedPolicyEndpoint {
+
+        @OnOpen
+        void onOpen(WebSocketSession session) {}
+    }
+
+    @WebSocketEndpoint("/ws/policy-deny")
+    @RequiresPolicy(DenyEveryonePolicy.class)
+    static class DenyPolicyEndpoint {
+
+        @OnOpen
+        void onOpen(WebSocketSession session) {}
+    }
+
+    @WebSocketEndpoint("/ws/policy-public")
+    @RequiresPolicy(PublicPolicy.class)
+    static class PublicPolicyEndpoint {
+
+        @OnOpen
+        void onOpen(WebSocketSession session) {}
+    }
+
+    @WebSocketEndpoint("/ws/policy-action")
+    @RequiresPolicy(ContentReadActionPolicy.class)
+    static class ActionPolicyEndpoint {
+
+        @OnOpen
+        void onOpen(WebSocketSession session) {}
+    }
+
+    @WebSocketEndpoint("/ws/policy-roles-action")
+    @RequiresPolicy(EditorAndActionPolicy.class)
+    static class RoleAndActionPolicyEndpoint {
+
+        @OnOpen
+        void onOpen(WebSocketSession session) {}
+    }
+
+    @WebSocketEndpoint("/ws/policy-unregistered-action")
+    @RequiresPolicy(UnregisteredActionPolicy.class)
+    static class UnregisteredActionPolicyEndpoint {
+
+        @OnOpen
+        void onOpen(WebSocketSession session) {}
+    }
+
+    @WebSocketEndpoint("/ws/policy-mixed")
+    @RequiresPolicy(EditorRolePolicy.class)
+    @RolesAllowed("viewer")
+    static class PolicyMixedWithInlineRolesEndpoint {
+
+        @OnOpen
+        void onOpen(WebSocketSession session) {}
+    }
+
+    @RequiresPolicy(EditorRolePolicy.class)
+    static class ParentPolicyEndpoint {}
+
+    @WebSocketEndpoint("/ws/policy-hierarchy")
+    @RequiresPolicy(ViewerRolePolicy.class)
+    static class ChildPolicyEndpoint extends ParentPolicyEndpoint {
+
+        @OnOpen
+        void onOpen(WebSocketSession session) {}
+    }
+
+    /** Not public, so it is not a valid policy type. */
+    @RolesAllowed("editor")
+    interface NonPublicPolicy extends AccessPolicy {}
+
+    @WebSocketEndpoint("/ws/policy-invalid")
+    @RequiresPolicy(NonPublicPolicy.class)
+    static class InvalidPolicyEndpoint {
+
+        @OnOpen
+        void onOpen(WebSocketSession session) {}
+    }
+
+    @WebSocketEndpoint("/ws/policy-inherited")
+    static class InheritingPolicyEndpoint extends ParentPolicyEndpoint {
+
+        @OnOpen
+        void onOpen(WebSocketSession session) {}
+    }
+
+    @RequiresPolicy(EditorRolePolicy.class)
+    interface PolicyCarrier {}
+
+    @WebSocketEndpoint("/ws/policy-interface")
+    static class InterfacePolicyEndpoint implements PolicyCarrier {
+
+        @OnOpen
+        void onOpen(WebSocketSession session) {}
+    }
+
+    @WebSocketEndpoint("/ws/policy-mixed-action")
+    @RequiresPolicy(EditorRolePolicy.class)
+    @RequiresAction("cms.content.read")
+    static class PolicyMixedWithInlineActionEndpoint {
+
+        @OnOpen
+        void onOpen(WebSocketSession session) {}
+    }
+
+    @WebSocketEndpoint("/ws/policy-open")
+    static class PolicyOnOpenMethodEndpoint {
+
+        @OnOpen
+        @RequiresPolicy(EditorRolePolicy.class)
+        void onOpen(WebSocketSession session) {}
+    }
+
+    @WebSocketEndpoint("/ws/policy-message")
+    static class PolicyOnMessageMethodEndpoint {
+
+        @OnMessage
+        @RequiresPolicy(EditorRolePolicy.class)
+        void onMessage(WebSocketSession session, String msg) {}
+    }
+
+    @WebSocketEndpoint("/ws/policy-close")
+    static class PolicyOnCloseMethodEndpoint {
+
+        @OnClose
+        @RequiresPolicy(EditorRolePolicy.class)
+        void onClose(WebSocketSession session) {}
+    }
+
+    @WebSocketEndpoint("/ws/policy-error")
+    static class PolicyOnErrorMethodEndpoint {
+
+        @OnError
+        @RequiresPolicy(EditorRolePolicy.class)
+        void onError(WebSocketSession session, Throwable error) {}
+    }
+
     // --- Tests ---
+
+    @Test
+    @DisplayName("endpoint type policies resolve to the existing policy variants; lifecycle policies fail startup")
+    void shouldAcceptTypePoliciesAndRejectLifecyclePolicies() {
+        // Given a scanner whose action registry knows cms.content.read
+        WebSocketEndpointScanner registryScanner = new WebSocketEndpointScanner(
+                new WebSocketEndpointScannerRequiresActionTest.StubActionRegistry(Set.of(CONTENT_READ)));
+
+        // When endpoints that reference a policy on the type are scanned, and lifecycle policies are
+        // scanned, every check runs so that one failing check cannot mask the others
+        assertAll(
+                // Then each type policy resolves to the policy variant and action an inline declaration
+                // would produce
+                () -> {
+                    WebSocketEndpointMeta roles = registryScanner.scan(new RolePolicyEndpoint());
+                    assertEquals(
+                            new SecurityPolicy.Constrained(List.of("editor"), List.of(), false),
+                            roles.securityPolicy(),
+                            "a role policy must resolve to its role constraint");
+                    assertFalse(roles.requiredAction().isPresent(), "a role policy declares no action");
+                },
+                () -> {
+                    WebSocketEndpointMeta authenticated = registryScanner.scan(new AuthenticatedPolicyEndpoint());
+                    assertEquals(
+                            new SecurityPolicy.AuthenticatedOnly(),
+                            authenticated.securityPolicy(),
+                            "an authenticated policy must resolve to authenticated-only");
+                },
+                () -> {
+                    WebSocketEndpointMeta deny = registryScanner.scan(new DenyPolicyEndpoint());
+                    assertEquals(
+                            new SecurityPolicy.DenyAll(),
+                            deny.securityPolicy(),
+                            "a deny policy must deny every caller");
+                },
+                () -> {
+                    WebSocketEndpointMeta open = registryScanner.scan(new PublicPolicyEndpoint());
+                    assertEquals(
+                            new SecurityPolicy.PermitAll(),
+                            open.securityPolicy(),
+                            "a public policy must permit every caller");
+                },
+                () -> {
+                    WebSocketEndpointMeta actionOnly = registryScanner.scan(new ActionPolicyEndpoint());
+                    assertEquals(
+                            new SecurityPolicy.None(),
+                            actionOnly.securityPolicy(),
+                            "an action-only policy adds no local predicate");
+                    assertEquals(
+                            Optional.of(CONTENT_READ),
+                            actionOnly.requiredAction(),
+                            "an action-only policy must resolve its registered action");
+                },
+                () -> {
+                    WebSocketEndpointMeta rolesAndAction = registryScanner.scan(new RoleAndActionPolicyEndpoint());
+                    assertEquals(
+                            new SecurityPolicy.Constrained(List.of("editor"), List.of(), false),
+                            rolesAndAction.securityPolicy(),
+                            "a role-and-action policy keeps its role constraint");
+                    assertEquals(
+                            Optional.of(CONTENT_READ),
+                            rolesAndAction.requiredAction(),
+                            "a role-and-action policy must resolve its registered action");
+                },
+                // And a policy reference on any lifecycle method fails startup, naming the method and the
+                // class-level placement the policy belongs on
+                () -> assertLifecyclePolicyRejected(registryScanner, new PolicyOnOpenMethodEndpoint(), "onOpen"),
+                () -> assertLifecyclePolicyRejected(registryScanner, new PolicyOnMessageMethodEndpoint(), "onMessage"),
+                () -> assertLifecyclePolicyRejected(registryScanner, new PolicyOnCloseMethodEndpoint(), "onClose"),
+                () -> assertLifecyclePolicyRejected(registryScanner, new PolicyOnErrorMethodEndpoint(), "onError"));
+    }
+
+    @Test
+    @DisplayName("a type policy inherited from an endpoint's superclass resolves like a direct declaration")
+    void shouldResolveTypePolicyInheritedFromSuperclass() {
+        WebSocketEndpointMeta meta = scanner.scan(new InheritingPolicyEndpoint());
+
+        assertEquals(
+                new SecurityPolicy.Constrained(List.of("editor"), List.of(), false),
+                meta.securityPolicy(),
+                "a class-level policy declared on the parent endpoint class must apply to the subclass");
+    }
+
+    @Test
+    @DisplayName("a type policy declared on an implemented interface resolves like a direct declaration")
+    void shouldResolveTypePolicyDeclaredOnImplementedInterface() {
+        WebSocketEndpointMeta meta = scanner.scan(new InterfacePolicyEndpoint());
+
+        assertEquals(
+                new SecurityPolicy.Constrained(List.of("editor"), List.of(), false),
+                meta.securityPolicy(),
+                "a policy declared on an implemented interface must apply to the endpoint");
+    }
+
+    @Test
+    @DisplayName("a type policy mixed with an inline action fails startup")
+    void shouldRejectTypePolicyMixedWithInlineAction() {
+        PolicyMixedWithInlineActionEndpoint endpoint = new PolicyMixedWithInlineActionEndpoint();
+
+        IllegalArgumentException thrown = assertThrows(IllegalArgumentException.class, () -> scanner.scan(endpoint));
+
+        assertTrue(thrown.getMessage().contains("Conflicting security annotations"), thrown.getMessage());
+    }
+
+    @Test
+    @DisplayName("a type policy that is not a valid policy type fails startup naming the endpoint")
+    void shouldRejectInvalidTypePolicyNamingEndpoint() {
+        InvalidPolicyEndpoint endpoint = new InvalidPolicyEndpoint();
+
+        IllegalArgumentException thrown = assertThrows(IllegalArgumentException.class, () -> scanner.scan(endpoint));
+
+        assertTrue(thrown.getMessage().contains(InvalidPolicyEndpoint.class.getName()), thrown.getMessage());
+        assertTrue(thrown.getMessage().contains("policy must be a public interface"), thrown.getMessage());
+    }
+
+    @Test
+    @DisplayName("a type policy mixed with an inline role annotation fails startup")
+    void shouldRejectTypePolicyMixedWithInlineRoles() {
+        PolicyMixedWithInlineRolesEndpoint endpoint = new PolicyMixedWithInlineRolesEndpoint();
+
+        IllegalArgumentException thrown = assertThrows(IllegalArgumentException.class, () -> scanner.scan(endpoint));
+
+        assertTrue(thrown.getMessage().contains("Conflicting security annotations"), thrown.getMessage());
+    }
+
+    @Test
+    @DisplayName("distinct policy references across an endpoint hierarchy fail startup")
+    void shouldRejectDistinctPolicyReferencesAcrossEndpointHierarchy() {
+        ChildPolicyEndpoint endpoint = new ChildPolicyEndpoint();
+
+        IllegalArgumentException thrown = assertThrows(IllegalArgumentException.class, () -> scanner.scan(endpoint));
+
+        assertTrue(thrown.getMessage().contains("Conflicting security annotations"), thrown.getMessage());
+    }
+
+    @Test
+    @DisplayName("a type policy naming an unregistered action fails startup")
+    void shouldRejectTypePolicyNamingUnregisteredAction() {
+        WebSocketEndpointScanner registryScanner = new WebSocketEndpointScanner(
+                new WebSocketEndpointScannerRequiresActionTest.StubActionRegistry(Set.of(CONTENT_READ)));
+        UnregisteredActionPolicyEndpoint endpoint = new UnregisteredActionPolicyEndpoint();
+
+        IllegalArgumentException thrown =
+                assertThrows(IllegalArgumentException.class, () -> registryScanner.scan(endpoint));
+
+        assertTrue(thrown.getMessage().contains("cms.unknown.read"), thrown.getMessage());
+        assertTrue(thrown.getMessage().contains("not registered"), thrown.getMessage());
+    }
+
+    @Test
+    @DisplayName("a type policy carrying an action fails startup when no action registry is installed")
+    void shouldRejectTypeActionPolicyWithoutActionRegistry() {
+        ActionPolicyEndpoint endpoint = new ActionPolicyEndpoint();
+
+        IllegalArgumentException thrown = assertThrows(IllegalArgumentException.class, () -> scanner.scan(endpoint));
+
+        assertTrue(thrown.getMessage().contains("cms.content.read"), thrown.getMessage());
+        assertTrue(thrown.getMessage().contains("cannot be enforced"), thrown.getMessage());
+    }
+
+    private static void assertLifecyclePolicyRejected(
+            WebSocketEndpointScanner registryScanner, Object endpoint, String lifecycleMethod) {
+        IllegalArgumentException thrown =
+                assertThrows(IllegalArgumentException.class, () -> registryScanner.scan(endpoint));
+        assertTrue(thrown.getMessage().contains("@RequiresPolicy"), thrown.getMessage());
+        assertTrue(thrown.getMessage().contains(lifecycleMethod), thrown.getMessage());
+        assertTrue(thrown.getMessage().contains("class-level"), thrown.getMessage());
+    }
 
     @Nested
     @DisplayName("valid endpoint scanning")
