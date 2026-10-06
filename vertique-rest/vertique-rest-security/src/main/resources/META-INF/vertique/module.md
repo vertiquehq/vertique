@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # REST Security Module
 
-> **Status:** Beta
+> **Status:** Stable
 > **Package:** `dev.vertique.rest.security`
 > **Artifact:** `vertique-rest-security`
 > **Depends on:** rest-core, security-core, security-runtime, context, logging
@@ -662,7 +662,7 @@ WARN; the authorization value is never logged. The Vert.x `jwt-claims` provider 
 excluded: its scope→permission projection is lossy, and the JWT principal already reaches
 `AuthorizationClaims` with full kind fidelity through `SecurityClaimMapper`.
 
-### Dagger bindings
+## Module Dagger Bindings
 
 What the two modules put in the graph, and where each instance comes from:
 
