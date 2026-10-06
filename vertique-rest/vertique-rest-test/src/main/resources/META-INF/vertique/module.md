@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # REST Test
 
-> **Status:** Beta
+> **Status:** Stable
 > **Package:** `dev.vertique.rest.test`
 > **Artifact:** `vertique-rest-test`
 > **Depends on:** rest-jaxrs, rest-core, config-core
@@ -244,6 +244,39 @@ installation site with the production `OrderedExtension` comparator.
 
 Request-validation strategies are **not** contributed through a seam. Include the strategy's own
 Dagger module in the component instead, so the graph never carries two strategies with the same id.
+
+---
+
+## Module Dagger Bindings
+
+`RestTestFixtureModule` includes `RestModule` and `ConfigParsingModule`, then unions
+`RestTestContributions` into the framework multibindings:
+
+| Binding | Value |
+|---|---|
+| `Set<Middleware>` | `@ElementsIntoSet` from `contributions.middlewares()` |
+| `Set<RequestInterceptor>` | `@ElementsIntoSet` from `contributions.requestInterceptors()` |
+| `Set<ResponseBodyEncoder>` | `@ElementsIntoSet` from `contributions.responseBodyEncoders()` |
+| `Set<ExceptionMapper<?>>` | `@ElementsIntoSet` from `contributions.exceptionMappers()` |
+| `Set<JsonMapperProfile>` | `@ElementsIntoSet` from `contributions.jsonMapperProfiles()` |
+| `Set<FileContentVerifier>` | `@ElementsIntoSet` from `contributions.fileContentVerifiers()` |
+
+`RestTestMount` is constructed by Dagger from `JaxRsRouterMount.Factory` and the graph's complete
+`Set<Middleware>` (package-private constructor). The consuming test `@Component` exposes it.
+
+`RestTestNoSecurityModule` (include **instead of** `AuthModule`, never with it) provides:
+
+| Binding | Value |
+|---|---|
+| `SecurityPolicyValidator` | `@Nullable` `null` — skip startup policy validation |
+
+---
+
+## Verification
+
+```bash
+./mvnw -ntp -pl vertique-rest/vertique-rest-test -am test
+```
 
 ---
 
