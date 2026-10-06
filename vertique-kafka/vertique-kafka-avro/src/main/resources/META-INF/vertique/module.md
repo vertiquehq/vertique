@@ -250,16 +250,6 @@ This module is itself an extension of the `KafkaSerdeProvider` SPI. There are no
 |---|---|---|
 | `KafkaSerdeProvider` | `@Provides` `@Singleton` `@IntoSet` | `ApicurioAvroSerdeProvider` for format id `"avro"` |
 
----
-
-## Verification
-
-```bash
-./mvnw -ntp -pl :vertique-kafka-avro -am test
-```
-
----
-
 ## Usage Example
 
 ### Avro producer

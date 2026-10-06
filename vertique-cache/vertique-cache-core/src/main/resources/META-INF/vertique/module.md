@@ -222,22 +222,6 @@ explicit declared TTL — builder or annotation — above `maxTtlSeconds` is rej
 `IllegalArgumentException`; it is not silently clamped. `ttlSeconds = 0` retains provider size
 protection while disabling time expiration.
 
-## Verification
-
-Run the cache package proof with:
-
-```text
-./mvnw -ntp -pl vertique-cache/vertique-cache-core,vertique-codegen/vertique-codegen-cache,vertique-cache/vertique-cache-caffeine,vertique-cache/vertique-cache-redis,vertique-micrometer/vertique-micrometer-cache,vertique-opentelemetry/vertique-opentelemetry-cache -am verify
-```
-
-The clean reactor verification additionally checks dependency and BOM parity, forbidden provider
-dependencies, packaged module-documentation parity, and regeneration of cache composition and AOP
-output:
-
-```text
-./mvnw -ntp clean verify
-```
-
 ## Dependencies
 
 | Artifact | Purpose |

@@ -272,16 +272,6 @@ This module owns no configuration keys. Format and profile selection are consume
 | `KafkaSerdeProvider` | `@Provides` `@Singleton` `@IntoSet` | `JsonSerdeProvider` for format id `"json"` |
 | `ComposeValidator` | `@Provides` `@Singleton` `@IntoSet` | `KafkaDefaultProfileValidator` (unknown `kafka.jsonProfile` fails startup) |
 
----
-
-## Verification
-
-```bash
-./mvnw -ntp -pl :vertique-kafka-json -am test
-```
-
----
-
 ## Dependencies
 
 | Artifact | Scope | Purpose |

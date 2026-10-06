@@ -110,8 +110,3 @@ supplies the cache runtime the aspects depend on.
 | `AspectProvider<CacheEvict>` | `@Binds` | Generated-proxy interceptor for `@CacheEvict` methods |
 | `AspectProvider<CacheEvict.List>` | `@Binds` | Generated-proxy interceptor for repeated `@CacheEvict` methods |
 
-## Verification
-
-```text
-./mvnw -ntp -pl vertique-cache/vertique-cache-aop -am verify
-```

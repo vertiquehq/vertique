@@ -152,10 +152,3 @@ The dependency required is `vertique-kafka-core` (provides `KafkaModule` and `Ka
 
 No Kafka-specific configuration in this module. Kafka producer settings (bootstrap servers, serializers, acks, etc.) are configured in the `kafka` module: connection scalars at the `kafka` root (e.g. `kafka.bootstrap.servers`), global properties under `kafka.properties`, and the global producer bag under `kafka.producer.properties`. Per-named-producer overrides live under `kafka.producers.{name}.*`. See `dev.vertique:vertique-kafka-core` for the full configuration reference.
 
----
-
-## Verification
-
-```bash
-./mvnw -ntp -pl :vertique-inbox-outbox-kafka -am test
-```

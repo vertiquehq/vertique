@@ -137,12 +137,3 @@ and `Set<ComposeValidator>` (from `dev.vertique:vertique-core`) — by contribut
 The ledger above is exact: the module declares no other direct dependency, and in particular no
 REST, services, management, database, launcher, test, or code-generation artifact.
 
----
-
-## Verification
-
-`CoreApplicationModule` is proven by the starter family's integration-test harness, which compiles
-a real `@VertiqueApp` component naming only this aggregate, builds it through the generated
-application factory, and asserts that the lifecycle step sets and the deployment manager resolve.
-A dependency fixture materializes the compile and runtime classpaths and fails when the direct
-ledger drifts or a launcher, test, or code-generation artifact leaks in.

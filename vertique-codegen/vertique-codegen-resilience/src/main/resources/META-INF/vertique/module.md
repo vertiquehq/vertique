@@ -64,12 +64,6 @@ The registered `ResilienceAnnotationProcessor` validates:
 The four declaration annotations are configuration inputs only. They are not
 aspects by themselves, and this processor does not emit proxies or metadata.
 
-## Verification
-
-```text
-./mvnw -ntp -pl vertique-codegen/vertique-codegen-resilience,vertique-codegen-all -am verify
-```
-
 ## Dependencies
 
 | Artifact | Purpose |

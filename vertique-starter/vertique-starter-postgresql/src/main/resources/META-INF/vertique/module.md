@@ -155,15 +155,3 @@ methods from an application-owned module.
 The ledger above is exact: the module declares no other direct dependency, and in particular no
 application, REST, management, services, launcher, test, or code-generation artifact.
 
----
-
-## Verification
-
-`PostgresqlPersistenceModule` is proven by the starter family's integration-test harness, which
-compiles a consumer whose only production dependency is this starter — with no application framework
-on the compile classpath at all — and then builds a Dagger graph composing this aggregate with a
-test-scope core application fixture, asserting that `io.vertx.sqlclient.Pool`, `MigrationRunner`, and
-the `MIGRATE`-phase Flyway startup contribution all resolve while the `VerticleDeployment` set stays
-empty. A dependency fixture materializes the compile and runtime classpaths and fails when the direct
-ledger drifts or an application, REST, management, services, launcher, test, code-generation, or
-Testcontainers artifact leaks in.

@@ -110,12 +110,6 @@ Endpoint, credentials, TLS, topology, and pool size live only under `redis.conne
 (`vertique-redis-core`); this module owns only the logical namespace, its own operation deadline,
 and its own TTL slack.
 
-## Verification
-
-```text
-./mvnw -ntp -pl vertique-rate-limit/vertique-rate-limit-redis -am verify
-```
-
 ## Dependencies
 
 | Artifact | Purpose |

@@ -85,12 +85,6 @@ Install it in the application component; it is the module's only application-fac
 | `MetricsConfig` | `@BindsOptionalOf` | Declared for adapter enablement checks; the adapter can be used with or without `MicrometerModule` as long as a `MeterRegistry` binding is present |
 | `RateLimitObserver` | `@RegisterIntoSet` | The metrics observer, wired through the generated `GeneratedRegistrationsModule` this module includes |
 
-## Verification
-
-```text
-./mvnw -ntp -pl vertique-micrometer/vertique-micrometer-rate-limit -am verify
-```
-
 ## Dependencies
 
 | Artifact | Purpose |

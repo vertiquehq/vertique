@@ -153,13 +153,3 @@ module.
 The ledger above is exact: the module declares no other direct dependency, and in particular no
 services, database, JWT, launcher, test, or code-generation artifact.
 
----
-
-## Verification
-
-`RestApplicationModule` is proven by the starter family's integration-test harness, which compiles
-a real `@VertiqueApp` component naming only this aggregate, builds it through the generated
-application factory, and asserts that representative routing, validation, security-policy, and
-management bindings resolve. A dependency fixture materializes the compile and runtime classpaths
-and fails when the direct ledger drifts or a services, database, JWT, launcher, test, or
-code-generation artifact leaks in.

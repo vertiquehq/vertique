@@ -253,21 +253,6 @@ The `LOCAL` backend entry itself is a framework-private Bucket4j implementation
 reached only through this map; it is Dagger composition surface, not something an
 application implements or replaces.
 
-## Verification
-
-Run the rate-limit family proof with:
-
-```text
-./mvnw -ntp -pl vertique-rate-limit/vertique-rate-limit-core,vertique-rate-limit/vertique-rate-limit-aop,vertique-rate-limit/vertique-rate-limit-redis,vertique-codegen/vertique-codegen-rate-limit,vertique-rest/vertique-rest-rate-limit,vertique-micrometer/vertique-micrometer-rate-limit,vertique-opentelemetry/vertique-opentelemetry-rate-limit -am verify
-```
-
-The clean reactor verification additionally checks dependency and BOM parity and
-packaged module-documentation parity:
-
-```text
-./mvnw -ntp clean verify
-```
-
 ## Dependencies
 
 | Artifact | Purpose |

@@ -66,12 +66,6 @@ Install it in the application component for local caching. Annotation apps also 
 | `CacheStore` | `@Provides` `@IntoMap` `@CacheModeKey(LOCAL)` | Local Caffeine store |
 | `String` | `@Provides` `@IntoMap` `@CacheProviderIdKey(LOCAL)` | Provider id `"caffeine"` |
 
-## Verification
-
-```text
-./mvnw -ntp -pl vertique-cache/vertique-cache-caffeine -am verify
-```
-
 ## Dependencies
 
 | Artifact | Purpose |

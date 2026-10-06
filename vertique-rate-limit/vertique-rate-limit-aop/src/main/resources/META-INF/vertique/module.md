@@ -104,12 +104,6 @@ the `RateLimiters` runtime the aspect depends on.
 |---|---|---|
 | `AspectProvider<RateLimited>` | `@Binds` | The generated-proxy interceptor for `@RateLimited` methods |
 
-## Verification
-
-```text
-./mvnw -ntp -pl vertique-rate-limit/vertique-rate-limit-aop -am verify
-```
-
 ## Dependencies
 
 | Artifact | Purpose |

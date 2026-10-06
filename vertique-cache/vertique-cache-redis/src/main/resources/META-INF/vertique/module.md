@@ -143,16 +143,6 @@ Example:
 | `CronScheduler` | `@BindsOptionalOf` | Optional cron for cleanup registration |
 | `ApplicationShutdownStep` | `@Provides` `@IntoSet` | Cleanup unregister then Redis client close (`INFRA`) |
 
-## Verification
-
-The Redis edge runs the same provider-neutral `CacheStoreContractTest` as the in-process provider.
-Redis integration uses the pinned Testcontainers image
-`redis:7.2.4-alpine@sha256:c8bb255c3559b3e458766db810aa7b3c7af1235b204cfdb304e79ff388fe1a5a`.
-
-```text
-./mvnw -ntp -pl vertique-cache/vertique-cache-redis -am verify
-```
-
 ## Dependencies
 
 | Artifact | Purpose |

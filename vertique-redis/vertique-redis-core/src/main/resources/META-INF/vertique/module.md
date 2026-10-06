@@ -160,12 +160,6 @@ Profiles live under `redis.connections` as a keyed object (key = profile name). 
 | `RedisClientRegistry` | `@Provides` `@Singleton` | Lazy shared clients for those profiles |
 | `ApplicationShutdownStep` | `@Provides` `@IntoSet` | `RedisClientShutdownStep` (`INFRA`, lowest same-phase priority) |
 
-## Verification
-
-```text
-./mvnw -ntp -pl vertique-redis/vertique-redis-core -am verify
-```
-
 ## Dependencies
 
 | Artifact | Purpose |

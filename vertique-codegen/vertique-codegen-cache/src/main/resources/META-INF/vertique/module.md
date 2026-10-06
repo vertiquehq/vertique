@@ -110,22 +110,6 @@ Validates every `@Cacheable` / `@CacheEvict` method as described under Validatio
 `process()` always returns `false`, so other processors still see the annotations, and the
 processor generates no sources.
 
-## Verification
-
-A clean reactor build regenerates AOP output from the consuming application sources; stale
-generated output is not a runtime provider dependency. Run the processor proof with:
-
-```text
-./mvnw -ntp -pl vertique-codegen/vertique-codegen-cache -am verify
-```
-
-The package-level clean build also verifies dependency/BOM parity and packaged module-documentation
-parity:
-
-```text
-./mvnw -ntp clean verify
-```
-
 ## Dependencies
 
 | Artifact | Purpose |

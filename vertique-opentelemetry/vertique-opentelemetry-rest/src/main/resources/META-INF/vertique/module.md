@@ -142,16 +142,6 @@ The adapter's SPI contributions are declared on their injectable implementations
 `@RegisterIntoSet`. During the provider build, `vertique-codegen-dagger` emits
 `GeneratedRegistrationsModule`, which this module includes explicitly.
 
----
-
-## Verification
-
-```bash
-./mvnw -ntp -pl vertique-opentelemetry/vertique-opentelemetry-rest -am test
-```
-
----
-
 ## Dependencies
 
 | Artifact | Purpose |

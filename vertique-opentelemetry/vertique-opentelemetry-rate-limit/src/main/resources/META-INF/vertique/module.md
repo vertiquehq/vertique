@@ -70,12 +70,6 @@ binds `Tracer`; it is the module's only application-facing type.
 |---|---|---|
 | `RateLimitObserver` | `@RegisterIntoSet` | The span-recording observer, wired through the generated `GeneratedRegistrationsModule` this module includes |
 
-## Verification
-
-```text
-./mvnw -ntp -pl vertique-opentelemetry/vertique-opentelemetry-rate-limit -am verify
-```
-
 ## Dependencies
 
 | Artifact | Purpose |

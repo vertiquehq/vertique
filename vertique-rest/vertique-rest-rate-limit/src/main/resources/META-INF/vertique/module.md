@@ -167,12 +167,6 @@ rateLimit:
 defaults to all mounts, WebSocket/SSE/static included). `defaultMode` (core
 configuration) applies to any rule policy that omits an explicit `mode`.
 
-## Verification
-
-```text
-./mvnw -ntp -pl vertique-rest/vertique-rest-rate-limit -am verify
-```
-
 ## Dependencies
 
 | Artifact | Purpose |

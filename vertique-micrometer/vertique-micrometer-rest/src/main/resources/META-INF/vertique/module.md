@@ -181,16 +181,6 @@ The adapter's SPI contributions are declared on their injectable implementations
 `GeneratedRegistrationsModule`, which this module includes explicitly. The generated module contains
 only those type adaptations; the optional `MetricsConfig` binding remains hand-written.
 
----
-
-## Verification
-
-```bash
-./mvnw -ntp -pl vertique-micrometer/vertique-micrometer-rest -am test
-```
-
----
-
 ## Dependencies
 
 | Artifact | Purpose |

@@ -87,11 +87,3 @@ artifact never pins a Kafka client version of its own. Both direct dependencies 
 modules that depend on this artifact in test scope get them transitively. The artifact also depends
 on SLF4J for fixture lifecycle logging and uses JUnit Jupiter only for its own integration test.
 
-## Verification
-
-`KafkaTestContainersIT#sharedStartsVerifiedBroker` proves that `shared()` returns a running broker
-with bootstrap servers. Run it with Docker available:
-
-```bash
-./mvnw -ntp -pl :vertique-kafka-test -am verify
-```

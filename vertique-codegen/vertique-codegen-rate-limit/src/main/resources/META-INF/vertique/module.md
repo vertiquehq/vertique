@@ -74,12 +74,6 @@ Validates every `@RateLimited` method as described under Core Concepts. `process
 returns `false`, so other processors still see the annotation, and the processor generates no
 sources.
 
-## Verification
-
-```text
-./mvnw -ntp -pl vertique-codegen/vertique-codegen-rate-limit -am verify
-```
-
 ## Dependencies
 
 | Artifact | Purpose |

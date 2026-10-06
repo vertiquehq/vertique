@@ -593,22 +593,6 @@ Transport failures are enriched as service failures:
 | `ServiceDispatchException` | other service transport failure |
 | `ServiceRegistrationException` | one or more contract/handler validation failures at startup |
 
----
-
-## Verification
-
-For a focused module check from the repository root:
-
-```bash
-./mvnw -ntp -pl vertique-services -am test
-```
-
-The public examples `examples/vertique-example-services` and
-`examples/vertique-example-services-codegen` demonstrate generated registration, handler
-implementations, typed clients, authorization, and lifecycle wiring.
-
----
-
 ## Dependencies
 
 - `dev.vertique:vertique-core` — async results, event-bus envelopes, lifecycle, and ordered

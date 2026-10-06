@@ -154,13 +154,3 @@ The ledger above is exact: the module declares no other direct dependency. Datab
 test, code-generation, and other capability artifacts remain application-owned composition
 choices.
 
----
-
-## Verification
-
-`ServicesApplicationModule` is proven by the starter family's integration-test harness, which
-compiles a real `@VertiqueApp` component naming only this aggregate, builds it through the
-generated application factory, and asserts that the `ServiceClientFactory`, paired service
-deployment lifecycle steps, and management binding resolve. A dependency fixture materializes the
-compile and runtime classpaths, enforces the exact framework-artifact ledger, and applies targeted
-forbidden-category checks so the bounded starter dependency closure cannot drift silently.
