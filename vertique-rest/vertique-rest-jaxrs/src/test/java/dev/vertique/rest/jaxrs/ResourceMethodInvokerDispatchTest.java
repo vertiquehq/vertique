@@ -4,9 +4,11 @@
 package dev.vertique.rest.jaxrs;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
@@ -15,12 +17,16 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.vertique.rest.core.context.RestContextResolution;
+import dev.vertique.rest.jaxrs.request.BoundRequest;
 import dev.vertique.rest.jaxrs.runtime.ResourceExecutionPlan;
 import io.vertx.core.Future;
 import io.vertx.ext.web.RoutingContext;
 import java.lang.reflect.Method;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -157,6 +163,65 @@ class ResourceMethodInvokerDispatchTest {
     }
 
     @Nested
+    @DisplayName("invokeMethod — resolvedBodyMapper fallback (#666)")
+    class ResolvedBodyMapperFallback {
+
+        @Test
+        @DisplayName("constructor mapper is stashed when KEY_RESOLVED_BODY_MAPPER is absent")
+        void constructorMapper_stashedWhenAbsent() throws Throwable {
+            FixtureResource resource = new FixtureResource();
+            Method method = FixtureResource.class.getMethod("greetNoArgs");
+            ObjectMapper profileMapper = new ObjectMapper();
+            ResourceMethodInvoker invoker = invokerFor(resource, method, null, profileMapper);
+
+            RoutingContext ctx = ctxWithData();
+            assertNull(ctx.get(BoundRequest.KEY_RESOLVED_BODY_MAPPER));
+
+            Future<Object> result = invokeMethod(invoker, ctx);
+            assertTrue(result.succeeded());
+            assertSame(
+                    profileMapper,
+                    ctx.get(BoundRequest.KEY_RESOLVED_BODY_MAPPER),
+                    "invoker fallback must stash the constructor mapper before binding");
+            verify(ctx).put(eq(BoundRequest.KEY_RESOLVED_BODY_MAPPER), eq(profileMapper));
+        }
+
+        @Test
+        @DisplayName("null constructor mapper leaves KEY_RESOLVED_BODY_MAPPER unset")
+        void nullConstructorMapper_doesNotStash() throws Throwable {
+            FixtureResource resource = new FixtureResource();
+            Method method = FixtureResource.class.getMethod("greetNoArgs");
+            ResourceMethodInvoker invoker = invokerFor(resource, method, null, null);
+
+            RoutingContext ctx = ctxWithData();
+
+            Future<Object> result = invokeMethod(invoker, ctx);
+            assertTrue(result.succeeded());
+            assertNull(ctx.get(BoundRequest.KEY_RESOLVED_BODY_MAPPER));
+            verify(ctx, never()).put(eq(BoundRequest.KEY_RESOLVED_BODY_MAPPER), any());
+        }
+
+        @Test
+        @DisplayName("pre-stashed KEY_RESOLVED_BODY_MAPPER is not overwritten by constructor mapper")
+        void preStashedMapper_isPreserved() throws Throwable {
+            FixtureResource resource = new FixtureResource();
+            Method method = FixtureResource.class.getMethod("greetNoArgs");
+            ObjectMapper constructorMapper = new ObjectMapper();
+            ObjectMapper alreadyStashed = new ObjectMapper();
+            ResourceMethodInvoker invoker = invokerFor(resource, method, null, constructorMapper);
+
+            RoutingContext ctx = ctxWithData();
+            ctx.put(BoundRequest.KEY_RESOLVED_BODY_MAPPER, alreadyStashed);
+
+            Future<Object> result = invokeMethod(invoker, ctx);
+            assertTrue(result.succeeded());
+            assertSame(alreadyStashed, ctx.get(BoundRequest.KEY_RESOLVED_BODY_MAPPER));
+            verify(ctx, times(1)).put(eq(BoundRequest.KEY_RESOLVED_BODY_MAPPER), eq(alreadyStashed));
+            verify(ctx, never()).put(eq(BoundRequest.KEY_RESOLVED_BODY_MAPPER), eq(constructorMapper));
+        }
+    }
+
+    @Nested
     @DisplayName("invokeMethod — bound request reuse (Slice 9a fix 2)")
     class BoundRequestReuse {
 
@@ -210,6 +275,14 @@ class ResourceMethodInvokerDispatchTest {
      */
     private static ResourceMethodInvoker invokerFor(
             FixtureResource resource, Method method, ResourceExecutionPlan plan) {
+        return invokerFor(resource, method, plan, null);
+    }
+
+    private static ResourceMethodInvoker invokerFor(
+            FixtureResource resource,
+            Method method,
+            ResourceExecutionPlan plan,
+            ObjectMapper resolvedBodyMapper) {
         ResourceMethodMeta meta = new ResourceMethodMeta(
                 resource,
                 method,
@@ -238,7 +311,8 @@ class ResourceMethodInvokerDispatchTest {
                 new RestContextResolution(Set.of()) /* restContextResolution */,
                 List.of() /* decoders */,
                 null /* beanValidator */,
-                null /* objectProcessor */);
+                null /* objectProcessor */,
+                resolvedBodyMapper);
     }
 
     /**
@@ -261,15 +335,32 @@ class ResourceMethodInvokerDispatchTest {
      */
     private static RoutingContext ctx() {
         RoutingContext ctx = mock(RoutingContext.class);
-        when(ctx.data()).thenReturn(new java.util.HashMap<>());
+        when(ctx.data()).thenReturn(new HashMap<>());
 
         io.vertx.core.http.HttpServerRequest request = mock(io.vertx.core.http.HttpServerRequest.class);
         when(ctx.request()).thenReturn(request);
-        when(ctx.pathParams()).thenReturn(java.util.Map.of());
+        when(ctx.pathParams()).thenReturn(Map.of());
         when(ctx.queryParams()).thenReturn(io.vertx.core.MultiMap.caseInsensitiveMultiMap());
         when(request.headers()).thenReturn(io.vertx.core.MultiMap.caseInsensitiveMultiMap());
-        when(request.cookies()).thenReturn(java.util.Set.of());
+        when(request.cookies()).thenReturn(Set.of());
         when(ctx.body()).thenReturn(null);
+        return ctx;
+    }
+
+    /**
+     * RoutingContext whose {@code get}/{@code put} are backed by a map so tests can assert
+     * {@link BoundRequest#KEY_RESOLVED_BODY_MAPPER} stash behavior without a real Vert.x context.
+     */
+    private static RoutingContext ctxWithData() {
+        RoutingContext ctx = ctx();
+        Map<String, Object> data = new HashMap<>();
+        when(ctx.get(any())).thenAnswer(inv -> data.get(inv.getArgument(0)));
+        org.mockito.Mockito.doAnswer(inv -> {
+                    data.put(inv.getArgument(0), inv.getArgument(1));
+                    return ctx;
+                })
+                .when(ctx)
+                .put(any(), any());
         return ctx;
     }
 }
