@@ -150,4 +150,50 @@ describe('PublicSnapshotWorkflowContractTest', () => {
       );
     }
   });
+
+  it('deploysOnlyAVerifiedPayloadBuiltByTheTriggeringCiRun', () => {
+    const yaml = workflow();
+    const step = (name) => {
+      const start = yaml.indexOf(`      - name: ${name}\n`);
+      assert.ok(start >= 0, `snapshot workflow has no "${name}" step`);
+      return start;
+    };
+
+    // The reactor is not rebuilt here: bytes come from the triggering CI run.
+    assert.doesNotMatch(yaml, /mvnw/, 'publication must not rebuild the reactor');
+    assert.match(
+      yaml,
+      /run-id:\s*\$\{\{\s*github\.event\.workflow_run\.id\s*\}\}/,
+      'the payload must be downloaded from the triggering run, not a caller-supplied run'
+    );
+
+    // Order matters: download, then check against the approved commit, then deploy.
+    const download = step('Download the CI-built payload');
+    const verify = step('Verify the payload belongs to the approved commit');
+    const publish = step('Publish the derived allowlist');
+    assert.ok(download < verify && verify < publish, 'the payload must be verified before it is deployed');
+    assert.match(
+      yaml.slice(verify, publish),
+      /snapshot-payload\.mjs verify[^\n]*--sha \$\{\{\s*steps\.guard\.outputs\.checkout_sha\s*\}\}/,
+      'the payload must be checked against the commit the guard approved'
+    );
+    assert.match(
+      yaml.slice(publish),
+      /--local-repository \$\{\{\s*runner\.temp\s*\}\}\/snapshot-payload\/repository/,
+      'publication must deploy the verified payload directory'
+    );
+  });
+
+  it('stagesThePayloadOnlyOnPushes', () => {
+    const ci = readFileSync(path.join(REPO_ROOT, '.github', 'workflows', 'ci.yml'), 'utf8');
+    const start = ci.indexOf('\n  snapshot-payload:\n');
+    assert.ok(start >= 0, 'ci.yml must stage the SNAPSHOT payload');
+    const job = ci.slice(start);
+
+    // A pull request must never produce a payload that publication could pick up.
+    assert.match(job, /^    if: \$\{\{ github\.event_name == 'push' \}\}$/m, 'payload staging must run on push only');
+    assert.match(job, /snapshot-payload\.mjs stage[^\n]*--sha \$\{\{\s*github\.sha\s*\}\}/, 'the payload must be bound to the built commit');
+    assert.match(job, /name: snapshot-payload\n/, 'the artifact name must match the one publication downloads');
+    assert.match(job, /if-no-files-found: error/, 'an empty payload must fail CI');
+  });
 });

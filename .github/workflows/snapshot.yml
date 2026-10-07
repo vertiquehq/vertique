@@ -9,7 +9,10 @@
 # release/snapshot-guard.mjs, not in this YAML.
 #
 # It is bound to the completion of the named required-CI workflow rather than to
-# push, so it can only publish bytes that were verified. It is deliberately NOT
+# push, so it can only publish bytes that were verified. The payload is built by
+# that CI run, not rebuilt here: it is downloaded from the exact triggering run
+# and checked against the commit the guard approved before anything is
+# deployed (release/snapshot-payload.mjs). It is deliberately NOT
 # a required check and cannot write a CI status: a failed publication must not
 # erase the required-CI result that was already established (FR-REL-023).
 #
@@ -28,6 +31,8 @@ on:
 permissions:
   contents: read
   packages: write
+  # Read access to the triggering CI run's artifacts, nothing more.
+  actions: read
 
 # Serialized per repository, and an in-flight deployment is never cancelled:
 # a half-written snapshot is worse than a delayed one (FR-REL-022).
@@ -56,7 +61,6 @@ jobs:
         with:
           distribution: temurin
           java-version: "21"
-          cache: maven
 
       # The guard collects its own context and decides. A denial exits 0: it is
       # a normal outcome, and a red run here would be indistinguishable from a
@@ -65,14 +69,25 @@ jobs:
         id: guard
         run: node release/snapshot-guard.mjs --github-output >> "$GITHUB_OUTPUT"
 
-      # Inherits -T1C from .mvn/maven.config deliberately: parallel install of
-      # an already-verified SHA changes wall-clock only, not published bytes.
-      - name: Install reactor into an isolated repository
+      # The payload the required-CI run staged for this exact commit. The run id
+      # comes from the triggering event, never from a caller-supplied input.
+      - name: Download the CI-built payload
         if: steps.guard.outputs.allowed == 'true'
-        run: ./mvnw -ntp -B -Dmaven.repo.local=${{ runner.temp }}/m2 -DskipTests -Prelease clean install
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: snapshot-payload
+          path: ${{ runner.temp }}/snapshot-payload
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      # Refuses a payload built from another commit, or one with a changed,
+      # missing or extra file, before any byte is deployed.
+      - name: Verify the payload belongs to the approved commit
+        if: steps.guard.outputs.allowed == 'true'
+        run: node release/snapshot-payload.mjs verify --dir ${{ runner.temp }}/snapshot-payload --sha ${{ steps.guard.outputs.checkout_sha }} --version ${{ steps.guard.outputs.version }}
 
       - name: Publish the derived allowlist
         if: steps.guard.outputs.allowed == 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: bash release/publish-artifacts.sh --local-repository ${{ runner.temp }}/m2 --repository-id github --target-url https://maven.pkg.github.com/${{ github.repository }} --mode snapshot --version ${{ steps.guard.outputs.version }}
+        run: bash release/publish-artifacts.sh --local-repository ${{ runner.temp }}/snapshot-payload/repository --repository-id github --target-url https://maven.pkg.github.com/${{ github.repository }} --mode snapshot --version ${{ steps.guard.outputs.version }}

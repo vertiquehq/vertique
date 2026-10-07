@@ -103,6 +103,16 @@ export function evaluateSnapshotPublication(inputs) {
   return { allowed: true, reason: 'successful required CI on current main at a SNAPSHOT version', checkoutSha: headSha };
 }
 
+/**
+ * Reads the declared `<revision>` from the reactor root POM.
+ * @returns {string|undefined}
+ */
+export function declaredVersion() {
+  const pomPath = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'pom.xml');
+  if (!existsSync(pomPath)) return undefined;
+  return /<revision>([^<]+)<\/revision>/.exec(readFileSync(pomPath, 'utf8'))?.[1]?.trim();
+}
+
 // ---------------------------------------------------------------------------
 // CLI
 // ---------------------------------------------------------------------------
@@ -124,13 +134,6 @@ if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToP
   const gitOutput = (args, fallback = '') => {
     const result = spawnSync('git', args, { encoding: 'utf8' });
     return result.status === 0 ? result.stdout.trim() : fallback;
-  };
-
-  /** Reads the declared `<revision>` from the reactor root POM. */
-  const declaredVersion = () => {
-    const pomPath = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'pom.xml');
-    if (!existsSync(pomPath)) return undefined;
-    return /<revision>([^<]+)<\/revision>/.exec(readFileSync(pomPath, 'utf8'))?.[1]?.trim();
   };
 
   const payload = readEvent();
