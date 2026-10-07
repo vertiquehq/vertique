@@ -220,7 +220,7 @@ A declaration's `@ApiDocs` is recognized by its fully qualified name, `dev.verti
 | Public policy (exactly one direct `@PermitAll`) | `securityScheme` must not be supplied; any value, blank included, is an error. |
 | Any other valid policy (`@DenyAll` included) | `securityScheme` is required and must not be blank. |
 
-`policy` has no default and `access` and `rolesAllowed` no longer exist: an `@ApiDocs` without `policy`, or one that sets a removed element, is the compiler's own error. A `policy` that is not an `AccessPolicy` type, or names a missing type, is also the compiler's own error. Elements are judged by value, so an explicit `securityScheme = ""` counts as not set. Each processor violation is a compile error naming the declaration and the element (see "Diagnostics" below), and a declaration with any violation is not registered.
+`policy` is required and has no default: an `@ApiDocs` without it is the compiler's own error. A `policy` that is not an `AccessPolicy` type, or names a missing type, is also the compiler's own error. Elements are judged by value, so an explicit `securityScheme = ""` counts as not set. Each processor violation is a compile error naming the declaration and the element (see "Diagnostics" below), and a declaration with any violation is not registered.
 
 ### Diagnostics
 

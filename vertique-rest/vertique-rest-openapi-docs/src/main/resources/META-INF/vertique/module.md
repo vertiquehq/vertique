@@ -410,6 +410,23 @@ public interface ManagementApi {
 }
 ```
 
+A policy states the audience with the annotations a resource method uses: `@PermitAll` for a public
+document, `@Authorized` for any authenticated reader, and `@RolesAllowed` (as above) for named
+roles. Only the public policy omits `securityScheme`; the others require it:
+
+```java
+@RestApplication(
+        name = "internal",
+        path = "/api/internal",
+        resources = {InternalResource.class})
+@ApiDocs(policy = InternalApi.DocsPolicy.class, securityScheme = "bearerAuth")
+public interface InternalApi {
+
+    @Authorized
+    public interface DocsPolicy extends AccessPolicy {}
+}
+```
+
 `bearerAuth` is the scheme of the JWT handler that `JwtAuthModule` registers (see
 `dev.vertique:vertique-rest-auth-jwt`). The example binds its `JWTAuth` from the configured
 `jwt.hs256Key` and keeps no key in its sources. It sets neither `jwt.validation.issuer` nor
@@ -2009,10 +2026,9 @@ configuration disables its document, startup re-checks, in one pass:
   `@ApiDocs.policy`;
 - that `securityScheme` is empty when the policy is public, a blank string included, and is not
   blank for every other policy, `@DenyAll` included. A failure names `@ApiDocs.securityScheme`;
-- that the declaration was compiled against this annotation. An interface compiled against an older
-  `@ApiDocs`, which declared `access` and `rolesAllowed` and no `policy`, has no policy to read: it
-  fails closed with a message that says to recompile, is never served as a public document, and is
-  not repaired by configuration.
+- that the class file records a `policy`. An interface whose `@ApiDocs` records none (a stale or
+  partially built class file) has no policy to read: it fails closed with a message that says to
+  recompile, is never served as a public document, and is not repaired by configuration.
 
 The annotation processor enforces the same rules at compile time, so ordinarily only a
 registration the processor did not produce, a declaration marked `@NoAutoWire` (which skips the
@@ -2308,7 +2324,7 @@ names are quoted.
 | An entry sets `enabled: true` for an application without `@ApiDocs` | `ConfigurationException` naming the application, its declaring interface, and `apidocs.documents.<name>.enabled` |
 | A blank key, or an entry that is not a JSON object | The keyed-collection parser's own `ConfigurationException`, raised before any check above; it says the entry has a blank key, or that the entry `'<key>'` must be a nested JSON object, and names the key |
 | The `@ApiDocs` of an active application breaks its shape rules: an invalid `policy`, a scheme on a public policy, no scheme on any other policy | `RestConfigurationException` under `Invalid @ApiDocs declarations:` listing every violation, sorted, each naming the application, its declaring interface, and `@ApiDocs.policy` or `@ApiDocs.securityScheme` |
-| The interface of an active application was compiled against an older `@ApiDocs` with no `policy` | `RestConfigurationException` in the same listing, naming the application and its declaring interface and saying to recompile; no document is served for it, and none is public |
+| The class file of an active application's interface records an `@ApiDocs` with no `policy` (a stale or partially built class file) | `RestConfigurationException` in the same listing, naming the application and its declaring interface and saying to recompile; no document is served for it, and none is public |
 | A document is enabled and `apidocs.path` breaks a rule above | `ConfigurationException` naming `apidocs.path` |
 | An enabled document has no `info`, or a blank `title` or `version` | `ConfigurationException` naming the application, its declaring interface's binary name, and `apidocs.documents.<name>.info`, `.info.title`, or `.info.version`; a blank `title` or `version` in `@OpenAPIDefinition(info)` names `@OpenAPIDefinition.info` |
 | An enabled document takes its `info` from `@OpenAPIDefinition` and its `@License` sets both `identifier` and `url` | `ConfigurationException` naming the application, its declaring interface's binary name, `@OpenAPIDefinition.info.license`, and `apidocs.documents.<name>.info`; neither value is echoed |
@@ -2462,8 +2478,8 @@ and its message can quote that value.
   scheme; both fail compilation and startup.
 - **Mixing `@PermitAll` with another requirement in a policy.** The policy is invalid, not public, and
   so is a policy that declares no direct requirement.
-- **Running an application compiled against the old `@ApiDocs`.** An interface that declares
-  `access` and `rolesAllowed` fails startup closed until it is recompiled with a `policy`.
+- **Running a stale class file.** An interface whose class file records an `@ApiDocs` with no `policy`
+  fails startup closed until it is recompiled.
 - **Expecting the application's error handling on a protected document.** Its `401`, `403`, `404`,
   `503`, and `500` answers end on the document route's own failure handler; exception mappers,
   error interceptors, and later mounts never see them.
@@ -2682,24 +2698,6 @@ set `info` and `serverUrl`; `access` and `mount` are refused (see [Configuration
 When the docs artifact is on the classpath but the component does not list `OpenApiDocsModule`,
 `dev.vertique:vertique-rest-jaxrs` logs one INFO line per active application carrying `@ApiDocs`,
 stating that no documentation route is published for it.
-
-### Migrating from `access` and `rolesAllowed`
-
-`@ApiDocs` no longer has `access` or `rolesAllowed`; `policy` is required and there is no default
-policy. Replace each declaration with a policy interface, nested in the declaring interface or
-declared elsewhere, and keep the `securityScheme`:
-
-| Before | After |
-|---|---|
-| `@ApiDocs(access = PUBLIC)` | `@ApiDocs(policy = P.class)` with `@PermitAll public interface P extends AccessPolicy {}` |
-| `@ApiDocs(access = PROTECTED, securityScheme = "s")` | `@ApiDocs(policy = P.class, securityScheme = "s")` with `@Authorized public interface P extends AccessPolicy {}` |
-| `@ApiDocs(access = PROTECTED, securityScheme = "s", rolesAllowed = {"a", "b"})` | `@ApiDocs(policy = P.class, securityScheme = "s")` with `@RolesAllowed({"a", "b"}) public interface P extends AccessPolicy {}`, the same role list in the same order |
-
-Recompile every application interface against this version. A class file compiled against the old
-annotation has no `policy`; it fails startup closed, naming the application and its interface, and
-it is never served as a public document. The compiler rejects the removed elements. The
-classification a document records, `ApiDocs.Access`, is derived from the policy and remains only as
-that derived value.
 
 ### Operation ids and application identity
 
