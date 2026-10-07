@@ -84,8 +84,9 @@ public class DecisionEventIngressCorrelationIT {
     void setUp(Vertx testVertx) throws Exception {
         vertx = testVertx;
         client = WebClient.create(vertx, new WebClientOptions().setDefaultHost(HOST));
-        ProtectedRootTestComponents.RolesAbsentComponent component =
-                DaggerProtectedRootTestComponents_RolesAbsentComponent.factory().create(vertx, DocsConfigs.loopback());
+        ProtectedRootTestComponents.AuthenticatedOnlyComponent component =
+                DaggerProtectedRootTestComponents_AuthenticatedOnlyComponent.factory()
+                        .create(vertx, DocsConfigs.loopback());
         recorder = component.decisionRecorder();
         deployment = StartupDeployments.deploy(vertx, component::httpVerticle, new DeploymentOptions());
         assertNull(deployment.failure(), () -> "the deployment failed: " + deployment.failure());
