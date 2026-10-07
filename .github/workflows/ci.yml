@@ -166,29 +166,13 @@ jobs:
         run: ./mvnw -ntp -Djacoco.module.report.skip=true clean verify
 
       # Building on a newer JDK must not raise the class-file version of what
-      # we ship. Class-file major 65 is Java 21; anything else means a module
-      # compiled without --release 21.
+      # we ship. The harness runs first so a broken checker cannot pass by
+      # accident; the checker then scans the build output and fails unless
+      # every class is at the Java 21 major version, or when it finds no classes.
       - name: Verify bytecode target
         run: |
-          python3 -I - <<'EOF'
-          import glob, sys
-          bad, seen = [], 0
-          for path in glob.glob('**/target/classes/**/*.class', recursive=True):
-              if '/target/it/' in path or '/META-INF/versions/' in path:
-                  continue
-              with open(path, 'rb') as f:
-                  head = f.read(8)
-              seen += 1
-              major = int.from_bytes(head[6:8], 'big')
-              if major != 65:
-                  bad.append((path, major))
-          if seen == 0:
-              sys.exit('no compiled classes found; the check would be vacuous')
-          for path, major in bad[:20]:
-              print(f'class-file major {major} (expected 65): {path}')
-          print(f'{seen} classes checked, {len(bad)} off target')
-          sys.exit(1 if bad else 0)
-          EOF
+          bash scripts/test-verify-bytecode-target.sh
+          bash scripts/verify-bytecode-target.sh
 
       # Surefire and Failsafe redirect test output to these reports. Retain
       # them after failures and cancellation so CI-only flakes and hangs remain
