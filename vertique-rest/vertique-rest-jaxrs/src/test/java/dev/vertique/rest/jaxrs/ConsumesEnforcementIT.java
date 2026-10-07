@@ -158,7 +158,6 @@ public class ConsumesEnforcementIT {
         deploy(vertx, ctx, Set.of(new JsonOnlyResource()), (port, c) -> {
             c.post(port, "127.0.0.1", "/echo")
                     .putHeader("Content-Type", "text/xml")
-                    .putHeader("Content-Length", "5")
                     .sendBuffer(Buffer.buffer("hello"))
                     .onComplete(ctx.succeeding(resp -> {
                         String body = String.valueOf(resp.bodyAsString());
@@ -188,7 +187,6 @@ public class ConsumesEnforcementIT {
         deploy(vertx, ctx, Set.of(new JsonOnlyResource()), (port, c) -> {
             c.post(port, "127.0.0.1", "/echo")
                     .putHeader("Content-Type", "application/json")
-                    .putHeader("Content-Length", "2")
                     .sendBuffer(Buffer.buffer("{}"))
                     .map(resp -> resp.statusCode() + "|" + String.valueOf(resp.bodyAsString()))
                     .onComplete(ctx.succeeding(result -> {
@@ -210,7 +208,6 @@ public class ConsumesEnforcementIT {
         deploy(vertx, ctx, Set.of(new NoConsumesResource()), (port, c) -> {
             c.post(port, "127.0.0.1", "/open")
                     .putHeader("Content-Type", "application/cbor")
-                    .putHeader("Content-Length", "2")
                     .sendBuffer(Buffer.buffer("{}"))
                     .map(resp -> resp.statusCode() + "|" + String.valueOf(resp.bodyAsString()))
                     .onComplete(ctx.succeeding(result -> {
@@ -229,7 +226,6 @@ public class ConsumesEnforcementIT {
     void requestWithBodyAndNoContentTypeAgainstConsumesOperation(Vertx vertx, VertxTestContext ctx) {
         deploy(vertx, ctx, Set.of(new JsonOnlyResource()), (port, c) -> {
             c.post(port, "127.0.0.1", "/echo")
-                    .putHeader("Content-Length", "5")
                     // No Content-Type header set — sendBuffer adds none of its own (unlike sendJson),
                     // so the request still reaches the server with no Content-Type at all.
                     .sendBuffer(Buffer.buffer("hello"))
@@ -291,7 +287,6 @@ public class ConsumesEnforcementIT {
         deploy(vertx, ctx, Set.of(new JsonOnlyResource()), (port, c) -> {
             c.post(port, "127.0.0.1", "/echo")
                     .putHeader("Content-Type", "text/xml")
-                    .putHeader("Content-Length", "5")
                     .sendBuffer(Buffer.buffer("hello"))
                     .map(resp -> new Object[] {resp.statusCode(), String.valueOf(resp.bodyAsString())})
                     .onComplete(ctx.succeeding(pair -> {
@@ -324,7 +319,6 @@ public class ConsumesEnforcementIT {
                 (port, c) -> {
                     c.post(port, "127.0.0.1", "/open")
                             .putHeader("Content-Type", "image/png")
-                            .putHeader("Content-Length", "5")
                             .sendBuffer(Buffer.buffer("hello"))
                             .map(resp -> new Object[] {resp.statusCode(), String.valueOf(resp.bodyAsString())})
                             .onComplete(ctx.succeeding(pair -> {
