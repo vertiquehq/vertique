@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # JSON Schema Module
 
-> **Status:** Alpha
+> **Status:** Stable
 > **Package:** `dev.vertique.json.schema`
 > **Artifact:** `vertique-json-schema`
 > **Depends on:** core
@@ -977,8 +977,9 @@ output-direction property. It is `false` for:
 - a position with no schema-library member scope, where the generator checks neither declaration.
 
 A member reached from several positions is reported once, with the conjunction of the flags at each
-position. The flag is provisional: it may change when the generator honors the marker at more
-positions.
+position. The positions listed above are the Stable contract for `false`; additional positions may
+begin returning `true` when the generator starts honoring `@Schema(hidden = true)` there — additive
+expansion only, never a narrowing of an existing `true`.
 
 Each reported member is a Java member, reported under its own name and the class that declares it:
 
@@ -1147,8 +1148,8 @@ One member `outputRenames(Type)` (on a `forOutputProfile` generator only) report
 is the binary class name (`Class#getName()`) declaring the member, `member` is the Java member's own
 name (`java.lang.reflect.Member#getName()`), `serializedName` is the name the profile mapper's
 serialization introspection gives it, and `schemaName` is the property name the output document
-publishes it under. The record carries names only, never a schema fragment. The record is provisional
-and may change before the OpenAPI publication wires it.
+publishes it under. The record carries names only, never a schema fragment. OpenAPI publication consumes
+this shape; components evolve only by appending nullable trailing fields (ADR-0254).
 
 ```java
 AnnotationJsonSchemaGenerator outputGenerator = AnnotationJsonSchemaGenerator.forOutputProfile(profile);
@@ -1164,8 +1165,8 @@ member's own name (`java.lang.reflect.Member#getName()`), the name of a field, a
 constant, a creator parameter's `<init>#i` or `method#i` name, or `null` when the entry reports the
 type itself (the component is annotated `jakarta.annotation.Nullable`); `marker` is the
 `HidingMarker` the declaration carries; `hideableBySchemaHidden` says whether declaring
-`@Schema(hidden = true)` on the property's own field or getter would leave it out (provisional, see
-"Constraints and common mistakes" above). The record carries names and flags only, never a schema
+`@Schema(hidden = true)` on the property's own field or getter would leave it out (see
+"Constraints and common mistakes" above for the Stable position rules). The record carries names and flags only, never a schema
 fragment.
 
 ```java
@@ -1213,6 +1214,13 @@ Java class declares it once on its `JsonMapperProfile` through
 modes consume.
 
 ---
+
+
+## Module Dagger Bindings
+
+None. `vertique-json-schema` is a plain library artifact: applications construct
+`AnnotationJsonSchemaGenerator` through its static factories. There is no Dagger `@Module`.
+
 
 ## Dependencies
 

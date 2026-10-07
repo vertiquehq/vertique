@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # REST Validation Module
 
-> **Status:** Beta
+> **Status:** Stable
 > **Package:** `dev.vertique.rest.validation`
 > **Artifact:** `vertique-rest-validation`
 > **Depends on:** rest-jaxrs, rest-core, json-schema, core
@@ -640,6 +640,22 @@ signatures within the first 12 bytes. It is a spoofing heuristic, not malware or
 validation; unmapped declared types are accepted without I/O.
 
 ---
+
+
+## Module Dagger Bindings
+
+`RestValidationModule` activates the default `web-validation` path.
+
+| Binding | Kind | What it is |
+|---|---|---|
+| `RequestValidationStrategy` | `@Binds @IntoSet` | `WebValidationStrategy` with id `web-validation` |
+| `OperationSchemaSource` | `@Binds` | `AnnotationSchemaSource` (single optional seam declared by `RestModule`; not a multibinding) |
+| `Validator` | `@BindsOptionalOf` | Optional Bean Validation metadata source for schema generation |
+
+Include `RestValidationModule` alongside `RestModule`. Pair with `ValidationModule` when Bean
+Validation metadata should supplement the annotation walk; otherwise the optional `Validator` is
+absent and generation uses the annotation floor alone.
+
 
 ## Configuration
 
