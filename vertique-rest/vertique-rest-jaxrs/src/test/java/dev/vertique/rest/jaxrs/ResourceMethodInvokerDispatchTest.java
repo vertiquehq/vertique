@@ -279,10 +279,7 @@ class ResourceMethodInvokerDispatchTest {
     }
 
     private static ResourceMethodInvoker invokerFor(
-            FixtureResource resource,
-            Method method,
-            ResourceExecutionPlan plan,
-            ObjectMapper resolvedBodyMapper) {
+            FixtureResource resource, Method method, ResourceExecutionPlan plan, ObjectMapper resolvedBodyMapper) {
         ResourceMethodMeta meta = new ResourceMethodMeta(
                 resource,
                 method,

@@ -36,9 +36,8 @@ import java.lang.annotation.Target;
  * JAX-RS module and {@code vertique-codegen-jaxrs} recognize the annotation by its fully qualified
  * name and do not depend on this module.
  *
- * <p>An application interface compiled against an older version of this annotation, one that
- * declared {@code access} and {@code rolesAllowed} instead of {@code policy}, fails startup closed,
- * naming the application and its interface, until it is recompiled against this version.
+ * <p>An application interface whose class file records no {@code policy} (a stale class file) fails
+ * startup closed, naming the application and its interface, until it is recompiled.
  */
 @Documented
 @Retention(RetentionPolicy.RUNTIME)
