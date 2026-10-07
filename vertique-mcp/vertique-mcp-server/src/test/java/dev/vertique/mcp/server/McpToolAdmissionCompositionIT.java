@@ -6,6 +6,7 @@ package dev.vertique.mcp.server;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import dagger.BindsInstance;
 import dagger.Component;
@@ -29,6 +30,7 @@ import dev.vertique.ratelimit.TokenBucketRateLimit;
 import dev.vertique.rest.core.config.HttpConfig;
 import dev.vertique.rest.core.router.RouterMount;
 import dev.vertique.rest.core.security.RouteAuthHandler;
+import dev.vertique.rest.core.security.SecurityRuntime;
 import dev.vertique.rest.security.IdentityResolutionMiddleware;
 import dev.vertique.rest.security.RequestOriginConfig;
 import dev.vertique.security.authz.Authorizer;
@@ -164,7 +166,9 @@ class McpToolAdmissionCompositionIT {
 
         @Provides
         static McpRequestDispatcher dispatcher(McpToolAdmission admission) {
-            return mock(McpRequestDispatcher.class);
+            McpRequestDispatcher dispatcher = mock(McpRequestDispatcher.class);
+            when(dispatcher.securityRuntime()).thenReturn(mock(SecurityRuntime.class));
+            return dispatcher;
         }
 
         @Provides
