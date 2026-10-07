@@ -61,7 +61,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          # Full history: the diff coverage gate diffs against origin/main.
+          # Full history: the diff coverage gate diffs against the PR's base branch.
           fetch-depth: 0
 
       # The build JDK is the newest supported one. The bytecode target stays
