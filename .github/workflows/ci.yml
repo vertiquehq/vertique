@@ -63,10 +63,13 @@ jobs:
           # Full history: the diff coverage gate diffs against origin/main.
           fetch-depth: 0
 
+      # The build JDK is the newest supported one. The bytecode target stays
+      # Java 21: the compiler plugin passes --release ${java.version}, and the
+      # "Verify bytecode target" step below fails the build if that ever drifts.
       - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
         with:
           distribution: temurin
-          java-version: "21"
+          java-version: "25"
 
       # GitHub's hashFiles('**/pom.xml') is a live expression that would
       # match target/ files the archetype and invoker integration tests
@@ -161,6 +164,31 @@ jobs:
       # so unrelated modules remain parallel.
       - name: Build and test
         run: ./mvnw -ntp -Djacoco.module.report.skip=true clean verify
+
+      # Building on a newer JDK must not raise the class-file version of what
+      # we ship. Class-file major 65 is Java 21; anything else means a module
+      # compiled without --release 21.
+      - name: Verify bytecode target
+        run: |
+          python3 -I - <<'EOF'
+          import glob, sys
+          bad, seen = [], 0
+          for path in glob.glob('**/target/classes/**/*.class', recursive=True):
+              if '/target/it/' in path or '/META-INF/versions/' in path:
+                  continue
+              with open(path, 'rb') as f:
+                  head = f.read(8)
+              seen += 1
+              major = int.from_bytes(head[6:8], 'big')
+              if major != 65:
+                  bad.append((path, major))
+          if seen == 0:
+              sys.exit('no compiled classes found; the check would be vacuous')
+          for path, major in bad[:20]:
+              print(f'class-file major {major} (expected 65): {path}')
+          print(f'{seen} classes checked, {len(bad)} off target')
+          sys.exit(1 if bad else 0)
+          EOF
 
       # Surefire and Failsafe redirect test output to these reports. Retain
       # them after failures and cancellation so CI-only flakes and hangs remain
