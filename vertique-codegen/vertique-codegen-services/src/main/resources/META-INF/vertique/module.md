@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Codegen Service Contract Module
 
-> **Status:** Beta
+> **Status:** Stable
 > **Package:** `dev.vertique.codegen.services.processor`
 > **Artifact:** `vertique-codegen-services`
 > **Depends on:** `vertique-codegen-core` (compile), `vertique-security-core` (compile)
@@ -119,6 +119,20 @@ misconfigured the class does not exist and the build fails at the component with
 error, instead of deploying with an empty service registry.
 
 ---
+
+
+## Key Classes
+
+### `ServiceContractProcessor`
+
+The annotation processor entry point (`META-INF/services/javax.annotation.processing.Processor`).
+It runs two independent scans each round: an impl-rooted scan that emits
+`{Contract}_ContractContributor` types for DIRECT and HANDLER implementations, and an
+annotation-rooted scan that emits `{Contract}_ServiceClientProxy` for every source-root
+`@ServiceContract` interface. It always returns `false` from `process` so peer processors see
+unmodified elements. Per-type opt-out is `@NoAutoWire`; the optional
+`-Avertique.codegen.package` override moves only `GeneratedServicesModule`.
+
 
 ## Generated Artifacts
 
@@ -435,6 +449,16 @@ Client-proxy emission shares the same `emitted` guard as contributor emission: `
   generated and manual registration paths produce identical addresses.
 
 ---
+
+
+## Module Dagger Bindings
+
+None at runtime. `vertique-codegen-services` is a compile-time annotation processor. It generates a
+`GeneratedServicesModule` for the consuming module's component, contributing
+`ServiceContractContributor` and typed client-proxy bindings that `DispatchModule` consumes. List the
+generated module in the application `@Component` modules list; do not edit or subclass the generated
+types.
+
 
 ## Dependencies
 

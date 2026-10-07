@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Codegen JAX-RS Pipeline Module
 
-> **Status:** Beta
+> **Status:** Stable
 > **Package:** `dev.vertique.codegen.jaxrs`
 > **Artifact:** `vertique-codegen-jaxrs`
 > **Depends on:** `vertique-codegen-core` (compile), `vertique-rest-core` (compile — for `RequestPreconditions` and `dev.vertique.rest.core.application.RestApplication`), `vertique-security-core` (compile — for `dev.vertique.security.authz.Authorized`), `vertique-input-processing` (compile), `jakarta.annotation-api` (compile), `swagger-annotations-jakarta` (compile), `vertique-rest-jaxrs` (test — the generated sources reference its runtime SPI types, so the consuming application declares it), `jakarta.ws.rs-api` (test)
