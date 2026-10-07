@@ -43,7 +43,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
-/** T005 proof that a disconnect suppresses a late admission completion. */
+/** Proof that a disconnect suppresses a late admission completion. */
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
 class McpToolAdmissionDisconnectIT {
 

@@ -43,7 +43,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
-/** T004 proof of disabled, backend-failure, and defensive admission classification. */
+/** Proof of disabled, backend-failure, and defensive admission classification. */
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
 class McpToolAdmissionFailurePathsTest {
 
@@ -168,7 +168,7 @@ class McpToolAdmissionFailurePathsTest {
             private final McpToolDescriptor descriptor = new McpToolDescriptor(
                     TOOL_NAME,
                     null,
-                    "T004 failure-path fixture.",
+                    "Failure-path fixture.",
                     new McpToolAnnotations(true, false, true, false),
                     "{\"type\":\"object\",\"additionalProperties\":false}",
                     null,
@@ -182,7 +182,7 @@ class McpToolAdmissionFailurePathsTest {
             @Override
             public dev.vertique.mcp.tool.McpPreparedToolCall prepare(
                     Map<String, Object> arguments, dev.vertique.mcp.tool.McpCancellationSignal cancellation) {
-                throw new AssertionError("T004 only exercises admission");
+                throw new AssertionError("Only exercises admission");
             }
         };
     }

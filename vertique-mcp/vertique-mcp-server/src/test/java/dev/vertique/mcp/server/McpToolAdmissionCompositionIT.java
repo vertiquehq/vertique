@@ -48,7 +48,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
-/** T002 TP-002 — production Dagger composition validates MCP rate-limit references before mounts. */
+/** Production Dagger composition validates MCP rate-limit references before mounts. */
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
 class McpToolAdmissionCompositionIT {
 
@@ -207,7 +207,7 @@ class McpToolAdmissionCompositionIT {
         private static final McpToolDescriptor DESCRIPTOR = new McpToolDescriptor(
                 TOOL_NAME,
                 null,
-                "T002 composition fixture tool.",
+                "Composition fixture tool.",
                 new McpToolAnnotations(true, false, true, false),
                 "{\"type\":\"object\",\"additionalProperties\":false}",
                 null,

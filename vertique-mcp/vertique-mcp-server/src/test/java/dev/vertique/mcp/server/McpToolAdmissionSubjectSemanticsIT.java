@@ -52,7 +52,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
-/** T003 proof of MCP admission's shared subject and anonymous key-derivation contract. */
+/** Proof of MCP admission's shared subject and anonymous key-derivation contract. */
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
 class McpToolAdmissionSubjectSemanticsIT {
 
@@ -334,7 +334,7 @@ class McpToolAdmissionSubjectSemanticsIT {
                 .thenReturn(new McpToolDescriptor(
                         TOOL_NAME,
                         null,
-                        "T003 subject semantics fixture.",
+                        "Subject semantics fixture.",
                         new McpToolAnnotations(true, false, true, false),
                         "{\"type\":\"object\",\"additionalProperties\":false}",
                         null,

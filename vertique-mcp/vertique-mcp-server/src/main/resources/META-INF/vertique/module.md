@@ -1334,13 +1334,13 @@ authenticated and subject-keyed. Strict `CLIENT` remains fail-closed when an
 authenticated identity has no client facet; missing origin for an origin-aware
 mode is `SUBJECT_UNRESOLVABLE`, not a raw-header or socket fallback.
 
-### Migration from the never-shipped MCP-001 fields
+### Earlier draft rate-limit field names
 
-MCP-001 never shipped its rate-limit fields, so there is no runtime migration or
-compatibility shim. These names are documented only for readers of earlier
-drafts:
+Earlier drafts of the MCP server named rate-limit fields that were never released, so
+there is no runtime migration or compatibility shim. These names are documented only for
+readers of those drafts:
 
-| Never-shipped MCP-001 field | Nearest shipped equivalent |
+| Earlier draft field | Nearest shipped equivalent |
 | --- | --- |
 | `maxRequestsPerWindow` | `rateLimit.policies.<name>.algorithm.capacity` |
 | `windowMs` | `rateLimit.policies.<name>.algorithm.refill.*` (greedy or interval refill) |

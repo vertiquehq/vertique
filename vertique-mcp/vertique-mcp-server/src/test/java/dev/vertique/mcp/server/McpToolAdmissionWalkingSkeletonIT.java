@@ -67,7 +67,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
 /**
- * T001 admission-stage proof: a real mounted MCP dispatcher over a real LOCAL Bucket4j policy.
+ * Admission-stage proof: a real mounted MCP dispatcher over a real LOCAL Bucket4j policy.
  *
  * <p>The configured-policy proof deliberately uses {@link RateLimitSubject#NONE}; the rate-limit
  * subject resolver is therefore not part of this walking skeleton's behavior. The no-policy control
@@ -153,7 +153,7 @@ class McpToolAdmissionWalkingSkeletonIT {
         // Given: no default policy and no RateLimiters binding or backend of any kind.
         McpToolAdmissionWalkingSkeletonFixture fixture = startFixture(McpRateLimitConfig.defaults(), Optional.empty());
 
-        // When: the registered tool is called through the ordinary MCP-001 path.
+        // When: the registered tool is called through the ordinary dispatch path.
         HttpResponse<Buffer> response = callTool(fixture.port(), 1);
 
         // Then: no-policy composition and the existing tool result remain available without a backend.
@@ -402,7 +402,7 @@ class McpToolAdmissionWalkingSkeletonIT {
         private static final McpToolDescriptor DESCRIPTOR = new McpToolDescriptor(
                 TOOL_NAME,
                 null,
-                "T001 rate-limit admission fixture tool.",
+                "Rate-limit admission fixture tool.",
                 new McpToolAnnotations(true, false, true, false),
                 "{\"type\":\"object\",\"additionalProperties\":false}",
                 null,

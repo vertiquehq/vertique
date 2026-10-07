@@ -44,7 +44,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
-/** T004 wire proof for backend-failure and defensive admission classifications. */
+/** Wire proof for backend-failure and defensive admission classifications. */
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
 class McpToolAdmissionFailureResponsesIT {
 

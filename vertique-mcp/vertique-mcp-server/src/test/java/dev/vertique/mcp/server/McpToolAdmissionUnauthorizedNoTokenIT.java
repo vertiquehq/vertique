@@ -35,7 +35,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
-/** T004 proof that registry and authorization rejection precede rate-limit admission. */
+/** Proof that registry and authorization rejection precede rate-limit admission. */
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
 class McpToolAdmissionUnauthorizedNoTokenIT {
 

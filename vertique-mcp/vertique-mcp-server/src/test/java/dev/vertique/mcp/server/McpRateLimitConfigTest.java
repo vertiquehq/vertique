@@ -18,7 +18,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
-/** T002 TP-001 — config-only policy precedence for generated MCP tool names. */
+/** Config-only policy precedence for generated MCP tool names. */
 class McpRateLimitConfigTest {
 
     private static final String DEFAULT_POLICY = "mcp-default";
