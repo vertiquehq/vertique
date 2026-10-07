@@ -24,8 +24,9 @@ import java.util.Set;
  *
  * <p>The closure deliberately does <strong>not</strong> descend through {@code properties},
  * {@code items}, {@code anyOf}, or {@code oneOf}. Those are not unconditional conjunctions: a
- * nullable overridden property, for example, legally produces {@code anyOf: [{"type":"null"},
- * {"type":"string"}]}, which is an alternation and not a contradiction. Each such subschema instead
+ * nullable overridden property whose override is shared, for example, legally produces {@code anyOf:
+ * [{"type":"null"}, {"$ref": ...}]} onto a string definition, which is an alternation and not a
+ * contradiction. Each such subschema instead
  * starts its own conjunctive location when the outer walk reaches it, so every <em>subschema</em> in
  * the document is checked exactly once as the head of its own location.
  *
