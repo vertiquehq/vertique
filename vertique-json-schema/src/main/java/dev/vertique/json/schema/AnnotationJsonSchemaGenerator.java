@@ -52,6 +52,8 @@ import java.util.Set;
 import java.util.function.Consumer;
 
 /**
+ * INTERNAL framework seam — callable by sibling Vertique modules only; not an application contract and outside the application maturity promise.
+ *
  * Generates deterministic, canonical Draft 2020-12 JSON Schema documents from a resolved Java
  * {@link Type} using Victools, configured with the Jackson, Jakarta Validation, and Swagger 2
  * annotation modules.
