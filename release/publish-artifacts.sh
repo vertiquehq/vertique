@@ -154,6 +154,14 @@ deploy_unit() {
   IFS=$'\x1f' read -r groupId artifactId version packaging pomFile jarFile sourcesFile javadocFile \
     < <(sed -n "${n}p" "$TSV_FILE")
 
+  # The primary file of every non-POM unit is a JAR. deploy-file derives the
+  # stored file's extension from this type, and only Maven core knows
+  # maven-plugin as a jar: an archetype deployed as "maven-archetype" would be
+  # stored as *.maven-archetype and never resolve. The unit's own POM, deployed
+  # as given, still declares the real packaging.
+  local deployType="jar"
+  [[ "$packaging" == "pom" ]] && deployType="pom"
+
   # Argument array — never an eval'd command string.
   local args=(
     "$DEPLOY_PLUGIN"
@@ -168,7 +176,7 @@ deploy_unit() {
     "-DgroupId=$groupId"
     "-DartifactId=$artifactId"
     "-Dversion=$version"
-    "-Dpackaging=$packaging"
+    "-Dpackaging=$deployType"
   )
 
   if [[ "$packaging" == "pom" ]]; then

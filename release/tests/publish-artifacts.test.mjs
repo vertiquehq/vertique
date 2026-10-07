@@ -20,7 +20,7 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -76,18 +76,18 @@ function policyFor(artifactIds) {
     skip: [],
     expectedPublishableGavCount: artifactIds.length,
     expectedPublishableGavs: artifactIds.map((id) => `${GROUP_ID}:${id}`),
-    payloadPolicy: { pom: ['pom'] },
+    payloadPolicy: { pom: ['pom'], 'maven-archetype': ['pom', 'jar'] },
   };
 }
 
 /** A resolvable POM-packaged payload unit. */
-const unitPom = (artifactId) => `<?xml version="1.0" encoding="UTF-8"?>
+const unitPom = (artifactId, packaging = 'pom') => `<?xml version="1.0" encoding="UTF-8"?>
 <project xmlns="http://maven.apache.org/POM/4.0.0">
     <modelVersion>4.0.0</modelVersion>
     <groupId>${GROUP_ID}</groupId>
     <artifactId>${artifactId}</artifactId>
     <version>${VERSION}</version>
-    <packaging>pom</packaging>
+    <packaging>${packaging}</packaging>
 </project>
 `;
 
@@ -95,7 +95,9 @@ const unitPom = (artifactId) => `<?xml version="1.0" encoding="UTF-8"?>
  * A throwaway repository holding the real staging tooling and the fixture reactor.
  * With extra artifact ids, each is also installed as a plain POM payload unit.
  */
-function fixtureRepository(root, extraArtifactIds = []) {
+function fixtureRepository(root, extraArtifactIds = [], archetypeArtifactIds = []) {
+  // Archetype units are POM-described, JAR-bearing units of packaging maven-archetype.
+  extraArtifactIds = [...extraArtifactIds, ...archetypeArtifactIds];
   const repo = path.join(root, 'repo');
   for (const file of [
     'mvnw',
@@ -109,7 +111,10 @@ function fixtureRepository(root, extraArtifactIds = []) {
   writeFileSync(path.join(repo, 'pom.xml'), reactorPom(extraArtifactIds));
   for (const artifactId of extraArtifactIds) {
     mkdirSync(path.join(repo, artifactId));
-    writeFileSync(path.join(repo, artifactId, 'pom.xml'), unitPom(artifactId));
+    writeFileSync(
+      path.join(repo, artifactId, 'pom.xml'),
+      unitPom(artifactId, archetypeArtifactIds.includes(artifactId) ? 'maven-archetype' : 'pom')
+    );
   }
   writeFileSync(
     path.join(repo, 'release', 'publication-policy.json'),
@@ -128,7 +133,12 @@ function fixtureRepository(root, extraArtifactIds = []) {
   for (const artifactId of extraArtifactIds) {
     const extraDir = path.join(root, 'm2', ...GROUP_ID.split('.'), artifactId, VERSION);
     mkdirSync(extraDir, { recursive: true });
-    writeFileSync(path.join(extraDir, `${artifactId}-${VERSION}.pom`), unitPom(artifactId));
+    const isArchetype = archetypeArtifactIds.includes(artifactId);
+    writeFileSync(
+      path.join(extraDir, `${artifactId}-${VERSION}.pom`),
+      unitPom(artifactId, isArchetype ? 'maven-archetype' : 'pom')
+    );
+    if (isArchetype) writeFileSync(path.join(extraDir, `${artifactId}-${VERSION}.jar`), 'PK-fixture-archetype');
   }
 
   return { repo, localRepository: path.join(root, 'm2') };
@@ -331,6 +341,41 @@ describe('PublishArtifactsTest', () => {
     for (const artifactId of ['fixture-unit-a', 'fixture-unit-b', 'fixture-unit-c', 'fixture-unit-d']) {
       assert.ok(!staged(artifactId), `${artifactId} was deployed after the first unit failed`);
     }
+  });
+
+  // deploy-file stores the primary file under an extension derived from the
+  // deploy type. An archetype unit's type must be jar: left as maven-archetype it
+  // would be stored as *.maven-archetype, which no consumer resolves.
+  it('storesAnArchetypeUnitsPrimaryFileAsAJar', (t) => {
+    const root = mkdtempSync(path.join(tmpdir(), 'vertique-publish-artifacts-'));
+    t.after(() => rmSync(root, { recursive: true, force: true }));
+    const { repo, localRepository } = fixtureRepository(root, [], ['fixture-archetype']);
+    const stage = path.join(root, 'staged');
+    mkdirSync(stage);
+
+    const run = spawnSync(
+      'bash',
+      [
+        path.join(repo, 'release', 'publish-artifacts.sh'),
+        '--local-repository', localRepository,
+        '--repository-id', 'fixture-stage',
+        '--target-url', `file://${stage}`,
+        '--mode', 'snapshot',
+        '--version', VERSION,
+        '--settings', 'settings.xml',
+      ],
+      { encoding: 'utf8', timeout: MAVEN_TIMEOUT_MS }
+    );
+    assert.equal(run.status, 0, `publish-artifacts failed:\n${run.stdout}\n${run.stderr}`);
+    assert.match(run.stdout, /deployed 2\/2 GAVs/);
+
+    const stagedDir = path.join(stage, ...GROUP_ID.split('.'), 'fixture-archetype', VERSION);
+    const names = readdirSync(stagedDir).filter((name) => !/\.(md5|sha1)$/.test(name));
+    assert.ok(names.some((name) => /^fixture-archetype-.*\.jar$/.test(name)), `no .jar staged: ${JSON.stringify(names)}`);
+    assert.ok(!names.some((name) => name.endsWith('.maven-archetype')), `an .maven-archetype file was staged: ${JSON.stringify(names)}`);
+    // The unit's own POM, deployed as given, still declares the real packaging.
+    const pom = names.find((name) => name.endsWith('.pom'));
+    assert.match(readFileSync(path.join(stagedDir, pom), 'utf8'), /<packaging>maven-archetype<\/packaging>/);
   });
 
   it('refusesNonPositiveParallelism', (t) => {
