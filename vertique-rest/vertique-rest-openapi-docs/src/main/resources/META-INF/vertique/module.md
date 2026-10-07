@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # REST OpenAPI Docs Module
 
-> **Status:** Alpha
+> **Status:** Beta
 > **Package:** `dev.vertique.rest.openapi.docs` (`ApiDocs` and `OpenApiDocsModule`; its subpackages
 > are internal to the module)
 > **Artifact:** `vertique-rest-openapi-docs`
