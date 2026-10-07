@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Codegen MCP Tool Processor
 
-> **Status:** Alpha
+> **Status:** Stable
 > **Package:** `dev.vertique.codegen.mcp`
 > **Artifact:** `vertique-codegen-mcp`
 > **Depends on:** `vertique-codegen-core`, `vertique-mcp-core`, `vertique-core`, `vertique-security-core`, `vertique-input-processing`, `com.palantir.javapoet:javapoet`
@@ -266,6 +266,19 @@ It does not, by design. `argument0`, `argument1`, ... is a positional Java ident
 relationship to the declared `@McpToolParam` name; the protocol name lives only in
 `@JsonProperty(...)` and in the emitted `McpToolParameterMetadata` list. Do not pattern-match on
 component names in generated-source tooling.
+
+---
+
+## Key Classes
+
+### `McpToolProcessor`
+
+The annotation processor entry point (`META-INF/services/javax.annotation.processing.Processor`).
+It discovers `@McpTool` methods, validates declarations at compile time, emits one package-private
+invoker per accepted tool, and emits `GeneratedMcpToolsModule` to multibind invokers and
+descriptors. It always returns `false` from `process` so peer processors see unmodified elements.
+Per-type opt-out is `@NoAutoWire`; `-Avertique.codegen.package` pins the generated module package
+(and therefore the single package every tool declaring type must live in).
 
 ---
 

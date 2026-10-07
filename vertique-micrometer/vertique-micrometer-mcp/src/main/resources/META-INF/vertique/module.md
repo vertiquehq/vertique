@@ -5,10 +5,10 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Micrometer MCP Module
 
-> **Status:** Alpha
+> **Status:** Stable
 > **Package:** `dev.vertique.mcp.micrometer`
 > **Artifact:** `vertique-micrometer-mcp`
-> **Depends on:** io.micrometer:micrometer-core (library), vertique-micrometer-core, vertique-mcp-core
+> **Depends on:** `vertique-micrometer-core`, `vertique-mcp-core`, `vertique-core`, `vertique-config-core`
 
 Observe-only Micrometer metrics adapter for the MCP server. When installed alongside
 `McpServerModule` and `MicrometerModule`, it records a per-request timer
@@ -90,15 +90,11 @@ to enabled — it records against whatever registry is injected.
 
 ### McpMicrometerModule
 
-Dagger `@Module`. The only public type in this artifact. Contributes one binding:
-
-- `McpServerMetricsObserver` into `Set<McpRequestLifecycleObserver>` — records the four meters
-  described above.
-
-Also declares `@BindsOptionalOf MetricsConfig metricsConfig()` so the observer can inject
-`Optional<MetricsConfig>` without requiring `MicrometerModule` to be installed. When
-`MicrometerModule` is also installed its `@Provides MetricsConfig` binding satisfies the optional;
-when absent the optional is empty and the observer defaults to enabled.
+Dagger `@Module`. The only public type in this artifact. Install it explicitly to contribute one
+`McpRequestLifecycleObserver` into the MCP lifecycle multibinding set and to declare
+`@BindsOptionalOf MetricsConfig` so the `metrics.enabled` gate works with or without
+`MicrometerModule`. When that optional is empty, recording defaults to enabled. The application must
+still provide a `MeterRegistry` binding (normally from `MicrometerModule`).
 
 ```java
 @Component(modules = {
@@ -110,14 +106,6 @@ when absent the optional is empty and the observer defaults to enabled.
 })
 interface AppComponent { /* ... */ }
 ```
-
-### McpServerMetricsObserver
-
-`@Singleton`, package-private `McpRequestLifecycleObserver`. Registers the active-requests gauge at
-construction time. On `open`, increments the gauge and returns a session; the session's
-`onCompleted` decrements the gauge and records the remaining instruments from the completion event.
-When `MetricsConfig.enabled()` is `false` (i.e., `metrics.enabled=false` in config), `open` returns a
-no-op session and no meter is ever touched.
 
 ---
 
@@ -169,6 +157,18 @@ Recorded only for `TOOLS_CALL` requests, once per completed request.
 
 Prometheus rendering: `vertique_mcp_tool_calls_seconds_count` /
 `vertique_mcp_tool_calls_seconds_sum` / `vertique_mcp_tool_calls_seconds_bucket`.
+
+---
+
+## Module Dagger Bindings
+
+| Type | Qualifier | Description |
+|---|---|---|
+| `MetricsConfig` | optional (`@BindsOptionalOf`) | Declared for the `metrics.enabled` gate |
+| `McpRequestLifecycleObserver` | `@IntoSet` | Per-request MCP meters contribution |
+
+Owns no module-local configuration keys. Observe-only: swallowed observer failures never alter MCP
+request processing.
 
 ---
 
