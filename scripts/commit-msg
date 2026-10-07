@@ -3,13 +3,19 @@
 # SPDX-License-Identifier: EUPL-1.2
 
 #
-# commit-msg hook — enforces Conventional Commits format.
+# commit-msg hook — enforces Conventional Commits format and keeps private
+# governance references out of commit messages.
 # Install via: ./scripts/install-hooks.sh
 #
 # Format: <type>(<scope>): <description>
 #   type:  feat|fix|refactor|test|docs|build|chore|style|perf|ci|revert
 #   scope: optional, e.g. rest, core, audit
 #   description: 1–100 characters, not ending with a period
+#
+# A message must also not name the private governance repository, cite a
+# decision record by number, or carry a specification, task, phase, repair or
+# decision identifier. scripts/verify-public-references.sh owns the patterns
+# and the full statement of the rule.
 
 MSG=$(cat "$1")
 
@@ -39,6 +45,36 @@ if ! echo "$MSG" | grep -qE "$PATTERN"; then
     echo "    $MSG"
     echo ""
     exit 1
+fi
+
+# Public-reference check. The installed hook is a copy living in the hooks
+# directory, so the verifier is looked up next to this file first (running the
+# hook from scripts/) and then at the top of the working tree.
+VERIFIER="$(dirname "$0")/verify-public-references.sh"
+if [ ! -f "$VERIFIER" ]; then
+    TOP="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+    VERIFIER="$TOP/scripts/verify-public-references.sh"
+fi
+
+if [ -f "$VERIFIER" ]; then
+    # Git's own template comments (branch name, changed paths) are not part of
+    # the message that gets recorded, so they must not be scanned.
+    CLEANED="$(mktemp "${TMPDIR:-/tmp}/commit-msg-XXXXXXXX")"
+    trap 'rm -f "$CLEANED"' EXIT
+    git stripspace --strip-comments < "$1" > "$CLEANED"
+
+    if ! FINDINGS="$(bash "$VERIFIER" --text "$CLEANED" --label "commit message" 2>&1)"; then
+        echo ""
+        echo "  ✗ Commit message refers to private governance material."
+        echo ""
+        echo "  Commit messages are public. State what changed in plain words; do not name the"
+        echo "  private governance repository, cite a decision record by number, or use a"
+        echo "  specification, task, phase, repair or decision identifier."
+        echo ""
+        echo "$FINDINGS" | sed 's/^/    /'
+        echo ""
+        exit 1
+    fi
 fi
 
 exit 0

@@ -12,7 +12,7 @@ implementation topology, maintainer-only invariants, source-navigation notes, te
 traceability out of this packaged document. A complex module may keep those details in a
 maintainer document held in the private governance repository, outside this repository entirely.
 
-Module docs are **evergreen reference**: they describe the current state of the module. Do not embed change history, "cycle N additions", or roadmap entries inline.
+Module docs are **evergreen reference**: they describe the current state of the module. Do not embed change history, "cycle N additions", or roadmap entries inline. For the same reason a module doc never cites the private records behind a behavior (decision records, specification, task or repair identifiers, the governance repository); it states the behavior itself.
 
 - **History** belongs in git (`git log -- <canonical module.md path>`).
 - **Decisions and planned work** stay in the private governance repository. Public module documents describe only shipped behavior.
@@ -86,6 +86,14 @@ Which other framework modules this module depends on, and why each dependency ex
 - **Packaged links** may use same-document anchors, external URIs, or module-local files inside the owning `META-INF/vertique/` tree. Use textual Maven coordinates for cross-module references, fully qualified names for source references, and backticked repository-relative paths for repository-only material. Never use `../` traversal.
 - **Index changes** are limited to artifact inventory or canonical-path changes; ordinary content edits do not change `docs/modules.md`.
 - **No `## Version History`**, **no `## Planned Additions`**, and **no `## Related ADRs`** — internal decisions and plans are kept private.
+- **No private references inline, in any section.** Do not cite a decision record by number, a
+  specification, task, phase, repair or decision identifier, or the private governance repository
+  (its name, a URL or issue reference into it, or a path into its record trees). State the shipped
+  behavior in plain words instead; a reader of this repository cannot open those records, so the
+  citation only misleads. `scripts/verify-module-docs.sh` checks every canonical module document for
+  decision-record and identifier citations, and `scripts/verify-public-references.sh` applies the
+  whole rule to everything a change adds, including commit messages and pull request text. There is
+  no suppression mechanism.
 - **No implementation tour** — package inventories, internal collaborators, generated metadata
   mechanics, and test topology belong in the maintainer document. Mention an implementation type only
   when an application must call, implement, configure, or deliberately replace it.

@@ -48,6 +48,34 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: bash scripts/detect-docs-only-scope.sh --event-name "$EVENT_NAME" --base-sha "$BASE_SHA" --head-sha "$HEAD_SHA" >> "$GITHUB_OUTPUT"
 
+  # Keeps private governance references out of the public repository: what a
+  # pull request adds, its commit messages, and its title and description. It
+  # has no dependency on `classify`, so documentation-only pull requests, which
+  # skip the build, are checked too. Pull request text reaches the repository-
+  # owned script through environment variables only, never through the shell.
+  public-references:
+    name: Public reference guard
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Verify pull request references
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: bash scripts/verify-pull-request-references.sh
+      - name: Verify reference guards and module documentation
+        run: |
+          bash scripts/test-verify-public-references.sh
+          bash scripts/test-verify-module-docs.sh
+          bash scripts/verify-module-docs.sh
+
   build:
     name: Build and Test
     needs: classify
