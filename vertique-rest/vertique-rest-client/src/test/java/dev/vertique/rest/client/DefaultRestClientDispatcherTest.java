@@ -16,6 +16,7 @@ import dev.vertique.rest.core.convert.ParamConverterRegistry;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
+import io.vertx.core.http.HttpClient;
 import io.vertx.ext.web.client.WebClient;
 import io.vertx.ext.web.client.WebClientOptions;
 import jakarta.ws.rs.Consumes;
@@ -123,23 +124,27 @@ class DefaultRestClientDispatcherTest {
      */
     private static WebClient webClient;
 
+    /** Awaitable close handle; {@link WebClient#close()} discards the underlying future. */
+    private static HttpClient transport;
+
     @BeforeAll
     static void startVertx() {
         vertx = Vertx.vertx();
         // Redirects off: parity with the raw client; WebClient forwards Authorization across 3xx.
-        webClient = WebClient.create(vertx, new WebClientOptions().setFollowRedirects(false));
+        transport = vertx.createHttpClient();
+        webClient = WebClient.wrap(transport, new WebClientOptions().setFollowRedirects(false));
     }
 
     /**
-     * Closes the shared {@link WebClient} before awaiting {@link Vertx#close()}.
-     *
-     * <p>{@link WebClient#close()} is {@code void}, so it cannot be joined; the owned {@link Vertx}
-     * close that follows is awaited so the event loops finish shutting down before the JVM moves on.
+     * Awaits the raw {@link HttpClient} close before awaiting {@link Vertx#close()}, so the client
+     * finishes shutting down on a still-alive event loop.
      */
     @AfterAll
     static void stopVertx() throws Exception {
-        if (webClient != null) {
-            webClient.close();
+        if (transport != null) {
+            transport.close().toCompletionStage().toCompletableFuture().get(AWAIT_SECONDS, TimeUnit.SECONDS);
+            transport = null;
+            webClient = null;
         }
         if (vertx != null) {
             vertx.close().toCompletionStage().toCompletableFuture().get(AWAIT_SECONDS, TimeUnit.SECONDS);

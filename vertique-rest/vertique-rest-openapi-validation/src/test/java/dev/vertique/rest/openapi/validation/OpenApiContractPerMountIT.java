@@ -20,6 +20,7 @@ import io.vertx.core.Future;
 import io.vertx.core.Handler;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
+import io.vertx.core.http.HttpClient;
 import io.vertx.core.http.HttpServer;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.Router;
@@ -245,7 +246,7 @@ public class OpenApiContractPerMountIT {
         Vertx loadingVertx = Vertx.vertx();
         Vertx serverVertx = Vertx.vertx();
         HttpServer localServer = null;
-        WebClient localClient = null;
+        HttpClient transport = null;
         try {
             Context loadingContext = loadingVertx.getOrCreateContext();
             OpenApiContractValidationStrategy strategy = constructOnContext(loadingContext, loadingVertx);
@@ -280,7 +281,8 @@ public class OpenApiContractPerMountIT {
             localServer =
                     await(serverVertx.createHttpServer().requestHandler(router).listen(0, "127.0.0.1"));
             int localPort = localServer.actualPort();
-            localClient = WebClient.create(serverVertx);
+            transport = serverVertx.createHttpClient();
+            WebClient localClient = WebClient.wrap(transport);
 
             String body = new JsonObject().put("name", "gizmo").encode();
 
@@ -311,7 +313,7 @@ public class OpenApiContractPerMountIT {
                     postGateContext.get(),
                     "the gate must not continue on the context that loaded the contract");
         } finally {
-            closeOwned(localClient, localServer, serverVertx, loadingVertx);
+            closeOwned(transport, localServer, serverVertx, loadingVertx);
         }
     }
 
@@ -345,19 +347,16 @@ public class OpenApiContractPerMountIT {
     }
 
     /**
-     * Closes the server and client first (joined), then both owned {@link Vertx} instances, mirroring
-     * this codebase's owned-{@code Vertx} teardown join pattern (never close {@code Vertx} while a
-     * request could still be in flight). Null-guards every field so a test that failed before assigning
-     * one still tears down cleanly.
+     * Joins the raw {@link HttpClient} and server closes, then both owned {@link Vertx} instances.
+     * {@link WebClient#close()} discards its future, so teardown awaits the wrapped transport instead.
+     * Null-guards every field so a test that failed before assigning one still tears down cleanly.
      */
-    private static void closeOwned(WebClient client, HttpServer server, Vertx serverVertx, Vertx loadingVertx)
+    private static void closeOwned(HttpClient transport, HttpServer server, Vertx serverVertx, Vertx loadingVertx)
             throws Exception {
         Future<Void> serverClose = server != null ? server.close() : Future.succeededFuture();
+        Future<Void> clientClose = transport != null ? transport.close() : Future.succeededFuture();
         CompletableFuture<Void> done = new CompletableFuture<>();
-        serverClose.onComplete(ar -> {
-            if (client != null) {
-                client.close();
-            }
+        Future.join(serverClose, clientClose).onComplete(ar -> {
             Future<Void> serverVertxClose = serverVertx.close();
             Future<Void> loadingVertxClose = loadingVertx.close();
             Future.join(serverVertxClose, loadingVertxClose).onComplete(joined -> done.complete(null));
