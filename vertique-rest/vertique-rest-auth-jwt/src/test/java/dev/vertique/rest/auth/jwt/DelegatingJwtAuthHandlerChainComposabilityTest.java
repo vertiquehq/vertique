@@ -28,7 +28,7 @@ import org.mockito.Mockito;
  * {@link ChainAuthHandler} OR chain.
  *
  * <p>The registrar composes alternative {@code @SecurityRequirement}s with
- * {@link ChainAuthHandler#any()} and {@code chain.add(handler)}. Vert.x 5.1.2's
+ * {@link ChainAuthHandler#any()} and {@code chain.add(handler)}. Vert.x's
  * {@code ChainAuthHandlerImpl.add} casts each member to
  * {@code io.vertx.ext.web.handler.impl.AuthenticationHandlerInternal}. The handler the framework
  * registers — {@code DelegatingJwtAuthHandler} (obtained here via {@link

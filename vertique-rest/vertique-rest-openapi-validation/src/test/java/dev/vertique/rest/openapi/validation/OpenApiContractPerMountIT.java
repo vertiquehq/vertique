@@ -229,7 +229,7 @@ public class OpenApiContractPerMountIT {
      * gate composes on is bound to that context. A separate {@code serverVertx} then serves the actual
      * HTTP request, so the request's own context is necessarily different from {@code loadingContext}.
      *
-     * <p>Per Vert.x 5.1.8's {@code FutureBase.emitResult}, a future bound to a non-null context
+     * <p>Per Vert.x's {@code FutureBase.emitResult}, a future bound to a non-null context
      * dispatches every attached listener via that context's {@code execute(...)} whenever the attaching
      * thread is not already running on it — regardless of whether the future was already complete at
      * attachment time. The untouched strategy's gate directly {@code .compose(...)}s onto the cached

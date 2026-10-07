@@ -32,7 +32,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
  * STEP-1 characterization IT — NOT a behavioral test of the feature. It empirically determines, in
- * Vert.x 5.1.2, the reliable mechanism for a failure handler to recover the matched route's identity
+ * Vert.x, the reliable mechanism for a failure handler to recover the matched route's identity
  * for the four error origins the fix cares about:
  *
  * <ol>

@@ -465,14 +465,14 @@ public final class RestRequestCompletionEmitter implements Middleware {
 
     /**
      * Normalizes a wire-failure cause to a low-cardinality classification string safe for use as
-     * a metric label: the cause's class simple name, except the Vert.x 5.1.2 connection-close
+     * a metric label: the cause's class simple name, except the Vert.x connection-close
      * signal — {@link io.vertx.core.impl.NoStackTraceThrowable} with the exact message
      * {@code "Connection closed"} — which normalizes to {@code "ConnectionClosed"}. Matched by
      * class name AND message (not message alone), so an unrelated exception carrying the same
      * text is not misclassified. An HTTP/2 {@code StreamResetException} is intentionally NOT
      * normalized and keeps its own simple class name.
      *
-     * <p><strong>Version-coupled:</strong> the exact class name and message are Vert.x 5.1.2
+     * <p><strong>Version-coupled:</strong> the exact class name and message are Vert.x
      * internals ({@code io.vertx.core.impl.NoStackTraceThrowable} is not part of the public API);
      * revisit this predicate on a Vert.x upgrade.
      *

@@ -47,7 +47,7 @@ import org.mockito.ArgumentCaptor;
  * declared constraint value a concrete detail names in its {@code args} and message at those same
  * composed, referenced, tuple and escaped positions.
  *
- * <p>Each path asserted is the instance location vertx-json-schema 5.1.8 reports for the failing
+ * <p>Each path asserted is the instance location vertx-json-schema reports for the failing
  * keyword, spelled exactly as the validator spells it.
  */
 class ValidationDetailPathTest {

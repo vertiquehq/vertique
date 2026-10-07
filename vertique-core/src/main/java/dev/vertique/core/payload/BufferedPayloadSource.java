@@ -20,7 +20,7 @@ import java.util.OptionalLong;
  * {@link #copyPrefix(int)} both operate directly on the {@code byte[]} and do not trigger buffer
  * construction (FR-AUD-405).
  *
- * <p>Note: {@link Buffer#buffer(byte[])} in Vert.x 5.0.8 allocates a new heap {@code ByteBuf}
+ * <p>Note: {@link Buffer#buffer(byte[])} in Vert.x allocates a new heap {@code ByteBuf}
  * and <em>copies</em> the array — the "wraps without copying" claim in older javadoc is incorrect
  * for this version. The lazy pattern ensures this copy is only paid when the {@link Buffer} view
  * is actually requested.
@@ -82,7 +82,7 @@ final class BufferedPayloadSource implements PayloadSource {
      * Returns a Vert.x {@link Buffer} view of the underlying byte array, creating it lazily on
      * first call (double-checked locking).
      *
-     * <p>{@link Buffer#buffer(byte[])} copies the array in Vert.x 5.0.8, so the view is built
+     * <p>{@link Buffer#buffer(byte[])} copies the array in Vert.x, so the view is built
      * at most once and reused on subsequent calls.
      *
      * @return an {@link Optional} containing the buffer view; never empty
@@ -118,7 +118,7 @@ final class BufferedPayloadSource implements PayloadSource {
             synchronized (this) {
                 b = lazyBufferView;
                 if (b == null) {
-                    // Buffer.buffer(byte[]) copies the array in Vert.x 5.0.8; this is intentional
+                    // Buffer.buffer(byte[]) copies the array in Vert.x; this is intentional
                     // and is exactly why we defer the allocation to first use.
                     b = Buffer.buffer(bytes);
                     lazyBufferView = b;

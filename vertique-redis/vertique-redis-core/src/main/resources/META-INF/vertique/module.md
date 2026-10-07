@@ -52,7 +52,7 @@ Ordinary request-path Redis commands remain on the asynchronous Vert.x Redis cli
 client is an internal maintenance implementation detail and is not used by the ordinary cache
 request path, readiness futures, or business futures.
 
-The registry maps profile settings to the Vert.x Redis Client 5.1.8 options as follows:
+The registry maps profile settings to the Vert.x Redis Client options as follows:
 
 | Profile setting | Vert.x option |
 |---|---|
@@ -64,7 +64,7 @@ The registry maps profile settings to the Vert.x Redis Client 5.1.8 options as f
 | `username` | `RedisOptions.setUser(...)` when present |
 | `passwordSecret` | `RedisOptions.setPassword(...)` when present |
 
-Single Redis commands are asynchronous: Vert.x Redis Client 5.1.8 `send(Request)` returns a
+Single Redis commands are asynchronous: Vert.x Redis Client `send(Request)` returns a
 `Future<Response>`. This module does not claim per-request cancellation.
 
 Redis clients close in validated profile order. For each profile, the registry closes any created
@@ -171,5 +171,5 @@ Profiles live under `redis.connections` as a keyed object (key = profile name). 
 | Artifact | Purpose |
 |---|---|
 | `vertique-core` | Framework foundation and typed configuration boundary |
-| Vert.x Redis Client 5.1.8 | Asynchronous Redis client API |
+| Vert.x Redis Client | Asynchronous Redis client API |
 | Lettuce 7.7.0.RELEASE | Internal topology-maintenance client |
