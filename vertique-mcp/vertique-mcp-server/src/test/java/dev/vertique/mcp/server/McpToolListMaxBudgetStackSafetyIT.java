@@ -57,7 +57,7 @@ import org.junit.jupiter.api.Timeout;
  * {@link McpAccessMode#PERMIT_ALL} resolves through {@code SecurityPolicyEnforcer#decide} with an
  * already-completed {@code Future.succeededFuture(...)} — the exact "decisions that complete
  * immediately" shape that turned the old per-candidate recursion into genuine native call-stack
- * recursion up to 2,000 frames deep, with no trampolining guarantee from Vert.x 5.1.6.
+ * recursion up to 2,000 frames deep, with no trampolining guarantee from Vert.x.
  *
  * <p>This fixture configures {@code mcp.tools.pageSize = 500} (the maximum) and registers 2,001
  * {@code DENY_ALL} tools — one more than the budget — so the scan must examine the full 2,000-budget

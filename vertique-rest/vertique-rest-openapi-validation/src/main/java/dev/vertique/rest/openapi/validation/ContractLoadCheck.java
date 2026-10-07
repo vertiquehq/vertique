@@ -15,6 +15,7 @@ import io.vertx.core.file.FileSystemException;
 import jakarta.annotation.Nullable;
 import jakarta.inject.Inject;
 import java.net.MalformedURLException;
+import java.net.URISyntaxException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -37,7 +38,7 @@ import java.util.SortedSet;
  * <p>A failure is a {@link RestConfigurationException} without a cause. Its message names the
  * application and the setting its contract location came from — or, for a mount serving no declared
  * application, the mount path — and the reason class, derived from the load failure's type: an
- * unsupported extension, an unreadable file, a {@code servers} URL that is not a valid absolute URL, or
+ * unsupported extension, an unreadable file, a {@code servers} URL that is not a valid URL, or
  * a document that is not a valid OpenAPI contract. It never carries the location, the file's content,
  * or any parser text; the strategy logs the underlying cause at {@code WARN} for the operator.
  *
@@ -59,9 +60,8 @@ final class ContractLoadCheck implements MountPublicationHook {
     /** The reason for a contract file that cannot be read. */
     private static final String UNREADABLE_REASON = "the file cannot be read";
 
-    /** The reason for a contract whose {@code servers} URL is not a valid absolute URL. */
-    private static final String SERVERS_REASON =
-            "a servers url is not a valid absolute URL; use an absolute URL or omit servers";
+    /** The reason for a contract whose {@code servers} URL is not a valid URL. */
+    private static final String SERVERS_REASON = "a servers url is not a valid URL; use a valid URL or omit servers";
 
     /** The reason for any other contract vertx-openapi rejects. */
     private static final String INVALID_REASON = "the file is not a valid OpenAPI contract";
@@ -216,7 +216,7 @@ final class ContractLoadCheck implements MountPublicationHook {
         boolean unreadable = false;
         int depth = 0;
         for (Throwable t = failure; t != null && depth < MAX_CAUSE_DEPTH; t = t.getCause(), depth++) {
-            if (t instanceof MalformedURLException) {
+            if (t instanceof URISyntaxException || t instanceof MalformedURLException) {
                 return SERVERS_REASON;
             }
             if (t instanceof FileSystemException) {

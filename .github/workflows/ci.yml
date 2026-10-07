@@ -63,10 +63,13 @@ jobs:
           # Full history: the diff coverage gate diffs against origin/main.
           fetch-depth: 0
 
+      # The build JDK is the newest supported one. The bytecode target stays
+      # Java 21: the compiler plugin passes --release ${java.version}, and the
+      # "Verify bytecode target" step below fails the build if that ever drifts.
       - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
         with:
           distribution: temurin
-          java-version: "21"
+          java-version: "25"
 
       # GitHub's hashFiles('**/pom.xml') is a live expression that would
       # match target/ files the archetype and invoker integration tests
@@ -162,6 +165,15 @@ jobs:
       - name: Build and test
         run: ./mvnw -ntp -Djacoco.module.report.skip=true clean verify
 
+      # Building on a newer JDK must not raise the class-file version of what
+      # we ship. The harness runs first so a broken checker cannot pass by
+      # accident; the checker then scans the build output and fails unless
+      # every class is at the Java 21 major version, or when it finds no classes.
+      - name: Verify bytecode target
+        run: |
+          bash scripts/test-verify-bytecode-target.sh
+          bash scripts/verify-bytecode-target.sh
+
       # Surefire and Failsafe redirect test output to these reports. Retain
       # them after failures and cancellation so CI-only flakes and hangs remain
       # diagnosable after the run.
@@ -203,6 +215,27 @@ jobs:
           name: jacoco-aggregate
           path: vertique-coverage-report/target/site/jacoco-aggregate/jacoco.xml
           if-no-files-found: error
+
+      # Pushes to main only: a pull request never produces a publishable
+      # payload. Staged from the build and tests that just ran, so nothing is
+      # rebuilt for publication: the script reuses this job's compiled output,
+      # adds the release profile's sources and Javadoc JARs in a private copy of
+      # the Maven repository, and records the commit, version and a digest per
+      # file in a manifest that publication checks before it deploys anything.
+      # Keep this the last step that can change the payload: it is uploaded
+      # straight away, and no later step of this run uploads artifacts.
+      - name: Stage the SNAPSHOT payload
+        if: github.event_name == 'push'
+        run: bash release/stage-snapshot-payload.sh --out ${{ runner.temp }}/snapshot-payload --sha ${{ github.sha }}
+
+      - name: Upload the SNAPSHOT payload
+        if: github.event_name == 'push'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: snapshot-payload
+          path: ${{ runner.temp }}/snapshot-payload
+          if-no-files-found: error
+          retention-days: 7
 
       # Always, not just on success: whatever this run downloaded should
       # survive even if a later step (or the build itself) fails, since a

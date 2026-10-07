@@ -46,7 +46,7 @@ through `findAnnotation`, while the reflective overloads also resolve type-level
 
 The executable foundation is application-scoped. Create one `Resilience` for the application graph
 and construct timeout/retry/breaker/bulkhead components or pipelines from that owner. Timeout and
-retry execution is backed by isolated Vert.x 5.1.6 CircuitBreaker engines; a timeout is a
+retry execution is backed by isolated Vert.x CircuitBreaker engines; a timeout is a
 per-supplier-attempt fence and does not cancel the supplier's underlying future. Retry delays are
 outside the per-attempt timeout, and public retry callbacks receive zero-based ordinals. A pipeline
 is fixed-order typed composition state and must contain at least one concern.

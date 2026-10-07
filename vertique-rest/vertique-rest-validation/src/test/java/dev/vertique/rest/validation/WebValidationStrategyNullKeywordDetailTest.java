@@ -28,7 +28,7 @@ import org.junit.jupiter.api.Test;
  * may echo the submitted request value (the class Javadoc's own example, {@code "500 is greater than
  * 100"}).
  *
- * <p>Every real error this project has observed from vertx-json-schema 5.1.6's Basic output format
+ * <p>Every real error this project has observed from vertx-json-schema's Basic output format
  * carries a non-empty keyword location, so this null-keyword-but-non-structural shape is not
  * straightforwardly reproducible end-to-end through a real schema and a real HTTP round trip within this
  * proof's time budget. Per the round's own instruction, this is a synthetic unit proof instead: a

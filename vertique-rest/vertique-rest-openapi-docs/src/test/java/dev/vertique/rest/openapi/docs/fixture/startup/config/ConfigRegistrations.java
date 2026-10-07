@@ -85,4 +85,21 @@ public final class ConfigRegistrations {
         return GeneratedRestApplicationRegistration.of(
                 declaringType, OpsApi.NAME, OpsApi.PATH, List.of(OpsResource.class), false, "", active);
     }
+
+    /**
+     * Registers application {@code audit} at {@code /api/audit} listing {@link OpsResource}, active,
+     * declared by {@link AuditProtectedWithoutSchemeApi}.
+     *
+     * @return the registration
+     */
+    public static GeneratedRestApplicationRegistration auditApi() {
+        return GeneratedRestApplicationRegistration.of(
+                AuditProtectedWithoutSchemeApi.class,
+                AuditProtectedWithoutSchemeApi.NAME,
+                AuditProtectedWithoutSchemeApi.PATH,
+                List.of(OpsResource.class),
+                false,
+                "",
+                true);
+    }
 }

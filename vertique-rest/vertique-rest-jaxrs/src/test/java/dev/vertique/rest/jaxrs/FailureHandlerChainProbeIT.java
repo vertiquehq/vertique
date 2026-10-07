@@ -26,7 +26,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
  * STEP-1 probe: confirms a per-route {@code failureHandler} that does NOT end the response and calls
- * {@code ctx.next()} CHAINS to the router-level catch-all failure handler in Vert.x 5.1.2 — the
+ * {@code ctx.next()} CHAINS to the router-level catch-all failure handler in Vert.x — the
  * pattern the production fix relies on (per-route handler stashes the route's decision, then defers
  * to the existing catch-all {@code handleFailure} to serialize the error body).
  *

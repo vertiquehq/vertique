@@ -7,7 +7,9 @@ import dev.vertique.examples.hello.HelloConfig;
 import dev.vertique.ratelimit.aop.RateLimited;
 import dev.vertique.ratelimit.spi.RateLimitSubject;
 import dev.vertique.security.SecurityContext;
+import dev.vertique.security.authz.AccessPolicy;
 import dev.vertique.security.authz.Authorized;
+import dev.vertique.security.authz.RequiresPolicy;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.media.Content;
@@ -24,13 +26,14 @@ import jakarta.ws.rs.*;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import java.net.URI;
+import java.util.concurrent.atomic.AtomicInteger;
 import lombok.extern.slf4j.Slf4j;
 
 /**
  * Hello service resource demonstrating JAX-RS endpoints with authentication and authorization.
  *
- * <p>Class-level {@code @PermitAll} makes all endpoints public by default. Individual
- * methods can override this with {@code @RolesAllowed}, {@code @Authorized}, or {@code @DenyAll}.
+ * <p>Public endpoints declare {@code @PermitAll} on the method. A class-level permit would mix
+ * with a method {@code @RequiresPolicy}, which registration rejects.
  *
  * <p>Secured endpoints demonstrate:
  * <ul>
@@ -44,8 +47,10 @@ import lombok.extern.slf4j.Slf4j;
 @Slf4j
 @Path("/hello")
 @Tag(name = "Hello", description = "Hello service endpoints")
-@PermitAll // Class-level default: all endpoints are open unless overridden
 public class HelloResource {
+
+    /** Incremented only when a typed deny handler runs. Denial must leave this at zero. */
+    public static final AtomicInteger policyDeniedWork = new AtomicInteger();
 
     private final HelloConfig config;
 
@@ -57,6 +62,7 @@ public class HelloResource {
     @GET
     @Path("/{name}")
     @Produces(MediaType.APPLICATION_JSON)
+    @PermitAll
     @Operation(
             operationId = "greet",
             summary = "Greet a person by name",
@@ -75,6 +81,7 @@ public class HelloResource {
 
     @GET
     @Produces(MediaType.APPLICATION_JSON)
+    @PermitAll
     @Operation(operationId = "greetDefault", summary = "Default greeting", description = "Returns a greeting for World")
     @ApiResponse(
             responseCode = "200",
@@ -88,6 +95,7 @@ public class HelloResource {
     @POST
     @Consumes(MediaType.APPLICATION_JSON)
     @Produces(MediaType.APPLICATION_JSON)
+    @PermitAll
     @Operation(
             operationId = "createGreeting",
             summary = "Create a custom greeting",
@@ -104,6 +112,7 @@ public class HelloResource {
 
     @DELETE
     @Path("/{name}")
+    @PermitAll
     @Operation(
             operationId = "deleteGreeting",
             summary = "Delete a greeting",
@@ -119,6 +128,7 @@ public class HelloResource {
     @Path("/greetings")
     @Consumes(MediaType.APPLICATION_JSON)
     @Produces(MediaType.APPLICATION_JSON)
+    @PermitAll
     @Operation(
             operationId = "createGreetingResource",
             summary = "Create a greeting resource",
@@ -139,6 +149,7 @@ public class HelloResource {
     @GET
     @Path("/greetings/{name}")
     @Produces(MediaType.APPLICATION_JSON)
+    @PermitAll
     @Operation(
             operationId = "getGreetingResource",
             summary = "Get a greeting resource",
@@ -172,6 +183,7 @@ public class HelloResource {
     @GET
     @Path("/limited/{name}")
     @Produces(MediaType.APPLICATION_JSON)
+    @PermitAll
     @RateLimited(policy = "hello-limited", subject = RateLimitSubject.NONE)
     @Operation(
             operationId = "greetLimited",
@@ -392,6 +404,101 @@ public class HelloResource {
     @ApiResponse(responseCode = "403", description = "Access denied")
     public Future<GreetingResponse> deniedEndpoint() {
         return Future.succeededFuture(new GreetingResponse("You should never see this"));
+    }
+
+    // --- Typed policies. Method-scoped only: a type policy would mix with the inline secured methods. ---
+
+    /** Anonymous permit. Carries no HTTP security scheme. */
+    @PermitAll
+    public interface PublicPolicy extends AccessPolicy {}
+
+    /** Blanket denial. The handler below must not run. */
+    @DenyAll
+    public interface DeniedPolicy extends AccessPolicy {}
+
+    /** Authentication only. */
+    @Authorized
+    public interface AuthenticatedPolicy extends AccessPolicy {}
+
+    /** Role {@code admin}. */
+    @RolesAllowed("admin")
+    public interface AdminPolicy extends AccessPolicy {}
+
+    /** Scope {@code write}. */
+    @Authorized(scopes = "write")
+    public interface WriteScopePolicy extends AccessPolicy {}
+
+    @GET
+    @Path("/policy/public")
+    @Produces(MediaType.APPLICATION_JSON)
+    @RequiresPolicy(PublicPolicy.class)
+    @Operation(
+            operationId = "policyPublic",
+            summary = "Typed permit policy",
+            description = "Anonymous access selected by a method policy")
+    @ApiResponse(responseCode = "200", description = "Permitted")
+    public Future<GreetingResponse> policyPublic() {
+        return Future.succeededFuture(new GreetingResponse("policy-public"));
+    }
+
+    @GET
+    @Path("/policy/denied")
+    @Produces(MediaType.APPLICATION_JSON)
+    @RequiresPolicy(DeniedPolicy.class)
+    @Operation(
+            operationId = "policyDenied",
+            summary = "Typed deny policy",
+            description = "Always denied before the handler",
+            security = @SecurityRequirement(name = "bearerAuth"))
+    @ApiResponse(responseCode = "403", description = "Access denied")
+    public Future<GreetingResponse> policyDenied() {
+        policyDeniedWork.incrementAndGet();
+        return Future.succeededFuture(new GreetingResponse("policy-denied"));
+    }
+
+    @GET
+    @Path("/policy/authenticated")
+    @Produces(MediaType.APPLICATION_JSON)
+    @RequiresPolicy(AuthenticatedPolicy.class)
+    @Operation(
+            operationId = "policyAuthenticated",
+            summary = "Typed authentication policy",
+            description = "Requires a subject and no role",
+            security = @SecurityRequirement(name = "bearerAuth"))
+    @ApiResponse(responseCode = "200", description = "Authenticated")
+    @ApiResponse(responseCode = "401", description = "Not authenticated")
+    public Future<GreetingResponse> policyAuthenticated() {
+        return Future.succeededFuture(new GreetingResponse("policy-authenticated"));
+    }
+
+    @GET
+    @Path("/policy/admin")
+    @Produces(MediaType.APPLICATION_JSON)
+    @RequiresPolicy(AdminPolicy.class)
+    @Operation(
+            operationId = "policyAdmin",
+            summary = "Typed admin policy",
+            description = "Requires the admin role",
+            security = @SecurityRequirement(name = "bearerAuth"))
+    @ApiResponse(responseCode = "200", description = "Admin")
+    @ApiResponse(responseCode = "403", description = "Insufficient role")
+    public Future<GreetingResponse> policyAdmin() {
+        return Future.succeededFuture(new GreetingResponse("policy-admin"));
+    }
+
+    @GET
+    @Path("/policy/write")
+    @Produces(MediaType.APPLICATION_JSON)
+    @RequiresPolicy(WriteScopePolicy.class)
+    @Operation(
+            operationId = "policyWrite",
+            summary = "Typed write-scope policy",
+            description = "Requires the write scope",
+            security = @SecurityRequirement(name = "bearerAuth"))
+    @ApiResponse(responseCode = "200", description = "Writer")
+    @ApiResponse(responseCode = "403", description = "Insufficient scope")
+    public Future<GreetingResponse> policyWrite() {
+        return Future.succeededFuture(new GreetingResponse("policy-write"));
     }
 
     // --- DTOs ---

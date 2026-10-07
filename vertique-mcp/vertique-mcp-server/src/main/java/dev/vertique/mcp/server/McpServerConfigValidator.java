@@ -7,18 +7,54 @@ import dev.vertique.core.exception.ConfigurationException;
 import dev.vertique.mcp.tool.McpAccessMode;
 import dev.vertique.mcp.tool.McpToolDescriptor;
 import dev.vertique.rest.core.config.HttpConfig;
+import dev.vertique.rest.core.security.RequiresActionResolver;
 import dev.vertique.rest.core.security.RouteAuthHandler;
+import dev.vertique.security.authz.ActionRef;
+import dev.vertique.security.authz.ActionRegistry;
 import dev.vertique.security.authz.Authorizer;
 import io.vertx.core.Handler;
 import io.vertx.ext.web.RoutingContext;
+import jakarta.annotation.security.DenyAll;
+import jakarta.annotation.security.PermitAll;
+import java.lang.annotation.Annotation;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.stream.Stream;
 
-/** Validates the startup-safe, bounded configuration accepted by the MCP server. */
+/**
+ * Validates the startup-safe, bounded configuration accepted by the MCP server.
+ *
+ * <p>Tool checks inspect each tool's <em>effective</em> requirements: a tool that declares a typed
+ * access policy is judged by that policy's retained requirements, never by the closed {@link
+ * McpAccessMode#DENY_ALL} placeholder its descriptor publishes for older runtimes.
+ */
 final class McpServerConfigValidator {
     private static final int MAX_INSTRUCTIONS_CHARS = 16_384;
+    private static final RequiresActionResolver ACTION_RESOLVER = new RequiresActionResolver();
+
+    private final Optional<ActionRegistry> actionRegistry;
+
+    /**
+     * Creates a validator that has no {@link ActionRegistry}, so an enabled mount cannot start with a
+     * typed action tool. Equivalent to {@code new McpServerConfigValidator(Optional.empty())}.
+     */
+    McpServerConfigValidator() {
+        this(Optional.empty());
+    }
+
+    /**
+     * Creates a validator that checks typed action tools against the installed action catalogue.
+     *
+     * @param actionRegistry the optional {@link ActionRegistry}; empty when the authorization engine
+     *     is not installed
+     */
+    McpServerConfigValidator(Optional<ActionRegistry> actionRegistry) {
+        this.actionRegistry = Objects.requireNonNull(actionRegistry, "actionRegistry");
+    }
 
     /** Validates {@code config}, throwing one stable key-named configuration error on failure. */
     void validate(McpServerConfig config) {
@@ -63,11 +99,18 @@ final class McpServerConfigValidator {
 
     /**
      * Validates the selected optional-authentication capability exactly as {@link #validate(McpServerConfig,
-     * Set)} does, and additionally enforces the registry-visibility rule (§4.5): when the server is
+     * Set)} does, and additionally enforces the registry-visibility rule: when the server is
      * enabled with no configured scheme, every tool the registry publishes must be reachable without
-     * authentication — {@link McpAccessMode#PERMIT_ALL} (public) or {@link McpAccessMode#DENY_ALL}
-     * (unreachable) — because an anonymous-only endpoint can never satisfy a
-     * {@link McpAccessMode#RESTRICTED} tool's requirement. This is the registry-visibility seam the
+     * authentication, because an anonymous-only endpoint can never satisfy a restricted tool's
+     * requirement.
+     *
+     * <p>The check is made on each tool's <em>effective</em> requirements. A tool with a typed access
+     * policy is reachable without authentication only when its retained requirements are public or
+     * deny-all; role, scope, authenticated and action requirements all need an authenticated caller. A
+     * tool without a typed policy is judged by its descriptor: {@link McpAccessMode#PERMIT_ALL} and
+     * {@link McpAccessMode#DENY_ALL} pass and {@link McpAccessMode#RESTRICTED} is rejected. The
+     * {@link McpAccessMode#DENY_ALL} placeholder a typed tool publishes is never mistaken for its
+     * policy. This is the registry-visibility seam the
      * composition validator exposes to callers that own a built {@link McpToolRegistry}; it discharges
      * the deferred registry-visibility check recorded as {@code shouldAllowUnconfiguredPublicOrDenyAllRegistryAndRejectUnconfiguredRestrictedRegistry}.
      *
@@ -87,9 +130,21 @@ final class McpServerConfigValidator {
             return;
         }
         boolean everyToolReachableWithoutAuthentication = registry.descriptorsByName().values().stream()
-                .map(McpToolDescriptor::access)
-                .allMatch(access -> access.mode() != McpAccessMode.RESTRICTED);
+                .noneMatch(descriptor -> requiresAuthentication(registry, descriptor));
         require(everyToolReachableWithoutAuthentication, "mcp.authenticationScheme");
+    }
+
+    /**
+     * Reports whether a tool's effective policy needs an authenticated caller: a typed policy unless
+     * its requirements are public or deny-all, otherwise a {@link McpAccessMode#RESTRICTED} descriptor.
+     */
+    private static boolean requiresAuthentication(McpToolRegistry registry, McpToolDescriptor descriptor) {
+        Optional<List<Annotation>> typed = registry.policyAnnotations(descriptor.name());
+        if (typed.isPresent()) {
+            return typed.get().stream()
+                    .noneMatch(annotation -> annotation instanceof PermitAll || annotation instanceof DenyAll);
+        }
+        return descriptor.access().mode() == McpAccessMode.RESTRICTED;
     }
 
     /**
@@ -141,8 +196,7 @@ final class McpServerConfigValidator {
 
     /**
      * Validates exactly as {@link #validate(McpServerConfig, Set, McpToolRegistry)} does, and
-     * additionally refuses to start an enabled MCP mount when the registry publishes an {@code
-     * @RequiresAction} tool but no core {@link Authorizer} is installed.
+     * additionally refuses to start an enabled MCP mount whose action tools cannot be enforced.
      *
      * <p>Without this gate, {@code SecurityPolicyEnforcer.decide} NPEs on its {@code null} authorizer
      * field at the first request for such a tool, and the surrounding fail-closed catch converts that
@@ -152,14 +206,22 @@ final class McpServerConfigValidator {
      * equivalent, naming every affected tool in one bounded configuration error rather than deferring
      * to a per-request NPE.
      *
+     * <p>A tool without a typed policy that publishes a descriptor action needs {@code authorizer}. A
+     * tool whose typed policy requires an action needs {@code authorizer}, an {@link ActionRegistry}
+     * (supplied to this validator's constructor) and an action the registry {@linkplain
+     * ActionRegistry#contains contains}; each shortfall has its own message. The requirement is read
+     * from the policy the registry retained, never from the {@link McpAccessMode#DENY_ALL} placeholder
+     * descriptor, and a typed tool without an action, such as a role-only policy, needs neither.
+     *
      * @param config the bounded configuration to validate
      * @param routeAuthHandlers every registered optional-authentication-capable handler
      * @param registry the immutable tool registry built before this validation runs
      * @param authorizer the optional core {@link Authorizer}; empty when the authorization engine is
      *     not installed
      * @throws ConfigurationException if any check {@link #validate(McpServerConfig, Set,
-     *     McpToolRegistry)} performs fails, or if the mount is enabled, {@code authorizer} is absent,
-     *     and the registry publishes at least one {@code @RequiresAction} tool
+     *     McpToolRegistry)} performs fails, or if the mount is enabled and an action tool cannot be
+     *     enforced: no {@code authorizer} for a legacy or typed action tool, no {@link ActionRegistry}
+     *     for a typed action tool, or a typed action the {@link ActionRegistry} does not contain
      */
     void validate(
             McpServerConfig config,
@@ -167,13 +229,15 @@ final class McpServerConfigValidator {
             McpToolRegistry registry,
             Optional<Authorizer> authorizer) {
         validate(config, routeAuthHandlers, registry);
-        requireAuthorizerForActionTools(config, registry, authorizer);
+        requireActionEngineForActionTools(config, registry, authorizer);
     }
 
     /**
      * Validates exactly as {@link #validate(McpServerConfig, Set, McpToolRegistry, HttpConfig)} does,
      * and additionally applies the no-authorizer-for-{@code @RequiresAction} gate documented on
-     * {@link #validate(McpServerConfig, Set, McpToolRegistry, Optional)}. This is the
+     * {@link #validate(McpServerConfig, Set, McpToolRegistry, Optional)}, which covers both legacy
+     * descriptor actions and typed-policy actions, including the {@link ActionRegistry} {@linkplain
+     * ActionRegistry#contains contains} check. This is the
      * overload {@link McpRouterMount}'s constructor — the one real production mount point — calls, so
      * every check this validator performs runs there together.
      *
@@ -194,31 +258,77 @@ final class McpServerConfigValidator {
             HttpConfig httpConfig,
             Optional<Authorizer> authorizer) {
         validate(config, routeAuthHandlers, registry, httpConfig);
-        requireAuthorizerForActionTools(config, registry, authorizer);
+        requireActionEngineForActionTools(config, registry, authorizer);
     }
 
     /**
      * Rejects, with one bounded configuration error naming every affected tool, an enabled mount whose
-     * registry publishes at least one {@code @RequiresAction} tool while {@code authorizer} is absent.
-     * A disabled mount is inert and never checked; an installed authorizer always passes
-     * regardless of the registry's contents.
+     * action tools cannot be enforced. A disabled mount is inert and never checked.
+     *
+     * <p>A legacy {@code @RequiresAction} tool needs an installed {@link Authorizer}. A tool whose
+     * typed policy requires an action needs the {@link Authorizer}, an {@link ActionRegistry}, and an
+     * action that the registry contains; each shortfall has its own message. A typed tool with no
+     * action, such as a role-only policy, needs neither.
      */
-    private static void requireAuthorizerForActionTools(
+    private void requireActionEngineForActionTools(
             McpServerConfig config, McpToolRegistry registry, Optional<Authorizer> authorizer) {
         require(authorizer != null, "mcp.tools");
-        if (!config.enabled() || authorizer.isPresent()) {
+        if (!config.enabled()) {
             return;
         }
-        List<String> unenforceableActionTools = registry.descriptorsByName().values().stream()
-                .filter(descriptor -> descriptor.access().action() != null)
-                .map(McpToolDescriptor::name)
-                .sorted()
-                .toList();
+        if (authorizer.isEmpty()) {
+            List<String> unenforceableActionTools = registry.descriptorsByName().values().stream()
+                    .filter(descriptor ->
+                            registry.policyAnnotations(descriptor.name()).isEmpty())
+                    .filter(descriptor -> descriptor.access().action() != null)
+                    .map(McpToolDescriptor::name)
+                    .sorted()
+                    .toList();
+            require(
+                    unenforceableActionTools.isEmpty(),
+                    "mcp.tools " + unenforceableActionTools + " declare @RequiresAction but no Authorizer is "
+                            + "installed to enforce it. Include SecurityAuthzModule in your Dagger component to "
+                            + "enable the authorization engine.");
+        }
+        Map<String, ActionRef> typedActions = typedActionsByTool(registry);
+        if (typedActions.isEmpty()) {
+            return;
+        }
         require(
-                unenforceableActionTools.isEmpty(),
-                "mcp.tools " + unenforceableActionTools + " declare @RequiresAction but no Authorizer is "
-                        + "installed to enforce it. Include SecurityAuthzModule in your Dagger component to "
-                        + "enable the authorization engine.");
+                authorizer.isPresent(),
+                "mcp.tools " + typedActions.keySet() + " declare a typed access policy that requires an action "
+                        + "but no Authorizer is installed to enforce it. Include SecurityAuthzModule in your Dagger "
+                        + "component to enable the authorization engine.");
+        require(
+                actionRegistry.isPresent(),
+                "mcp.tools " + typedActions.keySet() + " declare a typed access policy that requires an action "
+                        + "but no ActionRegistry is installed to validate it. Include SecurityAuthzModule in your "
+                        + "Dagger component to enable the authorization engine.");
+        ActionRegistry installed = actionRegistry.get();
+        for (Map.Entry<String, ActionRef> entry : typedActions.entrySet()) {
+            require(
+                    installed.contains(entry.getValue()),
+                    "mcp.tools '" + entry.getKey() + "' declares a typed access policy that requires action '"
+                            + entry.getValue().value() + "' which is not registered in the ActionRegistry");
+        }
+    }
+
+    /**
+     * Collects, in tool-name order, the action each typed policy tool requires; role-only tools have
+     * none. The registry already parsed every action of every retained requirement list when it
+     * resolved the policy, so resolving the action here cannot fail.
+     */
+    private static Map<String, ActionRef> typedActionsByTool(McpToolRegistry registry) {
+        Map<String, ActionRef> actions = new TreeMap<>();
+        for (String name : registry.descriptorsByName().keySet()) {
+            Optional<List<Annotation>> typed = registry.policyAnnotations(name);
+            if (typed.isEmpty()) {
+                continue;
+            }
+            Optional<ActionRef> action = ACTION_RESOLVER.resolve(typed.get(), List.of());
+            action.ifPresent(resolved -> actions.put(name, resolved));
+        }
+        return actions;
     }
 
     /**

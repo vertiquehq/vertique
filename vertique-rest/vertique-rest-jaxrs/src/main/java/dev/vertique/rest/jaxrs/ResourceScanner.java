@@ -18,6 +18,7 @@ import dev.vertique.rest.core.security.SecurityPolicyViolationException;
 import dev.vertique.rest.jaxrs.runtime.GeneratedJaxRsDescriptorRegistry;
 import dev.vertique.rest.jaxrs.runtime.GeneratedJaxRsDescriptorSupport;
 import dev.vertique.rest.jaxrs.runtime.GeneratedJaxRsResourceDescriptor;
+import dev.vertique.security.authz.AccessPolicyResolver;
 import io.swagger.v3.oas.annotations.Operation;
 import io.vertx.ext.web.FileUpload;
 import jakarta.annotation.Nullable;
@@ -157,12 +158,27 @@ class ResourceScanner {
             // (including superclass ones) use the resource class so interfaces it implements
             // contribute annotations (vertiquehq/vertique-dev#636).
             Class<?> annotationView = annotationViewType(method, clazz);
-            List<Annotation> methodAnnotations = AnnotationResolver.resolveMethodAnnotations(method, annotationView);
-
-            String httpMethod = resolveHttpMethod(methodAnnotations);
-            if (httpMethod == null) {
+            List<Annotation> legacyMethodAnnotations =
+                    AnnotationResolver.resolveMethodAnnotations(method, annotationView);
+            // Only operations that are routes carry a policy; a helper method is skipped before
+            // its declarations are collected, as on the inline-only path.
+            if (resolveHttpMethod(legacyMethodAnnotations) == null) {
                 continue;
             }
+            List<Annotation> methodAnnotations;
+            try {
+                methodAnnotations =
+                        AccessPolicyResolver.collectMethodAnnotations(clazz, method, legacyMethodAnnotations);
+            } catch (IllegalArgumentException | TypeNotPresentException ex) {
+                SecurityPolicyViolationException failure =
+                        new SecurityPolicyViolationException(List.of(new SecurityPolicyViolation(
+                                resolveOperationId(legacyMethodAnnotations, method),
+                                SecurityPolicyViolation.ViolationType.CONFLICTING_SECURITY_ANNOTATIONS,
+                                "Invalid or conflicting security policy at RequiresPolicy: " + ex.getMessage())));
+                failure.initCause(ex);
+                throw failure;
+            }
+            String httpMethod = resolveHttpMethod(methodAnnotations);
 
             String operationId = resolveOperationId(methodAnnotations, method);
             String path = resolvePath(classAnnotations, methodAnnotations);

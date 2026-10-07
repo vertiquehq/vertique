@@ -11,6 +11,7 @@ import dev.vertique.rest.core.security.AuthEnforcementCapability;
 import dev.vertique.rest.core.security.SecuritySchemeHandler;
 import dev.vertique.rest.jaxrs.synthetic.SyntheticOperationInstaller;
 import dev.vertique.rest.openapi.docs.ApiDocs;
+import dev.vertique.rest.openapi.docs.config.DocumentPolicies;
 import dev.vertique.rest.openapi.docs.config.EnabledDocuments;
 import dev.vertique.rest.openapi.docs.diagnostics.DocumentWarnings;
 import dev.vertique.rest.openapi.docs.document.PublishedDocument;
@@ -43,9 +44,11 @@ import java.util.function.Function;
  * exact document URL, or for a document the store does not hold yet, continues to the later mounts.
  * Its {@code Cache-Control} value is never weaker than the configured default.
  *
- * <p>A protected document is served through the resource security chain its application's
- * {@link ApiDocs} declares, installed by {@link ProtectedDocumentRoutes}. Its route never continues
- * to a later mount: a denial, a non-exact path, and a document the store does not hold yet each end
+ * <p>A protected document, one whose {@link ApiDocs#policy() policy} is anything but exactly one
+ * public requirement, is served through the resource security chain its application's {@link
+ * ApiDocs} declares, installed by {@link ProtectedDocumentRoutes}; a policy that denies every reader
+ * is installed the same way and refuses every request. Its route never continues to a later mount:
+ * a denial, a non-exact path, and a document the store does not hold yet each end
  * on the route's own failure handler. Its responses carry {@code Cache-Control: private, no-store}
  * and a {@code Vary} on the header that carries the scheme's credential, when there is one.
  *
@@ -67,7 +70,7 @@ public final class DocsRouterMount implements RouterMount {
 
     private static final String JSON_FILE = "openapi.json";
     private static final String YAML_FILE = "openapi.yaml";
-    private static final String ROLELESS_PROTECTED = "roleless-protected";
+    private static final String AUTHENTICATED_ONLY = "authenticated-only";
 
     private final String prefix;
     private final EnabledDocuments documents;
@@ -170,12 +173,13 @@ public final class DocsRouterMount implements RouterMount {
      * so a direct call cannot bypass it, runs the protected-document checks, installs the protected
      * document routes through the synthetic operation installer, when there is a protected document,
      * and then registers the public document routes. Once every route is in place, a protected
-     * document that lists no role logs one notice per component.
+     * document whose policy only requires authentication logs one notice per component.
      *
      * @param router the router to register the routes on
      * @throws RestConfigurationException when the mount is not validated or a protected document is
      *     invalid, before any route is registered; or when the installation of a protected document's
-     *     route is rejected, after every route has been removed from the router again
+     *     route is rejected, or a document registered as public does not declare a public policy,
+     *     after every route has been removed from the router again
      */
     void buildInto(Router router) {
         requireValidated();
@@ -192,6 +196,7 @@ public final class DocsRouterMount implements RouterMount {
                 if (document.access() != ApiDocs.Access.PUBLIC) {
                     continue;
                 }
+                requirePublicPolicy(document);
                 register(
                         router,
                         document.name(),
@@ -207,22 +212,35 @@ public final class DocsRouterMount implements RouterMount {
                         PublishedDocument::yaml,
                         PublishedDocument::yamlTag);
             }
+            // Every route is in place; the notice calls resolve policies, so a failure here clears too.
+            for (EnabledDocuments.EnabledDocument document : protectedDocuments) {
+                ApiDocs apiDocs = document.declaringType().getAnnotation(ApiDocs.class);
+                if (DocumentPolicies.isAuthenticatedOnly(apiDocs.policy())) {
+                    warnings.infoOnce(
+                            AUTHENTICATED_ONLY,
+                            document.name(),
+                            "apidocs.documents." + document.name()
+                                    + ": the protected document is readable by any principal the '"
+                                    + apiDocs.securityScheme() + "' handler authenticates; the policy of @ApiDocs on "
+                                    + document.declaringType().getName() + " requires authentication only");
+                }
+            }
         } catch (RuntimeException failure) {
             // Routes of documents installed before the failure already exist; none may serve.
             router.clear();
             throw failure;
         }
-        for (EnabledDocuments.EnabledDocument document : protectedDocuments) {
-            ApiDocs apiDocs = document.declaringType().getAnnotation(ApiDocs.class);
-            if (apiDocs.rolesAllowed().length == 0) {
-                warnings.infoOnce(
-                        ROLELESS_PROTECTED,
-                        document.name(),
-                        "apidocs.documents." + document.name()
-                                + ": the protected document is readable by any principal the '"
-                                + apiDocs.securityScheme() + "' handler authenticates; @ApiDocs on "
-                                + document.declaringType().getName() + " lists no rolesAllowed");
-            }
+    }
+
+    /**
+     * Fails closed for a document registered as public whose declaration does not make it public, as
+     * a hand-built document can be: the classification is derived again from the declaring type.
+     */
+    private static void requirePublicPolicy(EnabledDocuments.EnabledDocument document) {
+        if (!DocumentPolicies.isPublic(document.declaringType())) {
+            throw new RestConfigurationException("Application '" + document.name() + "' (declared by "
+                    + document.declaringType().getName() + "): the document is registered as public, but its"
+                    + " @ApiDocs.policy is not a public policy");
         }
     }
 
@@ -253,8 +271,8 @@ public final class DocsRouterMount implements RouterMount {
                         + "', but no registered SecuritySchemeHandler has that name");
             }
             if (authEnforcement.isEmpty()) {
-                violations.add(
-                        subject + "@ApiDocs.access is PROTECTED, but authentication enforcement is not installed");
+                violations.add(subject + "@ApiDocs.policy is not public, but authentication enforcement is not"
+                        + " installed");
             }
         }
         if (violations.isEmpty()) {

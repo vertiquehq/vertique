@@ -5,16 +5,20 @@ package dev.vertique.rest.websocket;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 
 import dev.vertique.rest.security.SecurityPolicyEnforcer;
+import dev.vertique.security.authz.AccessPolicy;
 import dev.vertique.security.authz.ActionDefinition;
 import dev.vertique.security.authz.ActionRef;
 import dev.vertique.security.authz.ActionRegistry;
 import dev.vertique.security.authz.Authorizer;
 import dev.vertique.security.authz.RequiresAction;
+import dev.vertique.security.authz.RequiresPolicy;
 import io.vertx.core.Vertx;
 import io.vertx.ext.web.Router;
+import jakarta.annotation.security.RolesAllowed;
 import java.util.Collection;
 import java.util.Optional;
 import java.util.Set;
@@ -97,6 +101,28 @@ class WebSocketActionGateStartupTest {
         void onOpen(WebSocketSession session) {}
     }
 
+    /** Typed policy requiring the editor role. */
+    @RolesAllowed("editor")
+    public interface EditorRolePolicy extends AccessPolicy {}
+
+    /** Typed policy carrying only the registered content-read action. */
+    @RequiresAction("cms.content.read")
+    public interface ContentReadActionPolicy extends AccessPolicy {}
+
+    @WebSocketEndpoint("/ws/typed-role")
+    @RequiresPolicy(EditorRolePolicy.class)
+    static class TypedRoleEndpoint {
+        @OnOpen
+        void onOpen(WebSocketSession session) {}
+    }
+
+    @WebSocketEndpoint("/ws/typed-action")
+    @RequiresPolicy(ContentReadActionPolicy.class)
+    static class TypedActionEndpoint {
+        @OnOpen
+        void onOpen(WebSocketSession session) {}
+    }
+
     // --- Enforcement-pipeline-absent rejection (C2a) ---
 
     @Nested
@@ -124,6 +150,41 @@ class WebSocketActionGateStartupTest {
                     IllegalStateException.class,
                     () -> registrar.registerAll(Set.of(new ActionEndpoint()), router),
                     "a class-level @RequiresAction endpoint must fail startup when the enforcer is absent");
+        }
+
+        @Test
+        @DisplayName("class-level @RequiresPolicy resolving to a role policy with null enforcer fails startup")
+        void typedRolePolicyWithNullEnforcer_failsStartup() {
+            WebSocketEndpointRegistrar registrar = new WebSocketEndpointRegistrar(
+                    new WebSocketMessageCodec(), null, null, null, Set.of(), null, null, null, null, null);
+
+            IllegalStateException rejected = assertThrows(
+                    IllegalStateException.class,
+                    () -> registrar.registerAll(Set.of(new TypedRoleEndpoint()), router),
+                    "a role-policy endpoint must fail startup when the enforcer is absent");
+            assertTrue(rejected.getMessage().contains(TypedRoleEndpoint.class.getName()), rejected.getMessage());
+        }
+
+        @Test
+        @DisplayName("class-level @RequiresPolicy resolving to an action-only policy with null enforcer fails startup")
+        void typedActionPolicyWithNullEnforcer_failsStartup() {
+            WebSocketEndpointRegistrar registrar = new WebSocketEndpointRegistrar(
+                    new WebSocketMessageCodec(),
+                    null,
+                    null,
+                    null,
+                    Set.of(),
+                    null,
+                    null,
+                    null,
+                    new StubActionRegistry(Set.of(CONTENT_READ)),
+                    null);
+
+            IllegalStateException rejected = assertThrows(
+                    IllegalStateException.class,
+                    () -> registrar.registerAll(Set.of(new TypedActionEndpoint()), router),
+                    "an action-policy endpoint must fail startup when the enforcer is absent");
+            assertTrue(rejected.getMessage().contains(TypedActionEndpoint.class.getName()), rejected.getMessage());
         }
 
         @Test

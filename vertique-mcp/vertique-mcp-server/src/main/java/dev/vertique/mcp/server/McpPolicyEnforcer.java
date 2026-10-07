@@ -8,6 +8,8 @@ import dev.vertique.mcp.lifecycle.McpAuthorizationSummary;
 import dev.vertique.mcp.tool.McpAccessMode;
 import dev.vertique.mcp.tool.McpToolAccess;
 import dev.vertique.mcp.tool.McpToolDescriptor;
+import dev.vertique.rest.core.security.AnnotationSecurityPolicyResolver;
+import dev.vertique.rest.core.security.RequiresActionResolver;
 import dev.vertique.rest.core.security.SecurityPolicy;
 import dev.vertique.rest.security.SecurityPolicyEnforcer;
 import dev.vertique.security.SecurityContext;
@@ -19,12 +21,14 @@ import io.vertx.core.Future;
 import jakarta.annotation.Nullable;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
+import java.lang.annotation.Annotation;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.regex.Pattern;
+import lombok.extern.slf4j.Slf4j;
 
 /**
  * The only MCP caller of {@link SecurityPolicyEnforcer#decide}: maps a generated
@@ -46,10 +50,19 @@ import java.util.regex.Pattern;
  *       {@link SecurityPolicy.AuthenticatedOnly}, plus the descriptor's required action.
  * </ul>
  *
+ * <p><strong>Typed policies.</strong> A tool that declares a typed access policy publishes the closed
+ * {@link McpAccessMode#DENY_ALL} placeholder in its descriptor, so the descriptor mapping above is
+ * not its effective policy. {@link #decide(McpToolDescriptor, List, SecurityContext)} maps the
+ * policy's validated direct requirements with the same resolvers the REST layer uses: public, deny,
+ * role, scope and authenticated requirements become the matching {@link SecurityPolicy}, and a
+ * requirement set that is only an action maps to {@link SecurityPolicy.AuthenticatedOnly} plus that
+ * action, exactly as an action-only descriptor does.
+ *
  * <p>This class never invokes a tool — denial is decided strictly before any invocation path, and it
  * exposes no invocation method at all. It stays package-private, adding
  * no public surface to {@code vertique-mcp-server} (enforced by the per-module inventory guard).
  */
+@Slf4j
 @Singleton
 class McpPolicyEnforcer {
 
@@ -65,6 +78,9 @@ class McpPolicyEnforcer {
 
     /** The resource type recorded on every {@link ResourceRef} this enforcer builds. */
     private static final String RESOURCE_TYPE = "mcp-tool";
+
+    private static final AnnotationSecurityPolicyResolver POLICY_RESOLVER = new AnnotationSecurityPolicyResolver();
+    private static final RequiresActionResolver ACTION_RESOLVER = new RequiresActionResolver();
 
     private final SecurityPolicyEnforcer securityPolicyEnforcer;
 
@@ -86,6 +102,12 @@ class McpPolicyEnforcer {
      * ever produces a decision, the same decision {@code tools/list} filtering and {@code tools/call}
      * denial both consume.
      *
+     * <p><strong>Descriptor only.</strong> This overload sees nothing but the descriptor. A tool that
+     * declares a typed access policy publishes the closed {@link McpAccessMode#DENY_ALL} placeholder,
+     * so evaluating its descriptor here always denies, whatever its policy would decide. Decide a
+     * registered tool through {@link #decide(McpToolDescriptor, List, SecurityContext)} with the
+     * requirements the registry retained, which is what {@code tools/list} and {@code tools/call} do.
+     *
      * @param descriptor the tool descriptor to evaluate; must not be {@code null}
      * @param caller     the already-established caller security context (anonymous or
      *                   authenticated); must not be {@code null}
@@ -95,7 +117,35 @@ class McpPolicyEnforcer {
     Future<AuthorizationDecision> decide(McpToolDescriptor descriptor, SecurityContext caller) {
         Objects.requireNonNull(descriptor, "descriptor");
         Objects.requireNonNull(caller, "caller");
-        Mapping mapping = mappingFor(descriptor.access());
+        return decide(descriptor, mappingFor(descriptor.access()), caller);
+    }
+
+    /**
+     * Evaluates one tool against the complete requirements of its typed access policy and an
+     * already-established caller {@link SecurityContext}.
+     *
+     * <p>The requirements are the validated direct annotations the registry retained when it
+     * registered the tool. They are mapped to the base {@link SecurityPolicy} plus optional {@link
+     * ActionRef} and handed to the same {@link SecurityPolicyEnforcer#decide} the descriptor overload
+     * uses, with the same MCP tool resource and origin, so events, the caller and fail-closed handling
+     * are identical. A requirement set that cannot be mapped is denied rather than failing the future.
+     *
+     * @param descriptor   the tool descriptor, used only for the tool name; must not be {@code null}
+     * @param requirements the tool's validated direct policy requirements; must not be {@code null}
+     * @param caller       the already-established caller security context; must not be {@code null}
+     * @return a future carrying the composed {@link AuthorizationDecision}; never {@code null} and
+     *     never a failed future
+     */
+    Future<AuthorizationDecision> decide(
+            McpToolDescriptor descriptor, List<Annotation> requirements, SecurityContext caller) {
+        Objects.requireNonNull(descriptor, "descriptor");
+        Objects.requireNonNull(requirements, "requirements");
+        Objects.requireNonNull(caller, "caller");
+        return decide(descriptor, mappingFor(descriptor.name(), requirements), caller);
+    }
+
+    private Future<AuthorizationDecision> decide(
+            McpToolDescriptor descriptor, Mapping mapping, SecurityContext caller) {
         ResourceRef resource = new ResourceRef(RESOURCE_TYPE, descriptor.name(), Map.of());
         InvocationOrigin origin = InvocationOrigin.of(DispatchBoundary.MCP);
         return securityPolicyEnforcer.decide(caller, mapping.policy(), mapping.action(), resource, origin);
@@ -103,7 +153,14 @@ class McpPolicyEnforcer {
 
     /**
      * Reports whether the given descriptor must be visible to the given caller in a {@code
-     * tools/list} candidate set — {@code true} exactly when {@link #decide} would permit.
+     * tools/list} candidate set — {@code true} exactly when {@link #decide(McpToolDescriptor,
+     * SecurityContext)} would permit that descriptor.
+     *
+     * <p><strong>Descriptor only.</strong> Like that overload, this sees only the descriptor, so a tool
+     * with a typed access policy, which publishes the closed {@link McpAccessMode#DENY_ALL}
+     * placeholder, is reported as not visible to every caller. It is not the visibility rule {@code
+     * tools/list} applies to a typed tool; that rule decides with the registry's retained policy
+     * requirements.
      *
      * <p><strong>This is a full evaluation and it emits.</strong> Visibility is not a cached or
      * cheaper check: it delegates to {@link #decide}, so a restrictive descriptor produces its own
@@ -226,6 +283,34 @@ class McpPolicyEnforcer {
                                 new SecurityPolicy.Constrained(access.roles(), List.of(), false),
                                 Optional.ofNullable(access.action()));
         };
+    }
+
+    /**
+     * Maps a typed policy's direct requirements with the REST resolvers. An action-only requirement
+     * set resolves to no base policy and maps to {@link SecurityPolicy.AuthenticatedOnly}, matching
+     * the action-only descriptor mapping.
+     *
+     * <p>The registry validated the requirements when it retained them, so a resolution failure is not
+     * expected. The catch is a defensive fail-closed backstop that maps any such failure to {@link
+     * SecurityPolicy.DenyAll}, because {@code decide} must never throw or fail its future.
+     */
+    private static Mapping mappingFor(String toolName, List<Annotation> requirements) {
+        try {
+            SecurityPolicy base = POLICY_RESOLVER.resolveFromAnnotations(requirements, List.of());
+            Optional<ActionRef> action = ACTION_RESOLVER.resolve(requirements, List.of());
+            if (base instanceof SecurityPolicy.None) {
+                return action.isPresent()
+                        ? new Mapping(new SecurityPolicy.AuthenticatedOnly(), action)
+                        : new Mapping(new SecurityPolicy.DenyAll(), Optional.empty());
+            }
+            return new Mapping(base, action);
+        } catch (RuntimeException unmappable) {
+            log.warn(
+                    "MCP tool '{}' policy requirements could not be mapped; denying (fail-closed)",
+                    toolName,
+                    unmappable);
+            return new Mapping(new SecurityPolicy.DenyAll(), Optional.empty());
+        }
     }
 
     /**

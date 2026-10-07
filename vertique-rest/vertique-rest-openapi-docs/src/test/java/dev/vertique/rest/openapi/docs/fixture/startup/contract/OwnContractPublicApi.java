@@ -6,13 +6,15 @@ package dev.vertique.rest.openapi.docs.fixture.startup.contract;
 import dev.vertique.rest.core.application.RestApplication;
 import dev.vertique.rest.openapi.docs.ApiDocs;
 import dev.vertique.rest.openapi.docs.fixture.CatalogResource;
+import dev.vertique.security.authz.AccessPolicy;
+import jakarta.annotation.security.PermitAll;
 
 /**
  * The documented application {@code public} at {@code /api/public}, like {@code PublicApi}, but
  * declaring its own OpenAPI contract location {@value #OPENAPI_PATH}, a test resource that describes
  * exactly its routed operations. Its registration is hand-written in {@link ContractRegistrations}.
  */
-@ApiDocs(access = ApiDocs.Access.PUBLIC)
+@ApiDocs(policy = OwnContractPublicApi.PublicDocsPolicy.class)
 @RestApplication(
         name = OwnContractPublicApi.NAME,
         path = OwnContractPublicApi.PATH,
@@ -28,7 +30,11 @@ public interface OwnContractPublicApi {
 
     /**
      * The application's own contract location, a test classpath resource without a {@code servers}
-     * member, because the {@code openapi-contract} strategy accepts only absolute server URLs or none.
+     * member; the {@code openapi-contract} strategy needs no server URL to validate.
      */
     String OPENAPI_PATH = "public-contract.json";
+
+    /** Anyone may read the document. */
+    @PermitAll
+    public interface PublicDocsPolicy extends AccessPolicy {}
 }

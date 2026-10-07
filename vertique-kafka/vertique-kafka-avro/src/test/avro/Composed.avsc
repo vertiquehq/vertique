@@ -1,0 +1,6 @@
+{
+  "namespace": "dev.vertique.kafka.avro.it.composed",
+  "type": "record",
+  "name": "Composed",
+  "fields": [ { "name": "id", "type": "string" } ]
+}

@@ -3,6 +3,7 @@
 
 package dev.vertique.rest.openapi.docs;
 
+import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -20,6 +21,7 @@ import dev.vertique.rest.openapi.docs.fixture.support.StartupDeployments;
 import dev.vertique.rest.openapi.docs.fixture.support.StartupDeployments.Outcome;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
+import io.vertx.core.http.HttpMethod;
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.auth.jwt.JWTAuth;
@@ -29,6 +31,7 @@ import io.vertx.ext.web.client.WebClient;
 import io.vertx.junit5.VertxExtension;
 import java.io.IOException;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
@@ -42,6 +45,7 @@ import org.junit.jupiter.api.Named;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.api.function.Executable;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -81,6 +85,11 @@ import org.junit.jupiter.params.provider.MethodSource;
  * protected document, and its revalidation, must vary on both {@code Origin}, which the CORS handler
  * adds, and {@code Authorization}, which the document adds: the document's {@code Vary} joins the one
  * already present rather than replacing it.
+ *
+ * <p>A seventh graph, deployed by its own test, holds one document per typed policy: public, deny,
+ * authenticated, role, scope, action, and combined. A caller the policy permits reads each document
+ * with {@code private, no-store} and {@code Vary: Authorization} on {@code 200}, {@code 304}, and {@code
+ * HEAD}, and the deny document answers every caller {@code no-store} with no {@code Vary}.
  *
  * <p>Each of the graphs (a) to (e) is one invocation of a parameterized test, named after the behavior
  * it isolates, so each passes or fails on its own. Both forms of every document are read. Each graph
@@ -302,6 +311,92 @@ public class DocumentCachingIT {
             StartupDeployments.undeploy(vertx, outcome);
             vertx.sharedData().getLocalMap(StartupDeployments.LOCAL_MAP).clear();
         }
+    }
+
+    /**
+     * One expected typed policy document: its name, the exact {@code Cache-Control} and {@code Vary}
+     * of every response that serves it, or {@code null} when it carries no {@code Vary}.
+     */
+    private record TypedRow(String document, String cacheControl, String vary) {}
+
+    /** The typed policy documents that a caller can read, every value written by hand. */
+    private static final List<TypedRow> TYPED_ROWS = List.of(
+            new TypedRow("open", "no-cache", null),
+            new TypedRow("authenticated", "private, no-store", "Authorization"),
+            new TypedRow("roles", "private, no-store", "Authorization"),
+            new TypedRow("scopes", "private, no-store", "Authorization"),
+            new TypedRow("action", "private, no-store", "Authorization"),
+            new TypedRow("combined", "private, no-store", "Authorization"));
+
+    @Test
+    @DisplayName(
+            "Typed policy documents keep exact Cache-Control and Vary on 200 and 304; a deny document never serves")
+    void typedPolicyDocumentsKeepExactCachingHeaders() throws Exception {
+        // Given: one deployment serving a document per typed policy under the permissive default, and
+        // the caller who holds the role and the scope, whom the application's authorizer permits
+        try (TypedDocumentDeployment deployment = TypedDocumentDeployment.startAll()) {
+            Map<String, String> tokens = TypedDocumentExpectations.tokens(deployment);
+            String entitled = tokens.get(TypedDocumentExpectations.ENTITLED);
+            List<Executable> checks = new ArrayList<>();
+
+            for (TypedRow row : TYPED_ROWS) {
+                for (TypedDocumentExpectations.Form form : TypedDocumentExpectations.Form.values()) {
+                    String path = form.path(row.document());
+                    String label = row.document() + " " + form;
+
+                    // When: the caller reads the form with GET, then with its entity tag
+                    TypedDocumentDeployment.Reply ok = deployment.request(HttpMethod.GET, path, entitled, Map.of());
+                    assertEquals(200, ok.status(), label + ": GET must answer 200, body: " + ok.text());
+                    String entityTag = ok.header("ETag");
+                    assertNotNull(entityTag, label + ": the 200 must carry an entity tag");
+                    TypedDocumentDeployment.Reply notModified =
+                            deployment.request(HttpMethod.GET, path, entitled, Map.of("If-None-Match", entityTag));
+                    assertEquals(304, notModified.status(), label + ": a matching If-None-Match must answer 304");
+                    TypedDocumentDeployment.Reply head = deployment.request(HttpMethod.HEAD, path, entitled, Map.of());
+
+                    // Then: each response carries the row's exact headers, never public or s-maxage
+                    for (TypedDocumentDeployment.Reply reply : List.of(ok, notModified, head)) {
+                        checks.add(() -> assertTypedHeaders(label + " " + reply.status(), row, reply));
+                    }
+                }
+            }
+
+            // When: the deny document is read by an anonymous and by the entitled caller
+            for (TypedDocumentExpectations.Form form : TypedDocumentExpectations.Form.values()) {
+                String path = form.path("deny");
+                TypedDocumentDeployment.Reply anonymous = deployment.request(HttpMethod.GET, path, null, Map.of());
+                TypedDocumentDeployment.Reply denied = deployment.request(HttpMethod.GET, path, entitled, Map.of());
+
+                // Then: both are refused with no-store, no Vary, and no entity tag, and neither is public
+                for (TypedDocumentDeployment.Reply reply : List.of(anonymous, denied)) {
+                    String label = "deny " + form + " " + reply.status();
+                    checks.add(() -> assertTrue(reply.status() == 401 || reply.status() == 403, label + ": status"));
+                    checks.add(() -> assertEquals(
+                            List.of("no-store"), reply.headers().getAll("Cache-Control"), label + ": Cache-Control"));
+                    checks.add(() -> assertEquals(List.of(), reply.headers().getAll("Vary"), label + ": no Vary"));
+                    checks.add(() -> assertNull(reply.header("ETag"), label + ": no entity tag"));
+                }
+            }
+            assertAll(checks);
+        }
+    }
+
+    /** Asserts the exact caching headers of one response of a typed policy document. */
+    private static void assertTypedHeaders(String label, TypedRow row, TypedDocumentDeployment.Reply reply) {
+        assertEquals(
+                List.of(row.cacheControl()),
+                reply.headers().getAll("Cache-Control"),
+                () -> label + ": exactly one Cache-Control");
+        for (String value : reply.headers().getAll("Cache-Control")) {
+            String lower = value.toLowerCase(Locale.ROOT);
+            assertFalse(lower.contains("public"), () -> label + ": Cache-Control must never be public: " + value);
+            assertFalse(
+                    lower.contains("s-maxage"), () -> label + ": Cache-Control must never carry s-maxage: " + value);
+        }
+        assertEquals(
+                row.vary() == null ? List.of() : List.of(row.vary()),
+                reply.headers().getAll("Vary"),
+                () -> label + ": exact Vary");
     }
 
     /**

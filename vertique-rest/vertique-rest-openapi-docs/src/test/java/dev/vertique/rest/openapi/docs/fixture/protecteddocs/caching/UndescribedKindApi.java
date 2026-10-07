@@ -5,12 +5,14 @@ package dev.vertique.rest.openapi.docs.fixture.protecteddocs.caching;
 
 import dev.vertique.rest.core.application.RestApplication;
 import dev.vertique.rest.openapi.docs.ApiDocs;
+import dev.vertique.security.authz.AccessPolicy;
+import dev.vertique.security.authz.Authorized;
 
 /**
  * The application {@code undescribed}, whose document is protected by a scheme whose handler describes
  * nothing, so the scheme kind is unknown. No operation of it requires that scheme.
  */
-@ApiDocs(access = ApiDocs.Access.PROTECTED, securityScheme = CachingSchemes.UNDESCRIBED)
+@ApiDocs(policy = UndescribedKindApi.AuthenticatedDocsPolicy.class, securityScheme = CachingSchemes.UNDESCRIBED)
 @RestApplication(
         name = UndescribedKindApi.NAME,
         path = UndescribedKindApi.PATH,
@@ -22,4 +24,8 @@ public interface UndescribedKindApi {
 
     /** The application's path. */
     String PATH = "/kinds/undescribed";
+
+    /** Any authenticated reader may read the document. */
+    @Authorized
+    public interface AuthenticatedDocsPolicy extends AccessPolicy {}
 }

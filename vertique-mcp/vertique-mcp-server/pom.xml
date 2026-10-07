@@ -46,7 +46,7 @@ SPDX-License-Identifier: EUPL-1.2
         <dependency><groupId>org.projectlombok</groupId><artifactId>lombok</artifactId></dependency>
         <dependency><groupId>org.junit.jupiter</groupId><artifactId>junit-jupiter</artifactId><scope>test</scope></dependency>
         <dependency><groupId>org.assertj</groupId><artifactId>assertj-core</artifactId><version>3.27.7</version><scope>test</scope></dependency>
-        <dependency><groupId>com.tngtech.archunit</groupId><artifactId>archunit-junit5</artifactId><version>1.5.0</version><scope>test</scope></dependency>
+        <dependency><groupId>com.tngtech.archunit</groupId><artifactId>archunit-junit5</artifactId><version>1.5.1</version><scope>test</scope></dependency>
         <dependency><groupId>io.vertx</groupId><artifactId>vertx-junit5</artifactId><scope>test</scope></dependency>
         <dependency><groupId>io.vertx</groupId><artifactId>vertx-web-client</artifactId><scope>test</scope></dependency>
         <dependency><groupId>org.mockito</groupId><artifactId>mockito-core</artifactId><scope>test</scope></dependency>
@@ -61,6 +61,10 @@ SPDX-License-Identifier: EUPL-1.2
              (test scope only — vertique-mcp-server never depends on the codegen module at compile/runtime). -->
         <dependency><groupId>${project.groupId}</groupId><artifactId>vertique-codegen-mcp</artifactId><scope>test</scope></dependency>
         <dependency><groupId>${project.groupId}</groupId><artifactId>vertique-codegen-test</artifactId><scope>test</scope></dependency>
+        <!-- Test-scope only: the typed-policy integration test calls policy-protected services from MCP
+             tool handlers through real service dispatch. The edge is acyclic: vertique-services depends
+             on neither vertique-mcp-core nor vertique-mcp-server. -->
+        <dependency><groupId>${project.groupId}</groupId><artifactId>vertique-services</artifactId><scope>test</scope></dependency>
         <!-- T014 TP-001: runs the real Dagger ComponentProcessor over in-memory compile fixtures to
              prove a missing InputObjectProcessor binding fails Dagger compilation (test scope only). -->
         <dependency><groupId>com.google.dagger</groupId><artifactId>dagger-compiler</artifactId><version>${dagger.version}</version><scope>test</scope></dependency>

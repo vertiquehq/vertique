@@ -5,17 +5,23 @@ package dev.vertique.rest.openapi.docs.fixture.conformance.corpus;
 
 import dev.vertique.rest.core.application.RestApplication;
 import dev.vertique.rest.openapi.docs.ApiDocs;
+import dev.vertique.security.authz.AccessPolicy;
 import io.swagger.v3.oas.annotations.OpenAPIDefinition;
 import io.swagger.v3.oas.annotations.info.Info;
+import jakarta.annotation.security.PermitAll;
 
 /**
  * Declares the security scheme kinds application {@value CorpusDocuments#SCHEMES} with a public
  * document; {@link ProtectedSchemesApi} declares it with a protected one.
  */
-@ApiDocs(access = ApiDocs.Access.PUBLIC)
+@ApiDocs(policy = PublicSchemesApi.PublicDocsPolicy.class)
 @OpenAPIDefinition(info = @Info(title = "Conformance schemes", version = CorpusDocuments.VERSION))
 @RestApplication(
         name = CorpusDocuments.SCHEMES,
         path = CorpusDocuments.SCHEMES_PATH,
         resources = SchemeKindsResource.class)
-public interface PublicSchemesApi {}
+public interface PublicSchemesApi {
+    /** Anyone may read the document. */
+    @PermitAll
+    public interface PublicDocsPolicy extends AccessPolicy {}
+}

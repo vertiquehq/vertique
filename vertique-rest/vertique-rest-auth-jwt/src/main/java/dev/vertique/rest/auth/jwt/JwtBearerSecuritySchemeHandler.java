@@ -727,7 +727,7 @@ public class JwtBearerSecuritySchemeHandler implements SecuritySchemeHandler, Ha
      * This wrapper additionally implements
      * {@link io.vertx.ext.web.handler.impl.AuthenticationHandlerInternal} — a Vert.x-internal
      * ({@code impl}-package) interface. This is a deliberate, version-pinned dependency on
-     * <strong>vertx-web 5.1.2</strong>: Vert.x's {@code ChainAuthHandlerImpl.add(...)}
+     * <strong>vertx-web</strong>: Vert.x's {@code ChainAuthHandlerImpl.add(...)}
      * <em>unconditionally</em> casts each member to {@code AuthenticationHandlerInternal}, so a
      * member that implements only {@link JWTAuthHandler} (which does not extend the internal
      * interface) triggers a {@link ClassCastException} at router build when an operation declares

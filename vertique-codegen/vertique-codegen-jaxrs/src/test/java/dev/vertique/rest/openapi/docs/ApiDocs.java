@@ -3,6 +3,7 @@
 
 package dev.vertique.rest.openapi.docs;
 
+import dev.vertique.security.authz.AccessPolicy;
 import java.lang.annotation.Documented;
 import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;
@@ -17,8 +18,9 @@ import java.lang.annotation.Target;
  *
  * <p>The processor recognizes the annotation by its fully qualified name and reads its elements by
  * name, so this stub's element names and defaults are exactly the ones the processor reads:
- * {@code access} with no default, {@code securityScheme} defaulting to {@code ""}, and
- * {@code rolesAllowed} defaulting to an empty array.
+ * {@code policy} with no default, and {@code securityScheme} defaulting to {@code ""}. The stub
+ * declares no other authorization element, so an application that still sets one fails javac's own
+ * element resolution.
  */
 @Retention(RetentionPolicy.RUNTIME)
 @Target(ElementType.TYPE)
@@ -26,34 +28,25 @@ import java.lang.annotation.Target;
 public @interface ApiDocs {
 
     /**
-     * Returns who may read the application's documentation.
+     * Returns the access policy that decides who may read the application's documentation.
      *
-     * @return the documentation access level
+     * @return the policy type
      */
-    Access access();
+    Class<? extends AccessPolicy> policy();
 
     /**
-     * Returns the security scheme that protects the documentation; required and non-blank exactly
-     * when {@link #access()} is {@link Access#PROTECTED}.
+     * Returns the security scheme that protects the documentation; empty for a public policy and
+     * supplied for every other policy.
      *
      * @return the security scheme name, or {@code ""} when none is set
      */
     String securityScheme() default "";
 
-    /**
-     * Returns the roles allowed to read protected documentation; allowed only when
-     * {@link #access()} is {@link Access#PROTECTED}, every entry non-blank, and empty meaning any
-     * authenticated caller.
-     *
-     * @return the allowed roles, or an empty array when none is set
-     */
-    String[] rolesAllowed() default {};
-
-    /** The documentation access levels. */
+    /** The documentation access levels derived from the policy. */
     enum Access {
         /** Anyone may read the documentation. */
         PUBLIC,
-        /** Only callers authenticated through {@link ApiDocs#securityScheme()} may read it. */
+        /** Only callers admitted by the policy may read it. */
         PROTECTED
     }
 }

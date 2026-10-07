@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Codegen JAX-RS Pipeline Module
 
-> **Status:** Beta
+> **Status:** Stable
 > **Package:** `dev.vertique.codegen.jaxrs`
 > **Artifact:** `vertique-codegen-jaxrs`
 > **Depends on:** `vertique-codegen-core` (compile), `vertique-rest-core` (compile — for `RequestPreconditions` and `dev.vertique.rest.core.application.RestApplication`), `vertique-security-core` (compile — for `dev.vertique.security.authz.Authorized`), `vertique-input-processing` (compile), `jakarta.annotation-api` (compile), `swagger-annotations-jakarta` (compile), `vertique-rest-jaxrs` (test — the generated sources reference its runtime SPI types, so the consuming application declares it), `jakarta.ws.rs-api` (test)
@@ -78,11 +78,11 @@ For a parameterized collection (`List<T>`, `Set<T>`, `SortedSet<T>`, `NavigableS
 | Class | Role |
 |---|---|
 | `ContextParamValidator` | Enforces FR-REST-187/188/189: (a) rejects an `@Context` parameter (or one auto-classified as CONTEXT by an injectable type) that also carries a value-binding annotation (`@PathParam`, `@QueryParam`, `@HeaderParam`, `@CookieParam`, `@FormParam`, `@BeanParam`) — conflict; (b) rejects reserved JAX-RS types unsupported in V1 (`UriInfo`, `HttpHeaders`, `Request`, `Configuration`, `Application`, `Providers`, `ResourceContext`); (c) rejects a `@Context` parameter whose type is neither a built-in nor a `ContextValue` subtype — non-injectable. Runs **before** the path/body-form validators and short-circuits them for any method carrying a context violation. Handles split inherited annotations (interface vs. impl) via interface-method walking. |
-| `SecurityAnnotationValidator` | Mirrors `AnnotationSecurityPolicyResolver` conflict matrix: `@DenyAll` + `@PermitAll`/`@RolesAllowed`, `@PermitAll` + `@RolesAllowed`, `@RolesAllowed({})` empty array. Class-level and method-level checked independently. |
+| `SecurityAnnotationValidator` | Mirrors `AnnotationSecurityPolicyResolver` conflict matrix: `@DenyAll` + `@PermitAll`/`@RolesAllowed`, `@PermitAll` + `@RolesAllowed`, `@RolesAllowed({})` empty array, and a `@RequiresPolicy` mixed with inline security or with a second policy in the same set. A method policy replaces a different type policy. Class-level and method-level checked independently. |
 | `HttpVerbValidator` | Tier-B guardrail: error on multiple HTTP verb annotations on a single method. |
 | `PathParamAlignmentValidator` | Bidirectional check between `@Path` placeholders and `@PathParam` declarations. Handles `@BeanParam` and `@RequestParams` composite types including record components. |
 | `BodyFormValidator` | Mirrors `RouteValidator.validateMethodParams`: at most one body parameter; body and form parameters mutually exclusive. |
-| `ApplicationAnnotationValidator` | Checks every `@RestApplication` declaration not annotated `@NoAutoWire` — the declaring interface and every superinterface, transitively — against the declaration annotation allow list, and the declaration's `@ApiDocs` against the documentation access rules; see "Declaration Annotation Allow List" and "`@ApiDocs` Checks" below. |
+| `ApplicationAnnotationValidator` | Checks every `@RestApplication` declaration not annotated `@NoAutoWire` — the declaring interface and every superinterface, transitively — against the declaration annotation allow list, and the declaration's `@ApiDocs` against the documentation policy rules; see "Declaration Annotation Allow List" and "`@ApiDocs` Checks" below. |
 
 `ContextParamValidator` runs first, before the remaining four resource-contract validators — see the short-circuit behavior noted under "Validation Rules" below. Those five validators take `EffectiveResourceContract`; `ApplicationAnnotationValidator` instead checks the `@RestApplication` declarations directly.
 
@@ -214,12 +214,13 @@ Each error names the declaration, the annotation, and the type carrying it, each
 
 A declaration's `@ApiDocs` is recognized by its fully qualified name, `dev.vertique.rest.openapi.docs.ApiDocs`, so this processor needs no dependency on the module that declares it. Its elements are checked at compile time:
 
-| `access` | `securityScheme` | `rolesAllowed` |
-|---|---|---|
-| `PROTECTED` | required, not blank | optional; every entry must be non-blank; empty admits any authenticated caller |
-| `PUBLIC` | must not be set | must not be set |
+| Rule | Outcome |
+|---|---|
+| `policy` must be a valid access policy | A public interface that extends only `AccessPolicy`, declares no members, and carries valid, non-conflicting requirements: no blank or empty `@RolesAllowed`, no `@PermitAll` mixed with another requirement. A class, bare `AccessPolicy`, an interface with extra parents or methods, or a non-public interface is an error, reported alone whatever `securityScheme` is. |
+| Public policy (exactly one direct `@PermitAll`) | `securityScheme` must not be supplied; any value, blank included, is an error. |
+| Any other valid policy (`@DenyAll` included) | `securityScheme` is required and must not be blank. |
 
-`access` has no default: an `@ApiDocs` without it is the compiler's own missing-element error. Elements are judged by value, so an explicit value equal to the default (`securityScheme = ""`, `rolesAllowed = {}`) counts as not set. Each violation is a compile error naming the declaration and the element (see "Diagnostics" below), and a declaration with any violation is not registered.
+`policy` is required and has no default: an `@ApiDocs` without it is the compiler's own error. A `policy` that is not an `AccessPolicy` type, or names a missing type, is also the compiler's own error. Elements are judged by value, so an explicit `securityScheme = ""` counts as not set. Each processor violation is a compile error naming the declaration and the element (see "Diagnostics" below), and a declaration with any violation is not registered.
 
 ### Diagnostics
 
@@ -243,14 +244,13 @@ A declaration's `@ApiDocs` is recognized by its fully qualified name, `dev.verti
 | Disallowed annotation on a superinterface (error) | `{Declaration} carries @{annotation} on its superinterface {Superinterface}, which a @RestApplication declaration's superinterface may not carry: a superinterface of a declaration may carry only java.lang and java.lang.annotation annotations` |
 | Declaration-only annotation on a superinterface (error) | `{Declaration} carries @{annotation} on its superinterface {Superinterface}, which is not allowed: that annotation is honored only on the @RestApplication declaring interface itself` |
 | `@OpenAPIDefinition` element other than `info` (error) | `{Declaration} carries @io.swagger.v3.oas.annotations.OpenAPIDefinition with an element other than info set, which is not allowed on a @RestApplication declaration: only its info element may be set` |
-| `@ApiDocs(access = PROTECTED)` without a scheme (error) | `{Declaration} declares @ApiDocs(access = PROTECTED) without a non-blank securityScheme; protected documentation needs securityScheme to name the security scheme that authenticates its readers` |
-| `@ApiDocs(access = PROTECTED)` with a blank role (error) | `{Declaration} declares @ApiDocs(access = PROTECTED) with a blank rolesAllowed entry; every rolesAllowed entry must name a role (leave rolesAllowed empty to admit any authenticated caller)` |
-| `@ApiDocs(access = PUBLIC)` with a scheme (error) | `{Declaration} declares @ApiDocs(access = PUBLIC) with a securityScheme; securityScheme is set only when access is PROTECTED` |
-| `@ApiDocs(access = PUBLIC)` with roles (error) | `{Declaration} declares @ApiDocs(access = PUBLIC) with rolesAllowed; rolesAllowed is set only when access is PROTECTED` |
+| `@ApiDocs` with an invalid policy (error) | `{Declaration} declares @ApiDocs with an invalid policy {Policy}: {reason}; policy must name a public interface that extends only AccessPolicy and declares valid, non-conflicting requirements` |
+| `@ApiDocs` with a public policy and a scheme (error) | `{Declaration} declares @ApiDocs(policy = {Policy}) with a securityScheme; securityScheme is set only when the policy is not public (a public policy is exactly one @PermitAll)` |
+| `@ApiDocs` with a policy that is not public and no scheme (error) | `{Declaration} declares @ApiDocs(policy = {Policy}) without a non-blank securityScheme; a policy that is not public needs securityScheme to name the security scheme that authenticates its readers` |
 | Declaration `@NoAutoWire` warning | `{Declaration} is annotated @NoAutoWire, so it is not registered as a REST application and is not validated.` |
 | Declaration `autoWire=false` warning | `{Declaration} is not registered as a REST application because -Avertique.codegen.autoWire=false is set.` |
 
-Every type in the messages — `{Application}`, `{Declaration}`, `{Superinterface}`, `{Resource}`, and `{annotation}` — is named by its binary name.
+Every type in the messages — `{Application}`, `{Declaration}`, `{Superinterface}`, `{Resource}`, `{Policy}`, and `{annotation}` — is named by its binary name.
 
 Every `@RestApplication` declaration not annotated `@NoAutoWire` is checked regardless of `-Avertique.codegen.autoWire=false` — the annotation allow list, the `@ApiDocs` checks, and the declaration checks (see "Declaration Checks" below) all still fail the build when violated; only the module write itself is skipped under that option (see "Extension Points" below). The `Application` subclass warning is the same with or without that option.
 
@@ -320,7 +320,7 @@ Every declaration is checked at compile time; each violation is a compile error 
 | Unique names (per compilation unit) | No two declarations of one compilation unit may share a name, active or not; the error names both. Uniqueness across compilation units is a startup check, outside this module. |
 | Sole discovery (per compilation unit) | `discover = true` fails when the compilation unit declares another `@RestApplication`, active or not. The cross-unit half of this rule, combined with startup composition, is also outside this module. |
 | Annotations | The declaring interface and its superinterfaces carry only allowed annotations; see "Declaration Annotation Allow List" above. |
-| `@ApiDocs` | `securityScheme` and `rolesAllowed` match `access`; see "`@ApiDocs` Checks" above. |
+| `@ApiDocs` | `policy` is a valid access policy and `securityScheme` is empty exactly when it is public; see "`@ApiDocs` Checks" above. |
 
 ### Emitted Registration
 
@@ -363,7 +363,7 @@ The processor supports the common OpenAPI Generator pattern where the contract i
 
 Interface- and superclass-declared canonicalization and sanitization policies follow the same rule on both paths, because both resolve them through the shared adapter in `vertique-input-processing` rather than through their own walk.
 
-Both paths produce identical `ResourceMethodMeta` and identical `SecurityPolicy` outcomes. Removing `vertique-codegen-jaxrs` from `annotationProcessorPaths` changes performance, not behavior.
+Both paths produce identical `ResourceMethodMeta` and identical `SecurityPolicy` outcomes. Removing `vertique-codegen-jaxrs` from `annotationProcessorPaths` changes performance, not behavior. A method `@RequiresPolicy` replaces a type policy, including when the method policy is action-only and its role/scope contract is empty. The match uses the method name and the signature viewed from the resource, so a type-variable parameter matches the type that binds it. The generated method-annotation list is `AccessPolicyResolver.collectMethodAnnotations` of the legacy list, so that action stays on the list even when the declaring method is package-private in the same package or protected. Like other hierarchy members, static methods, private methods, and package-private methods declared in another package are not part of that selection. The scanned method always selects itself whatever its modifiers, and a security annotation on the legacy list that the selection cannot reproduce fails registration instead of being replaced by a broader declaration.
 
 ---
 
@@ -414,6 +414,7 @@ The reflective runtime path (`ResourceScanner`) backs the composed view with `de
 | `@PermitAll` combined with `@RolesAllowed` or `@Authorized` at the same level (including across declarations) | Same | Same |
 | Differing `@RolesAllowed` role arrays or `@Authorized` scopes/`matchAll` across declarations of the same method or class | Same | Same |
 | `@RolesAllowed({})` empty value array | `ResourceScanner` → `SecurityPolicyViolation.EMPTY_ROLES_ALLOWED` | `@RolesAllowed at {level} has empty value array — use @DenyAll to deny access or specify at least one role` |
+| `@RequiresPolicy` mixed with inline security, or two policies in one method or type set | `ResourceScanner` → `SecurityPolicyViolation.CONFLICTING_SECURITY_ANNOTATIONS` | `Conflicting security annotations at {level}: @RequiresPolicy; pick one of @DenyAll, @PermitAll, or @RolesAllowed/@Authorized` |
 | An additive input-policy annotation and its skip counterpart in the same merged element (`@Sanitize` with `@SkipSanitization`, `@Canonicalize` with `@SkipCanonicalization`), including across an override | Shared invocation-policy resolution → `InvocationPolicyConflictException` at scan time | `Conflicting @Sanitize (declared on {site}) and @SkipSanitization (declared on {site}) for {element} — an override cannot remove an inherited policy; remove one of the annotations.` |
 | More than one body parameter | `RouteValidator.validateMethodParams` | `Method {name}() has {count} body parameters; at most one is allowed` |
 | `@FormParam`/file-upload mixed with body parameter | `RouteValidator.validateMethodParams` | `Method {name}() mixes @FormParam/file upload parameters with a body parameter; use one or the other` |

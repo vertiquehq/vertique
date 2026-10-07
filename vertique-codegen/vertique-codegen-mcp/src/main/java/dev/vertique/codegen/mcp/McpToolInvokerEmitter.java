@@ -149,6 +149,7 @@ final class McpToolInvokerEmitter {
     private static final ClassName MCP_BEAN_VALIDATION = ClassName.get("dev.vertique.mcp.tool", "McpBeanValidation");
     private static final ClassName MCP_INPUT_REJECTION_EXCEPTION =
             ClassName.get("dev.vertique.mcp.tool", "McpInputRejectionException");
+    private static final ClassName ACCESS_POLICY = ClassName.get("dev.vertique.security.authz", "AccessPolicy");
     private static final ClassName ACTION_REF = ClassName.get("dev.vertique.security.authz", "ActionRef");
     private static final ClassName FUTURE = ClassName.get("io.vertx.core", "Future");
     private static final ClassName JAKARTA_INJECT = ClassName.get("jakarta.inject", "Inject");
@@ -310,6 +311,10 @@ final class McpToolInvokerEmitter {
                 .addType(preparedCall(model, inputType, preparedCallType, cancellationAware))
                 .addType(inputCarrier(model, inputType));
 
+        if (model.accessPolicy() != null) {
+            invoker.addMethod(accessPolicyHook(model));
+        }
+
         if (optionalReaching) {
             invoker.addType(optionalProbe(optionalProbeType));
         }
@@ -403,6 +408,22 @@ final class McpToolInvokerEmitter {
                 parametersArg,
                 jsonProfileArg,
                 access(model));
+    }
+
+    /**
+     * Builds the {@code accessPolicy()} override that publishes the tool's typed policy. Only a typed
+     * tool gets it; an inline-only invoker keeps the interface default and its descriptor access.
+     */
+    private MethodSpec accessPolicyHook(McpToolModel model) {
+        TypeName hookType = ParameterizedTypeName.get(
+                OPTIONAL,
+                ParameterizedTypeName.get(ClassName.get(Class.class), WildcardTypeName.subtypeOf(ACCESS_POLICY)));
+        return MethodSpec.methodBuilder("accessPolicy")
+                .addAnnotation(Override.class)
+                .addModifiers(Modifier.PUBLIC)
+                .returns(hookType)
+                .addStatement("return $T.of($T.class)", OPTIONAL, ClassName.get(model.accessPolicy()))
+                .build();
     }
 
     private CodeBlock access(McpToolModel model) {

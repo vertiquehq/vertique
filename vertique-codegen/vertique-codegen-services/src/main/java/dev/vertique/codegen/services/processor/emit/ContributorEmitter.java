@@ -54,10 +54,12 @@ import javax.lang.model.type.TypeMirror;
  * <p>Per-candidate metadata fields follow the naming pattern
  * {@code <IMPLPREFIX>_<OPNAME>_METHOD}, {@code <IMPLPREFIX>_<OPNAME>_RESILIENCE},
  * {@code <IMPLPREFIX>_<OPNAME>_METHOD_ANNOTATIONS}, and (for handler pattern)
- * {@code <IMPLPREFIX>_<OPNAME>_HANDLER_METHOD}. {@code <IMPLPREFIX>} is derived from the impl's
- * unique-key (see below) via {@code Identifiers.constantName} so {@code UserServiceHandler}
- * yields {@code USER_SERVICE_HANDLER}. Per-contract fields like {@code CONTRACT_CLASS_ANNOTATIONS}
- * are shared across all candidates in the group.
+ * {@code <IMPLPREFIX>_<OPNAME>_HANDLER_METHOD}. The method-annotations field is initialised with
+ * {@code AccessPolicyResolver.collectMethodAnnotations}, rooted at the contract class so a typed
+ * access policy declared anywhere in the contract hierarchy is collected. {@code <IMPLPREFIX>} is
+ * derived from the impl's unique-key (see below) via {@code Identifiers.constantName} so
+ * {@code UserServiceHandler} yields {@code USER_SERVICE_HANDLER}. Per-contract fields like
+ * {@code CONTRACT_CLASS_ANNOTATIONS} are shared across all candidates in the group.
  *
  * <p><strong>Cross-package simple-name disambiguation.</strong> When a multi-impl group contains
  * two or more impls with the same simple class name across different packages (e.g.,
@@ -132,6 +134,8 @@ public final class ContributorEmitter {
     private static final ClassName RESILIENCE_ANNOTATIONS =
             ClassName.get("dev.vertique.resilience.annotation", "ResilienceAnnotations");
     private static final ClassName ANNOTATION_RESOLVER = ClassName.get("dev.vertique.core.util", "AnnotationResolver");
+    private static final ClassName ACCESS_POLICY_RESOLVER =
+            ClassName.get("dev.vertique.security.authz", "AccessPolicyResolver");
     private static final ClassName INJECT = ClassName.get("jakarta.inject", "Inject");
     private static final ClassName PROVIDER = ClassName.get("jakarta.inject", "Provider");
     private static final ClassName SINGLETON = ClassName.get("jakarta.inject", "Singleton");
@@ -287,7 +291,15 @@ public final class ContributorEmitter {
                                 Modifier.PRIVATE,
                                 Modifier.STATIC,
                                 Modifier.FINAL)
-                        .initializer("$T.resolveMethodAnnotations($L)", ANNOTATION_RESOLVER, methodFieldName)
+                        // Typed policies are collected from the actual contract: the resolved method may
+                        // be declared on a parent interface, which must not become the collection root.
+                        .initializer(
+                                "$T.collectMethodAnnotations($T.class, $L, $T.resolveMethodAnnotations($L))",
+                                ACCESS_POLICY_RESOLVER,
+                                contractClass,
+                                methodFieldName,
+                                ANNOTATION_RESOLVER,
+                                methodFieldName)
                         .build());
 
                 // <IMPL>_<OP>_RESILIENCE

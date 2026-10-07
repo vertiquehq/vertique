@@ -5,8 +5,10 @@ package dev.vertique.rest.openapi.docs.fixture.conformance.complete;
 
 import dev.vertique.rest.core.application.RestApplication;
 import dev.vertique.rest.openapi.docs.ApiDocs;
+import dev.vertique.security.authz.AccessPolicy;
 import io.swagger.v3.oas.annotations.OpenAPIDefinition;
 import io.swagger.v3.oas.annotations.info.Info;
+import jakarta.annotation.security.PermitAll;
 
 /**
  * The documented application {@value #NAME} at {@value #PATH}, listing {@link
@@ -14,7 +16,7 @@ import io.swagger.v3.oas.annotations.info.Info;
  * describes. Its document is public and carries the same {@code info} as
  * the other twin's declaration.
  */
-@ApiDocs(access = ApiDocs.Access.PUBLIC)
+@ApiDocs(policy = RefEntriesApi.PublicDocsPolicy.class)
 @OpenAPIDefinition(
         info =
                 @Info(
@@ -29,4 +31,8 @@ public interface RefEntriesApi {
 
     /** The application's path. */
     String PATH = "/ref";
+
+    /** Anyone may read the document. */
+    @PermitAll
+    public interface PublicDocsPolicy extends AccessPolicy {}
 }

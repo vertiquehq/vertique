@@ -5,11 +5,11 @@ SPDX-License-Identifier: EUPL-1.2
 
 # REST OpenAPI Docs Module
 
-> **Status:** Alpha
+> **Status:** Beta
 > **Package:** `dev.vertique.rest.openapi.docs` (`ApiDocs` and `OpenApiDocsModule`; its subpackages
 > are internal to the module)
 > **Artifact:** `vertique-rest-openapi-docs`
-> **Depends on:** rest-jaxrs, rest-core, core, json-schema
+> **Depends on:** rest-jaxrs, rest-core, security-core, core, json-schema
 
 Opt-in runtime OpenAPI 3.1 documents for named REST applications. An application interface that
 carries `@ApiDocs` gets two read-only documents, `openapi.json` and `openapi.yaml`, served under a
@@ -49,8 +49,9 @@ and wants a machine-readable OpenAPI document for some of them.
 Three things switch a document on; all three are required:
 
 1. `OpenApiDocsModule` is listed in the component.
-2. The application's declaring interface carries `@ApiDocs`: `access = ApiDocs.Access.PUBLIC` for a
-   document any caller may read, or `PROTECTED` with a `securityScheme` (see
+2. The application's declaring interface carries `@ApiDocs`, whose `policy` is an `AccessPolicy` that
+   states who may read the document: a policy that is exactly one `@PermitAll` for a document any
+   caller may read, or any other policy with a `securityScheme` (see
    [Protected Documents](#protected-documents)).
 3. The document has an `info` with a non-blank `title` and `version`, from
    `apidocs.documents.<name>.info` or from `@OpenAPIDefinition(info)` on the declaring interface,
@@ -59,9 +60,13 @@ Three things switch a document on; all three are required:
    from that contract, and a configured `info` is refused (see [Served Contracts](#served-contracts)).
 
 ```java
-@ApiDocs(access = ApiDocs.Access.PUBLIC)
+@ApiDocs(policy = PublicApi.DocsPolicy.class)
 @RestApplication(name = "public", path = "/api/public", resources = {CatalogResource.class})
-public interface PublicApi {}
+public interface PublicApi {
+
+    @PermitAll
+    public interface DocsPolicy extends AccessPolicy {}
+}
 ```
 
 ```json
@@ -111,17 +116,27 @@ configuration entry alone.
 
 ### Access: `PUBLIC` and `PROTECTED`
 
-`@ApiDocs.access` states who may read the document routes. Only the annotation on the declaring
-interface decides it; no configuration value changes it.
+`@ApiDocs.policy` states who may read the document routes: a public interface that extends
+`AccessPolicy` (from `vertique-security-core`) and declares its requirements with the annotations a
+resource method uses, `@PermitAll`, `@DenyAll`, `@RolesAllowed`, `@Authorized`, and `@RequiresAction`.
+Only the annotation on the declaring interface decides it; no configuration value changes it.
 
-- `PUBLIC` documents are served to any caller, without authentication.
-- `PROTECTED` documents are served through the security chain of an equally annotated resource
-  method: the authentication handler of `@ApiDocs.securityScheme`, then every registered
-  `OperationHandlerContributor` with the policy `@RolesAllowed(rolesAllowed)`, or any authenticated
-  caller when `rolesAllowed` is empty. See [Protected Documents](#protected-documents).
+The document's classification is derived from the policy and is never declared. It is exactly one of
+two values:
 
-The shape check refuses a protected document without a `securityScheme`, a blank role, and a
-`securityScheme` or any role on a `PUBLIC` document (see [`@ApiDocs` shape](#apidocs-shape)).
+- `PUBLIC`: the policy is exactly one `@PermitAll`. The document is served to any caller, without
+  authentication.
+- `PROTECTED`: every other valid policy, `@DenyAll` included. The document is served through the
+  security chain of an equally annotated resource method: the authentication handler of
+  `@ApiDocs.securityScheme`, then every registered `OperationHandlerContributor` with the
+  requirements of the policy. A policy that denies everyone authenticates the reader, then refuses
+  it, so in a supported composition no reader gets the document; the document's own handler also
+  refuses every request of a lone `@DenyAll` policy and never reads the store for it. See
+  [Protected Documents](#protected-documents).
+
+The shape check refuses a policy that is not a valid `AccessPolicy`, a `securityScheme` on a public
+document, even a blank one, and a missing or blank `securityScheme` on any other policy (see
+[`@ApiDocs` shape](#apidocs-shape)).
 
 ### Built once, off the event loop, frozen
 
@@ -330,12 +345,12 @@ shape check of every active application (see [Configuration](#configuration)). W
   milliseconds; no content), each load of a served contract (`Loaded the served contract of
   apidocs.documents.<name> at mount '<mount path>' in <n> ms`; no content), and each comparison
   between instances.
-- One INFO line per protected document whose `@ApiDocs` lists no `rolesAllowed`, on logger
-  `dev.vertique.rest.openapi.docs.DocumentWarnings`, once per document and component, logged after
-  every document route is installed:
+- One INFO line per protected document whose policy is exactly one `@Authorized` that lists no scope,
+  on logger `dev.vertique.rest.openapi.docs.DocumentWarnings`, once per document and component,
+  logged after every document route is installed:
   `apidocs.documents.<name>: the protected document is readable by any principal the '<scheme>'
-  handler authenticates; @ApiDocs on <interface> lists no rolesAllowed`. The message is one line;
-  it is wrapped here for reading.
+  handler authenticates; the policy of @ApiDocs on <interface> requires authentication only`. The
+  message is one line; it is wrapped here for reading. No other policy logs it.
 
 ---
 
@@ -367,26 +382,49 @@ interface AppComponent extends VertiqueApplicationComponent {}
 ```
 
 **2. Declare the applications and their document access.** Access is code, on the declaring
-interface. The public document takes its `info` from `@OpenAPIDefinition`:
+interface: each `@ApiDocs` names a policy, an interface that extends `AccessPolicy`, here nested in
+the declaring interface. The public document takes its `info` from `@OpenAPIDefinition`:
 
 ```java
 @RestApplication(
         name = "public",
         path = "/api/public",
         resources = {CatalogResource.class})
-@ApiDocs(access = ApiDocs.Access.PUBLIC)
+@ApiDocs(policy = PublicApi.DocsPolicy.class)
 @OpenAPIDefinition(info = @Info(title = "Catalog API", version = "1.0"))
-public interface PublicApi {}
+public interface PublicApi {
+
+    @PermitAll
+    public interface DocsPolicy extends AccessPolicy {}
+}
 
 @RestApplication(
         name = "management",
         path = "/api/mgmt",
         resources = {ManagementResource.class})
-@ApiDocs(
-        access = ApiDocs.Access.PROTECTED,
-        securityScheme = "bearerAuth",
-        rolesAllowed = {"admin"})
-public interface ManagementApi {}
+@ApiDocs(policy = ManagementApi.DocsPolicy.class, securityScheme = "bearerAuth")
+public interface ManagementApi {
+
+    @RolesAllowed("admin")
+    public interface DocsPolicy extends AccessPolicy {}
+}
+```
+
+A policy states the audience with the annotations a resource method uses: `@PermitAll` for a public
+document, `@Authorized` for any authenticated reader, and `@RolesAllowed` (as above) for named
+roles. Only the public policy omits `securityScheme`; the others require it:
+
+```java
+@RestApplication(
+        name = "internal",
+        path = "/api/internal",
+        resources = {InternalResource.class})
+@ApiDocs(policy = InternalApi.DocsPolicy.class, securityScheme = "bearerAuth")
+public interface InternalApi {
+
+    @Authorized
+    public interface DocsPolicy extends AccessPolicy {}
+}
 ```
 
 `bearerAuth` is the scheme of the JWT handler that `JwtAuthModule` registers (see
@@ -398,7 +436,7 @@ unexpired token signed with the key, whatever its issuer or audience. Set both i
 
 **3. Add document metadata in configuration.** The management interface declares no
 `@OpenAPIDefinition`, so its `info` comes from configuration; the public document gets a server URL.
-Configuration never holds `access`:
+Configuration never holds the access policy:
 
 ```json
 {
@@ -428,28 +466,37 @@ example also serves a Redoc page at `/apidocs/ui/` (see
 
 ## Protected Documents
 
-A document whose declaring interface carries
-`@ApiDocs(access = PROTECTED, securityScheme = "<scheme>", rolesAllowed = {...})` is served only to
-callers the security chain admits.
+A document whose declaring interface carries `@ApiDocs(policy = <policy>, securityScheme =
+"<scheme>")`, with a policy that is not exactly one `@PermitAll`, is served only to callers the
+security chain admits.
 
 ```java
-@ApiDocs(access = ApiDocs.Access.PROTECTED, securityScheme = "bearerAuth",
-        rolesAllowed = {"docs-reader"})
+@ApiDocs(policy = ManagementApi.DocsPolicy.class, securityScheme = "bearerAuth")
 @RestApplication(name = "management", path = "/api/management",
         resources = {AdminResource.class})
-public interface ManagementApi {}
+public interface ManagementApi {
+
+    @RolesAllowed("docs-reader")
+    public interface DocsPolicy extends AccessPolicy {}
+}
 ```
 
 ### Access comes from the annotation only
 
-- **Declared in code.** `securityScheme` names the scheme that authenticates a reader, and
-  `rolesAllowed` restricts reading to those roles. An empty `rolesAllowed` admits any caller the
-  scheme authenticates, and an INFO line says so at startup (see
-  [Startup log lines](#startup-log-lines)).
+- **Declared in code.** `securityScheme` names the scheme that authenticates a reader, and `policy`
+  says who of those readers may read. The policy declares its requirements with `@RolesAllowed`,
+  `@Authorized` (authentication only, or with scopes), `@RequiresAction`, a combination of them, or
+  `@DenyAll`. A policy that is exactly one `@Authorized` without scopes admits any caller the scheme
+  authenticates, and an INFO line says so at startup (see [Startup log lines](#startup-log-lines)).
+- **Classification.** A policy that is exactly one `@PermitAll` is public; every other valid policy
+  is protected, `@DenyAll` included. A protected document never falls through to a later mount and
+  is never cached by a shared cache.
 - **No configuration override.** `apidocs.documents.<name>` accepts only `enabled`, `info`, and
   `serverUrl`, and none of them changes who may read the document.
-- **No required action.** `@ApiDocs` has no attribute for a required action; a protected document
-  cannot require one.
+- **Required action.** A policy with `@RequiresAction` makes the action gate of the equally
+  annotated resource method run for the document: the action must be registered with the
+  application's `ActionRegistry`, an `Authorizer` must be bound, and the document application's
+  registrations own the permits. The framework grants nothing for it.
 
 ### One synthetic operation per form
 
@@ -457,7 +504,7 @@ Each form, `<apidocs.path>/<name>/openapi.json` and `<apidocs.path>/<name>/opena
 framework synthetic operation, `apidocs:<name>:json` or `apidocs:<name>:yaml`, that answers `GET`
 and `HEAD`. Its descriptor reports the documented application's name from `applicationName()` and
 the annotations of the equally annotated resource method: `@SecurityRequirement(name = "<scheme>")`
-plus `@RolesAllowed(rolesAllowed)`, or plus `@Authorized` when `rolesAllowed` is empty.
+plus the direct requirements of the document's policy.
 
 The route runs, in order:
 
@@ -465,12 +512,22 @@ The route runs, in order:
    [Events and metrics](#events-and-metrics));
 2. the authentication handler of the scheme;
 3. every registered `OperationHandlerContributor`, application contributors included, in the order
-   resource routes use (phase, then priority), each given the operation's effective policy and no
-   required action;
+   resource routes use (phase, then priority), each given the operation's effective policy and the
+   action the policy requires, if any;
 4. the document handler.
 
 The document handler evaluates the entity tag and `If-None-Match` only after the whole chain has
 passed, so a denied caller never learns the entity tag or gets a `304`.
+
+### Supported composition
+
+A protected document is enforced only in a composition that includes the framework's real
+authentication and security modules (`AuthModule` and `SecurityModule`, or a module that includes
+them, such as `JwtAuthModule`), beside the handler of the document's scheme. A composition that binds
+only the authentication-enforcement marker enforces nothing for a policy that needs identity, role,
+scope, or action checks; it is unsupported, and a protected document in it is not a sound deployment
+even where startup accepts it. Where a policy needs an action, the `ActionRegistry` and an
+`Authorizer` of the application belong to the composition too.
 
 ### Answers
 
@@ -478,7 +535,7 @@ passed, so a denied caller never learns the entity tag or gets a `304`.
 |---|---|
 | The chain admits the caller and the document is stored | `200` or `304` as for a public document (see [Responses](#responses)), with `Cache-Control: private, no-store` and the `Vary` of [Caching](#caching) |
 | The scheme does not authenticate the caller | `401` problem response |
-| A contributor denies the authenticated caller | `403` problem response, or the status the contributor fails the request with |
+| A contributor denies the authenticated caller, or the policy denies every reader | `403` problem response, or the status the contributor fails the request with; a policy that denies every reader authenticates first, so an anonymous reader gets `401` |
 | The chain admits the caller on a trailing-slash variant of the URL | `404` problem response |
 | The chain admits the caller and the document is not stored | `503` problem response, logged at ERROR |
 | A failure without an explicit `4xx` or `5xx` status | `500` problem response, logged at ERROR |
@@ -517,12 +574,14 @@ A protected document whose chain cannot be built fails startup while the docs mo
 router. The documentation router is left with no route, and the server never listens.
 
 - **Unknown scheme or no enforcement.** `securityScheme` names no registered
-  `SecuritySchemeHandler`, or authentication enforcement is not installed. Checked before any
+  `SecuritySchemeHandler`, or authentication enforcement is not installed for a policy that is not
+  public. A policy that denies everyone needs both too. Checked before any
   route is registered; each violation starts with
   `Application '<name>' (declared by <interface>): `, and several violations are listed one per
   line under `Invalid @ApiDocs values:`.
 - **No authentication handler.** The scheme's handler registered no authentication handler, or a
-  contributor rejects the operation while its route is built. The message starts with
+  contributor rejects the operation while its route is built, for example an action the policy
+  requires that no registry holds. The message starts with
   `Protected API document of application '<name>' (access policy: @ApiDocs on <interface>)`, and
   every document route already installed is removed again.
 
@@ -548,10 +607,14 @@ shared `jaxrs.openapiPath` is never served as a document (see [Startup Checks](#
 the shared contract under `openapi-contract`).
 
 ```java
-@ApiDocs(access = ApiDocs.Access.PUBLIC)
+@ApiDocs(policy = PartnerApi.DocsPolicy.class)
 @RestApplication(name = "partner", path = "/api/partner",
         openapiPath = "openapi/partner.yaml", resources = {PartnerResource.class})
-public interface PartnerApi {}
+public interface PartnerApi {
+
+    @PermitAll
+    public interface DocsPolicy extends AccessPolicy {}
+}
 ```
 
 The contract supplies its own `info`, so the document needs no `apidocs.documents.<name>` entry. An
@@ -816,11 +879,10 @@ document nor how it is cached.
   serves. An application on the shared global `jaxrs.openapiPath` with an enabled document is still
   refused, with the alternative of serving that file behind an access check (see
   [Startup Checks](#startup-checks)); an application with its own contract is served.
-- **`servers` under `openapi-contract`.** The strategy needs a contract it validates against to have
-  absolute server URLs or no `servers`: `vertx-openapi` cannot load a contract with a relative server
-  URL, so startup fails. The `servers` warning expects `servers[0].url` to equal the mount path, a
-  relative URL. Under `openapi-contract`, omit `servers` and accept the warning, or use an absolute
-  URL.
+- **`servers` under `openapi-contract`.** The strategy loads the served contract with `vertx-openapi`,
+  which accepts relative and absolute server URLs but fails startup on one it cannot parse. The
+  `servers` warning expects `servers[0].url` to equal the mount path, a relative URL, which the
+  strategy loads without complaint.
 
 ---
 
@@ -1194,8 +1256,8 @@ a consumer using another regular-expression dialect may read a pattern different
 
 ### Validation disclosure
 
-The root `x-vertique-validation` depends on the document's access, which comes only from
-`@ApiDocs(access)`; no configuration changes it.
+The root `x-vertique-validation` depends on the document's classification, which comes only from
+the policy of `@ApiDocs` (public exactly for one `@PermitAll`); no configuration changes it.
 
 - **Public document.** The root member is exactly `{"patternDialect":"java.util.regex"}`, and no
   input carries a marker.
@@ -1863,22 +1925,23 @@ without it.
 ```java
 @Retention(RUNTIME) @Target(TYPE) @Documented
 public @interface ApiDocs {
-    Access access();                    // required
-    String securityScheme() default ""; // PROTECTED only
-    String[] rolesAllowed() default {}; // PROTECTED only
-    enum Access { PUBLIC, PROTECTED }
+    Class<? extends AccessPolicy> policy(); // required, no default
+    String securityScheme() default "";     // empty exactly when the policy is public
+    enum Access { PUBLIC, PROTECTED }       // derived classification, not an attribute
 }
 ```
 
 Place it on the `@RestApplication` declaring interface. It enables the document named by the
 application and states who may read the document routes; it guards those routes only and is not API
-protection. No configuration changes the annotation's `access`. It is honored only on the declaring
+protection. No configuration changes the annotation's `policy`. It is honored only on the declaring
 interface itself. `vertique-rest-jaxrs` and `vertique-codegen-jaxrs` recognize it by its fully
 qualified name, `dev.vertique.rest.openapi.docs.ApiDocs` (also the constant `ApiDocs.ANNOTATION_NAME`),
 and never depend on this module.
 
-`PUBLIC` documents are served to any caller and `PROTECTED` documents through the security chain;
-see [Access](#access-public-and-protected) and [Protected Documents](#protected-documents).
+A document whose policy is exactly one `@PermitAll` is `PUBLIC` and served to any caller; every other
+valid policy is `PROTECTED` and served through the security chain. `Access` is the derived
+classification the document records, never an attribute of the annotation. See
+[Access](#access-public-and-protected) and [Protected Documents](#protected-documents).
 
 ### OpenApiDocsModule
 
@@ -1934,7 +1997,8 @@ unnoticed. The checks run in this order, and the first violation fails startup:
    that names no declared application is refused. An entry for an inactive application is accepted and
    publishes nothing.
 3. **Supported keys.** The entry holds only `enabled`, `info`, and `serverUrl` (case-sensitive). Any
-   other key fails, `access` and `mount` included: who may read a document is `@ApiDocs`'s, in code,
+   other key fails, `access` and `mount` included: who may read a document is the policy of
+   `@ApiDocs`, in code,
    and configuration cannot relocate a document. The failure lists each unsupported key's full path,
    sorted.
 4. **Unreadable `enabled`.** A string that is blank or made only of control characters cannot be
@@ -1953,12 +2017,25 @@ Keys elsewhere under `apidocs` are tolerated.
 ### `@ApiDocs` shape
 
 For every active application whose declaring interface carries `@ApiDocs`, whether or not
-configuration disables its document, startup re-checks that `securityScheme` is set exactly when
-`access` is `PROTECTED`, that `rolesAllowed` is empty when `access` is `PUBLIC`, and that no
-`rolesAllowed` entry is blank. The annotation processor enforces the same rules at compile time, so
-only a registration the processor did not produce can fail here. All violations are reported in one
-failure, sorted, each naming the application, its declaring interface, and the attribute. An inactive
-application is not checked.
+configuration disables its document, startup re-checks, in one pass:
+
+- that `policy` is a valid `AccessPolicy`: a public interface that extends only `AccessPolicy`, with
+  no members, and whose direct requirements are valid (`@PermitAll` and `@DenyAll` exclusive of every
+  other requirement, no empty or blank role, no blank scope, a canonical action). A failure names
+  `@ApiDocs.policy`;
+- that `securityScheme` is empty when the policy is public, a blank string included, and is not
+  blank for every other policy, `@DenyAll` included. A failure names `@ApiDocs.securityScheme`;
+- that the class file records a `policy`. An interface whose `@ApiDocs` records none (a stale or
+  partially built class file) has no policy to read: it fails closed with a message that says to
+  recompile, is never served as a public document, and is not repaired by configuration.
+
+The annotation processor enforces the same rules at compile time, so ordinarily only a
+registration the processor did not produce, a declaration marked `@NoAutoWire` (which skips the
+compile-time check), a stale class file, or a policy from a dependency whose version changed after
+compilation can fail here; every such failure fails closed. All violations are reported in one
+failure under `Invalid @ApiDocs declarations:`, sorted, each naming the application and its
+declaring interface and the attribute. A failure never repeats a role, scope, action, or scheme
+value. An inactive application is not checked.
 
 ### `info`
 
@@ -2034,8 +2111,8 @@ listens. A failure reported by the composition validator reaches the application
 `HttpVerticle`'s `IllegalStateException` (`Invalid mount configuration:`) listing every violation,
 sorted.
 
-**`@ApiDocs` values.** The docs mount checks each enabled `PROTECTED` document before it registers a
-route:
+**`@ApiDocs` values.** The docs mount checks each enabled `PROTECTED` document, a policy that denies
+everyone included, before it registers a route:
 
 - its `securityScheme` must be the scheme name of a registered `SecuritySchemeHandler`; and
 - authentication enforcement must be installed.
@@ -2245,12 +2322,13 @@ names are quoted.
 | An entry sets `enabled` to a string that is blank or made only of control characters | `ConfigurationException` naming the application, its declaring interface, and `apidocs.documents.<name>.enabled`, ending `it must be true or false, or be left out to keep the @ApiDocs decision` |
 | An entry sets `enabled: true` for an application without `@ApiDocs` | `ConfigurationException` naming the application, its declaring interface, and `apidocs.documents.<name>.enabled` |
 | A blank key, or an entry that is not a JSON object | The keyed-collection parser's own `ConfigurationException`, raised before any check above; it says the entry has a blank key, or that the entry `'<key>'` must be a nested JSON object, and names the key |
-| The `@ApiDocs` of an active application breaks its shape rules | `RestConfigurationException` listing every violation, sorted, each naming the application, its declaring interface, and `@ApiDocs.securityScheme` or `@ApiDocs.rolesAllowed` |
+| The `@ApiDocs` of an active application breaks its shape rules: an invalid `policy`, a scheme on a public policy, no scheme on any other policy | `RestConfigurationException` under `Invalid @ApiDocs declarations:` listing every violation, sorted, each naming the application, its declaring interface, and `@ApiDocs.policy` or `@ApiDocs.securityScheme` |
+| The class file of an active application's interface records an `@ApiDocs` with no `policy` (a stale or partially built class file) | `RestConfigurationException` in the same listing, naming the application and its declaring interface and saying to recompile; no document is served for it, and none is public |
 | A document is enabled and `apidocs.path` breaks a rule above | `ConfigurationException` naming `apidocs.path` |
 | An enabled document has no `info`, or a blank `title` or `version` | `ConfigurationException` naming the application, its declaring interface's binary name, and `apidocs.documents.<name>.info`, `.info.title`, or `.info.version`; a blank `title` or `version` in `@OpenAPIDefinition(info)` names `@OpenAPIDefinition.info` |
 | An enabled document takes its `info` from `@OpenAPIDefinition` and its `@License` sets both `identifier` and `url` | `ConfigurationException` naming the application, its declaring interface's binary name, `@OpenAPIDefinition.info.license`, and `apidocs.documents.<name>.info`; neither value is echoed |
 | An enabled document has an invalid `serverUrl` | `ConfigurationException` naming the application, its declaring interface, and `apidocs.documents.<name>.serverUrl` |
-| An enabled `PROTECTED` document names a `securityScheme` no registered handler has, or authentication enforcement is not installed | `RestConfigurationException` whose violations each start `Application '<name>' (declared by <interface>): `, naming `@ApiDocs.securityScheme` and the scheme, or `@ApiDocs.access`; several are listed under `Invalid @ApiDocs values:`; raised before any document route is registered |
+| An enabled `PROTECTED` document, one whose policy denies everyone included, names a `securityScheme` no registered handler has, or authentication enforcement is not installed | `RestConfigurationException` whose violations each start `Application '<name>' (declared by <interface>): `, naming `@ApiDocs.securityScheme` and the scheme, or `@ApiDocs.policy` and the missing authentication enforcement; several are listed under `Invalid @ApiDocs values:`; raised before any document route is registered |
 | An enabled `PROTECTED` document's scheme handler registered no authentication handler, or a contributor rejects its operation while the route is built | `RestConfigurationException` starting `Protected API document of application '<name>' (access policy: @ApiDocs on <interface>)`; every document route is removed again, so the documentation router has no route |
 | An enabled document has no JAX-RS mount of its application name, a JAX-RS mount lies at or under `apidocs.path`, or a JAX-RS pattern mount path can reach the prefix | `IllegalStateException` from `HttpVerticle` (`Invalid mount configuration:`) listing every violation, raised before any router is created |
 | The docs mount is hosted by an `HttpVerticle` built without composition validators | `RestConfigurationException` naming the docs mount, the cause, and the remedy (obtain `HttpVerticle` from Dagger) |
@@ -2310,7 +2388,7 @@ and its message can quote that value.
 - **Expecting `enabled: true` to enable a document.** Only `@ApiDocs` enables. `enabled: true` for an
   application without `@ApiDocs` fails startup; the entry can only switch a documented application off.
 - **Putting `access` or `mount` in an entry.** Entries accept only `enabled`, `info`, and `serverUrl`;
-  access is declared by `@ApiDocs` in code.
+  access is declared by the policy of `@ApiDocs` in code.
 - **Mounting a JAX-RS mount or a catch-all route under the prefix.** It fails startup. Choose another
   `apidocs.path`, or move, narrow, or remove the mount or route.
 - **A security handler without a description.** A published operation requiring a scheme whose
@@ -2388,10 +2466,19 @@ and its message can quote that value.
   request on stops fall-through under the prefix.
 - **Putting `@ApiDocs` on a superinterface.** Only the `@RestApplication` declaring interface is
   read; the annotation processor rejects it on a superinterface.
-- **Expecting an empty `rolesAllowed` to restrict a protected document.** It admits any caller the
-  scheme authenticates, and an INFO line says so at startup; list the roles that may read it.
-- **Expecting configuration to change a document's access.** Only `@ApiDocs` on the declaring
-  interface decides it; use `PUBLIC` only where the document may be read by any caller.
+- **Expecting an authenticated-only policy to restrict a protected document.** A policy that is one
+  `@Authorized` without scopes admits any caller the scheme authenticates, and an INFO line says so
+  at startup; use `@RolesAllowed`, scopes, or `@RequiresAction` to restrict who may read it.
+- **Expecting configuration to change a document's access.** Only the policy of `@ApiDocs` on the
+  declaring interface decides it; use a policy that is exactly one `@PermitAll` only where the
+  document may be read by any caller.
+- **Giving a public policy a `securityScheme`, or another policy none.** A public document names no
+  scheme, not even a blank one, and every other policy, `@DenyAll` included, needs a registered
+  scheme; both fail compilation and startup.
+- **Mixing `@PermitAll` with another requirement in a policy.** The policy is invalid, not public, and
+  so is a policy that declares no direct requirement.
+- **Running a stale class file.** An interface whose class file records an `@ApiDocs` with no `policy`
+  fails startup closed until it is recompiled.
 - **Expecting the application's error handling on a protected document.** Its `401`, `403`, `404`,
   `503`, and `500` answers end on the document route's own failure handler; exception mappers,
   error interceptors, and later mounts never see them.
@@ -2451,8 +2538,8 @@ and its message can quote that value.
 - **Expecting the contract's schemas to be checked against the code.** Under `web-validation` the
   contract plays no part in validation and nothing compares its schemas with what the runtime
   enforces; keep them in step.
-- **A relative `servers` URL under `openapi-contract`.** Startup fails: the strategy cannot load the
-  contract. Omit `servers` and accept the `servers` warning, or use an absolute URL.
+- **A malformed `servers` URL under `openapi-contract`.** Startup fails: the strategy cannot load the
+  contract. A relative URL, including the mount path the `servers` warning expects, loads.
 - **Expecting a contract file edit to be served without a restart.** The contract is loaded once
   per component; a later edit is not served.
 
@@ -2539,14 +2626,18 @@ document an application that uses it, declare one sole discovery application at 
 
 ```java
 @RestApplication(name = "services", path = "/", discover = true)
-@ApiDocs(access = ApiDocs.Access.PUBLIC)
+@ApiDocs(policy = ServicesApi.DocsPolicy.class)
 @OpenAPIDefinition(
         info =
                 @Info(
                         title = "Example Services Codegen API",
                         version = "0.1.0",
                         description = "…"))
-public interface ServicesApi {}
+public interface ServicesApi {
+
+    @PermitAll
+    public interface DocsPolicy extends AccessPolicy {}
+}
 ```
 
 Its routes stay where they were under three constraints:
@@ -2579,9 +2670,10 @@ list every warning.
 ### Enabling documents with `@ApiDocs`
 
 1. **List `OpenApiDocsModule`** in the component.
-2. **Put `@ApiDocs` on the declaring interface** with its access, which only code decides:
-   `PUBLIC`, or `PROTECTED` with a `securityScheme` and optional `rolesAllowed`. An empty
-   `rolesAllowed` admits any caller the scheme authenticates, and an INFO line says so (see
+2. **Put `@ApiDocs` on the declaring interface** with its policy, which only code decides: a policy
+   interface that is exactly one `@PermitAll` for a public document, or any other policy with a
+   `securityScheme`. A policy that is one `@Authorized` without scopes admits any caller the scheme
+   authenticates, and an INFO line says so (see
    [Access: `PUBLIC` and `PROTECTED`](#access-public-and-protected)).
 3. **Give the document an `info`** from `@OpenAPIDefinition(info)` on the declaring interface or from
    `apidocs.documents.<name>.info`; the example uses one of each (see [`info`](#info)).
@@ -2830,9 +2922,8 @@ global contract is served only by the application itself (see
 Startup refuses every violation, listing them all (see
 [Startup checks of a served contract](#startup-checks-of-a-served-contract)). It warns when
 `servers[0].url` is not the mount path (see
-[Warnings of a served contract](#warnings-of-a-served-contract)). Under `openapi-contract` a relative
-`servers` URL fails startup: omit `servers` or use an absolute URL (see
-[Contract and runtime](#contract-and-runtime)). A relative location resolves to a
+[Warnings of a served contract](#warnings-of-a-served-contract)). Under `openapi-contract` a malformed
+`servers` URL fails startup (see [Contract and runtime](#contract-and-runtime)). A relative location resolves to a
 working-directory file before a classpath resource of the same name, and that file then shadows the
 packaged contract, with a WARN (see
 [Where the contract is read from](#where-the-contract-is-read-from)).
@@ -2946,6 +3037,7 @@ in the runtime document only.
 |---|---|
 | `dev.vertique:vertique-rest-jaxrs` | The declared-application view, the operation publication seam the module consumes, and the `ApiDocsModuleInstalled` marker |
 | `dev.vertique:vertique-rest-core` | `RouterMount`, `MountMeta`, the extension phases, `JaxRsConfig` default headers, `ResponseProducerBinding`, `SecuritySchemeHandler` and `SecuritySchemeDescription` (rendered as `securitySchemes`), and `RestConfigurationException` |
+| `dev.vertique:vertique-security-core` | `AccessPolicy`, the type of `@ApiDocs.policy`, and the resolver that validates it and reads its direct requirements |
 | `dev.vertique:vertique-core` | `ConfigParser`, configuration path navigation, `ConfigurationException`, `@KeyedBy`, and `JsonMapperProfileRegistry` |
 | `dev.vertique:vertique-json-schema` | The redaction manifest each published request body is verified against and redacted by, and whose digest is part of the comparison between instances; the input generator that reports hidden members of a request body; the output generator that describes response types and reports their renamed and hidden members |
 | `io.vertx:vertx-json-schema` | Compile dependency; evaluates whether a captured request-body schema accepts an absent body, which decides the request body's `required` |
@@ -2960,7 +3052,8 @@ adds no route beyond the document URLs. It is not part of any starter.
 
 ## Verification
 
-- Start a component that lists `OpenApiDocsModule` with a `@ApiDocs(access = PUBLIC)` application and
+- Start a component that lists `OpenApiDocsModule` with an application whose `@ApiDocs` policy is one
+  `@PermitAll` and
   the `info` configuration, then `GET <prefix>/<name>/openapi.json` and `.yaml`: expect `200`, the
   exact content type, an `ETag`, and `Cache-Control`.
 - Repeat with `If-None-Match` set to the returned `ETag`, to `W/` plus the tag, and to `*`: expect
@@ -2968,14 +3061,18 @@ adds no route beyond the document URLs. It is not part of any starter.
 - `HEAD` the same URLs: expect the `200` headers with no body.
 - Request `<prefix>/unknown/openapi.json`, a trailing-slash variant of a public document, and a
   `POST`: expect the response of the later mounts, never one from this mount.
-- Annotate an application `@ApiDocs(access = PROTECTED, securityScheme = "bearerAuth",
-  rolesAllowed = {"docs-reader"})` with the JWT handler configured as `bearerAuth`: expect `401`
+- Annotate an application `@ApiDocs(policy = <a policy with @RolesAllowed("docs-reader")>,
+  securityScheme = "bearerAuth")` with the JWT handler configured as `bearerAuth`: expect `401`
   without a token and `403` with a token lacking the role, each as a problem response with
   `Cache-Control: no-store` and no `ETag`; with the role, expect `200` with
   `Cache-Control: private, no-store` and `Vary: Authorization`, and `304` for a matching
   `If-None-Match`. With the role, a trailing-slash variant answers `404`.
 - With that protected document, observe one `RestRequestCompletedEvent` per read or denial whose
   operation id is `apidocs:<name>:json` or `apidocs:<name>:yaml`.
+- Declare a policy that is one `@DenyAll` with `securityScheme = "bearerAuth"`: expect `401` without a
+  token and `403` with any valid token, never `200` or `304`, and no document bytes.
+- Run an interface compiled against the old `@ApiDocs` on this version: expect startup to fail naming
+  the application and its interface and saying to recompile.
 - Name a `securityScheme` no handler registers: expect startup to fail starting
   `Application '<name>' (declared by <interface>)` and the server not to listen.
 - Set `apidocs.documents.<name>.enabled` to `false`: expect no document route and no publication.
@@ -3023,7 +3120,7 @@ adds no route beyond the document URLs. It is not part of any starter.
 - Require a scheme whose handler returns no `openApiDescription()`: expect startup to fail naming
   the operation and the scheme; set `apidocs.documents.<name>.enabled: false` and expect startup to
   succeed with the route still refusing unauthenticated requests.
-- Give a `@ApiDocs(access = PUBLIC)` application `@RestApplication(openapiPath =
+- Give an application with a public `@ApiDocs` policy `@RestApplication(openapiPath =
   "openapi/partner.yaml")` with that resource on the classpath: expect both forms to parse to a tree
   equal to the contract, the stored line to name `source: served contract`, and the source INFO
   line to name the resource URL.

@@ -32,7 +32,7 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
 /**
- * The measurement design point 4 requires: whether {@code io.vertx.json.schema} 5.1.6's {@code
+ * The measurement design point 4 requires: whether {@code io.vertx.json.schema}'s {@code
  * pattern} keyword honors an embedded Java regex modifier group, which decides whether
  * {@link MetadataConstraintSource} may render a flagged {@code @Pattern} inline or must refuse it.
  *

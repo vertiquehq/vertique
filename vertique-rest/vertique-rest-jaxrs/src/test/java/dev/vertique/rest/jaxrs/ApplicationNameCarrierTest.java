@@ -29,6 +29,7 @@ import dev.vertique.rest.jaxrs.validation.NoneValidationStrategy;
 import io.swagger.v3.oas.annotations.Operation;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
+import io.vertx.core.http.HttpClient;
 import io.vertx.core.http.HttpMethod;
 import io.vertx.core.http.HttpServer;
 import io.vertx.ext.web.Router;
@@ -93,6 +94,9 @@ class ApplicationNameCarrierTest {
 
     private Vertx vertx;
     private @Nullable HttpServer server;
+    /** Awaitable close handle; {@link WebClient#close()} discards the underlying future. */
+    private @Nullable HttpClient transport;
+
     private @Nullable WebClient client;
     private int port;
 
@@ -103,12 +107,9 @@ class ApplicationNameCarrierTest {
 
     @AfterEach
     void tearDown() {
-        if (client != null) {
-            client.close();
-        }
-        if (server != null) {
-            await(server.close());
-        }
+        Future<Void> clientClose = transport != null ? transport.close() : Future.succeededFuture();
+        Future<Void> serverClose = server != null ? server.close() : Future.succeededFuture();
+        await(Future.join(clientClose, serverClose).mapEmpty());
         await(vertx.close());
     }
 
@@ -429,7 +430,8 @@ class ApplicationNameCarrierTest {
     private void listen(Router root) {
         server = await(vertx.createHttpServer().requestHandler(root).listen(0, "127.0.0.1"));
         port = server.actualPort();
-        client = WebClient.create(vertx);
+        transport = vertx.createHttpClient();
+        client = WebClient.wrap(transport);
     }
 
     private int get(String path) {

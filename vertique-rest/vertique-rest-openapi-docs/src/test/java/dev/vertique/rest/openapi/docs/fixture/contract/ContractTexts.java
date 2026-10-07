@@ -13,10 +13,9 @@ package dev.vertique.rest.openapi.docs.fixture.contract;
  * {@code listOrders} and {@code createOrder} described and nothing else, every operation with {@code
  * responses}. They differ in {@code info.title}; for {@link #WORKING_DIRECTORY_SHADOWED}, in the
  * request schema of {@code createOrder}, which also requires {@code quantity}; and in {@code servers}.
- * {@link #WORKING_DIRECTORY_SHADOWED} and {@link #ABSOLUTE} carry no {@code servers} member, because
- * a test also deploys them under the contract-validation strategy, which accepts only absolute server
- * URLs or none and answers every validated request with 500 for a relative one. {@link #LATE} keeps
- * {@code servers[0].url} {@code /api/partner}.
+ * {@link #WORKING_DIRECTORY_SHADOWED} and {@link #ABSOLUTE} carry no {@code servers} member; a test
+ * also deploys them under the contract-validation strategy, which needs no server URL to validate.
+ * {@link #LATE} keeps {@code servers[0].url} {@code /api/partner}.
  */
 public final class ContractTexts {
 

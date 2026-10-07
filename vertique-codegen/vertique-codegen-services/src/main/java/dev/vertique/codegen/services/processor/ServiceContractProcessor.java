@@ -24,6 +24,7 @@ import dev.vertique.codegen.services.processor.validate.MultipleUnconditionalImp
 import dev.vertique.codegen.services.processor.validate.OperationCollisionValidator;
 import dev.vertique.codegen.services.processor.validate.OperationValueValidator;
 import dev.vertique.codegen.services.processor.validate.PayloadParamValidator;
+import dev.vertique.codegen.services.processor.validate.PolicyDeclarationValidator;
 import dev.vertique.codegen.services.processor.validate.ReturnTypeValidator;
 import dev.vertique.codegen.validate.InjectConstructorValidator;
 import java.util.ArrayList;
@@ -103,6 +104,7 @@ public final class ServiceContractProcessor extends AbstractProcessor {
     private HandlerOverloadValidator handlerOverloadValidator;
     private OperationValueValidator operationValueValidator;
     private OperationCollisionValidator operationCollisionValidator;
+    private PolicyDeclarationValidator policyDeclarationValidator;
     private InjectConstructorValidator injectConstructorValidator;
     private HandlerContractValidator handlerContractValidator;
     private HandlerMatchValidator handlerMatchValidator;
@@ -148,6 +150,7 @@ public final class ServiceContractProcessor extends AbstractProcessor {
         handlerOverloadValidator = new HandlerOverloadValidator(ctx);
         operationValueValidator = new OperationValueValidator(ctx);
         operationCollisionValidator = new OperationCollisionValidator(ctx);
+        policyDeclarationValidator = new PolicyDeclarationValidator(ctx);
         injectConstructorValidator = new InjectConstructorValidator(ctx);
         handlerContractValidator = new HandlerContractValidator(ctx);
         handlerMatchValidator = new HandlerMatchValidator(ctx);
@@ -222,7 +225,7 @@ public final class ServiceContractProcessor extends AbstractProcessor {
             }
 
             // Use & (not &&) within each group so every validator runs and contributes its
-            // diagnostics in one compile. The split is by *root*, not by convenience: the five
+            // diagnostics in one compile. The split is by *root*, not by convenience: the six
             // contract-shape validators take explicit inputs so the contract-only client path can
             // reuse them without a ContractModel (which always carries an impl type), and only they
             // gate that path.
@@ -230,12 +233,14 @@ public final class ServiceContractProcessor extends AbstractProcessor {
                     & returnTypeValidator.validate(model.contractType(), model.operations())
                     & payloadParamValidator.validate(model.contractType(), model.operations())
                     & operationValueValidator.validate(model.contractType(), model.operations())
-                    & operationCollisionValidator.validate(model.contractType(), model.operations());
+                    & operationCollisionValidator.validate(model.contractType(), model.operations())
+                    & policyDeclarationValidator.validateContract(model.contractType(), model.operations());
 
             boolean implSideValid = handlerContractValidator.validate(model)
                     & handlerOverloadValidator.validate(model)
                     & injectConstructorValidator.validate(model.implType())
-                    & handlerMatchValidator.validate(model);
+                    & handlerMatchValidator.validate(model)
+                    & policyDeclarationValidator.validateImplementation(model);
 
             if (!contractShapeValid) {
                 contractShapeFailedFqns.add(contractFqn);
@@ -297,7 +302,7 @@ public final class ServiceContractProcessor extends AbstractProcessor {
      * contract that <em>does</em> have an impl produces both a contributor and a client proxy.
      * Contracts are processed in fully-qualified-name order so the generated output is deterministic.
      *
-     * <p>Only the five contract-shape validators gate emission — the impl-coupled ones
+     * <p>Only the six contract-shape validators gate emission — the impl-coupled ones
      * ({@code Handler*}, {@code @Inject} constructor, group-level) have no meaning without an impl.
      *
      * <p>Contracts whose <em>shape</em> was already rejected by the impl loop in this round are
@@ -329,7 +334,7 @@ public final class ServiceContractProcessor extends AbstractProcessor {
                 .filter(e -> e.getKind() == ElementKind.INTERFACE)
                 .map(TypeElement.class::cast)
                 // Contract-shape diagnostics already reported by the impl loop; re-running the same
-                // five validators here would duplicate every one of them.
+                // six validators here would duplicate every one of them.
                 .filter(t ->
                         !contractShapeFailedFqns.contains(t.getQualifiedName().toString()))
                 .sorted(Comparator.comparing(t -> t.getQualifiedName().toString()))
@@ -348,7 +353,8 @@ public final class ServiceContractProcessor extends AbstractProcessor {
                     & returnTypeValidator.validate(model.contractType(), model.operations())
                     & payloadParamValidator.validate(model.contractType(), model.operations())
                     & operationValueValidator.validate(model.contractType(), model.operations())
-                    & operationCollisionValidator.validate(model.contractType(), model.operations());
+                    & operationCollisionValidator.validate(model.contractType(), model.operations())
+                    & policyDeclarationValidator.validateContract(model.contractType(), model.operations());
 
             if (!valid) {
                 continue;

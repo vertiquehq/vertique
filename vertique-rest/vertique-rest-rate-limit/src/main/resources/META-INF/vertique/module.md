@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Rest Rate Limit
 
-> **Status:** Beta
+> **Status:** Stable
 > **Package:** `dev.vertique.rest.ratelimit`
 > **Artifact:** `vertique-rest-rate-limit`
 > **Depends on:** `vertique-rate-limit-core`, `vertique-rest-core`, `vertique-rest-security` (narrow: `RequestOrigin` type and the `OriginCaptureMiddleware.ORDER` constant only)
@@ -167,11 +167,6 @@ rateLimit:
 defaults to all mounts, WebSocket/SSE/static included). `defaultMode` (core
 configuration) applies to any rule policy that omits an explicit `mode`.
 
-## Verification
-
-```text
-./mvnw -ntp -pl vertique-rest/vertique-rest-rate-limit -am verify
-```
 
 ## Dependencies
 

@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # REST Security Module
 
-> **Status:** Beta
+> **Status:** Stable
 > **Package:** `dev.vertique.rest.security`
 > **Artifact:** `vertique-rest-security`
 > **Depends on:** rest-core, security-core, security-runtime, context, logging
@@ -346,7 +346,9 @@ The decision point is selected once, at construction, in this order:
 1. an application-provided `AuthorizationDecisionPoint`;
 2. an application-provided sync `AuthorizationPolicy`, wrapped as `SyncPolicyDecisionPoint`;
 3. the built-in decision point, which evaluates roles, scopes, and permissions from
-   `AuthorizationClaims`.
+   `AuthorizationClaims` by delegating to `ClaimAuthorizationPolicy` in `vertique-security-runtime`.
+   Its `requiredRoles`, `requiredScopes` and `requireAllScopes` context keys and its reason codes are
+   the same constants, so their spelling is unchanged.
 
 `decide(...)` is for a caller with no `RoutingContext` to drive — for example a non-HTTP-routed
 transport that has already established a `SecurityContext` for the caller. It mirrors
@@ -662,7 +664,7 @@ WARN; the authorization value is never logged. The Vert.x `jwt-claims` provider 
 excluded: its scope→permission projection is lossy, and the JWT principal already reaches
 `AuthorizationClaims` with full kind fidelity through `SecurityClaimMapper`.
 
-### Dagger bindings
+## Module Dagger Bindings
 
 What the two modules put in the graph, and where each instance comes from:
 

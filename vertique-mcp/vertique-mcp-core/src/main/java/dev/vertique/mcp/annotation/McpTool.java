@@ -35,8 +35,8 @@ import java.lang.annotation.Target;
  * call is cancelled; the framework cannot forcibly stop a handler that ignores the signal.
  *
  * <p><strong>Security: an unannotated tool is public.</strong> A tool method carrying no
- * authorization annotation — no {@code @PermitAll}, {@code @DenyAll}, {@code @RolesAllowed}, or
- * {@code @RequiresAction} — is permitted to every anonymous and authenticated caller, exactly as an
+ * authorization annotation — no {@code @PermitAll}, {@code @DenyAll}, {@code @RolesAllowed},
+ * {@code @RequiresAction}, or {@code @RequiresPolicy} — is permitted to every anonymous and authenticated caller, exactly as an
  * unannotated REST resource method is. The absence of an annotation is not a safe default for a
  * side-effecting tool; annotate it explicitly with the access requirement it needs.
  *

@@ -93,7 +93,7 @@ is the optional observer adapter for the shared Micrometer registry. Durable job
 pipeline implicitly.
 
 Fatal JVM `Error` values are rethrown and are not retried or counted as ordinary failures. The
-runtime's cleanup path intentionally accepts the Vert.x 5.1.6 consequence that a fatal error can
+runtime's cleanup path intentionally accepts the Vert.x consequence that a fatal error can
 reset accumulated closed-state breaker failures and close a half-open breaker before rethrowing
 the same fatal value.
 

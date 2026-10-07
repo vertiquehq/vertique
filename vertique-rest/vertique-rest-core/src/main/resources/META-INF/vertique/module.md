@@ -547,6 +547,11 @@ The resolved shape is a `SecurityPolicy` — a sealed interface with `None`, `Pe
 from `OperationRegistrationContext.securityPolicy()` and
 `RestOperationDescriptor.effectiveSecurityPolicy()`.
 
+`@RequiresPolicy` names an `AccessPolicy` interface. `AnnotationSecurityPolicyResolver` expands the
+selected policy's direct requirements into that same `SecurityPolicy`. `RequiresActionResolver`
+reads `@RequiresAction` from the same selection. A method policy replaces a type policy. Inline
+annotations with no policy keep their existing precedence.
+
 ### `JaxRsResources`
 
 Dagger qualifier for the `Set<Object>` multibinding of JAX-RS resource instances. Generated resource

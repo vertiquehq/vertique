@@ -5,6 +5,8 @@ package dev.vertique.rest.openapi.docs.fixture.protecteddocs.root;
 
 import dev.vertique.rest.core.application.RestApplication;
 import dev.vertique.rest.openapi.docs.ApiDocs;
+import dev.vertique.security.authz.AccessPolicy;
+import dev.vertique.security.authz.Authorized;
 import io.swagger.v3.oas.annotations.OpenAPIDefinition;
 import io.swagger.v3.oas.annotations.info.Info;
 
@@ -13,7 +15,13 @@ import io.swagger.v3.oas.annotations.info.Info;
  * protected document lists no roles: any caller the {@value InternalAdminApi#SECURITY_SCHEME}
  * scheme authenticates may read it.
  */
-@ApiDocs(access = ApiDocs.Access.PROTECTED, securityScheme = InternalAdminApi.SECURITY_SCHEME)
+@ApiDocs(
+        policy = InternalAuthenticatedApi.AuthenticatedDocsPolicy.class,
+        securityScheme = InternalAdminApi.SECURITY_SCHEME)
 @OpenAPIDefinition(info = @Info(title = "Internal", version = "1.0"))
 @RestApplication(name = InternalAdminApi.NAME, path = InternalAdminApi.PATH, discover = true)
-public interface InternalAuthenticatedApi {}
+public interface InternalAuthenticatedApi {
+    /** Any authenticated reader may read the document. */
+    @Authorized
+    public interface AuthenticatedDocsPolicy extends AccessPolicy {}
+}

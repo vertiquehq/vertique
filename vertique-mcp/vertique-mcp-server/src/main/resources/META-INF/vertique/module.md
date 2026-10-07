@@ -1,6 +1,6 @@
 # Vertique MCP Server
 
-> **Status:** Alpha
+> **Status:** Stable
 > **Package:** `dev.vertique.mcp.server`
 > **Artifact:** `vertique-mcp-server`
 > **Depends on:** `vertique-mcp-core`, `vertique-core`, `vertique-input-processing`, `vertique-json`,
@@ -102,9 +102,22 @@ limits are Jackson's own frozen `StreamReadConstraints` inside the private envel
 concern is owned jointly by per-decision authorization timeouts and the shared HTTP liveness
 settings, with no direct replacement MCP setting.
 
+## When To Use It
+
+Install `vertique-mcp-server` when an application should expose an HTTP Model Context Protocol
+mount. Include `McpServerModule` in the Dagger component, bind an immutable `McpServerConfig`, and
+pair with `vertique-codegen-mcp` so `@McpTool` methods become invokers. Require a direct
+`InputObjectProcessor` binding (for example via `SanitizationModule`) and, when the mount is
+enabled, a qualifying shared HTTP idle or read timeout.
+
+Omit this module when the process does not serve MCP. Tool annotations and lifecycle SPIs alone live
+in `vertique-mcp-core` and do not open a listening endpoint.
+
+---
+
 ## Conformance
 
-This module is Alpha maturity. It implements exactly 10 of the 37 server-leg scored scenarios in the
+This module implements exactly 10 of the 37 server-leg scored scenarios in the
 upstream Model Context Protocol conformance suite's frozen `2026-07-28` requirement set —
 `tools-list`, `tools-call-simple-text`, `tools-call-error`, the standard image/audio/embedded-resource
 and mixed-content result shapes, request-scoped progress, `server-stateless`, and
@@ -677,14 +690,20 @@ Composition fails before any route mounts for any of these:
 - **a restricted registry with no configured authentication scheme** — when the server is enabled
   with no `mcp.authenticationScheme`, the endpoint establishes only a canonical anonymous identity, so
   every registered tool must be reachable without authentication (public or unreachable); a
-  registered `@RolesAllowed`/`@RequiresAction` tool with no scheme configured fails the same way. An
-  unconfigured registry containing only public and/or deny-all tools is allowed. This composition
-  validator seam is independent of, and in addition to, the existing per-scheme optional-capability
-  check (§4.5): a configured scheme whose selected `RouteAuthHandler.createOptionalHandler()`
-  capability is absent still fails composition regardless of registry content.
+  registered `@RolesAllowed`/`@RequiresAction` tool with no scheme configured fails the same way, and
+  so does a tool whose typed access policy requires a role, a scope, authentication or an action (the
+  check reads the policy's requirements, never the closed placeholder the tool's descriptor
+  publishes). An unconfigured registry containing only public and/or deny-all tools is allowed. This
+  composition validator seam is independent of, and in addition to, the existing per-scheme
+  optional-capability check (§4.5): a configured scheme whose selected
+  `RouteAuthHandler.createOptionalHandler()` capability is absent still fails composition regardless
+  of registry content;
+- **an invalid typed access policy** — see [Typed access policies](#typed-access-policies), which
+  also lists the action-engine checks an enabled mount applies to a typed action tool.
 
 Every one of these failures raises exactly one bounded startup error naming the offending
-configuration key or tool. A registry with no contributed tools at all is not one of these failures
+configuration key or tool (and, for a typed policy, the policy type where one is known). A registry
+with no contributed tools at all is not one of these failures
 — composition still succeeds — but, when the mount is enabled (`mcp.enabled=true`), it is logged as
 one WARN naming the mount path and both likely causes: `GeneratedMcpToolsModule` not installed in
 the application's Dagger component, or `vertique-codegen-mcp` absent from the annotation-processor
@@ -775,8 +794,8 @@ and never type-graph-driven:
 - a non-root object schema is closed the same way exactly when it declares a non-empty `properties`
   member, no sibling `$ref`, and no `additionalProperties` member of its own; a property-less non-root
   object — a resolved `Map<K,V>` included — is never closed this way: the hardener never treats a
-  `Map`'s own absence of a `properties` member as under-description. On the input direction (rest-023
-  T003) a resolved `Map<K,V>` already carries its own `additionalProperties` — `V`'s own schema,
+  `Map`'s own absence of a `properties` member as under-description. On the input direction a resolved `Map<K,V>` already carries its own
+  `additionalProperties` — `V`'s own schema,
   including a type-use constraint declared on it, or an open schema for an unconstrained `V` — which
   the next rule below respects and never overwrites, exactly like a `@JsonAnySetter` type's own extras;
 
@@ -1107,3 +1126,149 @@ Denial and absence are externally indistinguishable — an unknown tool name and
 not use both resolve to the same `-32602` response, with no detail identifying which — and a denied
 tool is never invoked. Every restrictive evaluation emits exactly one combined
 `AuthorizationDecisionEvent`.
+
+### Typed access policies
+
+A tool can reference a typed access policy instead of inline security annotations. The policy's
+direct requirements — `@PermitAll`, `@DenyAll`, `@RolesAllowed`, `@Authorized` (authentication and
+scopes) and `@RequiresAction` — apply to the tool exactly as the same annotations do on a REST
+resource method, and a policy can combine roles, scopes and one action. Authoring the policy and the
+reference is described by `vertique-codegen-mcp`; this section covers what the server does with it.
+
+**One policy, three consumers.** The registry reads each invoker's `McpToolInvoker#accessPolicy()`
+hook exactly once, while it registers the invoker, and retains the policy's validated requirements
+beside the descriptor. Startup validation, `tools/list` and `tools/call` all use that retained list;
+none of them re-reads the hook or re-resolves the policy per request, and nothing caches a decision.
+
+- **Discovery.** `tools/list` decides every candidate against the typed requirements and hides a tool
+  the caller may not use, exactly as it does for descriptor-governed tools. Every restrictive
+  evaluation emits one `AuthorizationDecisionEvent` with the MCP tool resource and the MCP origin.
+- **Invocation.** `tools/call` decides again with the same requirements. A listing is never a grant:
+  a caller whose claims changed since the listing is refused. An unknown tool and a denied tool still
+  produce the identical `-32602` response, and a denied tool is never invoked.
+- **Mapping.** A public policy runs without a decision and emits no event; a deny policy refuses every
+  caller; role, scope and authentication requirements map as they do for REST; a policy that is only
+  an action maps to "authenticated caller required" plus that action, the same as a `@RequiresAction`
+  tool. The action runs through the one installed core `Authorizer`.
+- **Service calls.** Permitting the tool does not permit what it calls. When the tool dispatches into a
+  service whose own operation declares a policy, that service gate decides separately and its denial
+  stops the effect even though the tool was listed and permitted.
+
+**Startup rules.** The registry refuses to build, naming the tool, when the hook throws or returns
+`null`, and naming the tool and the policy type when the policy is malformed, empty or conflicting, or
+when an action in it does not parse. A hook that fails with a linkage error, such as a missing class,
+is refused the same way. A hand-written invoker that declares a typed policy must publish the closed descriptor access
+(`DENY_ALL`, no roles, no action); one that publishes anything else is refused, because a runtime
+that reads only the descriptor would enforce that access instead of the policy. The registry builds
+whether or not the mount is enabled. A tool with no hook is untouched: its descriptor access governs
+it, and a legacy `DENY_ALL` tool with no hook stays denied.
+
+An enabled mount then checks each typed tool's effective requirements:
+
+| Typed tool requires | Needs |
+|---|---|
+| Public or deny | Nothing |
+| Role, scope or authentication | A configured `mcp.authenticationScheme` |
+| An action | A scheme, an installed `Authorizer`, an `ActionRegistry`, and an action the registry contains |
+| Roles or scopes only | Neither an `Authorizer` nor an `ActionRegistry` |
+
+A typed action tool fails mounting with a distinct message, naming the tool, for an absent
+`Authorizer`, an absent `ActionRegistry`, and an action the registry does not contain. A disabled
+mount stays inert: none of these checks run. `McpServerModule` declares `ActionRegistry` as an
+optional binding, so an application that never installs the authorization engine still composes as
+long as it has no typed action tool; include `SecurityAuthzModule` to provide the registry and the
+`Authorizer`. A legacy inline `@RequiresAction` tool keeps its existing check, which needs only an
+installed `Authorizer`.
+
+**Older runtimes.** A typed invoker's descriptor publishes `DENY_ALL`. A server that predates the
+hook reads only that descriptor, so it hides the tool from `tools/list` and refuses it at
+`tools/call`; nothing runs. This is a fail-closed fallback for a mixed deployment, not support for
+running typed tools on an older server. An invoker compiled before the hook existed links and
+behaves exactly as before.
+
+Only direct, runtime-retained requirements count. A requirement reached through a composed or
+non-runtime security annotation is unsupported and is never enforced as a requirement.
+
+---
+
+## Key Classes
+
+### `McpServerModule`
+
+Dagger `@Module` that composes the optional MCP HTTP server: multibinds for lifecycle observers,
+completion listeners, request/tool interceptors, and generated tool invokers; optional `Validator`
+and `ActionRegistry`; compose validators; tool registry; router mount and related wiring. Install it
+explicitly — MCP is never auto-mounted.
+
+### `McpServerConfig`
+
+Immutable configuration deserialized from the flat `mcp` section. Closed type: fields and defaults
+are the configuration contract. An enabled mount validates required server identity, mount path,
+bounds, and authentication/authorization prerequisites before routes are installed.
+
+### `McpBodyTracePolicy`
+
+Enum for `mcp.bodyTracePolicy`: `IGNORE` (default) or `LINK`. Controls whether body-borne
+`params._meta.traceparent` / `tracestate` are extracted for optional OpenTelemetry linking.
+
+---
+
+## Module Dagger Bindings
+
+| Binding | Kind | What it is |
+|---|---|---|
+| `Set<McpRequestLifecycleObserver>` | `@Multibinds` | Neutral per-request observation |
+| `Set<McpRequestCompletedListener>` | `@Multibinds` | Post-transport completion callbacks |
+| `Set<McpRequestInterceptor>` | `@Multibinds` | Ordered pre-dispatch rejective interceptors |
+| `Set<McpToolInterceptor>` | `@Multibinds` | Ordered post-validation rejective interceptors |
+| `Set<McpToolInvoker>` | `@Multibinds` | Generated (or hand-written) tool invokers |
+| `Validator` | `@BindsOptionalOf` | Optional Bean Validation for generated `prepare` |
+| `ActionRegistry` | `@BindsOptionalOf` | Optional action catalogue for typed-policy tools |
+| `McpToolRegistry` | `@Provides` | Immutable registry built from invokers |
+| `ComposeValidator` | `@IntoSet` (several) | Profile default + input-processing composition guards |
+| `RouterMount` / auth wiring | `@Provides` / `@IntoSet` | HTTP mount and optional scheme identity path |
+
+Applications contribute observers, listeners, and interceptors into the multibinds above. Generated
+tools arrive through `GeneratedMcpToolsModule` from `vertique-codegen-mcp`.
+
+---
+
+## Configuration
+
+Keys are flat under `mcp` and map to `McpServerConfig` field names. Ordinary unknown keys are
+ignored. Former implementation-era keys (`mcp.requestTimeoutMs`, `mcp.jsonMaxDepth`, …) are unknown
+keys, not rejected.
+
+| Key | Default | Notes |
+|---|---|---|
+| `mcp.enabled` | `false` | Mount installed only when `true` |
+| `mcp.mountPath` | `/mcp/*` | One literal path ending in `/*` |
+| `mcp.serverName` / `mcp.serverVersion` | — | Required non-blank when enabled |
+| `mcp.instructions` | absent | Optional server instructions |
+| `mcp.authenticationScheme` | absent | Optional `RouteAuthHandler` scheme name |
+| `mcp.jsonProfile` | absent | MCP boundary default profile id (validated even when disabled) |
+| `mcp.allowedOrigins` | empty | DNS-rebinding allowlist; empty denies mismatched Origin |
+| `mcp.outputMaxBytes` | `2097152` | Shared response/output byte cap |
+| `mcp.ingressMaxTokens` | `65536` | Ingress JSON-RPC parser-token budget (1024–262144) |
+| `mcp.outputMaxTokens` | `65536` | Structured-output reparse token budget (1024–262144) |
+| `mcp.toolsPageSize` | `100` | `tools/list` page size |
+| `mcp.toolsTtlMs` | `300000` | Client cache-freshness hint |
+| `mcp.bodyTracePolicy` | `IGNORE` | `IGNORE` or `LINK` |
+
+An enabled mount also requires `http.idleTimeoutSeconds` or `http.readIdleTimeoutSeconds` > 0.
+
+---
+
+## Dependencies
+
+| Artifact | Why |
+|---|---|
+| `vertique-mcp-core` | Tool/lifecycle/interceptor contracts |
+| `vertique-core` | Correlation, JSON profiles, compose validation, extension ordering |
+| `vertique-input-processing` | Required `InputObjectProcessor` for tool argument pipelines |
+| `vertique-json` / `vertique-json-schema` | Profile mappers and tool schema generation |
+| `vertique-rest-core` | HTTP config, router mounts, route auth handler SPI |
+| `vertique-rest-security` | Identity resolution middleware for optional schemes |
+
+Runtime Bean Validation providers and observability adapters are separate artifacts.
+

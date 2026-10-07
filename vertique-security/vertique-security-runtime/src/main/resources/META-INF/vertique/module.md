@@ -192,6 +192,10 @@ The returned `Future<Void>` **always succeeds** — per-observer failures are ca
 
 ---
 
+### ClaimAuthorizationPolicy
+
+The role and scope calculation behind the REST built-in decision point, as an `AuthorizationPolicy` with a no-argument constructor. It reads `requiredRoles`, `requiredScopes` and `requireAllScopes` from `AuthorizationRequest.context()`: any one required role suffices; required scopes are checked against the union of `SCOPE` and `PERMISSION` claims, all of them when `requireAllScopes` is true and any one otherwise; both constraints must hold when both are present. Reason codes are `PERMITTED`, `ROLE_MISSING`, `SCOPE_MISSING` and `SCOPE_INSUFFICIENT`. It is pure: it neither authenticates nor emits events. The key spellings and reason codes are public constants because the enforcement layer shares them; the class is framework-internal, not an extension point, and its constants are shared with `vertique-rest-security`. Its debug lines are logged under this class's name, which an operator who enabled debug logging for `VertxProviderDecisionPoint` must now enable instead.
+
 ### InMemoryPolicyDefinitionSource, InMemoryRolePolicyResolver
 
 Programmatic reference implementations for applications that define authorization data in code rather than config.

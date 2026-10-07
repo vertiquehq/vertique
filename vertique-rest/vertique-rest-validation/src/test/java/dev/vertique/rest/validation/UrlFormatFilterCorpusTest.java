@@ -26,7 +26,7 @@ import org.junit.jupiter.params.provider.MethodSource;
 
 /**
  * Proof for the {@code web-validation} gate's {@code url} format check (rest-022 T021, TP-004, FR-020):
- * on a corpus of at most 512-character values taken from the vertx-json-schema 5.1.6 {@code url}
+ * on a corpus of at most 512-character values taken from the vertx-json-schema {@code url}
  * expression, the gate's verdict equals the engine's on every filtering-class row (the (a) rows, grouped
  * by class below: schemes, dotted quads, IPv6 literals, non-dotted and malformed hosts, ports, and
  * userinfo, plus {@code http://example.com:/}, which the engine rejects too, E15), and equals C-FORMAT's
@@ -90,7 +90,7 @@ class UrlFormatFilterCorpusTest {
     private static final Validator ENGINE_VALIDATOR = Validator.create(JsonSchema.of(URL_SCHEMA.copy()), GATE_OPTIONS);
 
     /**
-     * The (b) rows whose C-FORMAT verdict differs from the engine's 5.1.6 {@code url} expression, keyed
+     * The (b) rows whose C-FORMAT verdict differs from the engine's {@code url} expression, keyed
      * by input; derived at step 3 in a scratch harness and recorded in {@code evidence/T021.md} § TP-004.
      * The round-B ruling names four of these classes (non-ASCII hosts, since {@link URI} yields no host
      * for one; {@code --} inside a label; a last octet of {@code 0} or {@code 255}; and {@code ?} or

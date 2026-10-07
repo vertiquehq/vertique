@@ -107,7 +107,7 @@ SPDX-License-Identifier: EUPL-1.2
                 <artifactId>jib-maven-plugin</artifactId>
                 <configuration>
                     <from>
-                        <image>eclipse-temurin:21-jre</image>
+                        <image>eclipse-temurin:25-jre</image>
                     </from>
                     <to>
                         <image>vertique-example-apidocs</image>

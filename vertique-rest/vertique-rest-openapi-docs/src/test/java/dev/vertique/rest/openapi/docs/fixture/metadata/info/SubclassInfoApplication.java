@@ -5,6 +5,8 @@ package dev.vertique.rest.openapi.docs.fixture.metadata.info;
 
 import dev.vertique.rest.core.application.RestApplication;
 import dev.vertique.rest.openapi.docs.ApiDocs;
+import dev.vertique.security.authz.AccessPolicy;
+import jakarta.annotation.security.PermitAll;
 
 /**
  * Application {@code child} at {@code /api/child}, documented publicly and declared by a class rather
@@ -12,7 +14,7 @@ import dev.vertique.rest.openapi.docs.ApiDocs;
  * SuperclassInfoBase}, which does. Only a hand-written registration declares it, and only in a view
  * that never builds mounts.
  */
-@ApiDocs(access = ApiDocs.Access.PUBLIC)
+@ApiDocs(policy = SubclassInfoApplication.PublicDocsPolicy.class)
 @RestApplication(
         name = InfoRegistrations.CHILD_NAME,
         path = InfoRegistrations.CHILD_PATH,
@@ -20,4 +22,8 @@ import dev.vertique.rest.openapi.docs.ApiDocs;
 public final class SubclassInfoApplication extends SuperclassInfoBase {
 
     private SubclassInfoApplication() {}
+
+    /** Anyone may read the document. */
+    @PermitAll
+    public interface PublicDocsPolicy extends AccessPolicy {}
 }

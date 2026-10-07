@@ -3,11 +3,17 @@
 
 package dev.vertique.examples.services;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.application.test.VertiqueAppExtension;
+import dev.vertique.core.context.DispatchBoundary;
+import dev.vertique.core.correlation.CorrelationContext;
+import dev.vertique.core.correlation.CorrelationContextSnapshot;
+import dev.vertique.core.correlation.CorrelationIdentifier;
 import dev.vertique.core.eventbus.DispatchEnvelope;
 import dev.vertique.core.eventbus.DispatchMetadata;
 import dev.vertique.core.eventbus.Result;
@@ -31,6 +37,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -57,14 +64,18 @@ import org.junit.jupiter.api.extension.RegisterExtension;
  * against the live {@link dev.vertique.security.authz.Authorizer} from {@code SecurityAuthzModule},
  * and emitting decision events through the {@code SecurityEventsModule} emitter.
  *
- * <p>Three scenarios are covered:
+ * <p>Five scenarios are covered:
  * <ol>
  *   <li>permitted actor (ROLE {@code prober}) → handler runs and exactly one permit
  *       {@link AuthorizationDecisionEvent} is emitted;</li>
  *   <li>denied actor (ROLE {@code viewer}) → dispatch short-circuits, the handler never runs, and
  *       exactly one deny event is emitted;</li>
  *   <li>missing identity (no {@link SecurityContext} in the dispatch context) → dispatch fails closed,
- *       the handler never runs, and exactly one deny event is emitted.</li>
+ *       the handler never runs, and exactly one deny event is emitted;</li>
+ *   <li>no correlation in the dispatch context → the deny event carries identifiers seeded at
+ *       dispatch ingress, not the unbound sentinel;</li>
+ *   <li>correlation carried in the dispatch context → the decision event keeps the caller's
+ *       identifiers.</li>
  * </ol>
  *
  * <h3>Proof scope &amp; residual</h3>
@@ -187,6 +198,69 @@ public class AuthzServiceDispatchIT {
                     List<AuthorizationDecisionEvent> events = collector.events();
                     assertEquals(1, events.size(), "exactly one authorization event expected on fail-closed");
                     assertFalse(events.get(0).decision().permitted(), "event must carry a deny decision");
+                    ctx.completeNow();
+                })));
+    }
+
+    // --- Scenario 4: correlation seeded at dispatch ingress reaches the decision event ---
+
+    @Test
+    @DisplayName("dispatch without correlation: the fail-closed deny event carries ids seeded at dispatch ingress")
+    void missingCorrelation_isSeededAtIngress_andReachesTheDenyEvent(VertxTestContext ctx) {
+        AppComponent component = app.component();
+        AuthzEventCollector collector = component.authzEventCollector();
+        String seededSource = "seeded:" + DispatchBoundary.SERVICE_DISPATCH;
+        String unboundValue = CorrelationContext.unbound().requestId().value();
+        // No SecurityContext and no CorrelationContext in the dispatch context.
+        DispatchEnvelope<String> envelope = DispatchEnvelope.of("hello");
+
+        app.vertx()
+                .eventBus()
+                .<Result<?>>request(PROBE_ADDRESS, envelope, ENVELOPE_CODEC)
+                .onComplete(ctx.succeeding(msg -> ctx.verify(() -> {
+                    List<AuthorizationDecisionEvent> events = collector.events();
+                    assertEquals(1, events.size(), "exactly one authorization event expected on fail-closed");
+                    CorrelationContext correlation = events.get(0).correlation();
+                    assertEquals(seededSource, correlation.requestId().source(), "request id source");
+                    assertEquals(seededSource, correlation.correlationId().source(), "correlation id source");
+                    assertDoesNotThrow(
+                            () -> UUID.fromString(correlation.requestId().value()),
+                            "the default generator yields a UUID request id");
+                    assertDoesNotThrow(
+                            () -> UUID.fromString(correlation.correlationId().value()),
+                            "the default generator yields a UUID correlation id");
+                    assertNotEquals(unboundValue, correlation.requestId().value(), "sentinel request id");
+                    ctx.completeNow();
+                })));
+    }
+
+    // --- Scenario 5: correlation carried by the caller is not reseeded ---
+
+    @Test
+    @DisplayName("dispatch carrying correlation: the decision event keeps the caller's ids")
+    void carriedCorrelation_survivesDispatch_andReachesTheDecisionEvent(VertxTestContext ctx) {
+        AppComponent component = app.component();
+        AuthzEventCollector collector = component.authzEventCollector();
+        CorrelationContextSnapshot carried = CorrelationContextSnapshot.of(
+                new CorrelationIdentifier("req-carried-1", "test-caller"),
+                new CorrelationIdentifier("corr-carried-1", "test-caller"));
+        Map<String, Object> dispatchContext = Map.of(
+                SecurityContext.class.getName(),
+                securityContextWithRole(PERMITTED_ROLE),
+                CorrelationContext.class.getName(),
+                carried);
+        DispatchEnvelope<String> envelope = DispatchEnvelope.of("hello", DispatchMetadata.of(dispatchContext));
+
+        app.vertx()
+                .eventBus()
+                .<Result<?>>request(PROBE_ADDRESS, envelope, ENVELOPE_CODEC)
+                .onComplete(ctx.succeeding(msg -> ctx.verify(() -> {
+                    assertTrue(msg.body().isSuccess(), "dispatch should succeed for a permitted actor");
+                    List<AuthorizationDecisionEvent> events = collector.events();
+                    assertEquals(1, events.size(), "exactly one authorization event expected");
+                    CorrelationContext correlation = events.get(0).correlation();
+                    assertEquals(carried.requestId(), correlation.requestId(), "request id");
+                    assertEquals(carried.correlationId(), correlation.correlationId(), "correlation id");
                     ctx.completeNow();
                 })));
     }

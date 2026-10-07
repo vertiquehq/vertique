@@ -8,7 +8,7 @@ import java.net.URISyntaxException;
 
 /**
  * Decides the {@code url} format {@link PatternInputGuard} routes here: {@link URI} parsing plus a
- * post-parse check on the parsed scheme, host, and port that preserves the vertx-json-schema 5.1.6
+ * post-parse check on the parsed scheme, host, and port that preserves the vertx-json-schema
  * {@code url} expression's scheme and host filtering, with no new parser and no regular expression.
  *
  * <p>A value is a valid {@code url} when {@link URI} parses it as absolute; its scheme is {@code http},
@@ -21,7 +21,7 @@ import java.net.URISyntaxException;
  *
  * <p>A dotted-quad label longer than one character that starts with {@code 0} is not treated as an
  * octet, so a host with such a label, for example {@code 8.08.8.8}, is rejected as not a dotted quad
- * rather than checked against the ranges above. This is stricter than the vertx-json-schema 5.1.6
+ * rather than checked against the ranges above. This is stricter than the vertx-json-schema
  * {@code url} expression's own filtering, which this check otherwise preserves.
  *
  * <p>{@code format: url} is not an SSRF control: it resolves no names (for example {@code

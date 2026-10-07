@@ -6,6 +6,7 @@ package dev.vertique.codegen.mcp;
 import dev.vertique.codegen.AnnotationMirrors;
 import dev.vertique.codegen.CodegenContext;
 import dev.vertique.codegen.JaxRsAnnotations;
+import dev.vertique.codegen.security.AccessPolicyAnnotationResolver;
 import dev.vertique.mcp.tool.McpAccessMode;
 import dev.vertique.security.authz.ActionRef;
 import java.util.ArrayList;
@@ -18,10 +19,12 @@ import javax.lang.model.element.AnnotationValue;
 import javax.lang.model.element.Element;
 import javax.lang.model.element.ElementKind;
 import javax.lang.model.element.ExecutableElement;
+import javax.lang.model.element.Modifier;
 import javax.lang.model.element.TypeElement;
 import javax.lang.model.type.DeclaredType;
 import javax.lang.model.type.TypeKind;
 import javax.lang.model.type.TypeMirror;
+import javax.lang.model.util.ElementFilter;
 
 /**
  * Derives a tool's protocol access mode from the Jakarta base policy and Vertique action
@@ -51,6 +54,16 @@ import javax.lang.model.type.TypeMirror;
  * generated invoker emits {@code ActionRef.parse(<value>)}: a value outside that grammar would
  * otherwise compile into source that always throws at composition.
  *
+ * <p>A tool that references a typed access policy through {@code @RequiresPolicy} is resolved
+ * first, before any of the inline rules above. The policy is collected from the tool's declaring
+ * type — its method, the interface and superclass methods that correspond to it, and the type
+ * hierarchy — exactly as the service contracts collect it, and validated by the shared compiler
+ * resolver. A typed tool publishes {@link McpAccessMode#DENY_ALL} with no roles and no action, so a
+ * runtime that reads only the descriptor refuses it, and carries the policy type for the generated
+ * invoker to publish through its policy hook. A policy mixed with any inline security annotation, two
+ * distinct policies in one set, a malformed policy, or a policy the generated invoker cannot name is
+ * a compile error. A policy's own {@code @Authorized} is part of that policy and is accepted.
+ *
  * <p>Inline {@code @Authorized} placement is unsupported on MCP tools and is rejected. That check
  * runs over <em>every</em> source tier, not only the direct method and declaring type — an
  * {@code @Authorized} inherited from an overridden interface method or a superclass type resolves
@@ -59,7 +72,10 @@ import javax.lang.model.type.TypeMirror;
  */
 final class McpAuthorizationAnnotationResolver {
 
+    private static final String REQUIRES_POLICY = "dev.vertique.security.authz.RequiresPolicy";
+
     private final CodegenContext ctx;
+    private final AccessPolicyAnnotationResolver policies;
 
     /**
      * Constructs a resolver bound to the given codegen context.
@@ -68,6 +84,7 @@ final class McpAuthorizationAnnotationResolver {
      */
     McpAuthorizationAnnotationResolver(CodegenContext ctx) {
         this.ctx = ctx;
+        this.policies = new AccessPolicyAnnotationResolver(ctx.types(), ctx.elements());
     }
 
     /**
@@ -77,12 +94,17 @@ final class McpAuthorizationAnnotationResolver {
      * @param roles  the required roles; empty unless a {@code @RolesAllowed} was resolved
      * @param action the canonical {@code @RequiresAction} value, or {@code null} when none was
      *               resolved
+     * @param policy the referenced typed access policy, or {@code null} for an inline-only tool
      */
-    record Access(McpAccessMode mode, List<String> roles, String action) {
+    record Access(McpAccessMode mode, List<String> roles, String action, TypeElement policy) {
 
         /** Canonicalizes the record by defensively copying the role list. */
         Access {
             roles = List.copyOf(roles);
+        }
+
+        Access(McpAccessMode mode, List<String> roles, String action) {
+            this(mode, roles, action, null);
         }
     }
 
@@ -95,6 +117,14 @@ final class McpAuthorizationAnnotationResolver {
      * @return the resolved access contract, or empty when a diagnostic was reported
      */
     Optional<Access> resolve(TypeElement declaringType, ExecutableElement method) {
+        PolicySelection selection = selectPolicy(declaringType, method);
+        if (!selection.valid()) {
+            return Optional.empty();
+        }
+        if (selection.policy() != null) {
+            return Optional.of(new Access(McpAccessMode.DENY_ALL, List.of(), null, selection.policy()));
+        }
+
         List<List<Element>> tiers = sourceTiers(declaringType, method);
 
         Optional<Element> authorized = tiers.stream()
@@ -142,6 +172,152 @@ final class McpAuthorizationAnnotationResolver {
             case DENY_ALL -> Optional.of(new Access(McpAccessMode.DENY_ALL, List.of(), null));
             case ROLES_ALLOWED -> Optional.of(new Access(McpAccessMode.RESTRICTED, base.roles(), action.value()));
         };
+    }
+
+    // --- Typed access policy ---
+
+    /**
+     * The outcome of typed-policy selection.
+     *
+     * @param valid  {@code false} when a diagnostic was already reported
+     * @param policy the selected policy type, or {@code null} when the tool references none
+     */
+    private record PolicySelection(boolean valid, TypeElement policy) {
+
+        static PolicySelection invalid() {
+            return new PolicySelection(false, null);
+        }
+
+        static PolicySelection none() {
+            return new PolicySelection(true, null);
+        }
+    }
+
+    /**
+     * Selects the typed policy of one tool, rooted at the tool's declaring type, and reports every
+     * rejection once on the tool method.
+     */
+    private PolicySelection selectPolicy(TypeElement declaringType, ExecutableElement method) {
+        List<AnnotationMirror> selected;
+        try {
+            selected = policies.collectMethodAnnotations(declaringType, method, List.of());
+        } catch (IllegalArgumentException e) {
+            ctx.diagnostics()
+                    .error(
+                            method,
+                            "Invalid typed access policy on the @McpTool method %s.%s(): %s%s",
+                            declaringType.getSimpleName(),
+                            method.getSimpleName(),
+                            e.getMessage(),
+                            referencedPolicies(declaringType, method));
+            return PolicySelection.invalid();
+        }
+        Optional<TypeElement> policy = selected.stream()
+                .filter(mirror -> isAnnotation(mirror, REQUIRES_POLICY))
+                .map(this::policyType)
+                .flatMap(Optional::stream)
+                .findFirst();
+        if (policy.isEmpty()) {
+            return PolicySelection.none();
+        }
+        if (!nameableFrom(policy.get(), ctx.packageNameOf(declaringType))) {
+            ctx.diagnostics()
+                    .error(
+                            method,
+                            "The access policy %s referenced by the @McpTool method %s.%s() cannot be named by"
+                                    + " generated code: it and every type enclosing it must be public, or"
+                                    + " package-private in the package of the tool type",
+                            policy.get().getQualifiedName(),
+                            declaringType.getSimpleName(),
+                            method.getSimpleName());
+            return PolicySelection.invalid();
+        }
+        return new PolicySelection(true, policy.get());
+    }
+
+    private static boolean isAnnotation(AnnotationMirror mirror, String fqn) {
+        return mirror.getAnnotationType().asElement() instanceof TypeElement type
+                && type.getQualifiedName().contentEquals(fqn);
+    }
+
+    private Optional<TypeElement> policyType(AnnotationMirror mirror) {
+        return mirror.getElementValues().entrySet().stream()
+                .filter(entry -> entry.getKey().getSimpleName().contentEquals("value"))
+                .map(entry -> entry.getValue().getValue())
+                .filter(DeclaredType.class::isInstance)
+                .map(value -> ((DeclaredType) value).asElement())
+                .filter(TypeElement.class::isInstance)
+                .map(TypeElement.class::cast)
+                .findFirst();
+    }
+
+    /**
+     * Reports whether the generated invoker, a top-level class in {@code invokerPackage}, can name
+     * the policy: no enclosing type may be private, and a type that is not public must share the
+     * invoker's package.
+     */
+    private boolean nameableFrom(TypeElement policy, String invokerPackage) {
+        Element current = policy;
+        while (current instanceof TypeElement type) {
+            Set<Modifier> modifiers = type.getModifiers();
+            if (modifiers.contains(Modifier.PRIVATE)) {
+                return false;
+            }
+            Element enclosing = type.getEnclosingElement();
+            boolean implicitlyPublic = enclosing != null
+                    && (enclosing.getKind() == ElementKind.INTERFACE
+                            || enclosing.getKind() == ElementKind.ANNOTATION_TYPE);
+            if (!modifiers.contains(Modifier.PUBLIC)
+                    && !implicitlyPublic
+                    && !ctx.packageNameOf(type).equals(invokerPackage)) {
+                return false;
+            }
+            current = enclosing;
+        }
+        return true;
+    }
+
+    /**
+     * Lists the distinct policies referenced anywhere on the tool's collection path, so a rejection
+     * that the shared resolver words generically still names every policy involved.
+     */
+    private String referencedPolicies(TypeElement declaringType, ExecutableElement method) {
+        Set<TypeElement> hierarchy = new LinkedHashSet<>();
+        collectHierarchy(declaringType, hierarchy);
+        Set<String> names = new LinkedHashSet<>();
+        for (TypeElement type : hierarchy) {
+            addPolicyNames(type, names);
+            for (ExecutableElement candidate : ElementFilter.methodsIn(type.getEnclosedElements())) {
+                if (policies.corresponds(declaringType, method, candidate)) {
+                    addPolicyNames(candidate, names);
+                }
+            }
+        }
+        return names.isEmpty() ? "" : " (referenced policies: " + String.join(", ", names) + ")";
+    }
+
+    private void addPolicyNames(Element element, Set<String> names) {
+        for (AnnotationMirror mirror : element.getAnnotationMirrors()) {
+            if (isAnnotation(mirror, REQUIRES_POLICY)) {
+                policyType(mirror)
+                        .ifPresent(type -> names.add(type.getQualifiedName().toString()));
+            }
+        }
+    }
+
+    private static void collectHierarchy(TypeElement type, Set<TypeElement> found) {
+        if (type == null || type.getQualifiedName().contentEquals(Object.class.getName()) || !found.add(type)) {
+            return;
+        }
+        if (type.getSuperclass() instanceof DeclaredType declared
+                && declared.asElement() instanceof TypeElement superclass) {
+            collectHierarchy(superclass, found);
+        }
+        for (TypeMirror iface : type.getInterfaces()) {
+            if (iface instanceof DeclaredType declared && declared.asElement() instanceof TypeElement parent) {
+                collectHierarchy(parent, found);
+            }
+        }
     }
 
     // --- Base policy ---

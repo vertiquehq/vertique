@@ -4,6 +4,7 @@
 package dev.vertique.rest.core.security;
 
 import dev.vertique.core.util.AnnotationResolver;
+import dev.vertique.security.authz.AccessPolicyResolver;
 import dev.vertique.security.authz.Authorized;
 import jakarta.annotation.Nullable;
 import jakarta.annotation.security.DenyAll;
@@ -14,6 +15,7 @@ import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * INTERNAL framework seam — HTTP-runtime collaborator consumed by sibling framework modules; not
@@ -76,6 +78,14 @@ public class AnnotationSecurityPolicyResolver implements SecurityPolicyResolver 
      */
     public SecurityPolicy resolveFromAnnotations(
             List<Annotation> methodAnnotations, List<Annotation> classAnnotations) {
+        Optional<List<Annotation>> typed = typedRequirements(methodAnnotations, classAnnotations);
+        if (typed.isPresent()) {
+            return resolveFromAnnotations(typed.get(), List.of());
+        }
+        return resolveInline(methodAnnotations, classAnnotations);
+    }
+
+    private SecurityPolicy resolveInline(List<Annotation> methodAnnotations, List<Annotation> classAnnotations) {
         // Jakarta EE override: if the method declares any security annotation, class-level is ignored
         DenyAll denyAll = findAnnotation(methodAnnotations, DenyAll.class);
         PermitAll permitAll = findAnnotation(methodAnnotations, PermitAll.class);
@@ -156,6 +166,11 @@ public class AnnotationSecurityPolicyResolver implements SecurityPolicyResolver 
      */
     public boolean hasConflictingAnnotationsFrom(
             List<Annotation> methodAnnotations, List<Annotation> classAnnotations) {
+        try {
+            AccessPolicyResolver.select(methodAnnotations, classAnnotations);
+        } catch (IllegalArgumentException ex) {
+            return true;
+        }
         // Check method-level annotations for conflicts
         if (isConflictingCombination(
                         findAnnotation(methodAnnotations, DenyAll.class) != null,
@@ -200,6 +215,11 @@ public class AnnotationSecurityPolicyResolver implements SecurityPolicyResolver 
      * @return a descriptive string listing the conflicting annotations and where they appear
      */
     public String describeConflictFrom(List<Annotation> methodAnnotations, List<Annotation> classAnnotations) {
+        try {
+            AccessPolicyResolver.select(methodAnnotations, classAnnotations);
+        } catch (IllegalArgumentException ex) {
+            return "RequiresPolicy: " + ex.getMessage();
+        }
         // Identify which level has the conflict
         boolean methodConflict = isConflictingCombination(
                         findAnnotation(methodAnnotations, DenyAll.class) != null,
@@ -259,6 +279,20 @@ public class AnnotationSecurityPolicyResolver implements SecurityPolicyResolver 
             if (classRa != null) return classRa.value().length == 0;
         }
         return false;
+    }
+
+    /**
+     * Expands the selected {@code @RequiresPolicy}, if any, into its direct requirement
+     * annotations.
+     *
+     * @param methodAnnotations merged method-level annotations
+     * @param classAnnotations  merged class-level annotations
+     * @return the policy's expanded requirements, or empty when no policy is selected
+     * @throws IllegalArgumentException if the policy selection is invalid
+     */
+    private static Optional<List<Annotation>> typedRequirements(
+            List<Annotation> methodAnnotations, List<Annotation> classAnnotations) {
+        return AccessPolicyResolver.select(methodAnnotations, classAnnotations).map(AccessPolicyResolver::resolve);
     }
 
     /**

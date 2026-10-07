@@ -5,10 +5,10 @@ SPDX-License-Identifier: EUPL-1.2
 
 # REST JAX-RS Module
 
-> **Status:** Beta
+> **Status:** Stable
 > **Package:** `dev.vertique.rest.jaxrs`
 > **Artifact:** `vertique-rest-jaxrs`
-> **Depends on:** rest-core, security-core, json
+> **Depends on:** rest-core, security-core, input-processing, json
 
 The JAX-RS routing runtime. `vertique-rest-jaxrs` turns annotated resource classes into plain Vert.x
 routes, extracts and coerces method arguments, invokes the resource method, and dispatches whatever it
@@ -337,7 +337,11 @@ is visible in these places:
   contributor chain but not the operation interceptors, so it has no `OperationContext`. Its first
   handler is the completion recorder, ahead of authentication, so every request on the matched
   route, a `401` or `403` rejection included, completes as a `RestRequestCompletedEvent` whose
-  `operation()` is the synthetic descriptor, the same instance its contributors receive.
+  `operation()` is the synthetic descriptor, the same instance its contributors receive. A synthetic
+  operation created from a typed access policy (`SyntheticOperation.withPolicy`) reports the
+  requirements that policy declares from `methodAnnotations()`, behind the `@SecurityRequirement` of
+  its scheme when it names one; contributors receive the policy's action in
+  `OperationRegistrationContext.requiredAction()`.
 
 The name is `null` on the mount metadata, the operation descriptors, and `ctx.operation()` for a mount
 built through `Factory.create` and for the zero-declaration default mount; nothing derives a name from the mount path or the mount id.
@@ -1380,7 +1384,13 @@ An operation **restricts callers** when any of these holds:
 - its effective policy is `DenyAll`, `AuthenticatedOnly`, or `Constrained` — the `SecurityPolicy`
   variants `@DenyAll`, `@RolesAllowed`, and `@Authorized` (`dev.vertique:vertique-security-core`)
   resolve to; an `@Authorized` with no scopes resolves to `AuthenticatedOnly` (authentication
-  only), and one with scopes, or `@RolesAllowed`, resolves to `Constrained`;
+  only), and one with scopes, or `@RolesAllowed`, resolves to `Constrained`. A `@RequiresPolicy`
+  reference is expanded to those same variants before this classification. The scanner collects
+  the reference from the resource hierarchy, including an interface the consumer adds. A generated
+  companion's method-annotation list is that same collection, not `Class.getMethod`, so a generic
+  override and a same-package non-public override keep the action. An unknown
+  action remains `REQUIRES_ACTION_INVALID`, and restrictive security without an auth module
+  remains `SECURITY_ANNOTATIONS_WITHOUT_AUTH_MODULE`;
 - it declares one or more `@SecurityRequirement`s and none of its alternatives is anonymous (an
   empty requirement, which annotations cannot currently express); a scopeless
   `@SecurityRequirement` still restricts callers;
@@ -1804,7 +1814,7 @@ Beyond what `RestCoreModule` and `JsonRuntimeModule` contribute:
 | `MountCompositionValidator` (`JaxRsApplicationMountValidator`) | `@IntoSet`; INTERNAL; takes the `RestApplications` view, `JaxRsConfig`, and `Set<RequestValidationStrategy>`; validates application mounts against hand-built JAX-RS mounts and against each other, the cross-mount operationId refusal, and, under a contract-driven strategy, the contract-location parse — see [Mount conflicts](#mount-conflicts) |
 | `ComposeValidator` (`JaxRsDefaultProfileValidator`) | `@IntoSet`; fails the `VALIDATE` phase on an unknown `jaxrs.jsonProfile` (`json.systemProfile` is validated earlier, by the `CONFIGURE`-phase install step) |
 | `OperationSchemaSource`, `BeanValidator`, `InputObjectProcessor` (`dev.vertique.input.processing.InputObjectProcessor`), `ActionRegistry`, `Authorizer` | `@BindsOptionalOf`; satisfied by `rest-validation`, `validation`, `sanitization`, and `rest-security` respectively |
-| `SyntheticOperationInstaller` | `@Binds` to a package-private implementation; INTERNAL; framework documentation module only |
+| `SyntheticOperationInstaller` | `@Binds` to a package-private implementation; INTERNAL; framework documentation module only; enforces a `SyntheticOperation` typed policy in the supported `AuthModule` and `SecurityModule` composition and refuses a restrictive one without it |
 | `Set<MountPublicationHook>` | `@Multibinds`; INTERNAL; empty by default; sibling framework modules contribute: the documentation module through `@ElementsIntoSet`, the `openapi-contract` validation module's contract-load check through `@IntoSet` |
 
 `dev.vertique.rest.jaxrs.runtime.MagicBytesVerifierModule` is a separate opt-in `@Module` that
@@ -1820,6 +1830,43 @@ bypasses two things a resource route would normally go through: the API-scoped m
 interceptor, router-lifecycle-hook, and mount-customizer chains of a JAX-RS mount never run for it,
 and its own failure handler ends every failure itself rather than handing it to the application's
 error pipeline.
+
+A synthetic operation is built by one of three `SyntheticOperation` factories. `authenticated` and
+`withRoles` keep their behavior and their two-annotation descriptor shape: the scheme's
+`@SecurityRequirement` plus `@Authorized` or `@RolesAllowed`, and no required action. `withPolicy(origin,
+operationId, schemeName, applicationName, policy)` carries a typed `AccessPolicy` (public, deny, roles,
+scopes, a required action, or a combination) and reports it from `accessPolicy()`; the factory only
+checks for `null` and does not judge the policy. The installer resolves the policy's direct
+requirements, refuses an invalid policy (not a valid policy interface, no requirement, an empty or
+blank role, or an exclusive combination such as public with deny) with a `RestConfigurationException`
+that starts with the operation's origin and wraps the `IllegalArgumentException`, and does so before
+the router gains any route.
+
+The scheme follows the same rules a resource route has. An empty `schemeName` means the operation
+names no scheme and is legal only for a policy that resolves to public access: it then gets no
+`@SecurityRequirement` and no authentication handler, so it installs even where no scheme handler or
+security module is composed. Any other value, a blank one included, is a supplied scheme. Public plus
+a supplied scheme is rejected (a blank scheme name is refused earlier as a malformed security
+requirement, a named scheme by the registered security policy validator); deny with an empty scheme
+is rejected by that validator; deny with a registered scheme authenticates the caller and then denies; and
+every other restrictive policy needs a registered scheme whose handler provides authentication. A
+custom validator's rejection stays authoritative, and no scheme is invented for a policy that has
+none. With no policy validator bound at all, public plus a supplied scheme is not rejected.
+
+A policy flows through the existing contributor chain: its requirements resolve to the effective
+`SecurityPolicy`, and its action, once checked the way a resource route's `@RequiresAction` is, is
+passed to every operation handler contributor instead of "no action". The action is refused, with
+`RouteRegistrationException` violations raised before any route exists, when the authorization engine
+(no `ActionRegistry`) is not installed, the REST authentication enforcement runtime is not installed,
+no `Authorizer` is installed, or the action is not registered. Roles or scopes without the enforcement runtime are refused for the same reason a resource
+route is. An action-only policy resolves to no `SecurityPolicy` restriction plus its action, as it does
+on a resource route, so the action-gate contributor needs exactly one route authentication handler.
+
+Enforcement of a typed policy is supported in a composition that includes `AuthModule` and
+`SecurityModule`, directly or through a module that includes them. Where that composition is missing, a
+restrictive policy is refused at installation rather than installed unenforced. Hand-binding only some
+INTERNAL marker bindings of those modules is outside the supported composition: the installer does not
+validate an arbitrary graph, and it does not repair how those markers pair.
 
 `dev.vertique.rest.jaxrs.publication` holds `MountPublicationHook`, which is bound only through
 the `@Multibinds` `Set<MountPublicationHook>` multibinding above — empty by default, never an

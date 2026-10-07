@@ -1065,7 +1065,7 @@ public class JaxRsApplicationMountConflictIT {
 
     /**
      * Bounds {@code vertx.deployVerticle(supplier, options)} against a synchronously escaping
-     * {@link Throwable} (R10): Vert.x 5.1.6 catches only {@link Exception} around the supplier it
+     * {@link Throwable} (R10): Vert.x catches only {@link Exception} around the supplier it
      * invokes while constructing verticle instances, so an unwrapped {@link Error} would otherwise
      * propagate out of this call instead of failing the returned {@link Future}.
      *

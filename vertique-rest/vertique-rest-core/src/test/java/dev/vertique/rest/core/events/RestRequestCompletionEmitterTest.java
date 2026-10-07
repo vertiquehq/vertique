@@ -1199,7 +1199,7 @@ class RestRequestCompletionEmitterTest {
          * response, and that event is an {@link HttpRequestCompletedEvent}.
          *
          * <p>A successful WebSocket 101 upgrade calls {@code lifecycle.completeNow()} because
-         * Vert.x's {@code Http1xServerResponse.completeHandshake()} writes the 101
+         * Vert.x's {@code Http1ServerResponse.completeHandshake()} writes the 101
          * response without firing the normal response end handler. The end-to-end real-server proof
          * that a successful upgrade yields no completion event is
          * {@code WebSocketCompletionClaimIT} in {@code vertique-rest-websocket}.

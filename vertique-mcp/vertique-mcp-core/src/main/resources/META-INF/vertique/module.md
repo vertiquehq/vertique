@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # MCP Core
 
-> **Status:** Alpha
+> **Status:** Stable
 > **Package:** `dev.vertique.mcp.annotation`, `dev.vertique.mcp.tool`, `dev.vertique.mcp.lifecycle`,
 > `dev.vertique.mcp.interceptor`
 > **Artifact:** `vertique-mcp-core`
@@ -17,6 +17,24 @@ Model Context Protocol lifecycle facts and neutral per-request observation. It c
 authoring annotations, the immutable descriptor and invocation contracts, immutable terminal and
 completion events, their outcome classifications, and extension interfaces. It has no HTTP router,
 protocol parser, handler invocation, or runtime composition.
+
+## When To Use It
+
+Include `vertique-mcp-core` when an application needs to:
+
+- publish Model Context Protocol tools with `@McpTool` / `@McpToolParam` on dependency-injected types;
+- return explicit `McpToolResult` / `McpContent` payloads, or accept `McpCancellationSignal` /
+  progress reporting in a tool method;
+- contribute `McpRequestInterceptor` / `McpToolInterceptor` guards or
+  `McpRequestLifecycleObserver` / `McpRequestCompletedListener` observation;
+- read immutable MCP lifecycle facts (`McpRequestTerminalEvent`, `McpRequestCompletedEvent`) from
+  those extension points.
+
+Pair with `vertique-codegen-mcp` so annotated tools compile to invokers, and install
+`vertique-mcp-server` (`McpServerModule`) for the HTTP mount and runtime composition. Do not add
+this artifact alone expecting a listening MCP endpoint.
+
+---
 
 ## Tool authoring
 
@@ -88,13 +106,25 @@ constructor bounds any resolved-tool-identity telemetry against it) can validate
 without duplicating the pattern.
 
 `McpToolInvoker`, `McpPreparedToolCall`, and `McpStructuredOutputWriter` are generated-runtime
-contracts: application code neither implements nor calls them. `prepare` is the fixed input
+contracts: application code does not call them. A hand-written invoker remains supported; one that
+declares a typed policy follows the hook contract described below. `prepare` is the fixed input
 boundary — the server validates arguments against the input schema, generated code then applies
 input policies, materializes typed parameters through the effective JSON profile, and performs Bean
 Validation. No prepared call exists for a failed stage. A generated invoker's
 `structuredOutputWriter()` exposes only the ability to stream a structured result through the same
 stable profile mapper into a server-owned destination; it does not expose the mapper or own output
 limits, validation, observation, or terminal encoding.
+
+`McpToolInvoker#accessPolicy()` is the typed-policy hook. It returns
+`Optional<Class<? extends AccessPolicy>>` and defaults to empty, which means the access record of the
+tool's `McpToolDescriptor` governs it; an invoker compiled before the hook existed therefore keeps
+linking and behaving as it did. A generated invoker for a tool that references a policy overrides the
+hook with that policy type and publishes a descriptor whose `McpToolAccess` is `DENY_ALL` with no
+roles and no action. The placeholder is deliberate: a runtime that reads only the descriptor and
+ignores the hook hides and refuses the tool instead of silently dropping requirements it cannot
+express. A hand-written invoker may take the same path: implement `accessPolicy()` to return a policy
+and publish the `DENY_ALL` descriptor; the server registry validates the returned policy at
+registration. An inline-only invoker emits no hook and keeps its descriptor access exactly.
 
 `McpBeanValidation`, `McpInputRejectionException`, and `McpValueTrees` are further generated-runtime
 support types, public for the same reason `McpToolInvoker` is: `prepare` is generated into an
@@ -254,7 +284,49 @@ or the request itself. This mirrors the framework's own `RequestCompletionScope`
 an opt-in session capability rather than a separately multibound set, since the completion dispatch
 already threads through the per-request `McpRequestObservation` sessions this module owns.
 
-## Dependency boundary
+## Key Classes
+
+### Application surface
+
+| Type | Role |
+|---|---|
+| `@McpTool`, `@McpToolParam` | Compile-time tool publishing; consumed by `vertique-codegen-mcp` |
+| `McpToolResult`, `McpContent` | Handler-authored complete-only results and standard content blocks |
+| `McpCancellationSignal`, `McpProgressReporter` | Cooperative cancellation and request-scoped progress |
+| `McpToolDescriptor`, `McpToolAnnotations`, `McpToolAccess`, `McpAccessMode` | Immutable published tool metadata and access record |
+| `McpRequestInterceptor`, `McpToolInterceptor`, `McpRequestContext`, `McpToolInvocationContext` | Fail-closed pre-dispatch and post-validation interceptor SPIs |
+| `McpRequestLifecycleObserver`, `McpRequestObservation`, `McpRequestCompletedListener` | Neutral observation SPIs |
+| `McpRequestTerminalEvent`, `McpRequestCompletedEvent`, outcome / method / error enums | Immutable lifecycle facts |
+| `McpToolValueObservation`, `McpCompletionScope` | Opt-in session capabilities on observer sessions |
+
+Tool methods may declare Jakarta security annotations (`@PermitAll`, `@DenyAll`, `@RolesAllowed`,
+`@RequiresAction`, `@RequiresPolicy`). An unannotated tool is public. Typed policies use the
+generated `McpToolInvoker#accessPolicy()` hook described under Descriptor and invocation contracts.
+
+### Framework seams (INTERNAL)
+
+Application code does not call or implement these. They are public so generated invokers (in
+arbitrary application packages) and sibling framework modules can reach them:
+
+| Type | Role |
+|---|---|
+| `McpToolInvoker`, `McpPreparedToolCall`, `McpStructuredOutputWriter` | Generated-runtime invocation contracts |
+| `McpBeanValidation`, `McpInputRejectionException`, `McpValueTrees` | Generated `prepare` support |
+| `McpRawEvidenceObservation`, `McpRequestAdmissionEvidence`, `McpResponseEvidence` | Audit-owned raw-evidence capability |
+
+---
+
+## Module Dagger Bindings
+
+None. This artifact ships no Dagger `@Module`. Applications install `McpServerModule` from
+`vertique-mcp-server` and contribute interceptor / observer multibindings there.
+
+---
+
+## Dependencies
+
+Compile-scope Vertique dependencies: `vertique-core`, `vertique-security-core`. Also
+`jakarta.annotation-api` and `jakarta.validation-api` (Bean Validation API only — no provider).
 
 This module consumes only the public core correlation snapshot, the security snapshot and
 `ActionRef` types, `io.vertx.core.Future`, and the Jakarta Bean Validation API (resolved directly,

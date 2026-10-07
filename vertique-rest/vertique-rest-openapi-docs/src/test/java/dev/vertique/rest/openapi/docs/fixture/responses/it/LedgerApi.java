@@ -5,13 +5,15 @@ package dev.vertique.rest.openapi.docs.fixture.responses.it;
 
 import dev.vertique.rest.core.application.RestApplication;
 import dev.vertique.rest.openapi.docs.ApiDocs;
+import dev.vertique.security.authz.AccessPolicy;
+import jakarta.annotation.security.PermitAll;
 
 /**
  * The documented application {@code ledger} at {@code /api} (mount {@code /api/*}), listing {@link
  * LedgerResource}. Its one operation returns {@code Future<LedgerZx>}, which reaches a type
  * annotated {@code @Hidden}. Its document is public; its {@code info} comes from configuration.
  */
-@ApiDocs(access = ApiDocs.Access.PUBLIC)
+@ApiDocs(policy = LedgerApi.PublicDocsPolicy.class)
 @RestApplication(name = LedgerApi.NAME, path = LedgerApi.PATH, resources = LedgerResource.class)
 public interface LedgerApi {
 
@@ -20,4 +22,8 @@ public interface LedgerApi {
 
     /** The application's path. */
     String PATH = "/api";
+
+    /** Anyone may read the document. */
+    @PermitAll
+    public interface PublicDocsPolicy extends AccessPolicy {}
 }

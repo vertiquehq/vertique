@@ -6,6 +6,8 @@ package dev.vertique.json.schema;
 import jakarta.annotation.Nullable;
 
 /**
+ * INTERNAL framework seam — callable by sibling Vertique modules only; not an application contract and outside the application maturity promise.
+ *
  * One member, or one type, that a canonical generator's document describes while it carries a
  * hiding marker, as {@link AnnotationJsonSchemaGenerator#hiddenMembers(java.lang.reflect.Type)}
  * reports it.

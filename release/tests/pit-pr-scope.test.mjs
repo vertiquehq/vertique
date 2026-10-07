@@ -649,6 +649,6 @@ describe('PitSandboxContractTest', () => {
     assert.match(script, /--cap-drop ALL --security-opt no-new-privileges/);
     assert.match(script, /--memory "\$memory" --pids-limit \d+/);
     assert.match(dockerfile(), /^USER pit$/m, 'the container must not run as root');
-    assert.match(dockerfile(), /^FROM eclipse-temurin:21-jdk@sha256:[0-9a-f]{64}$/m, 'pin the base image by digest');
+    assert.match(dockerfile(), /^FROM eclipse-temurin:25-jdk@sha256:[0-9a-f]{64}$/m, 'pin the base image by digest');
   });
 });

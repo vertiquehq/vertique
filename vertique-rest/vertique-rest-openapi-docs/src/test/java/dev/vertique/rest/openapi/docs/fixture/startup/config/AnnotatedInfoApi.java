@@ -7,8 +7,10 @@ import dev.vertique.rest.core.application.RestApplication;
 import dev.vertique.rest.openapi.docs.ApiDocs;
 import dev.vertique.rest.openapi.docs.fixture.CatalogResource;
 import dev.vertique.rest.openapi.docs.fixture.PublicApi;
+import dev.vertique.security.authz.AccessPolicy;
 import io.swagger.v3.oas.annotations.OpenAPIDefinition;
 import io.swagger.v3.oas.annotations.info.Info;
+import jakarta.annotation.security.PermitAll;
 
 /**
  * Application {@code public} at {@code /api/public} listing {@link CatalogResource}, documented
@@ -16,6 +18,10 @@ import io.swagger.v3.oas.annotations.info.Info;
  * {@code Annotated}, version {@code 2}, description {@code From code}.
  */
 @OpenAPIDefinition(info = @Info(title = "Annotated", version = "2", description = "From code"))
-@ApiDocs(access = ApiDocs.Access.PUBLIC)
+@ApiDocs(policy = AnnotatedInfoApi.PublicDocsPolicy.class)
 @RestApplication(name = PublicApi.NAME, path = PublicApi.PATH, resources = CatalogResource.class)
-public interface AnnotatedInfoApi {}
+public interface AnnotatedInfoApi {
+    /** Anyone may read the document. */
+    @PermitAll
+    public interface PublicDocsPolicy extends AccessPolicy {}
+}

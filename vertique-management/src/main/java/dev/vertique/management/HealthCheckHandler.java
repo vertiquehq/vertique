@@ -324,7 +324,7 @@ public class HealthCheckHandler implements Handler<RoutingContext> {
             //
             // Today no such future reaches here: Future.join reads the same two accessors while
             // settling its composite and never completes when the cause is null, so the probe
-            // stalls upstream of this branch (measured against vertx-core 5.1.2). The guard is kept
+            // stalls upstream of this branch (measured against vertx-core). The guard is kept
             // because this is the seam that would observe the state if that ever changed.
             return toJson(execution.name(), HealthCheckResult.down());
         }

@@ -21,38 +21,38 @@ finer-grained attribution is required.
 
 | Coordinate | Version | License | Notes |
 | --- | --- | --- | --- |
-| `io.vertx:vertx-dependencies` (BOM) | 5.1.6 | Apache-2.0 OR EPL-2.0 | Recipient's choice; Vert.x is dual-licensed |
-| `io.lettuce:lettuce-core` | 7.7.0.RELEASE | MIT | Redis client, isolated to the topology-maintenance adapter |
+| `io.vertx:vertx-dependencies` (BOM) | 5.1.8 | Apache-2.0 OR EPL-2.0 | Recipient's choice; Vert.x is dual-licensed |
+| `io.lettuce:lettuce-core` | 7.8.0.RELEASE | MIT | Redis client, isolated to the topology-maintenance adapter |
 | `com.google.dagger:dagger` | 2.60.1 | Apache-2.0 | Compile-time DI, incl. `dagger-compiler` annotation processor |
-| `com.fasterxml.jackson:jackson-bom` | 2.22.2 | Apache-2.0 | |
-| `io.micrometer:micrometer-bom` | 1.16.6 | Apache-2.0 | |
-| `io.opentelemetry:opentelemetry-bom` | 1.65.0 | Apache-2.0 | |
-| `io.opentelemetry.semconv:opentelemetry-semconv` | 1.43.0 | Apache-2.0 | |
-| `io.prometheus:prometheus-metrics-bom` | 1.8.0 | Apache-2.0 | |
-| `org.projectlombok:lombok` | 1.18.42 | MIT | `provided` scope; compile-time only |
+| `com.fasterxml.jackson:jackson-bom` | 2.22.3 | Apache-2.0 | |
+| `io.micrometer:micrometer-bom` | 1.17.1 | Apache-2.0 | |
+| `io.opentelemetry:opentelemetry-bom` | 1.66.0 | Apache-2.0 | |
+| `io.opentelemetry.semconv:opentelemetry-semconv` | 1.44.0 | Apache-2.0 | |
+| `io.prometheus:prometheus-metrics-bom` | 1.9.0 | Apache-2.0 | |
+| `org.projectlombok:lombok` | 1.18.48 | MIT | `provided` scope; compile-time only |
 | `io.swagger.core.v3:swagger-*-jakarta` | 2.2.44 | Apache-2.0 | annotations / core / jaxrs2 / maven-plugin |
 | `jakarta.ws.rs:jakarta.ws.rs-api` | 4.0.0 | EPL-2.0 OR GPL-2.0-with-classpath-exception | Eclipse EE4J dual license |
 | `jakarta.inject:jakarta.inject-api` | 2.0.1 | Apache-2.0 | |
 | `jakarta.annotation:jakarta.annotation-api` | 2.1.1 | EPL-2.0 OR GPL-2.0-with-classpath-exception | Eclipse EE4J dual license |
 | `jakarta.validation:jakarta.validation-api` | 3.1.1 | Apache-2.0 | |
-| `org.hibernate.validator:hibernate-validator` | 9.1.0.Final | Apache-2.0 | |
+| `org.hibernate.validator:hibernate-validator` | 9.1.4.Final | Apache-2.0 | |
 | `org.glassfish.expressly:expressly` | 6.0.0 | EPL-2.0 OR GPL-2.0-with-classpath-exception | Eclipse EE4J dual license |
-| `ch.qos.logback:logback-classic` / `logback-core` | 1.6.3 | EPL-1.0 OR LGPL-2.1 | Recipient's choice |
-| `org.slf4j:slf4j-api` | 2.0.17 | MIT | |
-| `com.github.ben-manes.caffeine:caffeine` | 3.2.4 | Apache-2.0 | |
-| `com.bucket4j:bucket4j_jdk17-core` / `bucket4j_jdk17-vertx` | 8.19.0 | Apache-2.0 | Isolated to `vertique-rate-limit-core`/`-redis` |
-| `org.flywaydb:flyway-core` / `flyway-database-postgresql` | 12.0.2 | Apache-2.0 | Community edition; Redgate's paid-tier features are license-key gated but do not change this artifact's license |
+| `ch.qos.logback:logback-classic` / `logback-core` | 1.6.5 | EPL-1.0 OR LGPL-2.1 | Recipient's choice |
+| `org.slf4j:slf4j-api` | 2.0.20 | MIT | |
+| `com.github.ben-manes.caffeine:caffeine` | 3.3.0 | Apache-2.0 | |
+| `com.bucket4j:bucket4j_jdk17-core` / `bucket4j_jdk17-vertx` | 8.21.0 | Apache-2.0 | Isolated to `vertique-rate-limit-core`/`-redis` |
+| `org.flywaydb:flyway-core` / `flyway-database-postgresql` | 13.9.0 | Apache-2.0 | Community edition; Redgate's paid-tier features are license-key gated but do not change this artifact's license |
 | `org.postgresql:postgresql` | 42.7.13 | BSD-2-Clause | |
-| `org.apache.avro:avro` | 1.12.1 | Apache-2.0 | |
+| `org.apache.avro:avro` | 1.12.2 | Apache-2.0 | |
 | `io.apicurio:apicurio-registry-avro-serde-kafka` | 3.3.3 | Apache-2.0 | |
 | `com.github.victools:jsonschema-generator` (+ `-module-jackson`, `-module-jakarta-validation`, `-module-swagger-2`) | 4.38.0 | Apache-2.0 | |
 | `com.googlecode.owasp-java-html-sanitizer:owasp-java-html-sanitizer` | 20260313.1 | Apache-2.0 | Date-stamped version scheme |
 | `dev.cel:cel` | 0.14.0 | Apache-2.0 | Isolated to `vertique-workflow-definition` |
-| `io.github.jopenlibs:vault-java-driver` | 6.2.2 | MIT | Isolated to `vertique-config-vault` |
-| `software.amazon.awssdk:bom` | 2.54.14 | Apache-2.0 | Isolated to `vertique-config-aws-*` |
-| `com.azure:azure-security-keyvault-secrets` | 4.11.0 | MIT | Isolated to `vertique-config-azure-keyvault` |
-| `com.azure:azure-identity` | 1.18.3 | MIT | Isolated to `vertique-config-azure-keyvault` |
-| `com.palantir.javapoet:javapoet` | 0.19.0 | Apache-2.0 | Codegen source generation |
+| `io.github.jopenlibs:vault-java-driver` | 6.2.3 | MIT | Isolated to `vertique-config-vault` |
+| `software.amazon.awssdk:bom` | 2.55.11 | Apache-2.0 | Isolated to `vertique-config-aws-*` |
+| `com.azure:azure-security-keyvault-secrets` | 4.11.2 | MIT | Isolated to `vertique-config-azure-keyvault` |
+| `com.azure:azure-identity` | 1.18.7 | MIT | Isolated to `vertique-config-azure-keyvault` |
+| `com.palantir.javapoet:javapoet` | 0.20.0 | Apache-2.0 | Codegen source generation |
 | `org.opentest4j:opentest4j` | 1.3.0 | Apache-2.0 | |
 
 ## Test-scoped dependencies
@@ -62,13 +62,13 @@ review since test code, fixtures, and CI images redistribute them.
 
 | Coordinate | Version | License |
 | --- | --- | --- |
-| `org.junit.jupiter:junit-jupiter` (+ `-api`) | 5.14.4 | EPL-2.0 |
-| `io.rest-assured:rest-assured` | 6.0.0 | Apache-2.0 |
+| `org.junit.jupiter:junit-jupiter` (+ `-api`) | 6.1.3 | EPL-2.0 |
+| `io.rest-assured:rest-assured` | 6.0.1 | Apache-2.0 |
 | `com.atlassian.oai:swagger-request-validator-restassured` | 2.46.0 | Apache-2.0 |
-| `org.mockito:mockito-core` / `mockito-junit-jupiter` | 5.23.0 | MIT |
+| `org.mockito:mockito-core` / `mockito-junit-jupiter` | 5.24.0 | MIT |
 | `org.testcontainers:testcontainers` (+ `-postgresql`, `-kafka`, `-vault`, `-localstack`, `-junit-jupiter`) | 2.0.5 | MIT |
 | `org.wiremock:wiremock-standalone` | 3.13.2 | Apache-2.0 |
-| `com.github.nagyesta.lowkey-vault:lowkey-vault-testcontainers` / `lowkey-vault-client` | 7.3.0 | MIT |
+| `com.github.nagyesta.lowkey-vault:lowkey-vault-testcontainers` / `lowkey-vault-client` | 7.3.112 | MIT |
 | `com.google.testing.compile:compile-testing` | 0.23.0 | Apache-2.0 |
 | `com.google.guava:guava` | 33.6.0-jre | Apache-2.0 |
 
@@ -79,19 +79,19 @@ source tree.
 
 | Coordinate | Version | License |
 | --- | --- | --- |
-| `org.apache.maven.plugins:maven-compiler-plugin` | 3.15.0 | Apache-2.0 |
+| `org.apache.maven.plugins:maven-compiler-plugin` | 3.16.0 | Apache-2.0 |
 | `org.apache.maven.plugins:maven-dependency-plugin` | 3.11.0 | Apache-2.0 |
 | `org.apache.maven.plugins:maven-surefire-plugin` | 3.6.0 | Apache-2.0 |
-| `org.apache.maven.plugins:maven-failsafe-plugin` | 3.5.5 | Apache-2.0 |
+| `org.apache.maven.plugins:maven-failsafe-plugin` | 3.5.6 | Apache-2.0 |
 | `org.apache.maven.plugins:maven-enforcer-plugin` | 3.6.3 | Apache-2.0 |
-| `org.apache.maven.plugins:maven-shade-plugin` | 3.6.1 | Apache-2.0 |
-| `org.apache.maven.plugins:maven-source-plugin` | 3.3.1 | Apache-2.0 |
+| `org.apache.maven.plugins:maven-shade-plugin` | 3.6.2 | Apache-2.0 |
+| `org.apache.maven.plugins:maven-source-plugin` | 3.4.0 | Apache-2.0 |
 | `org.apache.maven.plugins:maven-javadoc-plugin` | 3.12.0 | Apache-2.0 |
 | `org.apache.maven.plugins:maven-deploy-plugin` | 3.1.4 | Apache-2.0 |
-| `org.codehaus.mojo:exec-maven-plugin` | 3.6.3 | Apache-2.0 |
-| `com.google.cloud.tools:jib-maven-plugin` | 3.5.1 | Apache-2.0 |
+| `org.codehaus.mojo:exec-maven-plugin` | 3.6.4 | Apache-2.0 |
+| `com.google.cloud.tools:jib-maven-plugin` | 3.5.2 | Apache-2.0 |
 | `com.diffplug.spotless:spotless-maven-plugin` | 3.10.2 | Apache-2.0 |
-| `org.jacoco:jacoco-maven-plugin` | 0.8.12 | EPL-2.0 |
+| `org.jacoco:jacoco-maven-plugin` | 0.8.15 | EPL-2.0 |
 | `org.codehaus.mojo:flatten-maven-plugin` | 1.8.0 | Apache-2.0 |
 
 ## Known compliance flags

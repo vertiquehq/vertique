@@ -168,7 +168,7 @@ Cron schedule definitions written by `JobRepository.saveSchedule()` at startup. 
 | `job_id` | `VARCHAR(255) PK` | Unique job identifier |
 | `cron_expression` | `VARCHAR(100)` | 6-field cron expression string |
 | `handler` | `VARCHAR(255)` | Event bus address of the handler; nullable — a `ServiceTarget` schedule leaves it null and uses `target` |
-| `target` | `VARCHAR(512)` | Resolved cron target reference the scheduler reads and writes (ADR-0201) |
+| `target` | `VARCHAR(512)` | Resolved cron target reference the scheduler reads and writes |
 | `execution_mode` | `VARCHAR(20)` | `EVERY_INSTANCE` or `SINGLE_INSTANCE` |
 | `timezone` | `VARCHAR(50)` | IANA zone ID |
 | `enabled` | `BOOLEAN` | Whether the schedule is active |
