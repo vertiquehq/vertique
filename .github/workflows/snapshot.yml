@@ -69,7 +69,7 @@ jobs:
       - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
         with:
           distribution: temurin
-          java-version: "21"
+          java-version: "25"
 
       # The guard collects its own context and decides. A denial exits 0: it is
       # a normal outcome, and a red run here would be indistinguishable from a
