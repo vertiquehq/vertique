@@ -57,6 +57,9 @@ GROUP_PATH="$(node -p 'require("./release/publication-policy.json").groupIdPrefi
 [[ -n "$GROUP_PATH" ]] || die "could not read the product group from release/publication-policy.json"
 rm -rf "${M2:?}/$GROUP_PATH"
 
-./mvnw -ntp -B -Dmaven.repo.local="$M2" -DskipTests -Darchetype.test.skip=true -Prelease install
+# Tests just ran in this build: -DskipTests does not reach the Invoker
+# integration tests, whose output never enters the payload, so they are skipped
+# explicitly alongside the archetype ones.
+./mvnw -ntp -B -Dmaven.repo.local="$M2" -DskipTests -Darchetype.test.skip=true -Dinvoker.skip=true -Prelease install
 
 node release/snapshot-payload.mjs stage --local-repository "$M2" --sha "$SHA" --out "$OUT"
