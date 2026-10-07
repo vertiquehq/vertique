@@ -92,6 +92,7 @@ public final class ApicurioAvroSerdeProvider implements KafkaSerdeProvider {
     @Override
     public <V> KafkaSerializer<V> serializer(Class<V> type, JsonObject endpointConfig) {
         requireSpecificRecord(type);
+        AvroClassTrust.register(type, endpointConfig);
         AvroKafkaSerializer<V> serializer = new AvroKafkaSerializer<>();
         serializer.configure(serializerConfig(endpointConfig), false);
         return new KafkaSerializer<>() {
@@ -110,6 +111,7 @@ public final class ApicurioAvroSerdeProvider implements KafkaSerdeProvider {
     @Override
     public <V> KafkaDeserializer<V> deserializer(Class<V> type, JsonObject endpointConfig) {
         requireSpecificRecord(type);
+        AvroClassTrust.register(type, endpointConfig);
         AvroKafkaDeserializer<V> deserializer = new AvroKafkaDeserializer<>();
         deserializer.configure(deserializerConfig(endpointConfig), false);
         return new KafkaDeserializer<>() {
@@ -135,6 +137,7 @@ public final class ApicurioAvroSerdeProvider implements KafkaSerdeProvider {
 
     @Override
     public KafkaDeserializer<Object> routingDeserializer(JsonObject endpointConfig) {
+        AvroClassTrust.register(endpointConfig);
         AvroKafkaDeserializer<Object> deserializer = new AvroKafkaDeserializer<>();
         deserializer.configure(deserializerConfig(endpointConfig), false);
         return new KafkaDeserializer<>() {
@@ -211,6 +214,8 @@ public final class ApicurioAvroSerdeProvider implements KafkaSerdeProvider {
         config.put(CFG_RETRY_BACKOFF_MS, DEFAULT_RETRY_BACKOFF_MS);
         // User-supplied apicurio.registry.* properties override the defaults above.
         serdeProperties.forEach(entry -> config.put(entry.getKey(), entry.getValue()));
+        // Vertique-owned key (read by AvroClassTrust); not an Apicurio setting.
+        config.remove(AvroClassTrust.TRUSTED_PACKAGES_KEY);
         // Confluent-wire compatibility is a framework invariant: schema id in the payload, never in
         // Kafka headers. Re-applied after the overlay so it cannot be silently broken.
         config.put(CFG_HEADERS_ENABLED, false);

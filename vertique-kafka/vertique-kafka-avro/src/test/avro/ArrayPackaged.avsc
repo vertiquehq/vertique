@@ -1,0 +1,6 @@
+{
+  "namespace": "dev.vertique.kafka.avro.it.pkg.array",
+  "type": "record",
+  "name": "ArrayPackaged",
+  "fields": [ { "name": "id", "type": "string" } ]
+}

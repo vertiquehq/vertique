@@ -1,0 +1,6 @@
+{
+  "namespace": "dev.vertique.kafka.avro.it.serializeronly",
+  "type": "record",
+  "name": "SerializerOnly",
+  "fields": [ { "name": "id", "type": "string" } ]
+}

@@ -1,0 +1,8 @@
+{
+  "namespace": "dev.vertique.kafka.avro.it.reserved",
+  "type": "record",
+  "name": "Reserved",
+  "fields": [
+    { "name": "mode", "type": { "type": "enum", "name": "Mode", "namespace": "dev.vertique.kafka.avro.it.reserved.default", "symbols": ["A", "B"] } }
+  ]
+}
