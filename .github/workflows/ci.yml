@@ -19,8 +19,9 @@ name: CI
 on:
   push:
     branches: [main]
+  # No base-branch filter: a stacked pull request targets the branch below it,
+  # and must be checked before it is retargeted to main.
   pull_request:
-    branches: [main]
 
 permissions:
   contents: read
@@ -191,6 +192,11 @@ jobs:
       # target). No credential, no external service; locally runnable as-is.
       - name: Diff coverage gate
         if: github.event_name == 'pull_request'
+        # Compare against the PR's own base so a stacked layer is gated on its
+        # own lines, not on the layers beneath it. fetch-depth 0 above makes
+        # every remote branch available as origin/<name>.
+        env:
+          DIFF_COVER_COMPARE_BRANCH: origin/${{ github.base_ref }}
         run: bash scripts/diff-coverage-gate.sh
 
       # Consumed by the non-required Coverage Comment workflow. Uploaded even
