@@ -204,6 +204,12 @@ public class JwtClaimsRejectionStatusIT {
     void claimsRejectionDoesNotLeakValidatorMessage() throws Exception {
         HttpResult result = get();
 
+        // An absent or unparseable body would satisfy the absence check below vacuously, so anchor on
+        // the rendered problem first: the leak assertion only means something against a real body.
+        assertEquals(
+                "Unauthorized",
+                result.problem().getString("title"),
+                "the leak check is only meaningful against a rendered problem body; body was " + result.bodyText());
         assertFalse(
                 result.bodyText().contains(REJECTION_MESSAGE),
                 "the claims validator's message is arbitrary application text and must not appear anywhere in the "
