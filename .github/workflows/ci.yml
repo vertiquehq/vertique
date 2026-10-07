@@ -204,6 +204,27 @@ jobs:
           path: vertique-coverage-report/target/site/jacoco-aggregate/jacoco.xml
           if-no-files-found: error
 
+      # Pushes to main only: a pull request never produces a publishable
+      # payload. Staged from the build and tests that just ran, so nothing is
+      # rebuilt for publication: the script reuses this job's compiled output,
+      # adds the release profile's sources and Javadoc JARs in a private copy of
+      # the Maven repository, and records the commit, version and a digest per
+      # file in a manifest that publication checks before it deploys anything.
+      # Keep this the last step that can change the payload: it is uploaded
+      # straight away, and no later step of this run uploads artifacts.
+      - name: Stage the SNAPSHOT payload
+        if: github.event_name == 'push'
+        run: bash release/stage-snapshot-payload.sh --out ${{ runner.temp }}/snapshot-payload --sha ${{ github.sha }}
+
+      - name: Upload the SNAPSHOT payload
+        if: github.event_name == 'push'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: snapshot-payload
+          path: ${{ runner.temp }}/snapshot-payload
+          if-no-files-found: error
+          retention-days: 7
+
       # Always, not just on success: whatever this run downloaded should
       # survive even if a later step (or the build itself) fails, since a
       # failure downstream of dependency resolution shouldn't cost the next
@@ -214,46 +235,3 @@ jobs:
         with:
           path: ~/.m2/repository
           key: maven-${{ runner.os }}-${{ steps.pom-hash.outputs.value }}-${{ github.run_id }}
-
-  # Builds the allowlisted SNAPSHOT payload once, beside the tests, so the
-  # publication workflow deploys it instead of rebuilding the reactor. Pushes to
-  # main only: a pull request never produces a publishable payload. A failure
-  # here fails CI on main, which keeps the publication guard from approving a
-  # commit whose payload was never built. The payload is bound to this commit by
-  # a manifest that publication checks before it deploys anything.
-  snapshot-payload:
-    name: Stage SNAPSHOT payload
-    if: ${{ github.event_name == 'push' }}
-    runs-on: blacksmith-2vcpu-ubuntu-2404
-    timeout-minutes: 40
-    steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          # Build code runs in this job; it must not find a token in .git/config.
-          persist-credentials: false
-
-      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
-        with:
-          distribution: temurin
-          java-version: "21"
-
-      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
-        with:
-          node-version: "22"
-
-      # An isolated repository, so the payload can only contain this build's
-      # artifacts. Tests already ran in the Build and Test job; this install
-      # only packages the release profile's sources and Javadoc JARs.
-      - name: Install reactor into an isolated repository
-        run: ./mvnw -ntp -B -Dmaven.repo.local=${{ runner.temp }}/m2 -DskipTests -Prelease clean install
-
-      - name: Stage the allowlisted payload
-        run: node release/snapshot-payload.mjs stage --local-repository ${{ runner.temp }}/m2 --sha ${{ github.sha }} --out ${{ runner.temp }}/snapshot-payload
-
-      - name: Upload the SNAPSHOT payload
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: snapshot-payload
-          path: ${{ runner.temp }}/snapshot-payload
-          if-no-files-found: error
-          retention-days: 7

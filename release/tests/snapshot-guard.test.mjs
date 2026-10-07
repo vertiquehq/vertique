@@ -213,16 +213,27 @@ describe('PublicSnapshotWorkflowContractTest', () => {
     );
   });
 
-  it('stagesThePayloadOnlyOnPushes', () => {
+  it('stagesThePayloadFromTheTestedBuildOnPushesOnly', () => {
     const ci = readFileSync(path.join(REPO_ROOT, '.github', 'workflows', 'ci.yml'), 'utf8');
-    const start = ci.indexOf('\n  snapshot-payload:\n');
-    assert.ok(start >= 0, 'ci.yml must stage the SNAPSHOT payload');
-    const job = ci.slice(start);
+    const stageStart = ci.indexOf('      - name: Stage the SNAPSHOT payload\n');
+    const uploadStart = ci.indexOf('      - name: Upload the SNAPSHOT payload\n');
+    assert.ok(stageStart >= 0 && uploadStart > stageStart, 'ci.yml must stage, then upload, the SNAPSHOT payload');
+
+    // Staged from the build the tests ran in, so only after that build.
+    assert.ok(ci.indexOf('      - name: Build and test\n') < stageStart, 'the payload must be staged after the tested build');
+    const stage = ci.slice(stageStart, uploadStart);
+    const upload = ci.slice(uploadStart, ci.indexOf('\n\n', uploadStart));
 
     // A pull request must never produce a payload that publication could pick up.
-    assert.match(job, /^    if: \$\{\{ github\.event_name == 'push' \}\}$/m, 'payload staging must run on push only');
-    assert.match(job, /snapshot-payload\.mjs stage[^\n]*--sha \$\{\{\s*github\.sha\s*\}\}/, 'the payload must be bound to the built commit');
-    assert.match(job, /name: snapshot-payload\n/, 'the artifact name must match the one publication downloads');
-    assert.match(job, /if-no-files-found: error/, 'an empty payload must fail CI');
+    for (const [label, step] of [['stage', stage], ['upload', upload]]) {
+      assert.match(step, /^        if: github\.event_name == 'push'$/m, `the ${label} step must run on push only`);
+    }
+    assert.match(stage, /stage-snapshot-payload\.sh[^\n]*--sha \$\{\{\s*github\.sha\s*\}\}/, 'the payload must be bound to the built commit');
+    assert.match(upload, /name: snapshot-payload\n/, 'the artifact name must match the one publication downloads');
+    assert.match(upload, /if-no-files-found: error/, 'an empty payload must fail CI');
+
+    // One upload step in the whole run: nothing else may publish an artifact of that name.
+    assert.equal([...ci.matchAll(/name: snapshot-payload\n/g)].length, 1);
+    assert.doesNotMatch(ci, /overwrite:\s*true/, 'no step may overwrite an uploaded artifact');
   });
 });
