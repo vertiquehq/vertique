@@ -11,7 +11,7 @@ import java.util.Set;
  * Internal observer fan-out that isolates optional diagnostics from admission behavior.
  *
  * <p>Adopts {@code dev.vertique.resilience.Resilience#emit}'s fatal guard: an observer failure
- * that is a {@link VirtualMachineError}, {@link ThreadDeath}, or {@link LinkageError} is rethrown
+ * that is a {@link VirtualMachineError} or {@link LinkageError} is rethrown
  * rather than swallowed — the JVM itself is in an unrecoverable or invalid-classloading state, and
  * masking that here would only hide it. Every other observer failure is isolated exactly as before.
  */
@@ -33,8 +33,6 @@ final class RateLimitObservationSupport {
     }
 
     private static boolean isFatal(Throwable failure) {
-        return failure instanceof VirtualMachineError
-                || failure instanceof ThreadDeath
-                || failure instanceof LinkageError;
+        return failure instanceof VirtualMachineError || failure instanceof LinkageError;
     }
 }
