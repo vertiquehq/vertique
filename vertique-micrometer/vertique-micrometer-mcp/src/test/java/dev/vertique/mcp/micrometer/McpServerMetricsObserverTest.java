@@ -116,7 +116,6 @@ class McpServerMetricsObserverTest {
                 null,
                 null,
                 null,
-                null,
                 null);
         openAndComplete(observer, otherMethod, McpRequestCompletedEvent.written(otherMethod, COMPLETED_AT));
 
@@ -289,7 +288,6 @@ class McpServerMetricsObserverTest {
                 KNOWN_TOOL,
                 200,
                 "2026-07-28",
-                null,
                 authorization,
                 null,
                 correlation);
@@ -385,7 +383,7 @@ class McpServerMetricsObserverTest {
         return switch (outcome) {
             case SUCCESS ->
                 McpRequestTerminalEvent.success(
-                        STARTED_AT, TERMINAL_AT, McpMethod.TOOLS_CALL, toolName, 200, null, null, null, null, null);
+                        STARTED_AT, TERMINAL_AT, McpMethod.TOOLS_CALL, toolName, 200, null, null, null, null);
             case TOOL_ERROR ->
                 McpRequestTerminalEvent.toolError(
                         STARTED_AT,
@@ -394,7 +392,6 @@ class McpServerMetricsObserverTest {
                         toolName,
                         errorType,
                         200,
-                        null,
                         null,
                         null,
                         null,
@@ -407,7 +404,6 @@ class McpServerMetricsObserverTest {
                         toolName,
                         errorType,
                         0,
-                        null,
                         null,
                         null,
                         null,
@@ -425,7 +421,6 @@ class McpServerMetricsObserverTest {
                         null,
                         null,
                         null,
-                        null,
                         null);
             case CANCELLED ->
                 McpRequestTerminalEvent.cancelled(
@@ -435,7 +430,6 @@ class McpServerMetricsObserverTest {
                         toolName,
                         errorType,
                         0,
-                        null,
                         null,
                         null,
                         null,
@@ -466,7 +460,6 @@ class McpServerMetricsObserverTest {
                 toolName,
                 McpErrorType.HANDLER,
                 0,
-                null,
                 null,
                 null,
                 null,

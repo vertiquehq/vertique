@@ -8,7 +8,6 @@ public enum McpErrorType {
     NONE,
     HTTP,
     PROTOCOL,
-    RATE_LIMIT,
     AUTHENTICATION,
     AUTHORIZATION,
     INPUT_VALIDATION,
@@ -19,5 +18,6 @@ public enum McpErrorType {
     SERIALIZATION,
     TIMEOUT,
     TRANSPORT,
-    INTERNAL
+    INTERNAL,
+    RATE_LIMIT
 }

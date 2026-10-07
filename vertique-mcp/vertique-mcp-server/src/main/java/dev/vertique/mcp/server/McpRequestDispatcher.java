@@ -1296,10 +1296,10 @@ final class McpRequestDispatcher {
                 500,
                 INTERNAL_ERROR,
                 protocolVersionOf(context),
-                originOf(context),
                 authorizationOf(context),
                 security,
-                correlationOf(context));
+                correlationOf(context),
+                originOf(context));
         write(context, 500, fallback, terminal);
     }
 
@@ -1335,10 +1335,10 @@ final class McpRequestDispatcher {
                 500,
                 INTERNAL_ERROR,
                 protocolVersionOf(context),
-                originOf(context),
                 authorizationOf(context),
                 security,
-                correlationOf(context));
+                correlationOf(context),
+                originOf(context));
         write(context, 500, fallback, terminal);
     }
 
@@ -1495,10 +1495,10 @@ final class McpRequestDispatcher {
                     500,
                     INTERNAL_ERROR,
                     protocolVersionOf(context),
-                    originOf(context),
                     authorizationOf(context),
                     security,
-                    correlationOf(context));
+                    correlationOf(context),
+                    originOf(context));
             write(context, 500, fallback, overCapTerminal);
             return;
         }
@@ -1511,10 +1511,10 @@ final class McpRequestDispatcher {
                 status,
                 INTERCEPTOR_REJECTED,
                 protocolVersionOf(context),
-                originOf(context),
                 authorizationOf(context),
                 security,
-                correlationOf(context));
+                correlationOf(context),
+                originOf(context));
         write(context, status, responseBytes, terminal);
     }
 
@@ -1560,10 +1560,10 @@ final class McpRequestDispatcher {
                     500,
                     INTERNAL_ERROR,
                     null,
-                    originOf(context),
                     null,
                     security,
-                    correlationOf(context));
+                    correlationOf(context),
+                    originOf(context));
             write(context, 500, fallback, overCapTerminal);
             return;
         }
@@ -1576,10 +1576,10 @@ final class McpRequestDispatcher {
                 status,
                 code,
                 null,
-                originOf(context),
                 null,
                 security,
-                correlationOf(context));
+                correlationOf(context),
+                originOf(context));
         write(context, status, errorBytes, terminal);
     }
 
@@ -1607,10 +1607,10 @@ final class McpRequestDispatcher {
                     500,
                     INTERNAL_ERROR,
                     protocolVersionOf(context),
-                    originOf(context),
                     authorizationOf(context),
                     security,
-                    correlationOf(context));
+                    correlationOf(context),
+                    originOf(context));
             write(context, 500, fallback, terminal);
             return;
         }
@@ -1621,10 +1621,10 @@ final class McpRequestDispatcher {
                 McpRequestTerminalEvent.UNKNOWN_TOOL_NAME,
                 200,
                 protocolVersionOf(context),
-                originOf(context),
                 authorizationOf(context),
                 security,
-                correlationOf(context));
+                correlationOf(context),
+                originOf(context));
         write(context, 200, payload, terminal);
     }
 
@@ -1965,10 +1965,10 @@ final class McpRequestDispatcher {
                 500,
                 INTERNAL_ERROR,
                 protocolVersionOf(context),
-                originOf(context),
                 authorizationOf(context),
                 security,
-                correlationOf(context));
+                correlationOf(context),
+                originOf(context));
         write(context, 500, fallback, terminal);
     }
 
@@ -1991,10 +1991,10 @@ final class McpRequestDispatcher {
                 500,
                 INTERNAL_ERROR,
                 protocolVersionOf(context),
-                originOf(context),
                 authorizationOf(context),
                 security,
-                correlationOf(context));
+                correlationOf(context),
+                originOf(context));
         write(context, 500, fallback, terminal);
     }
 
@@ -2022,10 +2022,10 @@ final class McpRequestDispatcher {
                     500,
                     INTERNAL_ERROR,
                     protocolVersionOf(context),
-                    originOf(context),
                     authorizationOf(context),
                     security,
-                    correlationOf(context));
+                    correlationOf(context),
+                    originOf(context));
             write(context, 500, fallback, terminal);
             return;
         }
@@ -2036,10 +2036,10 @@ final class McpRequestDispatcher {
                 McpRequestTerminalEvent.UNKNOWN_TOOL_NAME,
                 200,
                 protocolVersionOf(context),
-                originOf(context),
                 authorizationOf(context),
                 security,
-                correlationOf(context));
+                correlationOf(context),
+                originOf(context));
         write(context, 200, payload, terminal);
     }
 
@@ -2159,10 +2159,10 @@ final class McpRequestDispatcher {
                     500,
                     INTERNAL_ERROR,
                     protocolVersionOf(context),
-                    originOf(context),
                     authorizationOf(context),
                     security,
-                    correlationOf(context));
+                    correlationOf(context),
+                    originOf(context));
             write(context, 500, fallback, overCapTerminal);
             return;
         }
@@ -2175,10 +2175,10 @@ final class McpRequestDispatcher {
                 status,
                 error.code(),
                 protocolVersionOf(context),
-                originOf(context),
                 authorizationOf(context),
                 security,
-                correlationOf(context));
+                correlationOf(context),
+                originOf(context));
         write(context, status, body, terminal);
     }
 
@@ -2223,10 +2223,10 @@ final class McpRequestDispatcher {
                         status,
                         RATE_LIMITED,
                         protocolVersionOf(context),
-                        originOf(context),
                         authorizationOf(context),
                         security,
-                        correlationOf(context))
+                        correlationOf(context),
+                        originOf(context))
                 : McpRequestTerminalEvent.rejected(
                         startedAt(context),
                         Instant.now(),
@@ -2236,10 +2236,10 @@ final class McpRequestDispatcher {
                         status,
                         RATE_LIMITED,
                         protocolVersionOf(context),
-                        originOf(context),
                         authorizationOf(context),
                         security,
-                        correlationOf(context));
+                        correlationOf(context),
+                        originOf(context));
         write(context, status, body, terminal);
     }
 
@@ -2405,10 +2405,10 @@ final class McpRequestDispatcher {
                 status,
                 code,
                 protocolVersionOf(context),
-                originOf(context),
                 authorizationOf(context),
                 security,
-                correlationOf(context));
+                correlationOf(context),
+                originOf(context));
         write(context, status, body, terminal);
     }
 
@@ -2886,10 +2886,10 @@ final class McpRequestDispatcher {
                 500,
                 INTERNAL_ERROR,
                 protocolVersionOf(context),
-                originOf(context),
                 authorizationOf(context),
                 security,
-                correlationOf(context));
+                correlationOf(context),
+                originOf(context));
         writeSse(context, 500, fallback, terminal);
     }
 
@@ -3007,10 +3007,10 @@ final class McpRequestDispatcher {
                     toolName,
                     200,
                     protocolVersionOf(context),
-                    originOf(context),
                     authorizationOf(context),
                     security,
-                    correlationOf(context));
+                    correlationOf(context),
+                    originOf(context));
         }
         if (errorType == McpErrorType.INTERCEPTOR) {
             return McpRequestTerminalEvent.rejected(
@@ -3022,10 +3022,10 @@ final class McpRequestDispatcher {
                     200,
                     null,
                     protocolVersionOf(context),
-                    originOf(context),
                     authorizationOf(context),
                     security,
-                    correlationOf(context));
+                    correlationOf(context),
+                    originOf(context));
         }
         return McpRequestTerminalEvent.toolError(
                 startedAt(context),
@@ -3035,10 +3035,10 @@ final class McpRequestDispatcher {
                 errorType,
                 200,
                 protocolVersionOf(context),
-                originOf(context),
                 authorizationOf(context),
                 security,
-                correlationOf(context));
+                correlationOf(context),
+                originOf(context));
     }
 
     /**
@@ -3224,10 +3224,10 @@ final class McpRequestDispatcher {
                         mapping.httpStatus(),
                         mapping.protocolCode(),
                         protocolVersionOf(context),
-                        originOf(context),
                         authorizationOf(context),
                         security,
-                        correlationOf(context))
+                        correlationOf(context),
+                        originOf(context))
                 : McpRequestTerminalEvent.failed(
                         startedAt(context),
                         Instant.now(),
@@ -3237,10 +3237,10 @@ final class McpRequestDispatcher {
                         mapping.httpStatus(),
                         mapping.protocolCode(),
                         protocolVersionOf(context),
-                        originOf(context),
                         authorizationOf(context),
                         security,
-                        correlationOf(context));
+                        correlationOf(context),
+                        originOf(context));
         int writeStatus = responseCommitted ? context.response().getStatusCode() : mapping.httpStatus();
         writeSse(context, writeStatus, fallback, terminal);
     }
@@ -3358,10 +3358,10 @@ final class McpRequestDispatcher {
                 500,
                 INTERNAL_ERROR,
                 terminal.protocolVersion(),
-                terminal.origin(),
                 terminal.authorization(),
                 terminal.security(),
-                terminal.correlation());
+                terminal.correlation(),
+                terminal.origin());
     }
 
     /**
@@ -3456,10 +3456,10 @@ final class McpRequestDispatcher {
                 status,
                 null,
                 protocolVersionOf(context),
-                originOf(context),
                 authorizationOf(context),
                 security,
-                correlationOf(context));
+                correlationOf(context),
+                originOf(context));
         RequestCompletionRecorder.claimForOtherTransport(context);
         boolean responseCommitted = context.response().headWritten();
         // WRITTEN requires a committed response; an ended response with no head is WRITE_FAILED.
@@ -3570,10 +3570,10 @@ final class McpRequestDispatcher {
                 0,
                 null,
                 protocolVersionOf(context),
-                originOf(context),
                 authorizationOf(context),
                 establishedSecurity(),
-                correlationOf(context));
+                correlationOf(context),
+                originOf(context));
     }
 
     /**
@@ -3645,10 +3645,10 @@ final class McpRequestDispatcher {
                 status,
                 code,
                 protocolVersionOf(context),
-                originOf(context),
                 authorizationOf(context),
                 security,
-                correlationOf(context));
+                correlationOf(context),
+                originOf(context));
         write(context, status, errorBytes, terminal);
     }
 
@@ -3703,10 +3703,10 @@ final class McpRequestDispatcher {
                         status,
                         null,
                         protocolVersionOf(context),
-                        originOf(context),
                         authorizationOf(context),
                         security,
-                        correlationOf(context)));
+                        correlationOf(context),
+                        originOf(context)));
     }
 
     // Package-private (not private) so McpWritePhaseSettlementTest can drive this exact

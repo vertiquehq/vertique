@@ -721,7 +721,6 @@ class McpCompletionCoordinatorTest {
                 null,
                 null,
                 null,
-                null,
                 null);
     }
 
@@ -733,7 +732,6 @@ class McpCompletionCoordinatorTest {
                 McpRequestTerminalEvent.UNKNOWN_TOOL_NAME,
                 errorType,
                 0,
-                null,
                 null,
                 null,
                 null,

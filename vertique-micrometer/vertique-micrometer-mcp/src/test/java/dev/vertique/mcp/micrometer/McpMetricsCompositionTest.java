@@ -112,7 +112,6 @@ class McpMetricsCompositionTest {
                 null,
                 null,
                 null,
-                null,
                 null);
         return McpRequestCompletedEvent.written(terminal, terminalAt.plusMillis(1));
     }

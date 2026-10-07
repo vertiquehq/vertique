@@ -190,6 +190,16 @@ client IP when an authenticated identity has no client facet. Strict `CLIENT` be
 unchanged and still fails closed when its client facet is absent. The helper is integration
 surface for adapters, not application API to call directly in ordinary business code.
 
+**Behavior change for existing `@RateLimited` callers.** Before this normalization, a caller
+carrying the canonical anonymous identity was keyed as a literal anonymous principal. It now
+follows `AnonymousRateLimitPolicy`:
+
+- With `anonymous = BYPASS`, those callers are no longer limited.
+- With strict `CLIENT`, they no longer fail with `SUBJECT_UNRESOLVABLE`; the anonymous policy applies.
+- `SHARED_BUCKET` key bytes changed, so clustered counters start fresh once after upgrade.
+
+`RateLimitSubject` may gain constants in a minor release; switch over it with a `default` branch.
+
 ## Configuration
 
 All keys live under the root `rateLimit` object. Every key is optional unless stated; an omitted

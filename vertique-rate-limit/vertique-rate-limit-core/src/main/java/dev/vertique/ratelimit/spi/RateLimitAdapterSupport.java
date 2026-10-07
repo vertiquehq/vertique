@@ -27,7 +27,8 @@ import java.util.Optional;
  * <p>{@link #subjectKey} distinguishes two situations that must never collapse into one:
  *
  * <ul>
- *   <li><b>anonymous caller</b> (no {@code SecurityIdentity} at all): governed by {@link
+ *   <li><b>anonymous caller</b> (an empty resolver result or the canonical {@code
+ *       SecurityIdentity.anonymous()}): governed by {@link
  *       AnonymousRateLimitPolicy} — {@code SHARED_BUCKET} frames one shared anonymous component;
  *       {@code BYPASS} yields {@link Optional#empty()} and the caller proceeds unlimited.
  *   <li><b>identity present but the requested facet absent</b> (e.g. {@code subject = CLIENT} under

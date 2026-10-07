@@ -1346,8 +1346,10 @@ readers of those drafts:
 | `windowMs` | `rateLimit.policies.<name>.algorithm.refill.*` (greedy or interval refill) |
 | `maxTrackedPrincipals` | `rateLimit.local.maxTrackedKeys` or `rateLimit.policies.<name>.local.maxTrackedKeys` |
 
-The `McpRequestTerminalEvent.origin` component is likewise an intentional
-pre-release public-shape change; no legacy constructor overload is provided.
+`McpRequestTerminalEvent` carries the captured origin as its trailing, nullable `origin`
+component. The constructor and the five factories that predate it are unchanged and report a
+`null` origin; the factories that accept a trailing `RequestOrigin` carry it through, and
+the dispatcher uses those for every terminal event it emits.
 
 ### Opt-in AOP resilience for MCP tools
 
@@ -1406,6 +1408,12 @@ Immutable configuration deserialized from the flat `mcp` section. Closed type: f
 are the configuration contract. An enabled mount validates required server identity, mount path,
 bounds, and authentication/authorization prerequisites before routes are installed.
 
+### `McpRateLimitConfig` and `McpToolRateLimitConfig`
+
+Immutable records bound under `mcp.rateLimit`: the default policy, subject and anonymous
+handling, and per-tool overrides keyed by generated tool name. See
+[Rate-limit configuration and precedence](#rate-limit-configuration-and-precedence).
+
 ### `McpBodyTracePolicy`
 
 Enum for `mcp.bodyTracePolicy`: `IGNORE` (default) or `LINK`. Controls whether body-borne
@@ -1424,7 +1432,9 @@ Enum for `mcp.bodyTracePolicy`: `IGNORE` (default) or `LINK`. Controls whether b
 | `Set<McpToolInvoker>` | `@Multibinds` | Generated (or hand-written) tool invokers |
 | `Validator` | `@BindsOptionalOf` | Optional Bean Validation for generated `prepare` |
 | `ActionRegistry` | `@BindsOptionalOf` | Optional action catalogue for typed-policy tools |
+| `RateLimiters` | `@BindsOptionalOf` | Shared rate-limit runtime; required only when a policy is configured |
 | `McpToolRegistry` | `@Provides` | Immutable registry built from invokers |
+| `McpToolAdmission` | `@Provides` | Immutable admission plan built and validated at composition time |
 | `ComposeValidator` | `@IntoSet` (several) | Profile default + input-processing composition guards |
 | `RouterMount` / auth wiring | `@Provides` / `@IntoSet` | HTTP mount and optional scheme identity path |
 
@@ -1454,6 +1464,12 @@ keys, not rejected.
 | `mcp.toolsPageSize` | `100` | `tools/list` page size |
 | `mcp.toolsTtlMs` | `300000` | Client cache-freshness hint |
 | `mcp.bodyTracePolicy` | `IGNORE` | `IGNORE` or `LINK` |
+| `mcp.rateLimit.defaultPolicy` | absent | Shared policy applied to every tool without its own entry |
+| `mcp.rateLimit.subject` / `mcp.rateLimit.anonymous` | `EFFECTIVE_PRINCIPAL` / `SHARED_BUCKET` | Subject and anonymous handling for admission |
+| `mcp.rateLimit.tools.<tool>.{policy,subject,anonymous,cost}` | absent | Per-tool override; `cost` defaults to `1` |
+
+The `mcp.rateLimit.*` keys are described in full under
+[Rate-limit configuration and precedence](#rate-limit-configuration-and-precedence).
 
 An enabled mount also requires `http.idleTimeoutSeconds` or `http.readIdleTimeoutSeconds` > 0.
 
@@ -1469,6 +1485,11 @@ An enabled mount also requires `http.idleTimeoutSeconds` or `http.readIdleTimeou
 | `vertique-json` / `vertique-json-schema` | Profile mappers and tool schema generation |
 | `vertique-rest-core` | HTTP config, router mounts, route auth handler SPI |
 | `vertique-rest-security` | Identity resolution middleware for optional schemes |
+| `vertique-rate-limit-core` | Shared limiter runtime and subject resolution for configured admission |
+| `vertique-resilience` | Typed timeout and unavailable failures mapped at the handler boundary |
+
+An application that mounts MCP therefore also puts the rate-limit and resilience jars on its
+classpath, even when it configures no `mcp.rateLimit` policy.
 
 Runtime Bean Validation providers and observability adapters are separate artifacts.
 
