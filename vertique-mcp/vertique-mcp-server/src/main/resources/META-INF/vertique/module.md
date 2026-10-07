@@ -1,6 +1,6 @@
 # Vertique MCP Server
 
-> **Status:** Alpha
+> **Status:** Stable
 > **Package:** `dev.vertique.mcp.server`
 > **Artifact:** `vertique-mcp-server`
 > **Depends on:** `vertique-mcp-core`, `vertique-core`, `vertique-input-processing`, `vertique-json`,
@@ -102,9 +102,22 @@ limits are Jackson's own frozen `StreamReadConstraints` inside the private envel
 concern is owned jointly by per-decision authorization timeouts and the shared HTTP liveness
 settings, with no direct replacement MCP setting.
 
+## When To Use It
+
+Install `vertique-mcp-server` when an application should expose an HTTP Model Context Protocol
+mount. Include `McpServerModule` in the Dagger component, bind an immutable `McpServerConfig`, and
+pair with `vertique-codegen-mcp` so `@McpTool` methods become invokers. Require a direct
+`InputObjectProcessor` binding (for example via `SanitizationModule`) and, when the mount is
+enabled, a qualifying shared HTTP idle or read timeout.
+
+Omit this module when the process does not serve MCP. Tool annotations and lifecycle SPIs alone live
+in `vertique-mcp-core` and do not open a listening endpoint.
+
+---
+
 ## Conformance
 
-This module is Alpha maturity. It implements exactly 10 of the 37 server-leg scored scenarios in the
+This module implements exactly 10 of the 37 server-leg scored scenarios in the
 upstream Model Context Protocol conformance suite's frozen `2026-07-28` requirement set —
 `tools-list`, `tools-call-simple-text`, `tools-call-error`, the standard image/audio/embedded-resource
 and mixed-content result shapes, request-scoped progress, `server-stateless`, and
@@ -1175,3 +1188,87 @@ behaves exactly as before.
 
 Only direct, runtime-retained requirements count. A requirement reached through a composed or
 non-runtime security annotation is unsupported and is never enforced as a requirement.
+
+---
+
+## Key Classes
+
+### `McpServerModule`
+
+Dagger `@Module` that composes the optional MCP HTTP server: multibinds for lifecycle observers,
+completion listeners, request/tool interceptors, and generated tool invokers; optional `Validator`
+and `ActionRegistry`; compose validators; tool registry; router mount and related wiring. Install it
+explicitly — MCP is never auto-mounted.
+
+### `McpServerConfig`
+
+Immutable configuration deserialized from the flat `mcp` section. Closed type: fields and defaults
+are the configuration contract. An enabled mount validates required server identity, mount path,
+bounds, and authentication/authorization prerequisites before routes are installed.
+
+### `McpBodyTracePolicy`
+
+Enum for `mcp.bodyTracePolicy`: `IGNORE` (default) or `LINK`. Controls whether body-borne
+`params._meta.traceparent` / `tracestate` are extracted for optional OpenTelemetry linking.
+
+---
+
+## Module Dagger Bindings
+
+| Binding | Kind | What it is |
+|---|---|---|
+| `Set<McpRequestLifecycleObserver>` | `@Multibinds` | Neutral per-request observation |
+| `Set<McpRequestCompletedListener>` | `@Multibinds` | Post-transport completion callbacks |
+| `Set<McpRequestInterceptor>` | `@Multibinds` | Ordered pre-dispatch rejective interceptors |
+| `Set<McpToolInterceptor>` | `@Multibinds` | Ordered post-validation rejective interceptors |
+| `Set<McpToolInvoker>` | `@Multibinds` | Generated (or hand-written) tool invokers |
+| `Validator` | `@BindsOptionalOf` | Optional Bean Validation for generated `prepare` |
+| `ActionRegistry` | `@BindsOptionalOf` | Optional action catalogue for typed-policy tools |
+| `McpToolRegistry` | `@Provides` | Immutable registry built from invokers |
+| `ComposeValidator` | `@IntoSet` (several) | Profile default + input-processing composition guards |
+| `RouterMount` / auth wiring | `@Provides` / `@IntoSet` | HTTP mount and optional scheme identity path |
+
+Applications contribute observers, listeners, and interceptors into the multibinds above. Generated
+tools arrive through `GeneratedMcpToolsModule` from `vertique-codegen-mcp`.
+
+---
+
+## Configuration
+
+Keys are flat under `mcp` and map to `McpServerConfig` field names. Ordinary unknown keys are
+ignored. Former implementation-era keys (`mcp.requestTimeoutMs`, `mcp.jsonMaxDepth`, …) are unknown
+keys, not rejected.
+
+| Key | Default | Notes |
+|---|---|---|
+| `mcp.enabled` | `false` | Mount installed only when `true` |
+| `mcp.mountPath` | `/mcp/*` | One literal path ending in `/*` |
+| `mcp.serverName` / `mcp.serverVersion` | — | Required non-blank when enabled |
+| `mcp.instructions` | absent | Optional server instructions |
+| `mcp.authenticationScheme` | absent | Optional `RouteAuthHandler` scheme name |
+| `mcp.jsonProfile` | absent | MCP boundary default profile id (validated even when disabled) |
+| `mcp.allowedOrigins` | empty | DNS-rebinding allowlist; empty denies mismatched Origin |
+| `mcp.outputMaxBytes` | `2097152` | Shared response/output byte cap |
+| `mcp.ingressMaxTokens` | `65536` | Ingress JSON-RPC parser-token budget (1024–262144) |
+| `mcp.outputMaxTokens` | `65536` | Structured-output reparse token budget (1024–262144) |
+| `mcp.toolsPageSize` | `100` | `tools/list` page size |
+| `mcp.toolsTtlMs` | `300000` | Client cache-freshness hint |
+| `mcp.bodyTracePolicy` | `IGNORE` | `IGNORE` or `LINK` |
+
+An enabled mount also requires `http.idleTimeoutSeconds` or `http.readIdleTimeoutSeconds` > 0.
+
+---
+
+## Dependencies
+
+| Artifact | Why |
+|---|---|
+| `vertique-mcp-core` | Tool/lifecycle/interceptor contracts |
+| `vertique-core` | Correlation, JSON profiles, compose validation, extension ordering |
+| `vertique-input-processing` | Required `InputObjectProcessor` for tool argument pipelines |
+| `vertique-json` / `vertique-json-schema` | Profile mappers and tool schema generation |
+| `vertique-rest-core` | HTTP config, router mounts, route auth handler SPI |
+| `vertique-rest-security` | Identity resolution middleware for optional schemes |
+
+Runtime Bean Validation providers and observability adapters are separate artifacts.
+

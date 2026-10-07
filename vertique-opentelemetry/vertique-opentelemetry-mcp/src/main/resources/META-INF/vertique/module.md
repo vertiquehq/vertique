@@ -5,10 +5,10 @@ SPDX-License-Identifier: EUPL-1.2
 
 # OpenTelemetry MCP Module
 
-> **Status:** Alpha
+> **Status:** Stable
 > **Package:** `dev.vertique.mcp.opentelemetry`
 > **Artifact:** `vertique-opentelemetry-mcp`
-> **Depends on:** io.opentelemetry:opentelemetry-api (library), vertique-mcp-core
+> **Depends on:** `vertique-mcp-core`, `vertique-core`
 
 Observe-only OpenTelemetry span-enrichment adapter for the MCP server. When installed alongside
 `McpServerModule`, it captures the current Vert.x HTTP server span in `open(...)`, retains it across
@@ -108,10 +108,12 @@ affects MCP request processing.
 
 ### McpOpenTelemetryModule
 
-Dagger `@Module`. The only public type in this artifact. Contributes one binding:
-
-- `McpServerSpanObserver` into `Set<McpRequestLifecycleObserver>` — captures and enriches the HTTP
-  server span as described above.
+Dagger `@Module`. The only public type in this artifact. Install it explicitly to contribute one
+`McpRequestLifecycleObserver` that captures the current HTTP server span at `open` and enriches that
+retained span at logical settlement (bounded MCP attributes and at most one body-trace link when the
+server's `mcp.bodyTracePolicy` is `LINK`). The package-private observer session also implements
+`McpCompletionScope` so co-installed Micrometer recording can run with a valid span current for
+exemplars.
 
 ```java
 @Component(modules = {
@@ -123,30 +125,16 @@ Dagger `@Module`. The only public type in this artifact. Contributes one binding
 interface AppComponent { /* ... */ }
 ```
 
-### McpServerSpanObserver
+---
 
-`@Singleton`, package-private `McpRequestLifecycleObserver`. `open` captures `Span.current()` and
-its `SpanContext` and returns a session retaining both, or a no-op session when no valid span is
-current. The session's `onTerminal` enriches the retained span with the bounded attributes above and
-adds the optional body-trace link. The session does not override `onCompleted` — no MCP-specific work
-happens at transport completion — but it does implement the neutral `McpCompletionScope` capability:
-`openCompletionScope()` re-makes the retained span current for the framework's
-completion dispatch loop, so a co-installed Micrometer observer's timer recording happens with a valid
-span current and a registry-level exemplar bridge can attach its trace id. See
-"Micrometer exemplar completion scope" below.
+## Module Dagger Bindings
 
-**Micrometer exemplar completion scope.** The observability contract requires
-that "when a sampled HTTP span is current at terminal settlement, the adapter always invokes the
-Micrometer exemplar path." Vert.x's OpenTelemetry tracer ends the HTTP server span before any
-completion callback runs, so without help `Span.current()` is a no-op span by the time a Micrometer
-observer records its timer. `McpServerSpanObserver`'s session implements `McpCompletionScope`
-(`vertique-mcp-core`, `dev.vertique.mcp.lifecycle`) — the same opt-in-capability pattern
-`McpToolValueObservation` established — so `McpCompletionCoordinator` (`vertique-mcp-server`) opens it
-before dispatching `onCompleted` to any observer or listener, and closes it, in reverse order among
-every opened scope, only after all of them return. Both the open and the close are per-session
-failure-isolated. No OpenTelemetry type crosses into `vertique-mcp-core` or `vertique-micrometer-mcp`
-to make this work — the exemplar bridge itself (`OpenTelemetrySpanContext`) is registry-level,
-un-MCP-specific plumbing already shared with REST.
+| Type | Qualifier | Description |
+|---|---|---|
+| `McpRequestLifecycleObserver` | `@IntoSet` | HTTP server span capture + enrichment |
+
+Owns no module-local configuration keys. Body-trace linking is gated by `mcp.bodyTracePolicy` on
+`vertique-mcp-server`. Observe-only: failures never alter MCP request processing.
 
 ---
 
