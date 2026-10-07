@@ -34,7 +34,11 @@ public interface HealthCheck {
      * Returns the human-readable name of this health check, used as a key in
      * the aggregated health response (e.g., {@code "database"}, {@code "services"}).
      *
-     * @return the check name (must be unique within its qualifier set)
+     * <p>Implementations must not return {@code null}. A management endpoint that receives
+     * {@code null}, or an exception, from this method reports the check under its implementing
+     * class name instead.
+     *
+     * @return the non-null check name (must be unique within its qualifier set)
      */
     String name();
 

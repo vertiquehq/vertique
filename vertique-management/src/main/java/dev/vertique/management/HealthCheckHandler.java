@@ -265,6 +265,11 @@ public class HealthCheckHandler implements Handler<RoutingContext> {
             // previously defeated the recovery and suppressed the whole response.
             return new CheckExecution(check.getClass().getName(), Future.failedFuture(e));
         }
+        if (name == null) {
+            // HealthCheck.name() is documented non-null; tolerate a violation the same way as a
+            // throwing name, but keep running the check — its own result is still meaningful.
+            name = check.getClass().getName();
+        }
         try {
             return new CheckExecution(name, check.check().timeout(checkTimeoutSeconds, TimeUnit.SECONDS));
         } catch (Exception e) {

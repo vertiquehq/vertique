@@ -354,6 +354,22 @@ class HealthCheckHandlerTest {
     }
 
     /**
+     * A {@link HealthCheck} that violates the non-null {@link #name()} contract but is otherwise
+     * healthy, so its entry shows the fallback name alongside the check's own status.
+     */
+    static class NullNameCheck implements HealthCheck {
+        @Override
+        public String name() {
+            return null;
+        }
+
+        @Override
+        public Future<HealthCheckResult> check() {
+            return Future.succeededFuture(HealthCheckResult.up());
+        }
+    }
+
+    /**
      * A healthy {@link HealthCheck} that completes only after a delay, used to prove that a
      * sibling check still lands in the aggregated response when another check misbehaves.
      */
@@ -1115,6 +1131,22 @@ class HealthCheckHandlerTest {
                     assertNotNull(fallbackName, "an unobtainable name must fall back to some placeholder");
                     assertFalse(fallbackName.isBlank(), "the fallback name must not be blank");
                     assertEquals("DOWN", unnamed.getString("status"));
+                });
+                ctx.completeNow();
+            }));
+        }
+
+        @Test
+        @DisplayName("a check whose name() returns null is reported under its class name with its own status")
+        void nullNameCheckFallsBackToClassName(VertxTestContext ctx) {
+            HealthCheckHandler handler = new HealthCheckHandler(Set.of(new NullNameCheck()));
+            startServer(vertx, handler).compose(p -> request(vertx, p)).onComplete(ctx.succeeding(json -> {
+                ctx.verify(() -> {
+                    JsonArray checks = json.getJsonArray("checks");
+                    assertEquals(1, checks.size());
+                    JsonObject entry = checks.getJsonObject(0);
+                    assertEquals(NullNameCheck.class.getName(), entry.getString("name"));
+                    assertEquals("UP", entry.getString("status"), "the check still runs and keeps its own result");
                 });
                 ctx.completeNow();
             }));
