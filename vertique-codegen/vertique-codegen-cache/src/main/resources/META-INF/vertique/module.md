@@ -81,15 +81,13 @@ construction and calls that bypass the proxy are not intercepted.
 
 ### `@Cacheable` / `@CacheEvict` on an interface method
 
-`@Cacheable` or `@CacheEvict` on an interface method is a **compile error**. An interface is not a
-class with an `@Inject` constructor, so the declaration fails the proxyability preconditions
-(*"cacheable methods require exactly one @Inject constructor"*), and an abstract interface method
-additionally fails *"cacheable methods must be instance methods that can be overridden"*. Move the
-annotation to the implementing class's method.
+`@Cacheable` or `@CacheEvict` on an interface method is a **compile error**. This processor enforces
+a cache-owned placement rule and reports *"cache annotations must be declared on concrete class
+methods"*. Move the annotation to the implementing class's method.
 
-This differs deliberately from the generic AOP processor (`vertique-codegen-aop`), which silently
-ignores aspect triggers placed on interface methods for proxy generation. This processor does not
-follow that behavior: the misplacement is rejected at build time rather than ignored.
+This differs deliberately from the generic AOP processor (`vertique-codegen-aop`), which now weaves
+aspect triggers placed on interface methods. Cache annotations still require concrete class methods
+and reject the misplacement at build time.
 
 The generic AOP processor must be present on the application's annotation-processor path
 alongside this artifact for the validated annotations to produce proxies and metadata.

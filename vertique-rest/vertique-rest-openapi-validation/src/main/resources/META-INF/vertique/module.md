@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # REST OpenAPI Validation Module
 
-> **Status:** Beta
+> **Status:** Stable
 > **Package:** `dev.vertique.rest.openapi.validation`
 > **Artifact:** `vertique-rest-openapi-validation`
 > **Depends on:** rest-jaxrs
@@ -67,8 +67,7 @@ It then gives exactly one reason:
 
 - `its location must end in .json, .yaml, or .yml` — checked before loading, without regard to case;
 - `the file cannot be read`;
-- `a servers url is not a valid absolute URL; use an absolute URL or omit servers` — a relative or
-  malformed server URL;
+- `a servers url is not a valid URL; use a valid URL or omit servers` — a malformed server URL;
 - `the file is not a valid OpenAPI contract` — any other contract `vertx-openapi` rejects.
 
 The message never echoes the location, the file's content, or parser text; the strategy's WARN log
@@ -196,10 +195,11 @@ The strategy still passes the framework's `ParamConversionResolver` (`vertique-r
   through the contract-load check with a cause-free `RestConfigurationException` naming the
   application's contract setting (or the mount path) and the reason, never the location or content.
   The load is cached rather than retried, and the framework does not fall back silently.
-- **A relative `servers` URL fails startup.** `vertx-openapi` accepts only absolute server URLs or
-  none, so a contract whose `servers` holds a relative URL such as `/api` — or a malformed one —
-  cannot be loaded, and startup fails with the reason `a servers url is not a valid absolute URL; use an
-  absolute URL or omit servers`. Omit `servers` or use an absolute URL.
+- **A malformed `servers` URL fails startup.** `vertx-openapi` loads a contract whose `servers` are
+  absolute, relative such as `/api`, or absent, but not one holding a URL that cannot be parsed, and
+  startup fails with the reason `a servers url is not a valid URL; use a valid URL or omit servers`.
+  The `servers` base path plays no part in validation: the gate matches by operation id and reads
+  path parameters from the request path, so a relative `servers` URL changes nothing at request time.
 - **An unloadable global contract no mount uses does not fail startup.** The construction pre-warm of
   `jaxrs.openapiPath` is not awaited; when no mount binds that path, its failure is only a WARN.
 - **Every mount must declare an `openapiPath`.** Binding a mount without one throws
@@ -235,6 +235,20 @@ The strategy still passes the framework's `ParamConversionResolver` (`vertique-r
   application that needs the bound selects `web-validation`.
 - **`vertx-openapi` is a preview artifact.** Its API shape may change across Vert.x minor versions. This module pins the `vertx-openapi` version via the parent BOM.
 - **Security semantics.** The active security model is OR-of-AND-with-scopes. The `openapi-contract` strategy inherits the same security handling as all other strategies — security is applied by `JaxRsRouteRegistrar`, not by the validation strategy itself. The validation gate runs after the auth/authorization chain and is unaffected by the security model shape.
+
+---
+
+## Module Dagger Bindings
+
+`OpenApiContractValidationModule` contributes:
+
+| Binding | Value |
+|---|---|
+| `RequestValidationStrategy` | `@Binds @IntoSet` → `OpenApiContractValidationStrategy` (`id` `openapi-contract`) |
+| `MountPublicationHook` | `@Binds @IntoSet` → startup contract-load check (INTERNAL; sibling-framework seam) |
+
+The strategy is selected by `jaxrs.validationStrategy: openapi-contract`. The publication hook is
+not an application SPI.
 
 ---
 

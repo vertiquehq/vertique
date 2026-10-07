@@ -5,12 +5,14 @@ package dev.vertique.rest.openapi.docs.fixture.metadata.it.enrichment;
 
 import dev.vertique.rest.core.application.RestApplication;
 import dev.vertique.rest.openapi.docs.ApiDocs;
+import dev.vertique.security.authz.AccessPolicy;
+import jakarta.annotation.security.PermitAll;
 
 /**
  * The documented application {@code gen} at {@code /gen}, listing the catalog twin the generated
  * descriptor path describes. Its document is public; its {@code info} comes from configuration.
  */
-@ApiDocs(access = ApiDocs.Access.PUBLIC)
+@ApiDocs(policy = GenApi.PublicDocsPolicy.class)
 @RestApplication(name = GenApi.NAME, path = GenApi.PATH, resources = GeneratedCatalogResource.class)
 public interface GenApi {
 
@@ -19,4 +21,8 @@ public interface GenApi {
 
     /** The application's path. */
     String PATH = "/gen";
+
+    /** Anyone may read the document. */
+    @PermitAll
+    public interface PublicDocsPolicy extends AccessPolicy {}
 }

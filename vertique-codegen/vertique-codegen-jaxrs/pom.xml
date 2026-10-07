@@ -34,7 +34,7 @@ SPDX-License-Identifier: EUPL-1.2
             <artifactId>vertique-codegen-core</artifactId>
         </dependency>
 
-        <!-- Compile: references Authorized, RequestParams and other rest-core types -->
+        <!-- Compile: references RequestParams and other rest-core types -->
         <dependency>
             <groupId>dev.vertique</groupId>
             <artifactId>vertique-rest-core</artifactId>

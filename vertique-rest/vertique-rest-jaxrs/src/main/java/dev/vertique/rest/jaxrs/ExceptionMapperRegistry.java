@@ -29,6 +29,7 @@ import lombok.extern.slf4j.Slf4j;
 @Slf4j
 public class ExceptionMapperRegistry {
 
+    private final DefaultExceptionMapper defaults;
     private final Map<Class<? extends Throwable>, ExceptionMapper<?>> registry;
     private final Map<Class<? extends Throwable>, ExceptionMapper<?>> cache = new ConcurrentHashMap<>();
     private final Map<Class<? extends Throwable>, Boolean> specificMapperCache = new ConcurrentHashMap<>();
@@ -45,6 +46,7 @@ public class ExceptionMapperRegistry {
      * @param mappers  the set of user-contributed {@link ExceptionMapper} instances to register
      */
     public ExceptionMapperRegistry(DefaultExceptionMapper defaults, Set<ExceptionMapper<?>> mappers) {
+        this.defaults = defaults;
         this.registry = new ConcurrentHashMap<>();
 
         // Framework defaults: register the DefaultExceptionMapper for Throwable
@@ -112,6 +114,27 @@ public class ExceptionMapperRegistry {
      */
     public boolean hasSpecificMapper(Class<? extends Throwable> exceptionClass) {
         return specificMapperCache.computeIfAbsent(exceptionClass, this::lookupSpecificMapper);
+    }
+
+    /**
+     * Returns {@code true} when the framework {@link DefaultExceptionMapper}'s {@link Throwable}
+     * catch-all is what would produce the response — no application mapper more specific than
+     * {@code Throwable}, and no typed framework default such as {@code IllegalArgumentException}.
+     *
+     * <p>False when an application {@code ExceptionMapper<Throwable>} replaced the framework
+     * defaults at the {@code Throwable} registry slot: that catch-all owns its own logging.
+     *
+     * @param exceptionClass the exception class that would be mapped
+     * @return {@code true} when framework catch-all logging applies
+     */
+    boolean handledByFrameworkCatchAll(Class<? extends Throwable> exceptionClass) {
+        if (hasSpecificMapper(exceptionClass)) {
+            return false;
+        }
+        if (registry.get(Throwable.class) != defaults) {
+            return false;
+        }
+        return defaults.handledByCatchAll(exceptionClass);
     }
 
     /**

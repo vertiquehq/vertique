@@ -49,16 +49,11 @@ methods require exactly one @Inject constructor"*.
 
 ### `@RateLimited` on an interface method
 
-`@RateLimited` on an interface method is a **compile error**. An interface is not a class
-with an `@Inject` constructor, so the declaration fails the proxyability preconditions above
-(*"rate-limited methods require exactly one @Inject constructor"*), and an abstract interface
-method additionally fails *"rate-limited methods must be instance methods that can be
-overridden"*. Move the annotation to the implementing class's method.
-
-This differs deliberately from the generic AOP processor (`vertique-codegen-aop`), which
-silently ignores aspect triggers placed on interface methods for proxy generation. This
-processor does not follow that behavior: the misplacement is rejected at build time
-rather than ignored.
+`@RateLimited` on an interface method is allowed for weaving: `ProxyabilityValidator` skips
+interface-enclosed methods, and `vertique-codegen-aop` attributes the trigger to every concrete
+implementing class in the compilation that inherits or overrides the method. Policy name, cost,
+and key-path checks still run on the interface method. An interface alone is not a proxy bean —
+without a concrete implementor, no `$AopProxy` is generated and no admission occurs.
 
 The generic AOP processor must be present on the same annotation-processor path for
 a validated `@RateLimited` declaration to actually produce a proxy and method

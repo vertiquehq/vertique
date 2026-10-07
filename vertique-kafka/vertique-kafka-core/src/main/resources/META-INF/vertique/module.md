@@ -795,6 +795,12 @@ silently no longer being called.
 
 `producerMethod` (or `operation().method()` in the event form) is how a hook reaches method-level annotations on the direct-producer path.
 
+`KafkaProducerFactory.create(Class)` also calls `validateProducer(Class<?> producerInterface)` on every
+hook, once, before it builds the proxy. Unlike `onSend`, it may throw: the exception propagates out of
+`create`, so a configuration error a hook can detect statically (such as an unknown audit policy id on a
+producer method) fails application startup instead of surfacing, or being swallowed, on a later send. The
+default accepts every producer interface.
+
 ### Other multibindings
 
 | Multibinding | Qualifier | Contributes |

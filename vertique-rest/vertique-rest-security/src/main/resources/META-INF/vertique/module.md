@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # REST Security Module
 
-> **Status:** Beta
+> **Status:** Stable
 > **Package:** `dev.vertique.rest.security`
 > **Artifact:** `vertique-rest-security`
 > **Depends on:** rest-core, security-core, security-runtime, context, logging
@@ -346,7 +346,9 @@ The decision point is selected once, at construction, in this order:
 1. an application-provided `AuthorizationDecisionPoint`;
 2. an application-provided sync `AuthorizationPolicy`, wrapped as `SyncPolicyDecisionPoint`;
 3. the built-in decision point, which evaluates roles, scopes, and permissions from
-   `AuthorizationClaims`.
+   `AuthorizationClaims` by delegating to `ClaimAuthorizationPolicy` in `vertique-security-runtime`.
+   Its `requiredRoles`, `requiredScopes` and `requireAllScopes` context keys and its reason codes are
+   the same constants, so their spelling is unchanged.
 
 `decide(...)` is for a caller with no `RoutingContext` to drive — for example a non-HTTP-routed
 transport that has already established a `SecurityContext` for the caller. It mirrors
@@ -662,7 +664,7 @@ WARN; the authorization value is never logged. The Vert.x `jwt-claims` provider 
 excluded: its scope→permission projection is lossy, and the JWT principal already reaches
 `AuthorizationClaims` with full kind fidelity through `SecurityClaimMapper`.
 
-### Dagger bindings
+## Module Dagger Bindings
 
 What the two modules put in the graph, and where each instance comes from:
 
@@ -772,7 +774,10 @@ Resolution rules:
 
 - `X-Forwarded-For` is always parsed and exposed for observability, trusted peer or not.
 - Each `X-Forwarded-For` entry must be an IP address literal. Hostnames and malformed addresses are
-  dropped and counted in `forwardedForRejectedCount`; they are never looked up in DNS.
+  dropped and counted in `forwardedForRejectedCount`; they are never looked up in DNS. Entries are
+  parsed syntactically and never passed to the JDK resolver, so hex-only words (`deadbeef`), short
+  forms (`1234`), dotted quads with an octet above `255` and IPv4 octets with leading zeros
+  (`010.1.1.1`) are rejected, not resolved or reinterpreted.
 - `clientIp` uses the forwarded chain **only** when the direct peer matches a trusted CIDR;
   otherwise it is the direct peer address.
 - Forwarded scheme and host are honoured only when both the corresponding flag is set and the direct

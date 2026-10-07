@@ -51,6 +51,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
 import java.util.stream.Collectors;
@@ -272,6 +273,13 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
     private final List<FileContentVerifier> fileContentVerifiers;
 
     /**
+     * Per-verifier wait deadline in milliseconds, from {@link
+     * JaxRsConfig#fileContentVerifierDeadlineMs()}. Applied to every verifier future; validated
+     * positive at the {@code JaxRsConfig} provider.
+     */
+    private final long fileContentVerifierDeadlineMs;
+
+    /**
      * The pattern-input guard every body and parameter validator is compiled with, carrying the configured
      * {@link JaxRsConfig#validationPatternMaxChars()} and {@link JaxRsConfig#validationPatternMaxTotalChars()}
      * limits. The rest-core {@code JaxRsConfig} provider has already validated both at startup.
@@ -290,12 +298,14 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
      * behaviour. Parsing here, not per request, keeps the request hot path free of mode resolution.
      *
      * <p>The pattern-input limits {@link JaxRsConfig#validationPatternMaxChars()} and {@link
-     * JaxRsConfig#validationPatternMaxTotalChars()} are read here too, once; they are validated where
+     * JaxRsConfig#validationPatternMaxTotalChars()}, and the per-verifier wait deadline {@link
+     * JaxRsConfig#fileContentVerifierDeadlineMs()}, are read here too, once; they are validated where
      * {@link JaxRsConfig} is provided, not again here.
      *
      * @param config the JAX-RS runtime configuration; {@link JaxRsConfig#validationMode()} selects
      *     either {@code "aggregate"} (collect all violations) or {@code "failFast"} (stop at first
-     *     violation), and the two pattern-input limits bound pattern and bounded-format input
+     *     violation), the two pattern-input limits bound pattern and bounded-format input, and {@link
+     *     JaxRsConfig#fileContentVerifierDeadlineMs()} bounds each {@link FileContentVerifier} wait
      * @param paramConversionResolver the framework parameter-conversion resolver, threaded into the
      *     gate's {@link DefaultBoundRequest} construction
      * @param fileContentVerifiers the bound deep file-content verifiers
@@ -312,6 +322,7 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
         this.fileContentVerifiers = fileContentVerifiers.stream()
                 .sorted(OrderedExtension.comparator())
                 .toList();
+        this.fileContentVerifierDeadlineMs = config.fileContentVerifierDeadlineMs();
         this.patternInputGuard =
                 new PatternInputGuard(config.validationPatternMaxChars(), config.validationPatternMaxTotalChars());
     }
@@ -422,6 +433,7 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
                 List.copyOf(paramValidators),
                 fileParts,
                 fileContentVerifiers,
+                fileContentVerifierDeadlineMs,
                 failFast,
                 paramConversionResolver,
                 patternInputGuard));
@@ -948,6 +960,7 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
         private final Map<String, PreparedFilePart> namedFileDescriptors;
         private final PreparedFilePart aggregateFileDescriptor;
         private final List<FileContentVerifier> fileContentVerifiers;
+        private final long fileContentVerifierDeadlineMs;
         private final boolean failFast;
         private final ParamConversionResolver paramConversionResolver;
         private final PatternInputGuard patternInputGuard;
@@ -959,6 +972,7 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
                 List<ParamValidator> paramValidators,
                 List<FilePartDescriptor> fileParts,
                 List<FileContentVerifier> fileContentVerifiers,
+                long fileContentVerifierDeadlineMs,
                 boolean failFast,
                 ParamConversionResolver paramConversionResolver,
                 PatternInputGuard patternInputGuard) {
@@ -979,6 +993,7 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
             this.namedFileDescriptors = Map.copyOf(namedDescriptors);
             this.aggregateFileDescriptor = aggregateDescriptor;
             this.fileContentVerifiers = fileContentVerifiers;
+            this.fileContentVerifierDeadlineMs = fileContentVerifierDeadlineMs;
             this.failFast = failFast;
             this.paramConversionResolver = paramConversionResolver;
             this.patternInputGuard = patternInputGuard;
@@ -1059,7 +1074,9 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
                     return Future.succeededFuture();
                 }
                 return Combinators.foldSequential(
-                        fileContentVerifiers, (Void) null, (verifier, verifierIgnored) -> verify(verifier, upload));
+                        fileContentVerifiers,
+                        (Void) null,
+                        (verifier, verifierIgnored) -> verify(verifier, upload, fileContentVerifierDeadlineMs));
             });
         }
 
@@ -1071,14 +1088,25 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
          * Invokes one verifier on the event loop and normalizes every extension outcome into the
          * sequential chain. The leading succeeded future captures synchronous extension throws
          * without changing their cause identity.
+         *
+         * <p>Each verifier future is raced against {@code deadlineMs} (from {@code
+         * jaxrs.fileContentVerifierDeadlineMs}). The bound is <strong>per verifier invocation</strong>,
+         * not an overall chain budget: a later verifier gets a fresh deadline after an earlier one
+         * completes. When the deadline elapses first the chain fails closed as an infrastructure
+         * failure (500); the framework stops waiting but does not cancel verifier-owned work — see
+         * {@link FileContentVerifier}'s cancellation contract.
          */
-        private static Future<Void> verify(FileContentVerifier verifier, ApplicableUpload upload) {
+        private static Future<Void> verify(FileContentVerifier verifier, ApplicableUpload upload, long deadlineMs) {
             return Future.<Void>succeededFuture().compose(ignored -> {
                 Future<FileVerificationResult> verification = verifier.verify(upload.part());
                 if (verification == null) {
                     return Future.failedFuture(new IllegalStateException("FileContentVerifier returned a null Future"));
                 }
-                return verification.compose(result -> {
+                // Bound the wait: a non-blocking future that simply never resolves is not a
+                // synchronous throw, a null future, a failed future, or a null/rejected result, so
+                // none of the existing fail-closed branches catch it. .timeout() races the original
+                // future against deadlineMs and forwards it unchanged when it settles first.
+                return verification.timeout(deadlineMs, TimeUnit.MILLISECONDS).compose(result -> {
                     if (result == null) {
                         return Future.failedFuture(
                                 new IllegalStateException("FileContentVerifier completed with a null result"));

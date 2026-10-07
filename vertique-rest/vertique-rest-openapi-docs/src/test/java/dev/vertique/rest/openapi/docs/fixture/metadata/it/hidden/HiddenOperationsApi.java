@@ -5,6 +5,8 @@ package dev.vertique.rest.openapi.docs.fixture.metadata.it.hidden;
 
 import dev.vertique.rest.core.application.RestApplication;
 import dev.vertique.rest.openapi.docs.ApiDocs;
+import dev.vertique.security.authz.AccessPolicy;
+import jakarta.annotation.security.PermitAll;
 
 /**
  * The documented application {@code hidden} at {@code /api/hidden}, listing one resource with mixed
@@ -14,7 +16,7 @@ import dev.vertique.rest.openapi.docs.ApiDocs;
  * ({@link PartlyHiddenContractResource}). Its document is public; its {@code info} comes from
  * configuration.
  */
-@ApiDocs(access = ApiDocs.Access.PUBLIC)
+@ApiDocs(policy = HiddenOperationsApi.PublicDocsPolicy.class)
 @RestApplication(
         name = HiddenOperationsApi.NAME,
         path = HiddenOperationsApi.PATH,
@@ -34,4 +36,8 @@ public interface HiddenOperationsApi {
 
     /** The tag every hidden operation declares and no visible one does. */
     String HIDDEN_TAG = "hiddenOnlyZx";
+
+    /** Anyone may read the document. */
+    @PermitAll
+    public interface PublicDocsPolicy extends AccessPolicy {}
 }

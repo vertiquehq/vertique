@@ -3,21 +3,36 @@
 
 package dev.vertique.services;
 
+import static dev.vertique.services.interceptor.TypedPolicyServiceFixtures.EXECUTOR_ROLE;
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import dev.vertique.config.parser.DefaultConfigMapper;
 import dev.vertique.config.parser.DefaultConfigParser;
 import dev.vertique.core.config.ConfigParser;
+import dev.vertique.core.context.ContextHolder;
+import dev.vertique.core.eventbus.DispatchEnvelope;
 import dev.vertique.core.util.AnnotationResolver;
 import dev.vertique.resilience.annotation.ResilienceAnnotations;
 import dev.vertique.resilience.annotation.Retry;
 import dev.vertique.resilience.annotation.Timeout;
 import dev.vertique.security.SecurityContext;
+import dev.vertique.security.authz.RequiresPolicy;
+import dev.vertique.security.events.AuthorizationDecisionEvent;
+import dev.vertique.security.runtime.events.SecurityEventEmitter;
 import dev.vertique.services.ServiceContractRegistry.ContractEntry;
+import dev.vertique.services.dispatch.NonRecoverableDispatchFailure;
 import dev.vertique.services.dispatch.ServiceMethodMeta;
 import dev.vertique.services.dispatch.ServiceMethodMeta.ParamMeta;
 import dev.vertique.services.dispatch.ServiceMethodMeta.ParamSource;
 import dev.vertique.services.exception.ServiceRegistrationException;
+import dev.vertique.services.interceptor.ServiceAuthorizationInterceptor;
+import dev.vertique.services.interceptor.ServiceDispatchContext;
+import dev.vertique.services.interceptor.TypedPolicyServiceFixtures.AuthenticatedOnlyPolicy;
+import dev.vertique.services.interceptor.TypedPolicyServiceFixtures.Caller;
+import dev.vertique.services.interceptor.TypedPolicyServiceFixtures.ExecutorRolePolicy;
 import io.vertx.core.DeploymentOptions;
 import io.vertx.core.Future;
 import io.vertx.core.ThreadingModel;
@@ -28,6 +43,8 @@ import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 import java.lang.reflect.Method;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -1034,6 +1051,207 @@ class ServiceContractEntriesTest {
                     AnnotationResolver.resolveMethodAnnotations(method),
                     meta.methodAnnotations(),
                     "Legacy path: methodAnnotations auto-resolved from method");
+        }
+    }
+
+    // --- Generic bridge operations on the hand-written contributor path ---
+
+    /** Generic contract whose implementation receives a compiler-generated bridge. */
+    interface BridgedOperation<T> {
+        Future<String> take(T value);
+    }
+
+    /** Implementation that declares no access policy anywhere. */
+    static class PlainBridgedImpl implements BridgedOperation<String> {
+        @Override
+        public Future<String> take(String value) {
+            return Future.succeededFuture(value);
+        }
+    }
+
+    @Nested
+    @DisplayName("generic bridge operations")
+    class GenericBridgeTests {
+
+        private Method givenBridgeMethod() throws NoSuchMethodException {
+            Method bridge = PlainBridgedImpl.class.getMethod("take", Object.class);
+            assertTrue(bridge.isBridge(), "the fixture must expose the compiler-generated bridge");
+            return bridge;
+        }
+
+        private ContractEntry<?> whenBuiltWithBridge(Class<?> contract, Method bridge) {
+            return ServiceContractEntries.deployable()
+                    .contract(contract)
+                    .serviceInstance(new PlainBridgedImpl())
+                    .namespace("test")
+                    .name("bridged-svc")
+                    .operation("take")
+                    .method(bridge)
+                    .payloadType(String.class)
+                    .returnType(String.class)
+                    .param("value", ParamSource.PAYLOAD, String.class)
+                    .done()
+                    .build();
+        }
+
+        private void thenEntryCarriesNoPolicy(ContractEntry<?> entry) {
+            ServiceMethodMeta meta = entry.operations().get("take");
+            assertNotNull(meta, "the bridged operation must be registered");
+            assertTrue(
+                    meta.methodAnnotations().stream().noneMatch(RequiresPolicy.class::isInstance),
+                    "no policy was declared: " + meta.methodAnnotations());
+        }
+
+        @Test
+        @DisplayName("a bridge method without any policy builds when keyed by the implementation class")
+        void bridgeWithoutPolicy_buildsWhenKeyedByImplementation() throws Exception {
+            Method bridge = givenBridgeMethod();
+
+            ContractEntry<?> entry = assertDoesNotThrow(() -> whenBuiltWithBridge(PlainBridgedImpl.class, bridge));
+
+            thenEntryCarriesNoPolicy(entry);
+        }
+
+        @Test
+        @DisplayName("a bridge method without any policy builds when keyed by the generic contract")
+        void bridgeWithoutPolicy_buildsWhenKeyedByContract() throws Exception {
+            Method bridge = givenBridgeMethod();
+
+            ContractEntry<?> entry = assertDoesNotThrow(() -> whenBuiltWithBridge(BridgedOperation.class, bridge));
+
+            thenEntryCarriesNoPolicy(entry);
+        }
+    }
+
+    // --- Typed access policy collection on the hand-written contributor path ---
+
+    /** Parent interface that declares an operation with no policy of its own. */
+    interface InheritedOperation {
+        Future<String> work(String input);
+    }
+
+    /** Child contract that adds a typed policy over the inherited operation. */
+    interface ChildPolicyOverInheritedOperation extends InheritedOperation {
+        @Override
+        @RequiresPolicy(ExecutorRolePolicy.class)
+        Future<String> work(String input);
+    }
+
+    /** Implementation of {@link ChildPolicyOverInheritedOperation}. */
+    static class ChildPolicyImpl implements ChildPolicyOverInheritedOperation {
+        @Override
+        public Future<String> work(String input) {
+            return Future.succeededFuture(input);
+        }
+    }
+
+    /** Parent interface whose operation already carries a typed policy. */
+    interface PolicyBearingParent {
+        @RequiresPolicy(ExecutorRolePolicy.class)
+        Future<String> work(String input);
+    }
+
+    /** Child contract whose override names a different policy than its parent. */
+    interface DistinctPolicyChild extends PolicyBearingParent {
+        @Override
+        @RequiresPolicy(AuthenticatedOnlyPolicy.class)
+        Future<String> work(String input);
+    }
+
+    /** Implementation of {@link DistinctPolicyChild}. */
+    static class DistinctPolicyImpl implements DistinctPolicyChild {
+        @Override
+        public Future<String> work(String input) {
+            return Future.succeededFuture(input);
+        }
+    }
+
+    @Nested
+    @DisplayName("typed access policy collection")
+    class TypedPolicyCollectionTests {
+
+        private final SecurityEventEmitter emitter = mock(SecurityEventEmitter.class);
+        private final ContextHolder holder = mock(ContextHolder.class);
+
+        private ServiceMethodMeta build(Class<?> contract, Object instance, Method method) {
+            return ServiceContractEntries.deployable()
+                    .contract(contract)
+                    .serviceInstance(instance)
+                    .namespace("test")
+                    .name("typed-svc")
+                    .operation("work")
+                    .method(method)
+                    .returnType(String.class)
+                    .param("input", ParamSource.PAYLOAD, String.class)
+                    .done()
+                    .build()
+                    .operations()
+                    .get("work");
+        }
+
+        private Future<ServiceDispatchContext> dispatch(ServiceMethodMeta meta, Caller caller) {
+            when(emitter.emit(any(AuthorizationDecisionEvent.class))).thenReturn(Future.succeededFuture());
+            when(holder.current(SecurityContext.class)).thenReturn(Optional.of(caller));
+            ServiceAuthorizationInterceptor gate = new ServiceAuthorizationInterceptor(
+                    Optional.empty(), Optional.empty(), emitter, holder, Set.of(meta));
+            return gate.beforeDispatch(new ServiceDispatchContext(
+                    meta.address(),
+                    meta.stableTargetId(),
+                    meta.namespace(),
+                    meta.name(),
+                    meta.operation(),
+                    DispatchEnvelope.of("payload"),
+                    false,
+                    meta.methodAnnotations(),
+                    meta.classAnnotations(),
+                    Map.of()));
+        }
+
+        private void assertPolicyCollectedAndEnforced(Class<?> contract, Object instance) throws Exception {
+            Method inherited = InheritedOperation.class.getMethod("work", String.class);
+
+            ServiceMethodMeta meta = build(contract, instance, inherited);
+
+            assertTrue(
+                    meta.methodAnnotations().stream()
+                            .anyMatch(annotation -> annotation instanceof RequiresPolicy policy
+                                    && policy.value() == ExecutorRolePolicy.class),
+                    "the child's policy over the inherited operation must be collected: " + meta.methodAnnotations());
+            Future<ServiceDispatchContext> lacking =
+                    dispatch(meta, Caller.user("viewer").withRoles("viewer"));
+            Future<ServiceDispatchContext> holding =
+                    dispatch(meta, Caller.user("executor").withRoles(EXECUTOR_ROLE));
+            assertAll(
+                    () -> assertTrue(lacking.failed(), "a caller without the role is refused"),
+                    () -> assertInstanceOf(NonRecoverableDispatchFailure.class, lacking.cause()),
+                    () -> assertTrue(holding.succeeded(), "a caller holding the role is admitted"));
+        }
+
+        @Test
+        @DisplayName("a child contract policy over an inherited method is collected and enforced")
+        void childPolicyOverInheritedMethod_isCollectedAndEnforced() throws Exception {
+            assertPolicyCollectedAndEnforced(ChildPolicyOverInheritedOperation.class, new ChildPolicyImpl());
+        }
+
+        @Test
+        @DisplayName("the policy is also collected when the entry is keyed by the implementation class")
+        void childPolicyOverInheritedMethod_isCollectedWhenKeyedByImplementation() throws Exception {
+            assertPolicyCollectedAndEnforced(ChildPolicyImpl.class, new ChildPolicyImpl());
+        }
+
+        @Test
+        @DisplayName("distinct policy references across the contract hierarchy are rejected")
+        void distinctReferencesAcrossHierarchy_areRejected() throws Exception {
+            Method inherited = PolicyBearingParent.class.getMethod("work", String.class);
+
+            ServiceRegistrationException failure = assertThrows(
+                    ServiceRegistrationException.class,
+                    () -> build(DistinctPolicyChild.class, new DistinctPolicyImpl(), inherited));
+
+            assertTrue(
+                    failure.violations().stream()
+                            .anyMatch(violation -> violation.message().contains("distinct RequiresPolicy references")),
+                    "the rejection must name the conflict: " + failure.violations());
         }
     }
 }

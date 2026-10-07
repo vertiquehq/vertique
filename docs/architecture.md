@@ -52,7 +52,8 @@ Dependency direction stays one-way into the schema module: neither `vertique-cor
 nor `vertique-json` depends on it.
 
 `vertique-rest-openapi-docs` is the opt-in runtime OpenAPI documentation module: it depends on
-`vertique-rest-jaxrs`, `vertique-rest-core`, `vertique-core`, and `vertique-json-schema`, while
+`vertique-rest-jaxrs`, `vertique-rest-core`, `vertique-security-core`, `vertique-core`, and
+`vertique-json-schema`, while
 `vertique-rest-jaxrs` recognizes its `@ApiDocs` annotation by fully qualified name and never
 depends on it.
 
@@ -97,6 +98,11 @@ provider-neutral cache contracts and consumes `vertique-aop` and `vertique-core`
 the Caffeine and Redis provider modules depend on that neutral core. Shared Redis
 connection profiles and client lifecycle belong to `vertique-redis-core`, which is
 independent of cache-specific behavior so other Redis-backed capabilities can reuse it.
+
+`vertique-security-core` owns `AccessPolicy` and `@RequiresPolicy`. A policy is a public interface
+of direct security requirements. REST and the JAX-RS processor expand a selected policy into the
+existing `SecurityPolicy` and action metadata. The codegen mirror selects the same policy without
+a dependency on the security module.
 
 Rate limiting follows the same one-way boundary: `vertique-rate-limit-core` owns the
 programmatic quota-admission API, the policy and key models, and the in-process

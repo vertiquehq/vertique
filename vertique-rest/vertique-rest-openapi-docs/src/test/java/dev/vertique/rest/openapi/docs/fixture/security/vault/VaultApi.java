@@ -5,13 +5,15 @@ package dev.vertique.rest.openapi.docs.fixture.security.vault;
 
 import dev.vertique.rest.core.application.RestApplication;
 import dev.vertique.rest.openapi.docs.ApiDocs;
+import dev.vertique.security.authz.AccessPolicy;
+import jakarta.annotation.security.PermitAll;
 
 /**
  * The documented application {@code vault} at {@value #PATH} (mount {@value #MOUNT}), listing {@link
  * VaultResource}, whose one operation requires a scheme whose handler describes nothing. Its document
  * is public; its {@code info} and server URL come from configuration.
  */
-@ApiDocs(access = ApiDocs.Access.PUBLIC)
+@ApiDocs(policy = VaultApi.PublicDocsPolicy.class)
 @RestApplication(name = VaultApi.NAME, path = VaultApi.PATH, resources = VaultResource.class)
 public interface VaultApi {
 
@@ -23,4 +25,8 @@ public interface VaultApi {
 
     /** The application's mount path, as registered. */
     String MOUNT = "/vault/*";
+
+    /** Anyone may read the document. */
+    @PermitAll
+    public interface PublicDocsPolicy extends AccessPolicy {}
 }

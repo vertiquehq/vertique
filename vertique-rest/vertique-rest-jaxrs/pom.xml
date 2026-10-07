@@ -100,6 +100,12 @@ SPDX-License-Identifier: EUPL-1.2
             <artifactId>logback-classic</artifactId>
             <scope>test</scope>
         </dependency>
+        <!-- Typed-policy routing proof uses the real enforcer and authorization contributor. -->
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-rest-security</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>

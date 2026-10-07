@@ -86,7 +86,7 @@ import org.mockito.invocation.Invocation;
 /**
  * Proofs for the {@code web-validation} gate's pattern-input guard (rest-022 T004, FR-020): the bound
  * the gate places ahead of every {@code pattern}, {@code patternProperties}, pattern-bearing
- * {@code propertyNames} position and every bounded format, and the vertx-json-schema 5.1.6 behaviors
+ * {@code propertyNames} position and every bounded format, and the vertx-json-schema 5.1.8 behaviors
  * that bound relies on.
  *
  * <p>Each proof is one top-level method named after its contract entry, its cases being the rows of
@@ -1554,7 +1554,7 @@ class PatternInputGuardTest {
     // --- TP-015: the engine behaviors the guard relies on ---
 
     /**
-     * TP-015. The five vertx-json-schema 5.1.6 behaviors the guard relies on hold: (1) a node's
+     * TP-015. The five vertx-json-schema 5.1.8 behaviors the guard relies on hold: (1) a node's
      * {@code allOf} runs before its {@code pattern} and key regexes; (2) the custom format validator is
      * called for every format; (3) its exception escapes {@code validate()} unwrapped; (4) a node's
      * {@code allOf} runs before the engine's own check for the node's {@code format}; (5) a format name

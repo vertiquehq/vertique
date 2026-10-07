@@ -34,7 +34,7 @@ assert processorCoordinates == expectedProcessorCoordinates:
 Map<String, String> expectedManagedVersions = [
         "com.google.dagger:dagger-compiler": "2.60.1",
         "dev.vertique:vertique-codegen-all": vertiqueVersion.toString(),
-        "org.projectlombok:lombok": "1.18.42"
+        "org.projectlombok:lombok": "1.18.48"
 ]
 expectedManagedVersions.each { String coordinate, String expectedVersion ->
     List<String> parts = coordinate.split(":").toList()
@@ -79,7 +79,7 @@ assert materializedProcessorNames.count("dagger-compiler-2.60.1.jar") == 1:
         "Materialized processor path must contain Dagger exactly once: ${materializedProcessorNames}"
 assert materializedProcessorNames.count("vertique-codegen-all-${vertiqueVersion}.jar") == 1:
         "Materialized processor path must contain the facade exactly once: ${materializedProcessorNames}"
-assert materializedProcessorNames.count("lombok-1.18.42.jar") == 1:
+assert materializedProcessorNames.count("lombok-1.18.48.jar") == 1:
         "Materialized processor path must contain explicitly opted-in Lombok exactly once: ${materializedProcessorNames}"
 
 return true

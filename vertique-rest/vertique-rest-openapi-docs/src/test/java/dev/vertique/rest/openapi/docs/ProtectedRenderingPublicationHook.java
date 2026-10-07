@@ -22,10 +22,13 @@ import dev.vertique.rest.openapi.docs.document.PublishedDocument;
 import dev.vertique.rest.openapi.docs.metadata.OperationFacts;
 import dev.vertique.rest.openapi.docs.publication.DocsPublicationHook;
 import dev.vertique.rest.openapi.docs.publication.PublicationAccess;
+import dev.vertique.security.authz.AccessPolicyResolver;
 import io.vertx.core.Context;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import jakarta.annotation.Nullable;
+import jakarta.annotation.security.PermitAll;
+import java.lang.annotation.Annotation;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -43,8 +46,8 @@ import java.util.concurrent.ConcurrentHashMap;
  * <p>For such a mount, {@link #mountBuilt} takes the operation facts with {@link
  * DocsPublicationHook#operationFacts}, takes its own detached copy of the publication (every schema
  * object copied, the descriptor dropped), and calls {@link DocumentAssembler#assemble} with an enabled
- * document of the application (fixed {@link #INFO}, no server URL, access from the annotation's
- * {@code access()}) and an assembly context of the component's bound schema source and profile
+ * document of the application (fixed {@link #INFO}, no server URL, access derived from the
+ * annotation's policy: public exactly when it resolves to a lone {@code @PermitAll}) and an assembly context of the component's bound schema source and profile
  * registry. Assembly runs on a worker thread of the calling context when there is one, and on the
  * calling thread otherwise; the returned future completes on the calling context only after the
  * outcome is stored, so a deployment that succeeded has its renderings.
@@ -127,7 +130,7 @@ final class ProtectedRenderingPublicationHook implements MountPublicationHook {
                 .map(RestApplications.Entry::contractOrigin)
                 .orElse(ContractOrigin.GLOBAL);
         EnabledDocuments.EnabledDocument document = new EnabledDocuments.EnabledDocument(
-                applicationName, declaringType, apiDocs.access(), publication.mountPath(), origin, INFO, null, null);
+                applicationName, declaringType, accessOf(apiDocs), publication.mountPath(), origin, INFO, null, null);
         Map<String, OperationFacts> facts = PublicationAccess.operationFacts(publication);
         MountPublication detached = PublicationAccess.detach(publication);
         Callable<Outcome> task = () -> render(document, detached, facts);
@@ -140,6 +143,19 @@ final class ProtectedRenderingPublicationHook implements MountPublicationHook {
             outcomes.put(applicationName, rendered.succeeded() ? rendered.result() : Outcome.failed(rendered.cause()));
             return Future.succeededFuture();
         });
+    }
+
+    /**
+     * Classifies a document by its policy: public exactly when the policy resolves to a lone
+     * {@code @PermitAll}, protected for every other valid policy.
+     *
+     * @param apiDocs the declaration
+     * @return the classification the document is rendered in
+     */
+    private static ApiDocs.Access accessOf(ApiDocs apiDocs) {
+        List<Annotation> requirements = AccessPolicyResolver.resolve(apiDocs.policy());
+        boolean open = requirements.size() == 1 && requirements.get(0) instanceof PermitAll;
+        return open ? ApiDocs.Access.PUBLIC : ApiDocs.Access.PROTECTED;
     }
 
     /**

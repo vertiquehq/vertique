@@ -12,10 +12,13 @@ import dev.vertique.rest.openapi.docs.ApiDocs;
 import dev.vertique.rest.openapi.docs.document.DocumentInfo;
 import dev.vertique.rest.openapi.docs.metadata.AnnotatedInfo;
 import dev.vertique.rest.openapi.docs.schema.ContractReferences;
+import dev.vertique.security.authz.AccessPolicy;
 import io.swagger.v3.oas.annotations.OpenAPIDefinition;
 import io.swagger.v3.oas.annotations.info.Info;
 import io.vertx.core.json.JsonObject;
 import jakarta.annotation.Nullable;
+import java.lang.annotation.AnnotationTypeMismatchException;
+import java.lang.annotation.IncompleteAnnotationException;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.util.ArrayList;
@@ -34,17 +37,18 @@ import java.util.stream.Collectors;
  * <p>The checks run in three steps. First, every key of the raw {@code apidocs.documents} object,
  * in sorted order and whatever the entry's {@code enabled} value, must follow the application-name
  * grammar, name a declared application (active or not), hold only {@code enabled}, {@code info},
- * and {@code serverUrl}, hold no {@code enabled} string the parser cannot map to a boolean (a blank string or
- * one made only of control characters parses to no value, so it fails instead of keeping the
- * annotation's decision), and set {@code enabled: true}
- * only for an application whose declaring interface carries {@link ApiDocs}; the first violation
- * fails. Second, the {@link ApiDocs} of every
- * active application is re-checked for its shape, whether or not configuration disables its
- * document, and every violation is reported in one failure. Third, only when at least one document
- * is enabled, {@code apidocs.path} is checked, then each enabled document in name order; the first
- * violation fails. A generated document, whose application's contract origin is {@link
- * ContractOrigin#GLOBAL}, has its {@code info} resolved and its {@code serverUrl} checked. A
- * document whose application serves its own contract, its origin {@link
+ * and {@code serverUrl}, hold no {@code enabled} string the parser cannot map to a boolean (a blank
+ * string or one made only of control characters parses to no value, so it fails instead of keeping
+ * the annotation's decision), and set {@code enabled: true} only for an application whose declaring
+ * interface carries {@link ApiDocs}; the first violation fails. Second, the {@link ApiDocs} of
+ * every active application is re-checked for its shape, whether or not configuration disables its
+ * document, and every violation is reported in one failure: a declaration compiled against an
+ * older annotation that has no {@code policy}, a policy that is not a valid access policy, a public
+ * policy with any scheme, and a policy that is not public with a blank scheme. Third, only when at
+ * least one document is enabled, {@code apidocs.path} is checked, then each enabled document in
+ * name order; the first violation fails. A generated document, whose application's contract origin
+ * is {@link ContractOrigin#GLOBAL}, has its {@code info} resolved and its {@code serverUrl}
+ * checked. A document whose application serves its own contract, its origin {@link
  * ContractOrigin#CONFIGURATION} or {@link ContractOrigin#ANNOTATION}, needs no {@code info}: a
  * configured {@code info} or {@code serverUrl}, or an {@link OpenAPIDefinition} on its declaring
  * interface itself, would rewrite that contract and fails instead.
@@ -209,23 +213,32 @@ final class DocumentConfigChecks {
                 continue;
             }
             String prefix = describe(application) + ": ";
-            boolean isProtected = annotation.access() == ApiDocs.Access.PROTECTED;
-            boolean blankScheme = annotation.securityScheme().isBlank();
-            if (isProtected && blankScheme) {
-                violations.add(prefix + "@ApiDocs.securityScheme must name a scheme when access is PROTECTED");
+            Class<? extends AccessPolicy> policy;
+            try {
+                policy = annotation.policy();
+            } catch (IncompleteAnnotationException | AnnotationTypeMismatchException oldDeclaration) {
+                violations.add(prefix + "@ApiDocs.policy is missing: the interface was compiled against an older"
+                        + " @ApiDocs that declared access and rolesAllowed; recompile it against the current"
+                        + " @ApiDocs and declare a policy");
+                continue;
+            } catch (TypeNotPresentException missingPolicy) {
+                violations.add(prefix + "@ApiDocs.policy names a type that is not on the class path");
+                continue;
             }
-            if (!isProtected && !blankScheme) {
-                violations.add(prefix + "@ApiDocs.securityScheme must be empty when access is PUBLIC");
+            ApiDocs.Access access;
+            try {
+                access = DocumentPolicies.classify(policy);
+            } catch (IllegalArgumentException invalid) {
+                violations.add(prefix + "@ApiDocs.policy is not a valid access policy; it must be a public"
+                        + " interface that extends only AccessPolicy and declares valid requirements directly");
+                continue;
             }
-            String[] roles = annotation.rolesAllowed();
-            if (!isProtected && roles.length > 0) {
-                violations.add(prefix + "@ApiDocs.rolesAllowed must be empty when access is PUBLIC");
+            String scheme = annotation.securityScheme();
+            if (access == ApiDocs.Access.PUBLIC && !scheme.isEmpty()) {
+                violations.add(prefix + "@ApiDocs.securityScheme must be empty when the policy is public");
             }
-            for (String role : roles) {
-                if (role == null || role.isBlank()) {
-                    violations.add(prefix + "@ApiDocs.rolesAllowed entries must not be blank");
-                    break;
-                }
+            if (access == ApiDocs.Access.PROTECTED && scheme.isBlank()) {
+                violations.add(prefix + "@ApiDocs.securityScheme must name a scheme when the policy is not public");
             }
         }
         if (!violations.isEmpty()) {

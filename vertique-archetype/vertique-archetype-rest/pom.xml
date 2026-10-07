@@ -87,7 +87,7 @@ SPDX-License-Identifier: EUPL-1.2
             <extension>
                 <groupId>org.apache.maven.archetype</groupId>
                 <artifactId>archetype-packaging</artifactId>
-                <version>3.2.1</version>
+                <version>3.4.1</version>
             </extension>
         </extensions>
         <plugins>
@@ -104,8 +104,8 @@ SPDX-License-Identifier: EUPL-1.2
                         <configuration>
                             <rules>
                                 <requireMavenVersion>
-                                    <version>[3.9.9]</version>
-                                    <message>Archetype Maven Invoker staging requires Maven 3.9.9 exactly.</message>
+                                    <version>[3.10.0]</version>
+                                    <message>Archetype Maven Invoker staging requires Maven 3.10.0 exactly.</message>
                                 </requireMavenVersion>
                             </rules>
                         </configuration>

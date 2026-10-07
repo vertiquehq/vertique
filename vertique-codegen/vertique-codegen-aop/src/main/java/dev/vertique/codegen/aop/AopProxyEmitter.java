@@ -33,8 +33,12 @@ import javax.lang.model.element.ExecutableElement;
 import javax.lang.model.element.Modifier;
 import javax.lang.model.element.TypeElement;
 import javax.lang.model.element.VariableElement;
+import javax.lang.model.type.DeclaredType;
+import javax.lang.model.type.ExecutableType;
+import javax.lang.model.type.IntersectionType;
 import javax.lang.model.type.TypeKind;
 import javax.lang.model.type.TypeMirror;
+import javax.lang.model.type.TypeVariable;
 
 /**
  * Emits a reflection-free {@code <Bean>$AopProxy extends <Bean>} subclass proxy for a bean carrying
@@ -204,7 +208,7 @@ final class AopProxyEmitter {
         // @Override each intercepted method.
         for (int i = 0; i < interceptedMethods.size(); i++) {
             ExecutableElement method = interceptedMethods.get(i);
-            proxy.addMethod(buildOverride(method, i, metaFieldNames.get(method)));
+            proxy.addMethod(buildOverride(bean, method, i, metaFieldNames.get(method)));
         }
 
         write(JavaFile.builder(pkg, proxy.build()).build());
@@ -446,24 +450,26 @@ final class AopProxyEmitter {
      * failed future (Bug N2); the {@link Invocations} nester already does the same for the no-aspect
      * fast path.
      */
-    private MethodSpec buildOverride(ExecutableElement method, int ordinal, String metaField) {
+    private MethodSpec buildOverride(TypeElement bean, ExecutableElement method, int ordinal, String metaField) {
         String name = method.getSimpleName().toString();
-        TypeName returnType = TypeName.get(method.getReturnType());
+        ExecutableType member = (ExecutableType) ctx.types().asMemberOf((DeclaredType) bean.asType(), method);
+        TypeMirror returnMirror = member.getReturnType();
+        TypeName returnType = TypeName.get(returnMirror);
 
         MethodSpec.Builder override = MethodSpec.methodBuilder(name)
                 .addAnnotation(Override.class)
                 .addModifiers(Modifier.PUBLIC)
-                // Declare the method's own type parameters (e.g. <T>) so its T-referencing param and
-                // return types resolve in the override (Bug N3).
-                .addTypeVariables(method.getTypeParameters().stream()
-                        .map(TypeVariableName::get)
+                // Declare method type parameters from the asMemberOf-resolved executable. Bounds are
+                // taken from TypeVariable.getUpperBound() (not TypeParameterElement.getBounds()) so a
+                // source bound like <U extends T> on Contract<String> emits <U extends String>.
+                .addTypeVariables(member.getTypeVariables().stream()
+                        .map(AopProxyEmitter::resolvedTypeVariableName)
                         .toList())
                 .returns(returnType)
-                // Replicate the bean method's checked-exception declaration so the override signature
-                // matches (Bug N2); the Future-returning case never throws synchronously, but the
-                // declaration must still mirror the overridden method.
+                // Replicate the resolved throws clause so any specialized type names match the
+                // override signature (Bug N2).
                 .addExceptions(
-                        method.getThrownTypes().stream().map(TypeName::get).toList());
+                        member.getThrownTypes().stream().map(TypeName::get).toList());
 
         // Seed a NameAllocator with the override's parameter names (already in scope) so every
         // generated local/lambda variable gets suffixed (e.g. args_) when a user parameter shares its
@@ -472,9 +478,11 @@ final class AopProxyEmitter {
         NameAllocator names = new NameAllocator();
         List<String> paramNames = new ArrayList<>();
         List<? extends VariableElement> params = method.getParameters();
-        for (VariableElement p : params) {
+        List<? extends TypeMirror> paramTypes = member.getParameterTypes();
+        for (int pi = 0; pi < params.size(); pi++) {
+            VariableElement p = params.get(pi);
             String paramName = names.newName(p.getSimpleName().toString());
-            override.addParameter(TypeName.get(p.asType()), paramName);
+            override.addParameter(TypeName.get(paramTypes.get(pi)), paramName);
             paramNames.add(paramName);
         }
 
@@ -491,7 +499,7 @@ final class AopProxyEmitter {
         // observable at the terminal (Bug N1, PRD A.5).
         List<CodeBlock> superCallArgs = new ArrayList<>();
         for (int i = 0; i < params.size(); i++) {
-            TypeName paramType = TypeName.get(params.get(i).asType());
+            TypeName paramType = TypeName.get(paramTypes.get(i));
             superCallArgs.add(CodeBlock.of("($T) $N[$L]", paramType, argsVar, i));
         }
 
@@ -503,7 +511,7 @@ final class AopProxyEmitter {
         // super call may declare checked exceptions (Bug N2), so it is wrapped in a try/catch that
         // turns a synchronous throw into a failed future — the Supplier<Future<Object>> functional
         // type cannot itself throw a checked exception.
-        boolean returnsFuture = isFuture(method.getReturnType());
+        boolean returnsFuture = isFuture(returnMirror);
         if (returnsFuture) {
             // Future<T> method: terminal returns the super future cast to Future<Object>.
             override.addStatement(
@@ -529,11 +537,7 @@ final class AopProxyEmitter {
                     catchVar);
             // Map back to Future<T> via an unchecked cast on the element type.
             override.addStatement(
-                    "return $N.map($N -> ($T) $N)",
-                    resultVar,
-                    backCastVar,
-                    elementType(method.getReturnType()),
-                    backCastVar);
+                    "return $N.map($N -> ($T) $N)", resultVar, backCastVar, elementType(returnMirror), backCastVar);
         } else {
             // Non-Future return (sync): run the chain — the terminal wraps the synchronous super call
             // in a succeeded future — then unwrap the result. Because a sync-returning method has no
@@ -542,7 +546,7 @@ final class AopProxyEmitter {
             // but the SPI is public, so a custom aspect could defer on a sync-returning method — the
             // FR-013-05 guard below makes that a loud failure (IllegalStateException) at the call site
             // rather than a silently-wrong value, a swallowed failure, or an NPE.
-            TypeKind kind = method.getReturnType().getKind();
+            TypeKind kind = returnMirror.getKind();
             if (kind == TypeKind.VOID) {
                 override.addStatement(
                         "$T<Object> $N = $T.run(this, $N, $N, this.$N, () -> {\n"
@@ -707,6 +711,33 @@ final class AopProxyEmitter {
 
     private TypeName elementType(TypeMirror futureType) {
         return TypeName.get(ctx.unwrapFuture(futureType)).box();
+    }
+
+    /**
+     * Builds a {@link TypeVariableName} from an {@link Types#asMemberOf}-resolved {@link TypeVariable},
+     * using {@link TypeVariable#getUpperBound()} so enclosing type-argument substitutions appear in
+     * emitted bounds (nested intersections and interdependent method variables included).
+     */
+    private static TypeVariableName resolvedTypeVariableName(TypeVariable typeVariable) {
+        String name = typeVariable.asElement().getSimpleName().toString();
+        List<TypeName> bounds = new ArrayList<>();
+        TypeMirror upper = typeVariable.getUpperBound();
+        if (upper.getKind() == TypeKind.INTERSECTION) {
+            for (TypeMirror bound : ((IntersectionType) upper).getBounds()) {
+                if (!isPlainObject(bound)) {
+                    bounds.add(TypeName.get(bound));
+                }
+            }
+        } else if (!isPlainObject(upper)) {
+            bounds.add(TypeName.get(upper));
+        }
+        return bounds.isEmpty()
+                ? TypeVariableName.get(name)
+                : TypeVariableName.get(name, bounds.toArray(TypeName[]::new));
+    }
+
+    private static boolean isPlainObject(TypeMirror type) {
+        return type.getKind() == TypeKind.DECLARED && type.toString().equals("java.lang.Object");
     }
 
     private static FieldSpec buildStaticConstant(TypeName type, String name, CodeBlock initializer) {

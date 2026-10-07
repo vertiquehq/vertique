@@ -92,8 +92,8 @@ def stagedCompilerPlugins = stagedParent.build.plugins.plugin.findAll {
 assert stagedCompilerPlugins.size() == 1:
         "Published parent must retain exactly one compiler plugin configuration"
 def stagedCompilerPlugin = stagedCompilerPlugins[0]
-assert stagedCompilerPlugin.version.text() == "3.15.0":
-        "Published parent must pin Maven Compiler Plugin 3.15.0"
+assert stagedCompilerPlugin.version.text() == "3.16.0":
+        "Published parent must pin Maven Compiler Plugin 3.16.0"
 assert stagedCompilerPlugin.dependencies.dependency.isEmpty():
         "Published parent compiler plugin must not declare plugin dependencies"
 assert stagedCompilerPlugin.configuration.children().collect { it.name() } == ["annotationProcessorPaths"]:

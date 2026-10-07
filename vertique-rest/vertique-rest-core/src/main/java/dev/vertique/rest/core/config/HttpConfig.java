@@ -7,6 +7,7 @@ import com.fasterxml.jackson.annotation.JsonAutoDetect;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import dev.vertique.rest.core.RestConfigurationException;
 import io.vertx.core.http.HttpServerOptions;
+import java.util.Locale;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.experimental.Accessors;
@@ -24,6 +25,7 @@ import lombok.extern.jackson.Jacksonized;
  *   "http": {
  *     "port": 8443,
  *     "maxBodySize": 4194304,
+ *     "maxMultipartBodySizeBytes": 2097152,
  *     "uploadsDirectory": "file-uploads",
  *     "compressionSupported": true,
  *     "idleTimeoutSeconds": 30,
@@ -36,11 +38,13 @@ import lombok.extern.jackson.Jacksonized;
  * }
  * }</pre>
  *
- * <p>The {@code maxBodySize} and {@code uploadsDirectory} fields are consumed by {@link
- * io.vertx.ext.web.handler.BodyHandler} via {@code JaxRsRouterMount}. {@code maxBodySize} bounds
- * the total request body; {@code maxFormAttributeSize} and {@code maxFormFields} independently bound
- * decoded form content, by attribute size and by part count. {@code uploadsDirectory} selects where
- * multipart upload temporary files are spooled.
+ * <p>The {@code maxBodySize}, {@code maxMultipartBodySizeBytes}, and {@code uploadsDirectory} fields
+ * are consumed by {@link io.vertx.ext.web.handler.BodyHandler} via {@code JaxRsRouterMount}.
+ * {@code maxBodySize} bounds every request body; {@code maxMultipartBodySizeBytes} is the dedicated
+ * pre-auth admission ceiling for {@code multipart/form-data} (effective limit is the tighter of the
+ * two). {@code maxFormAttributeSize} and {@code maxFormFields} independently bound decoded form
+ * content, by attribute size and by part count. {@code uploadsDirectory} selects where multipart
+ * upload temporary files are spooled.
  */
 @Getter
 @Builder
@@ -49,6 +53,9 @@ import lombok.extern.jackson.Jacksonized;
 @JsonIgnoreProperties(ignoreUnknown = true)
 @JsonAutoDetect(fieldVisibility = JsonAutoDetect.Visibility.ANY, getterVisibility = JsonAutoDetect.Visibility.NONE)
 public class HttpConfig {
+
+    /** Media-type prefix Vert.x {@code BodyHandler} treats as multipart form uploads. */
+    private static final String MULTIPART_FORM_DATA = "multipart/form-data";
 
     // --- Core ---
 
@@ -64,9 +71,27 @@ public class HttpConfig {
      * Maximum allowed request body size in bytes. Enforced by
      * {@link io.vertx.ext.web.handler.BodyHandler#setBodyLimit(long)}, which returns 413
      * automatically when exceeded. Defaults to {@code 2097152} (2 MB).
+     *
+     * <p>For {@code multipart/form-data}, the effective BodyHandler limit is the tighter of this
+     * value and {@link #maxMultipartBodySizeBytes} — see {@link #bodyLimitBytes(String)}.
      */
     @Builder.Default
     private final long maxBodySize = 2_097_152;
+
+    /**
+     * Maximum allowed {@code multipart/form-data} request body size in bytes before authentication
+     * and resource dispatch. Must be positive. Defaults to {@code 2097152} (2 MB), matching
+     * {@link #maxBodySize}.
+     *
+     * <p>Applied as the BodyHandler body limit for multipart requests (the effective limit is
+     * {@code min(maxBodySize, maxMultipartBodySizeBytes)}). When {@code Content-Length} is present
+     * and exceeds the limit, Vert.x fails closed with 413 before creating upload files; chunked
+     * bodies are rejected as soon as cumulative bytes exceed the limit. Raise {@link #maxBodySize}
+     * for large non-multipart payloads without widening multipart spool admission by keeping this
+     * value tight.
+     */
+    @Builder.Default
+    private final long maxMultipartBodySizeBytes = 2_097_152;
 
     /**
      * Directory for multipart upload temporary files, created by Vert.x {@link
@@ -192,8 +217,8 @@ public class HttpConfig {
     private final SslConfig ssl = SslConfig.builder().build();
 
     /**
-     * Lombok builder customization that preserves the upload-directory default while validating
-     * both direct builder calls and Jackson's {@link Jacksonized} builder-deserialization path.
+     * Lombok builder customization that preserves defaults while validating both direct builder
+     * calls and Jackson's {@link Jacksonized} builder-deserialization path.
      */
     public static class HttpConfigBuilder {
         /**
@@ -212,6 +237,59 @@ public class HttpConfig {
             this.uploadsDirectory$set = true;
             return this;
         }
+
+        /**
+         * Sets the pre-auth multipart body admission ceiling in bytes.
+         *
+         * @param maxMultipartBodySizeBytes positive maximum multipart body size in bytes
+         * @return this builder
+         * @throws RestConfigurationException when {@code maxMultipartBodySizeBytes} is not positive
+         */
+        public HttpConfigBuilder maxMultipartBodySizeBytes(long maxMultipartBodySizeBytes) {
+            if (maxMultipartBodySizeBytes <= 0) {
+                throw new RestConfigurationException("http.maxMultipartBodySizeBytes must be positive");
+            }
+            this.maxMultipartBodySizeBytes$value = maxMultipartBodySizeBytes;
+            this.maxMultipartBodySizeBytes$set = true;
+            return this;
+        }
+    }
+
+    // --- Body admission ---
+
+    /**
+     * Returns the BodyHandler body-limit in bytes for a request with the given {@code Content-Type}.
+     *
+     * <p>Non-multipart requests use {@link #maxBodySize}. {@code multipart/form-data} uses the
+     * tighter of {@link #maxBodySize} and {@link #maxMultipartBodySizeBytes}, so multipart spooling
+     * cannot exceed the dedicated admission ceiling even when the global body limit is raised.
+     * A {@code maxBodySize} of {@code -1} (Vert.x "unlimited" sentinel) leaves non-multipart bodies
+     * unlimited but never disables the multipart ceiling: multipart then uses
+     * {@link #maxMultipartBodySizeBytes} alone.
+     *
+     * @param contentType the request {@code Content-Type} header, or {@code null}
+     * @return the body limit in bytes to pass to {@code BodyHandler#setBodyLimit}; {@code -1} only
+     *     for non-multipart requests when {@code maxBodySize} is {@code -1}
+     */
+    public long bodyLimitBytes(String contentType) {
+        if (isMultipartFormData(contentType)) {
+            return maxBodySize == -1 ? maxMultipartBodySizeBytes : Math.min(maxBodySize, maxMultipartBodySizeBytes);
+        }
+        return maxBodySize;
+    }
+
+    /**
+     * Returns whether {@code contentType} is {@code multipart/form-data}, ignoring parameters and
+     * using a case-insensitive prefix match (the same rule Vert.x {@code BodyHandler} uses).
+     *
+     * @param contentType the request {@code Content-Type} header, or {@code null}
+     * @return {@code true} when the media type is multipart form data
+     */
+    public static boolean isMultipartFormData(String contentType) {
+        if (contentType == null || contentType.isEmpty()) {
+            return false;
+        }
+        return contentType.toLowerCase(Locale.ROOT).startsWith(MULTIPART_FORM_DATA);
     }
 
     // --- Mapping ---

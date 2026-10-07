@@ -4,6 +4,7 @@
 package dev.vertique.rest.core.security;
 
 import dev.vertique.core.util.AnnotationResolver;
+import dev.vertique.security.authz.AccessPolicyResolver;
 import dev.vertique.security.authz.ActionRef;
 import dev.vertique.security.authz.RequiresAction;
 import jakarta.annotation.Nullable;
@@ -74,6 +75,13 @@ public class RequiresActionResolver {
      *     canonical {@link ActionRef}
      */
     public Optional<ActionRef> resolve(List<Annotation> methodAnnotations, List<Annotation> classAnnotations) {
+        Optional<Class<? extends dev.vertique.security.authz.AccessPolicy>> selected =
+                AccessPolicyResolver.select(methodAnnotations, classAnnotations);
+        if (selected.isPresent()) {
+            RequiresAction fromPolicy =
+                    findAnnotation(AccessPolicyResolver.resolve(selected.get()), RequiresAction.class);
+            return fromPolicy == null ? Optional.empty() : Optional.of(ActionRef.parse(fromPolicy.value()));
+        }
         RequiresAction requiresAction = findAnnotation(methodAnnotations, RequiresAction.class);
         if (requiresAction == null) {
             requiresAction = findAnnotation(classAnnotations, RequiresAction.class);

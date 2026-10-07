@@ -370,13 +370,6 @@ public final class ClientInterfaceScanner {
     }
 
     /**
-     * Reads the {@code value} attribute from a named annotation on the given element.
-     *
-     * @param element the element carrying the annotation
-     * @param annotationFqn the annotation's fully-qualified name
-     * @return the value attribute, or the element's simple name as fallback
-     */
-    /**
      * Reads the {@code value} attribute from a JAX-RS param annotation preserving the literal value,
      * including blank.
      *

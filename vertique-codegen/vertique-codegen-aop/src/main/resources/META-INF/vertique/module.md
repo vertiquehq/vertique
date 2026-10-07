@@ -179,7 +179,7 @@ The `@Binds` method replicates the target bean's declared scope — it never har
 
 Runs `@SupportedAnnotationTypes("*")` (wildcard) so it receives all annotations and can discover user-defined aspect triggers — annotations meta-annotated with `@Aspect` — without being configured for each one. Returns `false` to avoid claiming annotations; Dagger, Lombok, and other processors see the same elements.
 
-Only trigger methods enclosed by an `ElementKind.CLASS` are collected for proxy generation. A trigger annotation on an interface method — for example, a service-contract or REST-client interface method carrying `@Resilient` — is ignored for proxy generation: no `$AopProxy` is generated and proxyability or constructor validation is not run for that method.
+Trigger methods enclosed by an `ElementKind.CLASS` are collected on that class. A trigger annotation on an interface method — including an inherited `default` method — is woven onto every concrete implementing class in the same compilation that inherits or overrides the method: the implementor receives the `$AopProxy`, and proxyability / constructor validation run against that class. An interface alone is never treated as a subclass-proxy bean; when no concrete implementor is present, no proxy is generated for the interface-hosted trigger.
 
 The module (`GeneratedAopModule`) is emitted in the **first round that yields any binding**, not in the `processingOver()` round. This ensures the module exists before Dagger's `ComponentProcessingStep` validates a `@Component` that references it.
 

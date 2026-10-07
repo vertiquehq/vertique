@@ -12,7 +12,8 @@ import java.util.List;
  * Resolves a {@link SecurityPolicy} from security annotations on a method and its declaring class.
  *
  * <p>Implementations inspect standard Jakarta security annotations ({@code @DenyAll},
- * {@code @PermitAll}, {@code @RolesAllowed}) and framework annotations ({@link Authorized})
+ * {@code @PermitAll}, {@code @RolesAllowed}) and framework annotations
+ * ({@link dev.vertique.security.authz.Authorized})
  * to produce a typed {@link SecurityPolicy} value. Method-level annotations override class-level
  * following Jakarta EE semantics.
  *

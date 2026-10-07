@@ -23,6 +23,7 @@ Include `vertique-security-core` when a module needs to:
 - Read the typed security model from a `SecurityContext` (identity, authentication state, authorization claims, network origin)
 - Implement a custom `SecurityIdentityResolver`, `Authorizer`, `PolicyDefinitionSource`, `RolePolicyResolver`, `ActionContributor`, `AuthorizationNarrower`, `DelegationGrantValidator`, `PrincipalAuthorityResolver`, or `ChannelIdentityManager`
 - Declare or reference an `ActionRef` for `@RequiresAction` enforcement
+- Declare authentication and scope requirements with `@Authorized` on supported framework surfaces
 - Observe security lifecycle events by implementing `SecurityEventObserver`
 - Embed a `VerificationSource` discriminator in a credential-accepted event
 
@@ -407,10 +408,13 @@ Constants holder (not an enum, not instantiable) for machine-readable reason cod
 | `INTERNAL_AUTHZ_ERROR` | Default engine — unparseable action string, null context, or unexpected error; fails closed |
 | `AUTHENTICATION_REQUIRED` | Enforcement layer (reserved) |
 | `STEP_UP_REQUIRED` | Opt-in `AssuranceRequirementNarrower` (`dev.vertique:vertique-security-runtime`) — assurance-gated action, unmet minimum-assurance requirement |
+| `UNSUPPORTED_POLICY_CALLER` | Service authorization interceptor (`dev.vertique:vertique-services`) — a typed local predicate received a trusted context carrying a reconstruction, an identity subject, or a delegation. Not an authentication failure |
 | `DENY_ALL` | Enforcement layer (reserved) |
 | `SCOPE_MISSING` / `SCOPE_INSUFFICIENT` | Enforcement layer (reserved) |
 | `POLICY_INVALID` / `INSTANCE_ELIGIBILITY_FAILED` | Future evaluators (reserved) |
 | `AUTHORITY_RESOLUTION_FAILED` | Opt-in live authority re-resolution (Mode 2, `dev.vertique:vertique-security-runtime`) — `PrincipalAuthorityResolver` failed, timed out, or returned an ambiguous result |
+
+A local-only service decision event carries the operation's descriptive label in `request.action`. That string is audit context, not a registered action: it is never parsed as an `ActionRef` or submitted to an `Authorizer`, so an observer must not infer action registration or grant semantics from it, or from the reason code alone.
 
 A narrower may additionally surface a `DelegationReasonCodes` value as a decision's `reasonCode`.
 
@@ -433,6 +437,43 @@ public @interface RequiresAction {
 **AND-composition:** `@RequiresAction` AND-composes with `@RolesAllowed` and `@Authorized` — both the role/scope gate and the action gate must pass. Combining with `@PermitAll` or `@DenyAll` is a conflict rejected at compile time and at startup.
 
 **Fail-closed invariant:** any surface that does not enforce `@RequiresAction` must reject its presence at startup. An unenforceable annotation is a startup error, never silently ignored.
+
+### @Authorized
+
+`@Authorized` declares an authentication and scope requirement on a type or method. Empty scopes
+require authentication only; with scopes present, `matchAll` selects all-of (the default) or any-of
+matching. A method-level declaration overrides a type-level declaration on surfaces that support it.
+
+The annotation is now owned by `vertique-security-core` as
+`dev.vertique.security.authz.Authorized`; REST and WebSocket consumers retain the existing inline
+semantics. Moving it from `vertique-rest-core` is an owner-authorized source and binary break for
+old imports, without a deprecated REST alias. Applications must update imports and clean-rebuild
+with aligned framework and processor versions. Other transports do not gain inline support from the
+relocation alone.
+
+### AccessPolicy and @RequiresPolicy
+
+`AccessPolicy` is an empty public interface. A policy is a public, non-generic interface that
+extends only `AccessPolicy` and declares no fields, methods, or nested types. Its direct
+requirements are `@PermitAll`, `@DenyAll`, `@RolesAllowed`, `@Authorized`, and `@RequiresAction`.
+`@PermitAll` and `@DenyAll` are each exclusive. Roles, scopes, and one action may combine.
+
+`@RequiresPolicy` names one such policy on a type or method, within the placement each surface
+below accepts. A method reference replaces a type reference, and identical references coalesce. Distinct references, or a policy mixed with an inline
+security annotation, are rejected. REST expands the selected policy into the existing
+`SecurityPolicy` and action metadata. The policy is not instantiated, and its decision is not
+cached.
+
+Four surfaces evaluate `@RequiresPolicy`: REST routes (generated and reflective), service
+dispatch (the supported declaration is on the contract; collection starts at the registered contract
+interface, so a policy on an implementation class or handler method is not collected, except that
+a hand-built contract entry still reads class-level annotations from the service instance's class,
+a documented limit in the services reference), MCP tools, and WebSocket upgrade admission
+(declared on the endpoint class only). A policy on a WebSocket lifecycle method (`@OnOpen`, `@OnMessage`, `@OnClose`,
+`@OnError`) fails startup rather than being ignored. Each surface's contract is in its own
+`module.md`: the "Typed access policies" sections of `vertique-services` and `vertique-mcp-server`,
+and the "There is no per-message authorization" and "Typed policies gate admission only" sections of
+`vertique-rest-websocket`.
 
 ---
 

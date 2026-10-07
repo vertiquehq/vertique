@@ -5,12 +5,14 @@ package dev.vertique.examples.hello;
 
 import static io.restassured.RestAssured.given;
 import static org.hamcrest.Matchers.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import com.atlassian.oai.validator.OpenApiInteractionValidator;
 import com.atlassian.oai.validator.report.LevelResolver;
 import com.atlassian.oai.validator.report.ValidationReport;
 import com.atlassian.oai.validator.restassured.OpenApiValidationFilter;
 import dev.vertique.application.test.VertiqueAppExtension;
+import dev.vertique.examples.hello.resource.HelloResource;
 import dev.vertique.rest.auth.jwt.JwtAuthFactory;
 import io.restassured.RestAssured;
 import io.restassured.filter.log.RequestLoggingFilter;
@@ -319,5 +321,57 @@ public class AuthSecurityIT {
                 .body("isAdmin", equalTo(false))
                 .body("isUser", equalTo(true))
                 .body("authScheme", equalTo("BEARER"));
+    }
+
+    @Test
+    @DisplayName("typed policies on generated routes enforce permit, deny, authentication, roles, and scopes")
+    void shouldEnforceTypedPoliciesOnGeneratedRoutes() {
+        HelloResource.policyDeniedWork.set(0);
+        String user = generateToken("testuser", List.of("user"), "read");
+        String subject = generateToken("subject-1", List.of(), null);
+        String admin = generateToken("admin1", List.of("admin"), "read");
+        String writer = generateToken("writer", List.of("user"), "write");
+
+        given().when().get("/hello/policy/public").then().statusCode(200).body("message", equalTo("policy-public"));
+
+        given().header("Authorization", "Bearer " + user)
+                .when()
+                .get("/hello/policy/denied")
+                .then()
+                .statusCode(403);
+        assertEquals(0, HelloResource.policyDeniedWork.get(), "a typed deny must not run the handler");
+
+        given().when().get("/hello/policy/authenticated").then().statusCode(401);
+        given().header("Authorization", "Bearer " + subject)
+                .when()
+                .get("/hello/policy/authenticated")
+                .then()
+                .statusCode(200)
+                .body("message", equalTo("policy-authenticated"));
+
+        given().header("Authorization", "Bearer " + user)
+                .when()
+                .get("/hello/policy/admin")
+                .then()
+                .statusCode(403);
+        given().header("Authorization", "Bearer " + admin)
+                .when()
+                .get("/hello/policy/admin")
+                .then()
+                .statusCode(200)
+                .body("message", equalTo("policy-admin"));
+
+        given().header("Authorization", "Bearer " + user)
+                .when()
+                .get("/hello/policy/write")
+                .then()
+                .statusCode(403);
+        given().header("Authorization", "Bearer " + writer)
+                .when()
+                .get("/hello/policy/write")
+                .then()
+                .statusCode(200)
+                .body("message", equalTo("policy-write"));
+        assertEquals(0, HelloResource.policyDeniedWork.get());
     }
 }

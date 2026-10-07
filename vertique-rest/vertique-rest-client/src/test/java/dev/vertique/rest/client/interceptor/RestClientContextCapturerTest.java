@@ -98,4 +98,43 @@ class RestClientContextCapturerTest {
         assertSame(request, capturer.lastRequest, "the request context must pass through unchanged");
         assertSame(completion, capturer.lastCompletion, "the completion must pass through unchanged");
     }
+
+    @Test
+    @DisplayName("operation-aware onAttemptCompleted default delegates to the MethodMetadata form with the method")
+    void operationOverloadDefaultDelegatesToMethodMetadataForm() {
+        List<MethodMetadata> seen = new java.util.ArrayList<>();
+        RestClientContextCapturer<String> capturer = new RestClientContextCapturer<>() {
+            @Override
+            public String captureRequestContext() {
+                return "captured";
+            }
+
+            @Override
+            public void onAttemptCompleted(
+                    String capturedContext, RestClientRequestContext request, RestClientAttemptCompletion completion) {}
+
+            @Override
+            public void onAttemptCompleted(
+                    String capturedContext,
+                    RestClientRequestContext request,
+                    RestClientAttemptCompletion completion,
+                    MethodMetadata operation) {
+                seen.add(operation);
+            }
+        };
+        MethodMetadata method = probeMethodMetadata();
+
+        capturer.onAttemptCompleted(
+                "captured", requestContext(), completion(), new RestClientOperation(Probe.class, "svc", method));
+
+        assertEquals(1, seen.size());
+        assertSame(method, seen.get(0), "the operation's method metadata must reach the MethodMetadata form");
+    }
+
+    @Test
+    @DisplayName("validateOperation accepts every operation by default")
+    void validateOperationDefaultAccepts() {
+        new ThreeArgOnlyCapturer()
+                .validateOperation(new RestClientOperation(Probe.class, "svc", probeMethodMetadata()));
+    }
 }

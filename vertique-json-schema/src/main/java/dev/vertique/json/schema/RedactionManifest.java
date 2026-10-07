@@ -13,6 +13,8 @@ import java.util.List;
 import java.util.Objects;
 
 /**
+ * INTERNAL framework seam — callable by sibling Vertique modules only; not an application contract and outside the application maturity promise.
+ *
  * The JSON Pointers of every reserved-name assertion in one generated schema, bound to the digest of
  * that schema's canonical bytes. Only this package constructs instances.
  *

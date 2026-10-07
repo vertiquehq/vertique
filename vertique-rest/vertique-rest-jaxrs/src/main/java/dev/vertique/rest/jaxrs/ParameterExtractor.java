@@ -141,18 +141,27 @@ final class ParameterExtractor {
     private final String resourceMethodName;
 
     /**
-     * Per-bean-type cache of effective input policies for {@code @BeanParam} field arrays
-     * passed through {@link #materializeBean}. The route-level baseline is constant for the
-     * lifetime of this {@code ParameterExtractor} instance (one per route), so caching by
-     * {@code Class<?>} is sound: the same bean type always produces the same per-field policy
-     * array under the same route baseline. Without this cache, a route that materialises a
-     * bean with N fields on every request would re-walk N annotation lists per request.
+     * Cache of effective per-field input policies for {@code @BeanParam} materialization. Keyed by
+     * bean class <em>and</em> the parameter's effective baseline: two {@code @BeanParam} parameters
+     * of the same type on one route can declare different baselines ({@code @Sanitize} vs
+     * {@code @SkipSanitization}), so a class-only key would permanently reuse the first parameter's
+     * resolved field policies for the second. Without this cache, a route that materialises a bean
+     * with N fields on every request would re-walk N annotation lists per request.
      *
      * <p>Warmed at construction by {@link #warmBeanFieldPolicies} for every {@code BEAN_PARAM}
      * parameter this route declares, so a conflicting field declaration surfaces while the route is
      * being registered instead of on the first request that materialises the bean.
      */
-    private final Map<Class<?>, EffectiveInputPolicies[]> beanFieldPoliciesCache = new ConcurrentHashMap<>();
+    private final Map<BeanFieldPolicyKey, EffectiveInputPolicies[]> beanFieldPoliciesCache = new ConcurrentHashMap<>();
+
+    /**
+     * Cache key pairing a {@code @BeanParam} bean class with the invocation-policy baseline used to
+     * derive its per-field chains.
+     *
+     * @param beanType the bean class whose fields were resolved
+     * @param baseline the {@code @BeanParam} parameter's effective policies (route plus parameter-level)
+     */
+    private record BeanFieldPolicyKey(Class<?> beanType, EffectiveInputPolicies baseline) {}
 
     /**
      * Route-scoped cache of the scalar {@link ConversionContext} for each parameter, keyed by the
@@ -332,8 +341,10 @@ final class ParameterExtractor {
         }
         EffectiveInputPolicies route =
                 new EffectiveInputPolicies(meta.routeCanonicalizerChain(), meta.routeSanitizerChain());
+        Class<?> owner =
+                meta.resourceInstance() != null ? meta.resourceInstance().getClass() : method.getDeclaringClass();
         for (int i = 0; i < params.size(); i++) {
-            cache[i] = ReflectiveInvocationPolicies.resolveParameter(method, i, route);
+            cache[i] = ReflectiveInvocationPolicies.resolveParameter(method, i, owner, route);
         }
         return cache;
     }
@@ -533,7 +544,7 @@ final class ParameterExtractor {
                 case FORM -> extractFormParam(pm, ctx);
                 case FILE_UPLOADS -> List.copyOf(ctx.fileUploads());
                 case ENTITY_PARTS -> extractAllEntityParts(ctx);
-                case BEAN_PARAM -> extractBeanParam(pm.type(), boundRequest, ctx);
+                case BEAN_PARAM -> extractBeanParam(pm.type(), cachedParamPolicies[i], boundRequest, ctx);
                 default -> extractParam(pm, boundRequest);
             };
         }
@@ -1412,41 +1423,24 @@ final class ParameterExtractor {
 
     /**
      * Extracts a {@code @BeanParam} or {@code @RequestParams} composite parameter by populating
-     * its components via Jackson's {@code ObjectMapper.convertValue()}.
+     * its components via {@link #materializeBean}, so the reflective and generated paths share one
+     * policy baseline.
      *
-     * <p>Field metadata is resolved once per bean type via {@link #BEAN_PARAM_CACHE} and reused
-     * on every subsequent request, eliminating per-request reflection overhead.
+     * <p>{@code paramPolicies} is the {@code @BeanParam} parameter's own resolved chain (route
+     * baseline plus any parameter-level {@code @Canonicalize}/{@code @Sanitize}/{@code @Skip*}),
+     * not the bare route chains. Field-level annotations still override that baseline inside
+     * {@link #materializeBean}.
      *
-     * @param beanType     the record or POJO class to instantiate
-     * @param boundRequest the bound request parameters
-     * @param ctx          the routing context (for form params)
+     * @param beanType      the record or POJO class to instantiate
+     * @param paramPolicies the {@code @BeanParam} parameter's cached {@link EffectiveInputPolicies}
+     * @param boundRequest  the bound request parameters
+     * @param ctx           the routing context (for form params)
      * @return the populated instance
      */
-    private Object extractBeanParam(Class<?> beanType, BoundRequest boundRequest, RoutingContext ctx) {
-        List<BeanFieldEntry> fields = BEAN_PARAM_CACHE.computeIfAbsent(beanType, ParameterExtractor::computeBeanFields);
-        Map<String, Object> values = new LinkedHashMap<>();
-        for (BeanFieldEntry entry : fields) {
-            Object value = extractParamValue(entry.meta(), boundRequest, ctx);
-            if (value != null) {
-                values.put(entry.name(), value);
-            }
-        }
-
-        // Apply input processing to the intermediate map before materialization
-        if (objectProcessor != null) {
-            EffectiveInputPolicies policies =
-                    new EffectiveInputPolicies(meta.routeCanonicalizerChain(), meta.routeSanitizerChain());
-            Object processed = objectProcessor.processInput(
-                    values, beanType, policies, InputLocation.BEAN_PARAM, InputFieldNameResolver.IDENTITY);
-            if (processed instanceof Map<?, ?> processedMap) {
-                values = new LinkedHashMap<>();
-                for (var entry2 : processedMap.entrySet()) {
-                    values.put(entry2.getKey().toString(), entry2.getValue());
-                }
-            }
-        }
-
-        return VertiqueJson.mapper().convertValue(values, beanType);
+    private Object extractBeanParam(
+            Class<?> beanType, EffectiveInputPolicies paramPolicies, BoundRequest boundRequest, RoutingContext ctx) {
+        BeanParamFieldMeta[] fields = beanParamFields(beanType).toArray(new BeanParamFieldMeta[0]);
+        return materializeBean(fields, paramPolicies, boundRequest, ctx, beanType);
     }
 
     /**
@@ -1455,8 +1449,10 @@ final class ParameterExtractor {
      *
      * <p>The single derivation both the warming pass ({@link #warmBeanFieldPolicies}) and the request
      * path ({@link #materializeBean}) use, so a warmed entry is by construction the value the request
-     * path would otherwise have computed. Each field goes through {@link #resolveParamMetaPolicies},
-     * which rejects a field declaring both an additive and a skip annotation on the same axis.
+     * path would otherwise have computed. Each field first runs {@link #resolveParamMetaPolicies} for
+     * additive/skip conflict validation (returned chains discarded), then
+     * {@link InputObjectProcessor#resolvePropertyPolicies} for the effective chains that are stored
+     * and applied.
      *
      * @param beanType      the bean type the fields belong to; names the conflict site
      * @param fields        the bean's fields in declaration order
@@ -1472,7 +1468,12 @@ final class ParameterExtractor {
         EffectiveInputPolicies[] resolved = new EffectiveInputPolicies[fields.length];
         for (int i = 0; i < fields.length; i++) {
             String site = beanType.getSimpleName() + "." + fields[i].name();
-            resolved[i] = resolveParamMetaPolicies(fields[i].meta(), routeCanon, routeSanit, site, "field " + site);
+            // ParamMeta conflict check (additive+skip on the same field) — fail at warming/startup.
+            resolveParamMetaPolicies(fields[i].meta(), routeCanon, routeSanit, site, "field " + site);
+            // Complete pipeline: parameter baseline + bean-type metadata + field metadata, composed
+            // by the shared input-processing owner (same rules as processInput). Applied once at
+            // scalar/form extraction before conversion — no second metadata walk over the map.
+            resolved[i] = InputObjectProcessor.resolvePropertyPolicies(beanType, fields[i].name(), routePolicies);
         }
         return resolved;
     }
@@ -1496,39 +1497,48 @@ final class ParameterExtractor {
      * no parameters). A conflict in a warmed type always fails here.
      */
     private void warmBeanFieldPolicies() {
-        EffectiveInputPolicies route =
-                new EffectiveInputPolicies(meta.routeCanonicalizerChain(), meta.routeSanitizerChain());
-        for (ResourceMethodMeta.ParamMeta pm : meta.params()) {
+        List<ResourceMethodMeta.ParamMeta> params = meta.params();
+        for (int i = 0; i < params.size(); i++) {
+            ResourceMethodMeta.ParamMeta pm = params.get(i);
             if (pm.source() != ResourceMethodMeta.ParamSource.BEAN_PARAM) {
                 continue;
             }
             Class<?> beanType = pm.type();
             BeanParamFieldMeta[] fields = beanParamFields(beanType).toArray(new BeanParamFieldMeta[0]);
-            beanFieldPoliciesCache.computeIfAbsent(beanType, t -> resolveBeanFieldPolicies(t, fields, route));
+            // Seed with this @BeanParam parameter's own resolved policies (route + param-level),
+            // matching extractArguments / materializeBean — not the bare route chains alone.
+            EffectiveInputPolicies baseline = cachedParamPolicies[i];
+            BeanFieldPolicyKey key = new BeanFieldPolicyKey(beanType, baseline);
+            beanFieldPoliciesCache.computeIfAbsent(
+                    key, k -> resolveBeanFieldPolicies(k.beanType(), fields, k.baseline()));
         }
     }
 
     /**
      * Materializes a bean-param object from an explicit ordered field list, bypassing the
-     * {@link #BEAN_PARAM_CACHE} reflective walk. Per-field
-     * {@link EffectiveInputPolicies} are derived internally from each field's
-     * {@link ResourceMethodMeta.ParamMeta#annotations()} using the supplied route-level baseline,
-     * through the same shared resolver {@link #resolveParamMetaPolicies} drives for every {@code pm}
-     * without a {@link Method}+index pair. This ensures field-level input-policy annotations ({@code @Canonicalize},
-     * {@code @Sanitize}, {@code @SkipCanonicalization}, {@code @SkipSanitization}) are honoured on
-     * the generated-companion path, maintaining parity with the reflective path.
+     * {@link #BEAN_PARAM_CACHE} reflective walk.
      *
-     * <p>The overall processing contract is identical to {@link #extractBeanParam}: per-field
-     * extraction happens first, then the assembled intermediate {@link LinkedHashMap} is submitted
-     * to the {@link dev.vertique.input.processing.InputObjectProcessor} with {@code routePolicies}
-     * before final Jackson conversion.
+     * <p>Two responsibilities stay distinct at warming and on the request path:
+     * <ul>
+     *   <li>{@link #resolveParamMetaPolicies} validates additive/skip conflicts on each field's
+     *       {@link ResourceMethodMeta.ParamMeta#annotations()} (the same bridge every {@code pm}
+     *       without a {@link Method}+index pair uses) — its returned chains are discarded;</li>
+     *   <li>{@link InputObjectProcessor#resolvePropertyPolicies} owns the effective chains actually
+     *       applied: parameter baseline, bean-type metadata, and field metadata composed once.</li>
+     * </ul>
+     * That split keeps the generated-companion path in parity with the reflective path for both
+     * startup conflict rejection and single-pass processing.
+     *
+     * <p>The overall processing contract is identical to {@link #extractBeanParam}: the composed
+     * per-field policies are applied during scalar/form extraction <em>before</em> conversion. The
+     * intermediate map is not walked again.
      *
      * @param fields           ordered array of bean field metadata; must not be {@code null};
      *                         each {@code meta().annotations()} should carry the field's declared
-     *                         annotations so per-field policies can be derived
-     * @param routePolicies    route-level policies used as the baseline for per-field policy
-     *                         derivation and for the final intermediate-map processing step;
-     *                         pass {@link EffectiveInputPolicies#NONE} to use empty chains
+     *                         annotations so per-field conflict checks can run at warming
+     * @param routePolicies    the {@code @BeanParam} parameter's own resolved chain (route plus
+     *                         parameter-level annotations), used as the composition baseline; pass
+     *                         {@link EffectiveInputPolicies#NONE} for empty chains
      * @param boundRequest     the bound request exposing parameter values as {@link RequestValue}s
      * @param ctx              the routing context (for form params)
      * @param beanType         the bean class to materialise via Jackson
@@ -1540,8 +1550,9 @@ final class ParameterExtractor {
             BoundRequest boundRequest,
             RoutingContext ctx,
             Class<?> beanType) {
+        BeanFieldPolicyKey key = new BeanFieldPolicyKey(beanType, routePolicies);
         EffectiveInputPolicies[] perFieldPolicies = beanFieldPoliciesCache.computeIfAbsent(
-                beanType, t -> resolveBeanFieldPolicies(t, fields, routePolicies));
+                key, k -> resolveBeanFieldPolicies(k.beanType(), fields, k.baseline()));
         // A length match is sufficient (not just necessary) to trust index-for-index correspondence:
         // both the cached array and fields derive from the same bean-param companion's field list, in
         // the same declaration order.
@@ -1567,19 +1578,9 @@ final class ParameterExtractor {
             }
         }
 
-        // Apply route-level input processing to the intermediate map before materialization
-        if (objectProcessor != null && !routePolicies.isEmpty()) {
-            Object processed = objectProcessor.processInput(
-                    values, beanType, routePolicies, InputLocation.BEAN_PARAM, InputFieldNameResolver.IDENTITY);
-            if (processed instanceof Map<?, ?> processedMap) {
-                values = new LinkedHashMap<>();
-                for (Map.Entry<?, ?> entry : processedMap.entrySet()) {
-                    // Null values are intentional (absent fields); Jackson's convertValue handles them.
-                    values.put(String.valueOf(entry.getKey()), (Object) entry.getValue());
-                }
-            }
-        }
-
+        // Policies already applied once per field before conversion (parameter baseline + type +
+        // field metadata). Do not walk the intermediate map again — that would replay field
+        // sanitizers on already-processed strings.
         return VertiqueJson.mapper().convertValue(values, beanType);
     }
 
@@ -1671,22 +1672,6 @@ final class ParameterExtractor {
             converted.add(new BeanParamFieldMeta(entry.name(), entry.meta()));
         }
         return Collections.unmodifiableList(converted);
-    }
-
-    /**
-     * Extracts a single parameter value, dispatching to {@link #extractFormParam} for form
-     * parameters and {@link #extractParam} for all other sources.
-     *
-     * @param meta         the parameter metadata describing the source and type
-     * @param boundRequest the bound request parameters
-     * @param ctx          the routing context (for form params)
-     * @return the extracted value, or {@code null} if absent
-     */
-    private Object extractParamValue(ResourceMethodMeta.ParamMeta meta, BoundRequest boundRequest, RoutingContext ctx) {
-        return switch (meta.source()) {
-            case FORM -> extractFormParam(meta, ctx);
-            default -> extractParam(meta, boundRequest);
-        };
     }
 
     // --- Bean param reflection helpers ---

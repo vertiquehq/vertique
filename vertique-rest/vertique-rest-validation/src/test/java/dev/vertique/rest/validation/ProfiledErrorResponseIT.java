@@ -123,15 +123,6 @@ public class ProfiledErrorResponseIT {
     private WebClient client;
 
     /**
-     * Closes the {@link WebClient} and then the server started by the test that just ran.
-     *
-     * <p>{@link WebClient#close()} is {@code void}, unlike {@code HttpClient.close()}: it returns once
-     * the underlying client has been asked to close, so there is no future to join here and the server
-     * close alone carries the completion.
-     *
-     * @param ctx the test context used for async teardown assertion
-     */
-    /**
      * Restores the raw Vert.x delegate as the process JSON codec's mapper after every test.
      *
      * <p>Only the explicit-{@code system} tests install one, but the reset is unconditional: a leaked
@@ -144,6 +135,15 @@ public class ProfiledErrorResponseIT {
         VertiqueJson.resetForTests();
     }
 
+    /**
+     * Closes the {@link WebClient} and then the server started by the test that just ran.
+     *
+     * <p>{@link WebClient#close()} is {@code void}, unlike {@code HttpClient.close()}: it returns once
+     * the underlying client has been asked to close, so there is no future to join here and the server
+     * close alone carries the completion.
+     *
+     * @param ctx the test context used for async teardown assertion
+     */
     @AfterEach
     void tearDown(VertxTestContext ctx) {
         if (client != null) {

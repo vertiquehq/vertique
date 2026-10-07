@@ -89,8 +89,8 @@ public final class ContractConfigs {
      * Returns {@link #shared()} with the {@value #OPENAPI_CONTRACT} strategy selected, {@code
      * jaxrs.applications.orders.openapiPath} {@value ContractFiles#ORDERS_STRATEGY}, and {@code
      * jaxrs.applications.partner.openapiPath} {@value ContractFiles#PARTNER_STRATEGY}: both contracts
-     * without a {@code servers} member, because the {@value #OPENAPI_CONTRACT} strategy accepts only
-     * absolute server URLs or none and refuses startup when a mount's contract cannot be loaded.
+     * without a {@code servers} member; the {@value #OPENAPI_CONTRACT} strategy refuses startup when a
+     * mount's contract cannot be loaded.
      * {@code catalog} keeps the global contract.
      *
      * @return a fresh configuration

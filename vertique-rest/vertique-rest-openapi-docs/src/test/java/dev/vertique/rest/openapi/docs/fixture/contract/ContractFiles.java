@@ -32,7 +32,7 @@ public final class ContractFiles {
 
     /**
      * Valid: {@link #ORDERS} without a {@code servers} member, otherwise identical, for {@code orders}
-     * under the contract-validation strategy, which accepts only absolute server URLs or none.
+     * under the contract-validation strategy.
      */
     public static final String ORDERS_STRATEGY = "contracts/orders-strategy-openapi.json";
 
@@ -84,7 +84,7 @@ public final class ContractFiles {
 
     /**
      * Valid: {@link #PARTNER} without a {@code servers} member, otherwise identical, for {@code partner}
-     * under the contract-validation strategy, which accepts only absolute server URLs or none.
+     * under the contract-validation strategy.
      */
     public static final String PARTNER_STRATEGY = "contracts/partner-strategy-openapi.yaml";
 

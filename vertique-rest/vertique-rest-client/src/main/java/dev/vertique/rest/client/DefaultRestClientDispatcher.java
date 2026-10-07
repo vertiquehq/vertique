@@ -4,7 +4,6 @@
 package dev.vertique.rest.client;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import dev.vertique.core.codegen.MethodMetadata;
 import dev.vertique.core.validation.BeanValidator;
 import dev.vertique.resilience.ResiliencePipeline;
 import dev.vertique.resilience.exception.CircuitOpenException;
@@ -20,6 +19,7 @@ import dev.vertique.rest.client.interceptor.RestClientAttemptCompletion;
 import dev.vertique.rest.client.interceptor.RestClientAttemptTarget;
 import dev.vertique.rest.client.interceptor.RestClientContextCapturer;
 import dev.vertique.rest.client.interceptor.RestClientInterceptor;
+import dev.vertique.rest.client.interceptor.RestClientOperation;
 import dev.vertique.rest.client.interceptor.RestClientRequestContext;
 import dev.vertique.rest.client.interceptor.RestClientResponseContext;
 import dev.vertique.rest.client.meta.ClientMethodMeta;
@@ -93,6 +93,7 @@ final class DefaultRestClientDispatcher implements RestClientDispatcher {
     private final BeanValidator beanValidator;
 
     private final String clientName;
+    private final Class<?> clientType;
     private final RestClientInterceptorChain interceptorChain;
     private final RestClientResiliencePipelineFactory resilienceFactory;
 
@@ -119,6 +120,8 @@ final class DefaultRestClientDispatcher implements RestClientDispatcher {
      * @param resilienceFactory provides the prebuilt common-runtime pipeline for each method
      * @param beanValidator optional response validator; {@code null} to skip validation
      * @param clientName the logical name of the REST client (used in interceptor context)
+     * @param clientType the client interface the proxy was built for; handed to system capturers so
+     *     they anchor type-level annotations at it
      * @param contextCapturers system-owned context capturers, pre-sorted in {@code OrderedExtension} order
      * @param resolver the parameter conversion resolver for outbound typed-parameter serialization;
      *     used by generated proxies to serialize each param through the same converter chain as
@@ -135,6 +138,7 @@ final class DefaultRestClientDispatcher implements RestClientDispatcher {
             RestClientResiliencePipelineFactory resilienceFactory,
             @Nullable BeanValidator beanValidator,
             String clientName,
+            Class<?> clientType,
             List<RestClientContextCapturer<?>> contextCapturers,
             ParamConversionResolver resolver) {
         this.webClient = webClient;
@@ -147,6 +151,7 @@ final class DefaultRestClientDispatcher implements RestClientDispatcher {
         this.resilienceFactory = resilienceFactory;
         this.beanValidator = beanValidator;
         this.clientName = clientName;
+        this.clientType = clientType;
         this.contextCapturers = contextCapturers;
         this.resolver = resolver;
     }
@@ -199,16 +204,15 @@ final class DefaultRestClientDispatcher implements RestClientDispatcher {
     private record CapturerCapture(
             RestClientContextCapturer<?> capturer, @Nullable Object value) {
         /**
-         * Invokes the capturer's four-arg {@code onAttemptCompleted} with its own captured value and
-         * the dispatcher-owned {@code operation} metadata.
+         * Invokes the capturer's operation-aware {@code onAttemptCompleted} with its own captured
+         * value and the dispatcher-owned {@code operation}.
          *
          * @param req         the request context for this attempt
          * @param completion  the attempt's completion facts
-         * @param operation   the dispatcher-owned method metadata for the invoked client-interface
-         *                    operation
+         * @param operation   the client interface and the invoked operation
          */
         @SuppressWarnings({"unchecked", "rawtypes"})
-        void fire(RestClientRequestContext req, RestClientAttemptCompletion completion, MethodMetadata operation) {
+        void fire(RestClientRequestContext req, RestClientAttemptCompletion completion, RestClientOperation operation) {
             ((RestClientContextCapturer) capturer).onAttemptCompleted(value, req, completion, operation);
         }
     }
@@ -933,7 +937,7 @@ final class DefaultRestClientDispatcher implements RestClientDispatcher {
         // System capturers — each observes the attempt with its own captured value (never exposed to apps).
         for (CapturerCapture c : captures) {
             try {
-                c.fire(reqCtx, completion, meta.methodMetadata());
+                c.fire(reqCtx, completion, new RestClientOperation(clientType, clientName, meta.methodMetadata()));
             } catch (Exception e) {
                 log.debug("RestClientContextCapturer.onAttemptCompleted threw (ignored)", e);
             }

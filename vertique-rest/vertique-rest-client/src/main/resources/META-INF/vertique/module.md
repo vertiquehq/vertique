@@ -653,13 +653,35 @@ public interface RestClientContextCapturer<C> extends dev.vertique.core.extensio
             dev.vertique.core.codegen.MethodMetadata operation) {
         onAttemptCompleted(capturedContext, request, completion);
     }
+
+    default void onAttemptCompleted(
+            @Nullable C capturedContext,
+            RestClientRequestContext request,
+            RestClientAttemptCompletion completion,
+            RestClientOperation operation) {
+        onAttemptCompleted(capturedContext, request, completion, operation.method());
+    }
+
+    default void validateOperation(RestClientOperation operation) {}
 }
+
+public record RestClientOperation(Class<?> clientType, String clientName, MethodMetadata method) {}
 ```
 
-Override the four-argument variant when the capturer needs annotation-driven behavior: `operation` is
-always supplied by the dispatcher from its own client-method metadata, never by an interceptor and
-never derived from `RestClientRequestContext` (which deliberately carries no `java.lang.reflect.Method`).
-The default delegates to the three-argument form, so existing implementations keep working.
+Override the `RestClientOperation` variant when the capturer needs annotation-driven behavior: the
+dispatcher calls it for every attempt, and `operation` is always supplied by the dispatcher, never by
+an interceptor and never derived from `RestClientRequestContext` (which deliberately carries no
+`java.lang.reflect.Method`). `operation.clientType()` is the client interface the application built
+and `operation.method()` the invoked operation. Read type-level annotations from `clientType()` (and
+its super-interfaces), not from `method().declaringType()`, which is the super-interface for an
+operation inherited from one. Each default delegates to the next-narrower form (`RestClientOperation`,
+then `MethodMetadata`, then three arguments), so existing implementations keep working; never make a
+narrower form delegate back to a wider one.
+
+`RestClientBuilder.build` calls `validateOperation` once per operation of the client interface, before
+the proxy is created. It is the one capturer callback that may throw: an exception propagates out of
+`build`, so a configuration error a capturer can detect statically (such as an unknown audit policy
+id) fails startup instead of surfacing, or being swallowed, on a later attempt.
 
 Framework capturers should set `phase()` to `ExtensionPhase.SYSTEM_FIRST`. Capture precedes the
 interceptor chain structurally, so the phase orders capturers relative to each other and marks them as

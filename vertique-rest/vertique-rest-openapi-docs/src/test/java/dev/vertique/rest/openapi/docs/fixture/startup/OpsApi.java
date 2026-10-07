@@ -5,12 +5,14 @@ package dev.vertique.rest.openapi.docs.fixture.startup;
 
 import dev.vertique.rest.core.application.RestApplication;
 import dev.vertique.rest.openapi.docs.ApiDocs;
+import dev.vertique.security.authz.AccessPolicy;
+import jakarta.annotation.security.PermitAll;
 
 /**
  * The documented application {@code ops} at {@code /api/ops} listing {@link OpsResource}: its
- * declaring interface carries {@code @ApiDocs(access = PUBLIC)}.
+ * declaring interface carries {@code @ApiDocs(policy = PublicDocsPolicy.class)}.
  */
-@ApiDocs(access = ApiDocs.Access.PUBLIC)
+@ApiDocs(policy = OpsApi.PublicDocsPolicy.class)
 @RestApplication(name = OpsApi.NAME, path = OpsApi.PATH, resources = OpsResource.class)
 public interface OpsApi {
 
@@ -22,4 +24,8 @@ public interface OpsApi {
 
     /** The application's mount path, as its registration and publication report it. */
     String MOUNT_PATH = PATH + "/*";
+
+    /** Anyone may read the document. */
+    @PermitAll
+    public interface PublicDocsPolicy extends AccessPolicy {}
 }

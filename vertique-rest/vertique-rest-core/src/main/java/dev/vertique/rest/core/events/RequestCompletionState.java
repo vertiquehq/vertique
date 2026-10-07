@@ -12,14 +12,14 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Framework-owned completion state of one HTTP request: its start time, the exactly-once emission
- * flag, and the claim that records which transport owns the request and, for a REST operation,
- * which operation.
+ * flag, the optional post-handoff wire-failure cause, and the claim that records which transport
+ * owns the request and, for a REST operation, which operation.
  *
  * <p>{@link RestRequestCompletionEmitter} creates one state per request through
  * {@link RequestCompletionRecorder}, captures it in its single end-handler closure, and emits from
  * that state alone. The state is also the value of the request's holder in the shared
- * routing-context data, where the recorder's operation-route handler and other-transport claim find
- * it. Nothing outside this package can name the type.
+ * routing-context data, where the recorder's operation-route handler, other-transport claim, and
+ * wire-failure recorder find it. Nothing outside this package can name the type.
  *
  * <p><strong>Binding.</strong> The state records the {@link HttpServerRequest} it was created for.
  * The recorder's holder lookup returns it only on a routing context whose {@code request()} is that
@@ -55,6 +55,14 @@ final class RequestCompletionState {
 
     /** The current (claim, operation) value; replaced whole, never mutated. */
     private volatile Claim claim = Claim.NONE;
+
+    /**
+     * First post-handoff wire-failure cause recorded for this request, or {@code null}. First writer
+     * wins; later writers are ignored. Cleared on neither reroute nor claim change: a failure
+     * observed before emission must still classify the event.
+     */
+    @Nullable
+    private volatile Throwable wireFailure;
 
     /**
      * Creates the state of a request that starts now.
@@ -128,10 +136,33 @@ final class RequestCompletionState {
 
     /**
      * Applies a reroute: every claim becomes {@code NONE}, so the rerouted target decides. The start
-     * time and the emitted flag are kept.
+     * time, the emitted flag, and any recorded wire failure are kept.
      */
     void reroute() {
         claim = Claim.NONE;
+    }
+
+    /**
+     * Records {@code cause} as the request's post-handoff wire failure when none is recorded yet
+     * (first writer wins). Later calls leave the first cause unchanged.
+     *
+     * @param cause the failure observed after response handoff; must not be {@code null}
+     */
+    void recordWireFailure(Throwable cause) {
+        Objects.requireNonNull(cause, "cause");
+        if (wireFailure == null) {
+            wireFailure = cause;
+        }
+    }
+
+    /**
+     * Returns the first post-handoff wire-failure cause recorded for this request, or {@code null}.
+     *
+     * @return the recorded cause, or {@code null} when none was recorded
+     */
+    @Nullable
+    Throwable wireFailure() {
+        return wireFailure;
     }
 
     /** Which transport, if any, has claimed the request. */

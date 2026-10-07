@@ -14,6 +14,7 @@ import io.vertx.core.DeploymentOptions;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
+import io.vertx.core.http.HttpClient;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.client.HttpResponse;
 import io.vertx.ext.web.client.WebClient;
@@ -70,7 +71,8 @@ class TwoUnitApplicationsTest {
         assertNotNull(deploymentId, "the deployment must succeed");
 
         int port = (Integer) vertx.sharedData().getLocalMap("vertique").get("http.port");
-        WebClient client = WebClient.create(vertx);
+        HttpClient transport = vertx.createHttpClient();
+        WebClient client = WebClient.wrap(transport);
         try {
             HttpResponse<Buffer> catalogResponse = await(client.get(port, "127.0.0.1", "/api/public/catalog").send());
             assertEquals(200, catalogResponse.statusCode(), "GET /api/public/catalog must return 200");
@@ -91,7 +93,7 @@ class TwoUnitApplicationsTest {
                     legacyCatalogResponse.statusCode(),
                     "the leftover Application subclass stays inert: no mount exists at /api/legacy");
         } finally {
-            client.close();
+            await(transport.close());
         }
 
         assertEquals(

@@ -7,13 +7,16 @@ import dev.vertique.rest.core.application.RestApplication;
 import dev.vertique.rest.openapi.docs.ApiDocs;
 import dev.vertique.rest.openapi.docs.fixture.startup.OpsApi;
 import dev.vertique.rest.openapi.docs.fixture.startup.OpsResource;
+import dev.vertique.security.authz.AccessPolicy;
+import jakarta.annotation.security.RolesAllowed;
 
 /**
- * Application {@code ops} at {@code /api/ops} listing {@link OpsResource}, whose protected document lists an empty allowed role. The annotation processor refuses this shape; only a hand-written registration declares it.
+ * Application {@code ops} at {@code /api/ops} listing {@link OpsResource}, whose roles policy lists an empty allowed role, which the policy resolver rejects. The annotation processor refuses this shape; only a hand-written registration declares it.
  */
-@ApiDocs(
-        access = ApiDocs.Access.PROTECTED,
-        securityScheme = "bearerAuth",
-        rolesAllowed = {""})
+@ApiDocs(policy = OpsEmptyRoleEntryApi.RolesDocsPolicy.class, securityScheme = "bearerAuth")
 @RestApplication(name = OpsApi.NAME, path = OpsApi.PATH, resources = OpsResource.class)
-public interface OpsEmptyRoleEntryApi {}
+public interface OpsEmptyRoleEntryApi {
+    /** Readers holding one of the listed roles may read the document. */
+    @RolesAllowed({""})
+    public interface RolesDocsPolicy extends AccessPolicy {}
+}

@@ -53,10 +53,18 @@ import javax.lang.model.type.TypeMirror;
  *
  * <h2>Pre-computed SecurityPolicy</h2>
  *
+ * <p>A {@code @RequiresPolicy} reference is expanded by {@code EffectiveJaxRsContractResolver}
+ * into the same {@link dev.vertique.rest.core.security.SecurityPolicy} variants before this
+ * emitter runs. The role/scope constant is that contract. The method-annotation list passed to
+ * registration is {@code AccessPolicyResolver.collectMethodAnnotations} of the legacy list, so a
+ * generic override and a same-package non-public override keep their {@code @RequiresPolicy}.
+ * The action stays on that list. A selected method policy replaces the type policy even when
+ * that method policy is action-only and its role/scope contract is empty.
+ *
  * <p>The JAX-RS security policy for each method is resolved at compile time from the
  * {@link EffectiveSecurityContract} (applying the Jakarta EE "method overrides class" rule) and
- * emitted as a {@code private static final SecurityPolicy SP_<methodName>} constant. Generated
- * descriptors never invoke any runtime security-resolver call; the constant is read directly.
+ * emitted as a {@code private static final SecurityPolicy SP_<methodName>} constant. That constant
+ * is read directly. The method-annotation list is collected when the descriptor is described.
  *
  * <h2>Sub-resource locators</h2>
  *
@@ -235,9 +243,12 @@ public final class JaxRsDescriptorEmitter {
                         scConstName, routeSanits.stream().map(this::erasedFqn).toList()));
             }
 
-            // SecurityPolicy constant
+            // SecurityPolicy constant. An empty method contract normally means "no method
+            // override". A selected method policy is an override even when it is action-only.
             String spConstName = "SP" + methodSuffix;
-            EffectiveSecurityContract effective = effectiveSecurity(contract.classSecurity(), mc.methodSecurity());
+            EffectiveSecurityContract effective = mc.methodPolicyReplacesClass()
+                    ? mc.methodSecurity()
+                    : effectiveSecurity(contract.classSecurity(), mc.methodSecurity());
             staticFields.add(securityPolicyConst(spConstName, effective));
 
             // --- Build method resolution and ResourceMethodMeta in describe() body ---
@@ -290,10 +301,11 @@ public final class JaxRsDescriptorEmitter {
             describeBody.addStatement("var $L = resolveCanonicalizerChain(support, cl_, $L)", ccVarName, ccConstName);
             describeBody.addStatement("var $L = resolveSanitizerChain(support, cl_, $L)", scVarName, scConstName);
             describeBody.addStatement(
-                    "$T<$T> $L = support.effectiveMethodAnnotations($L)",
+                    "$T<$T> $L = support.collectPolicyAnnotations(resourceType(), $L, support.effectiveMethodAnnotations($L, resourceType()))",
                     LIST,
                     ANNOTATION,
                     methodAnnosVarName,
+                    methodVarName,
                     methodVarName);
             describeBody.addStatement(
                     "$T<$T> $L = support.effectiveClassAnnotations(resourceType())",

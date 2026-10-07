@@ -6,6 +6,9 @@ package dev.vertique.rest.jaxrs.runtime;
 import dev.vertique.core.sanitization.Canonicalizer;
 import dev.vertique.core.sanitization.Sanitizer;
 import dev.vertique.core.util.AnnotationResolver;
+import dev.vertique.rest.core.security.SecurityPolicyViolation;
+import dev.vertique.rest.core.security.SecurityPolicyViolationException;
+import dev.vertique.security.authz.AccessPolicyResolver;
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
@@ -190,17 +193,63 @@ public final class GeneratedJaxRsDescriptorSupport {
     }
 
     /**
-     * Returns the merged annotation list for a method, walking the superclass chain and all
-     * transitively reachable interfaces in BFS order (via {@link AnnotationResolver}).
+     * Returns the merged annotation list for a method, walking the superclass chain and the
+     * interfaces of the method's declaring class in BFS order (via {@link AnnotationResolver}).
      *
-     * <p>Annotations declared only on the interface method (e.g. {@code @Operation},
-     * {@code @ValidateWith}) are included in the result even when the concrete override has
-     * none.
+     * <p>Equivalent to {@link #effectiveMethodAnnotations(Method, Class)
+     * effectiveMethodAnnotations(method, method.getDeclaringClass())}. Prefer the two-argument
+     * overload with the resource class so a superclass-declared method inherits annotations from
+     * interfaces the resource implements.
      *
      * @param method the method to inspect; must not be {@code null}
      * @return an immutable list of all resolved annotations; never {@code null}
      */
     public List<Annotation> effectiveMethodAnnotations(Method method) {
-        return AnnotationResolver.resolveMethodAnnotations(method);
+        return effectiveMethodAnnotations(method, method.getDeclaringClass());
+    }
+
+    /**
+     * Returns the merged annotation list for a method resolved as a member of {@code viewType},
+     * walking the superclass chain and the interfaces of {@code viewType} in BFS order (via
+     * {@link AnnotationResolver}).
+     *
+     * <p>Annotations declared only on an interface method (e.g. {@code @Operation},
+     * {@code @ValidateWith}) are included even when the concrete override has none. Pass the
+     * resource class as {@code viewType} for class-declared methods (including superclass ones);
+     * for an inherited interface {@code default}, pass the declaring interface.
+     *
+     * @param method   the method to inspect; must not be {@code null}
+     * @param viewType the type whose interface hierarchy supplies inherited annotations; must not
+     *                 be {@code null}
+     * @return an immutable list of all resolved annotations; never {@code null}
+     */
+    public List<Annotation> effectiveMethodAnnotations(Method method, Class<?> viewType) {
+        Class<?> declaring = method.getDeclaringClass();
+        Class<?> annotationView = declaring.isInterface() ? declaring : viewType;
+        return AnnotationResolver.resolveMethodAnnotations(method, annotationView);
+    }
+
+    /**
+     * Applies typed-policy collection rooted at the resource type to the merged annotation list of
+     * a generated descriptor, failing registration the way the reflective scanner does.
+     *
+     * @param resourceType the resource class the descriptor describes; must not be {@code null}
+     * @param method       the resource method; must not be {@code null}
+     * @param legacy       the merged annotation list from {@link #effectiveMethodAnnotations}
+     * @return the legacy list, or its non-security annotations plus the selected policy
+     * @throws SecurityPolicyViolationException if a policy declaration is invalid or conflicting
+     */
+    public List<Annotation> collectPolicyAnnotations(Class<?> resourceType, Method method, List<Annotation> legacy) {
+        try {
+            return AccessPolicyResolver.collectMethodAnnotations(resourceType, method, legacy);
+        } catch (IllegalArgumentException | TypeNotPresentException ex) {
+            SecurityPolicyViolationException failure =
+                    new SecurityPolicyViolationException(List.of(new SecurityPolicyViolation(
+                            method.getName(),
+                            SecurityPolicyViolation.ViolationType.CONFLICTING_SECURITY_ANNOTATIONS,
+                            "Invalid or conflicting security policy at RequiresPolicy: " + ex.getMessage())));
+            failure.initCause(ex);
+            throw failure;
+        }
     }
 }

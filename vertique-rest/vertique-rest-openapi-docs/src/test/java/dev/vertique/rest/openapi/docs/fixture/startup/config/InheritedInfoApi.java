@@ -7,6 +7,8 @@ import dev.vertique.rest.core.application.RestApplication;
 import dev.vertique.rest.openapi.docs.ApiDocs;
 import dev.vertique.rest.openapi.docs.fixture.CatalogResource;
 import dev.vertique.rest.openapi.docs.fixture.PublicApi;
+import dev.vertique.security.authz.AccessPolicy;
+import jakarta.annotation.security.PermitAll;
 
 /**
  * Application {@code public} at {@code /api/public} listing {@link CatalogResource}, documented
@@ -14,6 +16,10 @@ import dev.vertique.rest.openapi.docs.fixture.PublicApi;
  * which does. The annotation processor refuses this shape, so only a hand-written registration
  * declares it, and only in a view that never builds mounts.
  */
-@ApiDocs(access = ApiDocs.Access.PUBLIC)
+@ApiDocs(policy = InheritedInfoApi.PublicDocsPolicy.class)
 @RestApplication(name = PublicApi.NAME, path = PublicApi.PATH, resources = CatalogResource.class)
-public interface InheritedInfoApi extends InfoParentApi {}
+public interface InheritedInfoApi extends InfoParentApi {
+    /** Anyone may read the document. */
+    @PermitAll
+    public interface PublicDocsPolicy extends AccessPolicy {}
+}

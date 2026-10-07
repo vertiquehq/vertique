@@ -5,16 +5,15 @@ package dev.vertique.rest.openapi.docs.fixture;
 
 import dev.vertique.rest.core.application.RestApplication;
 import dev.vertique.rest.openapi.docs.ApiDocs;
+import dev.vertique.security.authz.AccessPolicy;
+import jakarta.annotation.security.RolesAllowed;
 
 /**
  * The same declaration as {@link MgmtApi} with a protected document: application {@code mgmt} at
- * {@code /api/mgmt}, whose declaring interface carries {@code @ApiDocs(access = PROTECTED)} guarded
+ * {@code /api/mgmt}, whose declaring interface carries {@code @ApiDocs(policy = AuthenticatedDocsPolicy.class)} guarded
  * by the {@value #SECURITY_SCHEME} scheme and the {@value #ROLE} role.
  */
-@ApiDocs(
-        access = ApiDocs.Access.PROTECTED,
-        securityScheme = ProtectedMgmtApi.SECURITY_SCHEME,
-        rolesAllowed = {ProtectedMgmtApi.ROLE})
+@ApiDocs(policy = ProtectedMgmtApi.RolesDocsPolicy.class, securityScheme = ProtectedMgmtApi.SECURITY_SCHEME)
 @RestApplication(name = MgmtApi.NAME, path = MgmtApi.PATH, resources = ManagementResource.class)
 public interface ProtectedMgmtApi {
 
@@ -23,4 +22,8 @@ public interface ProtectedMgmtApi {
 
     /** The role allowed to read the document. */
     String ROLE = "admin";
+
+    /** Readers holding one of the listed roles may read the document. */
+    @RolesAllowed({ProtectedMgmtApi.ROLE})
+    public interface RolesDocsPolicy extends AccessPolicy {}
 }

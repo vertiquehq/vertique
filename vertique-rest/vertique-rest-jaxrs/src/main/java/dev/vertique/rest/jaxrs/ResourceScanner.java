@@ -18,6 +18,7 @@ import dev.vertique.rest.core.security.SecurityPolicyViolationException;
 import dev.vertique.rest.jaxrs.runtime.GeneratedJaxRsDescriptorRegistry;
 import dev.vertique.rest.jaxrs.runtime.GeneratedJaxRsDescriptorSupport;
 import dev.vertique.rest.jaxrs.runtime.GeneratedJaxRsResourceDescriptor;
+import dev.vertique.security.authz.AccessPolicyResolver;
 import io.swagger.v3.oas.annotations.Operation;
 import io.vertx.ext.web.FileUpload;
 import jakarta.annotation.Nullable;
@@ -153,12 +154,31 @@ class ResourceScanner {
         for (Method method : collectMethods(clazz)) {
             // Hoist merged annotation lists to the top of the loop so all subsequent helpers
             // use the same pre-resolved lists and avoid redundant AnnotationResolver traversal.
-            List<Annotation> methodAnnotations = AnnotationResolver.resolveMethodAnnotations(method);
-
-            String httpMethod = resolveHttpMethod(methodAnnotations);
-            if (httpMethod == null) {
+            // Interface defaults keep their declaring-interface view; class-declared methods
+            // (including superclass ones) use the resource class so interfaces it implements
+            // contribute annotations (vertiquehq/vertique-dev#636).
+            Class<?> annotationView = annotationViewType(method, clazz);
+            List<Annotation> legacyMethodAnnotations =
+                    AnnotationResolver.resolveMethodAnnotations(method, annotationView);
+            // Only operations that are routes carry a policy; a helper method is skipped before
+            // its declarations are collected, as on the inline-only path.
+            if (resolveHttpMethod(legacyMethodAnnotations) == null) {
                 continue;
             }
+            List<Annotation> methodAnnotations;
+            try {
+                methodAnnotations =
+                        AccessPolicyResolver.collectMethodAnnotations(clazz, method, legacyMethodAnnotations);
+            } catch (IllegalArgumentException | TypeNotPresentException ex) {
+                SecurityPolicyViolationException failure =
+                        new SecurityPolicyViolationException(List.of(new SecurityPolicyViolation(
+                                resolveOperationId(legacyMethodAnnotations, method),
+                                SecurityPolicyViolation.ViolationType.CONFLICTING_SECURITY_ANNOTATIONS,
+                                "Invalid or conflicting security policy at RequiresPolicy: " + ex.getMessage())));
+                failure.initCause(ex);
+                throw failure;
+            }
+            String httpMethod = resolveHttpMethod(methodAnnotations);
 
             String operationId = resolveOperationId(methodAnnotations, method);
             String path = resolvePath(classAnnotations, methodAnnotations);
@@ -188,7 +208,7 @@ class ResourceScanner {
                 continue;
             }
 
-            List<ResourceMethodMeta.ParamMeta> params = resolveParams(method);
+            List<ResourceMethodMeta.ParamMeta> params = resolveParams(method, annotationView);
             Class<?> responseBodyType = resolveResponseBodyType(method);
             boolean returnsFuture = io.vertx.core.Future.class.isAssignableFrom(method.getReturnType());
             boolean returnsVoid = responseBodyType == Void.class || method.getReturnType() == void.class;
@@ -321,10 +341,12 @@ class ResourceScanner {
      * {@link FormParam}, {@link BeanParam}, {@link Context}) and type (body, context,
      * {@code List<FileUpload>}, {@code List<EntityPart>}).
      *
-     * <p>Merged parameter annotations from the method's superclass chain and interfaces are
-     * retrieved via {@link AnnotationResolver#resolveParameterAnnotations(Method, int)}, ensuring
-     * that interface-declared parameter annotations ({@code @PathParam}, {@code @DefaultValue},
-     * etc.) are honoured for concrete implementations with no direct annotations.
+     * <p>Merged parameter annotations from the method's superclass chain and the annotation-view
+     * type's interfaces are retrieved via
+     * {@link AnnotationResolver#resolveParameterAnnotations(Method, int, Class)}, ensuring that
+     * interface-declared parameter annotations ({@code @PathParam}, {@code @DefaultValue}, etc.)
+     * are honoured for concrete implementations with no direct annotations — including when the
+     * method is declared by a superclass that does not itself implement the interface.
      *
      * <p>Detection order:
      *
@@ -350,16 +372,19 @@ class ResourceScanner {
      *   <li>Unannotated other type — request body (JSON deserialization)
      * </ol>
      *
-     * @param method the resource method
+     * @param method         the resource method
+     * @param annotationView the type whose interfaces supply inherited parameter annotations
      * @return ordered list of parameter metadata
      */
-    List<ResourceMethodMeta.ParamMeta> resolveParams(Method method) {
+    List<ResourceMethodMeta.ParamMeta> resolveParams(Method method, Class<?> annotationView) {
         List<ResourceMethodMeta.ParamMeta> params = new ArrayList<>();
         Parameter[] parameters = method.getParameters();
         for (int i = 0; i < parameters.length; i++) {
             Parameter param = parameters[i];
-            // Merge parameter annotations from the concrete method, superclasses, and interfaces.
-            Annotation[] mergedParamAnnotations = AnnotationResolver.resolveParameterAnnotations(method, i);
+            // Merge parameter annotations from the concrete method, superclasses, and the view's
+            // interfaces.
+            Annotation[] mergedParamAnnotations =
+                    AnnotationResolver.resolveParameterAnnotations(method, i, annotationView);
 
             // FR-REST-166/167/179: single CONTEXT source. A @Context-annotated parameter is
             // ALWAYS CONTEXT (even if its type is non-injectable) so RouteValidator can reject it
@@ -736,6 +761,23 @@ class ResourceScanner {
             return List.of(valueExtractor.apply(classAnn));
         }
         return List.of();
+    }
+
+    /**
+     * Returns the type whose interface hierarchy supplies inherited method annotations for
+     * {@code method} when resolved as a member of {@code resourceClass}.
+     *
+     * <p>Matches codegen {@code JaxRsHierarchy.interfacesForMethod}: an inherited interface
+     * {@code default} keeps its declaring-interface view; a class-declared method (including one
+     * inherited from a superclass) uses the resource class.
+     *
+     * @param method        the candidate resource method
+     * @param resourceClass the resource class being scanned
+     * @return the annotation-view type
+     */
+    private static Class<?> annotationViewType(Method method, Class<?> resourceClass) {
+        Class<?> declaring = method.getDeclaringClass();
+        return declaring.isInterface() ? declaring : resourceClass;
     }
 
     /**

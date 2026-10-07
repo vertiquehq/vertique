@@ -226,7 +226,8 @@ Validation requires a public, non-final enclosing class with exactly one constru
 overridden: final, private, static, and abstract methods are rejected. Each failure is reported as
 a family-prefixed compile-time diagnostic. Enclosing-class checks are memoized per class, so
 co-located annotations do not repeat the same class-level diagnostics; method-level checks still
-apply to each method.
+apply to each method. Methods enclosed by an interface are skipped — `vertique-codegen-aop` weaves
+those triggers onto concrete implementors and validates the implementor beans instead.
 
 ---
 
@@ -355,6 +356,11 @@ Nineteen public types — `CodegenContext`, `AnnotationMirrors`, `AnnotationLite
 substrate. They are public because sibling framework processors in other artifacts call them across
 package boundaries, and their Javadoc marks them INTERNAL. They are outside this module's
 compatibility promise.
+
+Within this internal namespace, `JaxRsAnnotations.AUTHORIZED` identifies
+`dev.vertique.security.authz.Authorized`, owned by `vertique-security-core`.
+`AccessPolicyAnnotationResolver` selects a `@RequiresPolicy` reference from annotation mirrors and
+returns that policy's direct requirements. It does not depend on `vertique-security-core`.
 
 What this module promises an application is the wiring annotations above and the Dagger graph they
 generate: the binding kind, scope, qualifier and set membership, whether a conditioned binding is

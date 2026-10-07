@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # REST WebSocket Module
 
-> **Status:** Beta
+> **Status:** Stable
 > **Package:** `dev.vertique.rest.websocket`
 > **Artifact:** `vertique-rest-websocket`
 > **Depends on:** rest-core, rest-security, core, context, security-core, security-runtime, logging
@@ -34,6 +34,7 @@ authentication, typed message handling, and context propagation on them rather t
 | Bearer-token authentication on the upgrade | `dev.vertique:vertique-rest-auth-jwt` (or another module contributing a `RouteAuthHandler`) |
 | Role/scope enforcement and a resolved `SecurityContext` | `dev.vertique:vertique-rest-security` (`AuthModule` + `SecurityModule`) |
 | `@RequiresAction` action gates on endpoints | `dev.vertique:vertique-security-runtime` (`SecurityAuthzModule`) |
+| A reusable `@RequiresPolicy` on endpoints | `dev.vertique:vertique-security-core` (policy types); `dev.vertique:vertique-rest-security` for a role/scope policy (enforcement); add `vertique-security-runtime` when the policy carries an action |
 | Bean Validation on typed messages | `dev.vertique:vertique-validation` (`ValidationModule`) |
 | Canonicalization/sanitization of inbound values | `dev.vertique:vertique-sanitization` (`SanitizationModule`) |
 
@@ -49,8 +50,9 @@ configuration for local development and for genuinely public sockets.
 A WebSocket endpoint's route runs four handlers in a fixed order before the socket exists:
 
 1. **Authentication** — installed only when the endpoint's policy is `@RolesAllowed`/`@Authorized`
-   (or when a class-level `@RequiresAction` is present). It sets the Vert.x user and appends
-   authentication evidence.
+   (or when a class-level `@RequiresAction` is present, or when a class-level `@RequiresPolicy`
+   resolves to a role, scope or authenticated-caller requirement, or carries an action). It sets
+   the Vert.x user and appends authentication evidence.
 2. **Identity resolution** — resolves the framework `SecurityContext` from that evidence.
 3. **Authorization** — evaluates the role/scope policy AND, when present, the `@RequiresAction`
    action gate. Both must pass.
@@ -70,17 +72,50 @@ therefore carry origin kind `websocket`, distinguishing them from REST's `rest`.
 
 **Fail-closed registration when the pipeline is absent.** Without `AuthModule` (no
 `IdentityPipelineFactory` bound), registering an endpoint whose security policy is restrictive
-(`@DenyAll`, `@RolesAllowed`, `@Authorized`) or that declares a class-level `@RequiresAction` fails
-startup with one aggregated `IllegalStateException` naming every offending endpoint class and its
-policy — see [Startup failures](#startup-failures). Unannotated endpoints are unaffected and keep
-serving unauthenticated.
+(`@DenyAll`, `@RolesAllowed`, `@Authorized`, or a `@RequiresPolicy` resolving to one of them) or
+that declares a class-level `@RequiresAction` fails startup with one aggregated
+`IllegalStateException` naming every offending endpoint class and its policy — see
+[Startup failures](#startup-failures). Unannotated endpoints are unaffected and keep serving
+unauthenticated.
 
 ### There is no per-message authorization
 
-Authorization runs once, at upgrade. `@RequiresAction` is accepted at **class level only**; placing
-it on `@OnOpen`, `@OnMessage`, `@OnClose`, or `@OnError` fails startup rather than being silently
-ignored. If a connection's privileges must change mid-stream, refresh the channel identity (see
-[Identity refresh](#identity-refresh)) — do not expect the framework to re-check a gate per frame.
+Authorization runs once, at upgrade. `@RequiresAction` and `@RequiresPolicy` are accepted at **class
+level only**; placing either on `@OnOpen`, `@OnMessage`, `@OnClose`, or `@OnError` fails startup
+rather than being silently ignored. If a connection's privileges must change mid-stream, refresh the
+channel identity (see [Identity refresh](#identity-refresh)) — do not expect the framework to
+re-check a gate per frame.
+
+### Typed policies gate admission only
+
+A class-level `@RequiresPolicy` names a reusable access policy (an interface extending
+`AccessPolicy` whose annotations declare the requirements) and resolves at startup to the same role,
+scope, public/deny and action gate the inline annotations produce. It decides whether the upgrade is
+admitted and nothing else.
+
+```java
+@RequiresPolicy(EditorPolicy.class)
+@WebSocketEndpoint("/ws/documents/{id}")
+public class DocumentEndpoint {
+
+    private final DocumentService documents;
+
+    @OnMessage
+    Future<Void> onMessage(WebSocketSession session, DocumentEdit edit) {
+        // The upgrade was admitted by EditorPolicy; the service re-checks its own policy per call.
+        return documents.apply(edit);
+    }
+}
+```
+
+Admission and service access are separate decisions:
+
+- **A permitted upgrade grants no standing permission.** A message that calls a policy-protected
+  service is checked again at that service, with the caller's identity at that moment; a refused
+  call has no effect.
+- **Handler code is not intercepted.** Arbitrary code in your `@OnMessage` method and ordinary Java
+  calls on service implementations are not enforced automatically. Protect business work with a
+  policy on the service and call it through the generated or proxy service client.
 
 ### Frames are gated until `@OnOpen` completes
 
@@ -212,7 +247,8 @@ public @interface WebSocketEndpoint {
 
 The path template is relative to `websocket.basePath`. Combine the annotation with the JAX-RS
 security annotations (`@RolesAllowed`, `@PermitAll`, `@DenyAll`, `@Authorized`) and, optionally,
-`@RequiresAction` — all at class level.
+`@RequiresAction` — all at class level — or replace them with a single class-level
+`@RequiresPolicy`, which cannot be mixed with them.
 
 ### Lifecycle annotations
 
@@ -429,13 +465,14 @@ application declares security the same way on both transports:
 | `@RolesAllowed({...})` | class | Authenticate, then require any one of the listed roles |
 | `@Authorized(scopes = {...})` | class | Authenticate, then enforce the declared scopes |
 | `@RequiresAction("...")` | class | Authenticate, then evaluate the action gate — AND-composed with the above |
+| `@RequiresPolicy(Policy.class)` | class | Resolves to the policy's role/scope/public/deny predicates and optional action gate, then behaves as the matching rows above; not combinable with the inline annotations |
 | `@PathParam("name")` | lifecycle method parameter | Binds a path-template placeholder |
 | `@ValidateWith(groups = {...})` | `@OnMessage` method | Selects Bean Validation groups |
 
-Method-level security annotations on lifecycle methods fail startup — the endpoint class is the only
-site for the security policy above. Input canonicalization and sanitization policies are resolved
-separately, and do read method- and parameter-level declarations — see
-[Validation and Input Processing](#validation-and-input-processing).
+Method-level security annotations (including `@RequiresPolicy`) on lifecycle methods fail startup —
+the endpoint class is the only site for the security policy above. Input canonicalization and
+sanitization policies are resolved separately, and do read method- and parameter-level
+declarations — see [Validation and Input Processing](#validation-and-input-processing).
 
 ---
 
@@ -657,12 +694,15 @@ All of these are raised while the router is built, so a misconfigured endpoint n
 | Conflicting security annotations on the class | `IllegalArgumentException` |
 | `@RolesAllowed` with an empty value list | `IllegalArgumentException` |
 | `@DenyAll`, `@RolesAllowed`, `@PermitAll`, or `@Authorized` on a lifecycle method | `IllegalArgumentException` |
+| `@RequiresPolicy` on a lifecycle method | `IllegalArgumentException` |
+| `@RequiresPolicy` naming an invalid policy, distinct policies across the endpoint's type hierarchy, or a policy mixed with an inline security annotation | `IllegalArgumentException` |
 | `@RequiresAction` on a lifecycle method | `IllegalArgumentException` |
 | `@RequiresAction` that is not a canonical action reference | `IllegalArgumentException` |
 | `@RequiresAction` combined with `@PermitAll` or `@DenyAll` | `IllegalArgumentException` |
 | `@RequiresAction` with no `ActionRegistry` installed | `IllegalArgumentException` |
 | `@RequiresAction` naming an action absent from the `ActionRegistry` | `IllegalArgumentException` |
 | `@RequiresAction` with no authorization enforcement pipeline installed | `IllegalStateException` |
+| `@RequiresPolicy` resolving to a restrictive policy or an action, with no authorization enforcement pipeline installed | `IllegalStateException` |
 | `@RequiresAction` with an `ActionRegistry` but no `Authorizer` | `IllegalStateException` |
 | One or more endpoints declare a restrictive policy (`@DenyAll`, `@RolesAllowed`, `@Authorized`) or class-level `@RequiresAction`, but no `IdentityPipelineFactory` is bound (no `AuthModule`) — checked for every contributed endpoint before any authentication handler is installed; the one exception aggregates every violating endpoint class and its policy | `IllegalStateException` |
 | Endpoint needs authentication but no `RouteAuthHandler` is registered | `IllegalStateException` |
@@ -674,8 +714,9 @@ All of these are raised while the router is built, so a misconfigured endpoint n
 | An endpoint declares a canonicalizer or sanitizer chain — on the class, a lifecycle method, or a lifecycle-method parameter, directly or through a composed annotation — or the message type declares field-level policies, while no `InputObjectProcessor` is bound | `ConfigurationException` |
 | `@OnMessage` declares more than one payload-eligible parameter | `ConfigurationException` |
 
-Every `@RequiresAction` failure mode above is deliberately fail-closed: an action gate that cannot
-be enforced refuses to boot rather than serving traffic with the gate silently missing. The
+Every `@RequiresAction` failure mode above, and the same failures for an action carried by a
+`@RequiresPolicy`, is deliberately fail-closed: an action gate that cannot be enforced refuses to
+boot rather than serving traffic with the gate silently missing. The
 restrictive-policy-without-pipeline row is the same discipline applied to role/scope policies: a
 `@DenyAll` endpoint with no `AuthModule` installed would otherwise register open, and a graph that
 binds a `RouteAuthHandler` without the pipeline would authenticate but never authorize.
@@ -705,9 +746,15 @@ exactly one `HttpRequestCompletedEvent`.
 ### Common mistakes
 
 - **Expecting per-message authorization.** There is none. A `@DenyAll`, `@RolesAllowed`,
-  `@PermitAll`, `@Authorized`, or `@RequiresAction` on a lifecycle method fails startup for exactly
-  this reason — it would suggest a guarantee the transport cannot make. Put the annotation on the
-  endpoint class instead; WebSocket authorizes once at upgrade.
+  `@PermitAll`, `@Authorized`, `@RequiresAction`, or `@RequiresPolicy` on a lifecycle method fails
+  startup for exactly this reason — it would suggest a guarantee the transport cannot make. Put the
+  annotation on the endpoint class instead; WebSocket authorizes once at upgrade.
+- **Treating an admitted upgrade as permission to run protected work.** `@RequiresPolicy` on the
+  endpoint only admits the connection. Put the policy on the service the message calls; code that
+  bypasses the service client is not checked.
+- **Mixing `@RequiresPolicy` with an inline `@RolesAllowed`, `@Authorized`, `@PermitAll`,
+  `@DenyAll` or `@RequiresAction`.** Startup fails; declare the requirements in the policy or
+  inline, not both.
 - **Storing the `SecurityContext` in `session.attributes()` at `@OnOpen`.** It goes stale across an
   identity refresh. Read it per invocation instead.
 - **Assuming a class-level `@Canonicalize`/`@Sanitize` is inert.** It governs every lifecycle method

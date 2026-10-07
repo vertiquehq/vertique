@@ -11,7 +11,7 @@ import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
-import dev.vertique.rest.core.events.RestRequestCompletionEmitter;
+import dev.vertique.rest.core.events.RequestCompletionRecorder;
 import dev.vertique.rest.core.interceptor.RequestInterceptor;
 import dev.vertique.rest.core.response.ResponseProducerBinding;
 import dev.vertique.rest.core.response.ResponseSerializer;
@@ -61,9 +61,9 @@ import org.slf4j.LoggerFactory;
  *
  * <p>The {@code wire-completion observation} group additionally verifies what the pipeline does
  * with the serializer's wire-completion future <em>after</em> the response has been handed off:
- * the {@link RestRequestCompletionEmitter#KEY_WIRE_FAILURE} marker, the class-only WARN, guarded
- * terminal cleanup, redispatch onto the captured request context, and the error fail-open and
- * fallback-500 completion paths.
+ * the framework-owned wire-failure marker via {@link RequestCompletionRecorder}, the class-only
+ * WARN, guarded terminal cleanup, redispatch onto the captured request context, and the error
+ * fail-open and fallback-500 completion paths.
  */
 class ResponsePipelineTest {
 
@@ -72,6 +72,7 @@ class ResponsePipelineTest {
     private HttpServerResponse httpResponse;
     private ResponseSerializer serializer;
     private MultiMap responseHeaders;
+    private Map<String, Object> ctxData;
 
     @BeforeEach
     void setUp() {
@@ -98,8 +99,16 @@ class ResponsePipelineTest {
         responseHeaders = MultiMap.caseInsensitiveMultiMap();
         when(httpResponse.headers()).thenReturn(responseHeaders);
 
-        // RequestPreconditions.from() caches in ctx.data()
-        when(ctx.data()).thenReturn(new HashMap<>());
+        // RequestPreconditions.from() caches in ctx.data(); get/put must share that map so the
+        // framework-owned completion holder installed below is visible to recordWireFailure.
+        ctxData = new HashMap<>();
+        when(ctx.data()).thenReturn(ctxData);
+        when(ctx.get(anyString())).thenAnswer(invocation -> ctxData.get(invocation.getArgument(0)));
+        when(ctx.put(anyString(), any())).thenAnswer(invocation -> {
+            ctxData.put(invocation.getArgument(0), invocation.getArgument(1));
+            return ctx;
+        });
+        RequestCompletionRecorder.installHolder(ctx);
         // No conditional headers by default
         when(httpRequest.getHeader("If-None-Match")).thenReturn(null);
         when(httpRequest.getHeader("If-Match")).thenReturn(null);
@@ -761,7 +770,7 @@ class ResponsePipelineTest {
     /**
      * Tests for the pipeline's observation of the serializer's wire-completion future. A failure
      * reported through that future happened <em>after</em> the response was handed off to the wire:
-     * the pipeline records it under {@link RestRequestCompletionEmitter#KEY_WIRE_FAILURE}, logs the
+     * the pipeline records it through {@link RequestCompletionRecorder#recordWireFailure}, logs the
      * cause class only, and performs guarded terminal cleanup — it never writes a bare 500, never
      * re-fires {@code afterResponse}, and never re-enters {@code sendFallback500}.
      */
@@ -831,8 +840,11 @@ class ResponsePipelineTest {
             // then the failure is recorded on the routing context and logged class-only
             assertSame(
                     cause,
-                    ctx.data().get(RestRequestCompletionEmitter.KEY_WIRE_FAILURE),
-                    "the post-handoff wire failure must be recorded under KEY_WIRE_FAILURE");
+                    RequestCompletionRecorder.recordedWireFailure(ctx),
+                    "the post-handoff wire failure must be recorded on the framework-owned completion state");
+            assertFalse(
+                    ctxData.containsKey("vertique.rest.core.events.wireFailure"),
+                    "the retired public RoutingContext.data() key must not be written");
             List<String> warnings = wireFailureWarnings();
             assertEquals(1, warnings.size(), "exactly one WARN must report the wire failure");
             assertTrue(
@@ -865,7 +877,7 @@ class ResponsePipelineTest {
             // then the pipeline records the failure and owns terminal cleanup only
             assertSame(
                     cause,
-                    ctx.data().get(RestRequestCompletionEmitter.KEY_WIRE_FAILURE),
+                    RequestCompletionRecorder.recordedWireFailure(ctx),
                     "an immediately-failed completion future must still set the marker");
             verify(httpResponse).end();
             assertEquals(1, observed.size(), "afterResponse must fire exactly once, at wire handoff");
@@ -910,7 +922,7 @@ class ResponsePipelineTest {
                         "terminal cleanup must be redispatched onto the captured request context");
                 assertSame(
                         cause,
-                        ctx.data().get(RestRequestCompletionEmitter.KEY_WIRE_FAILURE),
+                        RequestCompletionRecorder.recordedWireFailure(ctx),
                         "the marker must be set on the request context, not the completing thread");
             } finally {
                 vertx.close().toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS);
@@ -1120,7 +1132,7 @@ class ResponsePipelineTest {
             // then the failure is still recorded and the end attempt was made
             assertSame(
                     cause,
-                    ctx.data().get(RestRequestCompletionEmitter.KEY_WIRE_FAILURE),
+                    RequestCompletionRecorder.recordedWireFailure(ctx),
                     "a throwing terminal end() must not prevent the marker from being recorded");
             verify(httpResponse).end();
         }
@@ -1147,7 +1159,7 @@ class ResponsePipelineTest {
             verify(serializer, times(2)).serialize(eq(ctx), any(Response.class));
             assertSame(
                     cause,
-                    ctx.data().get(RestRequestCompletionEmitter.KEY_WIRE_FAILURE),
+                    RequestCompletionRecorder.recordedWireFailure(ctx),
                     "the fail-open retry's completion future must be the observed one");
             verify(httpResponse, never()).setStatusCode(500);
         }
@@ -1175,8 +1187,8 @@ class ResponsePipelineTest {
             assertEquals(1, wireFailureWarnings().size(), "the failed fallback-500 write must be logged");
             assertSame(
                     cause,
-                    ctx.data().get(RestRequestCompletionEmitter.KEY_WIRE_FAILURE),
-                    "the fallback-500 end() failure must be recorded under KEY_WIRE_FAILURE");
+                    RequestCompletionRecorder.recordedWireFailure(ctx),
+                    "the fallback-500 end() failure must be recorded on the framework-owned completion state");
         }
     }
 }

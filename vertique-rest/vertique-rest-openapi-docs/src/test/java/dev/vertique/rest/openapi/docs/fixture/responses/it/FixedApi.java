@@ -5,6 +5,8 @@ package dev.vertique.rest.openapi.docs.fixture.responses.it;
 
 import dev.vertique.rest.core.application.RestApplication;
 import dev.vertique.rest.openapi.docs.ApiDocs;
+import dev.vertique.security.authz.AccessPolicy;
+import jakarta.annotation.security.PermitAll;
 
 /**
  * The documented application {@code fixed} at {@code /api} (mount {@code /api/*}), listing {@link
@@ -12,7 +14,7 @@ import dev.vertique.rest.openapi.docs.ApiDocs;
  * member carries {@code @Schema(hidden = true)} on its own field. Its document is public; its
  * {@code info} comes from configuration.
  */
-@ApiDocs(access = ApiDocs.Access.PUBLIC)
+@ApiDocs(policy = FixedApi.PublicDocsPolicy.class)
 @RestApplication(name = FixedApi.NAME, path = FixedApi.PATH, resources = FixedReceiptResource.class)
 public interface FixedApi {
 
@@ -21,4 +23,8 @@ public interface FixedApi {
 
     /** The application's path. */
     String PATH = "/api";
+
+    /** Anyone may read the document. */
+    @PermitAll
+    public interface PublicDocsPolicy extends AccessPolicy {}
 }

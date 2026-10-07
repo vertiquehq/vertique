@@ -28,6 +28,7 @@ const MAIN_SHA = 'a'.repeat(40);
 /** The one input shape that must be allowed, shallow-merged with `overrides`. */
 const allowedInputs = (overrides = {}) => ({
   event: 'workflow_run',
+  runEvent: 'push',
   conclusion: 'success',
   workflowName: 'CI',
   requiredWorkflowName: 'CI',
@@ -58,6 +59,13 @@ describe('SnapshotGuardTest', () => {
       fork: { headRepository: 'someone-else/vertique' },
       'non-main branch': { headBranch: 'feat/thing' },
       tag: { headBranch: 'refs/tags/v0.1.0' },
+      // Only a push to main stages a publishable payload.
+      'run started by a pull request': { runEvent: 'pull_request' },
+      'run started by a schedule': { runEvent: 'schedule' },
+      'run with no event': { runEvent: undefined },
+      // The version is spliced into workflow commands.
+      'version with shell metacharacters': { version: '1.0.0$(id)-SNAPSHOT' },
+      'version with a space': { version: '1.0 0-SNAPSHOT' },
       // The run succeeded on a commit that is no longer main: publishing it
       // would overwrite the snapshot with older bytes.
       'superseded head': { currentMainSha: 'b'.repeat(40) },
@@ -108,6 +116,22 @@ describe('PublicSnapshotWorkflowContractTest', () => {
     assert.match(yaml, /snapshot-guard\.mjs/, 'the workflow must delegate the decision to the guard');
   });
 
+  it('refusesAForkOrPullRequestRunBeforeAnyCheckout', () => {
+    const yaml = workflow();
+    const job = yaml.slice(yaml.indexOf('\n  publish:\n'));
+    const condition = /^    if: >-\n((?:      .*\n)+)/m.exec(job);
+    assert.ok(condition, 'the publish job must carry a job-level condition');
+
+    // The guard script is part of the checkout, so a run it did not gate could
+    // execute a fork's copy of it with the write token. GitHub evaluates this
+    // condition from server-populated event fields, before any step runs.
+    const text = condition[1].replace(/\s+/g, ' ');
+    assert.match(text, /github\.event\.workflow_run\.event == 'push'/);
+    assert.match(text, /github\.event\.workflow_run\.head_repository\.full_name == github\.repository/);
+    assert.match(text, /github\.event\.workflow_run\.head_branch == 'main'/);
+    assert.ok(job.indexOf('    if: >-') < job.indexOf('    steps:'), 'the condition must precede every step');
+  });
+
   it('usesLocalMinimalTokenAndRemainsNonRequired', () => {
     const yaml = workflow();
 
@@ -149,5 +173,67 @@ describe('PublicSnapshotWorkflowContractTest', () => {
         `snapshot workflow step embeds logic: "${command}"`
       );
     }
+  });
+
+  it('deploysOnlyAVerifiedPayloadBuiltByTheTriggeringCiRun', () => {
+    const yaml = workflow();
+    const step = (name) => {
+      const start = yaml.indexOf(`      - name: ${name}\n`);
+      assert.ok(start >= 0, `snapshot workflow has no "${name}" step`);
+      return start;
+    };
+
+    // The reactor is not rebuilt here: bytes come from the triggering CI run.
+    assert.doesNotMatch(yaml, /mvnw/, 'publication must not rebuild the reactor');
+    // The version reaches the shell through the environment, never as command text.
+    const runLines = [...yaml.matchAll(/^\s*-?\s*run:\s*(.*)$/gm)].map((m) => m[1]);
+    for (const line of runLines) {
+      assert.doesNotMatch(line, /\$\{\{\s*steps\.guard\.outputs\.version/, `version spliced into a command: "${line}"`);
+    }
+    assert.match(
+      yaml,
+      /run-id:\s*\$\{\{\s*github\.event\.workflow_run\.id\s*\}\}/,
+      'the payload must be downloaded from the triggering run, not a caller-supplied run'
+    );
+
+    // Order matters: download, then check against the approved commit, then deploy.
+    const download = step('Download the CI-built payload');
+    const verify = step('Verify the payload belongs to the approved commit');
+    const publish = step('Publish the derived allowlist');
+    assert.ok(download < verify && verify < publish, 'the payload must be verified before it is deployed');
+    assert.match(
+      yaml.slice(verify, publish),
+      /snapshot-payload\.mjs verify[^\n]*--sha \$\{\{\s*steps\.guard\.outputs\.checkout_sha\s*\}\}/,
+      'the payload must be checked against the commit the guard approved'
+    );
+    assert.match(
+      yaml.slice(publish),
+      /--local-repository \$\{\{\s*runner\.temp\s*\}\}\/snapshot-payload\/repository/,
+      'publication must deploy the verified payload directory'
+    );
+  });
+
+  it('stagesThePayloadFromTheTestedBuildOnPushesOnly', () => {
+    const ci = readFileSync(path.join(REPO_ROOT, '.github', 'workflows', 'ci.yml'), 'utf8');
+    const stageStart = ci.indexOf('      - name: Stage the SNAPSHOT payload\n');
+    const uploadStart = ci.indexOf('      - name: Upload the SNAPSHOT payload\n');
+    assert.ok(stageStart >= 0 && uploadStart > stageStart, 'ci.yml must stage, then upload, the SNAPSHOT payload');
+
+    // Staged from the build the tests ran in, so only after that build.
+    assert.ok(ci.indexOf('      - name: Build and test\n') < stageStart, 'the payload must be staged after the tested build');
+    const stage = ci.slice(stageStart, uploadStart);
+    const upload = ci.slice(uploadStart, ci.indexOf('\n\n', uploadStart));
+
+    // A pull request must never produce a payload that publication could pick up.
+    for (const [label, step] of [['stage', stage], ['upload', upload]]) {
+      assert.match(step, /^        if: github\.event_name == 'push'$/m, `the ${label} step must run on push only`);
+    }
+    assert.match(stage, /stage-snapshot-payload\.sh[^\n]*--sha \$\{\{\s*github\.sha\s*\}\}/, 'the payload must be bound to the built commit');
+    assert.match(upload, /name: snapshot-payload\n/, 'the artifact name must match the one publication downloads');
+    assert.match(upload, /if-no-files-found: error/, 'an empty payload must fail CI');
+
+    // One upload step in the whole run: nothing else may publish an artifact of that name.
+    assert.equal([...ci.matchAll(/name: snapshot-payload\n/g)].length, 1);
+    assert.doesNotMatch(ci, /overwrite:\s*true/, 'no step may overwrite an uploaded artifact');
   });
 });

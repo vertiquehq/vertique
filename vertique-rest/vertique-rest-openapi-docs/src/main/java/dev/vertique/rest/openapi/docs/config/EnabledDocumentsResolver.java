@@ -90,6 +90,10 @@ public final class EnabledDocumentsResolver {
      * neither {@code info} nor {@code serverUrl} and carries no {@code OpenAPIDefinition} on its
      * declaring interface itself, since each would rewrite that contract.
      *
+     * <p>The access classification of a document is derived from the policy its {@link ApiDocs}
+     * declares by {@link DocumentPolicies}; a declaration whose policy is missing or invalid is
+     * classified protected here and refused by the checks before any document is returned.
+     *
      * @param config the root configuration
      * @param apidocsConfig the parsed {@code apidocs} section
      * @param applications the declared applications of the component
@@ -128,7 +132,7 @@ public final class EnabledDocumentsResolver {
             enabled.add(new EnabledDocuments.EnabledDocument(
                     application.name(),
                     application.declaringType(),
-                    annotation.access(),
+                    DocumentPolicies.classifyOrProtect(annotation),
                     application.mountPath(),
                     application.contractOrigin(),
                     info,

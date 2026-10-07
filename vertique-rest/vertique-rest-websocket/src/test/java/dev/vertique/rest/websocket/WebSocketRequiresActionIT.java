@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.core.context.ContextHolder;
 import dev.vertique.core.context.ContextValue;
@@ -27,6 +28,7 @@ import dev.vertique.security.PrincipalRef;
 import dev.vertique.security.PrincipalType;
 import dev.vertique.security.SecurityContext;
 import dev.vertique.security.SecurityIdentity;
+import dev.vertique.security.authz.AccessPolicy;
 import dev.vertique.security.authz.ActionDefinition;
 import dev.vertique.security.authz.ActionRef;
 import dev.vertique.security.authz.ActionRegistry;
@@ -36,6 +38,8 @@ import dev.vertique.security.authz.AuthorizationRequest;
 import dev.vertique.security.authz.Authorizer;
 import dev.vertique.security.authz.AuthzReasonCodes;
 import dev.vertique.security.authz.InvocationOrigin;
+import dev.vertique.security.authz.RequiresAction;
+import dev.vertique.security.authz.RequiresPolicy;
 import dev.vertique.security.authz.ResourceRef;
 import dev.vertique.security.events.AuthorizationDecisionEvent;
 import dev.vertique.security.events.SecurityEventObserver;
@@ -65,6 +69,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -166,7 +171,7 @@ public class WebSocketRequiresActionIT {
                 emitter,
                 contextHolder,
                 securityRuntime,
-                Optional.of(new EditorActionAuthorizer()));
+                Optional.of(new CountingEditorActionAuthorizer()));
 
         ActionRegistry actionRegistry = new StubActionRegistry(Set.of(CONTENT_READ));
 
@@ -184,12 +189,12 @@ public class WebSocketRequiresActionIT {
                 null,
                 actionRegistry,
                 // Authorizer present: the complete enforceable graph for a @RequiresAction endpoint.
-                new EditorActionAuthorizer());
+                new CountingEditorActionAuthorizer());
 
         Router router = Router.router(vertx);
         router.route("/*").handler(new RequestContextLifecycle());
 
-        registrar.registerAll(Set.of(new ContentEndpoint()), router);
+        registrar.registerAll(Set.of(new ContentEndpoint(), new TypedContentEndpoint()), router);
 
         vertx.createHttpServer().requestHandler(router).listen(0, "127.0.0.1").onComplete(ctx.succeeding(s -> {
             server = s;
@@ -349,7 +354,67 @@ public class WebSocketRequiresActionIT {
         }));
     }
 
+    /**
+     * Verifies that a typed action-only endpoint policy is enforced through the real upgrade pipeline:
+     * the action {@link Authorizer} decides the upgrade exactly once, the upgrade is admitted, and
+     * exactly one permitting {@link AuthorizationDecisionEvent} is emitted.
+     *
+     * @param ctx the test context
+     */
+    @Test
+    @DisplayName("typed action-only endpoint policy: the Authorizer decides the upgrade exactly once")
+    void typedActionPolicyDecidedOnceAtUpgrade(VertxTestContext ctx) {
+        TypedContentEndpoint.reset();
+        events.clear();
+        CountingEditorActionAuthorizer.calls.set(0);
+
+        connectWithToken("/ws/typed-content", "alice|visitor").onComplete(ctx.succeeding(ws -> {
+            ctx.verify(() -> {
+                assertNotNull(
+                        TypedContentEndpoint.onOpenSc.get(),
+                        "@OnOpen must run after the action policy admitted the upgrade");
+                assertEquals(
+                        1,
+                        CountingEditorActionAuthorizer.calls.get(),
+                        "the Authorizer must be called exactly once at upgrade");
+                assertEquals(1, events.size(), "exactly one AuthorizationDecisionEvent must be emitted");
+                assertTrue(events.get(0).decision().permitted(), "the upgrade decision must permit");
+                ws.close();
+                ctx.completeNow();
+            });
+        }));
+    }
+
     // --- Endpoint ---
+
+    /** Typed policy carrying only the {@code cms.content.read} action. */
+    @RequiresAction("cms.content.read")
+    public interface ContentReadPolicy extends AccessPolicy {}
+
+    /** WebSocket endpoint admitted by a typed action-only policy. */
+    @WebSocketEndpoint("/ws/typed-content")
+    @RequiresPolicy(ContentReadPolicy.class)
+    static class TypedContentEndpoint {
+
+        /** {@link SecurityContext} captured in {@link OnOpen}. */
+        static final AtomicReference<SecurityContext> onOpenSc = new AtomicReference<>();
+
+        /** Resets captured state before each test run. */
+        static void reset() {
+            onOpenSc.set(null);
+        }
+
+        /**
+         * Captures the resolved {@link SecurityContext} at connection open time.
+         *
+         * @param session the WebSocket session
+         * @param sc      the resolved security context
+         */
+        @OnOpen
+        public void onOpen(WebSocketSession session, SecurityContext sc) {
+            onOpenSc.set(sc);
+        }
+    }
 
     /**
      * WebSocket endpoint requiring both the {@code editor} role and the {@code cms.content.read}
@@ -420,6 +485,19 @@ public class WebSocketRequiresActionIT {
                     permit
                             ? AuthorizationDecision.permit(AuthzReasonCodes.PERMITTED)
                             : AuthorizationDecision.deny(AuthzReasonCodes.ACTION_NOT_ALLOWED));
+        }
+    }
+
+    /** {@link EditorActionAuthorizer} that counts how many action decisions it was asked for. */
+    static class CountingEditorActionAuthorizer extends EditorActionAuthorizer {
+
+        /** Number of action decisions requested since the last reset. */
+        static final AtomicInteger calls = new AtomicInteger();
+
+        @Override
+        public Future<AuthorizationDecision> authorize(SecurityContext ctx, ActionRef action, ResourceRef resource) {
+            calls.incrementAndGet();
+            return super.authorize(ctx, action, resource);
         }
     }
 

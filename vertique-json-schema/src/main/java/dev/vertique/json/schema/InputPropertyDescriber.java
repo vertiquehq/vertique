@@ -508,32 +508,6 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
     }
 
     /**
-     * Fills in an object schema's {@code properties}, {@code patternProperties}, {@code required},
-     * alias plan, extras and reserved names from a bean deserializer's bound properties.
-     *
-     * <p>Shared between the root type — described once per generation into the definition Victools
-     * asked for — and a nested member whose own type is bound case-insensitively only through that
-     * member's contextual {@code @JsonFormat(with = ACCEPT_CASE_INSENSITIVE_PROPERTIES)}: such a member
-     * cannot share the type's ordinary (case-sensitive) definition, since the same class used elsewhere
-     * without the annotation stays case-sensitive there, so it is described inline instead. See
-     * {@link #propertySchema}.
-     *
-     * @param definition      the object node to fill in; already carries no keyword this method writes
-     * @param javaType        the type being described
-     * @param resolved        the schema library's resolved type for {@code javaType}
-     * @param bean            the type's resolved bean deserializer
-     * @param builder         the captured builder the deserializer was assembled from, or {@code null}
-     * @param context          the active generation context
-     * @param caseInsensitive  whether {@code bean} binds its properties case-insensitively
-     * @param extrasSuppressed whether the type's own any-setter extras are suppressed: when
-     *                         {@code true}, {@link #describeExtras} is never consulted and {@code
-     *                         additionalProperties: false} is written directly instead — the member-level
-     *                         inline-closure rule's own effect, reused by {@link #inlineMemberSchema} for
-     *                         both the CI-plus-{@code FALSE} composition and the plain {@code FALSE}
-     *                         case; every other caller passes {@code false}, unchanged from before this
-     *                         parameter existed
-     */
-    /**
      * One {@code @JsonUnwrapped} sibling's own resolution, captured up front (C1, spike round 4
      * CRITICAL) so whether extras will be described can be computed over every sibling before any one
      * of them is processed — see the C1 comment in {@link #populateObjectSchema}.
@@ -613,6 +587,32 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
         return false;
     }
 
+    /**
+     * Fills in an object schema's {@code properties}, {@code patternProperties}, {@code required},
+     * alias plan, extras and reserved names from a bean deserializer's bound properties.
+     *
+     * <p>Shared between the root type — described once per generation into the definition Victools
+     * asked for — and a nested member whose own type is bound case-insensitively only through that
+     * member's contextual {@code @JsonFormat(with = ACCEPT_CASE_INSENSITIVE_PROPERTIES)}: such a member
+     * cannot share the type's ordinary (case-sensitive) definition, since the same class used elsewhere
+     * without the annotation stays case-sensitive there, so it is described inline instead. See
+     * {@link #propertySchema}.
+     *
+     * @param definition      the object node to fill in; already carries no keyword this method writes
+     * @param javaType        the type being described
+     * @param resolved        the schema library's resolved type for {@code javaType}
+     * @param bean            the type's resolved bean deserializer
+     * @param builder         the captured builder the deserializer was assembled from, or {@code null}
+     * @param context          the active generation context
+     * @param caseInsensitive  whether {@code bean} binds its properties case-insensitively
+     * @param extrasSuppressed whether the type's own any-setter extras are suppressed: when
+     *                         {@code true}, {@link #describeExtras} is never consulted and {@code
+     *                         additionalProperties: false} is written directly instead — the member-level
+     *                         inline-closure rule's own effect, reused by {@link #inlineMemberSchema} for
+     *                         both the CI-plus-{@code FALSE} composition and the plain {@code FALSE}
+     *                         case; every other caller passes {@code false}, unchanged from before this
+     *                         parameter existed
+     */
     private void populateObjectSchema(
             ObjectNode definition,
             JavaType javaType,
@@ -3137,7 +3137,7 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
      * {@code ^[nN][aA][mM][eE](?![\s\S])} — and every other character is escaped literally.
      *
      * <p>Anchored with {@code (?![\s\S])} rather than {@code $}: {@code io.vertx.json.schema}
-     * 5.1.6 compiles the {@code pattern} keyword with plain {@code java.util.regex.Pattern} (see
+     * 5.1.8 compiles the {@code pattern} keyword with plain {@code java.util.regex.Pattern} (see
      * {@code PatternFlagRenderingTest}), whose {@code $} — without {@code Pattern.MULTILINE} — still
      * matches immediately before a single trailing line terminator, not only at the true end of input.
      * A key ending in a newline would therefore wrongly match this fold under {@code $}. {@code

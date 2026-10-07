@@ -67,7 +67,10 @@ public final class ReflectiveInvocationPolicies {
 
     /**
      * Resolves the parameter-level policies for parameter {@code index} of {@code method}, over the
-     * already-resolved route policies.
+     * already-resolved route policies, using {@code method.getDeclaringClass()} as the annotation
+     * view. Prefer {@link #resolveParameter(Method, int, Class, EffectiveInputPolicies)} when the
+     * method is resolved as a member of a more specific owner (for example a JAX-RS resource
+     * class).
      *
      * @param method the method the parameter belongs to
      * @param index  the zero-based parameter index
@@ -77,13 +80,31 @@ public final class ReflectiveInvocationPolicies {
      *     on the same axis
      */
     public static EffectiveInputPolicies resolveParameter(Method method, int index, EffectiveInputPolicies route) {
+        return resolveParameter(method, index, method.getDeclaringClass(), route);
+    }
+
+    /**
+     * Resolves the parameter-level policies for parameter {@code index} of {@code method} as a
+     * member of {@code owner}, over the already-resolved route policies.
+     *
+     * @param method the method the parameter belongs to
+     * @param index  the zero-based parameter index
+     * @param owner  the class the route belongs to (its interfaces may contribute parameter
+     *               annotations when {@code method} is declared by a superclass)
+     * @param route  the route-level policies resolved by {@link #resolveRoute}
+     * @return the resolved parameter-level policies
+     * @throws InvocationPolicyConflictException when the parameter declares both additive and skip
+     *     on the same axis
+     */
+    public static EffectiveInputPolicies resolveParameter(
+            Method method, int index, Class<?> owner, EffectiveInputPolicies route) {
         InvocationPolicySource<Class<? extends Canonicalizer>> paramCanon =
-                paramSource(method, index, Canonicalize.class, Canonicalize::value, SkipCanonicalization.class);
+                paramSource(method, index, owner, Canonicalize.class, Canonicalize::value, SkipCanonicalization.class);
         List<Class<? extends Canonicalizer>> canonicalizers = InvocationPolicyResolver.resolveParameterChain(
                 paramCanon, route.canonicalizers(), PolicyAxis.CANONICALIZE);
 
         InvocationPolicySource<Class<? extends Sanitizer>> paramSani =
-                paramSource(method, index, Sanitize.class, Sanitize::value, SkipSanitization.class);
+                paramSource(method, index, owner, Sanitize.class, Sanitize::value, SkipSanitization.class);
         List<Class<? extends Sanitizer>> sanitizers =
                 InvocationPolicyResolver.resolveParameterChain(paramSani, route.sanitizers(), PolicyAxis.SANITIZE);
 
@@ -94,11 +115,12 @@ public final class ReflectiveInvocationPolicies {
 
     private static <A extends Annotation, S extends Annotation, V> InvocationPolicySource<V> methodSource(
             Method method, Class<?> owner, Class<A> additiveType, Function<A, V[]> valueOf, Class<S> skipType) {
-        List<Annotation> merged = AnnotationResolver.resolveMethodAnnotations(method);
+        Class<?> annotationView = annotationViewType(method, owner);
+        List<Annotation> merged = AnnotationResolver.resolveMethodAnnotations(method, annotationView);
         A additiveAnn = AnnotationResolver.findMetaAnnotation(merged, additiveType);
         S skipAnn = AnnotationResolver.findMetaAnnotation(merged, skipType);
 
-        List<Method> sites = methodSites(method);
+        List<Method> sites = methodSites(method, annotationView);
         String describe = "method " + owner.getSimpleName() + "." + method.getName();
 
         Optional<List<V>> additive =
@@ -131,12 +153,19 @@ public final class ReflectiveInvocationPolicies {
     }
 
     private static <A extends Annotation, S extends Annotation, V> InvocationPolicySource<V> paramSource(
-            Method method, int index, Class<A> additiveType, Function<A, V[]> valueOf, Class<S> skipType) {
-        List<Annotation> merged = List.of(AnnotationResolver.resolveParameterAnnotations(method, index));
+            Method method,
+            int index,
+            Class<?> owner,
+            Class<A> additiveType,
+            Function<A, V[]> valueOf,
+            Class<S> skipType) {
+        Class<?> annotationView = annotationViewType(method, owner);
+        List<Annotation> merged =
+                List.of(AnnotationResolver.resolveParameterAnnotations(method, index, annotationView));
         A additiveAnn = AnnotationResolver.findMetaAnnotation(merged, additiveType);
         S skipAnn = AnnotationResolver.findMetaAnnotation(merged, skipType);
 
-        List<Method> methodSites = methodSites(method);
+        List<Method> methodSites = methodSites(method, annotationView);
         List<Parameter> paramSites = paramSites(methodSites, index);
         String describe = "parameter " + index + " of method "
                 + method.getDeclaringClass().getSimpleName() + "." + method.getName();
@@ -155,10 +184,20 @@ public final class ReflectiveInvocationPolicies {
 
     // --- Declaration-site provenance walk ---
     // Mirrors AnnotationResolver's documented traversal order (declaring element, superclasses
-    // bottom-up, interfaces) one site at a time, since the merged annotation lists it returns carry
-    // no origin.
+    // bottom-up, interfaces of the annotation view) one site at a time, since the merged annotation
+    // lists it returns carry no origin.
 
-    private static List<Method> methodSites(Method method) {
+    /**
+     * Returns the type whose interface hierarchy supplies inherited annotations for {@code method}
+     * when resolved as a member of {@code owner}. Interface {@code default} methods keep their
+     * declaring-interface view; class-declared methods use {@code owner}.
+     */
+    private static Class<?> annotationViewType(Method method, Class<?> owner) {
+        Class<?> declaring = method.getDeclaringClass();
+        return declaring.isInterface() ? declaring : owner;
+    }
+
+    private static List<Method> methodSites(Method method, Class<?> annotationView) {
         List<Method> sites = new ArrayList<>();
         sites.add(method);
         Class<?> current = method.getDeclaringClass().getSuperclass();
@@ -166,7 +205,7 @@ public final class ReflectiveInvocationPolicies {
             addMatchingMethod(sites, current, method);
             current = current.getSuperclass();
         }
-        for (Class<?> iface : TypeResolver.getAllInterfaces(method.getDeclaringClass())) {
+        for (Class<?> iface : TypeResolver.getAllInterfaces(annotationView)) {
             addMatchingMethod(sites, iface, method);
         }
         return sites;

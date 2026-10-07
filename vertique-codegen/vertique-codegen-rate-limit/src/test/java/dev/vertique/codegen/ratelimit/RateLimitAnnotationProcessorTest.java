@@ -191,14 +191,6 @@ class RateLimitAnnotationProcessorTest {
                 .assertErrorMessage("instance methods that can be overridden");
     }
 
-    // --- Supplementary: root-text-equal non-root segment (not part of the frozen TP-001 matrix) ---
-
-    /**
-     * {@code key = {"0.0"}}: the root segment {@code "0"} resolves to parameter 0, and the second
-     * segment is textually {@code "0"} too but is not a valid identifier for that position — it must
-     * still be validated as a property-path segment rather than being waved through because it
-     * happens to equal the root's text.
-     */
     /**
      * P02/P03 review repair (T017, item 4): a bare-name (fluent, no {@code get}/{@code is} prefix)
      * zero-arg accessor is only a valid property-path segment when its declaring type is a record —
@@ -243,6 +235,14 @@ class RateLimitAnnotationProcessorTest {
                 .assertErrorMessage("rate-limit key property is not an accessible record or bean accessor");
     }
 
+    // --- Supplementary: root-text-equal non-root segment (not part of the frozen TP-001 matrix) ---
+
+    /**
+     * {@code key = {"0.0"}}: the root segment {@code "0"} resolves to parameter 0, and the second
+     * segment is textually {@code "0"} too but is not a valid identifier for that position — it must
+     * still be validated as a property-path segment rather than being waved through because it
+     * happens to equal the root's text.
+     */
     @Test
     @DisplayName(
             "rejects a non-root selector segment that is textually equal to the root but is not a valid identifier")
@@ -269,16 +269,16 @@ class RateLimitAnnotationProcessorTest {
                 .assertErrorMessage("rate-limit key property path contains an invalid identifier");
     }
 
-    // --- Supplementary: interface placement (proxyability rejects it; unlike codegen-aop's silent ignore) ---
+    // --- Supplementary: interface placement (woven by codegen-aop onto implementors) ---
 
     /**
-     * {@code @RateLimited} on an abstract interface method is a compile error: the interface has no
-     * {@code @Inject} constructor and the method is abstract. This differs from the generic AOP
-     * processor, which silently ignores aspect triggers on interface methods.
+     * {@code @RateLimited} on an interface method is not a proxyability error: the AOP processor
+     * weaves the trigger onto concrete implementors. This processor still validates policy / key /
+     * cost on the interface method itself.
      */
     @Test
-    @DisplayName("rejects @RateLimited on an abstract interface method")
-    void shouldRejectRateLimitedOnAnAbstractInterfaceMethod() {
+    @DisplayName("accepts @RateLimited on an abstract interface method for AOP weaving")
+    void shouldAcceptRateLimitedOnAnAbstractInterfaceMethod() {
         JavaFileObject source = SourceFiles.inline(PACKAGE + ".SearchPort", """
                 package com.example;
 
@@ -290,16 +290,12 @@ class RateLimitAnnotationProcessorTest {
                     String search(String query);
                 }
                 """);
-        ProcessorTestHarness.Result result = ProcessorTestHarness.run(new RateLimitAnnotationProcessor(), source)
-                .assertFailed();
-        result.assertErrorMessage("rate-limited methods require exactly one @Inject constructor");
-        result.assertErrorMessage("rate-limited methods must be instance methods that can be overridden");
+        ProcessorTestHarness.run(new RateLimitAnnotationProcessor(), source).assertSuccess();
     }
 
-    /** A {@code default} interface method is not abstract, but the interface still has no constructor. */
     @Test
-    @DisplayName("rejects @RateLimited on a default interface method")
-    void shouldRejectRateLimitedOnADefaultInterfaceMethod() {
+    @DisplayName("accepts @RateLimited on a default interface method for AOP weaving")
+    void shouldAcceptRateLimitedOnADefaultInterfaceMethod() {
         JavaFileObject source = SourceFiles.inline(PACKAGE + ".DefaultSearchPort", """
                 package com.example;
 
@@ -313,9 +309,7 @@ class RateLimitAnnotationProcessorTest {
                     }
                 }
                 """);
-        ProcessorTestHarness.run(new RateLimitAnnotationProcessor(), source)
-                .assertFailed()
-                .assertErrorMessage("rate-limited methods require exactly one @Inject constructor");
+        ProcessorTestHarness.run(new RateLimitAnnotationProcessor(), source).assertSuccess();
     }
 
     // --- TP-002: process() contract ---

@@ -4,7 +4,9 @@
 package dev.vertique.codegen.jaxrs.processor.validate;
 
 import dev.vertique.codegen.CodegenContext;
+import dev.vertique.codegen.JaxRsAnnotations;
 import dev.vertique.codegen.jaxrs.JaxRsHierarchy;
+import dev.vertique.codegen.security.AccessPolicyAnnotationResolver;
 import java.lang.annotation.Retention;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
@@ -56,16 +58,20 @@ import javax.lang.model.type.TypeMirror;
  * documentation module, and its elements are read by name, on the declaring interface only:
  *
  * <ul>
- *   <li>{@code access = PROTECTED} needs a non-blank {@code securityScheme}, and every {@code
- *       rolesAllowed} entry must be non-blank (an empty {@code rolesAllowed} means any authenticated
- *       caller);
- *   <li>{@code access = PUBLIC} takes neither a {@code securityScheme} nor any {@code
- *       rolesAllowed} entry.
+ *   <li>{@code policy} must resolve, through {@link AccessPolicyAnnotationResolver}, as a valid
+ *       access policy: a public interface that extends only {@code AccessPolicy}, declares no
+ *       members, and carries valid, non-conflicting requirements;
+ *   <li>a public policy, meaning exactly one direct {@code @PermitAll}, takes no {@code
+ *       securityScheme}, so any supplied value, blank included, is an error;
+ *   <li>every other valid policy, {@code @DenyAll} included, needs a non-blank {@code
+ *       securityScheme}.
  * </ul>
  *
  * <p>Element values are judged as read, so an explicit value equal to the default counts as unset.
- * An {@code @ApiDocs} without {@code access} is javac's missing-element error and gets no further
- * check here. Each violation's message names the declaration and the offending element.
+ * An {@code @ApiDocs} without {@code policy}, or one that sets an element the annotation does not
+ * declare, is javac's own error and gets no further check here. An invalid policy is reported
+ * alone, whatever the scheme is. Each violation's message names the declaration and the offending
+ * element.
  *
  * <p>A declaration annotated {@code @NoAutoWire} is never passed to this validator: the
  * declaration scan excludes it first, so it is inert. The checks do not depend on the auto-wire
@@ -105,12 +111,6 @@ public final class ApplicationAnnotationValidator {
 
     /** The packages whose annotation types are allowed anywhere in scope. */
     private static final Set<String> ALLOWED_PACKAGES = Set.of("java.lang", "java.lang.annotation");
-
-    /** The {@code @ApiDocs} access level that requires a security scheme. */
-    private static final String PROTECTED = "PROTECTED";
-
-    /** The {@code @ApiDocs} access level that takes no security scheme or roles. */
-    private static final String PUBLIC = "PUBLIC";
 
     private final CodegenContext ctx;
 
@@ -324,8 +324,9 @@ public final class ApplicationAnnotationValidator {
 
     /**
      * Checks the {@code @ApiDocs} directly present on {@code declaration}, if any, against the
-     * access rules, reporting one compile error per violation. An {@code @ApiDocs} without {@code
-     * access} is left to javac's missing-element error.
+     * policy and scheme rules, reporting one compile error per violation. An {@code @ApiDocs}
+     * without {@code policy}, or whose {@code policy} javac could not resolve, is left to javac's
+     * own error.
      *
      * @param declaration the declaring interface
      * @return {@code true} when {@code declaration} carries no {@code @ApiDocs}, or one that
@@ -337,59 +338,58 @@ public final class ApplicationAnnotationValidator {
             return true;
         }
         AnnotationMirror mirror = apiDocs.get();
-        Optional<String> access = ctx.annotations()
-                .attribute(mirror, "access", VariableElement.class)
-                .map(constant -> constant.getSimpleName().toString());
-        if (access.isEmpty()) {
+        TypeElement policy = ctx.annotations()
+                .attributeClass(mirror, "policy")
+                .flatMap(ctx::asTypeElement)
+                .orElse(null);
+        if (policy == null) {
             return true;
+        }
+        List<AnnotationMirror> requirements;
+        try {
+            requirements = new AccessPolicyAnnotationResolver(ctx.types(), ctx.elements()).resolve(policy);
+        } catch (IllegalArgumentException invalid) {
+            reportError(
+                    declaration,
+                    ("%s declares @ApiDocs with an invalid policy %s: %s; policy must name a public interface"
+                                    + " that extends only AccessPolicy and declares valid, non-conflicting"
+                                    + " requirements")
+                            .formatted(binaryName(declaration), binaryName(policy), invalid.getMessage()));
+            return false;
         }
         String securityScheme = ctx.annotations()
                 .attribute(mirror, "securityScheme", String.class)
                 .orElse("");
-        List<String> rolesAllowed = new ArrayList<>();
-        for (AnnotationValue entry : ctx.annotations().attributeArray(mirror, "rolesAllowed")) {
-            rolesAllowed.add(entry.getValue() instanceof String role ? role : "");
+        boolean isPublic = requirements.size() == 1 && isPermitAll(requirements.get(0));
+        if (isPublic && !securityScheme.isEmpty()) {
+            reportError(
+                    declaration,
+                    ("%s declares @ApiDocs(policy = %s) with a securityScheme; securityScheme is set only"
+                                    + " when the policy is not public (a public policy is exactly one @PermitAll)")
+                            .formatted(binaryName(declaration), binaryName(policy)));
+            return false;
         }
+        if (!isPublic && securityScheme.isBlank()) {
+            reportError(
+                    declaration,
+                    ("%s declares @ApiDocs(policy = %s) without a non-blank securityScheme; a policy that is"
+                                    + " not public needs securityScheme to name the security scheme that"
+                                    + " authenticates its readers")
+                            .formatted(binaryName(declaration), binaryName(policy)));
+            return false;
+        }
+        return true;
+    }
 
-        boolean passed = true;
-        if (PROTECTED.equals(access.get())) {
-            if (securityScheme.isBlank()) {
-                reportError(
-                        declaration,
-                        ("%s declares @ApiDocs(access = PROTECTED) without a non-blank securityScheme;"
-                                        + " protected documentation needs securityScheme to name the security scheme"
-                                        + " that authenticates its readers")
-                                .formatted(binaryName(declaration)));
-                passed = false;
-            }
-            if (rolesAllowed.stream().anyMatch(String::isBlank)) {
-                reportError(
-                        declaration,
-                        ("%s declares @ApiDocs(access = PROTECTED) with a blank rolesAllowed entry; every"
-                                        + " rolesAllowed entry must name a role (leave rolesAllowed empty to admit any"
-                                        + " authenticated caller)")
-                                .formatted(binaryName(declaration)));
-                passed = false;
-            }
-        } else if (PUBLIC.equals(access.get())) {
-            if (!securityScheme.isEmpty()) {
-                reportError(
-                        declaration,
-                        ("%s declares @ApiDocs(access = PUBLIC) with a securityScheme; securityScheme is"
-                                        + " set only when access is PROTECTED")
-                                .formatted(binaryName(declaration)));
-                passed = false;
-            }
-            if (!rolesAllowed.isEmpty()) {
-                reportError(
-                        declaration,
-                        ("%s declares @ApiDocs(access = PUBLIC) with rolesAllowed; rolesAllowed is set"
-                                        + " only when access is PROTECTED")
-                                .formatted(binaryName(declaration)));
-                passed = false;
-            }
-        }
-        return passed;
+    /**
+     * Returns whether {@code requirement} is a {@code @PermitAll}.
+     *
+     * @param requirement a direct requirement of a resolved policy
+     * @return {@code true} when the requirement's annotation type is {@code @PermitAll}
+     */
+    private boolean isPermitAll(AnnotationMirror requirement) {
+        TypeElement type = asTypeElement(requirement.getAnnotationType());
+        return type != null && JaxRsAnnotations.PERMIT_ALL.contentEquals(type.getQualifiedName());
     }
 
     /**

@@ -6,6 +6,7 @@ package dev.vertique.rest.openapi.docs.config;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -15,6 +16,7 @@ import dev.vertique.core.exception.ConfigurationException;
 import dev.vertique.rest.core.RestConfigurationException;
 import dev.vertique.rest.jaxrs.application.RestApplications;
 import dev.vertique.rest.jaxrs.runtime.GeneratedRestApplicationRegistration;
+import dev.vertique.rest.openapi.docs.ApiDocs;
 import dev.vertique.rest.openapi.docs.ConfigViewComponents;
 import dev.vertique.rest.openapi.docs.DaggerConfigViewComponents_ViewComponent;
 import dev.vertique.rest.openapi.docs.DaggerDocsTestComponents_SharedComponent;
@@ -36,14 +38,20 @@ import dev.vertique.rest.openapi.docs.fixture.startup.config.OpsPublicWithScheme
 import dev.vertique.rest.openapi.docs.fixture.startup.config.OpsPublicWithSchemeApi;
 import dev.vertique.rest.openapi.docs.fixture.startup.config.OpsValidProtectedApi;
 import io.vertx.core.json.JsonObject;
+import java.lang.annotation.AnnotationTypeMismatchException;
+import java.lang.annotation.IncompleteAnnotationException;
+import java.net.URLClassLoader;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 /**
  * The {@code apidocs} configuration and the validation the documentation module runs when at least
@@ -350,7 +358,7 @@ class ApidocsConfigTest {
 
     private static final String SECURITY_SCHEME_ATTRIBUTE = "@ApiDocs.securityScheme";
 
-    private static final String ROLES_ALLOWED_ATTRIBUTE = "@ApiDocs.rolesAllowed";
+    private static final String POLICY_ATTRIBUTE = "@ApiDocs.policy";
 
     /** Builds the declared-application view over the given generated-shape registrations. */
     private static RestApplications view(GeneratedRestApplicationRegistration... registrations) {
@@ -840,28 +848,28 @@ class ApidocsConfigTest {
                         SECURITY_SCHEME_ATTRIBUTE,
                         null),
                 Arguments.of(
-                        "public with roles",
+                        "public with roles in its policy",
                         OpsPublicWithRolesApi.class,
                         OPS_PUBLIC_WITH_ROLES_INTERFACE,
                         true,
                         sharedWithOpsInfo(),
-                        ROLES_ALLOWED_ATTRIBUTE,
+                        POLICY_ATTRIBUTE,
                         null),
                 Arguments.of(
-                        "protected with a blank role entry",
+                        "restrictive policy with a blank role entry",
                         OpsBlankRoleEntryApi.class,
                         OPS_BLANK_ROLE_ENTRY_INTERFACE,
                         true,
                         sharedWithOpsInfo(),
-                        ROLES_ALLOWED_ATTRIBUTE,
+                        POLICY_ATTRIBUTE,
                         null),
                 Arguments.of(
-                        "protected with an empty role entry",
+                        "restrictive policy with an empty role entry",
                         OpsEmptyRoleEntryApi.class,
                         OPS_EMPTY_ROLE_ENTRY_INTERFACE,
                         true,
                         sharedWithOpsInfo(),
-                        ROLES_ALLOWED_ATTRIBUTE,
+                        POLICY_ATTRIBUTE,
                         null),
                 Arguments.of(
                         "well-formed protected declaration",
@@ -947,6 +955,10 @@ class ApidocsConfigTest {
     private static final String OPS_PUBLIC_WITH_SCHEME_AND_ROLES_INTERFACE =
             "dev.vertique.rest.openapi.docs.fixture.startup.config.OpsPublicWithSchemeAndRolesApi";
 
+    /** The binary name of the declaration of application {@code audit}, whose restrictive policy names no scheme. */
+    private static final String AUDIT_PROTECTED_WITHOUT_SCHEME_INTERFACE =
+            "dev.vertique.rest.openapi.docs.fixture.startup.config.AuditProtectedWithoutSchemeApi";
+
     /** The control character BEL (code point 7). */
     private static final String BELL = String.valueOf((char) 7);
 
@@ -997,25 +1009,96 @@ class ApidocsConfigTest {
     }
 
     @Test
-    @DisplayName("Several @ApiDocs shape violations of one application fail together, one sorted line each")
+    @DisplayName("Shape violations of several applications fail together, one sorted line each")
     void severalShapeViolationsAreReportedTogetherInSortedOrder() {
-        // Given the shared declarations plus application ops, whose public document both names a
-        // scheme and lists a role, registered by hand as generated code would register it
-        RestApplications view = sharedViewWith(ConfigRegistrations.opsApi(OpsPublicWithSchemeAndRolesApi.class, true));
+        // Given the shared declarations plus application ops, whose public document names a scheme
+        // and whose policy also lists a role, and application audit, whose restrictive policy names no
+        // scheme, registered by hand as generated code would register it, ops first
+        RestApplications view = view(
+                ConfigRegistrations.publicApi(PublicApi.class),
+                ConfigRegistrations.mgmtApi(),
+                ConfigRegistrations.opsApi(OpsPublicWithSchemeAndRolesApi.class, true),
+                ConfigRegistrations.auditApi());
 
         // When the section is parsed and the documents selected
         RestConfigurationException failure =
                 assertThrows(RestConfigurationException.class, () -> resolve(sharedWithOpsInfo(), view));
 
-        // Then one failure names ops and its interface, and lists the rolesAllowed line before the
-        // securityScheme line, echoing neither attribute value
+        // Then one failure names both applications and their interfaces, lists audit's line before
+        // ops's, flags the policy of ops and the scheme of audit, and echoes no attribute value
         String message = failure.getMessage();
-        assertNamesApplication(message, "ops", OPS_PUBLIC_WITH_SCHEME_AND_ROLES_INTERFACE);
-        int roles = message.indexOf(ROLES_ALLOWED_ATTRIBUTE);
-        int scheme = message.indexOf(SECURITY_SCHEME_ATTRIBUTE);
-        assertTrue(roles >= 0, message);
-        assertTrue(scheme >= 0, message);
-        assertTrue(roles < scheme, "the rolesAllowed line comes before the securityScheme line: " + message);
+        assertTrue(message.startsWith("Invalid @ApiDocs declarations"), message);
+        assertTrue(message.contains("'ops'"), message);
+        assertTrue(message.contains(OPS_PUBLIC_WITH_SCHEME_AND_ROLES_INTERFACE), message);
+        assertTrue(message.contains("'audit'"), message);
+        assertTrue(message.contains(AUDIT_PROTECTED_WITHOUT_SCHEME_INTERFACE), message);
+        int audit = message.indexOf("'audit'");
+        int ops = message.indexOf("'ops'");
+        assertTrue(audit < ops, "the audit line comes before the ops line: " + message);
+        int auditScheme = message.indexOf(SECURITY_SCHEME_ATTRIBUTE, audit);
+        assertTrue(auditScheme > audit && auditScheme < ops, "audit's scheme violation: " + message);
+        assertTrue(message.indexOf(POLICY_ATTRIBUTE, ops) > ops, "ops's policy violation: " + message);
+        assertFalse(message.contains("zq7"), message);
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @ValueSource(
+            strings = {
+                LegacyAnnotationDeclarations.PUBLIC_DECLARATION,
+                LegacyAnnotationDeclarations.PROTECTED_DECLARATION
+            })
+    @DisplayName("A declaration compiled against the removed @ApiDocs elements fails closed and says to recompile")
+    void declarationCompiledAgainstTheOldAnnotationFailsClosed(String declaration, @TempDir Path work)
+            throws Exception {
+        // Given: an application interface compiled against an @ApiDocs with access and rolesAllowed
+        // and no policy, loaded against the real annotation
+        try (URLClassLoader loader = LegacyAnnotationDeclarations.compile(work)) {
+            Class<?> legacy = loader.loadClass(declaration);
+            ApiDocs read = legacy.getAnnotation(ApiDocs.class);
+            assertNotNull(read, "the declaration carries the annotation");
+            assertThrows(
+                    IncompleteAnnotationException.class,
+                    read::policy,
+                    "the setup is a declaration whose class file records no policy");
+
+            // When: it is registered as generated code would register it and the documents selected
+            RestApplications view = sharedViewWith(ConfigRegistrations.opsApi(legacy, true));
+            RestConfigurationException failure =
+                    assertThrows(RestConfigurationException.class, () -> resolve(sharedWithOpsInfo(), view));
+
+            // Then: startup fails closed naming the application and its interface, telling its author
+            // to recompile, and no public document is selected for it
+            String message = failure.getMessage();
+            assertNamesApplication(message, "ops", declaration);
+            assertTrue(message.contains("recompile"), message);
+        }
+    }
+
+    @Test
+    @DisplayName("A declaration whose class file records the policy as a string fails closed and says to recompile")
+    void declarationRecordingTheWrongPolicyTypeFailsClosed(@TempDir Path work) throws Exception {
+        // Given: an application interface compiled against an @ApiDocs whose policy is a string,
+        // loaded against the real annotation, so reading its policy throws a type mismatch
+        try (URLClassLoader loader = LegacyAnnotationDeclarations.compileMismatched(work)) {
+            Class<?> mismatched = loader.loadClass(LegacyAnnotationDeclarations.MISMATCHED_DECLARATION);
+            ApiDocs read = mismatched.getAnnotation(ApiDocs.class);
+            assertNotNull(read, "the declaration carries the annotation");
+            assertThrows(
+                    AnnotationTypeMismatchException.class,
+                    read::policy,
+                    "the setup is a declaration whose class file records a string policy");
+
+            // When: it is registered as generated code would register it and the documents selected
+            RestApplications view = sharedViewWith(ConfigRegistrations.opsApi(mismatched, true));
+            RestConfigurationException failure =
+                    assertThrows(RestConfigurationException.class, () -> resolve(sharedWithOpsInfo(), view));
+
+            // Then: startup fails closed naming the application and its interface, telling its author
+            // to recompile, and no document is selected for it
+            String message = failure.getMessage();
+            assertNamesApplication(message, "ops", LegacyAnnotationDeclarations.MISMATCHED_DECLARATION);
+            assertTrue(message.contains("recompile"), message);
+        }
     }
 
     /**

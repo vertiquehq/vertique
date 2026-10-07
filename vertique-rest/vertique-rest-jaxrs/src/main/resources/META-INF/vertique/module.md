@@ -5,10 +5,10 @@ SPDX-License-Identifier: EUPL-1.2
 
 # REST JAX-RS Module
 
-> **Status:** Beta
+> **Status:** Stable
 > **Package:** `dev.vertique.rest.jaxrs`
 > **Artifact:** `vertique-rest-jaxrs`
-> **Depends on:** rest-core, security-core, json
+> **Depends on:** rest-core, security-core, input-processing, json
 
 The JAX-RS routing runtime. `vertique-rest-jaxrs` turns annotated resource classes into plain Vert.x
 routes, extracts and coerces method arguments, invokes the resource method, and dispatches whatever it
@@ -73,7 +73,12 @@ Jakarta REST implementations such as Jersey and RESTEasy. A method declared by a
 interface default, and a default in a more specific interface wins over the one it overrides, so an
 override never adds a second route. A superclass's `private` method with the same signature is not
 inherited and does not hide the default. (A package-private one in another package does: the JVM
-dispatches the interface call to it and fails, so such a default is not routed.) The route takes the resource class's class-level annotations
+dispatches the interface call to it and fails, so such a default is not routed.) A public (or
+otherwise inherited) method declared by a superclass inherits method- and parameter-level JAX-RS
+annotations from the interfaces the *resource class* implements — not only from interfaces of the
+declaring superclass — so a `Base.delete` that implements `Crud.delete` for `R extends Base
+implements Crud` is routed with `Crud`'s `@DELETE` / `@Path` / `@PathParam` even when `Base`
+implements nothing. The route takes the resource class's class-level annotations
 (`@Path`, security, media types) together with the default method's merged method annotations.
 Inherited annotations are matched by erased signature, and type variables are not resolved against
 the implementing class: a generic interface method (`Crud<ID>`) overridden with a concrete parameter
@@ -108,7 +113,11 @@ interceptors → status and headers onto the wire → `ResponseSerializer` for t
 Two consequences matter to application code. `afterResponse` fires at **handoff**, while a streamed
 body may still be in flight, because observers need the routing context and tracing span still
 active. And status plus headers are already on the wire before a `ResponseSerializer` runs — a
-serializer owns the body only.
+serializer owns the body only. A post-handoff wire failure is recorded on the framework-owned
+completion state through `RequestCompletionRecorder.recordWireFailure` (first writer wins), not
+through a public `RoutingContext.data()` key; the completion event's `wireFailureCode` reads that
+marker, with a failed response end-handler result as the fallback, including the late-`end()`
+carve-out documented on `RestRequestCompletedEvent`.
 
 ### Per-request processing order
 
@@ -152,7 +161,13 @@ class/method case, instead of silently resolving to an empty chain. A conflict o
 field is rejected as well, a step later: it fails while the route's parameter extractor is built
 during route registration. Both are startup failures — declaring both `@Sanitize` and
 `@SkipSanitization` (or both `@Canonicalize` and `@SkipCanonicalization`) on one parameter or one bean
-field never reaches a request.
+field never reaches a request. A `@Canonicalize`/`@Sanitize`/`@Skip*` written on the `@BeanParam`
+parameter itself is the composition baseline for that bean's fields on both the reflective and
+generated paths: parameter, bean-type, and field metadata are composed once into each field's
+effective chain and applied on the transport string before conversion (field chains append; field
+skips suppress the corresponding axis). There is no second intermediate-map processing pass. The
+startup gate that refuses an unbound engine when a route declares processing counts that parameter
+chain, so a declared parameter policy cannot fail startup for work that would never run.
 
 **Which body shapes step 3 reaches.** A DTO body, a collection or array body, a `String` body, a
 form-urlencoded body bound to a POJO, and the schema-free `JsonObject` / `JsonArray` bodies all pass
@@ -293,9 +308,13 @@ static Set<RouterMount> mounts(
 
 **Multipart temp files are request-owned.** `BodyHandler` spools uploads under `http.uploadsDirectory`
 (default `file-uploads`) and cleanup is registered immediately after it, covering normal completion,
-failure, connection close, and stream reset. The file stays readable while the response streams, but
-an application that needs it afterwards must move or copy it **before** the response completes.
-Retaining a `FileUpload` or a file-backed `EntityPart` does not extend the path's lifetime.
+failure, connection close, and stream reset. Pre-auth spool admission for `multipart/form-data` is
+bounded by `http.maxMultipartBodySizeBytes` (effective limit
+`min(http.maxBodySize, http.maxMultipartBodySizeBytes)`); exceeding it returns 413, and when
+`Content-Length` is present Vert.x rejects before creating upload files. The file stays readable while
+the response streams, but an application that needs it afterwards must move or copy it **before** the
+response completes. Retaining a `FileUpload` or a file-backed `EntityPart` does not extend the path's
+lifetime.
 
 ### The application name on descriptors and interceptor contexts
 
@@ -318,7 +337,11 @@ is visible in these places:
   contributor chain but not the operation interceptors, so it has no `OperationContext`. Its first
   handler is the completion recorder, ahead of authentication, so every request on the matched
   route, a `401` or `403` rejection included, completes as a `RestRequestCompletedEvent` whose
-  `operation()` is the synthetic descriptor, the same instance its contributors receive.
+  `operation()` is the synthetic descriptor, the same instance its contributors receive. A synthetic
+  operation created from a typed access policy (`SyntheticOperation.withPolicy`) reports the
+  requirements that policy declares from `methodAnnotations()`, behind the `@SecurityRequirement` of
+  its scheme when it names one; contributors receive the policy's action in
+  `OperationRegistrationContext.requiredAction()`.
 
 The name is `null` on the mount metadata, the operation descriptors, and `ctx.operation()` for a mount
 built through `Factory.create` and for the zero-declaration default mount; nothing derives a name from the mount path or the mount id.
@@ -368,9 +391,15 @@ A 16-component convenience constructor omits `executionPlan`. The compact constr
 `validationGroups` and copies the four lists, so every component is immutable regardless of what the
 caller passes. `methodAnnotations` and `classAnnotations` are resolved through
 `dev.vertique.core.util.AnnotationResolver`, which walks the superclass chain and interfaces — an
-annotation on an interface method is visible here. For a route backed by an inherited interface
-`default` method, `method()` is the interface's `Method`, so `method().getDeclaringClass()` is the
-interface; `resourceInstance().getClass()` is the resource class.
+annotation on an interface method is visible here. For a class-declared method (including one
+inherited from a superclass) the interface walk uses the resource class, so interfaces the resource
+implements contribute annotations even when the declaring superclass does not. For a route backed by
+an inherited interface `default` method, `method()` is the interface's `Method`, so
+`method().getDeclaringClass()` is the interface and the interface walk starts there;
+`resourceInstance().getClass()` is the resource class. Security annotations from every declaration
+of the same method or class are merged and then checked for conflicts (incompatible kinds, or
+differing `@RolesAllowed` / `@Authorized` member values); a nearer declaration does not win. The
+codegen path applies the same fail-closed rule.
 
 `ParamMeta` describes one declared parameter:
 
@@ -472,7 +501,7 @@ The framework's `ExceptionMapper<Throwable>`, pre-configured by `RestModule`:
 | `ConflictException` (core.exception) | 409 | `ProblemDetail` |
 | `NotFoundException` (core.exception) | 404 | `ProblemDetail` |
 | `UnavailableException` (core.exception) | 503 | `ProblemDetail` |
-| `Throwable` (catch-all) | 500 | `ProblemDetail` with the fixed detail `"Internal Server Error"` — the exception message is never echoed |
+| `Throwable` (catch-all) | 500 | `ProblemDetail` with the fixed detail `"Internal Server Error"` — the exception message is never echoed. Logging is deferred to `ErrorPipeline` (see below) so a Vert.x 4xx fallback is not recorded as an unhandled server fault |
 
 `UnauthorizedException` and `ForbiddenException` are registered by fully-qualified name to avoid
 ambiguity with `jakarta.ws.rs.NotAuthorizedException` and `jakarta.ws.rs.ForbiddenException`.
@@ -510,12 +539,23 @@ RequestInterceptor.onError sync observers, with the original cause
   → Vert.x status-code fallback (only when no specific mapper matched)
   → ProblemDetail instance enrichment from the request path
   → ErrorInterceptor.afterMapping (async chain, Response → Response)
+  → unhandled-exception logging (framework Throwable catch-all only; level follows the final status)
 ```
 
 The original cause stays on the routing context for the whole of error processing, so audit and
 diagnostic interceptors can still see the root cause after mapping. A `beforeMapping` or
 `afterMapping` handler that fails is logged at WARN and its input passes through unchanged — one bad
 interceptor cannot break the error path.
+
+**Unhandled-exception logging.** The framework `Throwable` catch-all no longer logs inside the mapper:
+the catch-all has no routing context and cannot see a Vert.x 4xx status that will replace its 500.
+`ErrorPipeline` logs once, after mapping, fallback and the `afterMapping` chain have settled, using the
+status of the response that will be sent (an `afterMapping` interceptor can change it), and only when the framework catch-all actually
+produced the response (not a typed default such as `IllegalArgumentException`, and not an application
+`ExceptionMapper`). Final status **400–499** is logged at DEBUG (`Unhandled exception mapped to client
+error {status}`); other outcomes keep ERROR (`Unhandled exception`) with the stack. That keeps a
+multipart part-count rejection (or any other `ctx.fail(4xx, cause)` decoder limit) out of ERROR
+alerting while genuine unhandled server faults still page.
 
 **Vert.x status-code fallback.** The router-level failure handler records the status the Vert.x layer
 authoritatively decided for a failure, and the error pipeline reconciles it with the mapper's status.
@@ -571,8 +611,18 @@ exception's message that must not reach the client. A mapped response carrying a
 entity** is fail-closed the same way: replaced with a fresh `ProblemDetail` for the winning status and
 `application/problem+json`, so a 500 diagnostic body cannot ride under an overriding 401. Register your
 own `ExceptionMapper` for the cause's type when a specific detail is required — it outranks the Vert.x
-status entirely. When the recorded status *agrees* with the mapped one nothing changes, so a 415 whose
-detail names the offending content type keeps it.
+status entirely.
+
+**Equal-status detail sanitization.** When the recorded status *agrees* with the mapped one, the status
+is left alone but a `ProblemDetail` `detail` synthesized from an arbitrary exception message is still
+dropped — the same disclosure rule as the override path. That closes the leak where
+`ctx.fail(401, new UnauthorizedException("…"))` (or any other semantic type whose own mapping already
+equals the Vert.x status) would otherwise publish the cause message verbatim. A
+`jakarta.ws.rs.WebApplicationException` whose `Response` already carries an entity is treated as
+deliberately authored client output and keeps its body; the framework's own 415 producers
+(`JaxRsRouteRegistrar`'s `@Consumes` check and `ContentTypeValidationMiddleware`) author a
+`ProblemDetail` on that response before failing the context, so their content-type diagnostics still
+reach the client.
 
 **Headers when the body is rebuilt.** Rebuilding the body — by this override, or by the `instance`
 enrichment every `ProblemDetail` gets — drops the headers your mapper set that describe the *octets*
@@ -889,6 +939,15 @@ An SSE endpoint returns `ReadStream<SseEvent>` from a method annotated
 `dev.vertique:vertique-rest-core`, bound by `RestModule`) and create a channel inside the method; the
 framework handles buffering, wire formatting, keepalive, and connection lifecycle. Defaults come from
 `jaxrs.sse`.
+
+Disconnect detection uses `RoutingContext.addEndHandler` (multicast), not
+`response().closeHandler(...)`. The response's `endHandler` / `exceptionHandler` / `closeHandler`
+setters are single-slot: replacing them cuts off every routing-context end handler on that exit path,
+including completion emission and `RequestContextLifecycle` cleanup. Application code that needs to
+observe the request ending must register through `addEndHandler` or
+`RequestContextLifecycle.Handle.onClose` — never through those three response setters.
+The disconnect callback isolates failures: if a custom `ReadStream` throws while being cancelled, the
+exception is logged and completion emission and lifecycle cleanup still run exactly once.
 
 Each event is written as lines terminated by `\n`, followed by a blank line:
 
@@ -1323,9 +1382,15 @@ second policy resolution.
 An operation **restricts callers** when any of these holds:
 
 - its effective policy is `DenyAll`, `AuthenticatedOnly`, or `Constrained` — the `SecurityPolicy`
-  variants `@DenyAll`, `@RolesAllowed`, and `@Authorized` (`dev.vertique:vertique-rest-core`)
+  variants `@DenyAll`, `@RolesAllowed`, and `@Authorized` (`dev.vertique:vertique-security-core`)
   resolve to; an `@Authorized` with no scopes resolves to `AuthenticatedOnly` (authentication
-  only), and one with scopes, or `@RolesAllowed`, resolves to `Constrained`;
+  only), and one with scopes, or `@RolesAllowed`, resolves to `Constrained`. A `@RequiresPolicy`
+  reference is expanded to those same variants before this classification. The scanner collects
+  the reference from the resource hierarchy, including an interface the consumer adds. A generated
+  companion's method-annotation list is that same collection, not `Class.getMethod`, so a generic
+  override and a same-package non-public override keep the action. An unknown
+  action remains `REQUIRES_ACTION_INVALID`, and restrictive security without an auth module
+  remains `SECURITY_ANNOTATIONS_WITHOUT_AUTH_MODULE`;
 - it declares one or more `@SecurityRequirement`s and none of its alternatives is anonymous (an
   empty requirement, which annotations cannot currently express); a scopeless
   `@SecurityRequirement` still restricts callers;
@@ -1697,8 +1762,10 @@ as proof of a complete body.
   chain phases act on string values, and a raw binary body has none — use `FileContentVerifier` on a
   multipart `FileUpload` part when the intent is to inspect uploaded content.
 - **Expecting `@FilePart.maxSizeBytes` to prevent a disk write.** It is checked post-spool and returns
-  400. The ingress limits are `http.maxBodySize` (total bytes, returns 413) and `http.maxFormFields`
-  (part count).
+  400. The ingress limits are `http.maxBodySize` (every request, 413),
+  `http.maxMultipartBodySizeBytes` (multipart/form-data admission — effective
+  `min(maxBodySize, maxMultipartBodySizeBytes)`, 413, with Content-Length early reject before spool
+  when present), and `http.maxFormFields` (part count).
 - **Expecting `afterResponse` to mean "the client has the bytes".** It fires at handoff; a streamed
   body may still be in flight. Observe the wire-completion channel for the delivery outcome.
 - **Setting `@JsonProfile` on a resource method and expecting the response to keep the class
@@ -1747,7 +1814,7 @@ Beyond what `RestCoreModule` and `JsonRuntimeModule` contribute:
 | `MountCompositionValidator` (`JaxRsApplicationMountValidator`) | `@IntoSet`; INTERNAL; takes the `RestApplications` view, `JaxRsConfig`, and `Set<RequestValidationStrategy>`; validates application mounts against hand-built JAX-RS mounts and against each other, the cross-mount operationId refusal, and, under a contract-driven strategy, the contract-location parse — see [Mount conflicts](#mount-conflicts) |
 | `ComposeValidator` (`JaxRsDefaultProfileValidator`) | `@IntoSet`; fails the `VALIDATE` phase on an unknown `jaxrs.jsonProfile` (`json.systemProfile` is validated earlier, by the `CONFIGURE`-phase install step) |
 | `OperationSchemaSource`, `BeanValidator`, `InputObjectProcessor` (`dev.vertique.input.processing.InputObjectProcessor`), `ActionRegistry`, `Authorizer` | `@BindsOptionalOf`; satisfied by `rest-validation`, `validation`, `sanitization`, and `rest-security` respectively |
-| `SyntheticOperationInstaller` | `@Binds` to a package-private implementation; INTERNAL; framework documentation module only |
+| `SyntheticOperationInstaller` | `@Binds` to a package-private implementation; INTERNAL; framework documentation module only; enforces a `SyntheticOperation` typed policy in the supported `AuthModule` and `SecurityModule` composition and refuses a restrictive one without it |
 | `Set<MountPublicationHook>` | `@Multibinds`; INTERNAL; empty by default; sibling framework modules contribute: the documentation module through `@ElementsIntoSet`, the `openapi-contract` validation module's contract-load check through `@IntoSet` |
 
 `dev.vertique.rest.jaxrs.runtime.MagicBytesVerifierModule` is a separate opt-in `@Module` that
@@ -1763,6 +1830,43 @@ bypasses two things a resource route would normally go through: the API-scoped m
 interceptor, router-lifecycle-hook, and mount-customizer chains of a JAX-RS mount never run for it,
 and its own failure handler ends every failure itself rather than handing it to the application's
 error pipeline.
+
+A synthetic operation is built by one of three `SyntheticOperation` factories. `authenticated` and
+`withRoles` keep their behavior and their two-annotation descriptor shape: the scheme's
+`@SecurityRequirement` plus `@Authorized` or `@RolesAllowed`, and no required action. `withPolicy(origin,
+operationId, schemeName, applicationName, policy)` carries a typed `AccessPolicy` (public, deny, roles,
+scopes, a required action, or a combination) and reports it from `accessPolicy()`; the factory only
+checks for `null` and does not judge the policy. The installer resolves the policy's direct
+requirements, refuses an invalid policy (not a valid policy interface, no requirement, an empty or
+blank role, or an exclusive combination such as public with deny) with a `RestConfigurationException`
+that starts with the operation's origin and wraps the `IllegalArgumentException`, and does so before
+the router gains any route.
+
+The scheme follows the same rules a resource route has. An empty `schemeName` means the operation
+names no scheme and is legal only for a policy that resolves to public access: it then gets no
+`@SecurityRequirement` and no authentication handler, so it installs even where no scheme handler or
+security module is composed. Any other value, a blank one included, is a supplied scheme. Public plus
+a supplied scheme is rejected (a blank scheme name is refused earlier as a malformed security
+requirement, a named scheme by the registered security policy validator); deny with an empty scheme
+is rejected by that validator; deny with a registered scheme authenticates the caller and then denies; and
+every other restrictive policy needs a registered scheme whose handler provides authentication. A
+custom validator's rejection stays authoritative, and no scheme is invented for a policy that has
+none. With no policy validator bound at all, public plus a supplied scheme is not rejected.
+
+A policy flows through the existing contributor chain: its requirements resolve to the effective
+`SecurityPolicy`, and its action, once checked the way a resource route's `@RequiresAction` is, is
+passed to every operation handler contributor instead of "no action". The action is refused, with
+`RouteRegistrationException` violations raised before any route exists, when the authorization engine
+(no `ActionRegistry`) is not installed, the REST authentication enforcement runtime is not installed,
+no `Authorizer` is installed, or the action is not registered. Roles or scopes without the enforcement runtime are refused for the same reason a resource
+route is. An action-only policy resolves to no `SecurityPolicy` restriction plus its action, as it does
+on a resource route, so the action-gate contributor needs exactly one route authentication handler.
+
+Enforcement of a typed policy is supported in a composition that includes `AuthModule` and
+`SecurityModule`, directly or through a module that includes them. Where that composition is missing, a
+restrictive policy is refused at installation rather than installed unenforced. Hand-binding only some
+INTERNAL marker bindings of those modules is outside the supported composition: the installer does not
+validate an arbitrary graph, and it does not repair how those markers pair.
 
 `dev.vertique.rest.jaxrs.publication` holds `MountPublicationHook`, which is bound only through
 the `@Multibinds` `Set<MountPublicationHook>` multibinding above — empty by default, never an

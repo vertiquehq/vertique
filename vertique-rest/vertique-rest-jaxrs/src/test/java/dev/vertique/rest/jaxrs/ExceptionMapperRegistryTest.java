@@ -279,4 +279,41 @@ class ExceptionMapperRegistryTest {
         assertInstanceOf(ProblemDetail.class, response.getEntity());
         assertEquals("security: access denied", ((ProblemDetail) response.getEntity()).detail());
     }
+
+    @Test
+    @DisplayName("handledByFrameworkCatchAll is true for untyped causes under framework defaults")
+    void handledByFrameworkCatchAllForUntypedCause() {
+        assertTrue(registry.handledByFrameworkCatchAll(RuntimeException.class));
+        assertFalse(
+                registry.handledByFrameworkCatchAll(IllegalArgumentException.class),
+                "typed DefaultExceptionMapper handlers are not the catch-all");
+    }
+
+    @Test
+    @DisplayName("handledByFrameworkCatchAll is false when an application mapper is more specific")
+    void handledByFrameworkCatchAllFalseForSpecificUserMapper() {
+        ExceptionMapperRegistry withUser = new ExceptionMapperRegistry(defaults, Set.of(new UserNullPointerMapper()));
+
+        assertFalse(withUser.handledByFrameworkCatchAll(NullPointerException.class));
+        assertTrue(
+                withUser.handledByFrameworkCatchAll(RuntimeException.class),
+                "unrelated untyped causes still use the framework catch-all");
+    }
+
+    @Test
+    @DisplayName("handledByFrameworkCatchAll is false when an application ExceptionMapper<Throwable> replaces defaults")
+    void handledByFrameworkCatchAllFalseWhenUserReplacesThrowable() {
+        ExceptionMapperRegistry withUserCatchAll =
+                new ExceptionMapperRegistry(defaults, Set.of(new UserThrowableCatchAll()));
+
+        assertFalse(withUserCatchAll.handledByFrameworkCatchAll(RuntimeException.class));
+    }
+
+    /** Application catch-all that replaces the framework {@code Throwable} registry slot. */
+    static class UserThrowableCatchAll implements ExceptionMapper<Throwable> {
+        @Override
+        public Response toResponse(Throwable exception) {
+            return Response.status(500).entity(ProblemDetail.of(500, "user")).build();
+        }
+    }
 }

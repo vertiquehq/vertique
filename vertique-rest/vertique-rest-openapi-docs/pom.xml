@@ -32,6 +32,11 @@ SPDX-License-Identifier: EUPL-1.2
             <groupId>dev.vertique</groupId>
             <artifactId>vertique-rest-core</artifactId>
         </dependency>
+        <!-- AccessPolicy, the type of ApiDocs.policy(), and the AccessPolicyResolver that validates it. -->
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-security-core</artifactId>
+        </dependency>
         <!-- VertxConfig, ConfigParser, ConfigurationException, ExtensionPhase. -->
         <dependency>
             <groupId>dev.vertique</groupId>

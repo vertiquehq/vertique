@@ -17,16 +17,16 @@ import java.util.Set;
 /**
  * The compositions of the contract-load startup proofs whose contract location must be a compile-time
  * constant: an application whose declaration names its contract, and a hand-built JAX-RS mount with a
- * contract. Both name {@value #RELATIVE_SERVERS_RESOURCE}, a test resource whose only server URL is
- * relative and whose file name, server URL, and {@code info.description} carry {@value #MARKER}.
+ * contract. Both name {@value #MALFORMED_SERVERS_RESOURCE}, a test resource whose only server URL is
+ * malformed and whose file name, server URL, and {@code info.description} carry {@value #MARKER}.
  */
 public final class ContractLoadModules {
 
     /** The marker the classpath fixture carries in its name and content; no failure may echo it. */
     public static final String MARKER = "zq16marker";
 
-    /** The classpath location of the contract with a relative server URL. */
-    public static final String RELATIVE_SERVERS_RESOURCE = "contracts/" + MARKER + "-relative-servers.json";
+    /** The classpath location of the contract with a malformed server URL. */
+    public static final String MALFORMED_SERVERS_RESOURCE = "contracts/" + MARKER + "-malformed-servers.json";
 
     /** The hand-built mount's path; it overlaps no application mount path. */
     public static final String HAND_BUILT_MOUNT_PATH = "/api/handbuilt/*";
@@ -60,7 +60,7 @@ public final class ContractLoadModules {
 
     /**
      * Contributes a hand-built JAX-RS mount at {@value #HAND_BUILT_MOUNT_PATH} holding one {@link
-     * ManualResource}, with the contract location {@value #RELATIVE_SERVERS_RESOURCE}. The mount belongs
+     * ManualResource}, with the contract location {@value #MALFORMED_SERVERS_RESOURCE}. The mount belongs
      * to no application.
      */
     @Module
@@ -77,7 +77,7 @@ public final class ContractLoadModules {
         @Provides
         @IntoSet
         static RouterMount handBuiltMount(JaxRsRouterMount.Factory factory) {
-            return factory.create(HAND_BUILT_MOUNT_PATH, RELATIVE_SERVERS_RESOURCE, Set.of(new ManualResource()));
+            return factory.create(HAND_BUILT_MOUNT_PATH, MALFORMED_SERVERS_RESOURCE, Set.of(new ManualResource()));
         }
     }
 }

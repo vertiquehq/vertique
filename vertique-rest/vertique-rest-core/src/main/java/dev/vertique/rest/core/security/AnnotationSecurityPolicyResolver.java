@@ -4,6 +4,8 @@
 package dev.vertique.rest.core.security;
 
 import dev.vertique.core.util.AnnotationResolver;
+import dev.vertique.security.authz.AccessPolicyResolver;
+import dev.vertique.security.authz.Authorized;
 import jakarta.annotation.Nullable;
 import jakarta.annotation.security.DenyAll;
 import jakarta.annotation.security.PermitAll;
@@ -11,7 +13,9 @@ import jakarta.annotation.security.RolesAllowed;
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * INTERNAL framework seam — HTTP-runtime collaborator consumed by sibling framework modules; not
@@ -74,6 +78,14 @@ public class AnnotationSecurityPolicyResolver implements SecurityPolicyResolver 
      */
     public SecurityPolicy resolveFromAnnotations(
             List<Annotation> methodAnnotations, List<Annotation> classAnnotations) {
+        Optional<List<Annotation>> typed = typedRequirements(methodAnnotations, classAnnotations);
+        if (typed.isPresent()) {
+            return resolveFromAnnotations(typed.get(), List.of());
+        }
+        return resolveInline(methodAnnotations, classAnnotations);
+    }
+
+    private SecurityPolicy resolveInline(List<Annotation> methodAnnotations, List<Annotation> classAnnotations) {
         // Jakarta EE override: if the method declares any security annotation, class-level is ignored
         DenyAll denyAll = findAnnotation(methodAnnotations, DenyAll.class);
         PermitAll permitAll = findAnnotation(methodAnnotations, PermitAll.class);
@@ -120,9 +132,15 @@ public class AnnotationSecurityPolicyResolver implements SecurityPolicyResolver 
      *   <li>{@code @DenyAll} + {@code @Authorized}
      *   <li>{@code @PermitAll} + {@code @RolesAllowed}
      *   <li>{@code @PermitAll} + {@code @Authorized}
+     *   <li>two {@code @RolesAllowed} annotations with different role arrays (merged across
+     *       declarations of the same method or class)
+     *   <li>two {@code @Authorized} annotations with different scopes or {@code matchAll}
      * </ul>
      *
-     * <p>Interface-declared annotations are included via {@link AnnotationResolver}.
+     * <p>Interface-declared annotations are included via {@link AnnotationResolver}. Because that
+     * merge keeps every declaration's security annotations, a {@code @DenyAll} on a super-interface
+     * and a {@code @PermitAll} on an overriding default (or class override) is a conflict — nearer
+     * declarations do not win.
      *
      * @param resourceClass the class declaring the method
      * @param method        the annotated method
@@ -148,20 +166,27 @@ public class AnnotationSecurityPolicyResolver implements SecurityPolicyResolver 
      */
     public boolean hasConflictingAnnotationsFrom(
             List<Annotation> methodAnnotations, List<Annotation> classAnnotations) {
+        try {
+            AccessPolicyResolver.select(methodAnnotations, classAnnotations);
+        } catch (IllegalArgumentException ex) {
+            return true;
+        }
         // Check method-level annotations for conflicts
         if (isConflictingCombination(
-                findAnnotation(methodAnnotations, DenyAll.class) != null,
-                findAnnotation(methodAnnotations, PermitAll.class) != null,
-                findAnnotation(methodAnnotations, RolesAllowed.class) != null,
-                findAnnotation(methodAnnotations, Authorized.class) != null)) {
+                        findAnnotation(methodAnnotations, DenyAll.class) != null,
+                        findAnnotation(methodAnnotations, PermitAll.class) != null,
+                        findAnnotation(methodAnnotations, RolesAllowed.class) != null,
+                        findAnnotation(methodAnnotations, Authorized.class) != null)
+                || hasConflictingMemberValues(methodAnnotations)) {
             return true;
         }
         // Check class-level annotations for conflicts
         return isConflictingCombination(
-                findAnnotation(classAnnotations, DenyAll.class) != null,
-                findAnnotation(classAnnotations, PermitAll.class) != null,
-                findAnnotation(classAnnotations, RolesAllowed.class) != null,
-                findAnnotation(classAnnotations, Authorized.class) != null);
+                        findAnnotation(classAnnotations, DenyAll.class) != null,
+                        findAnnotation(classAnnotations, PermitAll.class) != null,
+                        findAnnotation(classAnnotations, RolesAllowed.class) != null,
+                        findAnnotation(classAnnotations, Authorized.class) != null)
+                || hasConflictingMemberValues(classAnnotations);
     }
 
     /**
@@ -190,27 +215,22 @@ public class AnnotationSecurityPolicyResolver implements SecurityPolicyResolver 
      * @return a descriptive string listing the conflicting annotations and where they appear
      */
     public String describeConflictFrom(List<Annotation> methodAnnotations, List<Annotation> classAnnotations) {
+        try {
+            AccessPolicyResolver.select(methodAnnotations, classAnnotations);
+        } catch (IllegalArgumentException ex) {
+            return "RequiresPolicy: " + ex.getMessage();
+        }
         // Identify which level has the conflict
         boolean methodConflict = isConflictingCombination(
-                findAnnotation(methodAnnotations, DenyAll.class) != null,
-                findAnnotation(methodAnnotations, PermitAll.class) != null,
-                findAnnotation(methodAnnotations, RolesAllowed.class) != null,
-                findAnnotation(methodAnnotations, Authorized.class) != null);
+                        findAnnotation(methodAnnotations, DenyAll.class) != null,
+                        findAnnotation(methodAnnotations, PermitAll.class) != null,
+                        findAnnotation(methodAnnotations, RolesAllowed.class) != null,
+                        findAnnotation(methodAnnotations, Authorized.class) != null)
+                || hasConflictingMemberValues(methodAnnotations);
 
-        List<String> present = new ArrayList<>();
-        if (methodConflict) {
-            if (findAnnotation(methodAnnotations, DenyAll.class) != null) present.add("@DenyAll");
-            if (findAnnotation(methodAnnotations, PermitAll.class) != null) present.add("@PermitAll");
-            if (findAnnotation(methodAnnotations, RolesAllowed.class) != null) present.add("@RolesAllowed");
-            if (findAnnotation(methodAnnotations, Authorized.class) != null) present.add("@Authorized");
-            return "method-level: " + String.join(" + ", present);
-        } else {
-            if (findAnnotation(classAnnotations, DenyAll.class) != null) present.add("@DenyAll");
-            if (findAnnotation(classAnnotations, PermitAll.class) != null) present.add("@PermitAll");
-            if (findAnnotation(classAnnotations, RolesAllowed.class) != null) present.add("@RolesAllowed");
-            if (findAnnotation(classAnnotations, Authorized.class) != null) present.add("@Authorized");
-            return "class-level: " + String.join(" + ", present);
-        }
+        List<Annotation> conflicting = methodConflict ? methodAnnotations : classAnnotations;
+        String level = methodConflict ? "method-level" : "class-level";
+        return level + ": " + describePresentSecurity(conflicting);
     }
 
     /**
@@ -262,6 +282,20 @@ public class AnnotationSecurityPolicyResolver implements SecurityPolicyResolver 
     }
 
     /**
+     * Expands the selected {@code @RequiresPolicy}, if any, into its direct requirement
+     * annotations.
+     *
+     * @param methodAnnotations merged method-level annotations
+     * @param classAnnotations  merged class-level annotations
+     * @return the policy's expanded requirements, or empty when no policy is selected
+     * @throws IllegalArgumentException if the policy selection is invalid
+     */
+    private static Optional<List<Annotation>> typedRequirements(
+            List<Annotation> methodAnnotations, List<Annotation> classAnnotations) {
+        return AccessPolicyResolver.select(methodAnnotations, classAnnotations).map(AccessPolicyResolver::resolve);
+    }
+
+    /**
      * Returns {@code true} if the given combination of security annotation flags represents a
      * conflict at a single declaration level.
      *
@@ -275,6 +309,71 @@ public class AnnotationSecurityPolicyResolver implements SecurityPolicyResolver 
             boolean hasDenyAll, boolean hasPermitAll, boolean hasRolesAllowed, boolean hasAuthorized) {
         if (hasDenyAll && (hasPermitAll || hasRolesAllowed || hasAuthorized)) return true;
         return hasPermitAll && (hasRolesAllowed || hasAuthorized);
+    }
+
+    /**
+     * Returns {@code true} when the merged annotation list carries two {@code @RolesAllowed} or
+     * two {@code @Authorized} instances with disagreeing member values — the fail-closed half of
+     * cross-declaration security parity with codegen (issue #634).
+     *
+     * @param annotations merged annotations from one declaration level
+     * @return {@code true} if member values conflict
+     */
+    private boolean hasConflictingMemberValues(List<Annotation> annotations) {
+        RolesAllowed firstRoles = null;
+        Authorized firstAuthorized = null;
+        for (Annotation ann : annotations) {
+            if (ann instanceof RolesAllowed roles) {
+                if (firstRoles == null) {
+                    firstRoles = roles;
+                } else if (!Arrays.equals(firstRoles.value(), roles.value())) {
+                    return true;
+                }
+            } else if (ann instanceof Authorized authorized) {
+                if (firstAuthorized == null) {
+                    firstAuthorized = authorized;
+                } else if (!Arrays.equals(firstAuthorized.scopes(), authorized.scopes())
+                        || firstAuthorized.matchAll() != authorized.matchAll()) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Lists the security annotations present in {@code annotations} for conflict descriptions,
+     * including distinct {@code @RolesAllowed}/{@code @Authorized} member-value variants.
+     *
+     * @param annotations the annotation list to describe
+     * @return a {@code " + "}-joined description
+     */
+    private String describePresentSecurity(List<Annotation> annotations) {
+        List<String> present = new ArrayList<>();
+        if (findAnnotation(annotations, DenyAll.class) != null) {
+            present.add("@DenyAll");
+        }
+        if (findAnnotation(annotations, PermitAll.class) != null) {
+            present.add("@PermitAll");
+        }
+        for (Annotation ann : annotations) {
+            if (ann instanceof RolesAllowed roles) {
+                String desc = "@RolesAllowed" + Arrays.toString(roles.value());
+                if (!present.contains(desc)) {
+                    present.add(desc);
+                }
+            } else if (ann instanceof Authorized authorized) {
+                String desc = "@Authorized[scopes="
+                        + Arrays.toString(authorized.scopes())
+                        + ",matchAll="
+                        + authorized.matchAll()
+                        + "]";
+                if (!present.contains(desc)) {
+                    present.add(desc);
+                }
+            }
+        }
+        return String.join(" + ", present);
     }
 
     /**

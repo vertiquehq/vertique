@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Codegen MCP Tool Processor
 
-> **Status:** Alpha
+> **Status:** Stable
 > **Package:** `dev.vertique.codegen.mcp`
 > **Artifact:** `vertique-codegen-mcp`
 > **Depends on:** `vertique-codegen-core`, `vertique-mcp-core`, `vertique-core`, `vertique-security-core`, `vertique-input-processing`, `com.palantir.javapoet:javapoet`
@@ -185,8 +185,38 @@ type-level one, and several interface candidates in one tier must agree.
 | `@DenyAll` | `DENY_ALL` |
 | `@RolesAllowed` and/or `@RequiresAction` | `RESTRICTED`, composed with AND when both are present |
 
-`@RequiresAction` conflicts with `@PermitAll` and `@DenyAll`, exactly as in REST. `@Authorized` is
-REST-specific and is rejected on a tool.
+`@RequiresAction` conflicts with `@PermitAll` and `@DenyAll`, exactly as in REST. Inline
+`@Authorized` declarations are unsupported on MCP tools and are rejected, including when inherited.
+
+### A typed policy replaces inline security and publishes a fail-closed descriptor
+
+A tool can instead reference a typed access policy with `@RequiresPolicy(Policy.class)` on the tool
+method or its declaring type. The processor selects the policy before it applies any rule above. It
+collects declarations from the tool's declaring type — the method, the interface and superclass
+methods that correspond to it after generic substitution, and the whole type hierarchy — and a method
+policy replaces the entire type policy. A policy's own `@Authorized`, scopes, roles and action are
+part of that policy and are accepted; an inline `@Authorized` on the tool stays rejected.
+
+For a typed tool the model carries `DENY_ALL` with no roles and no action, and the generated invoker
+overrides `McpToolInvoker#accessPolicy()` to return `Optional.of(Policy.class)` while publishing that
+`DENY_ALL` descriptor. A runtime that ignores the hook therefore refuses the tool. An inline-only
+tool emits no hook and its descriptor is unchanged.
+
+Each of these is one compile error naming the tool and the policy:
+
+- Distinct policy references in the method set, or in the type set, including parent/child and
+  diamond conflicts. The same policy repeated is accepted.
+- A policy beside any inline `@RolesAllowed`, `@RequiresAction`, `@PermitAll`, `@DenyAll` or
+  `@Authorized` on the method or type path.
+- A policy that is not a public non-generic interface extending only `AccessPolicy`, declares members,
+  has no requirement, has a blank role or scope or a malformed action, references another policy, or
+  carries a security-scheme annotation or an observable composed security annotation.
+- A policy the generated invoker cannot name: it, or a type enclosing it, is private, or is not public
+  and outside the tool's package.
+
+Overloads, static or private methods and package-private methods of another package that merely look
+like the tool method are not part of its declaration set and are ignored, never rejected. A conflict
+in the type set is reported even when a method policy would replace the type policy.
 
 ---
 
@@ -239,6 +269,19 @@ component names in generated-source tooling.
 
 ---
 
+## Key Classes
+
+### `McpToolProcessor`
+
+The annotation processor entry point (`META-INF/services/javax.annotation.processing.Processor`).
+It discovers `@McpTool` methods, validates declarations at compile time, emits one package-private
+invoker per accepted tool, and emits `GeneratedMcpToolsModule` to multibind invokers and
+descriptors. It always returns `false` from `process` so peer processors see unmodified elements.
+Per-type opt-out is `@NoAutoWire`; `-Avertique.codegen.package` pins the generated module package
+(and therefore the single package every tool declaring type must live in).
+
+---
+
 ## Module Dagger Bindings
 
 None at processor scope. The processor's *output* — `GeneratedMcpToolsModule` — is the module the
@@ -253,7 +296,7 @@ application installs.
 | `vertique-codegen-core` | compile | `CodegenContext`, `TypeResolver`, `AnnotationMirrors`, `Diagnostics`, and the generated-name helpers |
 | `vertique-mcp-core` | compile | `@McpTool` / `@McpToolParam`, and the `McpToolDescriptor`, `McpToolAccess`, `McpToolInvoker`, `McpPreparedToolCall` contracts the generated source implements |
 | `vertique-core` | compile | `@JsonProfile` and `JsonProfileId` for effective-profile resolution and normalization |
-| `vertique-security-core` | compile | `@RequiresAction` / `ActionRef`, from which the tool's access mode is derived |
+| `vertique-security-core` | compile | `@RequiresAction` / `ActionRef`, from which the tool's access mode is derived, and `@RequiresPolicy` / `AccessPolicy` for typed policies |
 | `vertique-input-processing` | compile | `dev.vertique.input.processing.apt.ElementInvocationPolicies` and `InvocationPolicyConflictException`, the shared compile-time derivation of route and parameter policy chains; the generated invoker's `EffectiveInputPolicies.NONE` literal is still addressed by name only (a JavaPoet `ClassName`), not by import |
 | `com.palantir.javapoet:javapoet` | compile | Source emission |
 

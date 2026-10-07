@@ -9,6 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.context.DefaultContextHolder;
 import dev.vertique.rest.core.config.JaxRsConfig;
+import dev.vertique.rest.core.events.RequestCompletionRecorder;
 import dev.vertique.rest.core.events.RestRequestCompletedEvent;
 import dev.vertique.rest.core.events.RestRequestCompletionEmitter;
 import dev.vertique.rest.core.interceptor.RequestInterceptor;
@@ -68,7 +69,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * <ul>
  *   <li>{@link #midStreamSourceFailureSurfacesWireFailureCode()} — the streamed source fails after
  *       the first chunk reached the client. The pipe future fails, the response pipeline records
- *       the cause under {@link RestRequestCompletionEmitter#KEY_WIRE_FAILURE} and ends the
+ *       the cause through {@link RequestCompletionRecorder#recordWireFailure} and ends the
  *       response. The event carries status 200 <em>and</em> a non-null {@code wireFailureCode} —
  *       the truncated-response signature — while the client observes a well-formed but truncated
  *       body.</li>

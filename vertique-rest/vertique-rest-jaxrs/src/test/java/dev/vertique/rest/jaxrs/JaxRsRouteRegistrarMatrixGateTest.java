@@ -9,8 +9,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.rest.core.RestConfigurationException;
 import dev.vertique.rest.core.routing.SecuritySchemeRegistry;
-import dev.vertique.rest.core.security.Authorized;
 import dev.vertique.rest.core.security.SecuritySchemeHandler;
+import dev.vertique.security.authz.Authorized;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.security.SecurityRequirementEntry;

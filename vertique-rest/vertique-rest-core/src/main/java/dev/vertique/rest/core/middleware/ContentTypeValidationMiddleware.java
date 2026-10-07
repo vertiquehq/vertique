@@ -3,8 +3,10 @@
 
 package dev.vertique.rest.core.middleware;
 
+import dev.vertique.rest.core.ProblemDetail;
 import io.vertx.core.http.HttpMethod;
 import io.vertx.ext.web.RoutingContext;
+import jakarta.ws.rs.core.Response;
 
 /**
  * API-scoped middleware that validates the {@code Content-Type} header on requests with bodies.
@@ -60,7 +62,14 @@ public class ContentTypeValidationMiddleware implements Middleware {
             if (hasBody) {
                 String contentType = ctx.request().getHeader("Content-Type");
                 if (contentType == null || !isAcceptedContentType(contentType)) {
-                    ctx.fail(415, new jakarta.ws.rs.NotSupportedException("Unsupported Content-Type"));
+                    // Author the ProblemDetail on the JAX-RS Response so equal-status detail
+                    // sanitization in ErrorPipeline keeps this framework diagnostic (a bare
+                    // NotSupportedException(message) would have its message dropped).
+                    Response unsupported = Response.status(415)
+                            .entity(ProblemDetail.of(415, "Unsupported Content-Type"))
+                            .type("application/problem+json")
+                            .build();
+                    ctx.fail(415, new jakarta.ws.rs.NotSupportedException(unsupported));
                     return;
                 }
             }

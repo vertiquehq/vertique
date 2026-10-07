@@ -120,11 +120,6 @@ import lombok.extern.slf4j.Slf4j;
 @Singleton
 public final class RestRequestCompletionEmitter implements Middleware {
 
-    // --- Routing context keys ---
-
-    /** Post-handoff wire-failure marker; value: Throwable; first writer wins. */
-    public static final String KEY_WIRE_FAILURE = "vertique.rest.core.events.wireFailure";
-
     /**
      * Execution priority inside the {@link ExtensionPhase#SYSTEM_FIRST} phase. It sorts this
      * middleware right after {@link RequestContextLifecycle} (ORDER = {@link Integer#MIN_VALUE}, same
@@ -290,7 +285,7 @@ public final class RestRequestCompletionEmitter implements Middleware {
      *                  every listener receives it
      * @param state     the request's completion state, as the end-handler closure holds it
      * @param endResult the outcome delivered to the response end handler; consulted for
-     *                  {@code wireFailureCode} when the {@link #KEY_WIRE_FAILURE} marker is absent
+     *                  {@code wireFailureCode} when the state's wire-failure marker is absent
      */
     void emit(RoutingContext ctx, RequestCompletionState state, AsyncResult<Void> endResult) {
         // --- Exactly-once guard ---
@@ -336,10 +331,10 @@ public final class RestRequestCompletionEmitter implements Middleware {
         // safeFailureMessage: intentionally null. Raw exception messages are unsafe (§10.3).
         // A future curated source may populate this field via enrichment.
         String safeFailureMessage = null;
-        // wireFailureCode: post-handoff wire-failure classification. The KEY_WIRE_FAILURE marker
-        // (streaming failures, set by the response pipeline; first-writer-wins) takes precedence
-        // over a failed end-handler result (client aborts).
-        Throwable marker = ctx.get(KEY_WIRE_FAILURE);
+        // wireFailureCode: post-handoff wire-failure classification. The framework-owned marker
+        // (streaming failures, set by the response pipeline via RequestCompletionRecorder; first
+        // writer wins) takes precedence over a failed end-handler result (client aborts).
+        Throwable marker = state.wireFailure();
         String wireFailureCode = wireFailureCode(marker, endResult);
 
         // --- Dispatch by claim: exactly one event type, or nothing ---
@@ -448,13 +443,13 @@ public final class RestRequestCompletionEmitter implements Middleware {
 
     /**
      * Derives the wire-failure classification for a completed request from the two input
-     * channels of the {@code ResponseSerializer} completion contract: the {@link #KEY_WIRE_FAILURE}
-     * marker (streaming failures, set by the response pipeline) and the end-handler
-     * {@link AsyncResult} (client aborts). The marker takes precedence when both carry a failure;
-     * when neither does, returns {@code null} (clean wire completion).
+     * channels of the {@code ResponseSerializer} completion contract: the framework-owned
+     * wire-failure marker on {@link RequestCompletionState} (streaming failures, set by the
+     * response pipeline via {@link RequestCompletionRecorder#recordWireFailure}) and the
+     * end-handler {@link AsyncResult} (client aborts). The marker takes precedence when both
+     * carry a failure; when neither does, returns {@code null} (clean wire completion).
      *
-     * @param marker    the {@link #KEY_WIRE_FAILURE} routing-context marker value, or {@code null}
-     *                  when absent
+     * @param marker    the framework-owned wire-failure marker value, or {@code null} when absent
      * @param endResult the outcome delivered to the response end handler
      * @return the normalized wire-failure classification, or {@code null} on clean completion
      */

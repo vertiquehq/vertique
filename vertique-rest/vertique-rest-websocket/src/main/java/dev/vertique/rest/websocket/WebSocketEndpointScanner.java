@@ -4,15 +4,18 @@
 package dev.vertique.rest.websocket;
 
 import dev.vertique.core.exception.ConfigurationException;
+import dev.vertique.core.util.AnnotationResolver;
 import dev.vertique.rest.core.security.AnnotationSecurityPolicyResolver;
-import dev.vertique.rest.core.security.Authorized;
 import dev.vertique.rest.core.security.RequiresActionResolver;
 import dev.vertique.rest.core.security.SecurityPolicy;
 import dev.vertique.rest.core.security.SecurityPolicyResolver;
 import dev.vertique.security.SecurityContext;
+import dev.vertique.security.authz.AccessPolicyResolver;
 import dev.vertique.security.authz.ActionRef;
 import dev.vertique.security.authz.ActionRegistry;
+import dev.vertique.security.authz.Authorized;
 import dev.vertique.security.authz.RequiresAction;
+import dev.vertique.security.authz.RequiresPolicy;
 import io.vertx.core.Future;
 import io.vertx.core.buffer.Buffer;
 import jakarta.annotation.Nullable;
@@ -42,11 +45,13 @@ import lombok.extern.slf4j.Slf4j;
  *   <li>{@link PathParam} names must match placeholders in the path template</li>
  *   <li>{@link OnMessage} may declare at most one payload-eligible parameter</li>
  *   <li>Security annotations ({@link DenyAll}, {@link RolesAllowed}, {@link PermitAll},
- *       {@link Authorized}, {@link RequiresAction}) are supported at <strong>endpoint/class level
- *       only</strong> and enforced once at upgrade; any of them on a lifecycle method fails startup
- *       rather than being silently ignored. A class-level {@link RequiresAction} must parse as a
- *       canonical {@link ActionRef} and be registered in the {@link ActionRegistry}, or startup fails
- *       (fail-closed; FR-AUTHZ-048, ADR-0115).</li>
+ *       {@link Authorized}, {@link RequiresAction}, {@link RequiresPolicy}) are supported at
+ *       <strong>endpoint/class level only</strong> and enforced once at upgrade; any of them on a
+ *       lifecycle method fails startup rather than being silently ignored. A class-level
+ *       {@link RequiresAction} must parse as a canonical {@link ActionRef} and be registered in the
+ *       {@link ActionRegistry}, or startup fails (fail-closed; FR-AUTHZ-048, ADR-0115). A class-level
+ *       {@link RequiresPolicy} resolves to the same security policy and action gate its inline
+ *       declarations would, and its action is validated the same way.</li>
  * </ul>
  */
 @Slf4j
@@ -183,12 +188,13 @@ class WebSocketEndpointScanner {
         }
 
         // --- Resolve security policy from class-level annotations ---
-        // Reject lifecycle-method security annotations first: the sentinel resolver below ignores them,
-        // so leaving them in place would register an unauthenticated route with a false "I annotated it"
-        // model. WebSocket authorizes once at upgrade — class-level placement only.
+        // Reject lifecycle-method security annotations first: the class-level resolution below ignores
+        // them, so leaving them in place would register an unauthenticated route with a false "I
+        // annotated it" model. WebSocket authorizes once at upgrade — class-level placement only.
         rejectLifecycleMethodSecurityAnnotations(clazz, onOpen, onMessage, onClose, onError);
         rejectLifecycleMethodRequiresAction(clazz, onOpen, onMessage, onClose, onError);
-        // Validate conflicting annotations before resolving
+        // Validate conflicting annotations (including a policy reference mixed with an inline security
+        // annotation) before resolving
         if (securityPolicyResolver.hasConflictingAnnotations(clazz, SENTINEL_METHOD)) {
             throw new IllegalArgumentException("Conflicting security annotations on " + clazz.getName() + ": "
                     + securityPolicyResolver.describeConflict(clazz, SENTINEL_METHOD));
@@ -197,12 +203,23 @@ class WebSocketEndpointScanner {
             throw new IllegalArgumentException("@RolesAllowed with empty value on " + clazz.getName()
                     + "; use @DenyAll to deny all access, or specify at least one role");
         }
-        // The sentinel method carries no security annotations so the resolver
-        // always falls back to class-level annotation scanning.
-        SecurityPolicy securityPolicy = securityPolicyResolver.resolve(SENTINEL_METHOD, clazz);
+        SecurityPolicy securityPolicy;
+        Optional<ActionRef> resolvedAction;
+        List<Annotation> classAnnotations = AnnotationResolver.resolveClassAnnotations(clazz);
+        if (selectsTypedPolicy(classAnnotations)) {
+            // A typed policy is read from the complete class annotations with an empty method list; the
+            // sentinel method never takes part in typed method collection.
+            securityPolicy = securityPolicyResolver.resolveFromAnnotations(List.of(), classAnnotations);
+            resolvedAction = requiresActionResolver.resolve(List.of(), classAnnotations);
+        } else {
+            // The sentinel method carries no security annotations so the resolver
+            // always falls back to class-level annotation scanning.
+            securityPolicy = securityPolicyResolver.resolve(SENTINEL_METHOD, clazz);
+            resolvedAction = resolveSentinelRequiredAction(clazz);
+        }
 
-        // --- Resolve and validate the @RequiresAction action gate (class-level only; ADR-0115) ---
-        Optional<ActionRef> requiredAction = resolveClassLevelRequiredAction(clazz, securityPolicy);
+        // --- Validate the action gate against the policy and registry (class-level only) ---
+        Optional<ActionRef> requiredAction = resolveClassLevelRequiredAction(clazz, securityPolicy, resolvedAction);
 
         return new WebSocketEndpointMeta(
                 path,
@@ -226,16 +243,17 @@ class WebSocketEndpointScanner {
 
     /**
      * Jakarta/framework security annotations that resolve into a {@link SecurityPolicy}. Present on a
-     * lifecycle method they would be silently ignored by the sentinel-based class-level resolver, so
-     * they must be rejected at scan time.
+     * lifecycle method they would be silently ignored by the class-level resolver, so they must be
+     * rejected at scan time. {@link RequiresPolicy} is included: a policy reference names the whole
+     * endpoint's admission, never a single lifecycle callback.
      */
     @SuppressWarnings("unchecked")
     private static final Class<? extends Annotation>[] LIFECYCLE_FORBIDDEN_SECURITY_ANNOTATIONS =
-            new Class[] {DenyAll.class, RolesAllowed.class, PermitAll.class, Authorized.class};
+            new Class[] {DenyAll.class, RolesAllowed.class, PermitAll.class, Authorized.class, RequiresPolicy.class};
 
     /**
-     * Fails startup if {@link DenyAll}, {@link RolesAllowed}, {@link PermitAll}, or {@link Authorized}
-     * is present on any WebSocket lifecycle method.
+     * Fails startup if {@link DenyAll}, {@link RolesAllowed}, {@link PermitAll}, {@link Authorized},
+     * or {@link RequiresPolicy} is present on any WebSocket lifecycle method.
      *
      * <p>WebSocket authorization happens once at upgrade, and the scanner resolves the endpoint's
      * {@link SecurityPolicy} from class-level annotations only (via a sentinel method). A method-level
@@ -304,15 +322,43 @@ class WebSocketEndpointScanner {
     }
 
     /**
-     * Resolves the class-level {@link RequiresAction} into a canonical {@link ActionRef} and validates
-     * it against the resolved {@link SecurityPolicy} and the {@link ActionRegistry} at startup
-     * (fail-closed).
+     * Whether the endpoint's complete class annotations select a typed access policy.
      *
-     * <p>The sentinel method carries no annotations, so {@link RequiresActionResolver} falls back to
-     * the class-level annotation. Validation rules, in order:
+     * <p>Invalid, conflicting or mixed policy declarations have already been rejected by the
+     * conflicting-annotation check that runs before this selection.
+     *
+     * @param classAnnotations the complete class-level annotations of the endpoint
+     * @return {@code true} when a {@link RequiresPolicy} reference is selected
+     */
+    private static boolean selectsTypedPolicy(List<Annotation> classAnnotations) {
+        return AccessPolicyResolver.select(List.of(), classAnnotations).isPresent();
+    }
+
+    /**
+     * Resolves the class-level inline {@link RequiresAction} through the sentinel method, which
+     * carries no annotations so {@link RequiresActionResolver} reads the class-level annotation only.
+     *
+     * @param clazz the endpoint class to scan
+     * @return the parsed {@link ActionRef}, or {@link Optional#empty()} when none is declared
+     * @throws IllegalArgumentException if a present {@code @RequiresAction} is not a canonical action
+     */
+    private Optional<ActionRef> resolveSentinelRequiredAction(Class<?> clazz) {
+        try {
+            return requiresActionResolver.resolve(SENTINEL_METHOD, clazz);
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("@RequiresAction on WebSocket endpoint " + clazz.getName()
+                    + " is not a canonical action: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Validates the endpoint's resolved action gate against the resolved {@link SecurityPolicy} and
+     * the {@link ActionRegistry} at startup (fail-closed). The action is either the class-level
+     * {@link RequiresAction} or the action carried by the endpoint's typed policy; it has already been
+     * parsed as a canonical {@link ActionRef} by the time it reaches this method. Validation rules,
+     * in order:
      * <ol>
      *   <li>absent → {@link Optional#empty()} (no action gate);</li>
-     *   <li>present but unparseable as a canonical {@link ActionRef} → startup failure;</li>
      *   <li>present together with a blanket {@link SecurityPolicy.PermitAll} or
      *       {@link SecurityPolicy.DenyAll} → startup failure: {@code @RequiresAction} composes only with
      *       {@code @RolesAllowed}/{@code @Authorized}, so a blanket allow/deny is a contradiction. This
@@ -324,25 +370,18 @@ class WebSocketEndpointScanner {
      *   <li>present but the parsed action is not registered → startup failure.</li>
      * </ol>
      *
-     * @param clazz          the endpoint class to scan for a class-level {@link RequiresAction}
+     * @param clazz          the endpoint class, used for error messages
      * @param securityPolicy the resolved class-level {@link SecurityPolicy}, used to reject the
      *                       {@code @RequiresAction} + {@code @PermitAll}/{@code @DenyAll} conflict
+     * @param resolved       the already-resolved action gate, or {@link Optional#empty()}
      * @return the resolved, registered {@link ActionRef}, or {@link Optional#empty()} when the
      *     endpoint declares no action gate
-     * @throws IllegalArgumentException if a present {@code @RequiresAction} is unparseable, conflicts
-     *     with {@code @PermitAll}/{@code @DenyAll}, cannot be enforced because no registry is installed,
-     *     or names an unregistered action
+     * @throws IllegalArgumentException if a present action gate conflicts with
+     *     {@code @PermitAll}/{@code @DenyAll}, cannot be enforced because no registry is installed, or
+     *     names an unregistered action
      */
-    private Optional<ActionRef> resolveClassLevelRequiredAction(Class<?> clazz, SecurityPolicy securityPolicy) {
-        Optional<ActionRef> resolved;
-        try {
-            // Sentinel has no annotations → resolver reads the class-level @RequiresAction only.
-            resolved = requiresActionResolver.resolve(SENTINEL_METHOD, clazz);
-        } catch (IllegalArgumentException e) {
-            throw new IllegalArgumentException("@RequiresAction on WebSocket endpoint " + clazz.getName()
-                    + " is not a canonical action: " + e.getMessage());
-        }
-
+    private Optional<ActionRef> resolveClassLevelRequiredAction(
+            Class<?> clazz, SecurityPolicy securityPolicy, Optional<ActionRef> resolved) {
         if (resolved.isEmpty()) {
             return Optional.empty();
         }

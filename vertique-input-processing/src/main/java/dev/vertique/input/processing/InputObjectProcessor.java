@@ -97,6 +97,26 @@ public interface InputObjectProcessor {
     }
 
     /**
+     * Resolves the effective policies {@link #processInput} would apply to one named property of
+     * {@code beanType} under {@code baseline}, without transforming a value.
+     *
+     * <p>Transports that extract flat bean properties before conversion (for example JAX-RS
+     * {@code @BeanParam} fields) use this so the invocation baseline, bean-type metadata, and
+     * field metadata compose exactly once — the same skip and append order as a structured
+     * {@code processInput} walk — and are then applied on the transport string before conversion.
+     *
+     * @param beanType     the bean / DTO class that declares the property; must not be {@code null}
+     * @param propertyName the Java property name; must not be {@code null}
+     * @param baseline     invocation-level policies (route plus parameter-level); must not be
+     *                     {@code null}
+     * @return the composed chains for that property; never {@code null}
+     */
+    static EffectiveInputPolicies resolvePropertyPolicies(
+            Class<?> beanType, String propertyName, EffectiveInputPolicies baseline) {
+        return PropertyPolicyComposer.resolve(beanType, propertyName, baseline);
+    }
+
+    /**
      * Hands {@code resolver} every owner type this processor may pass to
      * {@link InputFieldNameResolver#logicalName} while processing {@code declaredType}, so no
      * projection is composed on the request path.

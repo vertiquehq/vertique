@@ -11,10 +11,10 @@ import jakarta.inject.Singleton;
 import java.net.InetAddress;
 import java.security.cert.Certificate;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.regex.Pattern;
 import javax.net.ssl.SSLPeerUnverifiedException;
 import javax.net.ssl.SSLSession;
 
@@ -49,39 +49,6 @@ import javax.net.ssl.SSLSession;
  */
 @Singleton
 public final class RequestOriginCapturer {
-
-    /**
-     * One IPv4 octet: a value from {@code 0} to {@code 255} in one to three digits. The bound matters —
-     * the JDK does not parse a dotted quad with a larger octet as a literal, and resolves it as a
-     * hostname instead.
-     */
-    private static final String IPV4_OCTET = "(?:25[0-5]|2[0-4]\\d|[01]?\\d?\\d)";
-
-    /** Four dot-separated {@link #IPV4_OCTET}s. */
-    private static final String IPV4 = IPV4_OCTET + "(?:\\." + IPV4_OCTET + "){3}";
-
-    /**
-     * Pattern that matches IP address literals (IPv4, IPv6, IPv4-mapped IPv6) without performing
-     * DNS resolution. Used as a guard before calling {@link InetAddress#getByName(String)} to
-     * ensure the call never triggers a blocking DNS lookup on the event loop.
-     *
-     * <p>Only strings that {@code getByName} parses as literals — or rejects without a lookup — may
-     * match. Anything else goes to the OS resolver, and {@code X-Forwarded-For} is attacker-supplied
-     * on every request, trusted peer or not.
-     *
-     * <p>Groups covered:
-     * <ul>
-     *   <li>IPv4: four dot-separated decimal octets, each at most {@code 255}</li>
-     *   <li>IPv6: colon-hex notation with optional zone id ({@code %scope}), containing at least one
-     *       {@code :}. The colon keeps a hex-only hostname such as {@code cafe} out. The JDK never
-     *       resolves a string that starts with a hex digit or {@code :} and contains a {@code :} —
-     *       it parses it as an IPv6 literal or rejects it — and this branch admits no other
-     *       shape.</li>
-     *   <li>IPv4-mapped IPv6: {@code ::ffff:} prefix followed by an IPv4 address</li>
-     * </ul>
-     */
-    private static final Pattern IP_LITERAL =
-            Pattern.compile(IPV4 + "|[0-9a-fA-F]*:[0-9a-fA-F:]*(?:%[a-zA-Z0-9._~-]+)?|::ffff:" + IPV4);
 
     private final RequestOriginConfig config;
     private final List<CidrMatcher> trustedProxies;
@@ -186,54 +153,223 @@ public final class RequestOriginCapturer {
      * @return normalized IP string; {@code raw} unchanged if not an IPv6-mapped IPv4 address
      */
     static String normalizeIp(String raw) {
-        if (!isIpLiteral(raw)) {
-            // Not an IP literal — return unchanged so hostnames are never resolved on the event loop.
+        byte[] bytes = addressBytes(raw);
+        if (bytes == null) {
+            // Not an IP literal — return unchanged.
             return raw;
         }
-        try {
-            InetAddress addr = InetAddress.getByName(raw);
-            byte[] bytes = addr.getAddress();
-
-            // Case 1: JDK already resolved ::ffff:x.x.x.x to a 4-byte Inet4Address — return
-            // the canonical dotted-decimal form so callers never see the ::ffff: prefix.
-            if (bytes.length == 4) {
-                return addr.getHostAddress();
-            }
-
-            // Case 2: 16-byte Inet6Address — check for IPv4-mapped pattern manually.
-            // Format: first 10 bytes zero, bytes 10-11 are 0xFF 0xFF, bytes 12-15 are IPv4.
-            if (isZeroRange(bytes, 0, 10) && (bytes[10] & 0xFF) == 0xFF && (bytes[11] & 0xFF) == 0xFF) {
-                return (bytes[12] & 0xFF)
-                        + "."
-                        + (bytes[13] & 0xFF)
-                        + "."
-                        + (bytes[14] & 0xFF)
-                        + "."
-                        + (bytes[15] & 0xFF);
-            }
-
-            // Pure IPv6 — return the raw string unchanged so addresses like "2001:db8::1" are
-            // not expanded to their full form by InetAddress.getHostAddress().
-            return raw;
-        } catch (Exception e) {
-            // Not a parseable IP address — return raw unchanged.
-            return raw;
+        if (bytes.length == 4) {
+            return (bytes[0] & 0xFF) + "." + (bytes[1] & 0xFF) + "." + (bytes[2] & 0xFF) + "." + (bytes[3] & 0xFF);
         }
+        // Pure IPv6 — return the raw string unchanged so addresses like "2001:db8::1" are
+        // not expanded to their full form.
+        return raw;
     }
 
     /**
-     * Returns {@code true} if {@code s} is an IP address literal (IPv4, IPv6, or IPv4-mapped IPv6)
-     * that can be passed to {@link InetAddress#getByName(String)} without triggering a blocking DNS
-     * lookup.
+     * Returns {@code true} if {@code s} is an IP address literal (IPv4, IPv6, or IPv4-mapped IPv6).
      *
-     * <p>This guard must be checked before every runtime call to {@code getByName()} on the event
-     * loop. Strings that fail the check (hostnames, blank values) are rejected or returned unchanged.
+     * <p>The check is a syntactic parse that never touches the JDK resolver, so it is safe on the
+     * event loop for attacker-supplied {@code X-Forwarded-For} data. See {@link #parseLiteral}.
      *
      * @param s the string to test; may be {@code null}
-     * @return {@code true} when {@code s} matches an IP literal pattern
+     * @return {@code true} when {@code s} is a well-formed IP literal
      */
     static boolean isIpLiteral(String s) {
-        return s != null && IP_LITERAL.matcher(s).matches();
+        return parseLiteral(s) != null;
+    }
+
+    /**
+     * Parses an IP literal into its address bytes, converting IPv4-mapped IPv6 to the 4-byte IPv4
+     * form so IPv4 and mapped entries compare and match identically.
+     *
+     * @param s the candidate literal; may be {@code null}
+     * @return 4 bytes for IPv4 (or IPv4-mapped IPv6), 16 bytes for other IPv6, {@code null} when
+     *         {@code s} is not an IP literal
+     */
+    private static byte[] addressBytes(String s) {
+        byte[] bytes = parseLiteral(s);
+        if (bytes != null
+                && bytes.length == 16
+                && isZeroRange(bytes, 0, 10)
+                && (bytes[10] & 0xFF) == 0xFF
+                && (bytes[11] & 0xFF) == 0xFF) {
+            return Arrays.copyOfRange(bytes, 12, 16);
+        }
+        return bytes;
+    }
+
+    /**
+     * Parses an IPv4 or IPv6 literal without any name resolution. {@code X-Forwarded-For} is
+     * attacker-supplied and parsed before authentication, so the header must never reach
+     * {@link InetAddress#getByName(String)}: any string the JDK does not accept as a literal is
+     * handed to the OS resolver, a blocking lookup on the event loop.
+     *
+     * <p>Accepted forms:
+     * <ul>
+     *   <li>IPv4: four dot-separated decimal octets of one to three digits, each at most
+     *       {@code 255}. Leading zeros are rejected ({@code 010} is octal to some parsers and
+     *       decimal to others).</li>
+     *   <li>IPv6: up to eight 1-4 digit hex groups, at most one {@code ::}, an optional trailing
+     *       dotted IPv4 (which fills two groups), and an optional {@code %zone} suffix of
+     *       {@code [a-zA-Z0-9._~-]+}, which is syntax-checked and not resolved.</li>
+     * </ul>
+     *
+     * @param s the candidate literal; may be {@code null}
+     * @return 4 bytes (IPv4) or 16 bytes (IPv6), or {@code null} when {@code s} is not a literal
+     */
+    private static byte[] parseLiteral(String s) {
+        if (s == null || s.isEmpty()) {
+            return null;
+        }
+        if (s.indexOf(':') < 0) {
+            return parseIpv4(s);
+        }
+        String address = s;
+        int percent = s.indexOf('%');
+        if (percent >= 0) {
+            if (!isValidZone(s, percent + 1)) {
+                return null;
+            }
+            address = s.substring(0, percent);
+        }
+        return parseIpv6(address);
+    }
+
+    private static boolean isValidZone(String s, int from) {
+        if (from >= s.length()) {
+            return false;
+        }
+        for (int i = from; i < s.length(); i++) {
+            char c = s.charAt(i);
+            boolean ok = (c >= '0' && c <= '9')
+                    || (c >= 'a' && c <= 'z')
+                    || (c >= 'A' && c <= 'Z')
+                    || c == '.'
+                    || c == '_'
+                    || c == '~'
+                    || c == '-';
+            if (!ok) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static byte[] parseIpv4(String s) {
+        byte[] out = new byte[4];
+        int index = 0;
+        int octetStart = 0;
+        for (int i = 0; i <= s.length(); i++) {
+            if (i < s.length() && s.charAt(i) != '.') {
+                continue;
+            }
+            if (index == 4) {
+                return null;
+            }
+            int len = i - octetStart;
+            if (len < 1 || len > 3 || (len > 1 && s.charAt(octetStart) == '0')) {
+                return null;
+            }
+            int value = 0;
+            for (int j = octetStart; j < i; j++) {
+                char c = s.charAt(j);
+                if (c < '0' || c > '9') {
+                    return null;
+                }
+                value = value * 10 + (c - '0');
+            }
+            if (value > 255) {
+                return null;
+            }
+            out[index++] = (byte) value;
+            octetStart = i + 1;
+        }
+        return index == 4 ? out : null;
+    }
+
+    private static byte[] parseIpv6(String s) {
+        int gap = s.indexOf("::");
+        if (gap >= 0 && s.indexOf("::", gap + 1) >= 0) {
+            return null;
+        }
+        String left = gap >= 0 ? s.substring(0, gap) : s;
+        String right = gap >= 0 ? s.substring(gap + 2) : "";
+        int[] groups = new int[8];
+        int[] leftCount = {0};
+        // The trailing IPv4 form may only end the whole address: the right side when "::" is
+        // present, otherwise the only side.
+        boolean leftEndsAddress = gap < 0;
+        if (!parseGroups(left, groups, 0, leftCount, leftEndsAddress)) {
+            return null;
+        }
+        if (gap < 0) {
+            return leftCount[0] == 8 ? toBytes(groups) : null;
+        }
+        int[] rightGroups = new int[8];
+        int[] rightCount = {0};
+        if (!parseGroups(right, rightGroups, 0, rightCount, true)) {
+            return null;
+        }
+        if (leftCount[0] + rightCount[0] > 7) {
+            return null;
+        }
+        System.arraycopy(rightGroups, 0, groups, 8 - rightCount[0], rightCount[0]);
+        return toBytes(groups);
+    }
+
+    /**
+     * Parses a colon-separated run of hex groups into {@code out}, optionally ending in a dotted
+     * IPv4 that fills two groups. An empty {@code part} yields zero groups.
+     */
+    private static boolean parseGroups(String part, int[] out, int offset, int[] count, boolean mayEndInIpv4) {
+        if (part.isEmpty()) {
+            return true;
+        }
+        String[] tokens = part.split(":", -1);
+        int n = 0;
+        for (int t = 0; t < tokens.length; t++) {
+            String token = tokens[t];
+            if (token.isEmpty()) {
+                return false;
+            }
+            if (token.indexOf('.') >= 0) {
+                if (!mayEndInIpv4 || t != tokens.length - 1 || n > 6) {
+                    return false;
+                }
+                byte[] v4 = parseIpv4(token);
+                if (v4 == null) {
+                    return false;
+                }
+                out[offset + n++] = ((v4[0] & 0xFF) << 8) | (v4[1] & 0xFF);
+                out[offset + n++] = ((v4[2] & 0xFF) << 8) | (v4[3] & 0xFF);
+                continue;
+            }
+            if (token.length() > 4 || n > 7) {
+                return false;
+            }
+            int value = 0;
+            for (int j = 0; j < token.length(); j++) {
+                int digit = Character.digit(token.charAt(j), 16);
+                // Character.digit also accepts non-ASCII digits; restrict to ASCII.
+                if (digit < 0 || token.charAt(j) > 'f') {
+                    return false;
+                }
+                value = (value << 4) | digit;
+            }
+            out[offset + n++] = value;
+        }
+        count[0] = n;
+        return true;
+    }
+
+    private static byte[] toBytes(int[] groups) {
+        byte[] out = new byte[16];
+        for (int i = 0; i < 8; i++) {
+            out[2 * i] = (byte) (groups[i] >>> 8);
+            out[2 * i + 1] = (byte) groups[i];
+        }
+        return out;
     }
 
     /**
@@ -299,8 +435,8 @@ public final class RequestOriginCapturer {
      * chain is rejected (AC-RO-5): {@code rejected=true}, {@code entries=[]},
      * {@code rejectedCount=rawEntries.size()}.
      *
-     * <p>Otherwise, each entry is parsed as an {@link InetAddress}. Invalid entries (parse
-     * failure) are silently dropped and counted in {@code rejectedCount} (AC-RO-6). Valid entries
+     * <p>Otherwise, each entry is parsed as an IP literal without name resolution. Invalid entries
+     * (parse failure) are silently dropped and counted in {@code rejectedCount} (AC-RO-6). Valid entries
      * are normalized via {@link #normalizeIp(String)}.
      *
      * @param rawEntries the raw trimmed XFF entries
@@ -317,19 +453,14 @@ public final class RequestOriginCapturer {
         }
 
         // AC-RO-6: validate each entry individually.
-        // Guard: only accept IP literals — non-literals are rejected immediately without any
-        // DNS resolution attempt, keeping getByName() calls safe for the event loop.
+        // Only IP literals are accepted. The syntactic parse never resolves names, so attacker-supplied
+        // entries cannot reach the OS resolver from the event loop.
         List<String> valid = new ArrayList<>(rawEntries.size());
         int rejectedCount = 0;
         for (String entry : rawEntries) {
-            if (!isIpLiteral(entry)) {
-                rejectedCount++;
-                continue;
-            }
-            try {
-                InetAddress.getByName(entry);
+            if (isIpLiteral(entry)) {
                 valid.add(normalizeIp(entry));
-            } catch (Exception e) {
+            } else {
                 rejectedCount++;
             }
         }
@@ -450,34 +581,28 @@ public final class RequestOriginCapturer {
          * @return {@code true} if {@code ip} is in the CIDR range
          */
         boolean matches(String ip) {
-            if (!isIpLiteral(ip)) {
-                // Non-literal (null, hostname) can never match a CIDR range; reject immediately.
+            byte[] candidateBytes = addressBytes(ip);
+            if (candidateBytes == null) {
+                // Non-literal (null, hostname) can never match a CIDR range.
                 return false;
             }
-            try {
-                String normalized = normalizeIp(ip);
-                InetAddress candidate = InetAddress.getByName(normalized);
-                byte[] candidateBytes = candidate.getAddress();
 
-                // Address family must match.
-                if (candidateBytes.length != networkBytes.length) {
+            // Address family must match.
+            if (candidateBytes.length != networkBytes.length) {
+                return false;
+            }
+
+            // Compare prefix bits.
+            int remainingBits = prefixLength;
+            for (int i = 0; i < candidateBytes.length && remainingBits > 0; i++) {
+                int bits = Math.min(8, remainingBits);
+                int mask = 0xFF & (0xFF << (8 - bits));
+                if ((candidateBytes[i] & mask) != (networkBytes[i] & mask)) {
                     return false;
                 }
-
-                // Compare prefix bits.
-                int remainingBits = prefixLength;
-                for (int i = 0; i < candidateBytes.length && remainingBits > 0; i++) {
-                    int bits = Math.min(8, remainingBits);
-                    int mask = 0xFF & (0xFF << (8 - bits));
-                    if ((candidateBytes[i] & mask) != (networkBytes[i] & mask)) {
-                        return false;
-                    }
-                    remainingBits -= bits;
-                }
-                return true;
-            } catch (Exception e) {
-                return false;
+                remainingBits -= bits;
             }
+            return true;
         }
     }
 }

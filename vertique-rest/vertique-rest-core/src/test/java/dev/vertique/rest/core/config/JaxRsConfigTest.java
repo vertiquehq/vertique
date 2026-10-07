@@ -12,7 +12,8 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Verifies the {@link JaxRsConfig} defaults relevant to request-validation strategy selection, and the
- * pattern-input bounds of the {@code web-validation} gate: their defaults and their JSON binding.
+ * pattern-input bounds and file-content-verifier wait deadline of the {@code web-validation} gate:
+ * their defaults and their JSON binding.
  */
 class JaxRsConfigTest {
 
@@ -52,5 +53,17 @@ class JaxRsConfigTest {
                 () -> assertEquals(16, parsed.validationPatternMaxChars(), "validationPatternMaxChars"),
                 () -> assertEquals(64, parsed.validationPatternMaxTotalChars(), "validationPatternMaxTotalChars"),
                 () -> assertEquals("aggregate", parsed.validationMode(), "the other keys keep their defaults"));
+    }
+
+    @Test
+    @DisplayName("fileContentVerifierDeadlineMs defaults to 5000 and binds from JSON")
+    void fileContentVerifierDeadlineDefaultsAndBindsFromJson() throws Exception {
+        JaxRsConfig built = JaxRsConfig.builder().build();
+        JaxRsConfig parsed =
+                new ObjectMapper().readValue("{\"fileContentVerifierDeadlineMs\": 250}", JaxRsConfig.class);
+
+        assertEquals(5_000L, built.fileContentVerifierDeadlineMs());
+        assertEquals(250L, parsed.fileContentVerifierDeadlineMs());
+        assertEquals("aggregate", parsed.validationMode(), "other keys keep their defaults");
     }
 }

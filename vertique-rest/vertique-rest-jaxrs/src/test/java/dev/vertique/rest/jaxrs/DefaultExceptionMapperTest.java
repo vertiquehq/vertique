@@ -160,4 +160,16 @@ class DefaultExceptionMapperTest {
         assertEquals(400, second.getStatus());
         assertEquals("second call", ((ProblemDetail) second.getEntity()).detail());
     }
+
+    @Test
+    @DisplayName("handledByCatchAll is true only when the Throwable handler is the most specific match")
+    void handledByCatchAllReflectsMostSpecificHandler() {
+        DefaultExceptionMapper mapper = new DefaultExceptionMapper()
+                .on(IllegalArgumentException.class, ex -> Response.status(400).build())
+                .on(Throwable.class, ex -> Response.status(500).build());
+
+        assertTrue(mapper.handledByCatchAll(RuntimeException.class));
+        assertFalse(mapper.handledByCatchAll(IllegalArgumentException.class));
+        assertFalse(mapper.handledByCatchAll(NumberFormatException.class));
+    }
 }

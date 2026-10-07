@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Starter REST Module
 
-> **Status:** Alpha
+> **Status:** Stable
 > **Package:** `dev.vertique.starter.rest`
 > **Artifact:** `vertique-starter-rest`
 > **Depends on:** starter-core, management, rest-jaxrs, rest-security, rest-validation
@@ -137,6 +137,14 @@ module.
   transitively; listing it again adds nothing.
 - **Expecting the starter to supply a launcher.** It does not depend on
   `dev.vertique:vertique-launcher`. A standalone application still declares the launcher itself.
+
+---
+
+## Module Dagger Bindings
+
+None. `RestApplicationModule` is an `@Module(includes = …)` aggregate only — it declares no
+`@Provides` / `@Binds` / multibinding methods of its own. Bindings come from the six included
+modules listed under Core Concepts.
 
 ---
 
