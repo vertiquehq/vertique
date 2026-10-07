@@ -43,6 +43,15 @@ concurrency:
 jobs:
   publish:
     name: Publish main SNAPSHOT
+    # Evaluated by GitHub from server-populated event fields, before any step
+    # runs. The guard script lives in the checkout, so it cannot be the first
+    # line of defence: a fork pull request from a branch named "main" matches the
+    # trigger's branch filter, and its checkout would run the fork's own copy of
+    # the guard with the write token available.
+    if: >-
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      github.event.workflow_run.head_branch == 'main'
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:

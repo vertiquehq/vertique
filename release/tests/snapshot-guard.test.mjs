@@ -116,6 +116,22 @@ describe('PublicSnapshotWorkflowContractTest', () => {
     assert.match(yaml, /snapshot-guard\.mjs/, 'the workflow must delegate the decision to the guard');
   });
 
+  it('refusesAForkOrPullRequestRunBeforeAnyCheckout', () => {
+    const yaml = workflow();
+    const job = yaml.slice(yaml.indexOf('\n  publish:\n'));
+    const condition = /^    if: >-\n((?:      .*\n)+)/m.exec(job);
+    assert.ok(condition, 'the publish job must carry a job-level condition');
+
+    // The guard script is part of the checkout, so a run it did not gate could
+    // execute a fork's copy of it with the write token. GitHub evaluates this
+    // condition from server-populated event fields, before any step runs.
+    const text = condition[1].replace(/\s+/g, ' ');
+    assert.match(text, /github\.event\.workflow_run\.event == 'push'/);
+    assert.match(text, /github\.event\.workflow_run\.head_repository\.full_name == github\.repository/);
+    assert.match(text, /github\.event\.workflow_run\.head_branch == 'main'/);
+    assert.ok(job.indexOf('    if: >-') < job.indexOf('    steps:'), 'the condition must precede every step');
+  });
+
   it('usesLocalMinimalTokenAndRemainsNonRequired', () => {
     const yaml = workflow();
 
