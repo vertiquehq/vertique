@@ -13,7 +13,7 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { appendFileSync, mkdirSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -142,6 +142,28 @@ describe('SnapshotPayloadTest', () => {
     assert.match(problems, /fixture-unit-a-.*\.pom: content does not match/);
     assert.match(problems, /fixture-unit-b-.*\.pom: listed in the manifest but missing/);
     assert.match(problems, /unlisted\.jar: present but not listed/);
+  });
+
+  it('refusesASymlinkEvenWhenItsTargetMatchesAListedDigest', (t) => {
+    const f = fixture(t);
+    stage(f);
+    // A link to a file outside the payload would otherwise be read through.
+    symlinkSync(payloadFile(f, 'fixture-unit-a'), path.join(f.out, 'repository', 'link.pom'));
+
+    assert.match(verifyPayload({ dir: f.out, sha: SHA, version: VERSION }).join('\n'), /link\.pom: not a regular file/);
+  });
+
+  it('treatsFilesNamedLikeObjectMembersAsUnlisted', (t) => {
+    const f = fixture(t);
+    stage(f);
+    for (const name of ['constructor', 'toString', '__proto__']) {
+      writeFileSync(path.join(f.out, 'repository', name), 'x');
+    }
+
+    const problems = verifyPayload({ dir: f.out, sha: SHA, version: VERSION }).join('\n');
+    for (const name of ['constructor', 'toString', '__proto__']) {
+      assert.match(problems, new RegExp(`${name}: present but not listed`));
+    }
   });
 
   it('refusesAnAbsentOrUnreadableManifest', (t) => {

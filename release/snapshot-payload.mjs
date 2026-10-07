@@ -8,9 +8,13 @@
  * Required CI builds the allowlisted payload units once, on the commit it
  * verifies, and stages exactly those files with a manifest. The publication
  * workflow downloads that payload instead of rebuilding the reactor, and checks
- * it against the commit the publication guard approved before any byte is
- * deployed. A payload for any other commit, a changed file, a missing file or an
- * extra file is refused.
+ * it for consistency with the commit the publication guard approved before any
+ * byte is deployed: a payload for any other commit, a changed, missing or extra
+ * file, or anything that is not a regular file, is refused.
+ *
+ * This is a consistency check, not authentication. The manifest and the files
+ * travel together, so it catches mix-ups and corruption; who may produce the
+ * payload is decided by the run the publication workflow downloads it from.
  *
  * Usage:
  *   node release/snapshot-payload.mjs stage \
@@ -37,12 +41,19 @@ const REPOSITORY = 'repository';
 
 const sha256 = (file) => createHash('sha256').update(readFileSync(file)).digest('hex');
 
-/** Recursively lists files beneath `dir` as POSIX paths relative to `base`. */
-function listRelative(dir, base = dir, acc = []) {
+/**
+ * Recursively lists regular files beneath `dir` as POSIX paths relative to
+ * `base`. A symlink, device or any other entry is reported in `irregular`
+ * rather than followed: a link would otherwise let a payload name a file
+ * outside it.
+ */
+function listRelative(dir, base = dir, acc = { files: [], irregular: [] }) {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const full = path.join(dir, entry.name);
+    const relative = path.relative(base, full).split(path.sep).join('/');
     if (entry.isDirectory()) listRelative(full, base, acc);
-    else acc.push(path.relative(base, full).split(path.sep).join('/'));
+    else if (entry.isFile()) acc.files.push(relative);
+    else acc.irregular.push(relative);
   }
   return acc;
 }
@@ -100,19 +111,24 @@ export function verifyPayload({ dir, sha, version }) {
   if (manifest.schemaVersion !== 1) problems.push(`unsupported manifest schemaVersion ${manifest.schemaVersion}`);
   if (manifest.sha !== sha) problems.push(`payload was built from ${manifest.sha}, not the approved commit ${sha}`);
   if (manifest.version !== version) problems.push(`payload version "${manifest.version}" is not the approved "${version}"`);
-  const expected = manifest.files && typeof manifest.files === 'object' ? manifest.files : {};
-  if (Object.keys(expected).length === 0) problems.push('manifest lists no files');
+  // A Map, so a file named like an Object.prototype member is still "unlisted".
+  const expected = new Map(
+    manifest.files && typeof manifest.files === 'object' ? Object.entries(manifest.files) : []
+  );
+  if (expected.size === 0) problems.push('manifest lists no files');
 
   const repository = path.join(dir, REPOSITORY);
-  const present = existsSync(repository) ? new Set(listRelative(repository)) : new Set();
-  for (const [relative, digest] of Object.entries(expected)) {
+  const listing = existsSync(repository) ? listRelative(repository) : { files: [], irregular: [] };
+  for (const relative of listing.irregular) problems.push(`${relative}: not a regular file`);
+  const present = new Set(listing.files);
+  for (const [relative, digest] of expected) {
     if (!present.has(relative)) problems.push(`${relative}: listed in the manifest but missing`);
     else if (sha256(path.join(repository, ...relative.split('/'))) !== digest) {
       problems.push(`${relative}: content does not match the manifest digest`);
     }
   }
   for (const relative of present) {
-    if (!(relative in expected)) problems.push(`${relative}: present but not listed in the manifest`);
+    if (!expected.has(relative)) problems.push(`${relative}: present but not listed in the manifest`);
   }
   return problems;
 }

@@ -11,8 +11,8 @@
 # It is bound to the completion of the named required-CI workflow rather than to
 # push, so it can only publish bytes that were verified. The payload is built by
 # that CI run, not rebuilt here: it is downloaded from the exact triggering run
-# and checked against the commit the guard approved before anything is
-# deployed (release/snapshot-payload.mjs). It is deliberately NOT
+# and checked for consistency with the commit the guard approved before
+# anything is deployed (release/snapshot-payload.mjs). It is deliberately NOT
 # a required check and cannot write a CI status: a failed publication must not
 # erase the required-CI result that was already established (FR-REL-023).
 #
@@ -80,14 +80,19 @@ jobs:
           run-id: ${{ github.event.workflow_run.id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
-      # Refuses a payload built from another commit, or one with a changed,
-      # missing or extra file, before any byte is deployed.
+      # A consistency check, not authentication: refuses a payload built from
+      # another commit, or one with a changed, missing, extra or non-regular
+      # file, before any byte is deployed. The version reaches the shell through
+      # the environment, never spliced into the command text.
       - name: Verify the payload belongs to the approved commit
         if: steps.guard.outputs.allowed == 'true'
-        run: node release/snapshot-payload.mjs verify --dir ${{ runner.temp }}/snapshot-payload --sha ${{ steps.guard.outputs.checkout_sha }} --version ${{ steps.guard.outputs.version }}
+        env:
+          PAYLOAD_VERSION: ${{ steps.guard.outputs.version }}
+        run: node release/snapshot-payload.mjs verify --dir ${{ runner.temp }}/snapshot-payload --sha ${{ steps.guard.outputs.checkout_sha }} --version "$PAYLOAD_VERSION"
 
       - name: Publish the derived allowlist
         if: steps.guard.outputs.allowed == 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: bash release/publish-artifacts.sh --local-repository ${{ runner.temp }}/snapshot-payload/repository --repository-id github --target-url https://maven.pkg.github.com/${{ github.repository }} --mode snapshot --version ${{ steps.guard.outputs.version }}
+          PAYLOAD_VERSION: ${{ steps.guard.outputs.version }}
+        run: bash release/publish-artifacts.sh --local-repository ${{ runner.temp }}/snapshot-payload/repository --repository-id github --target-url https://maven.pkg.github.com/${{ github.repository }} --mode snapshot --version "$PAYLOAD_VERSION"

@@ -28,6 +28,7 @@ const MAIN_SHA = 'a'.repeat(40);
 /** The one input shape that must be allowed, shallow-merged with `overrides`. */
 const allowedInputs = (overrides = {}) => ({
   event: 'workflow_run',
+  runEvent: 'push',
   conclusion: 'success',
   workflowName: 'CI',
   requiredWorkflowName: 'CI',
@@ -58,6 +59,13 @@ describe('SnapshotGuardTest', () => {
       fork: { headRepository: 'someone-else/vertique' },
       'non-main branch': { headBranch: 'feat/thing' },
       tag: { headBranch: 'refs/tags/v0.1.0' },
+      // Only a push to main stages a publishable payload.
+      'run started by a pull request': { runEvent: 'pull_request' },
+      'run started by a schedule': { runEvent: 'schedule' },
+      'run with no event': { runEvent: undefined },
+      // The version is spliced into workflow commands.
+      'version with shell metacharacters': { version: '1.0.0$(id)-SNAPSHOT' },
+      'version with a space': { version: '1.0 0-SNAPSHOT' },
       // The run succeeded on a commit that is no longer main: publishing it
       // would overwrite the snapshot with older bytes.
       'superseded head': { currentMainSha: 'b'.repeat(40) },
@@ -161,6 +169,11 @@ describe('PublicSnapshotWorkflowContractTest', () => {
 
     // The reactor is not rebuilt here: bytes come from the triggering CI run.
     assert.doesNotMatch(yaml, /mvnw/, 'publication must not rebuild the reactor');
+    // The version reaches the shell through the environment, never as command text.
+    const runLines = [...yaml.matchAll(/^\s*-?\s*run:\s*(.*)$/gm)].map((m) => m[1]);
+    for (const line of runLines) {
+      assert.doesNotMatch(line, /\$\{\{\s*steps\.guard\.outputs\.version/, `version spliced into a command: "${line}"`);
+    }
     assert.match(
       yaml,
       /run-id:\s*\$\{\{\s*github\.event\.workflow_run\.id\s*\}\}/,
