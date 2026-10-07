@@ -30,7 +30,7 @@ public interface OwnContractPublicApi {
 
     /**
      * The application's own contract location, a test classpath resource without a {@code servers}
-     * member, because the {@code openapi-contract} strategy accepts only absolute server URLs or none.
+     * member; the {@code openapi-contract} strategy needs no server URL to validate.
      */
     String OPENAPI_PATH = "public-contract.json";
 
