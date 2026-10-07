@@ -107,7 +107,7 @@ class BuilderCaptureAndPatternAnchorTest {
         assertFalse(patternProperties.isMissingNode(), "the case-insensitive type must publish patternProperties");
         String regex = patternProperties.fieldNames().next();
 
-        // io.vertx.json.schema 5.1.6 compiles "pattern" with plain java.util.regex.Pattern and applies
+        // io.vertx.json.schema 5.1.8 compiles "pattern" with plain java.util.regex.Pattern and applies
         // it with an unanchored substring search (Matcher#find) — exactly what this test reproduces.
         boolean matchesTrailingNewlineKey =
                 Pattern.compile(regex).matcher("name\n").find();

@@ -493,7 +493,7 @@ final class MetadataConstraintSource implements ConstraintSource {
 
     /**
      * Renders a {@code @Pattern}'s regexp, embedding its flags as an inline Java regex modifier group
-     * ({@code io.vertx.json.schema} 5.1.6 compiles the {@code pattern} keyword with
+     * ({@code io.vertx.json.schema} 5.1.8 compiles the {@code pattern} keyword with
      * {@code java.util.regex.Pattern} and honors an embedded modifier group — measured in
      * {@code PatternFlagRenderingTest}). A flag with no embeddable modifier character
      * ({@code CANON_EQ}) cannot be expressed this way and fails generation with a bounded diagnostic.

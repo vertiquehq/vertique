@@ -253,7 +253,7 @@ modifier group (`(?i:...)`, ...; with `COMMENTS`, a line break precedes the clos
 when a trailing `#` comment would otherwise swallow it) as a correction, after the regexp is first
 compiled with its flags — one `java.util.regex` rejects fails generation with a diagnostic naming the
 property, never echoing the expression — measured against the real
-`io.vertx.json.schema` 5.1.6 validator, which compiles the `pattern` keyword with plain `java.util.regex.Pattern` and honors
+`io.vertx.json.schema` 5.1.8 validator, which compiles the `pattern` keyword with plain `java.util.regex.Pattern` and honors
 this — except `CANON_EQ`, which has no embeddable modifier character and fails generation with a
 bounded diagnostic naming the property. A regexp that compiles with its flags but whose embedded
 group does not — an open `\Q` quote, or comments mode switched on inline, can cause this — fails
@@ -603,7 +603,7 @@ rejects is now rejected, as the exact spelling already is (before, that copy was
 near-empty schema and the value was accepted); verdicts for the exact spelling are unchanged. The
 published input schema text of every case-insensitively bound type differs from earlier releases.
 The fold is anchored with
-`(?![\s\S])`, not `$`: `io.vertx.json.schema` 5.1.6 compiles the `pattern` keyword with plain
+`(?![\s\S])`, not `$`: `io.vertx.json.schema` 5.1.8 compiles the `pattern` keyword with plain
 `java.util.regex.Pattern`, whose `$` — without `Pattern.MULTILINE` — still matches immediately
 before a single trailing line terminator, not only at the true end of input; a key ending in a
 newline would otherwise wrongly match the fold. `(?![\s\S])` is the ECMA-262 end-of-input form — a

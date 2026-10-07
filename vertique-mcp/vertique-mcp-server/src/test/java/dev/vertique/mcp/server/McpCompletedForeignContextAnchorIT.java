@@ -59,7 +59,7 @@ import org.junit.jupiter.api.Timeout;
  * context.
  *
  * <p>That identity-no-op reasoning silently assumes a completed future carries no context binding
- * of its own. Per Vert.x 5.1.6's {@code FutureBase.emitResult} (see {@code
+ * of its own. Per Vert.x 5.1.8's {@code FutureBase.emitResult} (see {@code
  * io.vertx.core.impl.future.FutureBase#emitResult}), a future that <em>is</em> bound to a
  * non-{@code null} context — for instance one minted via {@code
  * ((ContextInternal) context).promise()} — dispatches every listener attached to it via {@code

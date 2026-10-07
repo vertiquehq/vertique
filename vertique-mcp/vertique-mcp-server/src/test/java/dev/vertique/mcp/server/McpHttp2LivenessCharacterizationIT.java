@@ -95,7 +95,7 @@ import org.junit.jupiter.api.Timeout;
  * issued from one shared {@link HttpClient} to the same host:port is multiplexed onto the identical
  * physical connection with no further configuration — confirmed directly against {@code
  * PoolOptions.DEFAULT_HTTP2_MAX_POOL_SIZE} (1) and {@code
- * HttpClientOptions.DEFAULT_HTTP2_MULTIPLEXING_LIMIT} (-1, unbounded) for vertx-core 5.1.6. The test
+ * HttpClientOptions.DEFAULT_HTTP2_MULTIPLEXING_LIMIT} (-1, unbounded) for vertx-core 5.1.8. The test
  * additionally records every request's {@link HttpConnection} object identity at the router level and
  * asserts exactly one distinct connection was ever observed, as direct evidence — not just an
  * assumption from defaults — that the hung request and every sibling call shared one connection.
@@ -243,7 +243,7 @@ class McpHttp2LivenessCharacterizationIT {
                 .hasSize(1);
 
         /*
-         * PINNED OBSERVED BEHAVIOR (R50 / issue #458, HTTP/2 h2c, vertx-core 5.1.6):
+         * PINNED OBSERVED BEHAVIOR (R50 / issue #458, HTTP/2 h2c, vertx-core 5.1.8):
          *
          * The armed http.idleTimeoutSeconds/readIdleTimeoutSeconds bound is applied at the whole
          * connection's socket level (Netty IdleStateHandler), not per HTTP/2 stream. Continuous

@@ -3137,7 +3137,7 @@ final class InputPropertyDescriber implements CustomDefinitionProviderV2 {
      * {@code ^[nN][aA][mM][eE](?![\s\S])} — and every other character is escaped literally.
      *
      * <p>Anchored with {@code (?![\s\S])} rather than {@code $}: {@code io.vertx.json.schema}
-     * 5.1.6 compiles the {@code pattern} keyword with plain {@code java.util.regex.Pattern} (see
+     * 5.1.8 compiles the {@code pattern} keyword with plain {@code java.util.regex.Pattern} (see
      * {@code PatternFlagRenderingTest}), whose {@code $} — without {@code Pattern.MULTILINE} — still
      * matches immediately before a single trailing line terminator, not only at the true end of input.
      * A key ending in a newline would therefore wrongly match this fold under {@code $}. {@code

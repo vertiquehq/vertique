@@ -83,7 +83,7 @@ import org.mockito.invocation.Invocation;
  * UriTemplateSyntax} do not exist yet, and this proof never references them.
  *
  * <p>At this task's baseline (T004's head on the FR-020 branch) the gate-private copy still carries the
- * seven formats' standard names, so vertx-json-schema 5.1.6's own regular expressions decide them: the
+ * seven formats' standard names, so vertx-json-schema 5.1.8's own regular expressions decide them: the
  * overflow and timeout reds below are that engine deciding a value its own checks cannot handle.
  */
 class FormatCheckReuseTest {
