@@ -173,7 +173,7 @@ public class CacheHealthCheck implements HealthCheck {
 public record HealthCheckResult(HealthStatus status, Map<String, Object> data) { }
 ```
 
-The canonical constructor rejects a `null` status with a `NullPointerException`, normalizes a `null` data map to empty, and takes an unmodifiable defensive copy, so the returned map is never `null` and never mutable.
+The canonical constructor rejects a `null` status with a `NullPointerException`, normalizes a `null` data map to empty, and takes an unmodifiable defensive copy that keeps the supplied map's iteration order (pass a `LinkedHashMap` to control the order entries appear in the probe response), so the returned map is never `null` and never mutable. A `null` key or value is rejected with a `NullPointerException`.
 
 | Factory | Status | Data |
 |--------|--------|------|
