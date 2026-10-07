@@ -5,6 +5,13 @@ package dev.vertique.mcp.server;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import dev.vertique.mcp.tool.McpAccessMode;
+import dev.vertique.mcp.tool.McpCancellationSignal;
+import dev.vertique.mcp.tool.McpPreparedToolCall;
+import dev.vertique.mcp.tool.McpToolAccess;
+import dev.vertique.mcp.tool.McpToolAnnotations;
+import dev.vertique.mcp.tool.McpToolDescriptor;
+import dev.vertique.mcp.tool.McpToolInvoker;
 import dev.vertique.ratelimit.GreedyRateLimitRefill;
 import dev.vertique.ratelimit.LocalRateLimitBackendFactory;
 import dev.vertique.ratelimit.RateLimitFailureMode;
@@ -17,6 +24,7 @@ import dev.vertique.ratelimit.spi.RateLimitBackend;
 import dev.vertique.ratelimit.spi.RateLimitBackendRequest;
 import dev.vertique.ratelimit.spi.RateLimitBackendResult;
 import dev.vertique.ratelimit.spi.RateLimitSubject;
+import dev.vertique.security.authz.AccessPolicy;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
@@ -43,6 +51,7 @@ class McpToolAdmissionUnauthorizedNoTokenIT {
     private static final String UNKNOWN_TOOL = "interop.missing";
     private static final String RESTRICTED_TOOL = McpGoClientInteropITFixture.RESTRICTED_TOOL;
     private static final String PUBLIC_TOOL = McpGoClientInteropITFixture.PUBLIC_TOOL;
+    private static final String TYPED_TOOL = "interop.typed";
     private static final String REQUEST_PATH = "/mcp/";
     private static final String PROTOCOL_VERSION = "2026-07-28";
 
@@ -95,6 +104,34 @@ class McpToolAdmissionUnauthorizedNoTokenIT {
                 .isEqualTo(1);
     }
 
+    @Test
+    void shouldConsumeNoTokenForAToolDeniedByATypedAccessPolicy() throws Exception {
+        RecordingBackend backend = new RecordingBackend();
+        RateLimiters rateLimiters = rateLimiters(backend);
+        fixture = await(McpGoClientInteropITFixture.start(
+                vertx,
+                new McpRateLimitConfig(
+                        POLICY_NAME, RateLimitSubject.NONE, AnonymousRateLimitPolicy.SHARED_BUCKET, List.of()),
+                Optional.of(rateLimiters),
+                Set.of(new TypedOpsToolInvoker())));
+        rawClient = vertx.createHttpClient();
+
+        HttpResponse<Buffer> denied = await(callTool(TYPED_TOOL, 1, null));
+
+        assertThat(denied.statusCode()).isEqualTo(400);
+        assertThat(new JsonObject(denied.bodyAsString()).getJsonObject("error").getInteger("code"))
+                .isEqualTo(-32602);
+        assertThat(backend.invocations())
+                .as("a call denied by a typed access policy must not acquire a token")
+                .isZero();
+
+        HttpResponse<Buffer> authorized = await(callTool(PUBLIC_TOOL, 2, McpGoClientInteropITFixture.BEARER_ALICE));
+        assertThat(authorized.statusCode()).isEqualTo(200);
+        assertThat(backend.invocations())
+                .as("a valid authorized call is the non-vacuous control")
+                .isEqualTo(1);
+    }
+
     private Future<HttpResponse<Buffer>> callTool(String toolName, int requestId, String bearer) {
         var request = WebClient.wrap(rawClient)
                 .post(fixture.server().actualPort(), "127.0.0.1", REQUEST_PATH)
@@ -132,6 +169,33 @@ class McpToolAdmissionUnauthorizedNoTokenIT {
 
     private static <T> T await(Future<T> future) throws Exception {
         return future.toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS);
+    }
+
+    /** A tool that publishes the closed placeholder access and declares {@link McpToolAdmissionOpsPolicy}. */
+    private static final class TypedOpsToolInvoker implements McpToolInvoker {
+        private static final McpToolDescriptor DESCRIPTOR = new McpToolDescriptor(
+                TYPED_TOOL,
+                null,
+                "Typed-policy fixture tool.",
+                new McpToolAnnotations(true, false, true, false),
+                "{\"type\":\"object\",\"additionalProperties\":false}",
+                null,
+                new McpToolAccess(McpAccessMode.DENY_ALL, List.of(), null));
+
+        @Override
+        public McpToolDescriptor descriptor() {
+            return DESCRIPTOR;
+        }
+
+        @Override
+        public Optional<Class<? extends AccessPolicy>> accessPolicy() {
+            return Optional.of(McpToolAdmissionOpsPolicy.class);
+        }
+
+        @Override
+        public McpPreparedToolCall prepare(Map<String, Object> arguments, McpCancellationSignal cancellation) {
+            throw new AssertionError("a denied typed-policy tool must never be prepared");
+        }
     }
 
     private static final class RecordingBackend implements RateLimitBackend {

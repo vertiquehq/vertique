@@ -73,6 +73,15 @@ record McpGoClientInteropITFixture(
 
     static Future<McpGoClientInteropITFixture> start(
             Vertx vertx, McpRateLimitConfig rateLimit, Optional<RateLimiters> rateLimiters) {
+        return start(vertx, rateLimit, rateLimiters, Set.of());
+    }
+
+    /** Starts the fixture with {@code additionalTools} registered next to the two interop tools. */
+    static Future<McpGoClientInteropITFixture> start(
+            Vertx vertx,
+            McpRateLimitConfig rateLimit,
+            Optional<RateLimiters> rateLimiters,
+            Set<McpToolInvoker> additionalTools) {
         AtomicInteger publicInvocations = new AtomicInteger();
         AtomicInteger restrictedInvocations = new AtomicInteger();
         AtomicInteger absentCredentials = new AtomicInteger();
@@ -85,7 +94,7 @@ record McpGoClientInteropITFixture(
                 .authenticationScheme("bearer")
                 .rateLimit(rateLimit)
                 .build();
-        McpToolRegistry registry = McpToolRegistry.build(Set.of(
+        Set<McpToolInvoker> tools = new java.util.LinkedHashSet<>(Set.of(
                 tool(
                         PUBLIC_TOOL,
                         new McpToolAccess(McpAccessMode.PERMIT_ALL, List.of(), null),
@@ -96,6 +105,8 @@ record McpGoClientInteropITFixture(
                         new McpToolAccess(McpAccessMode.RESTRICTED, List.of("ops"), null),
                         RESTRICTED_RESULT,
                         restrictedInvocations)));
+        tools.addAll(additionalTools);
+        McpToolRegistry registry = McpToolRegistry.build(tools);
         RecordingSecurityRuntime securityRuntime = new RecordingSecurityRuntime();
         McpPolicyEnforcer policyEnforcer = new McpPolicyEnforcer(new SecurityPolicyEnforcer(
                 Optional.empty(),
