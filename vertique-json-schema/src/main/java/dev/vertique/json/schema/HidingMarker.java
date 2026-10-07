@@ -4,6 +4,8 @@
 package dev.vertique.json.schema;
 
 /**
+ * INTERNAL framework seam — callable by sibling Vertique modules only; not an application contract and outside the application maturity promise.
+ *
  * The hiding marker or markers a {@link HiddenMember} carries.
  *
  * <p>The two markers are {@code io.swagger.v3.oas.annotations.Hidden} and {@code @Schema(hidden =

@@ -6,6 +6,8 @@ package dev.vertique.json.schema;
 import java.util.Objects;
 
 /**
+ * INTERNAL framework seam — callable by sibling Vertique modules only; not an application contract and outside the application maturity promise.
+ *
  * A canonical JSON Schema document and the redaction manifest the generator bound to it, as {@link
  * AnnotationJsonSchemaGenerator#describe(java.lang.reflect.Type)} returns them.
  *

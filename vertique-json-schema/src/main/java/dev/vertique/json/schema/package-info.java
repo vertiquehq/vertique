@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: EUPL-1.2
 
 /**
+ * Framework-support schema generation. Public types in this package are
+ * INTERNAL framework seams — not an application contract.
+ *
  * Transport-neutral, annotation-driven JSON Schema generation for resolved Java {@link
  * java.lang.reflect.Type} values.
  *

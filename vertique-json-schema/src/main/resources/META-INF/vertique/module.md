@@ -5,32 +5,35 @@ SPDX-License-Identifier: EUPL-1.2
 
 # JSON Schema Module
 
-> **Status:** Alpha
+> **Status:** Stable
 > **Package:** `dev.vertique.json.schema`
 > **Artifact:** `vertique-json-schema`
 > **Depends on:** core
 
-Generates deterministic, annotation-driven Draft 2020-12 JSON Schema documents from resolved Java
-`Type` values, through Victools configured with the Jackson, Jakarta Validation, and Swagger 2
-annotation modules. The module is transport-neutral: it has no dependency on REST, MCP, Vert.x
-Web, `vertx-json-schema`, Dagger, Micrometer, or OpenTelemetry, so any consumer that already
-resolves a Java type and, optionally, a JSON mapper profile can generate a schema for it without
-pulling in a transport framework.
+Framework-support schema generation for sibling Vertique modules. It produces deterministic,
+annotation-driven Draft 2020-12 JSON Schema documents from resolved Java `Type` values (Victools
+configured with the Jackson, Jakarta Validation, and Swagger 2 modules). It is transport-neutral and
+has no dependency on REST, MCP, Vert.x Web, `vertx-json-schema`, Dagger, Micrometer, or OpenTelemetry.
+
+**Applications do not use this artifact directly.** Install `vertique-rest-validation`
+(`RestValidationModule`), `vertique-rest-openapi-docs`, or `vertique-mcp-server` instead. Every
+public type in `dev.vertique.json.schema` is an INTERNAL framework seam — outside the application
+maturity promise — even though this module's `Status` is Stable for the generation behavior those
+consumers rely on.
 
 This module is not a schema registry, a validation engine, or a general-purpose schema DSL. It
-produces one canonical document per call; consumers own caching, validator compilation, and
-runtime value validation.
+produces one canonical document per call; framework consumers own caching, validator compilation,
+and runtime value validation.
 
 ---
 
 ## When To Use It
 
-Install `dev.vertique:vertique-json-schema` when a consumer needs a deterministic JSON Schema for
-a resolved Java type from its Jackson, Jakarta Validation, and Swagger annotations — for example a
-REST framework synthesizing request-body schemas, or a tool-protocol server publishing input and
-output schemas for generated types. It pairs naturally with `dev.vertique:vertique-json` when the
-consumer already resolves an effective `JsonMapperProfile` and wants schema generation aligned
-with that profile's mapper and declared wire-shape overrides.
+Do **not** add this dependency from application code. Use it only when authoring or extending a
+Vertique framework module that must synthesize JSON Schema from Jackson / Jakarta Validation /
+Swagger annotations (today: `rest-validation`, `rest-openapi-docs`, `mcp-server`). Application
+projects that need request validation install `RestValidationModule`; projects that need published
+OpenAPI or MCP tool schemas install those modules.
 
 ---
 
@@ -977,8 +980,9 @@ output-direction property. It is `false` for:
 - a position with no schema-library member scope, where the generator checks neither declaration.
 
 A member reached from several positions is reported once, with the conjunction of the flags at each
-position. The flag is provisional: it may change when the generator honors the marker at more
-positions.
+position. The positions listed above are the Stable contract for `false`; additional positions may
+begin returning `true` when the generator starts honoring `@Schema(hidden = true)` there — additive
+expansion only, never a narrowing of an existing `true`.
 
 Each reported member is a Java member, reported under its own name and the class that declares it:
 
@@ -1083,7 +1087,12 @@ above still fails generation.
 
 ---
 
-## Key Classes
+## Framework seams (INTERNAL)
+
+The types below are public only so sibling framework modules can call them. Their Javadoc marks them
+INTERNAL; they are not an application contract and sit outside this module's application maturity
+promise. Applications must not construct or catch them.
+
 
 ### AnnotationJsonSchemaGenerator
 
@@ -1147,8 +1156,8 @@ One member `outputRenames(Type)` (on a `forOutputProfile` generator only) report
 is the binary class name (`Class#getName()`) declaring the member, `member` is the Java member's own
 name (`java.lang.reflect.Member#getName()`), `serializedName` is the name the profile mapper's
 serialization introspection gives it, and `schemaName` is the property name the output document
-publishes it under. The record carries names only, never a schema fragment. The record is provisional
-and may change before the OpenAPI publication wires it.
+publishes it under. The record carries names only, never a schema fragment. OpenAPI publication consumes
+this shape; components evolve only by appending nullable trailing fields (ADR-0254).
 
 ```java
 AnnotationJsonSchemaGenerator outputGenerator = AnnotationJsonSchemaGenerator.forOutputProfile(profile);
@@ -1164,8 +1173,8 @@ member's own name (`java.lang.reflect.Member#getName()`), the name of a field, a
 constant, a creator parameter's `<init>#i` or `method#i` name, or `null` when the entry reports the
 type itself (the component is annotated `jakarta.annotation.Nullable`); `marker` is the
 `HidingMarker` the declaration carries; `hideableBySchemaHidden` says whether declaring
-`@Schema(hidden = true)` on the property's own field or getter would leave it out (provisional, see
-"Constraints and common mistakes" above). The record carries names and flags only, never a schema
+`@Schema(hidden = true)` on the property's own field or getter would leave it out (see
+"Constraints and common mistakes" above for the Stable position rules). The record carries names and flags only, never a schema
 fragment.
 
 ```java
@@ -1206,13 +1215,20 @@ application text. Log the cause where that is acceptable; log `getMessage()` alo
 
 ## Extension Points
 
-None. This module exposes a closed generation surface — no schema-generator SPI, custom Victools
-module registration, or configuration key. A consumer that needs a custom wire shape for an exact
-Java class declares it once on its `JsonMapperProfile` through
+None for applications. This module exposes a closed generation surface — no schema-generator SPI,
+custom Victools module registration, or configuration key. A framework consumer that needs a custom
+wire shape for an exact Java class declares it once on its `JsonMapperProfile` through
 `dev.vertique.core.json.JsonSchemaTypeOverride`, which this module's profile-aware construction
 modes consume.
 
 ---
+
+
+## Module Dagger Bindings
+
+None. `vertique-json-schema` is a plain library artifact: applications construct
+`AnnotationJsonSchemaGenerator` through its static factories. There is no Dagger `@Module`.
+
 
 ## Dependencies
 

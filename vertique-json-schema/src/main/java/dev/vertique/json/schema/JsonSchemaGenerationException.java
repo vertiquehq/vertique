@@ -4,6 +4,8 @@
 package dev.vertique.json.schema;
 
 /**
+ * INTERNAL framework seam — callable by sibling Vertique modules only; not an application contract and outside the application maturity promise.
+ *
  * Thrown when {@link AnnotationJsonSchemaGenerator} fails to construct, generate, or canonicalize
  * a JSON Schema document.
  *
