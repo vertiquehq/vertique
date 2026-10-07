@@ -265,6 +265,44 @@ class RateLimitAdapterSupportTest {
         });
     }
 
+    @Test
+    @DisplayName("IPv6 clients are keyed by their /64 so a subscriber cannot mint a bucket per address")
+    void shouldKeyIpv6ByNetworkPrefix() {
+        for (RateLimitSubject subject :
+                List.of(RateLimitSubject.IP, RateLimitSubject.ACTOR_OR_IP, RateLimitSubject.CLIENT_OR_IP)) {
+            RateLimitKey first = ipKey(subject, "2001:db8:1:2::1");
+            RateLimitKey sameSubnet = ipKey(subject, "2001:db8:1:2:ffff:ffff:ffff:ffff");
+            RateLimitKey otherSubnet = ipKey(subject, "2001:db8:1:3::1");
+
+            assertThat(sameSubnet)
+                    .as("same /64 shares a bucket for %s", subject)
+                    .isEqualTo(first);
+            assertThat(otherSubnet)
+                    .as("another /64 is separate for %s", subject)
+                    .isNotEqualTo(first);
+        }
+        assertThat(ipKey(RateLimitSubject.IP, "203.0.113.5"))
+                .as("IPv4 stays per-address")
+                .isNotEqualTo(ipKey(RateLimitSubject.IP, "203.0.113.6"));
+    }
+
+    @Test
+    @DisplayName("strict CLIENT applies the anonymous policy to the canonical anonymous identity")
+    void shouldApplyAnonymousPolicyToStrictClientForCanonicalAnonymous() {
+        RateLimitAdapterSupport canonical = adapterSupport(Optional.of(SecurityIdentity.anonymous()), Optional.empty());
+
+        assertThat(canonical.subjectKey(RateLimitSubject.CLIENT, AnonymousRateLimitPolicy.BYPASS, List.of()))
+                .isEmpty();
+        assertThat(canonical.subjectKey(RateLimitSubject.CLIENT, AnonymousRateLimitPolicy.SHARED_BUCKET, List.of()))
+                .isPresent();
+    }
+
+    private static RateLimitKey ipKey(RateLimitSubject subject, String clientIp) {
+        return adapterSupport(Optional.empty(), Optional.of(origin(clientIp)))
+                .subjectKey(subject, AnonymousRateLimitPolicy.SHARED_BUCKET, List.of())
+                .orElseThrow();
+    }
+
     private static RequestOrigin origin(String clientIp) {
         return new RequestOrigin(
                 "198.51.100.10",

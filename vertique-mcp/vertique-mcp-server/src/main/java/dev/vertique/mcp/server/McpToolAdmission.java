@@ -18,8 +18,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import lombok.extern.slf4j.Slf4j;
 
 /** Immutable, composition-built admission seam for MCP tool calls. */
+@Slf4j
 final class McpToolAdmission {
 
     private static final long DEFAULT_COST = 1L;
@@ -98,6 +100,7 @@ final class McpToolAdmission {
         try {
             key = keyFor(policy);
         } catch (RuntimeException keyFailure) {
+            logUnavailable(toolName, keyFailure);
             return Future.succeededFuture(Admission.failed());
         }
         if (key == null) {
@@ -107,10 +110,22 @@ final class McpToolAdmission {
             return policy.limiter()
                     .acquire(key, policy.cost())
                     .map(McpToolAdmission::admissionFor)
-                    .recover(failure -> Future.succeededFuture(Admission.failed()));
+                    .recover(failure -> {
+                        logUnavailable(toolName, failure);
+                        return Future.succeededFuture(Admission.failed());
+                    });
         } catch (RuntimeException acquireFailure) {
+            logUnavailable(toolName, acquireFailure);
             return Future.succeededFuture(Admission.failed());
         }
+    }
+
+    /** Logs the failure class only, never its message or the key, so a misconfigured subject is visible. */
+    private static void logUnavailable(String toolName, Throwable failure) {
+        log.warn(
+                "MCP tool admission unavailable for tool {}: {}",
+                toolName,
+                failure.getClass().getName());
     }
 
     private RateLimitKey keyFor(AdmissionPolicy policy) {

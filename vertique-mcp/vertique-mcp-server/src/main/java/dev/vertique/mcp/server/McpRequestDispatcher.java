@@ -160,6 +160,9 @@ final class McpRequestDispatcher {
     private static final int INTERNAL_ERROR = -32603;
     private static final int MISSING_REQUIRED_CLIENT_CAPABILITY = -32021;
     private static final int RATE_LIMITED = -32022;
+    /** Upper bound for a {@code Retry-After} value; keeps an extreme application-supplied duration from overflowing. */
+    private static final long MAX_RETRY_AFTER_SECONDS = 31_536_000L;
+
     private static final int MAX_HANDLER_FAILURE_CAUSE_HOPS = 8;
 
     /**
@@ -2244,12 +2247,8 @@ final class McpRequestDispatcher {
     }
 
     private static String retryAfterSeconds(Duration retryAfter) {
-        long milliseconds = retryAfter.toMillis();
-        long seconds = milliseconds / 1_000L;
-        if (milliseconds % 1_000L != 0) {
-            seconds++;
-        }
-        return Long.toString(Math.max(1L, seconds));
+        long seconds = retryAfter.getSeconds() + (retryAfter.getNano() > 0 ? 1L : 0L);
+        return Long.toString(Math.max(1L, Math.min(seconds, MAX_RETRY_AFTER_SECONDS)));
     }
 
     // --- tools/call ---

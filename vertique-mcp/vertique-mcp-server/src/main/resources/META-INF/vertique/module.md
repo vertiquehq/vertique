@@ -1287,6 +1287,10 @@ deduplication. See the [`vertique-aop` module reference](../../../../../../../ve
 for the single authoritative ordering registry; this page does not restate its
 bands.
 
+A mount with no `mcp.authenticationScheme` treats every caller as anonymous, so the default
+`EFFECTIVE_PRINCIPAL` subject puts all callers in one bucket per policy. Set `mcp.rateLimit.subject` to
+`ACTOR_OR_IP` (or `IP`) on such a mount; an IPv6 client is keyed by its /64 prefix.
+
 `SHARED_BUCKET` is aggregate anonymous protection, not per-caller isolation:
 one high-volume anonymous caller can exhaust the policy for every other
 anonymous caller. An application that binds a custom
