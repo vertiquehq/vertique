@@ -548,9 +548,7 @@ public final class Bulkhead implements Resilience.RuntimeExecution {
         }
 
         private boolean isFatal(Throwable failure) {
-            return failure instanceof VirtualMachineError
-                    || failure instanceof ThreadDeath
-                    || failure instanceof LinkageError;
+            return failure instanceof VirtualMachineError || failure instanceof LinkageError;
         }
     }
 
