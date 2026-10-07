@@ -55,7 +55,7 @@ jobs:
     # build still runs — a classify failure must never satisfy the required
     # check by skipping the job it exists to gate.
     if: ${{ !cancelled() && needs.classify.outputs.docs_only != 'true' }}
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 70
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
