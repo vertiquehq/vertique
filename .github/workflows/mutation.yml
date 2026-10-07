@@ -38,7 +38,7 @@ concurrency:
 jobs:
   mutation:
     name: PR-scoped mutation testing
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       # pull_request checks out the merge commit; its first parent is the base
