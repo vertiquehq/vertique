@@ -420,9 +420,7 @@ public final class Resilience {
     }
 
     private static boolean isFatal(Throwable failure) {
-        return failure instanceof VirtualMachineError
-                || failure instanceof ThreadDeath
-                || failure instanceof LinkageError;
+        return failure instanceof VirtualMachineError || failure instanceof LinkageError;
     }
 
     private void completeCloseIfIdle() {

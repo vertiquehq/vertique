@@ -325,9 +325,7 @@ final class CircuitBreakerPolicyExecution<T> implements Resilience.RuntimeExecut
     }
 
     private static boolean isFatal(Throwable failure) {
-        return failure instanceof VirtualMachineError
-                || failure instanceof ThreadDeath
-                || failure instanceof LinkageError;
+        return failure instanceof VirtualMachineError || failure instanceof LinkageError;
     }
 
     private record AttemptResult<T>(T value, Throwable failure) {

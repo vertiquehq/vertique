@@ -112,6 +112,10 @@ SPDX-License-Identifier: EUPL-1.2
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
 
         <java.version>21</java.version>
+        <!-- The single compile and API target. The compiler and Javadoc plugins, IDE importers and
+             tooling all read this property, so the build JDK (CI uses 25) can be newer than the
+             Java 21 the framework compiles for and ships. -->
+        <maven.compiler.release>${java.version}</maven.compiler.release>
         <vertx.version>5.1.8</vertx.version>
         <lettuce.version>7.8.0.RELEASE</lettuce.version>
         <dagger.version>2.60.1</dagger.version>
@@ -1181,7 +1185,7 @@ SPDX-License-Identifier: EUPL-1.2
                     <artifactId>maven-compiler-plugin</artifactId>
                     <version>${maven.compiler.plugin.version}</version>
                     <configuration>
-                        <release>${java.version}</release>
+                        <release>${maven.compiler.release}</release>
                         <annotationProcessorPaths>
                             <path>
                                 <groupId>com.google.dagger</groupId>

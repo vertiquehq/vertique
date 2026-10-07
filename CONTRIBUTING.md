@@ -11,7 +11,8 @@ Thank you for contributing to Vertique.
 
 The full build and its integration tests need:
 
-- a JDK at `pom.xml`'s `<java.version>` (Java 21) or later;
+- a JDK at `pom.xml`'s `<java.version>` (Java 21) or later (CI builds on JDK 25; the compiled
+  bytecode still targets Java 21);
 - Go at the version the MCP Go interop fixture's `go.mod` requires (1.25);
 - Node.js 22 or later with npm, for the MCP TypeScript interop and conformance tests;
 - a running Docker-compatible engine, for the Testcontainers-based integration tests.

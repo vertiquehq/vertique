@@ -209,7 +209,7 @@ pin Jib themselves or obtain its version from their organization's parent:
     <version>3.5.1</version>
     <configuration>
         <from>
-            <image>eclipse-temurin:21-jre</image>   <!-- slim JRE-only base -->
+            <image>eclipse-temurin:25-jre</image>   <!-- slim JRE-only base -->
         </from>
         <to>
             <image>my-app</image>                   <!-- local image name -->

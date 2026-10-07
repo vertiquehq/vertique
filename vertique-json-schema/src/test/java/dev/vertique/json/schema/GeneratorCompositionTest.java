@@ -345,8 +345,9 @@ class GeneratorCompositionTest {
     @Test
     @DisplayName("An alternation of otherwise disjoint types is not a conflict")
     void alternationOfDisjointTypesGeneratesNormally() {
-        // Given: the strict profile and a nullable overridden property, which Victools represents as an
-        // anyOf alternation of a null branch and the string fragment.
+        // Given: the strict profile and a nullable overridden property whose override is shared with a
+        // second property, which Victools represents as an anyOf alternation of a null branch and a
+        // reference to the string fragment.
         AnnotationJsonSchemaGenerator generator =
                 AnnotationJsonSchemaGenerator.forInputProfile(HardeningFixtures.strictProfile());
 
@@ -354,9 +355,37 @@ class GeneratorCompositionTest {
         String canonical = generator.generateCanonical(HardeningFixtures.NullableOverriddenDto.class);
 
         // Then: generation succeeds — an anyOf branch is an alternative, never a conjunction.
-        assertTrue(canonical.contains("anyOf"), "the fixture must exercise an alternation; was: " + canonical);
-        assertTrue(canonical.contains("\"type\":\"null\""), "the null alternative must survive; was: " + canonical);
-        assertTrue(canonical.contains("\"type\":\"string\""), "the string alternative must survive; was: " + canonical);
+        JsonNode document = SchemaAssertions.assertCanonicalForm(canonical);
+        JsonNode alternatives = document.at("/properties/amount/anyOf");
+        assertTrue(alternatives.isArray(), "the fixture must exercise an alternation; was: " + canonical);
+        assertTrue(
+                alternatives.toString().contains("\"type\":\"null\""),
+                "the null alternative must survive; was: " + canonical);
+        assertEquals(
+                "string",
+                document.at("/$defs/BigDecimal/type").asText(),
+                "the string alternative must survive in the shared definition; was: " + canonical);
+    }
+
+    @Test
+    @DisplayName("A nullable inline overridden property is not a conflict in either nullable rendering")
+    void nullableInlineOverriddenPropertyGeneratesNormally() {
+        // Given: the strict profile and a nullable overridden property that is the override's only user.
+        // Swagger releases differ in how they render it — an anyOf alternation of a null branch and the
+        // string fragment, or the fragment's own type extended to ["string", "null"] — and both are valid.
+        AnnotationJsonSchemaGenerator generator =
+                AnnotationJsonSchemaGenerator.forInputProfile(HardeningFixtures.strictProfile());
+
+        // When: the document is generated.
+        String canonical = generator.generateCanonical(HardeningFixtures.NullableInlineOverriddenDto.class);
+
+        // Then: generation succeeds, and whichever rendering applies, the property admits both a string
+        // and null while keeping the override's own constraints.
+        JsonNode property = SchemaAssertions.assertCanonicalForm(canonical).at("/properties/amount");
+        String rendered = property.toString();
+        assertTrue(rendered.contains("\"string\""), "the string alternative must survive; was: " + canonical);
+        assertTrue(rendered.contains("\"null\""), "the null alternative must survive; was: " + canonical);
+        assertTrue(rendered.contains("\"pattern\""), "the override's constraints must survive; was: " + canonical);
     }
 
     /**

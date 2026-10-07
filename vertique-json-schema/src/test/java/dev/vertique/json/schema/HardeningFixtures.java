@@ -585,10 +585,30 @@ final class HardeningFixtures {
     /**
      * Property whose {@code nullable} metadata produces an {@code anyOf} alternation rather than a
      * conjunction, so its {@code "null"} and {@code "string"} branches are not in conflict.
+     *
+     * <p>The alternation exists because the overridden class is referenced twice: the second,
+     * non-nullable property makes the override a shared {@code $defs} entry, and a nullable reference
+     * is wrapped in {@code anyOf} with the null schema. A nullable property that is the only user of
+     * its override is rendered inline instead; that shape is {@link NullableInlineOverriddenDto}.
      */
     static final class NullableOverriddenDto {
 
-        /** Nullable overridden decimal. */
+        /** Nullable overridden decimal, referenced through the shared definition. */
+        @Schema(nullable = true)
+        public BigDecimal amount;
+
+        /** Non-nullable second user of the override, so the definition is shared. */
+        public BigDecimal other;
+    }
+
+    /**
+     * Property whose {@code nullable} metadata is the sole use of the overridden class, so it is
+     * rendered inline: as {@code "type": ["string", "null"]} or, on older Swagger releases, as an
+     * {@code anyOf} alternation.
+     */
+    static final class NullableInlineOverriddenDto {
+
+        /** Nullable overridden decimal, rendered inline. */
         @Schema(nullable = true)
         public BigDecimal amount;
     }

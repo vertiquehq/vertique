@@ -63,10 +63,13 @@ jobs:
           # Full history: the diff coverage gate diffs against origin/main.
           fetch-depth: 0
 
+      # The build JDK is the newest supported one. The bytecode target stays
+      # Java 21: the compiler plugin passes --release ${java.version}, and the
+      # "Verify bytecode target" step below fails the build if that ever drifts.
       - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
         with:
           distribution: temurin
-          java-version: "21"
+          java-version: "25"
 
       # GitHub's hashFiles('**/pom.xml') is a live expression that would
       # match target/ files the archetype and invoker integration tests
@@ -161,6 +164,15 @@ jobs:
       # so unrelated modules remain parallel.
       - name: Build and test
         run: ./mvnw -ntp -Djacoco.module.report.skip=true clean verify
+
+      # Building on a newer JDK must not raise the class-file version of what
+      # we ship. The harness runs first so a broken checker cannot pass by
+      # accident; the checker then scans the build output and fails unless
+      # every class is at the Java 21 major version, or when it finds no classes.
+      - name: Verify bytecode target
+        run: |
+          bash scripts/test-verify-bytecode-target.sh
+          bash scripts/verify-bytecode-target.sh
 
       # Surefire and Failsafe redirect test output to these reports. Retain
       # them after failures and cancellation so CI-only flakes and hangs remain
