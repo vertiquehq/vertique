@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 # Vertique Codegen All
 
-> **Status:** Beta
+> **Status:** Stable
 > **Artifact:** `vertique-codegen-all`
 
 ## Overview
@@ -19,9 +19,21 @@ is not shaded and does not copy or merge service descriptors. Maven resolves the
 transitively, and each leaf contributes its own
 `META-INF/services/javax.annotation.processing.Processor` registration.
 
+## When To Use It
+
+Add `vertique-codegen-all` on the annotation-processor path whenever an application should receive
+every Vertique annotation processor without listing each leaf. Applications on
+`vertique-app-parent` already get this facade. Off-parent builds import `vertique-bom` and configure
+the compiler plugin with versionless `dagger-compiler` and `vertique-codegen-all` paths.
+
+Do not depend on this artifact at runtime — it is processor-path only and contributes no runtime
+classes.
+
+---
+
 ## Processor Leaves
 
-The facade declares these compile dependencies in deterministic order:
+The facade declares these compile dependencies in deterministic order (matching the POM):
 
 1. `vertique-codegen-application`
 2. `vertique-codegen-dagger`
@@ -35,9 +47,10 @@ The facade declares these compile dependencies in deterministic order:
 10. `vertique-codegen-sanitization`
 11. `vertique-codegen-aop`
 12. `vertique-codegen-events`
-13. `vertique-codegen-cache`
-14. `vertique-codegen-rate-limit`
-15. `vertique-codegen-resilience`
+13. `vertique-codegen-mcp`
+14. `vertique-codegen-cache`
+15. `vertique-codegen-rate-limit`
+16. `vertique-codegen-resilience`
 
 All processors remain non-claiming and ignore compilations that do not use their supported
 annotations. The facade adds no runtime Java API, annotations, SPI, or configuration keys.
@@ -60,9 +73,15 @@ The complete recipes and the `maven.compiler.proc=none` escape hatch are documen
 The facade is a closed ledger of Vertique-owned production processors, not a third-party processor
 SPI. Additions require updating the ordered dependency list and the facade discovery contract test.
 
+## Module Dagger Bindings
+
+None. This facade ships no Java types and no Dagger `@Module`.
+
+---
+
 ## Dependencies
 
-The fifteen processor leaves above are the facade's complete direct dependency set. Every leaf
+The sixteen processor leaves above are the facade's complete direct dependency set. Every leaf
 excludes transitive `org.projectlombok:lombok`, so resolving the facade cannot activate Lombok's
 annotation processor through a processor leaf's runtime dependencies. Applications that use
 Lombok declare and append it explicitly.
