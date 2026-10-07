@@ -3,6 +3,8 @@
 
 package dev.vertique.core.health;
 
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 
@@ -21,20 +23,33 @@ import java.util.Objects;
  * </ul>
  *
  * @param status the health status; never {@code null}
- * @param data optional diagnostic key-value pairs (may be empty, never null)
+ * @param data optional diagnostic key-value pairs in the supplied map's iteration order (may be
+ *             empty, never null)
  */
 public record HealthCheckResult(HealthStatus status, Map<String, Object> data) {
 
     /**
      * Creates a result with a guaranteed non-null status and unmodifiable data map.
      *
+     * <p>The data is copied preserving the supplied map's iteration order, so a check that builds
+     * its diagnostics in a deliberate order (for example a {@link LinkedHashMap}) sees that order
+     * in the rendered probe response. Null keys and values are rejected.
+     *
      * @param status the health status; must not be {@code null}
      * @param data optional diagnostic data (null treated as empty)
-     * @throws NullPointerException if {@code status} is {@code null}
+     * @throws NullPointerException if {@code status} is {@code null}, or {@code data} holds a null
+     *                              key or value
      */
     public HealthCheckResult {
         Objects.requireNonNull(status, "status");
-        data = data == null ? Map.of() : Map.copyOf(data);
+        data = data == null ? Map.of() : orderedCopy(data);
+    }
+
+    private static Map<String, Object> orderedCopy(Map<String, Object> data) {
+        Map<String, Object> copy = new LinkedHashMap<>();
+        data.forEach((key, value) ->
+                copy.put(Objects.requireNonNull(key, "data key"), Objects.requireNonNull(value, "data value")));
+        return Collections.unmodifiableMap(copy);
     }
 
     /**
