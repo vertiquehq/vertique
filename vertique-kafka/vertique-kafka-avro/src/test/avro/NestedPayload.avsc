@@ -1,0 +1,12 @@
+{
+  "namespace": "dev.vertique.kafka.avro.it.nested",
+  "type": "record",
+  "name": "NestedPayload",
+  "fields": [
+    { "name": "status", "type": { "type": "enum", "name": "Status", "symbols": ["OPEN", "CLOSED"] } },
+    { "name": "checksum", "type": { "type": "fixed", "name": "Checksum", "size": 4 } },
+    { "name": "line", "type": { "type": "record", "name": "Line", "fields": [ { "name": "sku", "type": "string" } ] } },
+    { "name": "lines", "type": { "type": "array", "items": "Line" } },
+    { "name": "note", "type": [ "null", { "type": "record", "name": "Note", "fields": [ { "name": "text", "type": "string" } ] } ], "default": null }
+  ]
+}

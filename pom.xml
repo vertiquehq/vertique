@@ -145,7 +145,7 @@ SPDX-License-Identifier: EUPL-1.2
         <postgresql.jdbc.version>42.7.13</postgresql.jdbc.version>
         <testcontainers.version>2.0.5</testcontainers.version>
         <apicurio.version>3.3.3</apicurio.version>
-        <avro.version>1.12.1</avro.version>
+        <avro.version>1.12.2</avro.version>
         <wiremock.version>3.13.2</wiremock.version>
         <jakarta.validation.version>3.1.1</jakarta.validation.version>
         <hibernate-validator.version>9.1.4.Final</hibernate-validator.version>

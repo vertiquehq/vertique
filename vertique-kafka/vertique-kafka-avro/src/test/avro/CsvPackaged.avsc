@@ -1,0 +1,6 @@
+{
+  "namespace": "dev.vertique.kafka.avro.it.pkg.csv",
+  "type": "record",
+  "name": "CsvPackaged",
+  "fields": [ { "name": "id", "type": "string" } ]
+}

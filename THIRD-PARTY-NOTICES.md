@@ -43,7 +43,7 @@ finer-grained attribution is required.
 | `com.bucket4j:bucket4j_jdk17-core` / `bucket4j_jdk17-vertx` | 8.21.0 | Apache-2.0 | Isolated to `vertique-rate-limit-core`/`-redis` |
 | `org.flywaydb:flyway-core` / `flyway-database-postgresql` | 13.9.0 | Apache-2.0 | Community edition; Redgate's paid-tier features are license-key gated but do not change this artifact's license |
 | `org.postgresql:postgresql` | 42.7.13 | BSD-2-Clause | |
-| `org.apache.avro:avro` | 1.12.1 | Apache-2.0 | |
+| `org.apache.avro:avro` | 1.12.2 | Apache-2.0 | |
 | `io.apicurio:apicurio-registry-avro-serde-kafka` | 3.3.3 | Apache-2.0 | |
 | `com.github.victools:jsonschema-generator` (+ `-module-jackson`, `-module-jakarta-validation`, `-module-swagger-2`) | 4.38.0 | Apache-2.0 | |
 | `com.googlecode.owasp-java-html-sanitizer:owasp-java-html-sanitizer` | 20260313.1 | Apache-2.0 | Date-stamped version scheme |
