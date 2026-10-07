@@ -421,7 +421,7 @@ only this type adaptation; configuration, registry, and optional bindings remain
   `dev.vertique:vertique-codegen-dagger` is `provided`, a build-time processor that is not resolved
   by any consumer
 - `io.micrometer:micrometer-core` — `MeterRegistry`, `CompositeMeterRegistry`, `MeterFilter`,
-  `JvmGcMetrics` and other binders; pinned at 1.16.6 to match `vertx-micrometer-metrics` 5.1.2
+  `JvmGcMetrics` and other binders; kept aligned with the version `vertx-micrometer-metrics` builds against
 - `io.vertx:vertx-micrometer-metrics` — `MicrometerMetricsFactory`, `MicrometerMetricsOptions`,
   `Label`, `MetricsDomain`
 - `io.vertx:vertx-core` — `VertxBuilder`, `VertxOptions`

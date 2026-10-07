@@ -703,7 +703,7 @@ final class McpRequestDispatcher {
      * preserves that fixture's fully synchronous behavior instead of forcing it through a {@code
      * Promise} indirection it never asked for.
      *
-     * <p><strong>{@code future.isComplete()} is not a no-op case.</strong> Per Vert.x 5.1.8's {@code
+     * <p><strong>{@code future.isComplete()} is not a no-op case.</strong> Per Vert.x's {@code
      * FutureBase#emitResult}, a completed future dispatches
      * every listener attached to it on the future's <em>own</em> context — via {@code
      * context.execute(...)} when the attaching thread is not already running on that context — not on
@@ -1722,7 +1722,7 @@ final class McpRequestDispatcher {
      * disconnect can arrive while a decision is in flight. A resolved decision keeps its outcome, but
      * the scan does not chain into another candidate.
      *
-     * <p>Deliberately iterative, not recursive. Vert.x 5.1.8 documents no trampolining or
+     * <p>Deliberately iterative, not recursive. Vert.x documents no trampolining or
      * stack-safety guarantee for {@link Future#compose} on an already-completed future, and a
      * synchronous {@link McpPolicyEnforcer#decide} decision (e.g. {@code PermitAll}) resolves exactly
      * that way — so a per-candidate recursive call chained through {@code compose} would be genuine
@@ -3219,10 +3219,10 @@ final class McpRequestDispatcher {
      * registers with it, and every other holder binding on the request, would never be torn down when a
      * client vanished. Registering through {@code addEndHandler} instead, which is multicast, keeps both
      * Vert.x Web's own handlers and this settlement hook firing for every exit path.
-     * {@code McpDisconnectCleanupIT} pins it against a real Vert.x 5.1.8 server.
+     * {@code McpDisconnectCleanupIT} pins it against a real Vert.x server.
      *
      * <p><strong>Classification.</strong> The same measurement fixes the transport outcome, which the
-     * single {@code AsyncResult} must now carry rather than two separate handlers: Vert.x 5.1.8
+     * single {@code AsyncResult} must now carry rather than two separate handlers: Vert.x
      * delivers {@link HttpClosedException} for an orderly close and a plain {@code SocketException}
      * ("Connection reset") for a hard RST, so the class of the cause — not which of two handlers fired —
      * selects {@code DISCONNECTED} or {@code RESET}. This is the same "classify by the end-handler

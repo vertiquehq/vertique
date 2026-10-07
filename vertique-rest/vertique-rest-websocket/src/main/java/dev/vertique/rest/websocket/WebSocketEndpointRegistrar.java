@@ -70,7 +70,7 @@ import lombok.extern.slf4j.Slf4j;
  *       invokes {@link OnOpen}, and resumes the socket.</li>
  *   <li>Calls {@link RequestContextLifecycle.Handle#completeNow()} to synchronously run all
  *       {@code onClose} and {@code afterClose} registrations. This explicit completion is required
- *       because Vert.x Web 5.1.8's {@code Http1ServerResponse.completeHandshake()} writes the
+ *       because Vert.x's {@code Http1ServerResponse.completeHandshake()} writes the
  *       101 response without firing the normal response end handler.</li>
  * </ol>
  *
@@ -767,7 +767,7 @@ class WebSocketEndpointRegistrar {
                     lifecycle.afterClose(() -> bootstrapSession(session, ws, meta, snapshot));
 
                     // Explicitly drive the request lifecycle to completion. Required because
-                    // Vert.x Web 5.1.8's Http1ServerResponse.completeHandshake() writes the 101
+                    // Vert.x's Http1ServerResponse.completeHandshake() writes the 101
                     // response and marks the response complete without firing the response end
                     // handler, so the lifecycle's automatic closeAll() would never run.
                     lifecycle.completeNow();

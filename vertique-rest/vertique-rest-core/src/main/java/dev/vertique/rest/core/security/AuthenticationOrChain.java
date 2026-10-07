@@ -17,7 +17,7 @@ import io.vertx.ext.web.handler.impl.ChainAuthHandlerImpl;
  * challenges on a final 401 — including when the request carries
  * {@code X-Requested-With: XMLHttpRequest}.
  *
- * <p>vertx-web 5.1.x {@code AuthenticationHandlerImpl.processException} deliberately skips
+ * <p>vertx-web {@code AuthenticationHandlerImpl.processException} deliberately skips
  * {@link #setAuthenticateHeader} for XHR so browsers do not pop a credential dialog. RFC 9110
  * §11.6.1 still requires the challenge on that 401, and Vertique's multi-scheme OR routes must
  * surface every alternative's challenge (Bearer realms, Basic, …) so clients can discover

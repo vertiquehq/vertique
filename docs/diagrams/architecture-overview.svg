@@ -5,7 +5,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 <svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 820 692" role="img">
 <title>Vertique platform architecture</title>
-<desc>A high-level layered platform stack on Vert.x 5.1. Shipped capabilities are solid; prospective additions are dashed (roadmap): AI agents in the programming model, LLM clients outbound, and Spring Boot / Quarkus host bridges. Inbound edges: REST, WebSocket, SSE, Kafka, Camel, and MCP tool server. Request pipeline and cross-cutting capabilities: security, validation, sanitization, localization, resilience, and cache. Programming model on the event bus: contract-based services, durable saga/Temporal workflow, cron jobs, delayed jobs, transactional inbox/outbox. An async non-blocking reactive runtime. Outbound edges: REST client, Kafka producers, Camel outbox. Cross-cutting observability and audit. Compile-time foundation: Dagger DI, codegen, config, bootstrap, deploy, JSON profiles. PostgreSQL, Redis, and Flyway data layer.</desc>
+<desc>A high-level layered platform stack on Vert.x 5. Shipped capabilities are solid; prospective additions are dashed (roadmap): AI agents in the programming model, LLM clients outbound, and Spring Boot / Quarkus host bridges. Inbound edges: REST, WebSocket, SSE, Kafka, Camel, and MCP tool server. Request pipeline and cross-cutting capabilities: security, validation, sanitization, localization, resilience, and cache. Programming model on the event bus: contract-based services, durable saga/Temporal workflow, cron jobs, delayed jobs, transactional inbox/outbox. An async non-blocking reactive runtime. Outbound edges: REST client, Kafka producers, Camel outbox. Cross-cutting observability and audit. Compile-time foundation: Dagger DI, codegen, config, bootstrap, deploy, JSON profiles. PostgreSQL, Redis, and Flyway data layer.</desc>
 <defs>
 <style>
 text{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;}
@@ -47,7 +47,7 @@ text{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Ar
 <text class="wordmark" x="30" y="100">Vertique</text>
 <text class="cap" x="30" y="120">Enterprise microservices on Vert.x — compile-time wired, event-bus native</text>
 <g><rect class="fill-gray" x="596" y="86" width="80" height="22" rx="11" stroke-width="0.5"/><text class="sub gray-t" x="636" y="98" text-anchor="middle" dominant-baseline="central">Java 21+</text></g>
-<g><rect class="fill-gray" x="684" y="86" width="96" height="22" rx="11" stroke-width="0.5"/><text class="sub gray-t" x="732" y="98" text-anchor="middle" dominant-baseline="central">Vert.x 5.1</text></g>
+<g><rect class="fill-gray" x="684" y="86" width="96" height="22" rx="11" stroke-width="0.5"/><text class="sub gray-t" x="732" y="98" text-anchor="middle" dominant-baseline="central">Vert.x 5</text></g>
 
 <text class="cap" x="30" y="140">Inbound edge — protocol adapters</text>
 <g><rect class="fill-blue" x="28" y="148" width="98" height="50" rx="8" stroke-width="0.5"/><text class="title blue-t" x="77" y="167" text-anchor="middle" dominant-baseline="central">REST</text><text class="sub blue-s" x="77" y="183" text-anchor="middle" dominant-baseline="central">JAX-RS</text></g>
