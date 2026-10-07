@@ -35,7 +35,8 @@ import org.apache.avro.util.ClassSecurityValidator.ClassSecurityPredicate;
  *       type itself plus every named schema (nested record, enum, fixed) reachable from its schema.</li>
  *   <li><strong>Package prefixes</strong> the application lists in
  *       {@value #TRUSTED_PACKAGES_KEY}, for the type-agnostic router path whose concrete types are not
- *       known when the serde is built. A prefix matches its subpackages; wildcards are rejected.</li>
+ *       known when the serde is built. A prefix matches its subpackages; wildcards and JDK/library
+ *       roots ({@code java}, {@code org.apache}, ...) are rejected.</li>
  * </ul>
  *
  * <p>The effect is JVM-wide and additive: trust registered for one endpoint is visible to every Avro
@@ -48,6 +49,13 @@ final class AvroClassTrust {
 
     private static final Pattern PACKAGE_NAME =
             Pattern.compile("[A-Za-z_$][A-Za-z0-9_$]*(\\.[A-Za-z_$][A-Za-z0-9_$]*)+");
+
+    /**
+     * Roots that never hold generated Avro records. A prefix under one would also trust arbitrary
+     * classes a writer schema can name through {@code java-class} properties or inner classes.
+     */
+    private static final Pattern FORBIDDEN_ROOT =
+            Pattern.compile("(java|javax|jakarta|jdk|sun|com\\.sun|org\\.apache|org\\.springframework)(\\..*)?");
 
     private static final Set<String> TRUSTED_CLASSES = ConcurrentHashMap.newKeySet();
     private static final Set<String> TRUSTED_PACKAGE_PREFIXES = ConcurrentHashMap.newKeySet();
@@ -128,15 +136,20 @@ final class AvroClassTrust {
         }
     }
 
+    /** The class name Avro will load for {@code schema}, including its reserved-word mangling ({@code default$}). */
+    private static String className(Schema schema) {
+        return SpecificData.get().getClassName(schema);
+    }
+
     private static void collectNamedClasses(Schema schema, Set<String> classes, Set<String> visited) {
         switch (schema.getType()) {
             case RECORD -> {
                 if (visited.add(schema.getFullName())) {
-                    classes.add(schema.getFullName());
+                    classes.add(className(schema));
                     schema.getFields().forEach(field -> collectNamedClasses(field.schema(), classes, visited));
                 }
             }
-            case ENUM, FIXED -> classes.add(schema.getFullName());
+            case ENUM, FIXED -> classes.add(className(schema));
             case ARRAY -> collectNamedClasses(schema.getElementType(), classes, visited);
             case MAP -> collectNamedClasses(schema.getValueType(), classes, visited);
             case UNION -> schema.getTypes().forEach(branch -> collectNamedClasses(branch, classes, visited));
@@ -176,6 +189,10 @@ final class AvroClassTrust {
                 throw new IllegalArgumentException(
                         TRUSTED_PACKAGES_KEY + " entry '" + pkg
                                 + "' is not a package name of at least two segments; wildcards and single-segment roots are not accepted");
+            }
+            if (FORBIDDEN_ROOT.matcher(pkg).matches()) {
+                throw new IllegalArgumentException(TRUSTED_PACKAGES_KEY + " entry '" + pkg
+                        + "' is under a JDK or library root; list the dedicated package of your generated records");
             }
             packages.add(pkg);
         }

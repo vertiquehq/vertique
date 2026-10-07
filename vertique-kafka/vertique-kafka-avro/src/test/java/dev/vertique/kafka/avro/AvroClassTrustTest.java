@@ -14,6 +14,7 @@ import dev.vertique.kafka.avro.it.composed.Composed;
 import dev.vertique.kafka.avro.it.nested.NestedPayload;
 import dev.vertique.kafka.avro.it.pkg.array.ArrayPackaged;
 import dev.vertique.kafka.avro.it.pkg.csv.CsvPackaged;
+import dev.vertique.kafka.avro.it.reserved.Reserved;
 import dev.vertique.kafka.avro.it.serializeronly.SerializerOnly;
 import dev.vertique.kafka.avro.it.untrusted.Unlisted;
 import dev.vertique.kafka.config.KafkaConfig;
@@ -138,6 +139,47 @@ class AvroClassTrustTest {
         assertTrue(AvroClassTrust.isTrusted("dev.vertique.kafka.avro.it.boundary.Thing"));
         assertTrue(AvroClassTrust.isTrusted("dev.vertique.kafka.avro.it.boundary.sub.Thing"));
         assertFalse(AvroClassTrust.isTrusted("dev.vertique.kafka.avro.it.boundaryX.Thing"));
+    }
+
+    @Test
+    @DisplayName("a nested type in a reserved-word namespace is trusted under Avro's mangled class name")
+    void reservedWordNamespaceIsTrusted() {
+        Schema mode = Reserved.getClassSchema().getField("mode").schema();
+        assertThrows(SecurityException.class, () -> resolve(mode));
+
+        provider.deserializer(Reserved.class, config(null));
+
+        assertDoesNotThrow(() -> resolve(mode));
+    }
+
+    @Test
+    @DisplayName("a trusted record does not trust a class that merely extends its name with a nested-class suffix")
+    void trustIsExactNotPrefixed() {
+        provider.serializer(Composed.class, config(null));
+
+        assertTrue(AvroClassTrust.isTrusted(Composed.class.getName()));
+        assertFalse(AvroClassTrust.isTrusted(Composed.class.getName() + "$Inner"));
+    }
+
+    @Test
+    @DisplayName("JDK and library roots, and null or non-string array entries, are rejected")
+    void floorAndElementTypesAreEnforced() {
+        for (String root : new String[] {
+            "java.util",
+            "javax.script",
+            "jakarta.ws",
+            "jdk.internal",
+            "sun.misc",
+            "com.sun.net",
+            "org.apache.avro",
+            "org.springframework.beans"
+        }) {
+            assertThrows(IllegalArgumentException.class, () -> provider.routingDeserializer(config(root)), root);
+        }
+        assertThrows(
+                IllegalArgumentException.class, () -> provider.routingDeserializer(config(new JsonArray().addNull())));
+        assertThrows(
+                IllegalArgumentException.class, () -> provider.routingDeserializer(config(new JsonArray().add(true))));
     }
 
     @Test

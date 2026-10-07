@@ -255,7 +255,7 @@ This module is itself an extension of the `KafkaSerdeProvider` SPI. There are no
 | `kafka.producers.{name}.serdeProperties.*` | Per-producer | Apicurio config overlaid on top of `kafka.schemaRegistry.*` |
 | `kafka.producers.{name}.methods.{method}.format` | Per-method | Overrides per-producer format for this producer method |
 | `kafka.producers.{name}.methods.{method}.serdeProperties.*` | Per-method | Apicurio config for this method; merged last (highest priority) |
-| `serdeProperties."vertique.avro.trusted-packages"` | Per-consumer / per-producer / per-method | Array of package names, or one comma-separated string. Each entry must have at least two segments (`com.acme.events`) and matches that package and its subpackages. Wildcards (`*`, `com.acme.*`) and single-segment roots are rejected at startup |
+| `serdeProperties."vertique.avro.trusted-packages"` | Per-consumer / per-producer / per-method | Array of package names, or one comma-separated string. Each entry must have at least two segments (`com.acme.events`) and matches that package and its subpackages. Wildcards (`*`, `com.acme.*`), single-segment roots and JDK/library roots (`java`, `javax`, `jakarta`, `jdk`, `sun`, `com.sun`, `org.apache`, `org.springframework`) are rejected at startup. List only the dedicated package of your generated records: a prefix trusts every class under it |
 
 **Format precedence (first match wins):**
 
