@@ -73,7 +73,10 @@ import lombok.extern.slf4j.Slf4j;
  * fail closed with reason {@link AuthzReasonCodes#INTERNAL_AUTHZ_ERROR}. {@link SecurityPolicy.None}
  * and {@link SecurityPolicy.PermitAll} install no handler, so they emit nothing. Event construction
  * never throws and never masks the security outcome: when no {@code CorrelationContext} is bound,
- * the event is built with {@link dev.vertique.core.correlation.CorrelationContext#unbound()}.
+ * the event is built with a freshly
+ * {@linkplain dev.vertique.core.correlation.CorrelationContext#generated(String) generated}
+ * joinable correlation (not the unbound sentinel), so authorization audit can mint a real
+ * {@code sourceEventId} from {@code requestId}.
  *
  * <p><strong>Decision point chain:</strong> {@link SecurityPolicy.Constrained} handlers are
  * evaluated through an {@link AuthorizationDecisionPoint} selected at construction time using the
@@ -1173,19 +1176,26 @@ public class SecurityPolicyEnforcer {
     // --- Event emission (ADR-0114) ---
 
     /**
-     * Captures the {@link CorrelationContext} bound on the current Vert.x context, falling back to
-     * {@link CorrelationContext#unbound()} when nothing is bound.
+     * Captures the {@link CorrelationContext} bound on the current Vert.x context, minting a
+     * fresh joinable context via {@link CorrelationContext#generated(String)} when nothing is
+     * bound.
      *
      * <p>This MUST be called at handler entry — synchronously, before any async hop — so the emitted
      * event reflects the correlation of the inbound request even when the decision resolves on a
      * different context (e.g. a remote-PDP {@link AuthorizationDecisionPoint} whose Future completes
-     * off this context). Reading the holder lazily at emit time would observe {@code unbound()} after
+     * off this context). Reading the holder lazily at emit time would observe a missing binding after
      * such a hop, wrongly degrading the event's correlation (FR-054).
      *
-     * @return the correlation bound at the call site, or {@link CorrelationContext#unbound()}
+     * <p>When no ambient correlation is bound, a generated UUID join key is used rather than
+     * {@link CorrelationContext#unbound()}: authorization audit adapters mint {@code sourceEventId}
+     * from {@code requestId}, so the reserved unbound sentinel would look joinable and is not.
+     *
+     * @return the correlation bound at the call site, or a freshly generated joinable context
      */
     private CorrelationContext captureCorrelation() {
-        return contextHolder.current(CorrelationContext.class).orElse(CorrelationContext.unbound());
+        return contextHolder
+                .current(CorrelationContext.class)
+                .orElseGet(() -> CorrelationContext.generated("generated:security-policy-enforcer"));
     }
 
     /**
@@ -1264,8 +1274,9 @@ public class SecurityPolicyEnforcer {
      *
      * <p>The {@code correlation} is captured by the caller at handler entry (see
      * {@link #captureCorrelation()}) rather than read here, so it reflects the inbound request even
-     * when the decision resolved on a different Vert.x context. A missing correlation is supplied as
-     * {@link CorrelationContext#unbound()} so it cannot mask the security outcome (FR-054).
+     * when the decision resolved on a different Vert.x context. A missing ambient correlation is
+     * supplied as a generated joinable context so it cannot mask the security outcome (FR-054) and
+     * remains safe for audit {@code sourceEventId} minting.
      *
      * @param request     the authorization request that was evaluated; must not be {@code null}
      * @param decision    the decision produced; must not be {@code null}

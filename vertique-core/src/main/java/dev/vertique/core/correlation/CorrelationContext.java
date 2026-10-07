@@ -119,18 +119,40 @@ public interface CorrelationContext extends ContextValue {
     // --- static factories ---
 
     /**
-     * Returns the singleton {@link UnboundCorrelationContext} sentinel used as a fail-closed
-     * fallback when no correlation context is bound to the current execution scope.
+     * Returns the singleton {@link UnboundCorrelationContext} sentinel used when no correlation
+     * context is bound and the event is deliberately <em>not</em> request-joinable.
      *
      * <p>The returned instance's {@link #requestId()} and {@link #correlationId()} carry the
      * sentinel value {@code "unavailable"}, making events carrying it distinguishable from those
-     * produced by a live request. Events emitted with the unbound sentinel are audit-visible but
-     * <em>not</em> request-joinable.
+     * produced by a live request. Prefer {@link #generated(String)} for fail-closed emission sites
+     * whose audit adapters mint {@code sourceEventId} from {@code requestId} — those families need
+     * a real join key, not the unbound sentinel.
      *
      * @return the {@link UnboundCorrelationContext} singleton; never {@code null}
      * @see UnboundCorrelationContext#INSTANCE
+     * @see #generated(String)
      */
     static CorrelationContext unbound() {
         return UnboundCorrelationContext.INSTANCE;
+    }
+
+    /**
+     * Returns a fresh {@link CorrelationContext} with newly minted UUID request and correlation
+     * identifiers tagged with {@code source}.
+     *
+     * <p>Use this when an event must still be audit-joinable even though no ambient correlation was
+     * bound (for example fail-closed authorization or snapshot-degradation emission). Each call
+     * yields unique identifiers; they do not claim to match an inbound request that never
+     * established correlation, but they are safe to use as {@code sourceEventId} / audit join keys.
+     *
+     * @param source origin label recorded on both identifiers (for example
+     *               {@code "generated:security-policy-enforcer"}); must not be null or blank
+     * @return a new joinable context; never {@code null}
+     * @throws NullPointerException     if {@code source} is {@code null}
+     * @throws IllegalArgumentException if {@code source} is blank
+     * @see #unbound()
+     */
+    static CorrelationContext generated(String source) {
+        return GeneratedCorrelationContext.mint(source);
     }
 }

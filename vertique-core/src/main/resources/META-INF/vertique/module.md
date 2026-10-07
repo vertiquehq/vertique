@@ -378,13 +378,15 @@ public interface CorrelationContext extends ContextValue {
     CorrelationContextSnapshot snapshot();
 
     static CorrelationContext unbound();
+    static CorrelationContext generated(String source);
 }
 ```
 
 `CorrelationIdentifier` is a `record (String value, String source)`; both components must be
-non-blank. `CorrelationContext.unbound()` is the sentinel returned outside a correlated execution —
-its `requestId()`/`correlationId()` carry the value `"unavailable"` from source `"unbound"`, so
-reading correlation off the request path never throws.
+non-blank. `CorrelationContext.unbound()` is the non-joinable sentinel (value `"unavailable"`,
+source `"unbound"`) for surfaces that are deliberately not request-tied.
+`CorrelationContext.generated(String source)` mints fresh UUID request/correlation ids for
+fail-closed emission sites that still need an audit join key when no ambient correlation is bound.
 
 The runtime that binds this context, and the `CorrelationIdGenerator` SPI it uses, ship in
 `dev.vertique:vertique-correlation`. An application overrides ID generation by binding its own

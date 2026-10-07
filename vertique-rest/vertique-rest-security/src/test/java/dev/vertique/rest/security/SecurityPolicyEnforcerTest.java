@@ -11,6 +11,7 @@ import dev.vertique.core.context.ContextHolder;
 import dev.vertique.core.context.ContextValue;
 import dev.vertique.core.correlation.CorrelationContext;
 import dev.vertique.core.correlation.CorrelationIdentifier;
+import dev.vertique.core.correlation.UnboundCorrelationContext;
 import dev.vertique.correlation.CorrelationContextFactory;
 import dev.vertique.rest.core.security.SecurityPolicy;
 import dev.vertique.rest.core.security.SecurityRuntime;
@@ -750,8 +751,8 @@ class SecurityPolicyEnforcerTest {
         }
 
         @Test
-        @DisplayName("no CorrelationContext bound → event uses the unbound() sentinel, no exception")
-        void unboundCorrelationUsesSentinel() {
+        @DisplayName("no CorrelationContext bound → event uses a generated joinable correlation, no exception")
+        void missingCorrelationMintsGeneratedJoinKey() {
             AuthorizationDecisionPoint dp = mock(AuthorizationDecisionPoint.class);
             when(dp.decide(any()))
                     .thenReturn(Future.succeededFuture(AuthorizationDecision.deny(AuthzReasonCodes.ROLE_MISSING)));
@@ -771,10 +772,19 @@ class SecurityPolicyEnforcerTest {
                             .handle(rc));
 
             assertEquals(1, events.size(), "must still emit exactly one event when correlation is unbound");
-            assertSame(
+            CorrelationContext correlation = events.get(0).correlation();
+            assertNotSame(
                     CorrelationContext.unbound(),
-                    events.get(0).correlation(),
-                    "event must carry the unbound() sentinel when no correlation is bound");
+                    correlation,
+                    "fail-closed authorization must not record the unbound sentinel as a join key");
+            assertNotEquals(
+                    UnboundCorrelationContext.SENTINEL_ID_VALUE,
+                    correlation.requestId().value(),
+                    "requestId must be a real joinable id for audit sourceEventId minting");
+            assertEquals(
+                    "generated:security-policy-enforcer",
+                    correlation.requestId().source(),
+                    "generated fallback must tag its source for observability");
         }
 
         @Test

@@ -149,8 +149,12 @@ public final class SnapshotDegradationGate implements ServiceInterceptor {
         }
 
         SnapshotDegradationMarker degradation = marker.get();
-        CorrelationContext correlation =
-                contextHolder.current(CorrelationContext.class).orElse(CorrelationContext.unbound());
+        // Mint a joinable UUID context when no ambient correlation is bound — degradation audit
+        // adapters mint sourceEventId from requestId, so CorrelationContext.unbound()'s reserved
+        // "unavailable" sentinel must not be recorded as a join key.
+        CorrelationContext correlation = contextHolder
+                .current(CorrelationContext.class)
+                .orElseGet(() -> CorrelationContext.generated("generated:snapshot-degradation"));
         IdentitySnapshotDegradationEvent event = new IdentitySnapshotDegradationEvent(
                 Instant.now(), correlation, degradation.origin(), degradation.reasonCode());
 

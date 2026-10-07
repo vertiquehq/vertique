@@ -32,6 +32,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -234,8 +235,8 @@ class PureDecisionPointExactOnceTest {
     }
 
     @Test
-    @DisplayName("unbound correlation: event uses the unbound() sentinel without throwing")
-    void enforcerEmits_sentinelCorrelation_whenUnbound() {
+    @DisplayName("no ambient correlation: event carries a generated joinable correlation, not the unbound sentinel")
+    void enforcerEmits_generatedCorrelation_whenUnbound() {
         AuthorizationDecisionPoint dp =
                 request -> Future.succeededFuture(AuthorizationDecision.deny(AuthzReasonCodes.ROLE_MISSING));
         SecurityPolicyEnforcer enforcer = enforcerWith(dp, emptyHolder());
@@ -247,11 +248,14 @@ class PureDecisionPointExactOnceTest {
 
         assertEquals(1, events.size(), "must emit exactly one event even with no correlation bound");
         AuthorizationDecisionEvent event = events.get(0);
-        assertSame(
-                CorrelationContext.unbound(),
-                event.correlation(),
-                "event must carry the unbound() sentinel when no correlation is bound");
+        CorrelationContext correlation = event.correlation();
+        assertNotSame(CorrelationContext.unbound(), correlation);
+        assertDoesNotThrow(() -> UUID.fromString(correlation.requestId().value()));
+        assertDoesNotThrow(() -> UUID.fromString(correlation.correlationId().value()));
         assertEquals(
-                "unavailable", event.correlation().correlationId().value(), "sentinel correlationId is 'unavailable'");
+                "generated:security-policy-enforcer", correlation.requestId().source());
+        assertEquals(
+                "generated:security-policy-enforcer",
+                correlation.correlationId().source());
     }
 }

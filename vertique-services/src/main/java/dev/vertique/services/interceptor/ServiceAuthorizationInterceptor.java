@@ -253,9 +253,12 @@ public final class ServiceAuthorizationInterceptor implements ServiceInterceptor
         }
         // Capture correlation and the ambient invocation origin once up front: an async Authorizer
         // may complete on a foreign context where the holder no longer sees these request-scoped
-        // values (identity-002 P2.S5b-ii — see currentInvocationOrigin()).
-        CorrelationContext correlation =
-                contextHolder.current(CorrelationContext.class).orElse(CorrelationContext.unbound());
+        // values (identity-002 P2.S5b-ii — see currentInvocationOrigin()). When no ambient
+        // correlation is bound, mint a joinable UUID context rather than CorrelationContext.unbound()
+        // — authorization audit adapters mint sourceEventId from requestId.
+        CorrelationContext correlation = contextHolder
+                .current(CorrelationContext.class)
+                .orElseGet(() -> CorrelationContext.generated("generated:service-authorization"));
         InvocationOrigin origin = currentInvocationOrigin();
         SecurityContext secCtx = contextHolder.current(SecurityContext.class).orElse(null);
         return authorizeAction(ctx, action.get(), secCtx, origin, correlation);

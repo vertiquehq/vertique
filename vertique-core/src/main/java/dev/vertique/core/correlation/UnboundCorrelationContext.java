@@ -8,20 +8,23 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Sentinel {@link CorrelationContext} used as a fail-closed fallback when no correlation context
- * is bound to the current execution scope.
+ * Sentinel {@link CorrelationContext} used when no correlation context is bound and the event is
+ * deliberately <em>not</em> request-joinable.
  *
- * <p>This sentinel is consumed by the enforcement layer (e.g. {@code SecurityPolicyEnforcer}) when
- * {@code ContextHolder.current(CorrelationContext.class)} returns empty — typically during
- * fail-closed authorization paths that must still emit an {@code AuthorizationDecisionEvent} even
- * though no live request context is present.
+ * <p>Prefer {@link CorrelationContext#generated(String)} for fail-closed emission sites whose audit
+ * adapters mint {@code sourceEventId} from {@code requestId} (authorization decisions, identity
+ * snapshot degradation). Those families need a real join key. This sentinel remains appropriate for
+ * surfaces that are not tied to an inbound request — for example Mode-3 captured-authority
+ * activation — where audit projects the reserved tuple to an empty correlation and supplies a
+ * family-local {@code sourceEventId}.
  *
  * <p><b>Sentinel identifiers.</b> Both {@link #requestId()} and {@link #correlationId()} return a
  * {@link CorrelationIdentifier} whose {@code value} is the documented constant
  * {@link #SENTINEL_ID_VALUE} ({@code "unavailable"}) and whose {@code source} is
- * {@link #SENTINEL_ID_SOURCE} ({@code "unbound"}). Any downstream consumer (audit, metrics,
- * tracing) can detect events carrying this sentinel by checking
- * {@code correlation.requestId().value().equals(UnboundCorrelationContext.SENTINEL_ID_VALUE)}.
+ * {@link #SENTINEL_ID_SOURCE} ({@code "unbound"}). Downstream consumers detect the reserved tuple by
+ * matching <em>both</em> value and source (equality with
+ * {@code UnboundCorrelationContext.INSTANCE.requestId()}), not the value alone — a genuine joinable
+ * id that merely happens to have the value {@code "unavailable"} carries a different source.
  *
  * <p><b>Audit visibility.</b> Events carrying this sentinel are audit-visible but
  * <em>not</em> request-joinable — they cannot be correlated back to a specific inbound request
@@ -152,8 +155,8 @@ public final class UnboundCorrelationContext implements CorrelationContext {
      *
      * <p>Returns a minimal {@link CorrelationContextSnapshot} containing only the sentinel
      * identifiers. All optional fields are {@code null} and collections are empty. The snapshot
-     * satisfies {@code AuthorizationDecisionEvent}'s non-null correlation validation so it can be
-     * carried in audit events emitted during the fail-closed fallback path.
+     * remains valid for event types that accept unbound correlation (for example Mode-3
+     * captured-authority activation).
      *
      * @return a valid immutable snapshot; never {@code null}
      */
