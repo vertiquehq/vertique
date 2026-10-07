@@ -216,8 +216,8 @@ only), which is exactly why the floor's own annotation read — not the suppleme
 that shape. Where a property matches nothing in the supplement, it contributes no addition and no
 correction — a silent no-op, not a failure. A `List`/array value's container-element constraints
 (`getConstrainedContainerElementTypes()`, type-argument index 0) merge onto the property's `items`
-subschema when that subschema is inline, as an addition; a `Map` value's element position is now a
-described position on the input direction too (rest-023 T003 — see "How a `Map` value is described"),
+subschema when that subschema is inline, as an addition; a `Map` value's element position is also a
+described position on the input direction (see "How a `Map` value is described"),
 but this supplement's own container-element merge still targets a `List`/array's `items` subschema
 only, unaffected by that change — it does not merge onto a `Map`'s own `additionalProperties`.
 
@@ -434,7 +434,7 @@ property and leave any constraint on the creator's own type's fields dead on inp
 
 ### How a `Map` value is described
 
-**On the input direction only** (rest-023 T003), a `Map<K,V>` position — a named property, a creator
+**On the input direction only**, a `Map<K,V>` position — a named property, a creator
 parameter, an any-setter's own extras value, a collection item, or a nested map — describes `V`'s own
 schema as its `additionalProperties`, through the same shared value-position renderer every other
 described value position uses: `V`'s own type (including a profile override on `V`, applied first),
@@ -492,7 +492,7 @@ named property — a `Map<String, LocalDate>` any-setter's extras carry `format:
 `vertique-strict` a `Map<String, BigDecimal>` any-setter's extras carry that profile's decimal
 fragment.
 
-An any-setter extras value (and, rest-023 T003, a map value — see "How a `Map` value is described")
+An any-setter extras value (and a map value — see "How a `Map` value is described")
 declared as `Optional<T>` is described as `T`'s own schema, constraints included, and admits an
 explicit `null`, matching Jackson's own `Optional.empty()` binding.
 
@@ -1157,7 +1157,7 @@ is the binary class name (`Class#getName()`) declaring the member, `member` is t
 name (`java.lang.reflect.Member#getName()`), `serializedName` is the name the profile mapper's
 serialization introspection gives it, and `schemaName` is the property name the output document
 publishes it under. The record carries names only, never a schema fragment. OpenAPI publication consumes
-this shape; components evolve only by appending nullable trailing fields (ADR-0254).
+this shape; components evolve only by appending nullable trailing fields.
 
 ```java
 AnnotationJsonSchemaGenerator outputGenerator = AnnotationJsonSchemaGenerator.forOutputProfile(profile);
