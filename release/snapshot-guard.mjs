@@ -27,6 +27,9 @@ import { fileURLToPath } from 'node:url';
 
 const SHA1_RE = /^[0-9a-f]{40}$/;
 const SNAPSHOT_VERSION_RE = /-SNAPSHOT$/;
+// The version is spliced into workflow commands, so it is restricted to the
+// characters a Maven version legitimately uses.
+const SAFE_SNAPSHOT_VERSION_RE = /^[0-9A-Za-z][0-9A-Za-z._-]*-SNAPSHOT$/;
 
 /** Deny with a reason. */
 const deny = (reason) => ({ allowed: false, reason, checkoutSha: null });
@@ -37,6 +40,7 @@ const deny = (reason) => ({ allowed: false, reason, checkoutSha: null });
  * @param {object} inputs
  * @param {string} inputs.event               triggering event name
  * @param {string} inputs.conclusion          the required-CI run's conclusion
+ * @param {string} inputs.runEvent            the event that started the required-CI run
  * @param {string} inputs.workflowName        the workflow that completed
  * @param {string} inputs.requiredWorkflowName the named required-CI workflow
  * @param {string} inputs.owningRepository    this product's own repository
@@ -53,6 +57,7 @@ export function evaluateSnapshotPublication(inputs) {
 
   const {
     event,
+    runEvent,
     conclusion,
     workflowName,
     requiredWorkflowName,
@@ -72,6 +77,10 @@ export function evaluateSnapshotPublication(inputs) {
     return deny(`triggering workflow "${workflowName}" is not the required CI workflow "${requiredWorkflowName}"`);
   }
   if (conclusion !== 'success') return deny(`required CI concluded "${conclusion}", not success`);
+
+  // Only a push to main stages a publishable payload; a run started by anything
+  // else must never be the source of one.
+  if (runEvent !== 'push') return deny(`required CI run was started by "${runEvent}", not push`);
 
   // A fork's run must never publish to this repository's packages.
   if (!owningRepository) return deny('owning repository not supplied');
@@ -93,6 +102,7 @@ export function evaluateSnapshotPublication(inputs) {
   // GitHub Packages is SNAPSHOT-only. A final version never publishes here.
   if (!version) return deny('no project version supplied');
   if (!SNAPSHOT_VERSION_RE.test(version)) return deny(`version "${version}" is not a SNAPSHOT`);
+  if (!SAFE_SNAPSHOT_VERSION_RE.test(version)) return deny(`version "${version}" contains unexpected characters`);
 
   // Once a line is released, it stops receiving mutable snapshots.
   const releasedLine = version.replace(SNAPSHOT_VERSION_RE, '');
@@ -101,6 +111,16 @@ export function evaluateSnapshotPublication(inputs) {
   }
 
   return { allowed: true, reason: 'successful required CI on current main at a SNAPSHOT version', checkoutSha: headSha };
+}
+
+/**
+ * Reads the declared `<revision>` from the reactor root POM.
+ * @returns {string|undefined}
+ */
+export function declaredVersion() {
+  const pomPath = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'pom.xml');
+  if (!existsSync(pomPath)) return undefined;
+  return /<revision>([^<]+)<\/revision>/.exec(readFileSync(pomPath, 'utf8'))?.[1]?.trim();
 }
 
 // ---------------------------------------------------------------------------
@@ -126,17 +146,11 @@ if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToP
     return result.status === 0 ? result.stdout.trim() : fallback;
   };
 
-  /** Reads the declared `<revision>` from the reactor root POM. */
-  const declaredVersion = () => {
-    const pomPath = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'pom.xml');
-    if (!existsSync(pomPath)) return undefined;
-    return /<revision>([^<]+)<\/revision>/.exec(readFileSync(pomPath, 'utf8'))?.[1]?.trim();
-  };
-
   const payload = readEvent();
   const run = payload.workflow_run ?? {};
   const decision = evaluateSnapshotPublication({
     event: process.env.GITHUB_EVENT_NAME,
+    runEvent: run.event,
     conclusion: run.conclusion,
     workflowName: run.name,
     requiredWorkflowName: process.env.VERTIQUE_REQUIRED_WORKFLOW ?? 'CI',
