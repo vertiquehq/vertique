@@ -1072,10 +1072,9 @@ public class ServedContractIT {
      * an absolute one to its file, and under {@code openapi-contract} the strategy validates against the
      * same file the document is served from.
      *
-     * <p>The shadowed contracts carry no {@code servers} member, because (d) also deploys them under the
-     * contract-validation strategy, which accepts only absolute server URLs or none. Their documents
-     * therefore also log the warning about {@code servers}; the warning checks count only the shadowing
-     * warning.
+     * <p>The shadowed contracts carry no {@code servers} member; (d) also deploys them under the
+     * contract-validation strategy, which needs no server URL to validate. Their documents therefore
+     * also log the warning about {@code servers}; the warning checks count only the shadowing warning.
      */
     @Test
     @DisplayName(
@@ -1441,9 +1440,8 @@ public class ServedContractIT {
      * a custom contract strategy.
      *
      * <p>In (a), partner's contract is configured as {@code contracts/partner-strategy-openapi.yaml}, the
-     * declared partner contract without a {@code servers} member: the contract-validation strategy
-     * accepts only absolute server URLs or none, and with the declared relative {@code /api/partner} it
-     * answers every validated request with 500.
+     * declared partner contract without a {@code servers} member, so the document also logs the warning
+     * about {@code servers}.
      */
     @Test
     @DisplayName(
@@ -1451,8 +1449,8 @@ public class ServedContractIT {
     void ownContractServedUnderOpenApiContractWhileSharedGlobalStillFails(Vertx vertx) throws Exception {
         List<Executable> checks = new ArrayList<>();
 
-        // (a) Given: openapi-contract, partner's contract configured without servers (the strategy accepts
-        // only absolute server URLs or none), orders's and catalog's documents disabled
+        // (a) Given: openapi-contract, partner's contract configured without servers, orders's and
+        // catalog's documents disabled
         JsonObject ownOnly = ContractConfigs.withDocumentEnabled(
                 ContractConfigs.withDocumentEnabled(
                         ContractConfigs.sharedUnderOpenApiContractWithPartnerStrategyContract(), ORDERS, false),

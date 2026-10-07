@@ -879,11 +879,10 @@ document nor how it is cached.
   serves. An application on the shared global `jaxrs.openapiPath` with an enabled document is still
   refused, with the alternative of serving that file behind an access check (see
   [Startup Checks](#startup-checks)); an application with its own contract is served.
-- **`servers` under `openapi-contract`.** The strategy needs a contract it validates against to have
-  absolute server URLs or no `servers`: `vertx-openapi` cannot load a contract with a relative server
-  URL, so startup fails. The `servers` warning expects `servers[0].url` to equal the mount path, a
-  relative URL. Under `openapi-contract`, omit `servers` and accept the warning, or use an absolute
-  URL.
+- **`servers` under `openapi-contract`.** The strategy loads the served contract with `vertx-openapi`,
+  which accepts relative and absolute server URLs but fails startup on one it cannot parse. The
+  `servers` warning expects `servers[0].url` to equal the mount path, a relative URL, which the
+  strategy loads without complaint.
 
 ---
 
@@ -2539,8 +2538,8 @@ and its message can quote that value.
 - **Expecting the contract's schemas to be checked against the code.** Under `web-validation` the
   contract plays no part in validation and nothing compares its schemas with what the runtime
   enforces; keep them in step.
-- **A relative `servers` URL under `openapi-contract`.** Startup fails: the strategy cannot load the
-  contract. Omit `servers` and accept the `servers` warning, or use an absolute URL.
+- **A malformed `servers` URL under `openapi-contract`.** Startup fails: the strategy cannot load the
+  contract. A relative URL, including the mount path the `servers` warning expects, loads.
 - **Expecting a contract file edit to be served without a restart.** The contract is loaded once
   per component; a later edit is not served.
 
@@ -2923,9 +2922,8 @@ global contract is served only by the application itself (see
 Startup refuses every violation, listing them all (see
 [Startup checks of a served contract](#startup-checks-of-a-served-contract)). It warns when
 `servers[0].url` is not the mount path (see
-[Warnings of a served contract](#warnings-of-a-served-contract)). Under `openapi-contract` a relative
-`servers` URL fails startup: omit `servers` or use an absolute URL (see
-[Contract and runtime](#contract-and-runtime)). A relative location resolves to a
+[Warnings of a served contract](#warnings-of-a-served-contract)). Under `openapi-contract` a malformed
+`servers` URL fails startup (see [Contract and runtime](#contract-and-runtime)). A relative location resolves to a
 working-directory file before a classpath resource of the same name, and that file then shadows the
 packaged contract, with a WARN (see
 [Where the contract is read from](#where-the-contract-is-read-from)).

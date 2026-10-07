@@ -534,7 +534,7 @@ public class SecurityPolicyEnforcer {
         // that completes normally (verified by the unmodified SecurityPolicyEnforcerDecisionTest
         // permit/deny suite still passing byte-for-byte after this change).
         //
-        // Vert.x 5.1.6's FutureBase#timeout
+        // Vert.x 5.1.8's FutureBase#timeout
         // branches on the SOURCE future's context, not the caller's. A gate future built with the
         // static Promise.promise() — or bridged from a CompletableFuture by a remote-PDP client, the
         // exact case this deadline exists for — has context == null, so its .timeout() continuation
@@ -548,7 +548,7 @@ public class SecurityPolicyEnforcer {
         // caller — see completeOnCallerContext, used at every promise.complete(...) call site below.
         roleScopeFuture = roleScopeFuture.timeout(gateDeadlineMs, TimeUnit.MILLISECONDS);
 
-        // {@code promise} itself stays the plain, context-less default — Vert.x 5.1.6's
+        // {@code promise} itself stays the plain, context-less default — Vert.x 5.1.8's
         // {@link Context} exposes no {@code promise()} factory to anchor one to a context directly.
         // Every settlement of it instead goes through {@link #completeOnCallerContext}, which
         // redispatches onto {@code callerContext} via {@link Context#runOnContext} before completing —

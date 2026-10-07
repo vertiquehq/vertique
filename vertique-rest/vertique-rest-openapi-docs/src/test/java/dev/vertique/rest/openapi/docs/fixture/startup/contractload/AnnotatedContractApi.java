@@ -9,7 +9,7 @@ import dev.vertique.rest.openapi.docs.fixture.CatalogResource;
 /**
  * The undocumented application {@code annotated} at {@code /api/annotated}, listing {@link
  * CatalogResource}, whose own declaration names the contract location {@value #OPENAPI_PATH}: a test
- * resource the {@code openapi-contract} strategy cannot load, because its only server URL is relative.
+ * resource the {@code openapi-contract} strategy cannot load, because its only server URL is malformed.
  * Its registration is hand-written in {@link ContractLoadModules.Annotated}.
  */
 @RestApplication(
@@ -25,6 +25,6 @@ public interface AnnotatedContractApi {
     /** The application's path. */
     String PATH = "/api/annotated";
 
-    /** The declared contract location, a test classpath resource with a relative server URL. */
-    String OPENAPI_PATH = ContractLoadModules.RELATIVE_SERVERS_RESOURCE;
+    /** The declared contract location, a test classpath resource with a malformed server URL. */
+    String OPENAPI_PATH = ContractLoadModules.MALFORMED_SERVERS_RESOURCE;
 }

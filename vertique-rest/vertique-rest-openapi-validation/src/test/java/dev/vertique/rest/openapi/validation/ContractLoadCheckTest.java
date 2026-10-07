@@ -90,9 +90,8 @@ class ContractLoadCheckTest {
     /** The reason for a contract file that cannot be read. */
     private static final String UNREADABLE_REASON = "the file cannot be read";
 
-    /** The reason for a contract with a relative or otherwise malformed server URL. */
-    private static final String SERVERS_REASON =
-            "a servers url is not a valid absolute URL; use an absolute URL or omit servers";
+    /** The reason for a contract with a malformed server URL. */
+    private static final String SERVERS_REASON = "a servers url is not a valid URL; use a valid URL or omit servers";
 
     /** The reason for any other contract vertx-openapi rejects. */
     private static final String INVALID_REASON = "the file is not a valid OpenAPI contract";
@@ -102,7 +101,13 @@ class ContractLoadCheckTest {
             "{\"openapi\":\"3.0.3\",\"info\":{\"title\":\"Orders\",\"version\":\"1\"," + "\"description\":\"" + MARKER
                     + " description\"},\"paths\":{}}";
 
-    /** A contract whose only server URL is relative. */
+    /** A contract whose only server URL is malformed. */
+    private static final String MALFORMED_SERVERS_CONTRACT = "{\"openapi\":\"3.0.3\",\"info\":{\"title\":\"Orders\","
+            + "\"version\":\"1\",\"description\":\"" + MARKER + " description\"},\"servers\":[{\"url\":\"http://"
+            + MARKER
+            + " host/api\"}],\"paths\":{}}";
+
+    /** A loadable contract whose only server URL is relative, which {@code vertx-openapi} accepts. */
     private static final String RELATIVE_SERVERS_CONTRACT = "{\"openapi\":\"3.0.3\",\"info\":{\"title\":\"Orders\","
             + "\"version\":\"1\",\"description\":\"" + MARKER + " description\"},\"servers\":[{\"url\":\"/" + MARKER
             + "/api\"}],\"paths\":{}}";
@@ -157,10 +162,10 @@ class ContractLoadCheckTest {
     static Stream<Unloadable> unloadableContracts() {
         return Stream.of(
                 new Unloadable(
-                        "a relative servers url",
-                        MARKER + "-relative-servers.json",
+                        "a malformed servers url",
+                        MARKER + "-malformed-servers.json",
                         Kind.FILE,
-                        RELATIVE_SERVERS_CONTRACT,
+                        MALFORMED_SERVERS_CONTRACT,
                         SERVERS_REASON),
                 new Unloadable(
                         "a readable contract with a .txt extension",
@@ -239,8 +244,8 @@ class ContractLoadCheckTest {
     @EnumSource(ContractOrigin.class)
     @DisplayName("the failure names the setting the application's contract location came from")
     void failureNamesTheSettingOfTheLocation(ContractOrigin origin, Vertx vertx) throws Exception {
-        // Given: an application mount whose location, from the given origin, has a relative servers url
-        Path location = write(MARKER + "-relative-servers.json", RELATIVE_SERVERS_CONTRACT);
+        // Given: an application mount whose location, from the given origin, has a malformed servers url
+        Path location = write(MARKER + "-malformed-servers.json", MALFORMED_SERVERS_CONTRACT);
         OpenApiContractValidationStrategy strategy = strategy(vertx, null);
         strategy.bindToMount(applicationMount(location));
         ContractLoadCheck check = new ContractLoadCheck(strategy, applications(location, origin));
@@ -265,8 +270,8 @@ class ContractLoadCheckTest {
     @Test
     @DisplayName("an application absent from the declared-application view is named with the generic setting")
     void applicationAbsentFromTheViewIsNamedWithTheGenericSetting(Vertx vertx) throws Exception {
-        // Given: an application mount bound to a relative-servers contract, and a view without it
-        Path location = write(MARKER + "-relative-servers.json", RELATIVE_SERVERS_CONTRACT);
+        // Given: an application mount bound to a malformed-servers contract, and a view without it
+        Path location = write(MARKER + "-malformed-servers.json", MALFORMED_SERVERS_CONTRACT);
         OpenApiContractValidationStrategy strategy = strategy(vertx, null);
         strategy.bindToMount(applicationMount(location));
         ContractLoadCheck check = new ContractLoadCheck(strategy, new RestApplications(List.of()));
@@ -286,8 +291,8 @@ class ContractLoadCheckTest {
     @Test
     @DisplayName("a hand-built JAX-RS mount whose contract cannot be loaded is named by its mount path")
     void handBuiltMountIsNamedByItsMountPath(Vertx vertx) throws Exception {
-        // Given: a hand-built mount bound to a relative-servers contract
-        Path location = write(MARKER + "-relative-servers.json", RELATIVE_SERVERS_CONTRACT);
+        // Given: a hand-built mount bound to a malformed-servers contract
+        Path location = write(MARKER + "-malformed-servers.json", MALFORMED_SERVERS_CONTRACT);
         OpenApiContractValidationStrategy strategy = strategy(vertx, null);
         strategy.bindToMount(new MountMeta(HAND_BUILT_MOUNT_ID, HAND_BUILT_MOUNT_PATH, location.toString(), Set.of()));
         ContractLoadCheck check = new ContractLoadCheck(strategy, new RestApplications(List.of()));
@@ -322,9 +327,9 @@ class ContractLoadCheckTest {
     void mountIdBoundToSeveralContractsFailsWhenAnyCannotBeLoaded(boolean unloadableFirst, Vertx vertx)
             throws Exception {
         // Given: two hand-built mounts with the same mount id and path, one bound to a loadable contract
-        // and one to a contract with a relative servers url, bound in the given order
+        // and one to a contract with a malformed servers url, bound in the given order
         Path loadable = write(MARKER + "-contract.json", VALID_CONTRACT);
-        Path unloadable = write(MARKER + "-relative-servers.json", RELATIVE_SERVERS_CONTRACT);
+        Path unloadable = write(MARKER + "-malformed-servers.json", MALFORMED_SERVERS_CONTRACT);
         MountMeta loadableMount =
                 new MountMeta(HAND_BUILT_MOUNT_ID, HAND_BUILT_MOUNT_PATH, loadable.toString(), Set.of());
         MountMeta unloadableMount =
@@ -378,8 +383,8 @@ class ContractLoadCheckTest {
     @Test
     @DisplayName("a mount built under another strategy passes even when the strategy bound it to a broken contract")
     void otherStrategyPasses(Vertx vertx) throws Exception {
-        // Given: a mount bound to a relative-servers contract, published under web-validation
-        Path location = write(MARKER + "-relative-servers.json", RELATIVE_SERVERS_CONTRACT);
+        // Given: a mount bound to a malformed-servers contract, published under web-validation
+        Path location = write(MARKER + "-malformed-servers.json", MALFORMED_SERVERS_CONTRACT);
         OpenApiContractValidationStrategy strategy = strategy(vertx, null);
         strategy.bindToMount(applicationMount(location));
         ContractLoadCheck check = new ContractLoadCheck(strategy, applications(location, ContractOrigin.CONFIGURATION));
@@ -410,7 +415,7 @@ class ContractLoadCheckTest {
     @DisplayName("a mount bound to a loadable contract passes while the global contract no mount binds is broken")
     void brokenUnboundGlobalContractDoesNotFailABoundMount(Vertx vertx) throws Exception {
         // Given: a broken global contract, and the application mount bound to its own loadable contract
-        Path globalLocation = write(MARKER + "-global-relative-servers.json", RELATIVE_SERVERS_CONTRACT);
+        Path globalLocation = write(MARKER + "-global-malformed-servers.json", MALFORMED_SERVERS_CONTRACT);
         Path location = write(MARKER + "-contract.json", VALID_CONTRACT);
         OpenApiContractValidationStrategy strategy = strategy(vertx, globalLocation.toString());
         strategy.bindToMount(applicationMount(location));
@@ -420,6 +425,22 @@ class ContractLoadCheckTest {
         Throwable failure = failureOf(vertx, check, applicationPublication(OpenApiContractValidationStrategy.ID));
 
         // Then: nothing fails
+        assertNull(failure, () -> "the check failed: " + failure);
+    }
+
+    @Test
+    @DisplayName("a mount bound to a contract with a relative servers url passes")
+    void relativeServersUrlDoesNotFailTheMount(Vertx vertx) throws Exception {
+        // Given: an application mount bound to a contract whose only server URL is relative
+        Path location = write(MARKER + "-relative-servers.json", RELATIVE_SERVERS_CONTRACT);
+        OpenApiContractValidationStrategy strategy = strategy(vertx, null);
+        strategy.bindToMount(applicationMount(location));
+        ContractLoadCheck check = new ContractLoadCheck(strategy, applications(location, ContractOrigin.CONFIGURATION));
+
+        // When: the mount's router is built
+        Throwable failure = failureOf(vertx, check, applicationPublication(OpenApiContractValidationStrategy.ID));
+
+        // Then: nothing fails — a relative server URL is a loadable contract
         assertNull(failure, () -> "the check failed: " + failure);
     }
 
@@ -546,9 +567,9 @@ class ContractLoadCheckTest {
         Vertx callerVertx = Vertx.vertx();
         CountDownLatch release = new CountDownLatch(1);
         try {
-            // Given: the mount bound on the loading context to a contract with a relative servers url,
+            // Given: the mount bound on the loading context to a contract with a malformed servers url,
             // whose event loop is then held so the load cannot complete
-            Path location = write(MARKER + "-relative-servers.json", RELATIVE_SERVERS_CONTRACT);
+            Path location = write(MARKER + "-malformed-servers.json", MALFORMED_SERVERS_CONTRACT);
             Context loadingContext = loadingVertx.getOrCreateContext();
             CompletableFuture<OpenApiContractValidationStrategy> bound = new CompletableFuture<>();
             loadingContext.runOnContext(ignored -> {
