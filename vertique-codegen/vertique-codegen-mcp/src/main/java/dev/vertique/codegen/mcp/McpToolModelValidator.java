@@ -333,6 +333,7 @@ final class McpToolModelValidator {
                 access.get().mode(),
                 access.get().roles(),
                 access.get().action(),
+                access.get().policy(),
                 jsonProfile.get().orElse(null),
                 parameters.get(),
                 returnModel.get()));

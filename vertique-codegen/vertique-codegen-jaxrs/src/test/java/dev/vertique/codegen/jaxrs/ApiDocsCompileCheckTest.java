@@ -29,17 +29,20 @@ import org.junit.jupiter.params.provider.MethodSource;
 import org.opentest4j.AssertionFailedError;
 
 /**
- * APT compilation tests for the compile side of FR-033's {@code @ApiDocs} checks (C-APPCHECK,
- * AC-033.2, AC-011.2's compile-time rows): on a {@code @RestApplication} declaration,
- * {@code securityScheme} is required and non-blank exactly when {@code access} is
- * {@code PROTECTED}, and {@code rolesAllowed} is allowed only then, with non-blank entries; each
- * violation fails compilation naming the interface and the attribute. The processor recognizes
- * {@code @ApiDocs} by one pinned fully qualified name (AR3-009), so an unrelated annotation with
- * the same simple name is not checked.
+ * APT compilation tests for the compile side of the {@code @ApiDocs} checks on a
+ * {@code @RestApplication} declaration. {@code policy} is required and names a valid access policy;
+ * {@code securityScheme} must be empty exactly when that policy is public (one direct
+ * {@code @PermitAll}; every other valid policy, {@code @DenyAll} included, is not public); and the
+ * former {@code access} and {@code rolesAllowed} elements no longer exist. Each processor-level
+ * violation fails compilation naming the interface and the attribute; the removed elements and a
+ * missing {@code policy} fail in javac's own element resolution. The processor recognizes
+ * {@code @ApiDocs} by one pinned fully qualified name, so an unrelated annotation with the same
+ * simple name is not checked.
  *
- * <p>Each row compiles {@code PathResource} and {@code Api} through {@link JaxRsPipelineProcessor}
- * via {@link ProcessorTestHarness}. {@code PathResource} is a concrete class with
- * {@code @Path("/p")}, an {@code @Inject} constructor, and one {@code @GET} method; {@code Api} is
+ * <p>Each row compiles {@code PathResource}, {@code Policies} and {@code Api} through
+ * {@link JaxRsPipelineProcessor} via {@link ProcessorTestHarness}. {@code PathResource} is a
+ * concrete class with {@code @Path("/p")}, an {@code @Inject} constructor, and one {@code @GET}
+ * method; {@code Policies} declares the public policy interfaces the rows name; {@code Api} is
  * {@code @RestApplication(name = "api", path = "/api", resources = PathResource.class) interface Api {}}
  * carrying the row's annotation, where {@code @ApiDocs} is the test-source {@link ApiDocs}. An
  * error names {@code Api} when its message contains {@code Api}'s binary name. An accepted row's
@@ -56,14 +59,29 @@ class ApiDocsCompileCheckTest {
     /** javac's diagnostic code for an annotation missing a value for an element without a default. */
     private static final String MISSING_ELEMENT_CODE = "compiler.err.annotation.missing.default.value";
 
+    /** javac's diagnostic code for an annotation that sets an element the annotation type lacks. */
+    private static final String UNKNOWN_ELEMENT_CODE = "compiler.err.cant.resolve.location.args";
+
+    /** javac's diagnostic code for a policy class literal that is not an access policy type. */
+    private static final String NOT_A_POLICY_TYPE_CODE = "compiler.err.prob.found.req";
+
+    /** javac's diagnostic code for a policy class literal naming a type that does not exist. */
+    private static final String UNRESOLVED_TYPE_CODE = "compiler.err.cant.resolve.location";
+
     /** How a row's compilation is expected to end. */
     enum Outcome {
         /** Compiles and emits {@code Api}'s registration. */
         ACCEPTED,
-        /** Fails with an error naming {@code Api} and the row's attribute. */
+        /** Fails with a processor error naming {@code Api} and the row's attribute. */
         REJECTED,
         /** Fails with javac's missing-element error for the row's attribute. */
-        MISSING_ELEMENT
+        MISSING_ELEMENT,
+        /** Fails with javac's unknown-element error for the row's attribute. */
+        UNKNOWN_ELEMENT,
+        /** Fails with javac's error for a {@code policy} value that is not an access policy type. */
+        NOT_A_POLICY_TYPE,
+        /** Fails with javac's error for a {@code policy} value naming a type that does not exist. */
+        UNRESOLVED_POLICY_TYPE
     }
 
     // -----------------------------------------------------------------------------------------
@@ -88,9 +106,73 @@ class ApiDocsCompileCheckTest {
             """.formatted(PKG));
 
     /**
+     * The policy interfaces the rows name. Every nested policy is explicitly public, as a member of
+     * a class must be to count as public. The valid ones carry one direct runtime requirement; each
+     * invalid one breaks exactly one rule of a valid policy.
+     */
+    private static final JavaFileObject POLICIES = SourceFiles.inline(PKG + ".Policies", """
+            package %s;
+
+            import dev.vertique.security.authz.AccessPolicy;
+            import dev.vertique.security.authz.Authorized;
+            import jakarta.annotation.security.DenyAll;
+            import jakarta.annotation.security.PermitAll;
+            import jakarta.annotation.security.RolesAllowed;
+
+            public class Policies {
+                @PermitAll
+                public interface Open extends AccessPolicy {}
+
+                @Authorized
+                public interface AuthenticatedOnly extends AccessPolicy {}
+
+                @RolesAllowed({"admin", "ops"})
+                public interface Admins extends AccessPolicy {}
+
+                @DenyAll
+                public interface Denied extends AccessPolicy {}
+
+                @PermitAll
+                @RolesAllowed("admin")
+                public interface OpenAndRoles extends AccessPolicy {}
+
+                @RolesAllowed(" ")
+                public interface BlankRole extends AccessPolicy {}
+
+                @RolesAllowed({})
+                public interface EmptyRoles extends AccessPolicy {}
+
+                public interface NoRequirement extends AccessPolicy {}
+
+                public interface Unrelated {}
+
+                @PermitAll
+                public interface TwoParents extends AccessPolicy, Unrelated {}
+
+                @PermitAll
+                public interface Derived extends Open {}
+
+                @PermitAll
+                public interface WithMethod extends AccessPolicy {
+                    String name();
+                }
+
+                @PermitAll
+                public static class ClassPolicy implements AccessPolicy {}
+
+                /** An interface that does not extend the policy marker. */
+                @PermitAll
+                public interface NotAPolicy extends Unrelated {}
+            }
+
+            @jakarta.annotation.security.PermitAll
+            interface HiddenOpen extends dev.vertique.security.authz.AccessPolicy {}
+            """.formatted(PKG));
+
+    /**
      * An unrelated {@code CLASS}-retained annotation sharing {@code ApiDocs}'s simple name and
-     * shape, so FR-025's runtime allow list does not reject it and only a simple-name match would
-     * check it.
+     * shape, so the runtime allow list does not reject it and only a simple-name match would check
+     * it.
      */
     private static final JavaFileObject OTHER_API_DOCS = SourceFiles.inline("other.ApiDocs", """
             package other;
@@ -103,17 +185,18 @@ class ApiDocsCompileCheckTest {
             @Retention(RetentionPolicy.CLASS)
             @Target(ElementType.TYPE)
             public @interface ApiDocs {
-                Access access();
+                Class<?> policy();
 
                 String securityScheme() default "";
-
-                String[] rolesAllowed() default {};
-
-                enum Access { PUBLIC, PROTECTED }
             }
             """);
 
-    private static JavaFileObject apiFixture(String annotation) {
+    /**
+     * {@code Api} carrying {@code annotation} above its {@code @RestApplication}, with {@code body}
+     * as its members. The removed {@code access} element's constants stay imported so a row can
+     * still use them.
+     */
+    private static JavaFileObject apiFixture(String annotation, String body) {
         return SourceFiles.inline(API_BINARY_NAME, """
                 package %s;
 
@@ -122,60 +205,113 @@ class ApiDocsCompileCheckTest {
 
                 import dev.vertique.rest.core.application.RestApplication;
                 import dev.vertique.rest.openapi.docs.ApiDocs;
+                import dev.vertique.security.authz.AccessPolicy;
+                import jakarta.annotation.security.PermitAll;
 
                 %s
                 @RestApplication(name = "api", path = "/api", resources = PathResource.class)
-                interface Api {}
-                """.formatted(PKG, annotation));
+                interface Api {
+                    %s
+                }
+                """.formatted(PKG, annotation, body));
     }
 
     // -----------------------------------------------------------------------------------------
-    // TP-006 — @ApiDocs shapes are checked at compile time, naming the interface and attribute
+    // @ApiDocs shapes are checked at compile time, naming the interface and attribute
     // -----------------------------------------------------------------------------------------
+
+    private static final String NESTED_POLICY = "@PermitAll interface NestedOpen extends AccessPolicy {}";
+
+    private static Arguments row(String annotation, Outcome outcome, String attribute) {
+        return Arguments.of(annotation, "", outcome, attribute, List.of());
+    }
 
     private static Stream<Arguments> apiDocsShapes() {
         return Stream.of(
-                Arguments.of("@ApiDocs(access = PROTECTED)", Outcome.REJECTED, "securityScheme", List.of()),
+                // Valid declarations: a public policy with no scheme, and every other valid policy
+                // (deny included) with a scheme.
+                row("@ApiDocs(policy = Policies.Open.class)", Outcome.ACCEPTED, null),
+                row(
+                        "@ApiDocs(policy = Policies.AuthenticatedOnly.class, securityScheme = \"bearerAuth\")",
+                        Outcome.ACCEPTED,
+                        null),
+                row(
+                        "@ApiDocs(policy = Policies.Admins.class, securityScheme = \"bearerAuth\")",
+                        Outcome.ACCEPTED,
+                        null),
+                row(
+                        "@ApiDocs(policy = Policies.Denied.class, securityScheme = \"bearerAuth\")",
+                        Outcome.ACCEPTED,
+                        null),
+                // A policy nested in the application interface is a member of an interface, so it is
+                // implicitly public without the modifier.
                 Arguments.of(
-                        "@ApiDocs(access = PROTECTED, securityScheme = \" \")",
+                        "@ApiDocs(policy = Api.NestedOpen.class)", NESTED_POLICY, Outcome.ACCEPTED, null, List.of()),
+                // A public policy takes no scheme; any supplied value, blank included, is one.
+                row(
+                        "@ApiDocs(policy = Policies.Open.class, securityScheme = \"bearerAuth\")",
                         Outcome.REJECTED,
-                        "securityScheme",
-                        List.of()),
-                Arguments.of(
-                        "@ApiDocs(access = PUBLIC, securityScheme = \"bearerAuth\")",
+                        "securityScheme"),
+                row(
+                        "@ApiDocs(policy = Policies.Open.class, securityScheme = \" \")",
                         Outcome.REJECTED,
-                        "securityScheme",
-                        List.of()),
-                Arguments.of(
-                        "@ApiDocs(access = PUBLIC, rolesAllowed = \"admin\")",
+                        "securityScheme"),
+                // Every other valid policy needs a scheme.
+                row("@ApiDocs(policy = Policies.AuthenticatedOnly.class)", Outcome.REJECTED, "securityScheme"),
+                row("@ApiDocs(policy = Policies.Admins.class)", Outcome.REJECTED, "securityScheme"),
+                row("@ApiDocs(policy = Policies.Denied.class)", Outcome.REJECTED, "securityScheme"),
+                // A blank scheme is not a scheme either.
+                row(
+                        "@ApiDocs(policy = Policies.AuthenticatedOnly.class, securityScheme = \" \")",
                         Outcome.REJECTED,
-                        "rolesAllowed",
-                        List.of()),
-                Arguments.of(
-                        "@ApiDocs(access = PROTECTED, securityScheme = \"bearerAuth\", rolesAllowed = {\"admin\", \" \"})",
+                        "securityScheme"),
+                row(
+                        "@ApiDocs(policy = Policies.Admins.class, securityScheme = \" \")",
                         Outcome.REJECTED,
-                        "rolesAllowed",
-                        List.of()),
-                Arguments.of(
-                        "@ApiDocs(access = PROTECTED, securityScheme = \"bearerAuth\", rolesAllowed = \"\")",
+                        "securityScheme"),
+                // An invalid policy is rejected whatever the scheme is.
+                row("@ApiDocs(policy = Policies.OpenAndRoles.class)", Outcome.REJECTED, "policy"),
+                row(
+                        "@ApiDocs(policy = Policies.BlankRole.class, securityScheme = \"bearerAuth\")",
                         Outcome.REJECTED,
-                        "rolesAllowed",
-                        List.of()),
-                Arguments.of("@ApiDocs(access = PUBLIC)", Outcome.ACCEPTED, null, List.of()),
+                        "policy"),
+                row(
+                        "@ApiDocs(policy = Policies.EmptyRoles.class, securityScheme = \"bearerAuth\")",
+                        Outcome.REJECTED,
+                        "policy"),
+                row("@ApiDocs(policy = Policies.NoRequirement.class)", Outcome.REJECTED, "policy"),
+                row("@ApiDocs(policy = Policies.ClassPolicy.class)", Outcome.REJECTED, "policy"),
+                row("@ApiDocs(policy = dev.vertique.security.authz.AccessPolicy.class)", Outcome.REJECTED, "policy"),
+                row("@ApiDocs(policy = Policies.TwoParents.class)", Outcome.REJECTED, "policy"),
+                row("@ApiDocs(policy = Policies.Derived.class)", Outcome.REJECTED, "policy"),
+                row("@ApiDocs(policy = Policies.WithMethod.class)", Outcome.REJECTED, "policy"),
+                row("@ApiDocs(policy = HiddenOpen.class)", Outcome.REJECTED, "policy"),
+                // The type system rejects a class literal that is not an access policy type at all,
+                // and one naming a type that does not exist.
+                row("@ApiDocs(policy = Policies.NotAPolicy.class)", Outcome.NOT_A_POLICY_TYPE, "policy"),
+                row("@ApiDocs(policy = Policies.Missing.class)", Outcome.UNRESOLVED_POLICY_TYPE, "Missing"),
+                // policy is required.
+                row("@ApiDocs", Outcome.MISSING_ELEMENT, "policy"),
+                row("@ApiDocs(securityScheme = \"bearerAuth\")", Outcome.MISSING_ELEMENT, "policy"),
+                // The removed authorization elements no longer exist, even beside a valid policy.
+                row("@ApiDocs(policy = Policies.Open.class, access = PUBLIC)", Outcome.UNKNOWN_ELEMENT, "access"),
+                row(
+                        "@ApiDocs(policy = Policies.Admins.class, securityScheme = \"bearerAuth\","
+                                + " rolesAllowed = \"admin\")",
+                        Outcome.UNKNOWN_ELEMENT,
+                        "rolesAllowed"),
+                row("@ApiDocs(access = PROTECTED, securityScheme = \"bearerAuth\")", Outcome.MISSING_ELEMENT, "policy"),
+                // An unrelated annotation with the same simple name is not checked, even where the
+                // same shape on the real one would be rejected.
                 Arguments.of(
-                        "@ApiDocs(access = PROTECTED, securityScheme = \"bearerAuth\")",
+                        "@other.ApiDocs(policy = Policies.Open.class, securityScheme = \"bearerAuth\")",
+                        "",
                         Outcome.ACCEPTED,
                         null,
-                        List.of()),
+                        List.of(OTHER_API_DOCS)),
                 Arguments.of(
-                        "@ApiDocs(access = PROTECTED, securityScheme = \"bearerAuth\", rolesAllowed = {\"admin\","
-                                + " \"ops\"})",
-                        Outcome.ACCEPTED,
-                        null,
-                        List.of()),
-                Arguments.of("@ApiDocs", Outcome.MISSING_ELEMENT, "access", List.of()),
-                Arguments.of(
-                        "@other.ApiDocs(access = other.ApiDocs.Access.PROTECTED)",
+                        "@other.ApiDocs(policy = Policies.Denied.class)",
+                        "",
                         Outcome.ACCEPTED,
                         null,
                         List.of(OTHER_API_DOCS)));
@@ -183,22 +319,26 @@ class ApiDocsCompileCheckTest {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("apiDocsShapes")
-    @DisplayName("@ApiDocs shapes are checked at compile time, naming the interface and attribute")
-    void apiDocsShapesAreCheckedAtCompileTime(
-            String annotation, Outcome expected, String attribute, List<JavaFileObject> extraSources) {
-        List<JavaFileObject> sources = new ArrayList<>(List.of(PATH_RESOURCE, apiFixture(annotation)));
+    @DisplayName("policy is required, removed authorization elements reject, and policy and scheme must agree")
+    void shouldRequirePolicyAndRejectRemovedAuthorizationElements(
+            String annotation, String apiBody, Outcome expected, String attribute, List<JavaFileObject> extraSources) {
+        List<JavaFileObject> sources =
+                new ArrayList<>(List.of(PATH_RESOURCE, POLICIES, apiFixture(annotation, apiBody)));
         sources.addAll(extraSources);
         var result = ProcessorTestHarness.run(new JaxRsPipelineProcessor(), sources.toArray(JavaFileObject[]::new));
         logDiagnostics("@ApiDocs shape " + annotation, result);
         switch (expected) {
             case ACCEPTED -> assertEmitsOnlyApiRegistration(result);
             case REJECTED -> assertErrorNamingApiAnd(result, attribute);
-            case MISSING_ELEMENT -> assertMissingElementError(result, attribute);
+            case MISSING_ELEMENT -> assertJavacError(result, MISSING_ELEMENT_CODE, "'" + attribute + "'");
+            case UNKNOWN_ELEMENT -> assertJavacError(result, UNKNOWN_ELEMENT_CODE, attribute);
+            case NOT_A_POLICY_TYPE -> assertJavacError(result, NOT_A_POLICY_TYPE_CODE, "NotAPolicy");
+            case UNRESOLVED_POLICY_TYPE -> assertJavacError(result, UNRESOLVED_TYPE_CODE, attribute);
         }
     }
 
     // -----------------------------------------------------------------------------------------
-    // TP-008 — the processor's @ApiDocs name is one pinned literal
+    // The processor's @ApiDocs name is one pinned literal
     // -----------------------------------------------------------------------------------------
 
     @Test
@@ -222,18 +362,17 @@ class ApiDocsCompileCheckTest {
                         + diagnosticsSummary(result));
     }
 
-    private static void assertMissingElementError(ProcessorTestHarness.Result result, String element) {
+    private static void assertJavacError(ProcessorTestHarness.Result result, String code, String messagePart) {
         result.assertFailed();
         boolean found = result.compilation().diagnostics().stream()
                 .filter(d -> d.getKind() == Diagnostic.Kind.ERROR)
-                .filter(d -> MISSING_ELEMENT_CODE.equals(d.getCode()))
+                .filter(d -> code.equals(d.getCode()))
                 .map(d -> d.getMessage(null))
                 .filter(Objects::nonNull)
-                .anyMatch(message -> message.contains("'" + element + "'"));
+                .anyMatch(message -> message.contains(messagePart));
         assertTrue(
                 found,
-                () -> "Expected javac's missing-element error (" + MISSING_ELEMENT_CODE + ") for '" + element + "'"
-                        + diagnosticsSummary(result));
+                () -> "Expected javac's error (" + code + ") mentioning " + messagePart + diagnosticsSummary(result));
     }
 
     /**

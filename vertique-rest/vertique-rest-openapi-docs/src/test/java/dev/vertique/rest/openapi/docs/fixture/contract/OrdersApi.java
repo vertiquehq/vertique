@@ -5,13 +5,15 @@ package dev.vertique.rest.openapi.docs.fixture.contract;
 
 import dev.vertique.rest.core.application.RestApplication;
 import dev.vertique.rest.openapi.docs.ApiDocs;
+import dev.vertique.security.authz.AccessPolicy;
+import jakarta.annotation.security.PermitAll;
 
 /**
  * The documented application {@value #NAME} at {@value #PATH}, listing {@link OrderResource}. Its
  * declaring interface names no contract and carries no {@code @OpenAPIDefinition}: its own contract
  * comes only from configuration ({@code jaxrs.applications.orders.openapiPath}).
  */
-@ApiDocs(access = ApiDocs.Access.PUBLIC)
+@ApiDocs(policy = OrdersApi.PublicDocsPolicy.class)
 @RestApplication(name = OrdersApi.NAME, path = OrdersApi.PATH, resources = OrderResource.class)
 public interface OrdersApi {
 
@@ -23,4 +25,8 @@ public interface OrdersApi {
 
     /** The application's mount path, as its registration and publication report it. */
     String MOUNT_PATH = PATH + "/*";
+
+    /** Anyone may read the document. */
+    @PermitAll
+    public interface PublicDocsPolicy extends AccessPolicy {}
 }

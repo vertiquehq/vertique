@@ -89,6 +89,14 @@ SPDX-License-Identifier: EUPL-1.2
             <scope>test</scope>
         </dependency>
         <dependency>
+            <!-- Test-scope only: the service-gate integration test registers a policy-protected service
+                 behind an endpoint. The edge is acyclic: vertique-services depends on neither
+                 vertique-rest nor vertique-rest-websocket. -->
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-services</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
             <groupId>dev.vertique</groupId>
             <artifactId>vertique-input-processing</artifactId>
             <version>${project.version}</version>

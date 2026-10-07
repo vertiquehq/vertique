@@ -6,10 +6,12 @@ package dev.vertique.services;
 import dev.vertique.core.config.JsonConfigPaths;
 import dev.vertique.core.util.AnnotationResolver;
 import dev.vertique.resilience.annotation.ResilienceAnnotations;
+import dev.vertique.security.authz.AccessPolicyResolver;
 import dev.vertique.services.dispatch.ServiceMethodDescriptor;
 import dev.vertique.services.dispatch.ServiceMethodMeta;
 import dev.vertique.services.dispatch.ServiceMethodMeta.ParamMeta;
 import dev.vertique.services.dispatch.ServiceMethodMeta.ParamSource;
+import dev.vertique.services.exception.ServiceRegistrationException;
 import io.vertx.core.DeploymentOptions;
 import io.vertx.core.ThreadingModel;
 import io.vertx.core.json.JsonObject;
@@ -183,6 +185,8 @@ public final class ServiceContractEntries {
          *
          * @return the built contract entry
          * @throws IllegalStateException if required fields are missing or no operations were defined
+         * @throws ServiceRegistrationException if an operation's typed access policy is invalid,
+         *     conflicting or mixed with an inline security annotation
          */
         public ServiceContractRegistry.ContractEntry<?> build() {
             if (contract == null) {
@@ -218,7 +222,7 @@ public final class ServiceContractEntries {
             Map<String, ServiceMethodMeta> metaMap = new LinkedHashMap<>();
 
             for (Map.Entry<String, OperationBuilder> e : operations.entrySet()) {
-                ServiceMethodMeta meta = e.getValue().buildMeta(serviceInstance, namespace, name);
+                ServiceMethodMeta meta = e.getValue().buildMeta(contract, serviceInstance, namespace, name);
                 metaMap.put(e.getKey(), meta);
             }
 
@@ -476,7 +480,8 @@ public final class ServiceContractEntries {
          * <p>When set, {@link ServiceMethodMeta#methodAnnotations()} returns this list instead of
          * the default auto-resolution via
          * {@link AnnotationResolver#resolveMethodAnnotations(Method)}. When not called, the default
-         * auto-resolution from {@code method} is used (current behavior).
+         * auto-resolution from {@code method} is used, plus any typed access policy collected from the
+         * entry's contract class (see {@code AccessPolicyResolver.collectMethodAnnotations}).
          *
          * <p>Use this when the annotations should be derived from a contract interface method rather
          * than the handler method (e.g. in codegen-driven contributors).
@@ -522,19 +527,40 @@ public final class ServiceContractEntries {
         }
 
         /**
+         * Resolves the method annotations when no override was supplied. A typed access policy is
+         * collected starting from the entry's contract class, so a declaration on a parent interface
+         * is found for an inherited method; with no policy the inline annotations are returned
+         * unchanged.
+         */
+        private List<Annotation> collectMethodAnnotations(Class<?> contract) {
+            List<Annotation> inline = AnnotationResolver.resolveMethodAnnotations(method);
+            try {
+                return AccessPolicyResolver.collectMethodAnnotations(contract, method, inline);
+            } catch (IllegalArgumentException e) {
+                throw new ServiceRegistrationException(List.of(ServiceRegistrationViolation.ofMethod(
+                        contract, method.getName(), "invalid typed access policy: " + e.getMessage())));
+            }
+        }
+
+        /**
          * Builds the {@link ServiceMethodMeta} for this operation.
          *
          * <p>When an explicit {@link #address(String)} was set, uses it directly and sets
          * {@code stableTargetId = null}. Otherwise, derives the address and stable target id
          * via {@link ServiceAddressing}.
          *
+         * @param contract the contract key class the entry was declared with; typed access policies are
+         *     collected starting from it
          * @param serviceInstance the service implementation instance
          * @param namespace the service namespace segment (may be null or blank for no-namespace entries)
          * @param name the service name segment
          * @return the built metadata record
          * @throws IllegalStateException if required fields are missing
+         * @throws ServiceRegistrationException if the typed access policy collected for the method is
+         *     invalid, conflicting or mixed with an inline security annotation
          */
-        ServiceMethodMeta buildMeta(Object serviceInstance, @Nullable String namespace, String name) {
+        ServiceMethodMeta buildMeta(
+                Class<?> contract, Object serviceInstance, @Nullable String namespace, String name) {
             if (method == null) {
                 throw new IllegalStateException("method is required for operation '" + operationName + "'");
             }
@@ -562,7 +588,7 @@ public final class ServiceContractEntries {
 
             List<Annotation> methodAnnotations = this.methodAnnotationsOverride != null
                     ? this.methodAnnotationsOverride
-                    : AnnotationResolver.resolveMethodAnnotations(method);
+                    : collectMethodAnnotations(contract);
             List<Annotation> classAnnotations = this.classAnnotationsOverride != null
                     ? this.classAnnotationsOverride
                     : AnnotationResolver.resolveClassAnnotations(annotationClass);

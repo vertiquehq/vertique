@@ -24,6 +24,8 @@ import dev.vertique.rest.openapi.docs.fixture.protecteddocs.shared.Observations;
 import dev.vertique.rest.openapi.docs.fixture.protecteddocs.shared.SharedDeployment;
 import dev.vertique.rest.openapi.docs.fixture.protecteddocs.shared.TraceContributors;
 import dev.vertique.rest.openapi.docs.fixture.protecteddocs.shared.TwinResource;
+import dev.vertique.rest.openapi.docs.fixture.protecteddocs.typed.TypedDocumentApis;
+import dev.vertique.rest.openapi.docs.fixture.protecteddocs.typed.TypedDocumentModule;
 import dev.vertique.rest.openapi.docs.fixture.support.Futures;
 import dev.vertique.rest.openapi.docs.fixture.support.StartupDeployments;
 import dev.vertique.rest.openapi.docs.fixture.support.StartupDeployments.Outcome;
@@ -46,6 +48,7 @@ import io.vertx.ext.web.client.WebClient;
 import io.vertx.junit5.VertxExtension;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Comparator;
 import java.util.EnumMap;
 import java.util.LinkedHashMap;
@@ -74,8 +77,8 @@ import org.slf4j.LoggerFactory;
  *
  * <p>The shared graph composes the framework's REST, request-validation, JWT authentication (scheme
  * {@code bearerAuth}), and documentation modules with two declared applications: {@code public},
- * whose document is public, and {@code management}, whose declaring interface's access policy is
- * {@code PROTECTED} under scheme {@code bearerAuth} with the role {@code admin}. The
+ * whose document is public, and {@code management}, whose declaring interface's policy requires the
+ * role {@code admin} under scheme {@code bearerAuth}, so its document is protected. The
  * configured default {@code Cache-Control} is the permissive {@code public, max-age=3600}, and
  * {@code apidocs.documents.management} sets {@code enabled} and {@code serverUrl}, which never change
  * the access policy. Beside them: probe contributors at priorities 45, 90, 200, and 400, which record
@@ -91,6 +94,11 @@ import org.slf4j.LoggerFactory;
  * time; each request registers a barrier that completes once the server closed the request's
  * lifecycle, after every end handler and listener ran, so the events and the trace read after it are
  * exactly that request's. Expected values are fixed literals.
+ *
+ * <p>The typed policy tests each deploy their own fresh graph of {@code TypedDocumentApis}, one
+ * document per policy, with the real JWT authentication module, the application's action registry and
+ * counting authorizer, and a late contributor after authorization, so one failing test cannot mask
+ * another and no test depends on the shared deployments above.
  *
  * <p>The class timeout is 60 seconds rather than the default 20, because the class starts two
  * deployments, builds a third graph with its own HTTP server, and sends over a hundred sequential
@@ -722,6 +730,400 @@ public class ProtectedDocumentIT {
         } finally {
             storeless.close();
         }
+    }
+
+    // --- Typed policies ---
+
+    /**
+     * Every typed document policy, over GET, HEAD, an unconditional request, a wildcard {@code
+     * If-None-Match} and a matching entity tag, in JSON and YAML, for every kind of caller, on one
+     * fresh deployment: an anonymous or forged caller is refused 401, an authenticated caller the
+     * policy does not permit is refused 403, and neither is ever answered 200 or 304, given a byte of
+     * the document, or an entity tag; a permitted caller gets the document with {@code private,
+     * no-store} and {@code Vary: Authorization}, and {@code 304} only for a conditional request.
+     * Nothing falls through to the later mount, the late contributor runs only for permitted
+     * callers, and the application's authorizer is asked for the policy's action exactly once per
+     * request that reaches the action gate, never because of a framework grant.
+     */
+    @Test
+    @DisplayName("Typed document policies authorize GET, HEAD and conditional requests before any bytes or 304")
+    void shouldAuthorizeTypedPoliciesBeforeGetHeadAndConditionalResponses() throws Exception {
+        // Given: one deployment serving a document per policy, every caller's token, and the
+        // expected outcome of every caller on every document
+        try (TypedDocumentDeployment deployment = TypedDocumentDeployment.startAll()) {
+            Map<String, String> tokens = TypedDocumentExpectations.tokens(deployment);
+            Map<String, Map<String, TypedDocumentExpectations.Outcome>> outcomes = TypedDocumentExpectations.outcomes();
+            List<Executable> checks = new ArrayList<>();
+            int expectedLateRuns = 0;
+            int expectedEvaluations = 0;
+
+            for (String document : TypedDocumentExpectations.DOCUMENTS) {
+                boolean open = document.equals(TypedDocumentApis.Open.NAME);
+                boolean deniesEveryone = document.equals(TypedDocumentApis.Deny.NAME);
+                for (TypedDocumentExpectations.Form form : TypedDocumentExpectations.Form.values()) {
+                    String path = form.path(document);
+
+                    // Given: the form's bytes and entity tag, read once by a caller the policy permits
+                    TypedDocumentDeployment.Reply baseline = null;
+                    if (!deniesEveryone) {
+                        baseline = deployment.request(
+                                HttpMethod.GET, path, tokens.get(TypedDocumentExpectations.ENTITLED), Map.of());
+                        TypedDocumentExpectations.assertIsDocument(document + " " + form + " baseline", baseline);
+                        assertNotNull(
+                                baseline.header("ETag"), document + " " + form + ": the baseline carries an ETag");
+                        expectedLateRuns += open ? 0 : 1;
+                        expectedEvaluations +=
+                                TypedDocumentExpectations.evaluatesAction(document, TypedDocumentExpectations.ENTITLED)
+                                        ? 1
+                                        : 0;
+                    }
+
+                    // When: every caller sends GET and HEAD, unconditionally, with a wildcard
+                    // If-None-Match, and with the document's matching entity tag
+                    Map<String, String> conditions = new LinkedHashMap<>();
+                    conditions.put("unconditional", null);
+                    conditions.put("If-None-Match *", "*");
+                    if (baseline != null) {
+                        conditions.put("If-None-Match tag", baseline.header("ETag"));
+                    }
+                    for (Map.Entry<String, TypedDocumentExpectations.Outcome> caller :
+                            outcomes.get(document).entrySet()) {
+                        TypedDocumentExpectations.Outcome outcome = caller.getValue();
+                        if (outcome == TypedDocumentExpectations.Outcome.NOT_ASSERTED) {
+                            continue;
+                        }
+                        for (HttpMethod method : List.of(HttpMethod.GET, HttpMethod.HEAD)) {
+                            for (Map.Entry<String, String> condition : conditions.entrySet()) {
+                                Map<String, String> headers = condition.getValue() == null
+                                        ? Map.of()
+                                        : Map.of("If-None-Match", condition.getValue());
+                                TypedDocumentDeployment.Reply reply =
+                                        deployment.request(method, path, tokens.get(caller.getKey()), headers);
+                                String row = document + " | " + form + " | " + method + " | " + caller.getKey() + " | "
+                                        + condition.getKey();
+                                boolean served = outcome == TypedDocumentExpectations.Outcome.SERVED;
+                                boolean revalidation = condition.getValue() != null;
+                                TypedDocumentDeployment.Reply first = baseline;
+                                // Then: the caller's outcome holds, and a denial is never a 200 or a 304
+                                if (served) {
+                                    checks.add(() -> TypedDocumentExpectations.assertServed(
+                                            row, document, form, method, revalidation, reply, first));
+                                } else {
+                                    checks.add(
+                                            () -> TypedDocumentExpectations.assertDenied(row, outcome, method, reply));
+                                    checks.add(() -> TypedDocumentExpectations.assertNeverServed(row, reply));
+                                }
+                                expectedLateRuns += served && !open ? 1 : 0;
+                                expectedEvaluations +=
+                                        TypedDocumentExpectations.evaluatesAction(document, caller.getKey()) ? 1 : 0;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Then: only the permitted requests reached the late contributor, the authorizer was asked
+            // for exactly the policy's action once per request that reached its gate, and no request
+            // fell through to the later mount
+            Observations mount = deployment.mountObservations();
+            int lateRuns = deployment.observations().lateContributorRuns();
+            List<String> actions = deployment.observations().authorizedActions();
+            int lateExpected = expectedLateRuns;
+            int evaluationsExpected = expectedEvaluations;
+            checks.add(() -> assertEquals(lateExpected, lateRuns, "requests that reached the late contributor"));
+            checks.add(() -> assertEquals(
+                    evaluationsExpected, actions.size(), "action evaluations: one per request that reached the gate"));
+            checks.add(() -> assertEquals(
+                    List.of(TypedDocumentApis.ACTION),
+                    actions.stream().distinct().toList(),
+                    "the authorizer saw exactly the policy's action"));
+            checks.add(() -> assertEquals(0, mount.laterMountRouteHits(), "the later mount's routes never ran"));
+            checks.add(() -> assertEquals(0, mount.laterMountCatchAllHits(), "the later catch-all never ran"));
+            checks.add(
+                    () -> assertEquals(0, mount.laterMountFailureHandlerHits(), "the later failure handler never ran"));
+            assertAll(checks);
+        }
+    }
+
+    /**
+     * An evaluator that throws or fails its future for a caller who passed the role and scope
+     * predicates fails the request closed: the caller is answered 403 on GET, HEAD and conditional
+     * requests, given no bytes and no entity tag, never 200 or 304, and the late contributor never
+     * runs. A control caller of the same policies is served, so the refusal comes from the evaluator.
+     */
+    @Test
+    @DisplayName("A failing policy evaluator fails the document request closed")
+    void shouldFailClosedWhenThePolicyEvaluatorFails() throws Exception {
+        // Given: a fresh deployment, a control caller the evaluator permits and two callers whose
+        // evaluation throws and fails
+        try (TypedDocumentDeployment deployment = TypedDocumentDeployment.startAll()) {
+            String control = deployment.token("alice", List.of("admin"), TypedDocumentApis.SCOPE);
+            Map<String, String> faulty = new LinkedHashMap<>();
+            faulty.put(
+                    "throwing",
+                    deployment.token(TypedDocumentModule.THROWING, List.of("admin"), TypedDocumentApis.SCOPE));
+            faulty.put(
+                    "failing",
+                    deployment.token(TypedDocumentModule.FAILING, List.of("admin"), TypedDocumentApis.SCOPE));
+            List<Executable> checks = new ArrayList<>();
+            int refused = 0;
+
+            for (String document : List.of(TypedDocumentApis.Action.NAME, TypedDocumentApis.Combined.NAME)) {
+                String path = TypedDocumentExpectations.Form.JSON.path(document);
+                TypedDocumentDeployment.Reply served = deployment.request(HttpMethod.GET, path, control, Map.of());
+                checks.add(() -> assertEquals(200, served.status(), document + ": the control caller is served"));
+                int lateRunsBefore = deployment.observations().lateContributorRuns();
+
+                // When: each faulty caller sends GET, HEAD, and conditional requests
+                for (Map.Entry<String, String> caller : faulty.entrySet()) {
+                    for (HttpMethod method : List.of(HttpMethod.GET, HttpMethod.HEAD)) {
+                        for (String condition : Arrays.asList(null, "*", served.header("ETag"))) {
+                            Map<String, String> headers =
+                                    condition == null ? Map.of() : Map.of("If-None-Match", condition);
+                            TypedDocumentDeployment.Reply reply =
+                                    deployment.request(method, path, caller.getValue(), headers);
+                            String row = document + " | " + method + " | " + caller.getKey() + " | "
+                                    + (condition == null ? "unconditional" : "If-None-Match " + condition);
+                            refused++;
+
+                            // Then: the request fails closed with 403 and is never served or revalidated
+                            checks.add(() -> TypedDocumentExpectations.assertDenied(
+                                    row, TypedDocumentExpectations.Outcome.FORBIDDEN, method, reply));
+                            checks.add(() -> TypedDocumentExpectations.assertNeverServed(row, reply));
+                        }
+                    }
+                }
+                int lateRunsAfter = deployment.observations().lateContributorRuns();
+                checks.add(() -> assertEquals(
+                        lateRunsBefore,
+                        lateRunsAfter,
+                        document + ": a failed evaluation never reaches the late contributor"));
+            }
+
+            // Then: every faulty request evaluated the action and none fell through to the later mount
+            int evaluations = deployment.observations().authorizations();
+            int expectedEvaluations = refused + 2;
+            checks.add(() -> assertEquals(
+                    expectedEvaluations,
+                    evaluations,
+                    "each faulty request and each control read asked the authorizer once"));
+            checks.add(() -> assertEquals(
+                    0, deployment.mountObservations().laterMountCatchAllHits(), "the later catch-all never ran"));
+            assertAll(checks);
+        }
+    }
+
+    /**
+     * A contributor after authorization refuses an authorized request: the caller is answered 403 on
+     * GET, HEAD and conditional requests, given no bytes, no entity tag and no 304, while the same
+     * requests without the refusal are served and revalidated. A caller the policy denies is denied
+     * before the late contributor, whatever the refusal header says.
+     */
+    @Test
+    @DisplayName("A later contributor's refusal stops an authorized document request without bytes or 304")
+    void shouldRefuseThroughALaterContributorAfterAuthorization() throws Exception {
+        // Given: a fresh deployment, the entitled caller, and a caller every policy but open refuses
+        try (TypedDocumentDeployment deployment = TypedDocumentDeployment.startAll()) {
+            Map<String, String> tokens = TypedDocumentExpectations.tokens(deployment);
+            String entitled = tokens.get(TypedDocumentExpectations.ENTITLED);
+            Map<String, String> refusal = Map.of(TypedDocumentModule.LATE_REFUSAL_HEADER, "1");
+            List<Executable> checks = new ArrayList<>();
+
+            for (String document : List.of(
+                    TypedDocumentApis.Authenticated.NAME,
+                    TypedDocumentApis.Roles.NAME,
+                    TypedDocumentApis.Scopes.NAME,
+                    TypedDocumentApis.Action.NAME,
+                    TypedDocumentApis.Combined.NAME)) {
+                String path = TypedDocumentExpectations.Form.JSON.path(document);
+                TypedDocumentDeployment.Reply baseline = deployment.request(HttpMethod.GET, path, entitled, Map.of());
+                assertEquals(200, baseline.status(), document + ": the entitled caller is served without the refusal");
+                String tag = baseline.header("ETag");
+                int runsBefore = deployment.observations().lateContributorRuns();
+
+                // When: the entitled caller sends the refusal header on GET, HEAD, and conditional requests
+                int refusedRequests = 0;
+                for (HttpMethod method : List.of(HttpMethod.GET, HttpMethod.HEAD)) {
+                    for (String condition : Arrays.asList(null, "*", tag)) {
+                        Map<String, String> headers = new LinkedHashMap<>(refusal);
+                        if (condition != null) {
+                            headers.put("If-None-Match", condition);
+                        }
+                        TypedDocumentDeployment.Reply reply = deployment.request(method, path, entitled, headers);
+                        String row = document + " | " + method + " | refused | "
+                                + (condition == null ? "unconditional" : "If-None-Match " + condition);
+                        refusedRequests++;
+
+                        // Then: the contributor's 403 ends it: no document, no entity tag, no 304
+                        checks.add(() -> assertEquals(403, reply.status(), row + ": status"));
+                        checks.add(() -> TypedDocumentExpectations.assertNeverServed(row, reply));
+                    }
+                }
+                int refusedRuns = deployment.observations().lateContributorRuns() - runsBefore;
+                int refusedCount = refusedRequests;
+                checks.add(() -> assertEquals(
+                        refusedCount,
+                        refusedRuns,
+                        document + ": each authorized request reached the late contributor"));
+
+                // When: callers the policy denies send the refusal header too
+                for (String caller : List.of(TypedDocumentExpectations.ANONYMOUS, TypedDocumentExpectations.FORGED)) {
+                    int runsBeforeDenied = deployment.observations().lateContributorRuns();
+                    TypedDocumentDeployment.Reply reply =
+                            deployment.request(HttpMethod.GET, path, tokens.get(caller), refusal);
+                    int runsAfterDenied = deployment.observations().lateContributorRuns();
+
+                    // Then: authentication answers 401 before the late contributor runs
+                    checks.add(() -> assertEquals(401, reply.status(), document + " " + caller + ": status"));
+                    checks.add(() -> TypedDocumentExpectations.assertNeverServed(document + " " + caller, reply));
+                    checks.add(() -> assertEquals(
+                            runsBeforeDenied, runsAfterDenied, document + " " + caller + ": the late contributor ran"));
+                }
+            }
+            assertAll(checks);
+        }
+    }
+
+    /**
+     * A denied request to a restrictive document, and a non-exact path of it, ends on the
+     * documentation route and never reaches the later mount, while the controls show the counters
+     * count: an unknown document and a non-exact path of the public document do fall through.
+     */
+    @Test
+    @DisplayName("A typed document denial never falls through to a later mount; a public document still does")
+    void shouldNeverFallThroughAfterATypedDenial() throws Exception {
+        // Given: a fresh deployment and its later mount's counters
+        try (TypedDocumentDeployment deployment = TypedDocumentDeployment.startAll()) {
+            Map<String, String> tokens = TypedDocumentExpectations.tokens(deployment);
+            Observations mount = deployment.mountObservations();
+            List<Executable> checks = new ArrayList<>();
+
+            // When: every restrictive document is requested by the callers it denies, and every
+            // caller requests its non-exact path
+            Map<String, Map<String, TypedDocumentExpectations.Outcome>> outcomes = TypedDocumentExpectations.outcomes();
+            for (String document : TypedDocumentExpectations.DOCUMENTS) {
+                if (document.equals(TypedDocumentApis.Open.NAME)) {
+                    continue;
+                }
+                String path = TypedDocumentExpectations.Form.JSON.path(document);
+                for (Map.Entry<String, TypedDocumentExpectations.Outcome> caller :
+                        outcomes.get(document).entrySet()) {
+                    if (TypedDocumentExpectations.denial(caller.getValue())) {
+                        TypedDocumentDeployment.Reply denied =
+                                deployment.request(HttpMethod.GET, path, tokens.get(caller.getKey()), Map.of());
+                        String row = document + " | " + caller.getKey() + " | exact path";
+
+                        // Then: the denial ends on the documentation route
+                        checks.add(() -> TypedDocumentExpectations.assertNeverServed(row, denied));
+                        checks.add(() -> assertFalse(
+                                denied.text().contains(LaterDocsPrefixMount.BODY), row + ": the later mount answered"));
+                    }
+                    TypedDocumentDeployment.Reply nonExact =
+                            deployment.request(HttpMethod.GET, path + "/", tokens.get(caller.getKey()), Map.of());
+                    String row = document + " | " + caller.getKey() + " | non-exact path";
+
+                    // Then: a non-exact path is never served, and never continues to the later mount
+                    checks.add(() -> TypedDocumentExpectations.assertNeverServed(row, nonExact));
+                    checks.add(() -> assertFalse(
+                            nonExact.text().contains(LaterDocsPrefixMount.BODY), row + ": the later mount answered"));
+                }
+            }
+            int routesAfterDenials = mount.laterMountRouteHits();
+            int catchAllAfterDenials = mount.laterMountCatchAllHits();
+            int failureHandlerAfterDenials = mount.laterMountFailureHandlerHits();
+
+            // When: the controls run: an unknown document, and a non-exact path of the public document
+            TypedDocumentDeployment.Reply unknown =
+                    deployment.request(HttpMethod.GET, "/apidocs/unknown/openapi.json", null, Map.of());
+            TypedDocumentDeployment.Reply publicNonExact = deployment.request(
+                    HttpMethod.GET,
+                    TypedDocumentExpectations.Form.JSON.path(TypedDocumentApis.Open.NAME) + "/",
+                    null,
+                    Map.of());
+            int catchAllAfterControls = mount.laterMountCatchAllHits();
+
+            // Then: no denial fell through, and both controls reached the later catch-all
+            checks.add(() -> assertEquals(0, routesAfterDenials, "no denial reached the later mount's routes"));
+            checks.add(() -> assertEquals(0, catchAllAfterDenials, "no denial reached the later catch-all"));
+            checks.add(
+                    () -> assertEquals(0, failureHandlerAfterDenials, "no denial reached the later failure handler"));
+            checks.add(() -> assertEquals(
+                    LaterDocsPrefixMount.BODY, unknown.text(), "control: an unknown document falls through"));
+            checks.add(() -> assertEquals(
+                    LaterDocsPrefixMount.BODY,
+                    publicNonExact.text(),
+                    "control: the public document still falls through"));
+            checks.add(
+                    () -> assertEquals(2, catchAllAfterControls, "control: both controls raised the catch-all count"));
+            assertAll(checks);
+        }
+    }
+
+    /**
+     * The document policy and the resource policy are independent: the {@code scopes} document needs a
+     * scope while its own resource needs a role, so a caller may read one and not the other; the
+     * {@code deny} document's resource, declaring no policy, stays open; and the application's
+     * authorizer decides the action grant of the {@code action} document.
+     */
+    @Test
+    @DisplayName("Resource policies stay independent of the document policy, and grants stay with the application")
+    void shouldKeepResourcePoliciesIndependentOfDocumentPolicies() throws Exception {
+        // Given: a fresh deployment and callers holding the role only, the scope only, and both
+        try (TypedDocumentDeployment deployment = TypedDocumentDeployment.startAll()) {
+            Map<String, String> tokens = TypedDocumentExpectations.tokens(deployment);
+            String scopesDocument = TypedDocumentExpectations.Form.JSON.path(TypedDocumentApis.Scopes.NAME);
+            String scopesResource = TypedDocumentApis.Scopes.PATH + TypedDocumentApis.Scopes.ITEMS;
+
+            // When: each caller reads the scopes document and the scopes resource
+            Map<String, int[]> statuses = new LinkedHashMap<>();
+            for (String caller : List.of(
+                    TypedDocumentExpectations.ANONYMOUS,
+                    TypedDocumentExpectations.SCOPED,
+                    TypedDocumentExpectations.ADMIN_ONLY,
+                    TypedDocumentExpectations.ENTITLED)) {
+                statuses.put(caller, new int[] {
+                    deployment
+                            .request(HttpMethod.GET, scopesDocument, tokens.get(caller), Map.of())
+                            .status(),
+                    deployment
+                            .request(HttpMethod.GET, scopesResource, tokens.get(caller), Map.of())
+                            .status()
+                });
+            }
+
+            // And: the deny document's resource, and the blocked caller's reads of the action document
+            TypedDocumentDeployment.Reply denyResource =
+                    deployment.request(HttpMethod.GET, TypedDocumentApis.Deny.PATH + "/items", null, Map.of());
+            TypedDocumentDeployment.Reply blockedDocument = deployment.request(
+                    HttpMethod.GET,
+                    TypedDocumentExpectations.Form.JSON.path(TypedDocumentApis.Action.NAME),
+                    tokens.get(TypedDocumentExpectations.BLOCKED),
+                    Map.of());
+            List<String> actions = deployment.observations().authorizedActions();
+
+            // Then: the document and the resource answer each by its own policy
+            assertAll(
+                    () -> assertEquals(List.of(401, 401), toList(statuses.get(TypedDocumentExpectations.ANONYMOUS))),
+                    () -> assertEquals(
+                            List.of(200, 403), toList(statuses.get(TypedDocumentExpectations.SCOPED)), "scope only"),
+                    () -> assertEquals(
+                            List.of(403, 200), toList(statuses.get(TypedDocumentExpectations.ADMIN_ONLY)), "role only"),
+                    () -> assertEquals(
+                            List.of(200, 200), toList(statuses.get(TypedDocumentExpectations.ENTITLED)), "both"),
+                    () -> assertEquals(200, denyResource.status(), "the deny document's resource declares no policy"),
+                    () -> assertEquals(
+                            403,
+                            blockedDocument.status(),
+                            "the application's authorizer refuses a caller holding the role and the scope"),
+                    () -> assertEquals(
+                            List.of(TypedDocumentApis.ACTION),
+                            actions,
+                            "the authorizer was asked exactly once, for the document's action"));
+        }
+    }
+
+    private static List<Integer> toList(int[] statuses) {
+        return Arrays.stream(statuses).boxed().toList();
     }
 
     // --- Row expectations ---

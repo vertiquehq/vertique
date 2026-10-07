@@ -5,6 +5,8 @@ package dev.vertique.rest.openapi.docs.fixture.metadata.it.hidden;
 
 import dev.vertique.rest.core.application.RestApplication;
 import dev.vertique.rest.openapi.docs.ApiDocs;
+import dev.vertique.security.authz.AccessPolicy;
+import jakarta.annotation.security.PermitAll;
 
 /**
  * The documented application {@code hiddengen} at {@code /api/hiddengen}, listing the
@@ -12,7 +14,7 @@ import dev.vertique.rest.openapi.docs.ApiDocs;
  * interface; both are described by hand-written {@code _JaxRsDescriptor} companions. Every
  * operation it lists is hidden. Its document is public; its {@code info} comes from configuration.
  */
-@ApiDocs(access = ApiDocs.Access.PUBLIC)
+@ApiDocs(policy = HiddenGeneratedApi.PublicDocsPolicy.class)
 @RestApplication(
         name = HiddenGeneratedApi.NAME,
         path = HiddenGeneratedApi.PATH,
@@ -24,4 +26,8 @@ public interface HiddenGeneratedApi {
 
     /** The application's path. */
     String PATH = "/api/hiddengen";
+
+    /** Anyone may read the document. */
+    @PermitAll
+    public interface PublicDocsPolicy extends AccessPolicy {}
 }

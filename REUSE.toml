@@ -36,3 +36,11 @@ path = [
 precedence = "aggregate"
 SPDX-FileCopyrightText = "2012 Julian Berman"
 SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = [
+  "vertique-mcp/vertique-mcp-server/src/test/resources/policy-compatibility/baseline.sha256",
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 Koivisto Capital Oy"
+SPDX-License-Identifier = "EUPL-1.2"

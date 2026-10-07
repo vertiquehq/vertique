@@ -4,6 +4,7 @@
 package dev.vertique.services;
 
 import dev.vertique.resilience.annotation.ResilienceAnnotations;
+import dev.vertique.security.authz.AccessPolicyResolver;
 import dev.vertique.services.dispatch.ServiceMethodDescriptor;
 import dev.vertique.services.dispatch.ServiceMethodMeta;
 import dev.vertique.services.dispatch.ServiceMethodMeta.ParamMeta;
@@ -53,6 +54,8 @@ import java.util.Set;
  *   <li>No duplicate operation ids within a contract (including {@link ServiceOperation} values).</li>
  *   <li>No duplicate event bus addresses across all registered contracts.</li>
  *   <li>Implementation must provide all contract methods.</li>
+ *   <li>A typed access policy is collected from the registered contract; an invalid, conflicting
+ *       or inline-mixed policy rejects the method.</li>
  * </ul>
  */
 public class ServiceRegistrar {
@@ -220,8 +223,20 @@ public class ServiceRegistrar {
         // Resilience annotations (method-level overrides type-level)
         ResilienceAnnotations resilienceAnnotations = PolicyResolver.resolveResilience(contract, method);
 
-        // Annotation resolution for interceptor metadata (resolved once at boot)
-        List<Annotation> methodAnnotations = PolicyResolver.resolveMethodAnnotations(method);
+        // Annotation resolution for interceptor metadata (resolved once at boot). A typed access
+        // policy is collected from the actual contract, not from the declaring class of the method,
+        // so a declaration introduced below an inherited method cannot be lost.
+        List<Annotation> methodAnnotations;
+        boolean policyRejected = false;
+        try {
+            methodAnnotations = AccessPolicyResolver.collectMethodAnnotations(
+                    contract, method, PolicyResolver.resolveMethodAnnotations(method));
+        } catch (IllegalArgumentException e) {
+            violations.add(ServiceRegistrationViolation.ofMethod(
+                    contract, method.getName(), "invalid typed access policy: " + e.getMessage()));
+            methodAnnotations = List.of();
+            policyRejected = true;
+        }
         List<Annotation> classAnnotations = PolicyResolver.resolveClassAnnotations(contract);
 
         // One-way detection and validation
@@ -231,6 +246,11 @@ public class ServiceRegistrar {
                     contract,
                     method.getName(),
                     "@OneWay methods must return Future<Void>, found Future<" + returnType.getSimpleName() + ">"));
+        }
+
+        // A rejected typed policy never registers the method
+        if (policyRejected) {
+            return null;
         }
 
         // Payload type

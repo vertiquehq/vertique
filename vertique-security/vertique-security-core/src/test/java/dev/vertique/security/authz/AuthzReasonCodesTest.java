@@ -37,7 +37,7 @@ class AuthzReasonCodesTest {
             }
         }
         // Guard against an empty reflective sweep silently passing.
-        assertEquals(15, count, "expected the full stable reason-code vocabulary to be present");
+        assertEquals(16, count, "expected the full stable reason-code vocabulary to be present");
     }
 
     // --- spot-check exact frozen values ---
@@ -55,6 +55,7 @@ class AuthzReasonCodesTest {
         assertEquals("INTERNAL_AUTHZ_ERROR", AuthzReasonCodes.INTERNAL_AUTHZ_ERROR);
         assertEquals("AUTHORITY_RESOLUTION_FAILED", AuthzReasonCodes.AUTHORITY_RESOLUTION_FAILED);
         assertEquals("STEP_UP_REQUIRED", AuthzReasonCodes.STEP_UP_REQUIRED);
+        assertEquals("UNSUPPORTED_POLICY_CALLER", AuthzReasonCodes.UNSUPPORTED_POLICY_CALLER);
     }
 
     private static boolean isPublicStaticFinalString(Field field) {

@@ -5,6 +5,8 @@ package dev.vertique.rest.openapi.docs.fixture.responses.it;
 
 import dev.vertique.rest.core.application.RestApplication;
 import dev.vertique.rest.openapi.docs.ApiDocs;
+import dev.vertique.security.authz.AccessPolicy;
+import jakarta.annotation.security.PermitAll;
 
 /**
  * The documented application {@code accounts} at {@code /api} (mount {@code /api/*}), listing
@@ -12,7 +14,7 @@ import dev.vertique.rest.openapi.docs.ApiDocs;
  * snake-case profile, a dynamic response, and declared content that differs from the return type.
  * Its document is public; its {@code info} comes from configuration.
  */
-@ApiDocs(access = ApiDocs.Access.PUBLIC)
+@ApiDocs(policy = AccountsApi.PublicDocsPolicy.class)
 @RestApplication(
         name = AccountsApi.NAME,
         path = AccountsApi.PATH,
@@ -24,4 +26,8 @@ public interface AccountsApi {
 
     /** The application's path. */
     String PATH = "/api";
+
+    /** Anyone may read the document. */
+    @PermitAll
+    public interface PublicDocsPolicy extends AccessPolicy {}
 }

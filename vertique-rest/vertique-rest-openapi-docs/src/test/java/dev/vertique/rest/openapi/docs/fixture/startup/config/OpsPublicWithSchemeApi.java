@@ -7,10 +7,16 @@ import dev.vertique.rest.core.application.RestApplication;
 import dev.vertique.rest.openapi.docs.ApiDocs;
 import dev.vertique.rest.openapi.docs.fixture.startup.OpsApi;
 import dev.vertique.rest.openapi.docs.fixture.startup.OpsResource;
+import dev.vertique.security.authz.AccessPolicy;
+import jakarta.annotation.security.PermitAll;
 
 /**
  * Application {@code ops} at {@code /api/ops} listing {@link OpsResource}, whose public document names a security scheme. The annotation processor refuses this shape; only a hand-written registration declares it.
  */
-@ApiDocs(access = ApiDocs.Access.PUBLIC, securityScheme = "bearerAuth")
+@ApiDocs(policy = OpsPublicWithSchemeApi.PublicDocsPolicy.class, securityScheme = "bearerAuth")
 @RestApplication(name = OpsApi.NAME, path = OpsApi.PATH, resources = OpsResource.class)
-public interface OpsPublicWithSchemeApi {}
+public interface OpsPublicWithSchemeApi {
+    /** Anyone may read the document. */
+    @PermitAll
+    public interface PublicDocsPolicy extends AccessPolicy {}
+}

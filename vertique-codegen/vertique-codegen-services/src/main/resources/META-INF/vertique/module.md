@@ -135,6 +135,25 @@ the `ServiceContractEntries.deployable()` builder, resolving every `java.lang.re
 resilience annotation list, and annotation list once into `private static final` fields rather than
 per call. Deployment options are read from `services.contracts.{namespace}.{name}`.
 
+The per-operation annotation list is collected from the **contract class**, never from the class that
+declares the resolved method, so a typed access policy declared anywhere in the contract's interface
+hierarchy cannot be lost when the operation is inherited from a parent interface. Resilience metadata
+keeps its own resolution and is unaffected:
+
+```java
+private static final Method USER_SERVICE_IMPL_GETUSER_METHOD =
+        resolveMethod(UserService.class, "getUser", java.lang.String.class);
+private static final List<Annotation> USER_SERVICE_IMPL_GETUSER_METHOD_ANNOTATIONS =
+        AccessPolicyResolver.collectMethodAnnotations(
+                UserService.class,
+                USER_SERVICE_IMPL_GETUSER_METHOD,
+                AnnotationResolver.resolveMethodAnnotations(USER_SERVICE_IMPL_GETUSER_METHOD));
+```
+
+When the contract hierarchy references no policy, the call returns the inline annotations unchanged.
+The generated contributor therefore links against `AccessPolicyResolver` in
+`dev.vertique:vertique-security-core`, which an application receives through `vertique-services`.
+
 `GeneratedServicesModule` is an abstract `@Module` with two generated binding families. The
 server-side family has one `@Provides @IntoSet ServiceContractContributor` method per emitted
 contributor. The client-side family has one `@Provides @Singleton` method per eligible source-root
@@ -205,7 +224,7 @@ and a `{Contract}_ServiceClientProxy`; a contract with no impl in this compilati
 client proxy.
 
 It is equally independent of implementation validity. Only a failure rooted in the contract's own
-shape — the same five contract-shape checks marked "Yes" in [Validation Failures](#validation-failures)
+shape — the same contract-shape checks marked "Yes" in [Validation Failures](#validation-failures)
 below — suppresses client-proxy emission. An impl-side rejection (double-pattern, a
 missing/overloaded/mis-parameterised handler method, a missing `@Inject` constructor, or a
 contract-group conflict) leaves the client proxy emitted, because the proxy is a function of the
@@ -341,6 +360,9 @@ contract's shape alone, so an impl-only defect never withholds it, while a contr
 | `ServiceHandler<C>`: `C` must be a `@ServiceContract` interface, and the handler must not implement `C` directly or any other `@ServiceContract` interface | Ambiguous registration shape | No — impl-only |
 | Each contract method needs exactly one matching handler method: same name, identical payload parameters in order and type, identical `Future<T>` return type | Name-based matching cannot disambiguate anything looser | No — impl-only |
 | Extra handler parameters must be `SecurityContext` subtypes or `@DispatchContextValue`-annotated types | Anything else cannot be supplied at dispatch time; the diagnostic names the offending parameter | No — impl-only |
+| A contract's `@RequiresPolicy` declarations must resolve: at most one distinct policy per type-level set and per method-level set (declarations on the contract and its parent interfaces are collected together), and no mixing with an inline `@RolesAllowed`, `@PermitAll`, `@DenyAll`, `@Authorized`, or `@RequiresAction` | The runtime applies the same selection when it registers the service, so this turns a startup rejection into a build error. A type-level failure is reported once on the contract; a method-level failure on the method | Yes |
+| A referenced policy must be well formed: a public, non-generic interface that extends only `AccessPolicy`, declares no members, declares at least one direct requirement, has no empty or blank role or scope, and has a three-segment lower-case action | The diagnostic names the policy and carries the resolver's reason | Yes |
+| `@RequiresPolicy` may not be placed on a service implementation class, on a method that implements a contract operation (including an overriding method on a base class), or on a handler method (including an overriding method on a base handler) | Only the contract is collected, so the annotation would be silently ignored; the diagnostic tells the author to declare it on the contract. An implementation that is also a JAX-RS resource (the class or a superclass carries `@Path`) may keep `@RequiresPolicy` on the class and on methods that do not correspond to a contract operation, because the REST routes read them; a method that does correspond to a contract operation is still rejected | No — impl-only |
 
 **Per contract group:**
 
@@ -398,6 +420,17 @@ Client-proxy emission shares the same `emitted` guard as contributor emission: `
   choose manual wiring or conditional generation.
 - **Conditions are evaluated against the resolved application config**, so a condition naming a key
   that no config source supplies matches only when `matchIfMissing = true`.
+- **Declare `@RequiresPolicy` on the contract only.** Generated and manual registration both collect
+  typed policies from the contract interface and its parents. A policy on an implementation class or
+  method, or on a handler method, never takes effect, so the processor rejects it instead of
+  compiling an unprotected operation. The exception is an implementation that is also a JAX-RS
+  resource (the class or a superclass is annotated with `@Path`): its REST routes read
+  `@RequiresPolicy` from the class and from route methods, so the class-level annotation and a
+  method-level annotation on a method that does not correspond to a contract operation are accepted.
+- **A policy cannot be combined with inline security on the same contract hierarchy.** Mixing
+  `@RequiresPolicy` with `@RolesAllowed`, `@PermitAll`, `@DenyAll`, `@Authorized`, or
+  `@RequiresAction` across the type-level and method-level declarations of one operation is a
+  compile error; a contract that uses only inline annotations keeps its existing behavior.
 - **`@CronJob` targets are unaffected.** Cron targets are resolved by address at runtime, and both the
   generated and manual registration paths produce identical addresses.
 
@@ -407,8 +440,8 @@ Client-proxy emission shares the same `emitted` guard as contributor emission: `
 
 | Artifact | Scope | Purpose |
 |---|---|---|
-| `dev.vertique:vertique-codegen-core` | compile | `CodegenContext`, `TypeResolver`, `AnnotationMirrors`, `Diagnostics`, `PackageResolver`, `DaggerModuleWriter`, `Identifiers`, `Conditions`, `Constructors`, `InjectConstructorValidator`, and the `@NoAutoWire` / `@ConditionalOnProperty` annotations |
-| `dev.vertique:vertique-security-core` | compile | `SecurityContext`, recognized as a dispatch-context parameter type |
+| `dev.vertique:vertique-codegen-core` | compile | `CodegenContext`, `TypeResolver`, `AnnotationMirrors`, `Diagnostics`, `PackageResolver`, `DaggerModuleWriter`, `Identifiers`, `Conditions`, `Constructors`, `InjectConstructorValidator`, `AccessPolicyAnnotationResolver` (compiler-mirror policy selection), and the `@NoAutoWire` / `@ConditionalOnProperty` annotations |
+| `dev.vertique:vertique-security-core` | compile | `SecurityContext`, recognized as a dispatch-context parameter type; `AccessPolicyResolver` and `RequiresPolicy` are referenced by name from generated code and diagnostics |
 | `com.palantir.javapoet:javapoet` | compile | Source generation; not on the application runtime classpath |
 
 The processor itself contributes no Dagger bindings. It emits a `@Module` into the consuming

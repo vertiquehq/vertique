@@ -7,11 +7,13 @@ import dev.vertique.codegen.AnnotationMirrors;
 import dev.vertique.codegen.CodegenContext;
 import dev.vertique.codegen.Diagnostics;
 import dev.vertique.codegen.JaxRsAnnotations;
+import dev.vertique.codegen.security.AccessPolicyAnnotationResolver;
 import dev.vertique.input.processing.InvocationPolicyConflictException;
 import dev.vertique.input.processing.apt.ElementInvocationPolicies;
 import dev.vertique.input.processing.apt.ElementInvocationPolicies.ElementPolicyChains;
 import java.util.ArrayList;
 import java.util.EnumSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 import javax.lang.model.element.AnnotationValue;
@@ -19,7 +21,9 @@ import javax.lang.model.element.ElementKind;
 import javax.lang.model.element.ExecutableElement;
 import javax.lang.model.element.Modifier;
 import javax.lang.model.element.TypeElement;
+import javax.lang.model.type.DeclaredType;
 import javax.lang.model.type.TypeMirror;
+import javax.lang.model.util.ElementFilter;
 
 /**
  * Resolves the effective JAX-RS contract for a concrete resource class by applying the
@@ -58,6 +62,7 @@ public final class EffectiveJaxRsContractResolver {
     private static final String DEFAULT_VALUE_FQN = "jakarta.ws.rs.DefaultValue";
     private static final String OPERATION_FQN = "io.swagger.v3.oas.annotations.Operation";
     private static final String VALIDATE_WITH_FQN = "dev.vertique.core.validation.ValidateWith";
+    private static final String REQUIRES_POLICY = "dev.vertique.security.authz.RequiresPolicy";
 
     // --- Multi-value shape policy ---
 
@@ -307,6 +312,15 @@ public final class EffectiveJaxRsContractResolver {
      * @return the effective security contract; never {@code null}
      */
     private EffectiveSecurityContract resolveClassSecurity(TypeElement concreteClass) {
+        PolicyScan typed = scanTypes(concreteClass);
+        if (!typed.policies().isEmpty()) {
+            if (typed.policies().size() > 1 || typed.inline()) {
+                ctx.diagnostics()
+                        .error(concreteClass, Diagnostics.securityAnnotationConflict("class-level", "@RequiresPolicy"));
+                return EffectiveSecurityContract.NONE;
+            }
+            return contractForPolicy(concreteClass, typed.policies().iterator().next());
+        }
         EffectiveSecurityContract found = null;
 
         EffectiveSecurityContract direct = buildSecurityContract(concreteClass);
@@ -358,7 +372,8 @@ public final class EffectiveJaxRsContractResolver {
         List<String> produces = resolveMediaTypes(concreteMethod, concreteClass, PRODUCES_FQN);
 
         // Method-level security
-        EffectiveSecurityContract methodSecurity = resolveMethodSecurity(concreteMethod, concreteClass);
+        MethodSecurityDecision methodDecision = resolveMethodSecurity(concreteMethod, concreteClass);
+        EffectiveSecurityContract methodSecurity = methodDecision.contract();
 
         // @ValidateWith
         List<TypeMirror> validationGroups = resolveValidationGroups(concreteMethod, concreteClass);
@@ -391,7 +406,8 @@ public final class EffectiveJaxRsContractResolver {
                 validationGroups,
                 params,
                 routeCanonicalizers,
-                routeSanitizers);
+                routeSanitizers,
+                methodDecision.replacesClass());
     }
 
     /**
@@ -516,9 +532,35 @@ public final class EffectiveJaxRsContractResolver {
      *
      * @param method        the concrete method
      * @param resourceClass the resource class
-     * @return the effective security contract; never {@code null}
+     * @return the method contract, and whether a method policy replaces the type policy
      */
-    private EffectiveSecurityContract resolveMethodSecurity(ExecutableElement method, TypeElement resourceClass) {
+    private MethodSecurityDecision resolveMethodSecurity(ExecutableElement method, TypeElement resourceClass) {
+        List<ExecutableElement> matches = correspondingMethods(method, resourceClass);
+        Set<String> methodPolicies = methodPolicyNames(matches);
+        PolicyScan typed = scanTypes(resourceClass);
+        if (!methodPolicies.isEmpty() || !typed.policies().isEmpty()) {
+            if (methodPolicies.size() > 1
+                    || typed.policies().size() > 1
+                    || typed.inline()
+                    || methodHasInline(matches)) {
+                ctx.diagnostics()
+                        .error(method, Diagnostics.securityAnnotationConflict("method-level", "@RequiresPolicy"));
+                return new MethodSecurityDecision(EffectiveSecurityContract.NONE, false);
+            }
+            for (String typePolicy : typed.policies()) {
+                // An action-only policy is a valid empty role/scope contract. Emptiness is not
+                // failure; an invalid policy already emitted Kind.ERROR inside contractForPolicy.
+                contractForPolicy(method, typePolicy);
+            }
+            if (!methodPolicies.isEmpty()) {
+                // The method policy replaces the type policy even when its role/scope contract is
+                // empty. Action-only is that empty contract; it is not "no method security".
+                return new MethodSecurityDecision(
+                        contractForPolicy(method, methodPolicies.iterator().next()), true);
+            }
+            return new MethodSecurityDecision(EffectiveSecurityContract.NONE, false);
+        }
+
         EffectiveSecurityContract found = null;
 
         EffectiveSecurityContract direct = buildSecurityContract(method);
@@ -539,7 +581,7 @@ public final class EffectiveJaxRsContractResolver {
                         EffectiveSecurityContract merged = accumulateSecurity(found, sc);
                         if (merged == null) {
                             emitCrossDeclarationSecurityConflict(method, resourceClass, false, found, sc);
-                            return EffectiveSecurityContract.NONE;
+                            return new MethodSecurityDecision(EffectiveSecurityContract.NONE, false);
                         }
                         found = merged;
                     }
@@ -548,7 +590,7 @@ public final class EffectiveJaxRsContractResolver {
             }
         }
 
-        return mergeSecurityFromInterfaces(found, method, resourceClass, false);
+        return new MethodSecurityDecision(mergeSecurityFromInterfaces(found, method, resourceClass, false), false);
     }
 
     /**
@@ -1257,6 +1299,140 @@ public final class EffectiveJaxRsContractResolver {
         }
         return kinds;
     }
+
+    /**
+     * Resolves the role, scope and action contract an {@code AccessPolicy} contributes, reporting
+     * an invalid or missing policy at the given site.
+     *
+     * @param site      the element the diagnostic is attached to
+     * @param policyFqn the fully qualified policy interface name
+     * @return the policy's security contract, or {@link EffectiveSecurityContract#NONE} on failure
+     */
+    private EffectiveSecurityContract contractForPolicy(javax.lang.model.element.Element site, String policyFqn) {
+        TypeElement policy = ctx.elements().getTypeElement(policyFqn);
+        if (policy == null) {
+            ctx.diagnostics().error(site, "AccessPolicy not found: " + policyFqn);
+            return EffectiveSecurityContract.NONE;
+        }
+        try {
+            new AccessPolicyAnnotationResolver(ctx.types(), ctx.elements()).resolve(policy);
+        } catch (IllegalArgumentException ex) {
+            ctx.diagnostics().error(site, "AccessPolicy " + ex.getMessage());
+            return EffectiveSecurityContract.NONE;
+        }
+        return buildSecurityContract(policy);
+    }
+
+    private PolicyScan scanTypes(TypeElement concreteClass) {
+        LinkedHashSet<String> policies = new LinkedHashSet<>();
+        boolean inline = false;
+        List<TypeElement> types = new ArrayList<>();
+        types.add(concreteClass);
+        TypeElement current = JaxRsHierarchy.superClass(ctx, concreteClass);
+        while (current != null
+                && !"java.lang.Object".equals(current.getQualifiedName().toString())) {
+            types.add(current);
+            current = JaxRsHierarchy.superClass(ctx, current);
+        }
+        types.addAll(JaxRsHierarchy.allInterfaces(ctx, concreteClass));
+        for (TypeElement type : types) {
+            String policy = policyFqn(type);
+            if (policy != null) {
+                policies.add(policy);
+            }
+            if (hasInlineSecurity(type)) {
+                inline = true;
+            }
+        }
+        return new PolicyScan(policies, inline);
+    }
+
+    private Set<String> methodPolicyNames(List<ExecutableElement> matches) {
+        LinkedHashSet<String> names = new LinkedHashSet<>();
+        for (ExecutableElement match : matches) {
+            addPolicy(names, match);
+        }
+        return names;
+    }
+
+    private boolean methodHasInline(List<ExecutableElement> matches) {
+        for (ExecutableElement match : matches) {
+            if (hasInlineSecurity(match)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Methods on the consumer hierarchy that are the same operation as {@code method}.
+     *
+     * <p>Matching uses the simple name and the signature viewed from {@code resourceClass}, so a
+     * type-variable parameter matches its binding. Erased parameter comparison does not.
+     */
+    private List<ExecutableElement> correspondingMethods(ExecutableElement method, TypeElement resourceClass) {
+        AccessPolicyAnnotationResolver resolver = policyResolver();
+        List<ExecutableElement> matches = new ArrayList<>();
+        TypeElement current = resourceClass;
+        while (current != null
+                && !"java.lang.Object".equals(current.getQualifiedName().toString())) {
+            addCorresponding(matches, resolver, method, resourceClass, current);
+            current = JaxRsHierarchy.superClass(ctx, current);
+        }
+        for (TypeElement iface : JaxRsHierarchy.allInterfaces(ctx, resourceClass)) {
+            addCorresponding(matches, resolver, method, resourceClass, iface);
+        }
+        return matches;
+    }
+
+    private static void addCorresponding(
+            List<ExecutableElement> matches,
+            AccessPolicyAnnotationResolver resolver,
+            ExecutableElement method,
+            TypeElement resourceClass,
+            TypeElement owner) {
+        for (ExecutableElement candidate : ElementFilter.methodsIn(owner.getEnclosedElements())) {
+            if (resolver.corresponds(resourceClass, method, candidate) && !matches.contains(candidate)) {
+                matches.add(candidate);
+            }
+        }
+    }
+
+    private AccessPolicyAnnotationResolver policyResolver() {
+        return new AccessPolicyAnnotationResolver(ctx.types(), ctx.elements());
+    }
+
+    private void addPolicy(Set<String> names, javax.lang.model.element.Element element) {
+        String policy = policyFqn(element);
+        if (policy != null) {
+            names.add(policy);
+        }
+    }
+
+    private String policyFqn(javax.lang.model.element.Element element) {
+        return AnnotationMirrors.findByFqn(element, REQUIRES_POLICY)
+                .flatMap(mirror -> ctx.annotations().attributeClass(mirror, "value"))
+                .map(type -> {
+                    if (type instanceof DeclaredType declared
+                            && declared.asElement() instanceof TypeElement typeElement) {
+                        return typeElement.getQualifiedName().toString();
+                    }
+                    return type.toString();
+                })
+                .orElse(null);
+    }
+
+    private static boolean hasInlineSecurity(javax.lang.model.element.Element element) {
+        return AnnotationMirrors.isPresent(element, JaxRsAnnotations.PERMIT_ALL)
+                || AnnotationMirrors.isPresent(element, JaxRsAnnotations.DENY_ALL)
+                || AnnotationMirrors.isPresent(element, JaxRsAnnotations.ROLES_ALLOWED)
+                || AnnotationMirrors.isPresent(element, JaxRsAnnotations.AUTHORIZED)
+                || AnnotationMirrors.isPresent(element, JaxRsAnnotations.REQUIRES_ACTION);
+    }
+
+    private record PolicyScan(Set<String> policies, boolean inline) {}
+
+    private record MethodSecurityDecision(EffectiveSecurityContract contract, boolean replacesClass) {}
 
     /**
      * Builds an {@link EffectiveSecurityContract} from the security annotations directly present

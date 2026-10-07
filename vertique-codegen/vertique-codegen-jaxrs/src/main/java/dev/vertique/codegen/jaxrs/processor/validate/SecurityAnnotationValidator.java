@@ -11,11 +11,15 @@ import dev.vertique.codegen.jaxrs.EffectiveMethodContract;
 import dev.vertique.codegen.jaxrs.EffectiveResourceContract;
 import dev.vertique.codegen.jaxrs.EffectiveSecurityContract;
 import dev.vertique.codegen.jaxrs.EffectiveSecurityContract.SecurityKind;
+import dev.vertique.codegen.jaxrs.JaxRsHierarchy;
+import dev.vertique.codegen.security.AccessPolicyAnnotationResolver;
 import java.util.ArrayList;
 import java.util.List;
+import javax.lang.model.element.AnnotationMirror;
 import javax.lang.model.element.Element;
 import javax.lang.model.element.ExecutableElement;
 import javax.lang.model.element.TypeElement;
+import javax.lang.model.util.ElementFilter;
 
 /**
  * Validates security annotation combinations on JAX-RS resource classes and methods at
@@ -89,6 +93,9 @@ public final class SecurityAnnotationValidator {
             ctx.diagnostics().error(resource, Diagnostics.securityAnnotationConflict("class-level", combination));
         }
         checkRequiresActionConflict(resource, "class-level", hasRequiresAction, hasPermitAll, hasDenyAll);
+        if (typePolicyConflict(resource)) {
+            ctx.diagnostics().error(resource, Diagnostics.securityAnnotationConflict("class-level", "@RequiresPolicy"));
+        }
     }
 
     /**
@@ -125,6 +132,9 @@ public final class SecurityAnnotationValidator {
      *     validators should be skipped for this method
      */
     public boolean validateMethodLevel(TypeElement resource, ExecutableElement method) {
+        if (methodPolicyConflict(resource, method)) {
+            return false;
+        }
         boolean hasDenyAll = AnnotationMirrors.isPresent(method, JaxRsAnnotations.DENY_ALL);
         boolean hasPermitAll = AnnotationMirrors.isPresent(method, JaxRsAnnotations.PERMIT_ALL);
         boolean hasRolesAllowed = AnnotationMirrors.isPresent(method, JaxRsAnnotations.ROLES_ALLOWED);
@@ -374,6 +384,93 @@ public final class SecurityAnnotationValidator {
         boolean hasRolesAllowed = AnnotationMirrors.isPresent(resource, JaxRsAnnotations.ROLES_ALLOWED);
         boolean hasAuthorized = AnnotationMirrors.isPresent(resource, JaxRsAnnotations.AUTHORIZED);
         return isConflictingCombination(hasDenyAll, hasPermitAll, hasRolesAllowed, hasAuthorized);
+    }
+
+    /**
+     * Returns {@code true} if the resource's type hierarchy carries a typed-policy selection that
+     * the runtime resolver rejects (distinct policies or a policy mixed with inline security).
+     *
+     * @param resource the resource type to inspect; must not be {@code null}
+     * @return {@code true} when the type-level policy selection is invalid
+     */
+    private boolean typePolicyConflict(TypeElement resource) {
+        return rejects(policyResolver(), List.of(), typeSecurity(resource));
+    }
+
+    private boolean methodPolicyConflict(TypeElement resource, ExecutableElement method) {
+        AccessPolicyAnnotationResolver resolver = policyResolver();
+        List<AnnotationMirror> types = typeSecurity(resource);
+        if (!rejects(resolver, methodSecurity(resource, method), types)) {
+            return false;
+        }
+        if (!rejects(resolver, List.of(), types)) {
+            ctx.diagnostics().error(method, Diagnostics.securityAnnotationConflict("method-level", "@RequiresPolicy"));
+        }
+        return true;
+    }
+
+    private static boolean rejects(
+            AccessPolicyAnnotationResolver resolver, List<AnnotationMirror> methods, List<AnnotationMirror> types) {
+        try {
+            resolver.select(methods, types);
+            return false;
+        } catch (IllegalArgumentException ex) {
+            return true;
+        }
+    }
+
+    private AccessPolicyAnnotationResolver policyResolver() {
+        return new AccessPolicyAnnotationResolver(ctx.types(), ctx.elements());
+    }
+
+    private List<AnnotationMirror> typeSecurity(TypeElement resource) {
+        List<AnnotationMirror> mirrors = new ArrayList<>();
+        for (TypeElement type : typeHierarchy(resource)) {
+            addSecurityMirrors(mirrors, type);
+        }
+        return mirrors;
+    }
+
+    private List<AnnotationMirror> methodSecurity(TypeElement resource, ExecutableElement method) {
+        List<AnnotationMirror> mirrors = new ArrayList<>();
+        AccessPolicyAnnotationResolver resolver = policyResolver();
+        for (TypeElement type : typeHierarchy(resource)) {
+            for (ExecutableElement candidate : ElementFilter.methodsIn(type.getEnclosedElements())) {
+                if (resolver.corresponds(resource, method, candidate)) {
+                    addSecurityMirrors(mirrors, candidate);
+                }
+            }
+        }
+        return mirrors;
+    }
+
+    private List<TypeElement> typeHierarchy(TypeElement resource) {
+        List<TypeElement> types = new ArrayList<>();
+        TypeElement current = resource;
+        while (current != null
+                && !"java.lang.Object".equals(current.getQualifiedName().toString())) {
+            types.add(current);
+            current = JaxRsHierarchy.superClass(ctx, current);
+        }
+        types.addAll(JaxRsHierarchy.allInterfaces(ctx, resource));
+        return types;
+    }
+
+    private static void addSecurityMirrors(List<AnnotationMirror> mirrors, Element element) {
+        for (AnnotationMirror mirror : element.getAnnotationMirrors()) {
+            if (!(mirror.getAnnotationType().asElement() instanceof TypeElement type)) {
+                continue;
+            }
+            String name = type.getQualifiedName().toString();
+            if (name.equals("dev.vertique.security.authz.RequiresPolicy")
+                    || name.equals(JaxRsAnnotations.PERMIT_ALL)
+                    || name.equals(JaxRsAnnotations.DENY_ALL)
+                    || name.equals(JaxRsAnnotations.ROLES_ALLOWED)
+                    || name.equals(JaxRsAnnotations.AUTHORIZED)
+                    || name.equals(JaxRsAnnotations.REQUIRES_ACTION)) {
+                mirrors.add(mirror);
+            }
+        }
     }
 
     /**

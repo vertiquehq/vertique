@@ -1777,7 +1777,7 @@ final class McpRequestDispatcher {
                 return Future.succeededFuture(ScanResult.cancelled());
             }
             McpToolDescriptor descriptor = toolRegistry.descriptorsByName().get(name);
-            var decisionFuture = policyEnforcer.decide(descriptor, caller);
+            var decisionFuture = decideTool(descriptor, caller);
             if (!decisionFuture.isComplete()) {
                 // Genuinely asynchronous: resume through compose, on a fresh stack frame, instead of
                 // looping here — looping would spin-wait on a future that is not yet resolved.
@@ -2183,8 +2183,12 @@ final class McpRequestDispatcher {
         // descriptor — never the raw caller-supplied toolName — so a later abort terminal for this
         // request (see settlementTerminal/resolvedToolNameOf) can report the real tool name instead of
         // always inventing UNKNOWN_TOOL_NAME.
-        context.put(RESOLVED_TOOL_NAME_KEY, invoker.descriptor().name());
-        policyEnforcer.decide(invoker.descriptor(), caller).onComplete(ar -> {
+        // Decided with the registry's retained descriptor, never the invoker's live one, so tools/list
+        // and tools/call judge the same pinned descriptor even if an invoker publishes a different one
+        // on a later descriptor() call.
+        McpToolDescriptor registered = toolRegistry.descriptorsByName().get(toolName);
+        context.put(RESOLVED_TOOL_NAME_KEY, registered.name());
+        decideTool(registered, caller).onComplete(ar -> {
             // The settlement guard — this is the seam McpToolsCallDisconnectAcrossAuthorizationIT
             // pins: a disconnect/reset can settle this request while the real authorization decision is
             // still pending, and no branch below (deny, permit, or invocation) may run once it has.
@@ -2215,6 +2219,19 @@ final class McpRequestDispatcher {
             }
             invokeAndRespond(context, envelope, security, toolName, invoker);
         });
+    }
+
+    /**
+     * Decides one registered tool for {@code caller}: against its typed policy's requirements when the
+     * registry retained them at registration, otherwise against its descriptor's access record. Both
+     * {@code tools/list} and {@code tools/call} decide through this one seam, so a listed tool is
+     * always rechecked with the same effective policy at call time.
+     */
+    private Future<AuthorizationDecision> decideTool(McpToolDescriptor descriptor, SecurityContext caller) {
+        return toolRegistry
+                .policyAnnotations(descriptor.name())
+                .map(requirements -> policyEnforcer.decide(descriptor, requirements, caller))
+                .orElseGet(() -> policyEnforcer.decide(descriptor, caller));
     }
 
     /** Writes the standard pre-invocation error for a tool whose client capability is absent. */

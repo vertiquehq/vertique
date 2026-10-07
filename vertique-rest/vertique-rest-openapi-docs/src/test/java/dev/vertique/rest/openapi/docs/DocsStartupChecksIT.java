@@ -148,14 +148,14 @@ public class DocsStartupChecksIT {
     /** The attribute naming a protected document's security scheme. */
     private static final String SECURITY_SCHEME_ATTRIBUTE = "@ApiDocs.securityScheme";
 
-    /** The attribute declaring a document's access. */
-    private static final String ACCESS_ATTRIBUTE = "@ApiDocs.access";
-
     /** The statement of a refusal whose scheme matches no registered handler. */
     private static final String NO_HANDLER = "no registered SecuritySchemeHandler has that name";
 
-    /** The statement of a refusal of a protected document without authentication enforcement. */
-    private static final String NO_ENFORCEMENT = "authentication enforcement is not installed";
+    /**
+     * The words of a refusal of a restrictive document policy without authentication enforcement. Only
+     * these words are pinned: the rest of the sentence names the policy and may be reworded.
+     */
+    private static final String NO_ENFORCEMENT = "authentication enforcement";
 
     /** The statement of a refusal that a protected document failing a startup check must not make. */
     private static final String NOT_SERVED_YET = "not served yet";
@@ -564,12 +564,12 @@ public class DocsStartupChecksIT {
                 Arguments.of(
                         "the bearerAuth handler, no enforcement marker",
                         Composition.PROTECTED_BEARER_AUTH_ONLY,
-                        List.of(PROTECTED_MGMT_API, ACCESS_ATTRIBUTE, NO_ENFORCEMENT),
+                        List.of(PROTECTED_MGMT_API, NO_ENFORCEMENT),
                         List.of(NOT_SERVED_YET)),
                 Arguments.of(
                         "AuthenticatedMgmtApi, the bearerAuth handler, no enforcement marker",
                         Composition.AUTHENTICATED_BEARER_AUTH_ONLY,
-                        List.of(AUTHENTICATED_MGMT_API, ACCESS_ATTRIBUTE, NO_ENFORCEMENT),
+                        List.of(AUTHENTICATED_MGMT_API, NO_ENFORCEMENT),
                         List.of(NOT_SERVED_YET)),
                 Arguments.of(
                         "control: the shared fixture's public document only, no handler, no marker",
@@ -1108,7 +1108,7 @@ public class DocsStartupChecksIT {
 
     @Test
     @DisplayName(
-            "a protected document breaking both value rules fails startup in one refusal listing its access line before its securityScheme line")
+            "a protected document breaking both value rules fails startup in one refusal listing its two violation lines in sorted order")
     void bothProtectedValueViolationsOfOneDocumentAreSorted(Vertx vertx) throws Exception {
         // Given: PublicApi and ProtectedMgmtApi (bearerAuth), with neither a scheme handler nor the
         // enforcement marker bound, and the protected document's info configured
@@ -1127,23 +1127,22 @@ public class DocsStartupChecksIT {
                     component,
                     SpyCheck.HOOK_ONLY,
                     MGMT,
-                    List.of(
-                            PROTECTED_MGMT_API,
-                            ACCESS_ATTRIBUTE,
-                            NO_ENFORCEMENT,
-                            SECURITY_SCHEME_ATTRIBUTE,
-                            BEARER_AUTH,
-                            NO_HANDLER),
+                    List.of(PROTECTED_MGMT_API, NO_ENFORCEMENT, SECURITY_SCHEME_ATTRIBUTE, BEARER_AUTH, NO_HANDLER),
                     List.of(NOT_SERVED_YET));
 
-            // and: in one message, the access line before the securityScheme line
+            // and: in one message, the document's two lines in sorted order
             String message = outcome.failure().getMessage();
-            int accessLine = message.indexOf(ACCESS_ATTRIBUTE);
-            int schemeLine = message.indexOf(SECURITY_SCHEME_ATTRIBUTE);
+            List<String> documentLines = message.lines()
+                    .filter(line -> line.contains(PROTECTED_MGMT_API))
+                    .map(String::strip)
+                    .toList();
             assertAll(
                     label + ": the refusal " + message,
-                    () -> assertTrue(
-                            accessLine < schemeLine, label + ": the access line comes before the securityScheme line"),
+                    () -> assertTrue(documentLines.size() >= 2, label + ": one line per violation"),
+                    () -> assertEquals(
+                            documentLines.stream().sorted().toList(),
+                            documentLines,
+                            label + ": the violation lines are sorted"),
                     () -> assertEquals(
                             1, occurrences(message, NO_ENFORCEMENT), label + ": one missing-enforcement line"),
                     () -> assertEquals(1, occurrences(message, NO_HANDLER), label + ": one missing-handler line"));

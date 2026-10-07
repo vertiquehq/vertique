@@ -359,6 +359,8 @@ compatibility promise.
 
 Within this internal namespace, `JaxRsAnnotations.AUTHORIZED` identifies
 `dev.vertique.security.authz.Authorized`, owned by `vertique-security-core`.
+`AccessPolicyAnnotationResolver` selects a `@RequiresPolicy` reference from annotation mirrors and
+returns that policy's direct requirements. It does not depend on `vertique-security-core`.
 
 What this module promises an application is the wiring annotations above and the Dagger graph they
 generate: the binding kind, scope, qualifier and set membership, whether a conditioned binding is

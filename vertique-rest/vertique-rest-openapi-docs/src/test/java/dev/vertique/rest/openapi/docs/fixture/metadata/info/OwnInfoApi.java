@@ -5,9 +5,11 @@ package dev.vertique.rest.openapi.docs.fixture.metadata.info;
 
 import dev.vertique.rest.core.application.RestApplication;
 import dev.vertique.rest.openapi.docs.ApiDocs;
+import dev.vertique.security.authz.AccessPolicy;
 import io.swagger.v3.oas.annotations.OpenAPIDefinition;
 import io.swagger.v3.oas.annotations.info.Contact;
 import io.swagger.v3.oas.annotations.info.Info;
+import jakarta.annotation.security.PermitAll;
 
 /**
  * Application {@code child} at {@code /api/child}, documented publicly, whose declaring interface
@@ -17,9 +19,13 @@ import io.swagger.v3.oas.annotations.info.Info;
  * it, and only in a view that never builds mounts.
  */
 @OpenAPIDefinition(info = @Info(title = "Own", version = "2", contact = @Contact(name = "OwnContact")))
-@ApiDocs(access = ApiDocs.Access.PUBLIC)
+@ApiDocs(policy = OwnInfoApi.PublicDocsPolicy.class)
 @RestApplication(
         name = InfoRegistrations.CHILD_NAME,
         path = InfoRegistrations.CHILD_PATH,
         resources = InfoPingResource.class)
-public interface OwnInfoApi extends ParentInfoApi {}
+public interface OwnInfoApi extends ParentInfoApi {
+    /** Anyone may read the document. */
+    @PermitAll
+    public interface PublicDocsPolicy extends AccessPolicy {}
+}

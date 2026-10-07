@@ -9,8 +9,10 @@ import dev.vertique.rest.openapi.docs.fixture.conformance.hidden.scan.HiddenInte
 import dev.vertique.rest.openapi.docs.fixture.conformance.hidden.scan.HiddenTypeResource;
 import dev.vertique.rest.openapi.docs.fixture.conformance.hidden.scan.MixedMethodsResource;
 import dev.vertique.rest.openapi.docs.fixture.conformance.hidden.scan.PartlyHiddenInterfaceResource;
+import dev.vertique.security.authz.AccessPolicy;
 import io.swagger.v3.oas.annotations.OpenAPIDefinition;
 import io.swagger.v3.oas.annotations.info.Info;
+import jakarta.annotation.security.PermitAll;
 
 /**
  * The documented application {@value #NAME} at {@value #PATH}, listing one resource of every hiding
@@ -23,7 +25,7 @@ import io.swagger.v3.oas.annotations.info.Info;
  * {@code info} this interface carries. This interface stays outside that package, so a scan of the
  * package never finds its {@code @OpenAPIDefinition}.
  */
-@ApiDocs(access = ApiDocs.Access.PUBLIC)
+@ApiDocs(policy = HiddenParityApi.PublicDocsPolicy.class)
 @OpenAPIDefinition(info = @Info(title = HiddenParityApi.TITLE, version = HiddenParityApi.VERSION))
 @RestApplication(
         name = HiddenParityApi.NAME,
@@ -47,4 +49,8 @@ public interface HiddenParityApi {
 
     /** The annotated {@code info.version}. */
     String VERSION = "1.0";
+
+    /** Anyone may read the document. */
+    @PermitAll
+    public interface PublicDocsPolicy extends AccessPolicy {}
 }

@@ -13,6 +13,7 @@ import dev.vertique.security.authz.AuthorizationClaims;
 import dev.vertique.security.authz.AuthorizationDecision;
 import dev.vertique.security.authz.AuthorizationRequest;
 import dev.vertique.security.authz.ResourceRef;
+import dev.vertique.security.runtime.authz.ClaimAuthorizationPolicy;
 import io.vertx.core.Future;
 import io.vertx.ext.auth.authorization.AuthorizationProvider;
 import java.util.List;
@@ -51,6 +52,10 @@ class VertxProviderDecisionPointTest {
 
     private static AuthorityClaim scopeClaim(String scope) {
         return new AuthorityClaim(AuthorityKind.SCOPE, scope, "", "", "", Map.of());
+    }
+
+    private static AuthorityClaim permissionClaim(String permission) {
+        return new AuthorityClaim(AuthorityKind.PERMISSION, permission, "", "", "", Map.of());
     }
 
     private static SecurityContext secCtxWith(Set<AuthorityClaim> claims) {
@@ -155,6 +160,98 @@ class VertxProviderDecisionPointTest {
     }
 
     // --- Scope checks (OR semantics) ---
+
+    @Nested
+    @DisplayName("Context keys and reason codes alias the shared claim policy")
+    class SharedConstants {
+
+        @Test
+        @DisplayName("every key and reason code equals the shared constant and keeps its public spelling")
+        void constantsAliasTheSharedClaimPolicy() {
+            assertEquals("requiredRoles", VertxProviderDecisionPoint.CTX_REQUIRED_ROLES);
+            assertEquals("requiredScopes", VertxProviderDecisionPoint.CTX_REQUIRED_SCOPES);
+            assertEquals("requireAllScopes", VertxProviderDecisionPoint.CTX_REQUIRE_ALL_SCOPES);
+            assertEquals("PERMITTED", VertxProviderDecisionPoint.REASON_PERMITTED);
+            assertEquals("ROLE_MISSING", VertxProviderDecisionPoint.REASON_ROLE_MISSING);
+            assertEquals("SCOPE_MISSING", VertxProviderDecisionPoint.REASON_SCOPE_MISSING);
+            assertEquals("SCOPE_INSUFFICIENT", VertxProviderDecisionPoint.REASON_SCOPE_INSUFFICIENT);
+            assertEquals("requiredRoles", ClaimAuthorizationPolicy.CTX_REQUIRED_ROLES);
+            assertEquals("requiredScopes", ClaimAuthorizationPolicy.CTX_REQUIRED_SCOPES);
+            assertEquals("requireAllScopes", ClaimAuthorizationPolicy.CTX_REQUIRE_ALL_SCOPES);
+            assertEquals("PERMITTED", ClaimAuthorizationPolicy.REASON_PERMITTED);
+            assertEquals("ROLE_MISSING", ClaimAuthorizationPolicy.REASON_ROLE_MISSING);
+            assertEquals("SCOPE_MISSING", ClaimAuthorizationPolicy.REASON_SCOPE_MISSING);
+            assertEquals("SCOPE_INSUFFICIENT", ClaimAuthorizationPolicy.REASON_SCOPE_INSUFFICIENT);
+        }
+    }
+
+    @Nested
+    @DisplayName("Scope checks count PERMISSION claims as scopes")
+    class PermissionClaims {
+
+        @Test
+        @DisplayName("permit: a PERMISSION-only claim satisfies a required scope in OR mode")
+        void permitWhenPermissionOnlyClaimMatchesInOrMode() {
+            SecurityContext ctx = secCtxWith(Set.of(permissionClaim("read")));
+            VertxProviderDecisionPoint dp = new VertxProviderDecisionPoint(Set.of());
+
+            AuthorizationDecision decision = dp.decide(requestWithScopes(ctx, List.of("read", "write"), false))
+                    .result();
+
+            assertTrue(decision.permitted());
+            assertEquals("PERMITTED", decision.reasonCode());
+        }
+
+        @Test
+        @DisplayName("permit: a PERMISSION-only claim satisfies a required scope in AND mode")
+        void permitWhenPermissionOnlyClaimMatchesInAndMode() {
+            SecurityContext ctx = secCtxWith(Set.of(permissionClaim("read")));
+            VertxProviderDecisionPoint dp = new VertxProviderDecisionPoint(Set.of());
+
+            AuthorizationDecision decision =
+                    dp.decide(requestWithScopes(ctx, List.of("read"), true)).result();
+
+            assertTrue(decision.permitted());
+        }
+
+        @Test
+        @DisplayName("permit: SCOPE and PERMISSION claims together satisfy all required scopes in AND mode")
+        void permitWhenScopeAndPermissionClaimsTogetherCoverAndMode() {
+            SecurityContext ctx = secCtxWith(Set.of(scopeClaim("read"), permissionClaim("write")));
+            VertxProviderDecisionPoint dp = new VertxProviderDecisionPoint(Set.of());
+
+            AuthorizationDecision decision = dp.decide(requestWithScopes(ctx, List.of("read", "write"), true))
+                    .result();
+
+            assertTrue(decision.permitted(), "the union of SCOPE and PERMISSION claims is used");
+        }
+
+        @Test
+        @DisplayName("deny: a PERMISSION claim does not satisfy a required role")
+        void denyWhenPermissionClaimIsOfferedForARole() {
+            SecurityContext ctx = secCtxWith(Set.of(permissionClaim("admin")));
+            VertxProviderDecisionPoint dp = new VertxProviderDecisionPoint(Set.of());
+
+            AuthorizationDecision decision =
+                    dp.decide(requestWithRoles(ctx, List.of("admin"))).result();
+
+            assertFalse(decision.permitted());
+            assertEquals("ROLE_MISSING", decision.reasonCode());
+        }
+
+        @Test
+        @DisplayName("deny: partial SCOPE and PERMISSION coverage in AND mode → SCOPE_MISSING")
+        void denyWhenUnionStillMissesAScopeInAndMode() {
+            SecurityContext ctx = secCtxWith(Set.of(scopeClaim("read"), permissionClaim("other")));
+            VertxProviderDecisionPoint dp = new VertxProviderDecisionPoint(Set.of());
+
+            AuthorizationDecision decision = dp.decide(requestWithScopes(ctx, List.of("read", "write"), true))
+                    .result();
+
+            assertFalse(decision.permitted());
+            assertEquals("SCOPE_MISSING", decision.reasonCode());
+        }
+    }
 
     @Nested
     @DisplayName("Scope authorization checks — OR semantics")

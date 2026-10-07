@@ -7,10 +7,16 @@ import dev.vertique.rest.core.application.RestApplication;
 import dev.vertique.rest.openapi.docs.ApiDocs;
 import dev.vertique.rest.openapi.docs.fixture.startup.OpsApi;
 import dev.vertique.rest.openapi.docs.fixture.startup.OpsResource;
+import dev.vertique.security.authz.AccessPolicy;
+import dev.vertique.security.authz.Authorized;
 
 /**
  * Application {@code ops} at {@code /api/ops} listing {@link OpsResource}, whose protected document names no security scheme. The annotation processor refuses this shape; only a hand-written registration declares it.
  */
-@ApiDocs(access = ApiDocs.Access.PROTECTED)
+@ApiDocs(policy = OpsProtectedWithoutSchemeApi.AuthenticatedDocsPolicy.class)
 @RestApplication(name = OpsApi.NAME, path = OpsApi.PATH, resources = OpsResource.class)
-public interface OpsProtectedWithoutSchemeApi {}
+public interface OpsProtectedWithoutSchemeApi {
+    /** Any authenticated reader may read the document. */
+    @Authorized
+    public interface AuthenticatedDocsPolicy extends AccessPolicy {}
+}

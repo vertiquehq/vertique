@@ -360,7 +360,9 @@ multibindings for application extension points.
 
 When `@RequiresAction` is used on service contracts or operations, install the authorization engine.
 Vertique validates the action gates at component construction and fails closed when the required
-authorization bindings are absent.
+authorization bindings are absent. A typed policy that declares an action needs the same engine;
+role, scope, authenticated-only, public and deny policies do not (see
+[Typed access policies](#typed-access-policies)).
 
 ---
 
@@ -415,6 +417,86 @@ public Future<String> displayName(String userId, SecurityContext securityContext
 `@RequiresAction` adds a framework authorization gate. Authorization denials and identity-snapshot
 degradation failures are non-recoverable; an application interceptor cannot turn them into a
 successful dispatch.
+
+### Typed access policies
+
+A contract or operation can carry `@RequiresPolicy(MyPolicy.class)` instead of inline security
+annotations. The policy is a public interface extending `AccessPolicy` that declares the same
+requirements REST uses: `@PermitAll`, `@DenyAll`, `@RolesAllowed`, `@Authorized` (authenticated
+caller, optionally scopes with `matchAll`) and `@RequiresAction`. An operation policy replaces the
+contract policy. Mixing a policy reference with an inline security annotation, or referencing two
+different policies on one operation, is rejected at startup.
+
+```java
+public interface OperatorPolicy extends AccessPolicy {}   // annotated @RolesAllowed("operator")
+
+@ServiceContract(namespace = "ops", value = "jobs")
+public interface JobService {
+    @RequiresPolicy(OperatorPolicy.class)
+    Future<String> restart(String jobId);
+}
+```
+
+Behavior for a dispatch through the generated or proxy client:
+
+- **Local predicates run first.** Any role suffices; scopes must all be held unless `matchAll` is
+  `false`; `SCOPE` and `PERMISSION` claims both count as scopes. Claims are recomputed on every
+  call from the real propagated `SecurityContext`.
+- **Public and deny.** `@PermitAll` passes with no authorization work and no event. `@DenyAll`
+  denies every caller, including a call with no caller, with reason `DENY_ALL`.
+- **Authentication.** A missing or anonymous caller is denied with `AUTHENTICATION_REQUIRED`.
+- **Action.** When local checks pass and the policy declares an action, the configured
+  `Authorizer` is called once with only the declared action. A local denial never reaches it.
+- **Failures.** A denial, a throwing or `null` evaluation, a `null` or failed future are all
+  non-recoverable denials; `recoverError` cannot turn them into success.
+
+Startup rules: the policy reference is resolved when the component is built, and every violation
+is reported in one `ServiceRegistrationException`. A declared action must parse and be registered,
+and requires the `Authorizer` and `ActionRegistry`. Role, scope, authenticated-only, public and
+deny policies boot without either. A dispatch that carries a policy reference with no resolved gate
+is denied with `INTERNAL_AUTHZ_ERROR`.
+
+Caller support boundary:
+
+- **Marked callers are rejected by local predicates.** A caller whose context carries a
+  reconstruction marker, an on-behalf-of identity subject or a delegation is denied with
+  `UNSUPPORTED_POLICY_CALLER` before any claim or action evaluation, even when the action would
+  permit. This is a support boundary, not proof that an unmarked caller is trusted.
+- **Action-only policies keep the action path.** A policy whose only requirement is an action does
+  not apply the marker check; reconstruction, narrowing, assurance and delegation handling stay
+  inside the injected `Authorizer`.
+- **Direct implementation calls are not dispatch.** Calling a service implementation as an
+  ordinary Java method is not enforced. Only dispatch through the service client and interceptor
+  chain is.
+- **Only the contract's policy is collected.** Collection starts at the registered contract
+  interface. A policy declared on an implementation class or a handler method is not collected and
+  does not protect the operation. The manual registrar collects at registration and rejects a
+  registration whose policy is invalid, conflicting or mixed with an inline security annotation.
+  A hand-written `ServiceContractContributor` entry built with `ServiceContractEntries` collects
+  method policies the same way when it supplies no `.methodAnnotations(...)` override, starting at
+  the class passed to `.contract(...)`, so a policy on a parent interface of an inherited method is
+  enforced and an invalid or conflicting policy fails the build of the entry with a
+  `ServiceRegistrationException`. Documented limit: class-level annotations on that path are still
+  read from the service instance's class (from the contract when a handler method is set), so a
+  class-level policy declared on the implementation class is read from there and still enforces.
+  Methods passed to `.method(...)` must be contract methods: a bridge or synthetic method with no unique
+  non-bridge counterpart is rejected on this path with a `ServiceRegistrationException`, as the manual
+  registrar rejects it, even when no policy is declared.
+- Application checks on resources, tenants, ownership and business state remain the
+  application's responsibility and run inside the service.
+
+Event shape: every restrictive attempt emits exactly one `AuthorizationDecisionEvent`. For a
+local-only policy `request.action` is the descriptive operation label, not a registered action:
+it is never parsed as an `ActionRef` and never sent to the `Authorizer` or `ActionRegistry`, so an
+observer must not infer action registration or grant semantics from that string or the reason code
+alone. An allow reason can also occur on a local-only event. The request context carries the
+role and scope requirements. For a policy with both local predicates and an action, one composed
+event is emitted whose reason is the first failing predicate and whose `safeAttributes` record
+`rolesSatisfied`, `actionSatisfied` and `actionEvaluated`; `request.action` is still the operation
+label. `rolesSatisfied` reflects the whole local predicate, that is authentication, roles and scopes
+together, not roles alone. `actionEvaluated` says whether the action step ran (it does not when a
+local predicate failed) and `actionSatisfied` says whether that step permitted. An action-only
+policy emits the existing action event with the declared action.
 
 ---
 
@@ -580,6 +662,10 @@ Java method name.
 - Do not bind a generated and manual implementation for the same contract.
 - Do not use interceptor recovery for authorization or identity-degradation failures; Vertique
   marks those failures non-recoverable.
+- Do not place `@RequiresPolicy` on a service implementation class or handler method; only the
+  contract's declaration is collected and enforced.
+- Do not expect typed role or scope policies to admit reconstructed, on-behalf-of or delegated
+  callers; they are denied with `UNSUPPORTED_POLICY_CALLER`.
 - A hand-built `ServiceContractContributor` entry that omits an operation the contract interface
   declares now fails at `ServiceClientFactory.create()` time, not only on the first invocation of
   that method.

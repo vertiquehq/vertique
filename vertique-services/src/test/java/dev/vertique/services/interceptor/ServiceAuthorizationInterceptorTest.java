@@ -3,9 +3,19 @@
 
 package dev.vertique.services.interceptor;
 
+import static dev.vertique.services.interceptor.TypedPolicyServiceFixtures.ACTION_VALUE;
+import static dev.vertique.services.interceptor.TypedPolicyServiceFixtures.EXECUTOR_ROLE;
+import static dev.vertique.services.interceptor.TypedPolicyServiceFixtures.OPERATOR_ROLE;
+import static dev.vertique.services.interceptor.TypedPolicyServiceFixtures.READ_SCOPE;
+import static dev.vertique.services.interceptor.TypedPolicyServiceFixtures.UNSUPPORTED_POLICY_CALLER;
+import static dev.vertique.services.interceptor.TypedPolicyServiceFixtures.WRITE_SCOPE;
+import static dev.vertique.services.interceptor.TypedPolicyServiceFixtures.metaFor;
+import static org.junit.jupiter.api.Assertions.assertAll;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -13,26 +23,43 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import dev.vertique.core.context.ContextHolder;
 import dev.vertique.core.correlation.UnboundCorrelationContext;
 import dev.vertique.core.eventbus.DispatchEnvelope;
+import dev.vertique.security.AuthenticationState;
+import dev.vertique.security.PrincipalType;
 import dev.vertique.security.SecurityContext;
+import dev.vertique.security.SecurityIdentity;
 import dev.vertique.security.authz.ActionRef;
 import dev.vertique.security.authz.ActionRegistry;
+import dev.vertique.security.authz.AuthorizationClaims;
 import dev.vertique.security.authz.AuthorizationDecision;
 import dev.vertique.security.authz.AuthorizationRequest;
 import dev.vertique.security.authz.Authorizer;
 import dev.vertique.security.authz.AuthzReasonCodes;
 import dev.vertique.security.authz.InvocationOrigin;
 import dev.vertique.security.authz.RequiresAction;
+import dev.vertique.security.authz.RequiresPolicy;
 import dev.vertique.security.events.AuthorizationDecisionEvent;
+import dev.vertique.security.origin.RequestOrigin;
 import dev.vertique.security.runtime.events.SecurityEventEmitter;
+import dev.vertique.services.ServiceRegistrationViolation;
+import dev.vertique.services.dispatch.NonRecoverableDispatchFailure;
 import dev.vertique.services.dispatch.ServiceMethodDescriptor;
 import dev.vertique.services.dispatch.ServiceMethodMeta;
 import dev.vertique.services.exception.ServiceRegistrationException;
+import dev.vertique.services.interceptor.TypedPolicyServiceFixtures.AuthenticatedOnlyPolicy;
+import dev.vertique.services.interceptor.TypedPolicyServiceFixtures.Caller;
+import dev.vertique.services.interceptor.TypedPolicyServiceFixtures.ExecutorRolePolicy;
+import dev.vertique.services.interceptor.TypedPolicyServiceFixtures.MalformedActionPolicy;
+import dev.vertique.services.interceptor.TypedPolicyServiceFixtures.TypedPolicyContract;
+import dev.vertique.services.interceptor.TypedPolicyServiceFixtures.TypedPolicyService;
+import dev.vertique.services.interceptor.TypedPolicyServiceFixtures.UnregisteredActionPolicy;
 import io.vertx.core.Future;
+import jakarta.annotation.security.RolesAllowed;
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Method;
 import java.util.List;
@@ -517,6 +544,24 @@ class ServiceAuthorizationInterceptorTest {
         }
 
         @Test
+        @DisplayName("an inline-only startup violation still names the contract and method")
+        void startupValidation_inlineOnly_violationKeepsContractAndMethod() {
+            Authorizer authorizer = mock(Authorizer.class);
+            SecurityEventEmitter emitter = mock(SecurityEventEmitter.class);
+            ContextHolder holder = mock(ContextHolder.class);
+            Set<ServiceMethodMeta> metas =
+                    Set.of(metaWith(List.of(requiresActionOn("unparseableActionHolder")), List.of()));
+
+            ServiceRegistrationException thrown = assertThrows(
+                    ServiceRegistrationException.class,
+                    () -> interceptor(authorizer, registryAllowing(), emitter, holder, metas));
+
+            ServiceRegistrationViolation violation = thrown.violations().get(0);
+            assertNotNull(violation.contract(), "an inline-only violation names its contract");
+            assertNotNull(violation.method(), "an inline-only violation names its method");
+        }
+
+        @Test
         @DisplayName("unregistered @RequiresAction action fails startup")
         void startupValidation_unregisteredAction_throws() {
             Authorizer authorizer = mock(Authorizer.class);
@@ -569,6 +614,592 @@ class ServiceAuthorizationInterceptorTest {
 
             // Should not throw: action is registered and engine present.
             interceptor(authorizer, registryAllowing(ACTION), emitter, holder, metas);
+        }
+    }
+
+    // --- Typed policy gate ---
+
+    @RequiresPolicy(UnregisteredActionPolicy.class)
+    private void unregisteredActionPolicyHolder() {}
+
+    @RequiresPolicy(MalformedActionPolicy.class)
+    private void malformedActionPolicyHolder() {}
+
+    @RequiresPolicy(ExecutorRolePolicy.class)
+    @RolesAllowed("admin")
+    private void policyMixedWithInlineRoleHolder() {}
+
+    @RequiresPolicy(ExecutorRolePolicy.class)
+    private void executorPolicyHolder() {}
+
+    @RequiresPolicy(AuthenticatedOnlyPolicy.class)
+    private void authenticatedPolicyHolder() {}
+
+    @RolesAllowed("admin")
+    private void inlineRoleOnlyHolder() {}
+
+    /** Returns the {@code @RequiresPolicy} declared on the named private holder of this test class. */
+    private static RequiresPolicy requiresPolicyHeldBy(String methodName) {
+        try {
+            return ServiceAuthorizationInterceptorTest.class
+                    .getDeclaredMethod(methodName)
+                    .getAnnotation(RequiresPolicy.class);
+        } catch (NoSuchMethodException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    /** Returns the annotations declared on the named private holder of this test class. */
+    private static List<Annotation> annotationsHeldBy(String methodName) {
+        try {
+            return List.of(ServiceAuthorizationInterceptorTest.class
+                    .getDeclaredMethod(methodName)
+                    .getAnnotations());
+        } catch (NoSuchMethodException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    @Nested
+    @DisplayName("typed policy gate")
+    class TypedPolicyGate {
+
+        private static final String LOCAL_ONLY_SCENARIO_ADDRESS = "services/typed/";
+
+        private final SecurityEventEmitter emitter = mock(SecurityEventEmitter.class);
+        private final Authorizer authorizer = mock(Authorizer.class);
+        private final ContextHolder holder = mock(ContextHolder.class);
+        private final ActionRegistry registry =
+                registryAllowing(ActionRef.parse(TypedPolicyServiceFixtures.ACTION_VALUE));
+
+        TypedPolicyGate() {
+            when(emitter.emit(any(AuthorizationDecisionEvent.class))).thenReturn(Future.succeededFuture());
+        }
+
+        // --- builders ---
+
+        private ServiceMethodMeta metaOf(String operation) {
+            return metaFor(
+                    TypedPolicyContract.class,
+                    new TypedPolicyService(),
+                    operation,
+                    LOCAL_ONLY_SCENARIO_ADDRESS + operation);
+        }
+
+        private ServiceDispatchContext contextOf(ServiceMethodMeta meta) {
+            return new ServiceDispatchContext(
+                    meta.address(),
+                    meta.stableTargetId(),
+                    meta.namespace(),
+                    meta.name(),
+                    meta.operation(),
+                    DispatchEnvelope.of("payload"),
+                    false,
+                    meta.methodAnnotations(),
+                    meta.classAnnotations(),
+                    Map.of());
+        }
+
+        private ServiceAuthorizationInterceptor gateWithEngine(ServiceMethodMeta... metas) {
+            return interceptor(authorizer, registry, emitter, holder, Set.of(metas));
+        }
+
+        private ServiceAuthorizationInterceptor gateWithoutEngine(ServiceMethodMeta... metas) {
+            return interceptor(null, null, emitter, holder, Set.of(metas));
+        }
+
+        private void bind(Caller caller) {
+            when(holder.current(SecurityContext.class)).thenReturn(Optional.ofNullable(caller));
+        }
+
+        private AuthorizationDecisionEvent onlyEvent() {
+            ArgumentCaptor<AuthorizationDecisionEvent> captor =
+                    ArgumentCaptor.forClass(AuthorizationDecisionEvent.class);
+            verify(emitter, times(1)).emit(captor.capture());
+            return captor.getValue();
+        }
+
+        private void assertDeniedNonRecoverably(Future<ServiceDispatchContext> result) {
+            assertTrue(result.failed(), "the gate must refuse the dispatch");
+            assertInstanceOf(
+                    NonRecoverableDispatchFailure.class,
+                    result.cause(),
+                    "a typed denial must be non-recoverable so recoverError cannot resurrect it");
+        }
+
+        private void assertDeniedLocally(String operation, Caller caller, String reason, PrincipalType actor) {
+            ServiceMethodMeta meta = metaOf(operation);
+            bind(caller);
+            Future<ServiceDispatchContext> result = gateWithEngine(meta).beforeDispatch(contextOf(meta));
+
+            assertDeniedNonRecoverably(result);
+            AuthorizationDecisionEvent event = onlyEvent();
+            assertFalse(event.decision().permitted(), "the event must record the denial");
+            assertEquals(reason, event.decision().reasonCode(), "denial reason");
+            assertEquals(
+                    actor, event.request().securityContext().identity().actor().type(), "event actor");
+            assertEquals(operation, event.request().action(), "a local-only event carries the operation label");
+            verifyNoInteractions(authorizer);
+            verify(registry, never()).contains(any());
+            verify(registry, never()).find(any());
+        }
+
+        // --- startup ---
+
+        @Test
+        @DisplayName(
+                "role, scope, authenticated-only, deny and public typed policies boot with no authorization engine")
+        void startup_localPolicies_bootWithoutEngine() {
+            for (String operation :
+                    List.of("rolesOnly", "allScopes", "anyScope", "authenticatedOnly", "denyAll", "publicOp")) {
+                assertDoesNotThrow(
+                        () -> gateWithoutEngine(metaOf(operation)),
+                        operation + " must not need an Authorizer or ActionRegistry");
+            }
+        }
+
+        @Test
+        @DisplayName("typed policies that declare an action require the authorization engine at startup")
+        void startup_actionPolicy_needsEngine() {
+            for (String operation : List.of("actionOnly", "operatorAndAction")) {
+                assertThrows(
+                        ServiceRegistrationException.class,
+                        () -> gateWithoutEngine(metaOf(operation)),
+                        operation + " must be rejected when the engine is absent");
+            }
+        }
+
+        @Test
+        @DisplayName(
+                "typed policies that declare an action boot when the engine is installed and the action registered")
+        void startup_actionPolicy_bootsWithEngine() {
+            assertDoesNotThrow(() -> gateWithEngine(metaOf("actionOnly"), metaOf("operatorAndAction")));
+        }
+
+        @Test
+        @DisplayName("a typed policy naming an unregistered action fails startup")
+        void startup_unregisteredAction_failsStartup() {
+            ServiceMethodMeta meta = metaWith(annotationsHeldBy("unregisteredActionPolicyHolder"), List.of());
+
+            assertThrows(ServiceRegistrationException.class, () -> gateWithEngine(meta));
+        }
+
+        @Test
+        @DisplayName("a typed policy naming a malformed action fails startup")
+        void startup_malformedAction_failsStartup() {
+            ServiceMethodMeta meta = metaWith(annotationsHeldBy("malformedActionPolicyHolder"), List.of());
+
+            assertThrows(ServiceRegistrationException.class, () -> gateWithEngine(meta));
+        }
+
+        @Test
+        @DisplayName("a policy reference mixed with an inline security annotation fails startup")
+        void startup_policyMixedWithInline_failsStartup() {
+            ServiceMethodMeta meta = metaWith(annotationsHeldBy("policyMixedWithInlineRoleHolder"), List.of());
+
+            assertThrows(ServiceRegistrationException.class, () -> gateWithoutEngine(meta));
+        }
+
+        @Test
+        @DisplayName("distinct policy references in one complete method set fail startup")
+        void startup_conflictingMethodReferences_failsStartup() {
+            List<Annotation> conflicting = List.of(
+                    requiresPolicyHeldBy("executorPolicyHolder"), requiresPolicyHeldBy("authenticatedPolicyHolder"));
+            ServiceMethodMeta meta = metaWith(conflicting, List.of());
+
+            assertThrows(ServiceRegistrationException.class, () -> gateWithoutEngine(meta));
+        }
+
+        // --- runtime: lookup by address ---
+
+        @Test
+        @DisplayName("the gate resolved at startup is looked up by the dispatch address")
+        void dispatch_gateIsLookedUpByAddress() {
+            ServiceMethodMeta needsRole = metaOf("rolesOnly");
+            ServiceMethodMeta needsLogin = metaOf("authenticatedOnly");
+            ServiceAuthorizationInterceptor pep = gateWithoutEngine(needsRole, needsLogin);
+            bind(Caller.user("plain"));
+
+            Future<ServiceDispatchContext> roleResult = pep.beforeDispatch(contextOf(needsRole));
+            Future<ServiceDispatchContext> loginResult = pep.beforeDispatch(contextOf(needsLogin));
+
+            assertDeniedNonRecoverably(roleResult);
+            assertTrue(loginResult.succeeded(), "an authenticated caller passes the authenticated-only operation");
+        }
+
+        @Test
+        @DisplayName("fail-closed: a dispatch carrying a policy reference with no registered gate is refused")
+        void dispatch_policyWithoutRegisteredGate_failsClosed() {
+            ServiceMethodMeta unregistered = metaOf("publicOp");
+            ServiceAuthorizationInterceptor pep = gateWithoutEngine(metaOf("rolesOnly"));
+            bind(Caller.user("anyone").withRoles(EXECUTOR_ROLE));
+
+            Future<ServiceDispatchContext> result = pep.beforeDispatch(contextOf(unregistered));
+
+            assertDeniedNonRecoverably(result);
+            verifyNoInteractions(authorizer);
+        }
+
+        // --- runtime: local predicates ---
+
+        @Test
+        @DisplayName("role policy: a caller lacking the role is denied with the operation label and no authorizer call")
+        void localRole_callerLackingRole_isDeniedWithOperationLabel() {
+            assertDeniedLocally(
+                    "rolesOnly", Caller.user("viewer").withRoles("viewer"), "ROLE_MISSING", PrincipalType.USER);
+        }
+
+        @Test
+        @DisplayName("role policy: a caller holding the role is permitted with one permit event")
+        void localRole_callerHoldingRole_isPermitted() {
+            ServiceMethodMeta meta = metaOf("rolesOnly");
+            bind(Caller.user("executor").withRoles(EXECUTOR_ROLE));
+
+            Future<ServiceDispatchContext> result = gateWithEngine(meta).beforeDispatch(contextOf(meta));
+
+            assertTrue(result.succeeded());
+            assertTrue(onlyEvent().decision().permitted());
+            verifyNoInteractions(authorizer);
+        }
+
+        @Test
+        @DisplayName("scope policies: all-scopes default, any-scope opt-out and the scope plus permission union")
+        void localScopes_allAnyAndUnion() {
+            ServiceMethodMeta all = metaOf("allScopes");
+            ServiceMethodMeta any = metaOf("anyScope");
+            ServiceAuthorizationInterceptor pep = gateWithoutEngine(all, any);
+
+            bind(Caller.user("one").withScopes(READ_SCOPE));
+            Future<ServiceDispatchContext> oneOfTwo = pep.beforeDispatch(contextOf(all));
+            Future<ServiceDispatchContext> oneOfAny = pep.beforeDispatch(contextOf(any));
+            bind(Caller.user("union").withScopes(READ_SCOPE).withPermissions(WRITE_SCOPE));
+            Future<ServiceDispatchContext> union = pep.beforeDispatch(contextOf(all));
+
+            assertAll(
+                    () -> assertDeniedNonRecoverably(oneOfTwo),
+                    () -> assertTrue(oneOfAny.succeeded(), "any-scope accepts one scope"),
+                    () -> assertTrue(union.succeeded(), "a PERMISSION claim counts as a scope"));
+        }
+
+        @Test
+        @DisplayName("authentication required: no caller is denied with an anonymous actor")
+        void local_missingCaller_requiresAuthentication() {
+            assertDeniedLocally("rolesOnly", null, AuthzReasonCodes.AUTHENTICATION_REQUIRED, PrincipalType.ANONYMOUS);
+        }
+
+        @Test
+        @DisplayName("authentication required: a bound anonymous caller is denied even holding the claims")
+        void local_anonymousCaller_requiresAuthentication() {
+            assertDeniedLocally(
+                    "authenticatedOnly",
+                    Caller.anonymous().withRoles(EXECUTOR_ROLE),
+                    AuthzReasonCodes.AUTHENTICATION_REQUIRED,
+                    PrincipalType.ANONYMOUS);
+        }
+
+        @Test
+        @DisplayName("marked caller: a reconstruction marker is rejected before claims")
+        void local_reconstructionMarker_isUnsupported() {
+            assertDeniedLocally(
+                    "rolesOnly",
+                    Caller.user("rebuilt").withRoles(EXECUTOR_ROLE).reconstructed(),
+                    UNSUPPORTED_POLICY_CALLER,
+                    PrincipalType.USER);
+        }
+
+        @Test
+        @DisplayName("marked caller: an identity subject is rejected before claims")
+        void local_subjectMarker_isUnsupported() {
+            assertDeniedLocally(
+                    "rolesOnly",
+                    Caller.user("on-behalf").withRoles(EXECUTOR_ROLE).withSubject(),
+                    UNSUPPORTED_POLICY_CALLER,
+                    PrincipalType.USER);
+        }
+
+        @Test
+        @DisplayName("marked caller: an identity delegation is rejected before claims")
+        void local_delegationMarker_isUnsupported() {
+            assertDeniedLocally(
+                    "rolesOnly",
+                    Caller.user("delegated").withRoles(EXECUTOR_ROLE).withDelegation(),
+                    UNSUPPORTED_POLICY_CALLER,
+                    PrincipalType.USER);
+        }
+
+        @Test
+        @DisplayName("public policy: no authorization work, no event, even with no caller")
+        void local_publicPolicy_doesNothing() {
+            ServiceMethodMeta meta = metaOf("publicOp");
+            bind(null);
+
+            Future<ServiceDispatchContext> result = gateWithEngine(meta).beforeDispatch(contextOf(meta));
+
+            assertTrue(result.succeeded());
+            verify(emitter, never()).emit(any(AuthorizationDecisionEvent.class));
+            verifyNoInteractions(authorizer);
+        }
+
+        @Test
+        @DisplayName("deny policy: refused without any caller, with an anonymous event actor and DENY_ALL")
+        void local_denyPolicy_refusesWithoutCaller() {
+            assertDeniedLocally("denyAll", null, AuthzReasonCodes.DENY_ALL, PrincipalType.ANONYMOUS);
+        }
+
+        @Test
+        @DisplayName("the real invocation origin is carried onto the local-only decision event")
+        void local_denial_carriesInvocationOrigin() {
+            InvocationOrigin origin = InvocationOrigin.of("delayed-job");
+            ServiceMethodMeta meta = metaOf("rolesOnly");
+            bind(Caller.user("viewer").withRoles("viewer"));
+            when(holder.current(InvocationOrigin.class)).thenReturn(Optional.of(origin));
+
+            gateWithoutEngine(meta).beforeDispatch(contextOf(meta));
+
+            assertEquals(origin, onlyEvent().invocationOrigin());
+        }
+
+        // --- runtime: action and combined policies ---
+
+        @Test
+        @DisplayName("combined policy: a local denial precedes the action and never calls the authorizer")
+        void combined_localDenial_precedesAction() {
+            ServiceMethodMeta meta = metaOf("operatorAndAction");
+            bind(Caller.user("executor-only").withRoles(EXECUTOR_ROLE));
+
+            Future<ServiceDispatchContext> result = gateWithEngine(meta).beforeDispatch(contextOf(meta));
+
+            assertDeniedNonRecoverably(result);
+            assertEquals("ROLE_MISSING", onlyEvent().decision().reasonCode());
+            verifyNoInteractions(authorizer);
+        }
+
+        @Test
+        @DisplayName("combined policy: a marked caller is rejected even though the action would permit")
+        void combined_markedCaller_rejectedBeforeAction() {
+            ServiceMethodMeta meta = metaOf("operatorAndAction");
+            when(authorizer.authorize(any(AuthorizationRequest.class)))
+                    .thenReturn(Future.succeededFuture(AuthorizationDecision.permit(AuthzReasonCodes.PERMITTED)));
+            bind(Caller.user("rebuilt").withRoles(OPERATOR_ROLE, EXECUTOR_ROLE).reconstructed());
+
+            Future<ServiceDispatchContext> result = gateWithEngine(meta).beforeDispatch(contextOf(meta));
+
+            assertDeniedNonRecoverably(result);
+            assertEquals(UNSUPPORTED_POLICY_CALLER, onlyEvent().decision().reasonCode());
+            verify(authorizer, never()).authorize(any(AuthorizationRequest.class));
+        }
+
+        @Test
+        @DisplayName(
+                "combined policy: when local checks pass the authorizer is called once with only the declared action")
+        void combined_localChecksPass_authorizerCalledOnceWithDeclaredAction() {
+            ServiceMethodMeta meta = metaOf("operatorAndAction");
+            ArgumentCaptor<AuthorizationRequest> requestCaptor = ArgumentCaptor.forClass(AuthorizationRequest.class);
+            when(authorizer.authorize(requestCaptor.capture()))
+                    .thenReturn(Future.succeededFuture(AuthorizationDecision.permit(AuthzReasonCodes.PERMITTED)));
+            bind(Caller.user("both").withRoles(OPERATOR_ROLE, EXECUTOR_ROLE));
+
+            Future<ServiceDispatchContext> result = gateWithEngine(meta).beforeDispatch(contextOf(meta));
+
+            assertTrue(result.succeeded());
+            verify(authorizer, times(1)).authorize(any(AuthorizationRequest.class));
+            assertEquals(
+                    TypedPolicyServiceFixtures.ACTION_VALUE,
+                    requestCaptor.getValue().action());
+            assertTrue(requestCaptor.getValue().context().isEmpty(), "no claim context leaks into the action request");
+            assertTrue(onlyEvent().decision().permitted(), "one composed permit event");
+        }
+
+        @Test
+        @DisplayName("action-only policy: a throwing evaluator denies non-recoverably with INTERNAL_AUTHZ_ERROR")
+        void action_throwingEvaluator_failsClosed() {
+            ServiceMethodMeta meta = metaOf("actionOnly");
+            when(authorizer.authorize(any(AuthorizationRequest.class))).thenThrow(new RuntimeException("boom"));
+            bind(Caller.user("granted").withRoles(EXECUTOR_ROLE));
+
+            Future<ServiceDispatchContext> result = gateWithEngine(meta).beforeDispatch(contextOf(meta));
+
+            assertDeniedNonRecoverably(result);
+            assertEquals(
+                    AuthzReasonCodes.INTERNAL_AUTHZ_ERROR,
+                    onlyEvent().decision().reasonCode());
+        }
+
+        @Test
+        @DisplayName("action-only policy: no caller is denied with AUTHENTICATION_REQUIRED and no authorizer call")
+        void action_noCaller_requiresAuthentication() {
+            ServiceMethodMeta meta = metaOf("actionOnly");
+            bind(null);
+
+            Future<ServiceDispatchContext> result = gateWithEngine(meta).beforeDispatch(contextOf(meta));
+
+            assertDeniedNonRecoverably(result);
+            AuthorizationDecisionEvent event = onlyEvent();
+            assertEquals(
+                    AuthzReasonCodes.AUTHENTICATION_REQUIRED, event.decision().reasonCode());
+            assertEquals(
+                    PrincipalType.ANONYMOUS,
+                    event.request().securityContext().identity().actor().type());
+            verifyNoInteractions(authorizer);
+        }
+
+        // --- characterization ---
+
+        @Test
+        @DisplayName("characterization: an inline-only security annotation is not enforced by the service gate")
+        void characterization_inlineOnlyDeclaration_isPassThrough() {
+            ServiceMethodMeta meta = metaWith(annotationsHeldBy("inlineRoleOnlyHolder"), List.of());
+            ServiceAuthorizationInterceptor pep = gateWithoutEngine(meta);
+            bind(null);
+
+            Future<ServiceDispatchContext> result =
+                    pep.beforeDispatch(dispatchContext(annotationsHeldBy("inlineRoleOnlyHolder"), List.of()));
+
+            assertTrue(result.succeeded(), "inline-only declarations keep their existing pass-through behavior");
+            verify(emitter, never()).emit(any(AuthorizationDecisionEvent.class));
+            verifyNoInteractions(authorizer);
+        }
+
+        // --- fail-closed hardening ---
+
+        /** A bound context whose identity cannot be read: it throws, or returns {@code null}. */
+        private SecurityContext unreadableIdentity(boolean throwing) {
+            return new SecurityContext() {
+                @Override
+                public SecurityIdentity identity() {
+                    if (throwing) {
+                        throw new IllegalStateException("identity unavailable");
+                    }
+                    return null;
+                }
+
+                @Override
+                public AuthenticationState authentication() {
+                    throw new IllegalStateException("authentication must not be read");
+                }
+
+                @Override
+                public AuthorizationClaims authorization() {
+                    return AuthorizationClaims.empty();
+                }
+
+                @Override
+                public Optional<RequestOrigin> origin() {
+                    return Optional.empty();
+                }
+            };
+        }
+
+        private void assertUnreadableIdentityFailsClosed(boolean throwing) {
+            ServiceMethodMeta meta = metaOf("rolesOnly");
+            when(holder.current(SecurityContext.class)).thenReturn(Optional.of(unreadableIdentity(throwing)));
+
+            Future<ServiceDispatchContext> result = gateWithEngine(meta).beforeDispatch(contextOf(meta));
+
+            assertDeniedNonRecoverably(result);
+            assertEquals(
+                    AuthzReasonCodes.INTERNAL_AUTHZ_ERROR,
+                    onlyEvent().decision().reasonCode());
+            verifyNoInteractions(authorizer);
+        }
+
+        @Test
+        @DisplayName("fail-closed: a bound context whose identity throws is denied non-recoverably with one event")
+        void failClosed_identityThrows_deniesWithOneEvent() {
+            assertUnreadableIdentityFailsClosed(true);
+        }
+
+        @Test
+        @DisplayName("fail-closed: a bound context whose identity is null is denied non-recoverably with one event")
+        void failClosed_identityNull_deniesWithOneEvent() {
+            assertUnreadableIdentityFailsClosed(false);
+        }
+
+        @Test
+        @DisplayName("fail-closed: a combined policy whose action decision breaks composition emits one event")
+        void failClosed_combinedCompositionThrows_deniesWithOneEvent() {
+            ServiceMethodMeta meta = metaOf("operatorAndAction");
+            AuthorizationDecision unusable = mock(AuthorizationDecision.class);
+            when(unusable.permitted()).thenReturn(true);
+            when(unusable.reasonCode()).thenReturn(null);
+            when(authorizer.authorize(any(AuthorizationRequest.class))).thenReturn(Future.succeededFuture(unusable));
+            bind(Caller.user("both").withRoles(OPERATOR_ROLE, EXECUTOR_ROLE));
+
+            Future<ServiceDispatchContext> result = gateWithEngine(meta).beforeDispatch(contextOf(meta));
+
+            assertDeniedNonRecoverably(result);
+            assertEquals(
+                    AuthzReasonCodes.INTERNAL_AUTHZ_ERROR,
+                    onlyEvent().decision().reasonCode());
+            verify(authorizer, times(1)).authorize(any(AuthorizationRequest.class));
+        }
+
+        @Test
+        @DisplayName("fail-closed: an action decision that cannot be enforced is a non-recoverable denial")
+        void failClosed_actionDecisionThrowsWhileEnforced_deniesNonRecoverably() {
+            ServiceMethodMeta meta = metaOf("actionOnly");
+            AuthorizationDecision unusable = mock(AuthorizationDecision.class);
+            when(unusable.permitted()).thenThrow(new IllegalStateException("decision unreadable"));
+            when(authorizer.authorize(any(AuthorizationRequest.class))).thenReturn(Future.succeededFuture(unusable));
+            bind(Caller.user("granted").withRoles(EXECUTOR_ROLE));
+
+            Future<ServiceDispatchContext> result = gateWithEngine(meta).beforeDispatch(contextOf(meta));
+
+            assertDeniedNonRecoverably(result);
+            verify(emitter, times(1)).emit(any(AuthorizationDecisionEvent.class));
+        }
+
+        // --- startup: addresses, diagnostics and unsupported requirements ---
+
+        @Test
+        @DisplayName("two operations sharing an address with different typed gates fail startup naming the address")
+        void startup_sharedAddressWithDifferentGates_failsStartup() {
+            String shared = LOCAL_ONLY_SCENARIO_ADDRESS + "shared";
+            ServiceMethodMeta needsRole =
+                    metaFor(TypedPolicyContract.class, new TypedPolicyService(), "rolesOnly", shared);
+            ServiceMethodMeta needsLogin =
+                    metaFor(TypedPolicyContract.class, new TypedPolicyService(), "authenticatedOnly", shared);
+
+            ServiceRegistrationException failure =
+                    assertThrows(ServiceRegistrationException.class, () -> gateWithoutEngine(needsRole, needsLogin));
+
+            assertTrue(
+                    failure.violations().stream().anyMatch(violation -> violation
+                            .message()
+                            .contains("address '" + shared + "' resolves to conflicting typed access policies")),
+                    "the conflict must name the shared address: " + failure.violations());
+        }
+
+        @Test
+        @DisplayName("a startup violation names the dispatch identity rather than the declaring class")
+        void startup_violation_namesTheDispatchIdentity() {
+            ServiceMethodMeta meta = metaWith(annotationsHeldBy("unregisteredActionPolicyHolder"), List.of());
+
+            ServiceRegistrationException failure =
+                    assertThrows(ServiceRegistrationException.class, () -> gateWithEngine(meta));
+
+            assertAll(
+                    () -> assertEquals(1, failure.violations().size()),
+                    () -> assertTrue(
+                            failure.violations().get(0).message().contains("address 'services/svc/exec'"),
+                            "the violation must carry the dispatch address: " + failure.violations()),
+                    () -> assertTrue(
+                            failure.violations().get(0).message().contains("service 'svc'"),
+                            "the violation must carry the service name: " + failure.violations()));
+        }
+
+        @Test
+        @DisplayName("an unrecognised policy requirement is rejected instead of being skipped")
+        void gate_unsupportedRequirement_isRejected() {
+            RequiresPolicy notARequirement = requiresPolicyHeldBy("executorPolicyHolder");
+
+            IllegalArgumentException failure = assertThrows(
+                    IllegalArgumentException.class,
+                    () -> ServiceAuthorizationInterceptor.TypedGate.of(List.of(notARequirement)));
+
+            assertTrue(
+                    failure.getMessage().contains("unsupported policy requirement " + RequiresPolicy.class.getName()),
+                    failure.getMessage());
         }
     }
 }

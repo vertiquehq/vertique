@@ -20,8 +20,8 @@ import java.util.List;
  * {@code @JaxRsResources} instance, which the root application's discovery membership selects; the
  * symmetric-key {@link JWTAuth} the JWT authentication module verifies tokens with; and the
  * {@link DecisionRecorder} as a security event observer. The registration of the declaration is
- * contributed by {@link RolesPresent} or {@link RolesAbsent}, exactly as the generated registration
- * module does ({@code GeneratedRestApplicationRegistration.of(declaringType, name, path, List.of(),
+ * contributed by {@link RoleRestricted} or {@link AuthenticatedOnly}, exactly as the generated
+ * registration module does ({@code GeneratedRestApplicationRegistration.of(declaringType, name, path, List.of(),
  * true, "", true)}), since the annotation processor does not run on framework test sources.
  */
 @Module
@@ -73,9 +73,9 @@ public final class RootApplicationModule {
 
     /** Registers {@link InternalAdminApi}, whose document lists a role, active. */
     @Module
-    public static final class RolesPresent {
+    public static final class RoleRestricted {
 
-        private RolesPresent() {}
+        private RoleRestricted() {}
 
         /**
          * Registers {@link InternalAdminApi}.
@@ -92,9 +92,9 @@ public final class RootApplicationModule {
 
     /** Registers {@link InternalAuthenticatedApi}, whose document lists no role, active. */
     @Module
-    public static final class RolesAbsent {
+    public static final class AuthenticatedOnly {
 
-        private RolesAbsent() {}
+        private AuthenticatedOnly() {}
 
         /**
          * Registers {@link InternalAuthenticatedApi}.

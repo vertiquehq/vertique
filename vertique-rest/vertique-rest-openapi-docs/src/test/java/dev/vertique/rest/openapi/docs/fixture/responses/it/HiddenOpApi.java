@@ -5,6 +5,8 @@ package dev.vertique.rest.openapi.docs.fixture.responses.it;
 
 import dev.vertique.rest.core.application.RestApplication;
 import dev.vertique.rest.openapi.docs.ApiDocs;
+import dev.vertique.security.authz.AccessPolicy;
+import jakarta.annotation.security.PermitAll;
 
 /**
  * The documented application {@code hiddenop} at {@code /api} (mount {@code /api/*}), listing
@@ -12,7 +14,7 @@ import dev.vertique.rest.openapi.docs.ApiDocs;
  * the other is visible and returns {@code void}. Its document is public; its {@code info} comes
  * from configuration.
  */
-@ApiDocs(access = ApiDocs.Access.PUBLIC)
+@ApiDocs(policy = HiddenOpApi.PublicDocsPolicy.class)
 @RestApplication(name = HiddenOpApi.NAME, path = HiddenOpApi.PATH, resources = HiddenOperationResource.class)
 public interface HiddenOpApi {
 
@@ -21,4 +23,8 @@ public interface HiddenOpApi {
 
     /** The application's path. */
     String PATH = "/api";
+
+    /** Anyone may read the document. */
+    @PermitAll
+    public interface PublicDocsPolicy extends AccessPolicy {}
 }

@@ -7,11 +7,14 @@ import dev.vertique.rest.core.routing.RestOperationDescriptor;
 import dev.vertique.rest.core.routing.SecurityRequirementSet;
 import dev.vertique.rest.core.security.SecurityPolicy;
 import dev.vertique.rest.jaxrs.synthetic.SyntheticOperation;
+import dev.vertique.security.authz.AccessPolicyResolver;
+import dev.vertique.security.authz.ActionRef;
 import dev.vertique.security.authz.Authorized;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.security.SecurityRequirementEntry;
 import jakarta.annotation.security.RolesAllowed;
 import java.lang.annotation.Annotation;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
@@ -25,8 +28,11 @@ import java.util.Optional;
  * #methodAnnotations()} and {@link #findAnnotation} report the synthetic {@code @SecurityRequirement}
  * and {@code @RolesAllowed} (or {@code @Authorized}) instances built by {@link
  * #securityAnnotations}, the very instances the installer resolves the security policy and
- * requirement sets from. It has no class annotations and no media types, and its route template is
- * the literal path the operation was installed at.
+ * requirement sets from. For an operation governed by a typed policy they report the requirements
+ * the policy declares instead, behind the scheme's {@code @SecurityRequirement} when the operation
+ * names a scheme, and {@link #requiredAction()} reports the policy's action. It has no class
+ * annotations and no media types, and its route template is the literal path the operation was
+ * installed at.
  *
  * <p>{@link #applicationName()} reports the name of the application whose document the operation
  * serves; the installer takes it from the synthetic operation.
@@ -40,6 +46,7 @@ final class SyntheticOperationDescriptor implements RestOperationDescriptor {
     private final SecurityPolicy securityPolicy;
     private final List<SecurityRequirementSet> securityRequirementSets;
     private final String applicationName;
+    private final Optional<ActionRef> requiredAction;
 
     /**
      * Creates the descriptor for one installed synthetic operation.
@@ -52,6 +59,8 @@ final class SyntheticOperationDescriptor implements RestOperationDescriptor {
      * @param securityPolicy          the policy resolved from {@code methodAnnotations}
      * @param securityRequirementSets the requirement sets resolved from {@code methodAnnotations}
      * @param applicationName         the documented application's name
+     * @param requiredAction          the action the operation requires, or {@link Optional#empty()}
+     *                                when it requires none
      */
     SyntheticOperationDescriptor(
             String operationId,
@@ -60,7 +69,8 @@ final class SyntheticOperationDescriptor implements RestOperationDescriptor {
             List<Annotation> methodAnnotations,
             SecurityPolicy securityPolicy,
             List<SecurityRequirementSet> securityRequirementSets,
-            String applicationName) {
+            String applicationName,
+            Optional<ActionRef> requiredAction) {
         this.operationId = Objects.requireNonNull(operationId, "operationId");
         this.httpMethod = Objects.requireNonNull(httpMethod, "httpMethod");
         this.routeTemplate = Objects.requireNonNull(routeTemplate, "routeTemplate");
@@ -68,24 +78,48 @@ final class SyntheticOperationDescriptor implements RestOperationDescriptor {
         this.securityPolicy = Objects.requireNonNull(securityPolicy, "securityPolicy");
         this.securityRequirementSets = List.copyOf(securityRequirementSets);
         this.applicationName = Objects.requireNonNull(applicationName, "applicationName");
+        this.requiredAction = Objects.requireNonNull(requiredAction, "requiredAction");
     }
 
     /**
-     * Builds the method annotations a resource method equally secured as {@code operation} declares:
-     * {@code @SecurityRequirement(name = schemeName)}, then {@code @RolesAllowed(rolesAllowed)} for a
-     * role-restricted operation or {@code @Authorized} (its defaults: no scopes, match all) for an
-     * authenticated-only one.
+     * Builds the method annotations a resource method equally secured as {@code operation} declares.
+     *
+     * <p>For an operation governed by a typed policy that is {@code @SecurityRequirement(name =
+     * schemeName)}, left out when the scheme is empty, followed by the policy's resolved direct
+     * requirements. Otherwise it is {@code @SecurityRequirement(name = schemeName)}, then
+     * {@code @RolesAllowed(rolesAllowed)} for a role-restricted operation or {@code @Authorized} (its
+     * defaults: no scopes, match all) for an authenticated-only one.
      *
      * @param operation the synthetic operation
-     * @return the two synthetic annotation instances, in that order
+     * @return the synthetic annotation instances, in that order
+     * @throws IllegalArgumentException if the operation's typed policy is not a valid policy
      */
     static List<Annotation> securityAnnotations(SyntheticOperation operation) {
+        if (operation.accessPolicy().isPresent()) {
+            List<Annotation> annotations = new ArrayList<>();
+            if (!operation.schemeName().isEmpty()) {
+                annotations.add(new SecurityRequirementLiteral(operation.schemeName()));
+            }
+            annotations.addAll(
+                    AccessPolicyResolver.resolve(operation.accessPolicy().get()));
+            return List.copyOf(annotations);
+        }
         Annotation requirement = new SecurityRequirementLiteral(operation.schemeName());
         Annotation access = operation
                 .rolesAllowed()
                 .<Annotation>map(roles -> new RolesAllowedLiteral(roles.toArray(String[]::new)))
                 .orElseGet(AuthorizedLiteral::new);
         return List.of(requirement, access);
+    }
+
+    /**
+     * Returns the action the operation requires.
+     *
+     * @return the action a typed policy declares, or {@link Optional#empty()} when the operation
+     *     requires none, as for every operation not governed by a typed policy
+     */
+    Optional<ActionRef> requiredAction() {
+        return requiredAction;
     }
 
     @Override

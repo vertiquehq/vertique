@@ -274,6 +274,7 @@
       "public abstract dev.vertique.mcp.tool.McpPreparedToolCall dev.vertique.mcp.tool.McpToolInvoker.prepare(java.util.Map<java.lang.String, java.lang.Object>,dev.vertique.mcp.tool.McpCancellationSignal)",
       "public abstract dev.vertique.mcp.tool.McpToolDescriptor dev.vertique.mcp.tool.McpToolInvoker.descriptor()",
       "public default java.util.Optional<dev.vertique.mcp.tool.McpStructuredOutputWriter> dev.vertique.mcp.tool.McpToolInvoker.structuredOutputWriter()",
+      "public default java.util.Optional<java.lang.Class<? extends dev.vertique.security.authz.AccessPolicy>> dev.vertique.mcp.tool.McpToolInvoker.accessPolicy()",
       "public default java.util.Set<java.lang.String> dev.vertique.mcp.tool.McpToolInvoker.requiredClientCapabilities()"
     ],
     "dev.vertique.mcp.tool.McpStructuredOutputWriter": [

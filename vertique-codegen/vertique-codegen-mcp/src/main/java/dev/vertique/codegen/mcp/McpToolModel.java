@@ -33,6 +33,9 @@ import javax.lang.model.element.TypeElement;
  * @param roles           the roles a {@code RESTRICTED} tool requires; empty otherwise
  * @param action          the canonical {@code @RequiresAction} value; {@code null} when no action
  *                        was resolved
+ * @param accessPolicy    the typed access policy the tool references; {@code null} for an inline-only
+ *                        tool. A typed tool carries {@link McpAccessMode#DENY_ALL}, no roles and no
+ *                        action here: the policy, not the legacy descriptor, holds its requirements
  * @param jsonProfile     the effective {@code @JsonProfile} id resolved method-over-type;
  *                        {@code null} when the tool declares none and composition selects the
  *                        boundary/global default
@@ -54,6 +57,7 @@ record McpToolModel(
         McpAccessMode accessMode,
         List<String> roles,
         String action,
+        TypeElement accessPolicy,
         String jsonProfile,
         List<McpToolParameterModel> parameters,
         McpToolReturnModel returnModel) {

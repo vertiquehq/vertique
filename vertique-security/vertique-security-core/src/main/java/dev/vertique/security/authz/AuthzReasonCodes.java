@@ -54,6 +54,16 @@ public final class AuthzReasonCodes {
      */
     public static final String STEP_UP_REQUIRED = "STEP_UP_REQUIRED";
 
+    /**
+     * The caller's shape is not supported by a typed local predicate: a service operation that
+     * references a typed policy with role, scope or authentication requirements received a trusted
+     * context that carries a reconstruction, an identity subject, or a delegation. The caller may be
+     * perfectly authentic; the local claim checks simply do not apply to such contexts, so the
+     * enforcement layer denies instead of evaluating claims. This is neither an authentication
+     * failure nor a policy-shape error. Produced by the service authorization interceptor.
+     */
+    public static final String UNSUPPORTED_POLICY_CALLER = "UNSUPPORTED_POLICY_CALLER";
+
     // --- scope (reserved for the enforcement layer / future evaluators) ---
 
     /** A required scope is entirely absent. Reserved; not produced by the default action engine. */

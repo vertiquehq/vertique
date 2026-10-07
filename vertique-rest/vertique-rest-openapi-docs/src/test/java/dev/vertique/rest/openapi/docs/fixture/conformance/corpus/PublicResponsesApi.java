@@ -9,14 +9,16 @@ import dev.vertique.rest.openapi.docs.fixture.responses.it.AccountResource;
 import dev.vertique.rest.openapi.docs.fixture.responses.it.FixedReceiptResource;
 import dev.vertique.rest.openapi.docs.fixture.responses.it.HiddenOperationResource;
 import dev.vertique.rest.openapi.docs.fixture.responses.it.ReportResource;
+import dev.vertique.security.authz.AccessPolicy;
 import io.swagger.v3.oas.annotations.OpenAPIDefinition;
 import io.swagger.v3.oas.annotations.info.Info;
+import jakarta.annotation.security.PermitAll;
 
 /**
  * Declares the responses application {@value CorpusDocuments#RESPONSES} with a public document;
  * {@link ProtectedResponsesApi} declares it with a protected one.
  */
-@ApiDocs(access = ApiDocs.Access.PUBLIC)
+@ApiDocs(policy = PublicResponsesApi.PublicDocsPolicy.class)
 @OpenAPIDefinition(info = @Info(title = "Conformance responses", version = CorpusDocuments.VERSION))
 @RestApplication(
         name = CorpusDocuments.RESPONSES,
@@ -27,4 +29,8 @@ import io.swagger.v3.oas.annotations.info.Info;
             FixedReceiptResource.class,
             HiddenOperationResource.class
         })
-public interface PublicResponsesApi {}
+public interface PublicResponsesApi {
+    /** Anyone may read the document. */
+    @PermitAll
+    public interface PublicDocsPolicy extends AccessPolicy {}
+}

@@ -1434,18 +1434,55 @@ public class JaxRsRouteRegistrar {
             return Optional.empty();
         }
 
+        return resolveRequiredAction(
+                meta.operationId(),
+                resolved,
+                meta.securityPolicy(),
+                actionRegistry,
+                authEnabled,
+                authorizerAvailable,
+                routeViolations);
+    }
+
+    /**
+     * Validates an already parsed {@code @RequiresAction} action gate at startup, applying the checks
+     * of {@link #resolveRequiredAction(ResourceMethodMeta, RequiresActionResolver, ActionRegistry,
+     * boolean, boolean, List)} after its parse step, so a manual route and a framework-owned synthetic
+     * operation fail on exactly the same conditions: a policy conflict, no action registry, no auth
+     * enforcement runtime, no authorizer, or an action the registry does not hold. Any problem is
+     * accumulated into {@code routeViolations}.
+     *
+     * @param operationId         the operation's id, named in every violation
+     * @param resolved            the parsed action, or {@link Optional#empty()} when the operation
+     *                            declares none
+     * @param policy              the operation's resolved security policy
+     * @param actionRegistry      the framework action registry, or {@code null} when authz is absent
+     * @param authEnabled         whether the REST auth-enforcement capability is installed
+     * @param authorizerAvailable whether the core action {@link dev.vertique.security.authz.Authorizer}
+     *                            is installed
+     * @param routeViolations     the accumulator to which any startup violation is added
+     * @return the registered {@link ActionRef}, or {@link Optional#empty()} when the operation declares
+     *     no enforceable action gate (including when a violation was recorded)
+     */
+    static Optional<ActionRef> resolveRequiredAction(
+            String operationId,
+            Optional<ActionRef> resolved,
+            SecurityPolicy policy,
+            @Nullable ActionRegistry actionRegistry,
+            boolean authEnabled,
+            boolean authorizerAvailable,
+            List<RouteRegistrationViolation> routeViolations) {
         if (resolved.isEmpty()) {
             return Optional.empty();
         }
 
         // @RequiresAction AND-composes only with @RolesAllowed/@Authorized; pairing it with a
         // blanket @PermitAll/@DenyAll is a conflict (mirrors the compile-time codegen check).
-        SecurityPolicy policy = meta.securityPolicy();
         if (policy instanceof SecurityPolicy.PermitAll || policy instanceof SecurityPolicy.DenyAll) {
             routeViolations.add(new RouteRegistrationViolation(
-                    meta.operationId(),
+                    operationId,
                     RouteRegistrationViolation.ViolationType.REQUIRES_ACTION_POLICY_CONFLICT,
-                    "@RequiresAction on operation '" + meta.operationId() + "' conflicts with "
+                    "@RequiresAction on operation '" + operationId + "' conflicts with "
                             + (policy instanceof SecurityPolicy.PermitAll ? "@PermitAll" : "@DenyAll")
                             + "; @RequiresAction composes only with @RolesAllowed/@Authorized"));
             return Optional.empty();
@@ -1454,9 +1491,9 @@ public class JaxRsRouteRegistrar {
         ActionRef action = resolved.get();
         if (actionRegistry == null) {
             routeViolations.add(new RouteRegistrationViolation(
-                    meta.operationId(),
+                    operationId,
                     RouteRegistrationViolation.ViolationType.REQUIRES_ACTION_INVALID,
-                    "@RequiresAction('" + action.value() + "') on operation '" + meta.operationId()
+                    "@RequiresAction('" + action.value() + "') on operation '" + operationId
                             + "' cannot be enforced: the authorization engine is not installed"));
             return Optional.empty();
         }
@@ -1467,9 +1504,9 @@ public class JaxRsRouteRegistrar {
             // checkSecurityWithoutAuth does not catch this case: SecurityPolicy.None.isRestrictive()
             // is false, so an action-only route is invisible to it.
             routeViolations.add(new RouteRegistrationViolation(
-                    meta.operationId(),
+                    operationId,
                     RouteRegistrationViolation.ViolationType.REQUIRES_ACTION_INVALID,
-                    "@RequiresAction('" + action.value() + "') on operation '" + meta.operationId()
+                    "@RequiresAction('" + action.value() + "') on operation '" + operationId
                             + "' cannot be enforced: the auth enforcement runtime is not installed. "
                             + "Include AuthModule in your Dagger component to enable security features."));
             return Optional.empty();
@@ -1481,9 +1518,9 @@ public class JaxRsRouteRegistrar {
             // the enforcer evaluates the gate (NPE on the missing authorizer). Fail closed at boot
             // instead (finding W2).
             routeViolations.add(new RouteRegistrationViolation(
-                    meta.operationId(),
+                    operationId,
                     RouteRegistrationViolation.ViolationType.REQUIRES_ACTION_INVALID,
-                    "@RequiresAction('" + action.value() + "') on operation '" + meta.operationId()
+                    "@RequiresAction('" + action.value() + "') on operation '" + operationId
                             + "' requires action '" + action.value()
                             + "' but no Authorizer is installed to enforce it. Include SecurityAuthzModule "
                             + "in your Dagger component to enable the authorization engine."));
@@ -1491,9 +1528,9 @@ public class JaxRsRouteRegistrar {
         }
         if (!actionRegistry.contains(action)) {
             routeViolations.add(new RouteRegistrationViolation(
-                    meta.operationId(),
+                    operationId,
                     RouteRegistrationViolation.ViolationType.REQUIRES_ACTION_INVALID,
-                    "@RequiresAction('" + action.value() + "') on operation '" + meta.operationId()
+                    "@RequiresAction('" + action.value() + "') on operation '" + operationId
                             + "' is not registered in the ActionRegistry"));
             return Optional.empty();
         }

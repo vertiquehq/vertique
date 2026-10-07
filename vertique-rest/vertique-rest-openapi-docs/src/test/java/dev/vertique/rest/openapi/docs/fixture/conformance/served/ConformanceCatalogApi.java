@@ -6,15 +6,17 @@ package dev.vertique.rest.openapi.docs.fixture.conformance.served;
 import dev.vertique.rest.core.application.RestApplication;
 import dev.vertique.rest.openapi.docs.ApiDocs;
 import dev.vertique.rest.openapi.docs.fixture.contract.CatalogEntryResource;
+import dev.vertique.security.authz.AccessPolicy;
 import io.swagger.v3.oas.annotations.OpenAPIDefinition;
 import io.swagger.v3.oas.annotations.info.Info;
+import jakarta.annotation.security.PermitAll;
 
 /**
  * The documented application {@value #NAME} at {@value #PATH}, listing {@link CatalogEntryResource}.
  * It names no contract of its own, so its document is generated, with the {@code info} its declaring
  * interface carries.
  */
-@ApiDocs(access = ApiDocs.Access.PUBLIC)
+@ApiDocs(policy = ConformanceCatalogApi.PublicDocsPolicy.class)
 @OpenAPIDefinition(info = @Info(title = ConformanceCatalogApi.TITLE, version = ConformanceCatalogApi.VERSION))
 @RestApplication(
         name = ConformanceCatalogApi.NAME,
@@ -36,4 +38,8 @@ public interface ConformanceCatalogApi {
 
     /** The annotated {@code info.version}. */
     String VERSION = "1.0";
+
+    /** Anyone may read the document. */
+    @PermitAll
+    public interface PublicDocsPolicy extends AccessPolicy {}
 }

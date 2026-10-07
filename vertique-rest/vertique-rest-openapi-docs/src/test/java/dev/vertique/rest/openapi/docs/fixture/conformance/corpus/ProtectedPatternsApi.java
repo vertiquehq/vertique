@@ -6,6 +6,8 @@ package dev.vertique.rest.openapi.docs.fixture.conformance.corpus;
 import dev.vertique.rest.core.application.RestApplication;
 import dev.vertique.rest.openapi.docs.ApiDocs;
 import dev.vertique.rest.openapi.docs.fixture.input.patterns.PatternsResource;
+import dev.vertique.security.authz.AccessPolicy;
+import dev.vertique.security.authz.Authorized;
 import io.swagger.v3.oas.annotations.OpenAPIDefinition;
 import io.swagger.v3.oas.annotations.info.Info;
 
@@ -14,10 +16,14 @@ import io.swagger.v3.oas.annotations.info.Info;
  * {@value CorpusDocuments#BEARER_AUTH}, which any authenticated caller may read; {@link
  * PublicPatternsApi} declares it with a public one.
  */
-@ApiDocs(access = ApiDocs.Access.PROTECTED, securityScheme = CorpusDocuments.BEARER_AUTH)
+@ApiDocs(policy = ProtectedPatternsApi.AuthenticatedDocsPolicy.class, securityScheme = CorpusDocuments.BEARER_AUTH)
 @OpenAPIDefinition(info = @Info(title = "Conformance patterns", version = CorpusDocuments.VERSION))
 @RestApplication(
         name = CorpusDocuments.PATTERNS,
         path = CorpusDocuments.PATTERNS_PATH,
         resources = PatternsResource.class)
-public interface ProtectedPatternsApi {}
+public interface ProtectedPatternsApi {
+    /** Any authenticated reader may read the document. */
+    @Authorized
+    public interface AuthenticatedDocsPolicy extends AccessPolicy {}
+}

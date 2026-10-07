@@ -547,6 +547,183 @@ class SecurityAnnotationValidatorTest {
         }
     }
 
+    @Nested
+    @DisplayName("typed policy selection")
+    class TypedPolicies {
+
+        @Test
+        @DisplayName("class @RequiresPolicy mixed with method @PermitAll is a conflict")
+        void classPolicy_methodPermitAll_errors() {
+            var result =
+                    ProcessorTestHarness.run(new ValidatorProbe(), SourceFiles.inline("dev.vertique.test.Res", """
+                    package dev.vertique.test;
+
+                    import dev.vertique.security.authz.AccessPolicy;
+                    import dev.vertique.security.authz.RequiresPolicy;
+                    import jakarta.annotation.security.PermitAll;
+                    import jakarta.annotation.security.RolesAllowed;
+                    import jakarta.ws.rs.GET;
+                    import jakarta.ws.rs.Path;
+
+                    class Policies {
+                        @RolesAllowed("admin")
+                        public interface AdminPolicy extends AccessPolicy {}
+                    }
+
+                    @RequiresPolicy(Policies.AdminPolicy.class)
+                    @Path("/res")
+                    public class Res {
+                        @GET @PermitAll public String get() { return ""; }
+                    }
+                    """));
+            result.assertFailed();
+            assertEquals(1, errorCount(result), "class policy mixed with method @PermitAll must be one conflict");
+        }
+
+        @Test
+        @DisplayName("method @RequiresPolicy replaces a different class @RequiresPolicy")
+        void methodPolicy_replacesClassPolicy_noError() {
+            var result =
+                    ProcessorTestHarness.run(new ValidatorProbe(), SourceFiles.inline("dev.vertique.test.Res", """
+                    package dev.vertique.test;
+
+                    import dev.vertique.security.authz.AccessPolicy;
+                    import dev.vertique.security.authz.RequiresPolicy;
+                    import jakarta.annotation.security.PermitAll;
+                    import jakarta.annotation.security.RolesAllowed;
+                    import jakarta.ws.rs.GET;
+                    import jakarta.ws.rs.Path;
+
+                    class Policies {
+                        @RolesAllowed("admin")
+                        public interface AdminPolicy extends AccessPolicy {}
+
+                        @PermitAll
+                        public interface OpenPolicy extends AccessPolicy {}
+                    }
+
+                    @RequiresPolicy(Policies.AdminPolicy.class)
+                    @Path("/res")
+                    public class Res {
+                        @GET @RequiresPolicy(Policies.OpenPolicy.class) public String get() { return ""; }
+                    }
+                    """));
+            result.assertSuccess();
+            assertEquals(0, errorCount(result));
+        }
+
+        @Test
+        @DisplayName("two different @RequiresPolicy references on one type hierarchy conflict")
+        void twoTypePolicies_error() {
+            var result =
+                    ProcessorTestHarness.run(new ValidatorProbe(), SourceFiles.inline("dev.vertique.test.Res", """
+                    package dev.vertique.test;
+
+                    import dev.vertique.security.authz.AccessPolicy;
+                    import dev.vertique.security.authz.RequiresPolicy;
+                    import jakarta.annotation.security.DenyAll;
+                    import jakarta.annotation.security.PermitAll;
+                    import jakarta.ws.rs.GET;
+                    import jakarta.ws.rs.Path;
+
+                    class Policies {
+                        @PermitAll
+                        public interface OpenPolicy extends AccessPolicy {}
+
+                        @DenyAll
+                        public interface ClosedPolicy extends AccessPolicy {}
+                    }
+
+                    @RequiresPolicy(Policies.OpenPolicy.class)
+                    interface Left {
+                        @GET String get();
+                    }
+
+                    @RequiresPolicy(Policies.ClosedPolicy.class)
+                    interface Right {
+                        @GET String get();
+                    }
+
+                    @Path("/res")
+                    public class Res implements Left, Right {
+                        @GET @Override public String get() { return ""; }
+                    }
+                    """));
+            result.assertFailed();
+            assertEquals(1, errorCount(result), "distinct type-set policies must be one conflict");
+        }
+
+        @Test
+        @DisplayName("a private superclass method is not part of the operation")
+        void privateSuperMethod_doesNotConflict() {
+            var result =
+                    ProcessorTestHarness.run(new ValidatorProbe(), SourceFiles.inline("dev.vertique.test.Res", """
+                    package dev.vertique.test;
+
+                    import dev.vertique.security.authz.AccessPolicy;
+                    import dev.vertique.security.authz.RequiresPolicy;
+                    import jakarta.annotation.security.PermitAll;
+                    import jakarta.annotation.security.RolesAllowed;
+                    import jakarta.ws.rs.GET;
+                    import jakarta.ws.rs.Path;
+
+                    class Policies {
+                        @RolesAllowed("admin")
+                        public interface AdminPolicy extends AccessPolicy {}
+                    }
+
+                    class Hidden {
+                        @PermitAll
+                        private String get() { return ""; }
+                    }
+
+                    @RequiresPolicy(Policies.AdminPolicy.class)
+                    @Path("/res")
+                    public class Res extends Hidden {
+                        @GET public String get() { return ""; }
+                    }
+                    """));
+            result.assertSuccess();
+            assertEquals(0, errorCount(result), "a hidden private method must not mix with the class policy");
+        }
+
+        @Test
+        @DisplayName("a generic override is the same operation as the type-variable method")
+        void genericOverride_mixedWithPermitAll_errors() {
+            var result =
+                    ProcessorTestHarness.run(new ValidatorProbe(), SourceFiles.inline("dev.vertique.test.Res", """
+                    package dev.vertique.test;
+
+                    import dev.vertique.security.authz.AccessPolicy;
+                    import dev.vertique.security.authz.RequiresPolicy;
+                    import jakarta.annotation.security.PermitAll;
+                    import jakarta.annotation.security.RolesAllowed;
+                    import jakarta.ws.rs.GET;
+                    import jakarta.ws.rs.Path;
+
+                    class Policies {
+                        @RolesAllowed("admin")
+                        public interface AdminPolicy extends AccessPolicy {}
+                    }
+
+                    interface Mid<T> {
+                        @RequiresPolicy(Policies.AdminPolicy.class)
+                        String take(T value);
+                    }
+
+                    interface Next extends Mid<String> {}
+
+                    @Path("/res")
+                    public class Res implements Next {
+                        @GET @PermitAll public String take(String value) { return ""; }
+                    }
+                    """));
+            result.assertFailed();
+            assertEquals(
+                    1, errorCount(result), "a policy on take(T) mixed with take(String) @PermitAll is one conflict");
+        }
+    }
+
     // --- Helper ---
 
     private int errorCount(ProcessorTestHarness.Result result) {
@@ -555,9 +732,12 @@ class SecurityAnnotationValidatorTest {
                 .filter(d -> {
                     String msg = d.getMessage(null);
                     return msg != null
+                            && !msg.contains("cannot find symbol")
                             && (msg.contains("Conflicting security annotations")
                                     || msg.contains("@RolesAllowed at")
-                                    || msg.contains("empty value array"));
+                                    || msg.contains("empty value array")
+                                    || msg.contains("RequiresPolicy")
+                                    || msg.contains("AccessPolicy"));
                 })
                 .count();
     }
