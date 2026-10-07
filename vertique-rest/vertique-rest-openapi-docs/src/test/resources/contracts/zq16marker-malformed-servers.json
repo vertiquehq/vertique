@@ -1,0 +1,14 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Malformed servers",
+    "version": "1.0.0",
+    "description": "zq16marker: a contract whose only server URL is malformed"
+  },
+  "servers": [
+    {
+      "url": "http://zq16marker host/api"
+    }
+  ],
+  "paths": {}
+}

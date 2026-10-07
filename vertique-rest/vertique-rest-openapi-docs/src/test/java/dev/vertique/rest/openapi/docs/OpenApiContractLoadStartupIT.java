@@ -87,9 +87,8 @@ public class OpenApiContractLoadStartupIT {
     /** The reason for a contract file that cannot be read. */
     private static final String UNREADABLE_REASON = "the file cannot be read";
 
-    /** The reason for a contract with a relative or otherwise malformed server URL. */
-    private static final String SERVERS_REASON =
-            "a servers url is not a valid absolute URL; use an absolute URL or omit servers";
+    /** The reason for a contract with a malformed server URL. */
+    private static final String SERVERS_REASON = "a servers url is not a valid URL; use a valid URL or omit servers";
 
     /** The reason for any other contract vertx-openapi rejects. */
     private static final String INVALID_REASON = "the file is not a valid OpenAPI contract";
@@ -101,10 +100,11 @@ public class OpenApiContractLoadStartupIT {
     /** The classpath resource of a loadable, servers-free contract describing {@code public}'s operations. */
     private static final String PUBLIC_CONTRACT_RESOURCE = "apidocs-contract-test.json";
 
-    /** A contract whose only server URL is relative. */
-    private static final String RELATIVE_SERVERS_CONTRACT = "{\"openapi\":\"3.0.3\",\"info\":{\"title\":\"Public\","
-            + "\"version\":\"1\",\"description\":\"" + MARKER + " description\"},\"servers\":[{\"url\":\"/" + MARKER
-            + "/api\"}],\"paths\":{}}";
+    /** A contract whose only server URL is malformed. */
+    private static final String MALFORMED_SERVERS_CONTRACT = "{\"openapi\":\"3.0.3\",\"info\":{\"title\":\"Public\","
+            + "\"version\":\"1\",\"description\":\"" + MARKER + " description\"},\"servers\":[{\"url\":\"http://"
+            + MARKER
+            + " host/api\"}],\"paths\":{}}";
 
     /** A loadable contract with no {@code servers}. */
     private static final String VALID_CONTRACT = "{\"openapi\":\"3.0.3\",\"info\":{\"title\":\"Public\","
@@ -165,9 +165,9 @@ public class OpenApiContractLoadStartupIT {
     static Stream<Unloadable> unloadableContracts() {
         return Stream.of(
                 new Unloadable(
-                        "(1) a relative servers url",
-                        MARKER + "-relative-servers.json",
-                        RELATIVE_SERVERS_CONTRACT,
+                        "(1) a malformed servers url",
+                        MARKER + "-malformed-servers.json",
+                        MALFORMED_SERVERS_CONTRACT,
                         SERVERS_REASON),
                 new Unloadable(
                         "(2) a readable contract with a .txt extension",
@@ -236,7 +236,7 @@ public class OpenApiContractLoadStartupIT {
     @DisplayName("(5) a hand-built JAX-RS mount whose contract cannot be loaded fails startup naming its mount path")
     void unloadableHandBuiltMountContractFailsStartup(Vertx vertx) throws Exception {
         // Given: openapi-contract, a loadable global contract, and a hand-built mount whose contract has a
-        // relative servers url
+        // malformed servers url
         JsonObject config = config(OPENAPI_CONTRACT, publicContract("global-contract.json"));
         Provisions component = DaggerContractLoadTestComponents_HandBuiltContractLoadComponent.factory()
                 .create(vertx, config);
@@ -246,7 +246,7 @@ public class OpenApiContractLoadStartupIT {
 
         // Then: startup fails naming the mount path and the reason
         String message =
-                assertRefused("(5) a hand-built mount", outcome, ContractLoadModules.RELATIVE_SERVERS_RESOURCE);
+                assertRefused("(5) a hand-built mount", outcome, ContractLoadModules.MALFORMED_SERVERS_RESOURCE);
         assertTrue(
                 message.contains("OpenAPI contract of JAX-RS mount '" + ContractLoadModules.HAND_BUILT_MOUNT_PATH + "'"
                         + CANNOT_BE_LOADED + SERVERS_REASON),
@@ -257,8 +257,8 @@ public class OpenApiContractLoadStartupIT {
     @DisplayName("(6) an application inheriting an unloadable global contract fails startup naming jaxrs.openapiPath")
     void unloadableInheritedGlobalContractNamesTheGlobalSetting(Vertx vertx) throws Exception {
         // Given: openapi-contract and an unloadable global contract public inherits
-        Path location = tempDir.resolve(MARKER + "-relative-servers.json");
-        Files.writeString(location, RELATIVE_SERVERS_CONTRACT);
+        Path location = tempDir.resolve(MARKER + "-malformed-servers.json");
+        Files.writeString(location, MALFORMED_SERVERS_CONTRACT);
         JsonObject config = config(OPENAPI_CONTRACT, location.toString());
 
         // When: it is deployed
@@ -277,7 +277,7 @@ public class OpenApiContractLoadStartupIT {
             "(6) an application whose declaration names an unloadable contract fails startup naming the annotation")
     void unloadableDeclaredContractNamesTheAnnotationSetting(Vertx vertx) throws Exception {
         // Given: openapi-contract, a loadable global contract, and an application declaring a contract with
-        // a relative servers url
+        // a malformed servers url
         JsonObject config = config(OPENAPI_CONTRACT, publicContract("global-contract.json"));
         Provisions component = DaggerContractLoadTestComponents_AnnotatedContractLoadComponent.factory()
                 .create(vertx, config);
@@ -287,7 +287,7 @@ public class OpenApiContractLoadStartupIT {
 
         // Then: startup fails naming the application and its declaration's setting
         String message =
-                assertRefused("(6) a declared contract", outcome, ContractLoadModules.RELATIVE_SERVERS_RESOURCE);
+                assertRefused("(6) a declared contract", outcome, ContractLoadModules.MALFORMED_SERVERS_RESOURCE);
         assertTrue(
                 message.contains("OpenAPI contract of application '" + AnnotatedContractApi.NAME
                         + "' (the @RestApplication annotation's openapiPath)" + CANNOT_BE_LOADED + SERVERS_REASON),
@@ -297,9 +297,9 @@ public class OpenApiContractLoadStartupIT {
     @Test
     @DisplayName("(12) two verticle instances fail startup with the same single failure as one instance")
     void multipleInstancesFailWithTheSameFailure(Vertx vertx) throws Exception {
-        // Given: openapi-contract and public's configured contract with a relative servers url
-        Path location = tempDir.resolve(MARKER + "-relative-servers.json");
-        Files.writeString(location, RELATIVE_SERVERS_CONTRACT);
+        // Given: openapi-contract and public's configured contract with a malformed servers url
+        Path location = tempDir.resolve(MARKER + "-malformed-servers.json");
+        Files.writeString(location, MALFORMED_SERVERS_CONTRACT);
         JsonObject config = withApplicationContract(
                 config(OPENAPI_CONTRACT, publicContract("global-contract.json")), location.toString());
 
@@ -373,8 +373,8 @@ public class OpenApiContractLoadStartupIT {
     @DisplayName("(8) another strategy starts with the contract module present and an unloadable contract configured")
     void otherStrategyStartsWithAnUnloadableContract(String strategy, Vertx vertx) throws Exception {
         // Given: the strategy, and an unloadable global and configured contract
-        Path location = tempDir.resolve(MARKER + "-relative-servers.json");
-        Files.writeString(location, RELATIVE_SERVERS_CONTRACT);
+        Path location = tempDir.resolve(MARKER + "-malformed-servers.json");
+        Files.writeString(location, MALFORMED_SERVERS_CONTRACT);
         JsonObject config = withApplicationContract(config(strategy, location.toString()), location.toString());
 
         // When: it is deployed and sent a conforming request
@@ -418,8 +418,8 @@ public class OpenApiContractLoadStartupIT {
     @DisplayName("(11) an empty mount under openapi-contract binds no contract and starts")
     void emptyMountStarts(Vertx vertx) throws Exception {
         // Given: openapi-contract, an unloadable global contract, and an application with no resource
-        Path location = tempDir.resolve(MARKER + "-relative-servers.json");
-        Files.writeString(location, RELATIVE_SERVERS_CONTRACT);
+        Path location = tempDir.resolve(MARKER + "-malformed-servers.json");
+        Files.writeString(location, MALFORMED_SERVERS_CONTRACT);
         JsonObject config = config(OPENAPI_CONTRACT, location.toString());
         Provisions component = DaggerContractLoadTestComponents_EmptyContractLoadComponent.factory()
                 .create(vertx, config);

@@ -21,7 +21,7 @@ finer-grained attribution is required.
 
 | Coordinate | Version | License | Notes |
 | --- | --- | --- | --- |
-| `io.vertx:vertx-dependencies` (BOM) | 5.1.6 | Apache-2.0 OR EPL-2.0 | Recipient's choice; Vert.x is dual-licensed |
+| `io.vertx:vertx-dependencies` (BOM) | 5.1.8 | Apache-2.0 OR EPL-2.0 | Recipient's choice; Vert.x is dual-licensed |
 | `io.lettuce:lettuce-core` | 7.7.0.RELEASE | MIT | Redis client, isolated to the topology-maintenance adapter |
 | `com.google.dagger:dagger` | 2.60.1 | Apache-2.0 | Compile-time DI, incl. `dagger-compiler` annotation processor |
 | `com.fasterxml.jackson:jackson-bom` | 2.22.2 | Apache-2.0 | |
