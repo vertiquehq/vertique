@@ -14,6 +14,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import dev.vertique.codegen.test.ProcessorTestHarness;
 import dev.vertique.codegen.test.ProcessorTestHarness.Result;
 import dev.vertique.codegen.test.fixtures.SourceFiles;
+import dev.vertique.core.exception.ConfigurationException;
 import dev.vertique.core.sanitization.Canonicalizer;
 import dev.vertique.core.sanitization.InputFieldNameResolver;
 import dev.vertique.core.sanitization.InputLocation;
@@ -1480,6 +1481,18 @@ class SanitizationProcessorRoundtripTest {
             }
             """);
 
+    /**
+     * Value type of the container-of-maps field. Deliberately declares no policy: a governed type behind
+     * a {@code Map} value is a configuration registration refuses, so the matrix keeps the shape that
+     * still has to conform — a map reaches no owner on either path — with a value that is legal.
+     */
+    private static final JavaFileObject CONF_PLAIN_DTO = SourceFiles.inline("com.example.conf.ConfPlainDto", """
+            package com.example.conf;
+            public class ConfPlainDto {
+                public String text;
+            }
+            """);
+
     /** Target of the accessor-less field: reachable only through a {@code private} field with no accessor. */
     private static final JavaFileObject CONF_NESTED_DTO = SourceFiles.inline("com.example.conf.ConfNestedDto", """
             package com.example.conf;
@@ -1558,7 +1571,7 @@ class SanitizationProcessorRoundtripTest {
                 public ConfWeird<String, ConfLeafDto> weird;
                 public List<List<ConfLeafDto>> nestedLists;
                 private ConfNestedDto accessorLess;
-                public List<Map<String, ConfLeafDto>> mapsInList;
+                public List<Map<String, ConfPlainDto>> mapsInList;
                 public ConfRootDto self;
                 @Sanitize(StripControlCharsSanitizer.class)
                 public String name;
@@ -1578,7 +1591,15 @@ class SanitizationProcessorRoundtripTest {
 
     /** The compilation unit shared, byte-identical, by both conformance environments. */
     private static final JavaFileObject[] CONF_SOURCES = {
-        CONF_LEAF_DTO, CONF_NESTED_DTO, CONF_WRAPPER, CONF_PAIR, CONF_FIXED, CONF_WEIRD, CONF_ROOT_DTO, CONF_RESOURCE
+        CONF_LEAF_DTO,
+        CONF_PLAIN_DTO,
+        CONF_NESTED_DTO,
+        CONF_WRAPPER,
+        CONF_PAIR,
+        CONF_FIXED,
+        CONF_WEIRD,
+        CONF_ROOT_DTO,
+        CONF_RESOURCE
     };
 
     /** FQN of the conformance root DTO, loaded separately out of each environment's classloader. */
@@ -1586,6 +1607,44 @@ class SanitizationProcessorRoundtripTest {
 
     /** FQN of the generated companion whose presence distinguishes the two environments. */
     private static final String CONF_ROOT_PROCESSOR_FQN = "com.example.conf.ConfRootDto_InputProcessor";
+
+    // --- Governed type behind a Map value: refused at registration on both paths ---
+
+    private static final JavaFileObject STRAND_LEAF_DTO = SourceFiles.inline("com.example.strand.StrandLeafDto", """
+            package com.example.strand;
+            import dev.vertique.core.sanitization.Sanitize;
+            import dev.vertique.sanitization.sanitize.StripControlCharsSanitizer;
+            public class StrandLeafDto {
+                @Sanitize(StripControlCharsSanitizer.class)
+                public String text;
+            }
+            """);
+
+    private static final JavaFileObject STRAND_ROOT_DTO = SourceFiles.inline("com.example.strand.StrandRootDto", """
+            package com.example.strand;
+            import java.util.Map;
+            public class StrandRootDto {
+                public Map<String, StrandLeafDto> entries;
+            }
+            """);
+
+    private static final JavaFileObject STRAND_RESOURCE = SourceFiles.inline("com.example.strand.StrandResource", """
+            package com.example.strand;
+            import jakarta.ws.rs.POST;
+            import jakarta.ws.rs.Path;
+            @Path("/strand")
+            public class StrandResource {
+                @POST
+                public String create(StrandRootDto body) { return null; }
+            }
+            """);
+
+    private static final JavaFileObject[] STRAND_SOURCES = {STRAND_LEAF_DTO, STRAND_ROOT_DTO, STRAND_RESOURCE};
+
+    /** Never generated: the scanner does not reach a leaf held only as a Map value. */
+    private static final String STRAND_LEAF_PROCESSOR_FQN = "com.example.strand.StrandLeafDto_InputProcessor";
+
+    private static final String STRAND_ROOT_FQN = "com.example.strand.StrandRootDto";
 
     // --- Isolated Pair-shape conformance fixtures ---
 
@@ -1907,6 +1966,26 @@ class SanitizationProcessorRoundtripTest {
                             + " already outside this surplus before this gate existed — String's own metadata"
                             + " declares no fields either — so neither path ever treated it as a field-name"
                             + " owner");
+        }
+
+        @Test
+        @DisplayName(
+                "a governed type reachable only as a Map value is refused with and without the codegen processor on the compile path")
+        void aGovernedTypeBehindAMapValueIsRefusedOnBothPaths() {
+            // The scanner emits no companion for a leaf it can reach only through a Map value, so the
+            // codegen environment is asserted by a successful compilation rather than by a companion.
+            Result generated = ProcessorTestHarness.run(new SanitizationProcessor(), STRAND_SOURCES);
+            generated.assertSuccess();
+            Result reflective = compileWithoutCodegen(STRAND_SOURCES, STRAND_LEAF_PROCESSOR_FQN);
+
+            for (Result environment : List.of(generated, reflective)) {
+                ConfigurationException refusal =
+                        assertThrows(ConfigurationException.class, () -> prepareOwners(environment, STRAND_ROOT_FQN));
+                assertTrue(
+                        refusal.getMessage().contains("'entries'")
+                                && refusal.getMessage().contains("com.example.strand.StrandLeafDto"),
+                        () -> "the refusal must name the property and the stranded type: " + refusal.getMessage());
+            }
         }
 
         @Test

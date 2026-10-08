@@ -134,8 +134,15 @@ public interface InputObjectProcessor {
      *
      * @param declaredType the body or message type; {@code null} prepares nothing
      * @param resolver     the resolver the same traversal will use at runtime; must not be {@code null}
+     * <p>It also refuses, as a {@code ConfigurationException}, a declared policy the engine provably
+     * cannot run: a policy-declaring type held as the value of a {@code Map} property (or a {@code Map}
+     * entry-point type), and a polymorphic base whose subtype — as reported by
+     * {@link InputFieldNameResolver#polymorphicSubtypes} — declares a chain or skip the base does not.
+     *
      * @throws dev.vertique.core.exception.ConfigurationException if a reachable owner's projection
-     *                                                            cannot be composed
+     *                                                            cannot be composed, or a reachable type
+     *                                                            strands a declared policy behind a
+     *                                                            {@code Map} value or a polymorphic subtype
      * @throws IllegalStateException if a reachable type declares conflicting policy annotations —
      *                               previously surfaced on the first request, now at registration
      */

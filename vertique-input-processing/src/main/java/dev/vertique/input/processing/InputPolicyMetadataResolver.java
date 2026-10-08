@@ -23,6 +23,7 @@ import java.util.Collection;
 import java.util.Deque;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -54,8 +55,13 @@ import java.util.concurrent.ConcurrentHashMap;
  * {@code Map<String, Inner>} or {@code Object} field, and a subtype's own chains are invisible
  * because descent follows the declared type rather than the runtime one. Values behind those links
  * still receive the chains they inherit — they simply contribute no declared metadata of their own.
- * {@link #declaresPolicies} follows exactly the same links and reports {@code false} for the same
- * cases, by construction.
+ * The two shapes whose stranded policy can be named statically are refused at registration by
+ * {@link OwnerTypeWalk} instead of being skipped in silence: {@link #mapValueClassesByProperty} finds
+ * the declared class behind a {@code Map}, and the codec's
+ * {@link dev.vertique.core.sanitization.InputFieldNameResolver#polymorphicSubtypes} supplies a
+ * polymorphic base's subtypes. {@link #declaresPolicies} follows the same links as the walker, plus a
+ * {@code Map}'s statically known value class, so a policy that is only stranded still counts as
+ * declared and the transport cannot boot without an engine over it.
  *
  * <p>Field classification runs through {@link TypeClassifier}, the single rule set this module also
  * applies to {@link DefaultInputObjectProcessor}'s entry-point target type: {@code java.util.Optional}
@@ -103,6 +109,9 @@ class InputPolicyMetadataResolver {
         enqueueDescendable(pending, TypeClassifier.classify(targetType));
         // A collection or array entry point carries its policies on the element type, not the container.
         enqueueDescendable(pending, TypeClassifier.elementType(targetType));
+        // A Map entry point carries them on its value type, which the engine never applies — but a
+        // declared policy there is exactly what the startup gate must not report as absent.
+        mapValueClasses(targetType).forEach(value -> enqueueDescendable(pending, value));
 
         while (!pending.isEmpty()) {
             Class<?> type = pending.poll();
@@ -125,6 +134,13 @@ class InputPolicyMetadataResolver {
                     enqueueDescendable(pending, field.fieldType());
                 }
             }
+            // A Map-typed property is usually absent from the metadata above (an unannotated one is
+            // not recorded), so its value classes come from the declared property types instead.
+            if (!OwnerTypeWalk.isPlatformType(type.getName())) {
+                for (Set<Class<?>> values : mapValueClassesByProperty(type).values()) {
+                    values.forEach(value -> enqueueDescendable(pending, value));
+                }
+            }
         }
         return false;
     }
@@ -138,6 +154,98 @@ class InputPolicyMetadataResolver {
     private static void enqueueDescendable(Deque<Class<?>> pending, @Nullable Class<?> type) {
         if (type != null && type != String.class && isDescendableObject(type)) {
             pending.add(type);
+        }
+    }
+
+    /**
+     * The descendable classes {@code type} binds as <em>values of a {@link Map}</em>, at any depth of
+     * container nesting: {@code Map<String, Dto>}, {@code Map<String, List<Dto>>},
+     * {@code List<Map<String, Dto>>}, {@code Optional<Map<String, Map<String, Dto>>>} and a
+     * {@code Map} subtype that fixes its value type all yield {@code Dto}.
+     *
+     * <p>These are the classes whose own declared policies the engine cannot apply: a map has no
+     * statically known property set, so {@link #isDescendableObject} refuses the link and the entries
+     * are processed against {@link InputPolicyMetadata#EMPTY}. Scalar leaves, {@link Object}, wildcards
+     * that resolve to {@code Object} and a raw {@code Map} yield nothing — there is no declared
+     * class behind them to carry a policy.
+     *
+     * @param type the declared type; may be {@code null}
+     * @return the descendable classes bound behind a {@code Map}, in declaration order; never
+     *         {@code null}
+     */
+    static Set<Class<?>> mapValueClasses(@Nullable Type type) {
+        Set<Class<?>> values = new LinkedHashSet<>();
+        collectMapValues(type, false, 0, values);
+        return values;
+    }
+
+    /**
+     * Applies {@link #mapValueClasses} to every instance property {@code owner} declares, keyed by
+     * property name so a refusal can name the offending field.
+     *
+     * <p>The property set matches {@link #resolveFields}: instance fields up the class hierarchy
+     * (a subclass shadows a superclass field of the same name) or a record's components, never a
+     * static or synthetic field. It reads the declared types directly rather than the resolved
+     * metadata because an unannotated {@code Map} field is not recorded there.
+     *
+     * @param owner the class whose properties to inspect
+     * @return property name to the descendable classes bound behind a {@code Map} on it; properties
+     *         with none are absent
+     */
+    static Map<String, Set<Class<?>>> mapValueClassesByProperty(Class<?> owner) {
+        Map<String, Type> properties = new LinkedHashMap<>();
+        if (owner.isRecord()) {
+            for (RecordComponent component : owner.getRecordComponents()) {
+                properties.put(component.getName(), component.getGenericType());
+            }
+        } else {
+            for (Class<?> cls = owner; cls != null && cls != Object.class; cls = cls.getSuperclass()) {
+                for (Field field : cls.getDeclaredFields()) {
+                    if (field.isSynthetic() || Modifier.isStatic(field.getModifiers())) continue;
+                    properties.putIfAbsent(field.getName(), field.getGenericType());
+                }
+            }
+        }
+        Map<String, Set<Class<?>>> result = new LinkedHashMap<>();
+        properties.forEach((name, type) -> {
+            Set<Class<?>> values = mapValueClasses(type);
+            if (!values.isEmpty()) {
+                result.put(name, values);
+            }
+        });
+        return result;
+    }
+
+    /**
+     * Maximum container nesting {@link #collectMapValues} follows. Real shapes nest two or three
+     * levels; the bound exists so a self-referential container such as
+     * {@code class Tree extends HashMap<String, Tree>} terminates instead of recursing forever.
+     */
+    private static final int MAX_CONTAINER_DEPTH = 16;
+
+    /**
+     * Walks container nesting one level at a time, recording a descendable class once a
+     * {@link Map} has been crossed.
+     *
+     * @param type      the type at this level; may be {@code null}
+     * @param insideMap whether a {@code Map} was crossed on the way here
+     * @param depth     container levels followed so far
+     * @param out       the accumulating result
+     */
+    private static void collectMapValues(@Nullable Type type, boolean insideMap, int depth, Set<Class<?>> out) {
+        Type normalized = TypeClassifier.normalize(type);
+        if (normalized == null || depth > MAX_CONTAINER_DEPTH) {
+            return;
+        }
+        Class<?> raw = TypeClassifier.rawClassOf(normalized);
+        Type entry = TypeClassifier.entryBinding(normalized);
+        if (entry != null) {
+            boolean crossesMap = raw != null && Map.class.isAssignableFrom(raw);
+            collectMapValues(entry, insideMap || crossesMap, depth + 1, out);
+            return;
+        }
+        if (insideMap && raw != null && raw != String.class && isDescendableObject(raw)) {
+            out.add(raw);
         }
     }
 

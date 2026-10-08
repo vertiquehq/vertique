@@ -14,6 +14,7 @@ import java.util.Collection;
 import java.util.Deque;
 import java.util.HashSet;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.TreeSet;
@@ -148,6 +149,10 @@ final class OwnerTypeWalk {
             enqueue(pending, classified);
         }
         enqueue(pending, elementClassified);
+        // A Map entry point has no owner of its own to carry the check below.
+        rejectStrandedMapValues(
+                "The declared type " + declaredType.getTypeName(),
+                InputPolicyMetadataResolver.mapValueClasses(declaredType));
 
         while (!pending.isEmpty()) {
             Class<?> owner = pending.poll();
@@ -165,6 +170,12 @@ final class OwnerTypeWalk {
             // would reject a valid application at startup for a wire-key lookup no execution path can
             // ever perform.
             InputPolicyMetadata metadata = metadataResolver.resolve(owner);
+            if (!isPlatformType(owner)) {
+                // Both shapes strand a declared policy without any schema-free dispatch the gates
+                // below would notice, so they run for every walked owner, whatever its field count.
+                checkMapValues(owner);
+                checkPolymorphicSubtypes(owner, metadata, resolver, metadataResolver);
+            }
             if (!metadata.fields().isEmpty()) {
                 resolver.precompute(owner);
                 checkGovernedFieldsAreBound(owner, metadata, resolver);
@@ -200,6 +211,150 @@ final class OwnerTypeWalk {
                 enqueue(pending, field.collectionElementType());
             }
         }
+    }
+
+    /**
+     * Fails startup for a {@code Map}-typed property whose statically known value type declares an
+     * input policy.
+     *
+     * <p>A map has no statically known property set, so the engine processes its entries against
+     * empty metadata: the value type's own {@code @Canonicalize} and {@code @Sanitize}, on the type
+     * or on its fields, never run. Only the chains the entries inherit reach them, which is
+     * indistinguishable from a working policy until the value that mattered gets through. A map
+     * whose value type declares nothing — {@code Map<String, String>}, {@code Map<String, Object>},
+     * a raw {@code Map}, or a typed value that declares no chain — loses nothing and is accepted.
+     *
+     * @param owner the walked class whose declared properties are inspected
+     * @throws ConfigurationException when a property binds a policy-declaring class behind a
+     *                                {@code Map}
+     */
+    private static void checkMapValues(Class<?> owner) {
+        for (Map.Entry<String, Set<Class<?>>> property :
+                InputPolicyMetadataResolver.mapValueClassesByProperty(owner).entrySet()) {
+            rejectStrandedMapValues("Property '" + property.getKey() + "' of " + owner.getName(), property.getValue());
+        }
+    }
+
+    /**
+     * Throws when any of {@code values} declares an input policy somewhere in its type graph.
+     *
+     * @param site   how to name the offending declaration in the message
+     * @param values the descendable classes bound as {@code Map} values at {@code site}
+     * @throws ConfigurationException when one of {@code values} declares a canonicalizer or sanitizer
+     */
+    private static void rejectStrandedMapValues(String site, Set<Class<?>> values) {
+        for (Class<?> value : values) {
+            if (InputObjectProcessor.declaresPolicies(value)) {
+                throw new ConfigurationException(site + " holds " + value.getName() + " as a Map value, and that type"
+                        + " declares input policies. A Map has no statically known property set, so its entries"
+                        + " are processed without them and the declared canonicalizers and sanitizers would"
+                        + " silently never run. Replace the Map with a typed object (or a list of typed"
+                        + " objects), or move the policies onto the Map-typed property itself, where they reach"
+                        + " every string inside it.");
+            }
+        }
+    }
+
+    /**
+     * Fails startup for a polymorphic base whose subtype declares an input policy the base does not.
+     *
+     * <p>The engine resolves metadata from the declared type and never inspects the runtime subtype
+     * the codec selects, so a chain or skip that only a subtype carries is never applied to that
+     * subtype's data. Whether the codec can bind a subtype is the codec's knowledge and arrives
+     * through {@link InputFieldNameResolver#polymorphicSubtypes}. A subtype that merely inherits the
+     * base's own declarations loses nothing and is accepted; only a declaration the base's metadata
+     * does not already carry is stranded.
+     *
+     * @param owner            the walked class, possibly a polymorphic base
+     * @param base             {@code owner}'s resolved metadata
+     * @param resolver         the codec projection that knows the subtypes
+     * @param metadataResolver the engine's metadata resolver
+     * @throws ConfigurationException when a subtype declares policy the base does not
+     */
+    private static void checkPolymorphicSubtypes(
+            Class<?> owner,
+            InputPolicyMetadata base,
+            InputFieldNameResolver resolver,
+            InputPolicyMetadataResolver metadataResolver) {
+        for (Class<?> subtype : resolver.polymorphicSubtypes(owner)) {
+            if (subtype == owner || !owner.isAssignableFrom(subtype)) {
+                continue;
+            }
+            String stranded = strandedDeclaration(base, metadataResolver.resolve(subtype), metadataResolver);
+            if (stranded != null) {
+                throw new ConfigurationException("Type " + owner.getName() + " is a polymorphic base the codec can bind"
+                        + " as " + subtype.getName() + ", which declares " + stranded + " that "
+                        + owner.getName() + " does not. Policy metadata is resolved from the declared type, so"
+                        + " those canonicalizers and sanitizers would silently never run on a "
+                        + subtype.getSimpleName() + " value. Declare the policy on " + owner.getName()
+                        + ", or declare the field with the concrete subtype.");
+            }
+        }
+    }
+
+    /**
+     * Describes the first policy {@code subtype} declares that {@code base}'s metadata does not
+     * carry, or returns {@code null} when the base already covers everything the subtype declares.
+     *
+     * <p>Compared per declaration: type-level chains and skips, then each field the subtype
+     * records. A field the base records identically is covered; a field with a different chain or
+     * skip, or one the base lacks, is stranded when it declares policy itself or holds a type whose
+     * graph does.
+     *
+     * @param base             the declared type's metadata
+     * @param subtype          the subtype's metadata
+     * @param metadataResolver the engine's metadata resolver
+     * @return a short description of the stranded declaration, or {@code null} when none
+     */
+    @Nullable
+    private static String strandedDeclaration(
+            InputPolicyMetadata base, InputPolicyMetadata subtype, InputPolicyMetadataResolver metadataResolver) {
+        if (!subtype.objectCanonicalizerChain().isEmpty()
+                && !subtype.objectCanonicalizerChain().equals(base.objectCanonicalizerChain())) {
+            return "a type-level @Canonicalize";
+        }
+        if (!subtype.objectSanitizerChain().isEmpty()
+                && !subtype.objectSanitizerChain().equals(base.objectSanitizerChain())) {
+            return "a type-level @Sanitize";
+        }
+        if (subtype.skipCanonicalization() && !base.skipCanonicalization()) {
+            return "a type-level @SkipCanonicalization";
+        }
+        if (subtype.skipSanitization() && !base.skipSanitization()) {
+            return "a type-level @SkipSanitization";
+        }
+        for (FieldPolicyMetadata field : subtype.fields().values()) {
+            FieldPolicyMetadata inherited = base.fields().get(field.fieldName());
+            if (inherited != null && sameDeclaration(field, inherited)) {
+                continue;
+            }
+            if (carriesChains(field) || field.skipCanonicalization() || field.skipSanitization()) {
+                return "a policy on the field '" + field.fieldName() + "'";
+            }
+            Class<?> nested = field.collectionElementType() != null ? field.collectionElementType() : field.fieldType();
+            if (!field.isStringType()
+                    && InputPolicyMetadataResolver.isDescendableObject(nested)
+                    && InputObjectProcessor.declaresPolicies(nested)) {
+                return "policies on " + nested.getName() + ", held by the field '" + field.fieldName() + "',";
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Reports whether two field records declare the same policy and bind the same type.
+     *
+     * @param a one field's metadata
+     * @param b the other field's metadata
+     * @return {@code true} when chains, skips and the bound type agree
+     */
+    private static boolean sameDeclaration(FieldPolicyMetadata a, FieldPolicyMetadata b) {
+        return a.canonicalizerChain().equals(b.canonicalizerChain())
+                && a.sanitizerChain().equals(b.sanitizerChain())
+                && a.skipCanonicalization() == b.skipCanonicalization()
+                && a.skipSanitization() == b.skipSanitization()
+                && a.fieldType() == b.fieldType()
+                && Objects.equals(a.collectionElementType(), b.collectionElementType());
     }
 
     /**

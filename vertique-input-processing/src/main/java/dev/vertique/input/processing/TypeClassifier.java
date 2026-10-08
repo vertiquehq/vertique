@@ -203,26 +203,80 @@ final class TypeClassifier {
      */
     @Nullable
     private static Type collectionElementBinding(@Nullable Type collectionType) {
-        Class<?> rawType = rawClassOf(collectionType);
-        if (rawType == null || !Collection.class.isAssignableFrom(rawType)) {
+        return supertypeArgument(collectionType, Collection.class, 0);
+    }
+
+    /**
+     * Resolves one type argument of {@code generic} as it is bound by {@code type}'s supertype
+     * chain: {@code Collection}'s element ({@code index} 0) or {@code Map}'s value ({@code index} 1).
+     * The walk is the one {@link #collectionElementBinding} documents, parameterized on the generic
+     * interface and the argument position so the two lookups can never disagree about how a
+     * supertype binds its variables.
+     *
+     * @param type    the declared type, already normalized; may be {@code null}
+     * @param generic the generic interface to resolve against ({@code Collection} or {@code Map})
+     * @param index   the position of the wanted type parameter on {@code generic}
+     * @return the argument as written at its declaration site, or {@code null} when {@code type} is
+     *         not a {@code generic} or carries no resolvable binding
+     */
+    @Nullable
+    private static Type supertypeArgument(@Nullable Type type, Class<?> generic, int index) {
+        Class<?> rawType = rawClassOf(type);
+        if (rawType == null || !generic.isAssignableFrom(rawType)) {
             return null;
         }
-        if (rawType == Collection.class) {
-            Type[] args = collectionType instanceof ParameterizedType parameterized
+        if (rawType == generic) {
+            Type[] args = type instanceof ParameterizedType parameterized
                     ? parameterized.getActualTypeArguments()
                     : new Type[0];
-            return args.length == 1 ? args[0] : null;
+            return args.length == generic.getTypeParameters().length ? args[index] : null;
         }
-        Map<TypeVariable<?>, Type> bindings = bindingsOf(rawType, collectionType);
+        Map<TypeVariable<?>, Type> bindings = bindingsOf(rawType, type);
         for (Type supertype : supertypesOf(rawType)) {
             Type resolved = substitute(supertype, bindings);
             Class<?> resolvedRaw = rawClassOf(resolved);
-            if (resolvedRaw != null && Collection.class.isAssignableFrom(resolvedRaw)) {
-                Type element = collectionElementBinding(resolved);
-                if (element != null) {
-                    return element;
+            if (resolvedRaw != null && generic.isAssignableFrom(resolvedRaw)) {
+                Type argument = supertypeArgument(resolved, generic, index);
+                if (argument != null) {
+                    return argument;
                 }
             }
+        }
+        return null;
+    }
+
+    /**
+     * Returns the normalized value type a {@link Map} binds, or the element type a container binds,
+     * without the exclusions {@link #elementType} applies — the result may be another container, a
+     * {@code Map}, or {@link Object}.
+     *
+     * <p>{@link #elementType} answers "which class does the walker descend into"; this answers "what
+     * does the declared type say its entries are". The two differ exactly where a policy can be
+     * stranded: {@code List<Map<String, Dto>>} has no descendable element, yet {@code Dto} sits behind
+     * it. A caller looking for such a type walks this binding level by level instead.
+     *
+     * @param type the declared type; may be {@code null}
+     * @return the normalized entry type, or {@code null} when {@code type} is neither a container nor
+     *         a {@code Map}, or carries no resolvable binding
+     */
+    @Nullable
+    static Type entryBinding(@Nullable Type type) {
+        Type container = normalize(type);
+        if (container instanceof GenericArrayType genericArray) {
+            return normalize(genericArray.getGenericComponentType());
+        }
+        if (container instanceof Class<?> cls && cls.isArray()) {
+            return cls.getComponentType();
+        }
+        Class<?> rawType = rawClassOf(container);
+        if (rawType == null) {
+            return null;
+        }
+        if (Map.class.isAssignableFrom(rawType)) {
+            return normalize(supertypeArgument(container, Map.class, 1));
+        }
+        if (Collection.class.isAssignableFrom(rawType)) {
+            return normalize(collectionElementBinding(container));
         }
         return null;
     }
