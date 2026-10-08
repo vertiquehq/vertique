@@ -6,6 +6,7 @@ package dev.vertique.rest.auth.jwt;
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.core.exception.UnauthorizedException;
@@ -204,6 +205,12 @@ public class JwtClaimsRejectionStatusIT {
     void claimsRejectionDoesNotLeakValidatorMessage() throws Exception {
         HttpResult result = get();
 
+        // An absent or unparseable body would satisfy the absence check below vacuously, so anchor on
+        // the rendered problem first: the leak assertion only means something against a real body.
+        assertEquals(
+                "Unauthorized",
+                result.problem().getString("title"),
+                "the leak check is only meaningful against a rendered problem body; body was " + result.bodyText());
         assertFalse(
                 result.bodyText().contains(REJECTION_MESSAGE),
                 "the claims validator's message is arbitrary application text and must not appear anywhere in the "
@@ -249,6 +256,7 @@ public class JwtClaimsRejectionStatusIT {
     private record HttpResult(int statusCode, String contentType, String wwwAuthenticate, String body) {
 
         JsonObject problem() {
+            assertNotNull(body, "the response carried no body; status was " + statusCode);
             return new JsonObject(body);
         }
 
