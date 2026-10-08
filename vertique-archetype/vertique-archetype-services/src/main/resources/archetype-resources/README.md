@@ -43,6 +43,9 @@ Builds a local container image with Jib. The image contains no `config` director
 containerized run through environment variables, or mount a directory and name it with
 `VERTX_CONFIG_LOCATIONS`.
 
+The base image (`eclipse-temurin:25-jre`) is a floating tag, so each build picks up the latest JRE
+patches; pin a digest for production builds.
+
 ```bash
 mvn -ntp jib:dockerBuild
 ```
