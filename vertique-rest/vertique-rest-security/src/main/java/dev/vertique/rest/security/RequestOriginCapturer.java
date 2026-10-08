@@ -6,6 +6,7 @@ package dev.vertique.rest.security;
 import dev.vertique.security.origin.RequestOrigin;
 import dev.vertique.security.origin.TlsFacts;
 import io.vertx.core.http.HttpServerRequest;
+import io.vertx.core.net.SocketAddress;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
 import java.net.InetAddress;
@@ -17,6 +18,7 @@ import java.util.Objects;
 import java.util.Optional;
 import javax.net.ssl.SSLPeerUnverifiedException;
 import javax.net.ssl.SSLSession;
+import lombok.extern.slf4j.Slf4j;
 
 /**
  * Builds a {@link RequestOrigin} from an inbound {@link HttpServerRequest} by applying the
@@ -47,6 +49,7 @@ import javax.net.ssl.SSLSession;
  *
  * <p>This class is {@code @Singleton} and stateless beyond the injected config.
  */
+@Slf4j
 @Singleton
 public final class RequestOriginCapturer {
 
@@ -69,12 +72,26 @@ public final class RequestOriginCapturer {
      * Builds a {@link RequestOrigin} snapshot from the given inbound HTTP request.
      *
      * @param request the inbound HTTP server request; must not be {@code null}
-     * @return a populated {@link RequestOrigin} snapshot; never {@code null}
+     * @return a populated {@link RequestOrigin} snapshot; never {@code null}. A part that cannot be
+     *     resolved is {@value RequestOrigin#UNKNOWN}; if the capture fails outright the result is
+     *     {@link RequestOrigin#unknown()}. This method does not throw.
      */
     public RequestOrigin capture(HttpServerRequest request) {
-        String remoteIp = normalizeIp(request.remoteAddress().host());
-        int remotePort = request.remoteAddress().port();
-        boolean peerTrusted = isPeerTrusted(remoteIp);
+        try {
+            return doCapture(request);
+        } catch (RuntimeException failure) {
+            log.debug("Request origin capture failed: {}", failure.getClass().getName());
+            return RequestOrigin.unknown();
+        }
+    }
+
+    private RequestOrigin doCapture(HttpServerRequest request) {
+        SocketAddress peer = request.remoteAddress();
+        String peerHost = peer == null ? null : peer.host();
+        String remoteIp = peerHost == null || peerHost.isBlank() ? RequestOrigin.UNKNOWN : normalizeIp(peerHost);
+        int remotePort = peer == null || peer.port() < 0 || peer.port() > 65_535 ? 0 : peer.port();
+        // An unresolved peer is never trusted, so forwarded headers cannot supply its client IP.
+        boolean peerTrusted = !RequestOrigin.UNKNOWN.equals(remoteIp) && isPeerTrusted(remoteIp);
 
         // Always parse X-Forwarded-For for observability (AC-RO-3).
         List<String> rawXff = parseXffHeader(request);

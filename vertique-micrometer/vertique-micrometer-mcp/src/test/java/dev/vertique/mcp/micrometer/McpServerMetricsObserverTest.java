@@ -17,6 +17,7 @@ import dev.vertique.mcp.lifecycle.McpRequestCompletedEvent;
 import dev.vertique.mcp.lifecycle.McpRequestObservation;
 import dev.vertique.mcp.lifecycle.McpRequestTerminalEvent;
 import dev.vertique.mcp.tool.McpToolDescriptor;
+import dev.vertique.security.origin.RequestOrigin;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.Meter;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -116,7 +117,8 @@ class McpServerMetricsObserverTest {
                 null,
                 null,
                 null,
-                null);
+                null,
+                RequestOrigin.unknown());
         openAndComplete(observer, otherMethod, McpRequestCompletedEvent.written(otherMethod, COMPLETED_AT));
 
         // DECISIVE: every terminal outcome recorded the exact frozen request-timer name with the
@@ -290,7 +292,8 @@ class McpServerMetricsObserverTest {
                 "2026-07-28",
                 authorization,
                 null,
-                correlation);
+                correlation,
+                RequestOrigin.unknown());
         openAndComplete(observer, successWithFacts, McpRequestCompletedEvent.written(successWithFacts, COMPLETED_AT));
 
         // DECISIVE: enumerate every tag key and value the registry actually received across every
@@ -383,7 +386,16 @@ class McpServerMetricsObserverTest {
         return switch (outcome) {
             case SUCCESS ->
                 McpRequestTerminalEvent.success(
-                        STARTED_AT, TERMINAL_AT, McpMethod.TOOLS_CALL, toolName, 200, null, null, null, null);
+                        STARTED_AT,
+                        TERMINAL_AT,
+                        McpMethod.TOOLS_CALL,
+                        toolName,
+                        200,
+                        null,
+                        null,
+                        null,
+                        null,
+                        RequestOrigin.unknown());
             case TOOL_ERROR ->
                 McpRequestTerminalEvent.toolError(
                         STARTED_AT,
@@ -395,7 +407,8 @@ class McpServerMetricsObserverTest {
                         null,
                         null,
                         null,
-                        null);
+                        null,
+                        RequestOrigin.unknown());
             case REJECTED ->
                 McpRequestTerminalEvent.rejected(
                         STARTED_AT,
@@ -408,7 +421,8 @@ class McpServerMetricsObserverTest {
                         null,
                         null,
                         null,
-                        null);
+                        null,
+                        RequestOrigin.unknown());
             case FAILED ->
                 McpRequestTerminalEvent.failed(
                         STARTED_AT,
@@ -421,7 +435,8 @@ class McpServerMetricsObserverTest {
                         null,
                         null,
                         null,
-                        null);
+                        null,
+                        RequestOrigin.unknown());
             case CANCELLED ->
                 McpRequestTerminalEvent.cancelled(
                         STARTED_AT,
@@ -434,7 +449,8 @@ class McpServerMetricsObserverTest {
                         null,
                         null,
                         null,
-                        null);
+                        null,
+                        RequestOrigin.unknown());
         };
     }
 
@@ -464,7 +480,8 @@ class McpServerMetricsObserverTest {
                 null,
                 null,
                 null,
-                null);
+                null,
+                RequestOrigin.unknown());
         openAndComplete(observer, terminalEvent, McpRequestCompletedEvent.written(terminalEvent, COMPLETED_AT));
     }
 

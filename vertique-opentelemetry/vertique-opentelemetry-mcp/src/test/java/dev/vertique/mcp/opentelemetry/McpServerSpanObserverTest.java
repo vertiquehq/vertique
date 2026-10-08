@@ -12,6 +12,7 @@ import dev.vertique.mcp.lifecycle.McpMethod;
 import dev.vertique.mcp.lifecycle.McpRequestObservation;
 import dev.vertique.mcp.lifecycle.McpRequestTerminalEvent;
 import dev.vertique.mcp.lifecycle.McpRequestTerminalObservation;
+import dev.vertique.security.origin.RequestOrigin;
 import io.opentelemetry.api.trace.Span;
 import io.opentelemetry.api.trace.SpanContext;
 import io.opentelemetry.api.trace.SpanKind;
@@ -312,12 +313,30 @@ class McpServerSpanObserverTest {
 
     private static McpRequestTerminalEvent successTerminal() {
         return McpRequestTerminalEvent.success(
-                STARTED_AT, TERMINAL_AT, McpMethod.TOOLS_CALL, KNOWN_TOOL, 200, null, null, null, null);
+                STARTED_AT,
+                TERMINAL_AT,
+                McpMethod.TOOLS_CALL,
+                KNOWN_TOOL,
+                200,
+                null,
+                null,
+                null,
+                null,
+                RequestOrigin.unknown());
     }
 
     private static McpRequestTerminalEvent successTerminalWithProtocolVersion(String protocolVersion) {
         return McpRequestTerminalEvent.success(
-                STARTED_AT, TERMINAL_AT, McpMethod.TOOLS_CALL, KNOWN_TOOL, 200, protocolVersion, null, null, null);
+                STARTED_AT,
+                TERMINAL_AT,
+                McpMethod.TOOLS_CALL,
+                KNOWN_TOOL,
+                200,
+                protocolVersion,
+                null,
+                null,
+                null,
+                RequestOrigin.unknown());
     }
 
     private static McpRequestTerminalObservation terminalObservation(

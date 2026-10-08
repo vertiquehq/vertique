@@ -14,6 +14,7 @@ import dev.vertique.security.AuthenticationState;
 import dev.vertique.security.DefaultAuthMethod;
 import dev.vertique.security.SecurityContextSnapshot;
 import dev.vertique.security.SecurityIdentity;
+import dev.vertique.security.origin.RequestOrigin;
 import jakarta.annotation.Nullable;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -81,6 +82,28 @@ class McpLifecycleEventTest {
             Map.of());
 
     // --- Terminal tuple matrix (W3 / TP-010) ---
+
+    @org.junit.jupiter.api.Test
+    @DisplayName("a terminal event always carries an origin; an unresolved one is RequestOrigin.unknown()")
+    void shouldRequireAnOrigin() {
+        assertThatThrownBy(() -> McpRequestTerminalEvent.success(
+                        STARTED_AT, TERMINAL_AT, McpMethod.TOOLS_CALL, "t.tool", 200, null, null, null, null, null))
+                .isInstanceOf(NullPointerException.class)
+                .hasMessageContaining("origin");
+        assertThat(McpRequestTerminalEvent.success(
+                                STARTED_AT,
+                                TERMINAL_AT,
+                                McpMethod.TOOLS_CALL,
+                                "t.tool",
+                                200,
+                                null,
+                                null,
+                                null,
+                                null,
+                                RequestOrigin.unknown())
+                        .origin())
+                .isEqualTo(RequestOrigin.unknown());
+    }
 
     @Nested
     @DisplayName("terminal tuple matrix")
@@ -565,7 +588,8 @@ class McpLifecycleEventTest {
                                 PROTOCOL_VERSION,
                                 null,
                                 null,
-                                null)),
+                                null,
+                                RequestOrigin.unknown())),
                 Arguments.of("a non-tool method carrying a named tool", (ThrowingConstruction)
                         () -> McpRequestTerminalEvent.success(
                                 STARTED_AT,
@@ -576,9 +600,19 @@ class McpLifecycleEventTest {
                                 PROTOCOL_VERSION,
                                 null,
                                 null,
-                                null)),
+                                null,
+                                RequestOrigin.unknown())),
                 Arguments.of("a blank tool name", (ThrowingConstruction) () -> McpRequestTerminalEvent.success(
-                        STARTED_AT, TERMINAL_AT, McpMethod.TOOLS_CALL, "  ", 200, PROTOCOL_VERSION, null, null, null)),
+                        STARTED_AT,
+                        TERMINAL_AT,
+                        McpMethod.TOOLS_CALL,
+                        "  ",
+                        200,
+                        PROTOCOL_VERSION,
+                        null,
+                        null,
+                        null,
+                        RequestOrigin.unknown())),
                 // P04 remediation (issue W7): a resolved tool identity must be bounded by the published
                 // McpToolDescriptor name grammar ([A-Za-z0-9_.-]{1,128}), not merely non-blank — an
                 // unresolved name never touches a real descriptor, so nothing else would bound it before
@@ -593,7 +627,8 @@ class McpLifecycleEventTest {
                                 PROTOCOL_VERSION,
                                 null,
                                 null,
-                                null)),
+                                null,
+                                RequestOrigin.unknown())),
                 Arguments.of("a tool name longer than the published 128-character bound", (ThrowingConstruction)
                         () -> McpRequestTerminalEvent.success(
                                 STARTED_AT,
@@ -604,7 +639,8 @@ class McpLifecycleEventTest {
                                 PROTOCOL_VERSION,
                                 null,
                                 null,
-                                null)),
+                                null,
+                                RequestOrigin.unknown())),
                 Arguments.of("an authentication rejection carrying security facts", (ThrowingConstruction)
                         () -> McpRequestTerminalEvent.rejected(
                                 STARTED_AT,
@@ -617,7 +653,8 @@ class McpLifecycleEventTest {
                                 PROTOCOL_VERSION,
                                 null,
                                 SECURITY,
-                                null)),
+                                null,
+                                RequestOrigin.unknown())),
                 // R05 (issue #431): a protocolVersion past the bound this record shares with the
                 // negotiation stage that produces it (McpProtocolCodec#MAX_PROTOCOL_VERSION_CHARS) must
                 // never reach an observer — see the BoundedValues nested class for the full boundary
@@ -633,7 +670,8 @@ class McpLifecycleEventTest {
                                 "v".repeat(65),
                                 null,
                                 null,
-                                null)),
+                                null,
+                                RequestOrigin.unknown())),
                 Arguments.of("a blank protocolVersion", (ThrowingConstruction) () -> McpRequestTerminalEvent.success(
                         STARTED_AT,
                         TERMINAL_AT,
@@ -643,7 +681,8 @@ class McpLifecycleEventTest {
                         "   ",
                         null,
                         null,
-                        null)));
+                        null,
+                        RequestOrigin.unknown())));
     }
 
     private static Stream<Arguments> acceptedTerminalFactRows() {
@@ -658,7 +697,8 @@ class McpLifecycleEventTest {
                                 PROTOCOL_VERSION,
                                 null,
                                 null,
-                                null)),
+                                null,
+                                RequestOrigin.unknown())),
                 Arguments.of("a tool call carrying a named tool", (ThrowingConstruction)
                         () -> McpRequestTerminalEvent.success(
                                 STARTED_AT,
@@ -669,7 +709,8 @@ class McpLifecycleEventTest {
                                 PROTOCOL_VERSION,
                                 null,
                                 null,
-                                null)),
+                                null,
+                                RequestOrigin.unknown())),
                 Arguments.of("a tool call using the UNKNOWN literal", (ThrowingConstruction)
                         () -> McpRequestTerminalEvent.success(
                                 STARTED_AT,
@@ -680,7 +721,8 @@ class McpLifecycleEventTest {
                                 PROTOCOL_VERSION,
                                 null,
                                 null,
-                                null)),
+                                null,
+                                RequestOrigin.unknown())),
                 Arguments.of("an authentication rejection without security facts", (ThrowingConstruction)
                         () -> McpRequestTerminalEvent.rejected(
                                 STARTED_AT,
@@ -693,7 +735,8 @@ class McpLifecycleEventTest {
                                 PROTOCOL_VERSION,
                                 null,
                                 null,
-                                null)),
+                                null,
+                                RequestOrigin.unknown())),
                 Arguments.of("an authorization rejection carrying security facts", (ThrowingConstruction)
                         () -> McpRequestTerminalEvent.rejected(
                                 STARTED_AT,
@@ -706,7 +749,8 @@ class McpLifecycleEventTest {
                                 PROTOCOL_VERSION,
                                 AUTHORIZATION,
                                 SECURITY,
-                                null)),
+                                null,
+                                RequestOrigin.unknown())),
                 // R05 (issue #431): a null protocolVersion is always legal — "emit only when negotiation
                 // completed" (contract §4.7) means every rejection path this repair did not touch (and
                 // every request that never negotiates) must still construct cleanly.
@@ -719,7 +763,8 @@ class McpLifecycleEventTest {
                         null,
                         null,
                         null,
-                        null)),
+                        null,
+                        RequestOrigin.unknown())),
                 Arguments.of("a protocolVersion at the 64-character bound", (ThrowingConstruction)
                         () -> McpRequestTerminalEvent.success(
                                 STARTED_AT,
@@ -730,7 +775,8 @@ class McpLifecycleEventTest {
                                 "v".repeat(64),
                                 null,
                                 null,
-                                null)));
+                                null,
+                                RequestOrigin.unknown())));
     }
 
     // --- Row tables: completion tuples ---
@@ -884,7 +930,8 @@ class McpLifecycleEventTest {
                 PROTOCOL_VERSION,
                 AUTHORIZATION,
                 securityFor(tuple),
-                CORRELATION);
+                CORRELATION,
+                RequestOrigin.unknown());
     }
 
     /**
@@ -908,7 +955,8 @@ class McpLifecycleEventTest {
                 PROTOCOL_VERSION,
                 null,
                 null,
-                null);
+                null,
+                RequestOrigin.unknown());
     }
 
     private static int canonicalStatus(McpOutcome outcome) {

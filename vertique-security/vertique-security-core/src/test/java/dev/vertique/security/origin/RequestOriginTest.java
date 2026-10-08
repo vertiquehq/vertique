@@ -335,4 +335,26 @@ class RequestOriginTest {
                 host,
                 Optional.empty());
     }
+
+    @Test
+    @DisplayName("unknown() is a valid origin whose parts are all unresolved")
+    void shouldBuildAnUnresolvedOrigin() {
+        RequestOrigin unknown = RequestOrigin.unknown();
+
+        assertEquals(RequestOrigin.UNKNOWN, unknown.remoteIp());
+        assertEquals(RequestOrigin.UNKNOWN, unknown.clientIp());
+        assertEquals(RequestOrigin.UNKNOWN, unknown.host());
+        assertEquals(0, unknown.remotePort());
+        assertTrue(unknown.forwardedFor().isEmpty());
+        assertTrue(unknown.tls().isEmpty());
+        assertFalse(unknown.clientIpKnown());
+    }
+
+    @Test
+    @DisplayName("a resolved client IP is reported as known")
+    void shouldReportAResolvedClientIpAsKnown() {
+        assertTrue(
+                new RequestOrigin("198.51.100.1", 1, List.of(), 0, false, "203.0.113.5", "https", "h", Optional.empty())
+                        .clientIpKnown());
+    }
 }

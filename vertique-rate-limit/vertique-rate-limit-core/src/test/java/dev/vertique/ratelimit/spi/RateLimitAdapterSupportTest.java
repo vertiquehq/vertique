@@ -297,6 +297,19 @@ class RateLimitAdapterSupportTest {
                 .isPresent();
     }
 
+    @Test
+    @DisplayName("an origin whose client IP could not be resolved fails closed for every origin-aware subject")
+    void shouldFailClosedWhenTheClientIpIsUnknown() {
+        for (RateLimitSubject subject :
+                List.of(RateLimitSubject.IP, RateLimitSubject.ACTOR_OR_IP, RateLimitSubject.CLIENT_OR_IP)) {
+            RateLimitAdapterSupport support = adapterSupport(Optional.empty(), Optional.of(RequestOrigin.unknown()));
+
+            assertThatThrownBy(() -> support.subjectKey(subject, AnonymousRateLimitPolicy.SHARED_BUCKET, List.of()))
+                    .as("subject %s", subject)
+                    .isInstanceOf(RateLimitRequestException.class);
+        }
+    }
+
     private static RateLimitKey ipKey(RateLimitSubject subject, String clientIp) {
         return adapterSupport(Optional.empty(), Optional.of(origin(clientIp)))
                 .subjectKey(subject, AnonymousRateLimitPolicy.SHARED_BUCKET, List.of())

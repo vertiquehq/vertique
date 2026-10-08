@@ -30,8 +30,12 @@ import java.util.Optional;
  *       plain HTTP).</li>
  * </ul>
  *
- * @param remoteIp                    IP address of the direct peer (TCP remote address); non-null,
- *                                    non-blank
+ * <p>A value the capture could not resolve is the literal {@value #UNKNOWN}, never {@code null}
+ * and never a guess: use {@link #unknown()} for an origin that could not be captured at all and
+ * {@link #clientIpKnown()} before treating {@code clientIp} as an identifier.
+ *
+ * @param remoteIp                    IP address of the direct peer (TCP remote address), or
+ *                                    {@value #UNKNOWN}; non-null, non-blank
  * @param remotePort                  TCP port of the direct peer; {@code [0, 65535]}
  * @param forwardedFor                parsed and sanitized {@code X-Forwarded-For} entries;
  *                                    never {@code null} after construction
@@ -90,5 +94,28 @@ public record RequestOrigin(
             throw new IllegalArgumentException("host must not be blank");
         }
         Objects.requireNonNull(tls, "tls");
+    }
+
+    /** The value of a string component that the capture could not resolve. */
+    public static final String UNKNOWN = "unknown";
+
+    /**
+     * Returns an origin for a request whose network envelope could not be captured: every address
+     * and the host are {@value #UNKNOWN}, the port is {@code 0}, the scheme is {@code "http"} and
+     * there are no forwarded entries or TLS facts.
+     *
+     * @return the unresolved origin; never {@code null}
+     */
+    public static RequestOrigin unknown() {
+        return new RequestOrigin(UNKNOWN, 0, List.of(), 0, false, UNKNOWN, "http", UNKNOWN, Optional.empty());
+    }
+
+    /**
+     * Reports whether {@link #clientIp()} identifies a client.
+     *
+     * @return {@code false} when the client IP could not be resolved and is {@value #UNKNOWN}
+     */
+    public boolean clientIpKnown() {
+        return !UNKNOWN.equals(clientIp);
     }
 }

@@ -16,6 +16,7 @@ import dev.vertique.mcp.lifecycle.McpRequestObservation;
 import dev.vertique.mcp.lifecycle.McpRequestTerminalEvent;
 import dev.vertique.mcp.lifecycle.McpRequestTerminalObservation;
 import dev.vertique.mcp.lifecycle.McpTransportOutcome;
+import dev.vertique.security.origin.RequestOrigin;
 import io.vertx.core.Context;
 import io.vertx.core.Vertx;
 import java.time.Instant;
@@ -721,7 +722,8 @@ class McpCompletionCoordinatorTest {
                 null,
                 null,
                 null,
-                null);
+                null,
+                RequestOrigin.unknown());
     }
 
     private static McpRequestTerminalEvent cancelledTerminal(McpErrorType errorType) {
@@ -736,7 +738,8 @@ class McpCompletionCoordinatorTest {
                 null,
                 null,
                 null,
-                null);
+                null,
+                RequestOrigin.unknown());
     }
 
     /** A named abort settlement path for the reverse-order suppression matrix. */

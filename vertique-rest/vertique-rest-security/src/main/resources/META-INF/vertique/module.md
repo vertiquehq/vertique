@@ -77,6 +77,11 @@ own contributor relative to them:
 authentication handler and stashes the resolved `RequestOrigin` so identity resolution and every
 emitted event carry the caller's address even when authentication fails.
 
+`RequestOriginCapturer.capture` never throws and never returns `null`. A part it cannot resolve
+(for example the peer address on a transport without one) is `RequestOrigin.UNKNOWN`, the port is
+`0`, and an unresolved peer is never treated as a trusted proxy, so forwarded headers cannot name
+its client. Check `RequestOrigin.clientIpKnown()` before using `clientIp()` as an identifier.
+
 ### The resolved `SecurityContext`
 
 `dev.vertique.security.SecurityContext` has four pillars, assembled at identity resolution:

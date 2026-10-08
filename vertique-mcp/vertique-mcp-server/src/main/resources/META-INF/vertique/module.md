@@ -1350,10 +1350,11 @@ readers of those drafts:
 | `windowMs` | `rateLimit.policies.<name>.algorithm.refill.*` (greedy or interval refill) |
 | `maxTrackedPrincipals` | `rateLimit.local.maxTrackedKeys` or `rateLimit.policies.<name>.local.maxTrackedKeys` |
 
-`McpRequestTerminalEvent` carries the captured origin as its trailing, nullable `origin`
-component. The constructor and the five factories that predate it are unchanged and report a
-`null` origin; the factories that accept a trailing `RequestOrigin` carry it through, and
-the dispatcher uses those for every terminal event it emits.
+`McpRequestTerminalEvent.origin` is never `null`. A request that traversed the mount carries the
+origin captured before admission; if the capture could not resolve a part, that part is the literal
+`unknown` (an address or host) or `0` (a port), and a capture that fails outright yields
+`RequestOrigin.unknown()`. The factories take the origin as their last argument and reject `null`.
+An origin-aware rate-limit subject treats an unknown client IP as unresolvable and fails closed.
 
 ### Opt-in AOP resilience for MCP tools
 

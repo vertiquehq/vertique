@@ -3679,8 +3679,10 @@ final class McpRequestDispatcher {
         return startedAt == null ? Instant.now() : startedAt;
     }
 
-    private static @Nullable RequestOrigin originOf(RoutingContext context) {
-        return context.get(RequestOrigin.class.getName());
+    /** The origin the mount captured for this request, or {@link RequestOrigin#unknown()} if none was stored. */
+    private static RequestOrigin originOf(RoutingContext context) {
+        RequestOrigin origin = context.get(RequestOrigin.class.getName());
+        return origin != null ? origin : RequestOrigin.unknown();
     }
 
     private static void reject(

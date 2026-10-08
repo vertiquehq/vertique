@@ -18,6 +18,7 @@ import dev.vertique.mcp.lifecycle.McpRequestCompletedEvent;
 import dev.vertique.mcp.lifecycle.McpRequestTerminalEvent;
 import dev.vertique.mcp.lifecycle.McpTransportOutcome;
 import dev.vertique.mcp.tool.McpProgressReporter;
+import dev.vertique.security.origin.RequestOrigin;
 import io.vertx.core.Context;
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
@@ -190,7 +191,16 @@ class McpProgressReporterTest {
             progressFinished.future().toCompletionStage().toCompletableFuture().get(2, TimeUnit.SECONDS);
 
             McpRequestTerminalEvent terminal = McpRequestTerminalEvent.success(
-                    Instant.now(), Instant.now(), McpMethod.TOOLS_CALL, "weather.current", 200, null, null, null, null);
+                    Instant.now(),
+                    Instant.now(),
+                    McpMethod.TOOLS_CALL,
+                    "weather.current",
+                    200,
+                    null,
+                    null,
+                    null,
+                    null,
+                    RequestOrigin.unknown());
             assertThat(McpRequestDispatcher.write(routing, 200, new byte[300], terminal))
                     .isTrue();
 
@@ -234,7 +244,8 @@ class McpProgressReporterTest {
                             null,
                             null,
                             null,
-                            null));
+                            null,
+                            RequestOrigin.unknown()));
             CompletableFuture<Throwable> failed = new CompletableFuture<>();
 
             context.runOnContext(ignored -> {

@@ -116,7 +116,7 @@ public final class RateLimitAdapterSupport {
             return Optional.empty();
         }
         Optional<RequestOrigin> origin = subjectResolver.currentOrigin();
-        if (origin.isEmpty()) {
+        if (origin.isEmpty() || !origin.get().clientIpKnown()) {
             throw new RateLimitRequestException(RateLimitRequestFailure.SUBJECT_UNRESOLVABLE);
         }
         return origin;

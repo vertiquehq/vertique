@@ -16,6 +16,10 @@ import java.util.Objects;
  *
  * <p>Use the named factories instead of the canonical constructor. They supply the only legal
  * outcome and result-type combinations.
+ *
+ * <p>{@code origin} is never {@code null}: a request that traversed the mount carries the origin
+ * captured before authentication, and a part the capture could not resolve is {@value
+ * RequestOrigin#UNKNOWN} (see {@link RequestOrigin#unknown()}).
  */
 public record McpRequestTerminalEvent(
         Instant startedAt,
@@ -31,7 +35,7 @@ public record McpRequestTerminalEvent(
         @Nullable McpAuthorizationSummary authorization,
         @Nullable SecurityContextSnapshot security,
         @Nullable CorrelationContextSnapshot correlation,
-        @Nullable RequestOrigin origin) {
+        RequestOrigin origin) {
 
     /** Literal used whenever the request has no generated, known tool identity. */
     public static final String UNKNOWN_TOOL_NAME = "UNKNOWN";
@@ -49,43 +53,6 @@ public record McpRequestTerminalEvent(
     private static final int MAX_PROTOCOL_VERSION_CHARS = 64;
 
     /**
-     * Creates an event without a captured request origin.
-     *
-     * <p>Retained so code compiled against the thirteen-component shape keeps linking; the event
-     * reports a {@code null} {@link #origin()}.
-     */
-    public McpRequestTerminalEvent(
-            Instant startedAt,
-            Instant terminalAt,
-            McpMethod method,
-            String toolName,
-            McpOutcome outcome,
-            McpErrorType errorType,
-            McpResultType resultType,
-            int httpStatus,
-            @Nullable Integer protocolErrorCode,
-            @Nullable String protocolVersion,
-            @Nullable McpAuthorizationSummary authorization,
-            @Nullable SecurityContextSnapshot security,
-            @Nullable CorrelationContextSnapshot correlation) {
-        this(
-                startedAt,
-                terminalAt,
-                method,
-                toolName,
-                outcome,
-                errorType,
-                resultType,
-                httpStatus,
-                protocolErrorCode,
-                protocolVersion,
-                authorization,
-                security,
-                correlation,
-                null);
-    }
-
-    /**
      * Validates the lifecycle facts and their state-dependent invariants.
      *
      * @throws NullPointerException if a required fact is null
@@ -99,6 +66,7 @@ public record McpRequestTerminalEvent(
         Objects.requireNonNull(outcome, "outcome");
         Objects.requireNonNull(errorType, "errorType");
         Objects.requireNonNull(resultType, "resultType");
+        Objects.requireNonNull(origin, "origin");
         if (terminalAt.isBefore(startedAt)) {
             throw new IllegalArgumentException("terminalAt must not be before startedAt");
         }
@@ -137,34 +105,10 @@ public record McpRequestTerminalEvent(
         }
     }
 
-    /** Creates a successful terminal event with a completed result. */
-    public static McpRequestTerminalEvent success(
-            Instant startedAt,
-            Instant terminalAt,
-            McpMethod method,
-            String toolName,
-            int httpStatus,
-            @Nullable String protocolVersion,
-            @Nullable McpAuthorizationSummary authorization,
-            @Nullable SecurityContextSnapshot security,
-            @Nullable CorrelationContextSnapshot correlation) {
-        return success(
-                startedAt,
-                terminalAt,
-                method,
-                toolName,
-                httpStatus,
-                protocolVersion,
-                authorization,
-                security,
-                correlation,
-                null);
-    }
-
     /**
      * Creates a successful terminal event with a completed result carrying the trusted captured request origin.
      *
-     * @param origin the captured origin, or {@code null} when none was captured
+     * @param origin the captured request origin; {@link RequestOrigin#unknown()} when it could not be captured
      */
     public static McpRequestTerminalEvent success(
             Instant startedAt,
@@ -176,7 +120,7 @@ public record McpRequestTerminalEvent(
             @Nullable McpAuthorizationSummary authorization,
             @Nullable SecurityContextSnapshot security,
             @Nullable CorrelationContextSnapshot correlation,
-            @Nullable RequestOrigin origin) {
+            RequestOrigin origin) {
         return new McpRequestTerminalEvent(
                 startedAt,
                 terminalAt,
@@ -194,36 +138,10 @@ public record McpRequestTerminalEvent(
                 origin);
     }
 
-    /** Creates a completed tool-error terminal event. */
-    public static McpRequestTerminalEvent toolError(
-            Instant startedAt,
-            Instant terminalAt,
-            McpMethod method,
-            String toolName,
-            McpErrorType errorType,
-            int httpStatus,
-            @Nullable String protocolVersion,
-            @Nullable McpAuthorizationSummary authorization,
-            @Nullable SecurityContextSnapshot security,
-            @Nullable CorrelationContextSnapshot correlation) {
-        return toolError(
-                startedAt,
-                terminalAt,
-                method,
-                toolName,
-                errorType,
-                httpStatus,
-                protocolVersion,
-                authorization,
-                security,
-                correlation,
-                null);
-    }
-
     /**
      * Creates a completed tool-error terminal event carrying the trusted captured request origin.
      *
-     * @param origin the captured origin, or {@code null} when none was captured
+     * @param origin the captured request origin; {@link RequestOrigin#unknown()} when it could not be captured
      */
     public static McpRequestTerminalEvent toolError(
             Instant startedAt,
@@ -236,7 +154,7 @@ public record McpRequestTerminalEvent(
             @Nullable McpAuthorizationSummary authorization,
             @Nullable SecurityContextSnapshot security,
             @Nullable CorrelationContextSnapshot correlation,
-            @Nullable RequestOrigin origin) {
+            RequestOrigin origin) {
         return new McpRequestTerminalEvent(
                 startedAt,
                 terminalAt,
@@ -254,38 +172,10 @@ public record McpRequestTerminalEvent(
                 origin);
     }
 
-    /** Creates a rejected terminal event. */
-    public static McpRequestTerminalEvent rejected(
-            Instant startedAt,
-            Instant terminalAt,
-            McpMethod method,
-            String toolName,
-            McpErrorType errorType,
-            int httpStatus,
-            @Nullable Integer protocolErrorCode,
-            @Nullable String protocolVersion,
-            @Nullable McpAuthorizationSummary authorization,
-            @Nullable SecurityContextSnapshot security,
-            @Nullable CorrelationContextSnapshot correlation) {
-        return rejected(
-                startedAt,
-                terminalAt,
-                method,
-                toolName,
-                errorType,
-                httpStatus,
-                protocolErrorCode,
-                protocolVersion,
-                authorization,
-                security,
-                correlation,
-                null);
-    }
-
     /**
      * Creates a rejected terminal event carrying the trusted captured request origin.
      *
-     * @param origin the captured origin, or {@code null} when none was captured
+     * @param origin the captured request origin; {@link RequestOrigin#unknown()} when it could not be captured
      */
     public static McpRequestTerminalEvent rejected(
             Instant startedAt,
@@ -299,7 +189,7 @@ public record McpRequestTerminalEvent(
             @Nullable McpAuthorizationSummary authorization,
             @Nullable SecurityContextSnapshot security,
             @Nullable CorrelationContextSnapshot correlation,
-            @Nullable RequestOrigin origin) {
+            RequestOrigin origin) {
         return terminal(
                 startedAt,
                 terminalAt,
@@ -316,38 +206,10 @@ public record McpRequestTerminalEvent(
                 origin);
     }
 
-    /** Creates a failed terminal event. */
-    public static McpRequestTerminalEvent failed(
-            Instant startedAt,
-            Instant terminalAt,
-            McpMethod method,
-            String toolName,
-            McpErrorType errorType,
-            int httpStatus,
-            @Nullable Integer protocolErrorCode,
-            @Nullable String protocolVersion,
-            @Nullable McpAuthorizationSummary authorization,
-            @Nullable SecurityContextSnapshot security,
-            @Nullable CorrelationContextSnapshot correlation) {
-        return failed(
-                startedAt,
-                terminalAt,
-                method,
-                toolName,
-                errorType,
-                httpStatus,
-                protocolErrorCode,
-                protocolVersion,
-                authorization,
-                security,
-                correlation,
-                null);
-    }
-
     /**
      * Creates a failed terminal event carrying the trusted captured request origin.
      *
-     * @param origin the captured origin, or {@code null} when none was captured
+     * @param origin the captured request origin; {@link RequestOrigin#unknown()} when it could not be captured
      */
     public static McpRequestTerminalEvent failed(
             Instant startedAt,
@@ -361,7 +223,7 @@ public record McpRequestTerminalEvent(
             @Nullable McpAuthorizationSummary authorization,
             @Nullable SecurityContextSnapshot security,
             @Nullable CorrelationContextSnapshot correlation,
-            @Nullable RequestOrigin origin) {
+            RequestOrigin origin) {
         return terminal(
                 startedAt,
                 terminalAt,
@@ -378,38 +240,10 @@ public record McpRequestTerminalEvent(
                 origin);
     }
 
-    /** Creates a cancelled terminal event. */
-    public static McpRequestTerminalEvent cancelled(
-            Instant startedAt,
-            Instant terminalAt,
-            McpMethod method,
-            String toolName,
-            McpErrorType errorType,
-            int httpStatus,
-            @Nullable Integer protocolErrorCode,
-            @Nullable String protocolVersion,
-            @Nullable McpAuthorizationSummary authorization,
-            @Nullable SecurityContextSnapshot security,
-            @Nullable CorrelationContextSnapshot correlation) {
-        return cancelled(
-                startedAt,
-                terminalAt,
-                method,
-                toolName,
-                errorType,
-                httpStatus,
-                protocolErrorCode,
-                protocolVersion,
-                authorization,
-                security,
-                correlation,
-                null);
-    }
-
     /**
      * Creates a cancelled terminal event carrying the trusted captured request origin.
      *
-     * @param origin the captured origin, or {@code null} when none was captured
+     * @param origin the captured request origin; {@link RequestOrigin#unknown()} when it could not be captured
      */
     public static McpRequestTerminalEvent cancelled(
             Instant startedAt,
@@ -423,7 +257,7 @@ public record McpRequestTerminalEvent(
             @Nullable McpAuthorizationSummary authorization,
             @Nullable SecurityContextSnapshot security,
             @Nullable CorrelationContextSnapshot correlation,
-            @Nullable RequestOrigin origin) {
+            RequestOrigin origin) {
         return terminal(
                 startedAt,
                 terminalAt,
@@ -453,7 +287,7 @@ public record McpRequestTerminalEvent(
             @Nullable McpAuthorizationSummary authorization,
             @Nullable SecurityContextSnapshot security,
             @Nullable CorrelationContextSnapshot correlation,
-            @Nullable RequestOrigin origin) {
+            RequestOrigin origin) {
         return new McpRequestTerminalEvent(
                 startedAt,
                 terminalAt,

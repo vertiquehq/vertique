@@ -19,6 +19,7 @@ import dev.vertique.mcp.lifecycle.McpRequestObservation;
 import dev.vertique.mcp.lifecycle.McpRequestTerminalEvent;
 import dev.vertique.mcp.lifecycle.McpRequestTerminalObservation;
 import dev.vertique.mcp.lifecycle.McpTransportOutcome;
+import dev.vertique.security.origin.RequestOrigin;
 import io.vertx.core.Context;
 import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
@@ -257,7 +258,16 @@ class McpWritePhaseSettlementTest {
 
     private static McpRequestTerminalEvent successTerminal() {
         return McpRequestTerminalEvent.success(
-                STARTED_AT, TERMINAL_AT, McpMethod.TOOLS_CALL, "call.stalledTool", 200, null, null, null, null);
+                STARTED_AT,
+                TERMINAL_AT,
+                McpMethod.TOOLS_CALL,
+                "call.stalledTool",
+                200,
+                null,
+                null,
+                null,
+                null,
+                RequestOrigin.unknown());
     }
 
     private static McpRequestTerminalEvent cancelledTerminal() {
@@ -272,7 +282,8 @@ class McpWritePhaseSettlementTest {
                 null,
                 null,
                 null,
-                null);
+                null,
+                RequestOrigin.unknown());
     }
 
     /**

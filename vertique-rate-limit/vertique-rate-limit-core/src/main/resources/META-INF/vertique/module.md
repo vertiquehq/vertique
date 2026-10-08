@@ -99,7 +99,8 @@ Extension Points. `RateLimitSubject` supports the strict `NONE`, `ACTOR`,
 `EFFECTIVE_PRINCIPAL`, and `CLIENT` dimensions plus the origin-aware `IP`,
 `ACTOR_OR_IP`, and `CLIENT_OR_IP` dimensions. Origin-aware dimensions use only the
 trusted `RequestOrigin.clientIp()` value; they fail closed when no captured origin is
-available and never inspect raw headers or socket addresses.
+available or its client IP is unresolved (`RequestOrigin.clientIpKnown()` is `false`), and never
+inspect raw headers or socket addresses.
 
 Every consumed decision reports one redacted, synchronous `RateLimitDecisionCompleted`
 event to the optional `RateLimitObserver` set: policy name/revision/mode/algorithm,
