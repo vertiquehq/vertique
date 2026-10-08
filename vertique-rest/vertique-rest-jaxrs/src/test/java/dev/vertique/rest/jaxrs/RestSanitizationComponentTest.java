@@ -13,7 +13,6 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
-import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.annotation.JsonSubTypes;
 import com.fasterxml.jackson.annotation.JsonTypeInfo;
@@ -499,11 +498,8 @@ class RestSanitizationComponentTest {
         public String label;
     }
 
-    /** A body whose Map-typed fields the mapper never binds. */
+    /** A body whose transient Map field the mapper never binds. */
     public static final class UnboundMapBody {
-        @JsonIgnore
-        public Map<String, GovernedValue> ignored;
-
         public transient Map<String, GovernedValue> transientMap;
 
         public String name;
@@ -526,7 +522,7 @@ class RestSanitizationComponentTest {
     }
 
     @Test
-    @DisplayName("Map properties the mapper never binds strand nothing and do not fail registration")
+    @DisplayName("a transient Map property the mapper never binds strands nothing and does not fail registration")
     void shouldAcceptMapPropertiesTheMapperNeverBinds() {
         InputObjectProcessor processor = DaggerRestSanitizationComponentTest_WithSanitizationComponent.create()
                 .inputObjectProcessor()

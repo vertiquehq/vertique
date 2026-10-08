@@ -173,6 +173,12 @@ class StrandedPolicyShapesTest {
         SelfMap values;
     }
 
+    /** A transient Map the codec never binds. */
+    static class TransientMapHolder {
+        transient Map<String, Governed> cache;
+        String name;
+    }
+
     static class StaticMapIgnored {
         static Map<String, Governed> shared;
         String name;
@@ -276,17 +282,24 @@ class StrandedPolicyShapesTest {
         }
 
         @Test
-        @DisplayName("is skipped when the codec binds no key into the property, and still refused when it does")
-        void propertiesTheCodecNeverBindsAreSkipped() {
+        @DisplayName("is skipped only for a transient property the codec binds no key into")
+        void onlyAProvablyUnboundTransientPropertyIsSkipped() {
             assertDoesNotThrow(
-                    () -> processor.precomputeFieldNameResolution(MapHolder.class, binding(Set.of("other"))));
+                    () -> processor.precomputeFieldNameResolution(TransientMapHolder.class, binding(Set.of("name"))));
             assertThrows(
                     ConfigurationException.class,
-                    () -> processor.precomputeFieldNameResolution(MapHolder.class, binding(Set.of("values"))));
+                    () -> processor.precomputeFieldNameResolution(
+                            TransientMapHolder.class, binding(Set.of("name", "cache"))),
+                    "a transient field with an accessor of that name is bound after all");
             assertThrows(
                     ConfigurationException.class,
-                    () -> processor.precomputeFieldNameResolution(MapHolder.class, binding(null)),
+                    () -> processor.precomputeFieldNameResolution(TransientMapHolder.class, binding(null)),
                     "a resolver that cannot enumerate what it binds is trusted as a whole");
+            assertThrows(
+                    ConfigurationException.class,
+                    () -> processor.precomputeFieldNameResolution(MapHolder.class, binding(Set.of("other"))),
+                    "an unbound property that is not transient may still be filled through an accessor of"
+                            + " another name");
         }
 
         @Test
@@ -355,6 +368,20 @@ class StrandedPolicyShapesTest {
     /** Adds a Map property whose value type declares nothing. */
     static class AddsPlainMap extends Base {
         Map<String, Plain> extra;
+    }
+
+    /** Second polymorphic level, reachable only through {@link LevelOneSub}. */
+    abstract static class LevelTwoBase {}
+
+    static class LevelTwoCircle extends LevelTwoBase {
+        @Sanitize(TestStripControlsSanitizer.class)
+        String label;
+    }
+
+    abstract static class LevelOneBase {}
+
+    static class LevelOneSub extends LevelOneBase {
+        LevelTwoBase shape;
     }
 
     /** A base with no fields of its own, so the emptiness gate never selects it. */
@@ -476,6 +503,20 @@ class StrandedPolicyShapesTest {
                             Base.class, subtypes(Map.of(Base.class, Set.of(AddsStrandedMap.class)))));
             assertDoesNotThrow(() -> processor.precomputeFieldNameResolution(
                     Base.class, subtypes(Map.of(Base.class, Set.of(AddsPlainMap.class)))));
+        }
+
+        @Test
+        @DisplayName("is refused one polymorphic level down, behind a subtype that declares nothing itself")
+        void nestedPolymorphicBaseBehindASubtypeIsChecked() {
+            InputFieldNameResolver resolver = subtypes(Map.of(
+                    LevelOneBase.class, Set.of(LevelOneSub.class),
+                    LevelTwoBase.class, Set.of(LevelTwoCircle.class)));
+
+            ConfigurationException ex = assertThrows(
+                    ConfigurationException.class,
+                    () -> processor.precomputeFieldNameResolution(LevelOneBase.class, resolver));
+
+            assertTrue(ex.getMessage().contains(LevelTwoCircle.class.getName()), ex.getMessage());
         }
 
         @Test

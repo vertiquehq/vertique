@@ -178,7 +178,7 @@ final class OwnerTypeWalk {
                 // Both shapes strand a declared policy without any schema-free dispatch the gates
                 // below would notice, so they run for every walked owner, whatever its field count.
                 checkMapValues(owner, resolver);
-                checkPolymorphicSubtypes(owner, metadata, resolver, metadataResolver);
+                checkPolymorphicSubtypes(owner, metadata, resolver, metadataResolver, pending);
             }
             if (!metadata.fields().isEmpty()) {
                 resolver.precompute(owner);
@@ -228,9 +228,10 @@ final class OwnerTypeWalk {
      * whose value type declares nothing — {@code Map<String, String>}, {@code Map<String, Object>},
      * a raw {@code Map}, or a typed value that declares no chain — loses nothing and is accepted.
      *
-     * <p>A property the codec does not bind is skipped when the resolver can enumerate what it binds
-     * ({@link InputFieldNameResolver#boundJavaNames}); a resolver that cannot is trusted as a whole,
-     * as in {@link #checkGovernedFieldsAreBound}.
+     * <p>The only property skipped is a {@code transient} field the codec provably does not bind (see
+     * {@link #isNeverBound}); any other unbound property is refused, like an unbound governed field in
+     * {@link #checkGovernedFieldsAreBound}, because the codec may still fill it through an accessor of
+     * another name.
      *
      * @param owner    the walked class whose declared properties are inspected
      * @param resolver the codec projection, consulted for which properties it binds
@@ -238,21 +239,50 @@ final class OwnerTypeWalk {
      *                                {@code Map}
      */
     private static void checkMapValues(Class<?> owner, InputFieldNameResolver resolver) {
-        Map<String, Set<Class<?>>> candidates = InputPolicyMetadataResolver.mapValueClassesByProperty(owner);
-        if (candidates.isEmpty()) {
-            return;
-        }
-        // Asked only once a candidate exists: enumerating what the codec binds composes its projection,
-        // which a walked class that is never projected against must not be made to do.
-        Set<String> bound = resolver.boundJavaNames(owner);
-        for (Map.Entry<String, Set<Class<?>>> property : candidates.entrySet()) {
-            if (bound != null && !bound.contains(property.getKey())) {
-                // The codec never binds a wire key into this property (ignored, transient, or reached
-                // through an accessor of another name), so no policy is stranded behind it.
-                continue;
+        for (Map.Entry<String, Set<Class<?>>> property :
+                InputPolicyMetadataResolver.mapValueClassesByProperty(owner).entrySet()) {
+            boolean governed = false;
+            for (Class<?> value : property.getValue()) {
+                governed |= InputObjectProcessor.declaresPolicies(value);
             }
-            rejectStrandedMapValues("Property '" + property.getKey() + "' of " + owner.getName(), property.getValue());
+            // Asked only once a policy is actually at stake: enumerating what the codec binds composes
+            // its projection, which a walked class that is never projected against must not be made to.
+            if (governed && !isNeverBound(owner, property.getKey(), resolver)) {
+                rejectStrandedMapValues(
+                        "Property '" + property.getKey() + "' of " + owner.getName(), property.getValue());
+            }
         }
+    }
+
+    /**
+     * Reports whether {@code property} is provably never written by the codec: a {@code transient}
+     * field that no property of that name binds. Anything weaker is not proof — a field the codec
+     * binds through an accessor of another name is absent from the bound names yet still filled — so
+     * an unbound property that is not {@code transient} is treated as bound, as the engine treats a
+     * resolver that cannot enumerate.
+     *
+     * @param owner    the walked class
+     * @param property the Java property name
+     * @param resolver the codec projection
+     * @return {@code true} only when the property is {@code transient} and not among the bound names
+     */
+    private static boolean isNeverBound(Class<?> owner, String property, InputFieldNameResolver resolver) {
+        if (!isTransientField(owner, property)) {
+            return false;
+        }
+        Set<String> bound = resolver.boundJavaNames(owner);
+        return bound != null && !bound.contains(property);
+    }
+
+    private static boolean isTransientField(Class<?> owner, String name) {
+        for (Class<?> cls = owner; cls != null && cls != Object.class; cls = cls.getSuperclass()) {
+            for (java.lang.reflect.Field field : cls.getDeclaredFields()) {
+                if (field.getName().equals(name) && !field.isSynthetic()) {
+                    return java.lang.reflect.Modifier.isTransient(field.getModifiers());
+                }
+            }
+        }
+        return false;
     }
 
     /**
@@ -289,13 +319,15 @@ final class OwnerTypeWalk {
      * @param base             {@code owner}'s resolved metadata
      * @param resolver         the codec projection that knows the subtypes
      * @param metadataResolver the engine's metadata resolver
+     * @param pending          the walk's frontier, to which each accepted subtype is added
      * @throws ConfigurationException when a subtype declares policy the base does not
      */
     private static void checkPolymorphicSubtypes(
             Class<?> owner,
             InputPolicyMetadata base,
             InputFieldNameResolver resolver,
-            InputPolicyMetadataResolver metadataResolver) {
+            InputPolicyMetadataResolver metadataResolver,
+            Deque<Class<?>> pending) {
         for (Class<?> subtype : resolver.polymorphicSubtypes(owner)) {
             if (subtype == owner || !owner.isAssignableFrom(subtype)) {
                 continue;
@@ -309,6 +341,9 @@ final class OwnerTypeWalk {
                         + subtype.getSimpleName() + " value. Declare the policy on " + owner.getName()
                         + ", or declare the field with the concrete subtype.");
             }
+            // The subtype is a real owner the codec binds: walk it so a polymorphic base or a Map
+            // reachable only through it is checked like any other.
+            enqueue(pending, subtype);
         }
     }
 
