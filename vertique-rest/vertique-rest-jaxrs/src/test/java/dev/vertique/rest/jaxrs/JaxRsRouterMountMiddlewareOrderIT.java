@@ -237,6 +237,9 @@ public class JaxRsRouterMountMiddlewareOrderIT {
                             .map(resp -> resp.statusCode())
                             .onComplete(ctx.succeeding(status -> {
                                 ctx.verify(() -> {
+                                    // Router-level middlewares also run on a 404 or 500, so pin the
+                                    // dispatch: the operation must have answered, not just been routed.
+                                    assertEquals(200, status, "GET /ping must be dispatched to the operation");
                                     assertNotNull(executionLog, "Execution log must not be null");
                                     assertEquals(
                                             2,
