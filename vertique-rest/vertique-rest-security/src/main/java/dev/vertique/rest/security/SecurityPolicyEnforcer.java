@@ -862,9 +862,25 @@ public class SecurityPolicyEnforcer {
                 return;
             }
 
-            decisionFuture.onComplete(ar -> {
+            // A gate that never settles is bounded by the resilience fence; a settled one is untouched.
+            Future<AuthorizationDecision> fencedDecision;
+            try {
+                fencedDecision = fence(decisionFuture, roleScopeFence);
+            } catch (RuntimeException e) {
+                log.warn("Authorization role/scope gate fence failed; failing closed", e);
+                internalErrorDeny(ctx, authzRequest, correlation);
+                return;
+            }
+
+            fencedDecision.onComplete(ar -> {
                 if (ar.failed()) {
-                    log.warn("Authorization decision point failed", ar.cause());
+                    logGateFailure("Authorization decision point failed", "role/scope", ar.cause(), roleScopeFence);
+                    if (isFenceFailure(ar.cause(), roleScopeFence)) {
+                        // The deadline elapsed or the runtime closed: the same fail-closed outcome as a
+                        // contract violation, and no resilience failure text reaches the response.
+                        internalErrorDeny(ctx, authzRequest, correlation);
+                        return;
+                    }
                     // Fail-closed: an evaluation error still emits one deny event (FR-054). Use the
                     // correlation captured at entry — the callback may run off the request context.
                     emitDecision(
@@ -979,10 +995,25 @@ public class SecurityPolicyEnforcer {
                 return;
             }
 
-            roleScopeFuture.onComplete(roleScopeAr -> {
+            // A gate that never settles is bounded by the resilience fence; a settled one is untouched.
+            Future<AuthorizationDecision> fencedRoleScope;
+            try {
+                fencedRoleScope = fence(roleScopeFuture, roleScopeFence);
+            } catch (RuntimeException e) {
+                log.warn("Authorization role/scope gate fence failed; failing closed", e);
+                internalErrorDenyComposed(ctx, authzRequest, correlation);
+                return;
+            }
+
+            fencedRoleScope.onComplete(roleScopeAr -> {
                 if (roleScopeAr.failed()) {
                     // Fail-closed: a role/scope evaluation error denies; the action gate is not reached.
-                    log.warn("Authorization decision point failed", roleScopeAr.cause());
+                    logGateFailure(
+                            "Authorization decision point failed", "role/scope", roleScopeAr.cause(), roleScopeFence);
+                    if (isFenceFailure(roleScopeAr.cause(), roleScopeFence)) {
+                        internalErrorDenyComposed(ctx, authzRequest, correlation);
+                        return;
+                    }
                     AuthorizationDecision decision =
                             combinedDecision(AuthorizationDecision.deny(AuthzReasonCodes.INTERNAL_AUTHZ_ERROR), null);
                     emitDecision(authzRequest, decision, correlation);
@@ -1041,7 +1072,18 @@ public class SecurityPolicyEnforcer {
                     internalErrorDenyComposed(ctx, authzRequest, correlation);
                     return;
                 }
-                actionFuture.onComplete(actionAr -> {
+                Future<AuthorizationDecision> fencedAction;
+                try {
+                    fencedAction = fence(actionFuture, actionFence);
+                } catch (RuntimeException e) {
+                    log.warn("Authorization action gate fence failed; failing closed", e);
+                    internalErrorDenyComposed(ctx, authzRequest, correlation);
+                    return;
+                }
+                fencedAction.onComplete(actionAr -> {
+                    if (actionAr.failed()) {
+                        logGateFailure("Authorizer failed", "action", actionAr.cause(), actionFence);
+                    }
                     AuthorizationDecision actionResult = actionAr.succeeded() ? actionAr.result() : null;
                     // The Authorizer contract forbids a failed future for a normal deny and forbids a
                     // null decision; fail closed (INTERNAL_AUTHZ_ERROR) if a misbehaving impl does either.

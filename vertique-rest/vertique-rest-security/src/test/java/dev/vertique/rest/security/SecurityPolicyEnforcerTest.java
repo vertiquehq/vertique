@@ -16,11 +16,14 @@ import dev.vertique.correlation.CorrelationContextFactory;
 import dev.vertique.rest.core.security.SecurityPolicy;
 import dev.vertique.rest.core.security.SecurityRuntime;
 import dev.vertique.security.SecurityContext;
+import dev.vertique.security.authz.ActionRef;
 import dev.vertique.security.authz.AuthorizationClaims;
 import dev.vertique.security.authz.AuthorizationDecision;
 import dev.vertique.security.authz.AuthorizationPolicy;
 import dev.vertique.security.authz.AuthorizationRequest;
+import dev.vertique.security.authz.Authorizer;
 import dev.vertique.security.authz.AuthzReasonCodes;
+import dev.vertique.security.authz.ResourceRef;
 import dev.vertique.security.events.AuthorizationDecisionEvent;
 import dev.vertique.security.events.SecurityEventObserver;
 import dev.vertique.security.runtime.events.SecurityEventEmitter;
@@ -1061,6 +1064,9 @@ class SecurityPolicyEnforcerTest {
             flippableHolder.boundAtEntry = false;
             promise.complete(AuthorizationDecision.deny(AuthzReasonCodes.ROLE_MISSING));
 
+            // The fence settles a still-pending gate on the request's context after a short hop, so the
+            // outcome is awaited; the request is failed only after the event is emitted.
+            verify(rc, timeout(2_000L)).fail(403);
             assertEquals(1, events.size(), "the resolved decision must emit exactly one event");
             assertSame(
                     correlation,
@@ -1070,7 +1076,140 @@ class SecurityPolicyEnforcerTest {
                     CorrelationContext.unbound(),
                     events.get(0).correlation(),
                     "off-context completion must not degrade to unbound() when correlation was bound at entry");
-            verify(rc).fail(403);
+        }
+    }
+
+    // --- Hung gates on the handler paths (REST and WebSocket): bounded by the resilience fence ---
+
+    @Nested
+    @DisplayName("Hung gates on the handler paths are bounded and fail closed")
+    class HungGateOnHandlerPaths {
+
+        private static final long HUNG_GATE_DEADLINE_MS = 100L;
+
+        /** Comfortably larger than the deadline; the decisive signal is that a deny arrives at all. */
+        private static final long DENY_WITHIN_MS = 3_000L;
+
+        private final List<AuthorizationDecisionEvent> events = new ArrayList<>();
+
+        private SecurityPolicyEnforcer enforcer(AuthorizationDecisionPoint dp, Optional<Authorizer> authorizer) {
+            return new SecurityPolicyEnforcer(
+                    Optional.of(dp),
+                    Optional.empty(),
+                    Set.of(),
+                    capturingEmitter(events),
+                    holder,
+                    securityRuntime,
+                    authorizer,
+                    Optional.of(new AuthorizationGateConfig(HUNG_GATE_DEADLINE_MS)),
+                    TestResilience.shared());
+        }
+
+        private void awaitEvents(int expected) throws InterruptedException {
+            long deadline = System.nanoTime() + DENY_WITHIN_MS * 1_000_000L;
+            while (events.size() < expected && System.nanoTime() < deadline) {
+                Thread.sleep(10L);
+            }
+        }
+
+        @Test
+        @DisplayName("hung decision point, role/scope-only handler → 403, one INTERNAL_AUTHZ_ERROR deny")
+        void hungDecisionPointOnTheRoleScopeOnlyHandler() throws Exception {
+            AuthorizationDecisionPoint dp = request ->
+                    io.vertx.core.Promise.<AuthorizationDecision>promise().future();
+            RoutingContext rc = stubRoutingContext(stubSecCtx(AuthorizationClaims.empty()));
+
+            enforcer(dp, Optional.empty())
+                    .createHandler(new SecurityPolicy.Constrained(List.of("admin"), List.of(), false))
+                    .handle(rc);
+
+            verify(rc, timeout(DENY_WITHIN_MS)).fail(403);
+            verify(rc, never()).next();
+            awaitEvents(1);
+            assertEquals(1, events.size(), "a hung gate must emit exactly one deny event");
+            assertEquals(
+                    AuthzReasonCodes.INTERNAL_AUTHZ_ERROR,
+                    events.get(0).decision().reasonCode());
+        }
+
+        @Test
+        @DisplayName("hung decision point, composed handler → 403, one deny, action gate not evaluated")
+        void hungDecisionPointOnTheComposedHandler() throws Exception {
+            AuthorizationDecisionPoint dp = request ->
+                    io.vertx.core.Promise.<AuthorizationDecision>promise().future();
+            RoutingContext rc = stubRoutingContext(stubSecCtx(AuthorizationClaims.empty()));
+
+            enforcer(dp, Optional.of(authorizerReturningPermit()))
+                    .createHandler(
+                            new SecurityPolicy.Constrained(List.of("admin"), List.of(), false),
+                            Optional.of(ActionRef.parse("orders.order.read")))
+                    .handle(rc);
+
+            verify(rc, timeout(DENY_WITHIN_MS)).fail(403);
+            verify(rc, never()).next();
+            awaitEvents(1);
+            assertEquals(1, events.size(), "a hung gate must emit exactly one deny event");
+            assertEquals(
+                    AuthzReasonCodes.INTERNAL_AUTHZ_ERROR,
+                    events.get(0).decision().reasonCode());
+            assertEquals(
+                    Boolean.FALSE,
+                    events.get(0).decision().safeAttributes().get("actionEvaluated"),
+                    "the action gate is never reached after a role/scope timeout");
+        }
+
+        @Test
+        @DisplayName("hung authorizer on the composed handler → 403, one deny, action gate evaluated")
+        void hungAuthorizerOnTheComposedHandler() throws Exception {
+            AuthorizationDecisionPoint permit =
+                    request -> Future.succeededFuture(AuthorizationDecision.permit(AuthzReasonCodes.PERMITTED));
+            Authorizer hung = new Authorizer() {
+                @Override
+                public Future<AuthorizationDecision> authorize(AuthorizationRequest request) {
+                    return io.vertx.core.Promise.<AuthorizationDecision>promise()
+                            .future();
+                }
+
+                @Override
+                public Future<AuthorizationDecision> authorize(
+                        SecurityContext ctx, ActionRef action, ResourceRef resource) {
+                    throw new UnsupportedOperationException("the handler uses the request overload only");
+                }
+            };
+            RoutingContext rc = stubRoutingContext(stubSecCtx(AuthorizationClaims.empty()));
+
+            enforcer(permit, Optional.of(hung))
+                    .createHandler(
+                            new SecurityPolicy.Constrained(List.of("admin"), List.of(), false),
+                            Optional.of(ActionRef.parse("orders.order.read")))
+                    .handle(rc);
+
+            verify(rc, timeout(DENY_WITHIN_MS)).fail(403);
+            verify(rc, never()).next();
+            awaitEvents(1);
+            assertEquals(1, events.size(), "a hung gate must emit exactly one deny event");
+            assertEquals(
+                    AuthzReasonCodes.INTERNAL_AUTHZ_ERROR,
+                    events.get(0).decision().reasonCode());
+            assertEquals(
+                    Boolean.TRUE,
+                    events.get(0).decision().safeAttributes().get("actionEvaluated"),
+                    "a timed-out action gate keeps the existing audit shape: it was evaluated");
+        }
+
+        private Authorizer authorizerReturningPermit() {
+            return new Authorizer() {
+                @Override
+                public Future<AuthorizationDecision> authorize(AuthorizationRequest request) {
+                    return Future.succeededFuture(AuthorizationDecision.permit(AuthzReasonCodes.PERMITTED));
+                }
+
+                @Override
+                public Future<AuthorizationDecision> authorize(
+                        SecurityContext ctx, ActionRef action, ResourceRef resource) {
+                    throw new UnsupportedOperationException("the handler uses the request overload only");
+                }
+            };
         }
     }
 }
