@@ -182,6 +182,33 @@ public interface InputFieldNameResolver {
     }
 
     /**
+     * Returns the concrete subtypes the codec may bind in place of {@code ownerType} when it is a
+     * polymorphic base, or an empty set when it is not.
+     *
+     * <p>The engine resolves a field's policy metadata from the <em>declared</em> type and never
+     * inspects the runtime value the codec selects, so a policy that only a subtype declares is
+     * never applied to that subtype's data. The engine therefore asks, at registration, which
+     * subtypes a base can be bound to and refuses a base whose subtype adds a declared chain or
+     * skip the base does not carry. Jackson's {@code @JsonTypeInfo} with {@code @JsonSubTypes} (or a
+     * mapper-registered subtype) is the motivating case.
+     *
+     * <p>Only subtypes the codec can enumerate are reported; one it discovers by name at runtime is
+     * invisible here, which is a documented residual rather than a silent promise. The set may
+     * contain {@code ownerType} itself, and the engine ignores it.
+     *
+     * <p>The default is the empty set: a projection that knows no polymorphism — including
+     * {@link #IDENTITY} — is trusted as a whole, as with {@link #boundJavaNames}. An implementation
+     * must answer from the class's annotations alone: this is asked of every reachable type,
+     * including ones whose property projection was deliberately never composed.
+     *
+     * @param ownerType the type the intermediate is keyed against; must not be {@code null}
+     * @return the subtypes the codec may bind for {@code ownerType}; never {@code null}
+     */
+    default Set<Class<?>> polymorphicSubtypes(Class<?> ownerType) {
+        return Set.of();
+    }
+
+    /**
      * A key that arrives on one type but is bound into a field declared on another.
      *
      * @param declaringType the type declaring the field the key binds into; never {@code null}

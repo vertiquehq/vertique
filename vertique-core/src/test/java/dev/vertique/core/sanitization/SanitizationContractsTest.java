@@ -231,10 +231,12 @@ class SanitizationContractsTest {
             // promotedFields, promotedField, boundJavaNames and unroutableWireNames joined the
             // ledger with ADR-0247, all as default methods: an implementation that ignores them is
             // unaffected, which is what keeps the addition compatible on a Stable interface.
+            // polymorphicSubtypes joined the same way, as a default returning the empty set.
             assertEquals(
                     new TreeSet<>(Set.of(
                             "boundJavaNames(Class)",
                             "logicalName(Class,String)",
+                            "polymorphicSubtypes(Class)",
                             "precompute(Class)",
                             "promotedField(Class,String)",
                             "promotedFields(Class)",
@@ -285,6 +287,14 @@ class SanitizationContractsTest {
         void identityHasNoUnroutableKeys() {
             assertTrue(InputFieldNameResolver.IDENTITY
                     .unroutableWireNames(Object.class)
+                    .isEmpty());
+        }
+
+        @Test
+        @DisplayName("IDENTITY knows no polymorphism, so the default polymorphicSubtypes is empty")
+        void identityHasNoPolymorphicSubtypes() {
+            assertTrue(InputFieldNameResolver.IDENTITY
+                    .polymorphicSubtypes(Object.class)
                     .isEmpty());
         }
 
