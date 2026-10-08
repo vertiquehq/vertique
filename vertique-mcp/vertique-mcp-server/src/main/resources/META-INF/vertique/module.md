@@ -156,7 +156,14 @@ request to any instance. Every request is admitted through the fixed pipeline be
   therefore rejects **every** present `Origin` rather than imposing no restriction — the MCP HTTP
   transport spec requires Origin validation specifically so a locally bound, unconfigured MCP server
   is not reachable from an arbitrary browser page or a DNS-rebound name. A request with no `Origin`
-  header (every non-browser client) is never origin-rejected.
+  header (every non-browser client) is never origin-rejected. The comparison is literal, so every
+  `mcp.allowedOrigins` entry must be an exact serialized origin as a browser sends it:
+  `scheme://host[:port]` in lowercase, with no path, trailing slash, query, fragment, userinfo, wildcard
+  or default port (`https://app.example.com`, `http://localhost:8080`). An entry of any other shape can
+  never match, so startup fails with a `ConfigurationException` naming the offending entry rather than
+  silently denying the intended caller; entries are never rewritten or normalized. The literal `null`
+  that browsers send for opaque origins (sandboxed frames, `data:` and `file:` pages) is never
+  allowlistable, because allowing it would admit every such page.
 - **Content-Type** — mandatory: every admitted request is a `POST` carrying the protocol's required
   JSON-RPC body, so an absent `Content-Type` is rejected with HTTP `415` exactly like a present one
   whose media type (parameters such as `; charset=utf-8` ignored) is not `application/json`. Admitting
@@ -164,7 +171,9 @@ request to any instance. Every request is admitted through the fixed pipeline be
   empty type, or `navigator.sendBeacon`, both send none).
 - **Accept** — a request that carries an `Accept` admitting none of `application/json`,
   `text/event-stream`, `application/*`, or `*/*` is rejected with HTTP `406`. A request with no
-  `Accept` header is never media-rejected. Discovery always answers `application/json`, so a client
+  `Accept` header is never media-rejected. A range carrying `q=0` does not admit its type, and a
+  comma or semicolon inside a quoted parameter value (`profile="a,b"`) is part of that value, not a
+  range or parameter separator. Discovery always answers `application/json`, so a client
   that accepts `application/json`, `text/event-stream`, or both receives the JSON discovery result.
 - **Body limit** — a body larger than `http.maxBodySize` is a bounded HTTP failure, not a protocol
   result.
@@ -1462,7 +1471,7 @@ keys, not rejected.
 | `mcp.instructions` | absent | Optional server instructions |
 | `mcp.authenticationScheme` | absent | Optional `RouteAuthHandler` scheme name |
 | `mcp.jsonProfile` | absent | MCP boundary default profile id (validated even when disabled) |
-| `mcp.allowedOrigins` | empty | DNS-rebinding allowlist; empty denies mismatched Origin |
+| `mcp.allowedOrigins` | empty | DNS-rebinding allowlist of exact `scheme://host[:port]` origins; empty denies mismatched Origin; any other entry shape fails startup |
 | `mcp.outputMaxBytes` | `2097152` | Shared response/output byte cap |
 | `mcp.ingressMaxTokens` | `65536` | Ingress JSON-RPC parser-token budget (1024–262144) |
 | `mcp.outputMaxTokens` | `65536` | Structured-output reparse token budget (1024–262144) |
