@@ -23,6 +23,8 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
 /**
@@ -34,6 +36,11 @@ import java.util.stream.Stream;
  */
 final class McpServerConfigValidator {
     private static final int MAX_INSTRUCTIONS_CHARS = 16_384;
+
+    /** Lowercase {@code scheme://host[:port]}: group 1 scheme, group 2 host or bracketed IPv6, group 3 port. */
+    private static final Pattern SERIALIZED_ORIGIN = Pattern.compile(
+            "([a-z][a-z0-9+.-]*)://([a-z0-9_-]+(?:\\.[a-z0-9_-]+)*|\\[[0-9a-f:.]+\\])(?::([0-9]{1,5}))?");
+
     private static final RequiresActionResolver ACTION_RESOLVER = new RequiresActionResolver();
 
     private final Optional<ActionRegistry> actionRegistry;
@@ -358,9 +365,42 @@ final class McpServerConfigValidator {
                 "mcp.mountPath");
     }
 
+    /**
+     * Requires every entry to be a serialized origin exactly as a browser sends it in {@code Origin}.
+     * Admission compares the header literally, so an entry of any other shape could never match and
+     * would silently deny the intended caller; it is rejected at startup instead of being rewritten. The
+     * opaque origin {@code null} is the one deliberate exception to "could never match": browsers do send
+     * it, but allowlisting it would admit every sandboxed page, so it is rejected too.
+     */
     private static void validateOrigins(Set<String> origins) {
         require(origins != null, "mcp.allowedOrigins");
-        require(origins.stream().allMatch(origin -> origin != null && !origin.isBlank()), "mcp.allowedOrigins");
+        require(origins.stream().allMatch(Objects::nonNull), "mcp.allowedOrigins");
+        origins.stream()
+                .filter(origin -> !isSerializedOrigin(origin))
+                .findFirst()
+                .ifPresent(origin -> {
+                    throw new ConfigurationException("Invalid configuration: mcp.allowedOrigins entry '" + origin
+                            + "' must be an exact serialized origin 'scheme://host[:port]' in lowercase, without"
+                            + " a path, trailing slash, query, fragment, userinfo, wildcard or default port");
+                });
+    }
+
+    private static boolean isSerializedOrigin(String origin) {
+        Matcher matcher = SERIALIZED_ORIGIN.matcher(origin);
+        if (!matcher.matches()) {
+            return false;
+        }
+        String port = matcher.group(3);
+        if (port == null) {
+            return true;
+        }
+        int number = Integer.parseInt(port);
+        return number >= 1 && number <= 65_535 && port.charAt(0) != '0' && !isDefaultPort(matcher.group(1), number);
+    }
+
+    /** Browsers omit the default port from {@code Origin}, so an entry spelling it can never match. */
+    private static boolean isDefaultPort(String scheme, int port) {
+        return ("http".equals(scheme) && port == 80) || ("https".equals(scheme) && port == 443);
     }
 
     private static void requireNonBlank(String value, String key) {
