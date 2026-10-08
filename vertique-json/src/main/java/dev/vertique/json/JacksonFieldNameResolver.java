@@ -12,9 +12,11 @@ import com.fasterxml.jackson.databind.JavaType;
 import com.fasterxml.jackson.databind.MapperFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.PropertyName;
+import com.fasterxml.jackson.databind.introspect.AnnotatedClass;
 import com.fasterxml.jackson.databind.introspect.AnnotatedMember;
 import com.fasterxml.jackson.databind.introspect.AnnotatedWithParams;
 import com.fasterxml.jackson.databind.introspect.BeanPropertyDefinition;
+import com.fasterxml.jackson.databind.jsontype.NamedType;
 import com.fasterxml.jackson.databind.util.NameTransformer;
 import dev.vertique.core.exception.ConfigurationException;
 import dev.vertique.core.json.VertiqueJson;
@@ -22,9 +24,11 @@ import dev.vertique.core.sanitization.InputFieldNameResolver;
 import dev.vertique.core.sanitization.InputFieldNameResolver.PromotedField;
 import jakarta.annotation.Nullable;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -291,6 +295,37 @@ public final class JacksonFieldNameResolver implements InputFieldNameResolver {
     @Override
     public Set<String> unroutableWireNames(Class<?> ownerType) {
         return projections.get(ownerType).unroutable();
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Non-empty only when the mapper's annotation introspection finds a type resolver on
+     * {@code ownerType} — an {@code @JsonTypeInfo} base. The subtypes are what the mapper's subtype
+     * resolver reports for it: {@code @JsonSubTypes} entries and any subtype registered on the mapper.
+     * A subtype Jackson would discover only from a type id at runtime is not enumerable and is absent.
+     *
+     * <p>Reads class annotations only, never the bean's properties, so asking about a type whose
+     * property projection was deliberately not composed cannot raise a property-name collision.
+     *
+     * @param ownerType the type the intermediate is keyed against; must not be {@code null}
+     * @return the subtypes the mapper can bind in place of {@code ownerType}, excluding
+     *         {@code ownerType} itself; never {@code null}
+     */
+    @Override
+    public Set<Class<?>> polymorphicSubtypes(Class<?> ownerType) {
+        JavaType javaType = mapper.getTypeFactory().constructType(ownerType);
+        AnnotatedClass classInfo = config.introspectClassAnnotations(javaType).getClassInfo();
+        if (config.getAnnotationIntrospector().findTypeResolver(config, classInfo, javaType) == null) {
+            return Set.of();
+        }
+        Set<Class<?>> subtypes = new LinkedHashSet<>();
+        for (NamedType named : config.getSubtypeResolver().collectAndResolveSubtypesByTypeId(config, classInfo)) {
+            if (named.getType() != ownerType) {
+                subtypes.add(named.getType());
+            }
+        }
+        return Collections.unmodifiableSet(subtypes);
     }
 
     /**

@@ -14,6 +14,8 @@ import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.annotation.JsonSubTypes;
+import com.fasterxml.jackson.annotation.JsonTypeInfo;
 import com.fasterxml.jackson.annotation.JsonUnwrapped;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dagger.Component;
@@ -458,6 +460,124 @@ class RestSanitizationComponentTest {
                 () -> processor.precomputeFieldNameResolution(
                         CreatorBody.class, JacksonFieldNameResolver.forRoute(null)));
         assertTrue(ex.getMessage().contains("street_name"), ex.getMessage());
+    }
+
+    // --- Policies the engine provably cannot run ---
+
+    /** A value type that declares a chain. */
+    public static final class GovernedValue {
+        @Sanitize(UppercasingSanitizer.class)
+        public String name;
+    }
+
+    /** A body holding a governed type only as a Map value. */
+    public static final class MapBody {
+        public Map<String, GovernedValue> entries;
+    }
+
+    /** A body holding an ungoverned Map. */
+    public static final class PlainMapBody {
+        public Map<String, String> entries;
+    }
+
+    @JsonTypeInfo(use = JsonTypeInfo.Id.NAME, property = "kind")
+    @JsonSubTypes(@JsonSubTypes.Type(value = GovernedCircle.class, name = "circle"))
+    public abstract static class ShapeBody {}
+
+    /** A subtype carrying a chain the base does not. */
+    public static final class GovernedCircle extends ShapeBody {
+        @Sanitize(UppercasingSanitizer.class)
+        public String label;
+    }
+
+    @JsonTypeInfo(use = JsonTypeInfo.Id.NAME, property = "kind")
+    @JsonSubTypes(@JsonSubTypes.Type(value = PlainSquare.class, name = "square"))
+    public abstract static class PlainShapeBody {}
+
+    public static final class PlainSquare extends PlainShapeBody {
+        public String label;
+    }
+
+    /** A body whose transient Map field the mapper never binds. */
+    public static final class UnboundMapBody {
+        public transient Map<String, GovernedValue> transientMap;
+
+        public String name;
+    }
+
+    @JsonTypeInfo(use = JsonTypeInfo.Id.NAME, property = "kind")
+    @JsonSubTypes({
+        @JsonSubTypes.Type(value = SiblingCircle.class, name = "circle"),
+        @JsonSubTypes.Type(value = SiblingSquare.class, name = "square")
+    })
+    public abstract static class SiblingShape {}
+
+    public static final class SiblingCircle extends SiblingShape {
+        @Sanitize(UppercasingSanitizer.class)
+        public String label;
+    }
+
+    public static final class SiblingSquare extends SiblingShape {
+        public String label;
+    }
+
+    @Test
+    @DisplayName("a transient Map property the mapper never binds strands nothing and does not fail registration")
+    void shouldAcceptMapPropertiesTheMapperNeverBinds() {
+        InputObjectProcessor processor = DaggerRestSanitizationComponentTest_WithSanitizationComponent.create()
+                .inputObjectProcessor()
+                .orElseThrow(() -> new AssertionError("engine must be bound"));
+
+        processor.precomputeFieldNameResolution(UnboundMapBody.class, JacksonFieldNameResolver.forRoute(null));
+    }
+
+    @Test
+    @DisplayName("a sibling subtype's policy does not fail a field declared with another subtype")
+    void shouldNotRefuseAFieldDeclaredWithAnUnaffectedSubtype() {
+        InputObjectProcessor processor = DaggerRestSanitizationComponentTest_WithSanitizationComponent.create()
+                .inputObjectProcessor()
+                .orElseThrow(() -> new AssertionError("engine must be bound"));
+
+        processor.precomputeFieldNameResolution(SiblingSquare.class, JacksonFieldNameResolver.forRoute(null));
+        assertThrows(
+                ConfigurationException.class,
+                () -> processor.precomputeFieldNameResolution(
+                        SiblingShape.class, JacksonFieldNameResolver.forRoute(null)));
+    }
+
+    @Test
+    @DisplayName("a governed type behind a Map value fails registration, and the startup gate sees its policy")
+    void shouldRefuseAGovernedTypeBehindAMapValue() {
+        InputObjectProcessor processor = DaggerRestSanitizationComponentTest_WithSanitizationComponent.create()
+                .inputObjectProcessor()
+                .orElseThrow(() -> new AssertionError("engine must be bound"));
+
+        assertTrue(InputObjectProcessor.declaresPolicies(MapBody.class));
+        ConfigurationException ex = assertThrows(
+                ConfigurationException.class,
+                () -> processor.precomputeFieldNameResolution(MapBody.class, JacksonFieldNameResolver.forRoute(null)));
+        assertTrue(ex.getMessage().contains("'entries'"), ex.getMessage());
+        assertTrue(ex.getMessage().contains(GovernedValue.class.getName()), ex.getMessage());
+
+        assertFalse(InputObjectProcessor.declaresPolicies(PlainMapBody.class));
+        processor.precomputeFieldNameResolution(PlainMapBody.class, JacksonFieldNameResolver.forRoute(null));
+    }
+
+    @Test
+    @DisplayName("a polymorphic subtype that adds a chain fails registration through the real mapper")
+    void shouldRefuseAPolymorphicSubtypeThatAddsAChain() {
+        InputObjectProcessor processor = DaggerRestSanitizationComponentTest_WithSanitizationComponent.create()
+                .inputObjectProcessor()
+                .orElseThrow(() -> new AssertionError("engine must be bound"));
+
+        ConfigurationException ex = assertThrows(
+                ConfigurationException.class,
+                () -> processor.precomputeFieldNameResolution(
+                        ShapeBody.class, JacksonFieldNameResolver.forRoute(null)));
+        assertTrue(ex.getMessage().contains(GovernedCircle.class.getName()), ex.getMessage());
+        assertTrue(ex.getMessage().contains("'label'"), ex.getMessage());
+
+        processor.precomputeFieldNameResolution(PlainShapeBody.class, JacksonFieldNameResolver.forRoute(null));
     }
 
     // --- Schema-free structured bodies ---
