@@ -77,6 +77,15 @@ public final class McpInputLifecycleObservationITFixture {
             CapableObserver capable,
             FixtureToolInvoker tool)
             throws Exception {
+        return startWithObservers(vertx, Set.of(metrics, tracing, capable), tool);
+    }
+
+    /**
+     * Starts the same real port-0 server as {@link #start}, contributing exactly the given lifecycle
+     * observers.
+     */
+    public static Started startWithObservers(
+            Vertx vertx, Set<McpRequestLifecycleObserver> observers, FixtureToolInvoker tool) throws Exception {
         McpServerConfig config = McpServerConfig.builder()
                 .enabled(true)
                 .serverName("vertique-test")
@@ -99,7 +108,7 @@ public final class McpInputLifecycleObservationITFixture {
         McpRequestDispatcher dispatcher = new McpRequestDispatcher(
                 config,
                 securityRuntime,
-                Set.of(metrics, tracing, capable),
+                observers,
                 Set.of(),
                 Set.of(),
                 Set.of(),

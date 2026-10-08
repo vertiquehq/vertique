@@ -9,18 +9,23 @@ package dev.vertique.mcp.lifecycle;
  * facts (the client-supplied JSON-RPC id and the caller's principal id) — below the neutral,
  * payload-free {@link McpRequestObservation}/{@link McpToolValueObservation} contract.
  *
- * <p>Least privilege is structural, exactly like {@link McpToolValueObservation}: the server delivers
+ * <p>Delivery is opt-in by type, exactly like {@link McpToolValueObservation}: the server delivers
  * {@link #onRequestAdmitted}/{@link #onResponseWritten} only to a session whose {@link
  * McpRequestLifecycleObserver#open(java.time.Instant)} returned an instance of this interface. An
  * ordinary metrics or tracing session that implements only the plain {@link McpRequestObservation}
  * contract has no method on its own interface capable of receiving raw evidence, through any callback.
+ * This is not an access-control boundary: the interface is public and observers are contributed
+ * through an open set, so any contributed observer can opt in and then receives raw request and
+ * response bodies, headers, the client's JSON-RPC id and the caller's principal id. Contribute such
+ * an observer only from code trusted with that data.
  *
- * <p>This interface exists so a private, audit-owned adapter can reach the raw envelope it needs
- * without widening the public {@link McpRequestObservation}/{@link McpToolValueObservation} contract
- * every other neutral observer (Micrometer, OpenTelemetry, any future framework integration) also
- * implements — mirroring how REST's audit adapter reaches its own raw evidence through a private,
- * audit-owned seam below REST's own payload-free public request/response types, never by widening
- * them.
+ * <p>This interface exists so an observer that needs the raw envelope, such as an audit adapter, can
+ * reach it without widening the public {@link McpRequestObservation}/{@link McpToolValueObservation}
+ * contract every other neutral observer (Micrometer, OpenTelemetry, any future integration) also
+ * implements.
+ *
+ * <p>Observation is read-only. Evidence bodies are snapshots, so an observer cannot change the
+ * request the server processes or the response it writes.
  */
 public interface McpRawEvidenceObservation extends McpRequestObservation {
 

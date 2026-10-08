@@ -16,21 +16,37 @@ import java.util.Objects;
  * including a bounded error or rejection response, so an opt-in session observes the response the
  * caller actually received on every settlement path that produces one.
  *
- * @param body the exact response bytes about to be written to the wire; never {@code null}, may be
- *     empty
+ * <p>The evidence is a snapshot: {@code body} is copied on the way in and on every {@link #body()}
+ * read, so an observer that modifies the array it receives changes neither the bytes written to the
+ * wire nor what another observer sees.
+ *
+ * @param body a copy of the exact response bytes about to be written to the wire; never {@code null},
+ *     may be empty
  * @param headers the response's HTTP headers, name to last value, as set immediately before the write;
  *     never {@code null}, may be empty
  */
 public record McpResponseEvidence(byte[] body, Map<String, String> headers) {
 
     /**
-     * Validates required fields and defensively copies {@code headers} into an unmodifiable view.
+     * Validates required fields, copies {@code body}, and defensively copies {@code headers} into an
+     * unmodifiable view.
      *
      * @throws NullPointerException if {@code body} or {@code headers} is {@code null}
      */
     public McpResponseEvidence {
         Objects.requireNonNull(body, "body");
         Objects.requireNonNull(headers, "headers");
+        body = body.clone();
         headers = Map.copyOf(headers);
+    }
+
+    /**
+     * Returns a copy of the response bytes; modifying it affects no other reader.
+     *
+     * @return a fresh copy of the exact response bytes; never {@code null}
+     */
+    @Override
+    public byte[] body() {
+        return body.clone();
     }
 }

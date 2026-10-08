@@ -258,18 +258,23 @@ evidence handle.
 #open` may additionally implement to receive `onRequestAdmitted`/`onResponseWritten` — the raw request
 body bytes, response bytes, headers, and the two per-request identifying facts (the client-supplied
 JSON-RPC id and the caller's principal id), below the payload-free `McpRequestObservation`/
-`McpToolValueObservation` contract. Least privilege is structural, exactly like
-`McpToolValueObservation`: the server delivers a raw-evidence callback only to a session that is an
-instance of this interface.
+`McpToolValueObservation` contract. Delivery is opt-in by type, exactly like `McpToolValueObservation`:
+the server delivers a raw-evidence callback only to a session that is an instance of this interface, so
+an ordinary metrics or tracing session has no method on its own type that can receive raw evidence.
 
-This is the boundary-evidence hook the audit adapter implements — a private, audit-owned seam, not a
-general-purpose extension point. It exists so an audit adapter can reach the raw envelope it needs
-without widening the public `McpRequestObservation`/`McpToolValueObservation` contract every other
-neutral observer (Micrometer, OpenTelemetry) also implements. `onRequestAdmitted` fires once per
-`tools/call` request, before tool-name resolution or authorization, so it fires even for a request
-rejected before the input pipeline runs; `onResponseWritten` fires once, immediately before the
-single shared terminal writer sends the response to the wire, for every terminal write on that
-surface.
+This is not an access-control boundary. The interface is public and observers are contributed through
+an open Dagger set, so any contributed observer can opt in and then receives raw request and response
+bodies, headers, the JSON-RPC id and the principal id. Contribute such an observer only from code
+trusted with that data. An audit adapter is the intended consumer; the capability exists so it can reach
+the raw envelope without widening the contract every other observer implements.
+
+`onRequestAdmitted` fires once per `tools/call` request, before tool-name resolution or authorization,
+so it fires even for a request rejected before the input pipeline runs; `onResponseWritten` fires once,
+immediately before the single shared terminal writer sends the response to the wire, for every terminal
+write on that surface. Observation is read-only: the evidence bodies are snapshots, copied when the
+record is built and again on every `body()` read, so an observer that modifies the array it receives
+changes neither the request the server processes, nor the response it writes, nor what another observer
+sees. Callback exceptions are caught and logged without affecting the request.
 
 ## Opt-in completion scope
 
@@ -297,7 +302,7 @@ already threads through the per-request `McpRequestObservation` sessions this mo
 | `McpRequestInterceptor`, `McpToolInterceptor`, `McpRequestContext`, `McpToolInvocationContext` | Fail-closed pre-dispatch and post-validation interceptor SPIs |
 | `McpRequestLifecycleObserver`, `McpRequestObservation`, `McpRequestCompletedListener` | Neutral observation SPIs |
 | `McpRequestTerminalEvent`, `McpRequestCompletedEvent`, outcome / method / error enums | Immutable lifecycle facts |
-| `McpToolValueObservation`, `McpCompletionScope` | Opt-in session capabilities on observer sessions |
+| `McpToolValueObservation`, `McpRawEvidenceObservation`, `McpCompletionScope` | Opt-in session capabilities on observer sessions |
 
 Tool methods may declare Jakarta security annotations (`@PermitAll`, `@DenyAll`, `@RolesAllowed`,
 `@RequiresAction`, `@RequiresPolicy`). An unannotated tool is public. Typed policies use the
@@ -312,7 +317,6 @@ arbitrary application packages) and sibling framework modules can reach them:
 |---|---|
 | `McpToolInvoker`, `McpPreparedToolCall`, `McpStructuredOutputWriter` | Generated-runtime invocation contracts |
 | `McpBeanValidation`, `McpInputRejectionException`, `McpValueTrees` | Generated `prepare` support |
-| `McpRawEvidenceObservation`, `McpRequestAdmissionEvidence`, `McpResponseEvidence` | Audit-owned raw-evidence capability |
 
 ---
 
