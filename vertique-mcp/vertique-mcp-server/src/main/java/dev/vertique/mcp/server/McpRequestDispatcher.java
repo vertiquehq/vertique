@@ -974,7 +974,7 @@ final class McpRequestDispatcher {
         if (accept == null) {
             return true;
         }
-        for (String range : accept.split(",")) {
+        for (String range : McpQuotedHeaderTokens.split(accept, ',')) {
             String mediaRange = mediaTypeOf(range);
             if ((mediaRange.equalsIgnoreCase(JSON_CONTENT_TYPE)
                             || mediaRange.equalsIgnoreCase(EVENT_STREAM_CONTENT_TYPE)
@@ -1003,7 +1003,7 @@ final class McpRequestDispatcher {
         if (semicolon < 0) {
             return false;
         }
-        for (String parameter : range.substring(semicolon + 1).split(";")) {
+        for (String parameter : McpQuotedHeaderTokens.split(range.substring(semicolon + 1), ';')) {
             int equals = parameter.indexOf('=');
             if (equals < 0) {
                 continue;
