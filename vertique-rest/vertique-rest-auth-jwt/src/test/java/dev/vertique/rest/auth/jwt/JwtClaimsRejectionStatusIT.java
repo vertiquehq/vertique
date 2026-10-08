@@ -6,6 +6,7 @@ package dev.vertique.rest.auth.jwt;
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.core.exception.UnauthorizedException;
@@ -255,6 +256,7 @@ public class JwtClaimsRejectionStatusIT {
     private record HttpResult(int statusCode, String contentType, String wwwAuthenticate, String body) {
 
         JsonObject problem() {
+            assertNotNull(body, "the response carried no body; status was " + statusCode);
             return new JsonObject(body);
         }
 
