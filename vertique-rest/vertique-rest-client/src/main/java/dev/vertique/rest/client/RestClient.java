@@ -49,6 +49,12 @@ public @interface RestClient {
     /**
      * Logical name for config lookup and per-client SPI resolution.
      *
+     * <p>When blank the interface's simple name is used. Two interfaces built through one
+     * {@link RestClientFactory} that resolve to the same name would share one
+     * {@code restClient.{name}.*} block, so the second build fails with a
+     * {@link dev.vertique.rest.client.exception.RestClientConfigurationException} unless both wrote that
+     * name explicitly here, which is a deliberate choice to share it.
+     *
      * @return the client name, empty string if not specified
      */
     String name() default "";

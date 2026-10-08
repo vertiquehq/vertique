@@ -52,6 +52,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
@@ -166,6 +167,9 @@ public final class RestClientBuilder {
     private RestClientConfig config;
 
     private Map<String, RestClientConfig> configIndex = Map.of();
+
+    @Nullable
+    private ConcurrentMap<String, NameClaim> clientNameBindings;
 
     private RestClientRetryPolicy retryPolicy = new DefaultRestClientRetryPolicy();
     private BackoffStrategy backoffStrategy = BackoffStrategy.exponential(500, 2.0, 30_000);
@@ -668,6 +672,20 @@ public final class RestClientBuilder {
         return this;
     }
 
+    /**
+     * Seeds the registry that records which client interface owns each resolved client name, so
+     * {@link #build(Class)} can refuse a second, different interface that resolves to the same name.
+     * Used by {@link RestClientFactory#builder()} to share one registry across every builder it
+     * creates; a standalone builder has no registry and performs no cross-build check.
+     *
+     * @param clientNameBindings the shared resolved-name → first-claim registry
+     * @return this builder
+     */
+    RestClientBuilder clientNameBindings(ConcurrentMap<String, NameClaim> clientNameBindings) {
+        this.clientNameBindings = clientNameBindings;
+        return this;
+    }
+
     // --- Terminal operation ---
 
     /**
@@ -696,6 +714,8 @@ public final class RestClientBuilder {
      * @throws IllegalArgumentException if no base URL can be resolved or the interface is not
      *     annotated with JAX-RS HTTP verb annotations
      * @throws RestClientException if external config values fail validation
+     * @throws RestClientConfigurationException if a factory-created builder resolves a client name that
+     *     a different interface already holds and at least one of them derived it from its simple name
      */
     @SuppressWarnings("unchecked")
     public <T> T build(Class<T> clientInterface) {
@@ -710,6 +730,7 @@ public final class RestClientBuilder {
         }
 
         String clientName = resolveClientName(clientInterface);
+        claimClientName(clientName, clientInterface);
 
         // Resolve the per-client typed config: an explicitly-set config() wins; otherwise look it up
         // by the resolved client name in the seeded index (RestClientFactory.builder()).
@@ -1104,6 +1125,52 @@ public final class RestClientBuilder {
         return capturers.stream()
                 .sorted(dev.vertique.core.extension.OrderedExtension.comparator())
                 .toList();
+    }
+
+    /**
+     * One interface's claim on a resolved client name.
+     *
+     * @param interfaceName the claiming interface's binary name
+     * @param explicit whether the name was written in {@link RestClient#name()} rather than derived
+     *     from the simple class name
+     */
+    record NameClaim(String interfaceName, boolean explicit) {}
+
+    /**
+     * Records {@code clientInterface}'s claim on {@code clientName} and refuses a different interface
+     * that resolves to the same name when either claim was not a deliberate choice.
+     *
+     * <p>The resolved name keys the {@code restClient.{name}.*} configuration and every per-client
+     * binding built on it. A name derived from the simple class name was never chosen, so two
+     * interfaces that share it — or an interface whose explicit name happens to equal another's simple
+     * name — would silently share one set of overrides. Several interfaces that all write the same
+     * {@link RestClient#name()} chose to share it and are accepted. Building the same interface again
+     * is legal, and a build that fails after this point still holds the name.
+     *
+     * @param clientName the resolved client name
+     * @param clientInterface the interface being built
+     * @throws RestClientConfigurationException if a different interface already holds {@code clientName}
+     *     and at least one of the two derived it from its simple class name
+     */
+    private void claimClientName(String clientName, Class<?> clientInterface) {
+        if (clientNameBindings == null) {
+            return;
+        }
+        RestClient annotation = clientInterface.getAnnotation(RestClient.class);
+        NameClaim claim = new NameClaim(
+                clientInterface.getName(),
+                annotation != null && !annotation.name().isBlank());
+        NameClaim held = clientNameBindings.putIfAbsent(clientName, claim);
+        if (held != null
+                && !held.interfaceName().equals(claim.interfaceName())
+                && !(held.explicit() && claim.explicit())) {
+            throw new RestClientConfigurationException("REST client interfaces " + held.interfaceName() + " and "
+                    + claim.interfaceName() + " both resolve to the client name '" + clientName
+                    + "' and at least one derives it from its simple class name, so they would share the"
+                    + " 'restClient." + clientName + ".*' configuration and any per-client binding keyed on"
+                    + " that name. Give each its own @RestClient(name = \"...\"), or give both the same"
+                    + " explicit name if sharing is intended.");
+        }
     }
 
     /**

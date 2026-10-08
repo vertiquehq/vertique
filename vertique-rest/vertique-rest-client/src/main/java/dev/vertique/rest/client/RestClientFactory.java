@@ -16,6 +16,8 @@ import jakarta.annotation.Nullable;
 import jakarta.inject.Singleton;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import lombok.extern.slf4j.Slf4j;
 
 /**
@@ -56,6 +58,9 @@ public class RestClientFactory {
     private final Set<RestClientInterceptor> globalInterceptors;
     private final Set<RestClientContextCapturer<?>> globalContextCapturers;
     private final Map<String, RestClientConfig> configIndex;
+
+    /** Resolved client name → the first interface's claim on it, shared by every builder. */
+    private final ConcurrentMap<String, RestClientBuilder.NameClaim> clientNameBindings = new ConcurrentHashMap<>();
 
     @Nullable
     private final dev.vertique.core.validation.BeanValidator beanValidator;
@@ -243,6 +248,7 @@ public class RestClientFactory {
         globalInterceptors.forEach(b::register);
         globalContextCapturers.forEach(b::registerCapturer);
         b.configIndex(configIndex);
+        b.clientNameBindings(clientNameBindings);
         if (beanValidator != null) {
             b.beanValidator(beanValidator);
         }
