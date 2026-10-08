@@ -257,14 +257,11 @@ public class ConsumesEnforcementIT {
     @DisplayName(
             "RequestWithBodyAndNoContentTypeAgainstNoConsumesOperation — no @Consumes, no Content-Type → passes (no per-route 415)")
     void requestWithBodyAndNoContentTypeAgainstNoConsumesOperation(Vertx vertx, VertxTestContext ctx) {
-        // The broad ContentTypeValidationMiddleware will 415 if the request has a body and no
-        // Content-Type — but that is the middleware's job, not the per-route handler's. We pass
-        // Content-Length: 0 to have no body, so the middleware also skips validation. The test
-        // proves no additional per-route 415 is added for the no-consumes operation.
+        // No middleware is mounted here, so this proves only that the per-route handler adds no 415
+        // of its own for an operation without @Consumes when the request has no Content-Type.
         deploy(vertx, ctx, Set.of(new NoConsumesResource()), (port, c) -> {
             c.post(port, "127.0.0.1", "/open")
-                    .putHeader("Content-Length", "0")
-                    // No Content-Type header; empty body → no middleware 415 either
+                    // No Content-Type header and no body
                     .send()
                     .map(resp -> resp.statusCode() + "|" + String.valueOf(resp.bodyAsString()))
                     .onComplete(ctx.succeeding(result -> {
