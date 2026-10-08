@@ -96,7 +96,8 @@ public class HealthCheckHandler implements Handler<RoutingContext> {
      * aggregation observe them: a per-check {@code otherwise} could itself throw and strand the
      * response.
      *
-     * @param name   the check's name, or its class name when {@link HealthCheck#name()} threw
+     * @param name   the check's name, or its class name when {@link HealthCheck#name()} threw or returned
+     *               {@code null}
      * @param result the raw, possibly failed, result of invoking the check
      */
     private record CheckExecution(String name, Future<HealthCheckResult> result) {}
@@ -264,6 +265,11 @@ public class HealthCheckHandler implements Handler<RoutingContext> {
             // name. name() is never called again — calling it on a rendering path is what
             // previously defeated the recovery and suppressed the whole response.
             return new CheckExecution(check.getClass().getName(), Future.failedFuture(e));
+        }
+        if (name == null) {
+            // HealthCheck.name() is documented non-null; tolerate a violation the same way as a
+            // throwing name, but keep running the check — its own result is still meaningful.
+            name = check.getClass().getName();
         }
         try {
             return new CheckExecution(name, check.check().timeout(checkTimeoutSeconds, TimeUnit.SECONDS));
