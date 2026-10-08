@@ -614,7 +614,9 @@ static HealthCheck databaseHealth(DatabaseHealthCheck check) {
 
 `HealthCheckResult` is a `record (HealthStatus status, Map<String, Object> data)` with the factories
 `up()`, `up(Map)`, `down()`, `down(String error)`, `down(Throwable cause)`, and `down(Map)`; `status`
-must not be `null`, and `data` is copied and never `null`. `down(String)` treats a `null` error as
+must not be `null`, and `data` is copied and never `null`. The copy is unmodifiable and keeps the
+supplied map's iteration order (pass a `LinkedHashMap` to control the order entries appear in the
+probe response); a `null` key or value is rejected with a `NullPointerException`. `down(String)` treats a `null` error as
 "no message" and yields empty data rather than throwing, so `down(throwable.getMessage())` is safe
 for a message-less exception.
 `down(Throwable)` puts the throwable's message under the `error` key, falling back to its fully

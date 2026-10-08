@@ -6,6 +6,8 @@ package dev.vertique.core.health;
 import static org.junit.jupiter.api.Assertions.*;
 
 import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -195,6 +197,33 @@ class HealthCheckResultTest {
             assertEquals(Map.of("key", "value"), result.data(), "later mutations of the source must not leak in");
             assertThrows(
                     UnsupportedOperationException.class, () -> result.data().put("new", "value"));
+        }
+
+        @Test
+        @DisplayName("data preserves the iteration order of the supplied map")
+        void dataPreservesInsertionOrder() {
+            // Map.copyOf places entries by hash and only salts the traversal start and direction, so
+            // none of its traversals of these sixteen keys equals this reverse insertion order.
+            Map<String, Object> source = new LinkedHashMap<>();
+            for (int i = 15; i >= 0; i--) {
+                source.put("service-" + i, i);
+            }
+
+            HealthCheckResult result = HealthCheckResult.up(source);
+
+            assertEquals(List.copyOf(source.keySet()), List.copyOf(result.data().keySet()));
+        }
+
+        @Test
+        @DisplayName("null data keys and values are rejected")
+        void nullEntriesRejected() {
+            Map<String, Object> nullValue = new HashMap<>();
+            nullValue.put("key", null);
+            Map<String, Object> nullKey = new HashMap<>();
+            nullKey.put(null, "value");
+
+            assertThrows(NullPointerException.class, () -> HealthCheckResult.up(nullValue));
+            assertThrows(NullPointerException.class, () -> HealthCheckResult.down(nullKey));
         }
     }
 }
