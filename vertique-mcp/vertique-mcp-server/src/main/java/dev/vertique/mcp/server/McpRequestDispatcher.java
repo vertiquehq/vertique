@@ -2262,7 +2262,7 @@ final class McpRequestDispatcher {
      *
      * <p>An unresolved name is never short-circuited straight to that response: it is first evaluated
      * against {@link #UNKNOWN_TOOL_PLACEHOLDER_DESCRIPTOR} through the same {@link
-     * McpPolicyEnforcer#decide} decision point a known-but-denied name reaches, so the two paths carry
+     * McpPolicyEnforcer#decide} decision point a known-but-denied name reaches, so both paths reach
      * the same decision point. The two responses are protocol-equivalent (same code, message and HTTP
      * status); their timing can still differ when a remote policy decision point is in the path, because
      * the placeholder settles synchronously. The terminal event for

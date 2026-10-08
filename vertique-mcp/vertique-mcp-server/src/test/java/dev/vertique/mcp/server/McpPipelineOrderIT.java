@@ -91,15 +91,15 @@ import org.junit.jupiter.params.provider.MethodSource;
  *
  * <p>The order is otherwise an emergent property of route registration order and statement order
  * across the router mount, the request dispatcher and the completion coordinator, and each
- * individual repair only proved one adjacency. This class proves the sequence as a whole in two
- * ways:
+ * earlier test covers one adjacency. This class covers the sequence as a whole in two ways:
  *
  * <ul>
  *   <li><strong>Precedence rows.</strong> Each row sends a request that violates two adjacent stages
  *       at once and asserts that the earlier stage's error is the one on the wire, that the later
  *       stage's collaborators were never entered, and that the terminal observation carries the
- *       earlier stage's classification. Swapping any two adjacent stages in production code turns
- *       the matching row red.
+ *       earlier stage's classification. Each row distinguishes the order of the two stages it names:
+ *       reversing that pair in production code makes the row fail. Pairs the rows do not name are
+ *       covered only by the full-sequence test below.
  *   <li><strong>Full sequence.</strong> One successful call records every stage a probe can observe
  *       and asserts the exact order, including the completion side: the terminal observation before
  *       the tool-output observation, and every completion scope opened before and closed after the
@@ -138,6 +138,7 @@ class McpPipelineOrderIT {
 
     // Probe event names, in the order a successful call produces them.
     private static final String OPEN = "lifecycle.open";
+    private static final String IDENTITY = "identity.resolve";
     private static final String ADMITTED = "evidence.admitted";
     private static final String REQUEST_INTERCEPTOR = "interceptor.request";
     private static final String ADMISSION = "admission.consume";
@@ -154,9 +155,9 @@ class McpPipelineOrderIT {
 
     private static final Set<String> COMPLETION_EVENTS = Set.of(SCOPE_OPEN, COMPLETED, LISTENER_COMPLETED, SCOPE_CLOSE);
     private static final List<String> REJECTED_AFTER_INTERCEPTOR =
-            List.of(OPEN, ADMITTED, REQUEST_INTERCEPTOR, TERMINAL);
-    private static final List<String> THROUGH_INVOKE =
-            List.of(OPEN, ADMITTED, REQUEST_INTERCEPTOR, PREPARE, TOOL_INPUT, TOOL_INTERCEPTOR, INVOKE, TERMINAL);
+            List.of(OPEN, IDENTITY, ADMITTED, REQUEST_INTERCEPTOR, TERMINAL);
+    private static final List<String> THROUGH_INVOKE = List.of(
+            OPEN, IDENTITY, ADMITTED, REQUEST_INTERCEPTOR, PREPARE, TOOL_INPUT, TOOL_INTERCEPTOR, INVOKE, TERMINAL);
 
     private final Vertx vertx = Vertx.vertx();
 
@@ -227,9 +228,14 @@ class McpPipelineOrderIT {
                                 .header("Mcp-Method", "tools/list")
                                 .header("MCP-Protocol-Version", "1999-01-01"),
                         Setup.NONE,
-                        Expect.rpc(400, -32700, List.of(OPEN, TERMINAL))),
+                        Expect.rpc(400, -32700, List.of(OPEN, IDENTITY, TERMINAL))),
                 new Row(
-                        "unknown method is judged before params schema and negotiation",
+                        "identity establishment is judged before envelope parsing",
+                        call(OPEN_TOOL, "{}", new JsonObject()).body("{not json"),
+                        Setup.FAIL_IDENTITY,
+                        Expect.status(500, List.of(OPEN, IDENTITY, TERMINAL))),
+                new Row(
+                        "an unknown method is judged before the negotiation failure its missing _meta would cause",
                         call(OPEN_TOOL, "{}", new JsonObject())
                                 .body(new JsonObject()
                                         .put("jsonrpc", "2.0")
@@ -238,7 +244,7 @@ class McpPipelineOrderIT {
                                         .put("params", new JsonObject())
                                         .encode()),
                         Setup.NONE,
-                        Expect.rpc(404, -32601, List.of(OPEN, TERMINAL))),
+                        Expect.rpc(404, -32601, List.of(OPEN, IDENTITY, TERMINAL))),
                 new Row(
                         "params schema is judged before negotiation",
                         call(OPEN_TOOL, "{}", new JsonObject())
@@ -250,12 +256,12 @@ class McpPipelineOrderIT {
                                         .encode())
                                 .header("Mcp-Method", "tools/list"),
                         Setup.NONE,
-                        Expect.rpc(400, -32602, List.of(OPEN, ADMITTED, TERMINAL))),
+                        Expect.rpc(400, -32602, List.of(OPEN, IDENTITY, ADMITTED, TERMINAL))),
                 new Row(
                         "negotiation is judged before the request interceptors",
                         call(OPEN_TOOL, "{}", new JsonObject()).header("Mcp-Method", "tools/list"),
                         Setup.REJECT_REQUESTS,
-                        Expect.rpc(400, -32020, List.of(OPEN, ADMITTED, TERMINAL))),
+                        Expect.rpc(400, -32020, List.of(OPEN, IDENTITY, ADMITTED, TERMINAL))),
                 // --- request interceptors, then tool resolution and authorization ---
                 new Row(
                         "request interceptors are judged before tool resolution",
@@ -277,8 +283,12 @@ class McpPipelineOrderIT {
                         "admission is judged before input schema validation and response transport selection",
                         call(LIMITED_TOOL, "{\"n\":\"x\"}", capability()),
                         Setup.DRAIN_QUOTA,
-                        Expect.rpc(429, -32022, List.of(OPEN, ADMITTED, REQUEST_INTERCEPTOR, ADMISSION, TERMINAL))
-                                .tool(LIMITED_TOOL)),
+                        Expect.rpc(
+                                        429,
+                                        -32022,
+                                        List.of(OPEN, IDENTITY, ADMITTED, REQUEST_INTERCEPTOR, ADMISSION, TERMINAL))
+                                .tool(LIMITED_TOOL)
+                                .json()),
                 new Row(
                         "input schema validation is judged before input processing",
                         call(OPEN_TOOL, "{\"n\":\"x\",\"rejectInput\":true}", new JsonObject()),
@@ -290,7 +300,7 @@ class McpPipelineOrderIT {
                         Setup.REJECT_TOOLS,
                         Expect.toolError(
                                 PREPARE_REJECTION,
-                                List.of(OPEN, ADMITTED, REQUEST_INTERCEPTOR, PREPARE, TERMINAL),
+                                List.of(OPEN, IDENTITY, ADMITTED, REQUEST_INTERCEPTOR, PREPARE, TERMINAL),
                                 McpErrorType.INPUT_PROCESSING)),
                 new Row(
                         "tool interceptors are judged before invocation",
@@ -300,6 +310,7 @@ class McpPipelineOrderIT {
                                 TOOL_INTERCEPTOR_REJECTION,
                                 List.of(
                                         OPEN,
+                                        IDENTITY,
                                         ADMITTED,
                                         REQUEST_INTERCEPTOR,
                                         PREPARE,
@@ -313,8 +324,11 @@ class McpPipelineOrderIT {
                         call(OVER_CAP_TOOL, "{}", new JsonObject()),
                         Setup.NONE,
                         Expect.internalError(THROUGH_INVOKE, McpErrorType.SERIALIZATION)),
+                // Negative pin: the output-schema failure settles through its own writer, which never
+                // reaches the tool-output publication, so the absence of that observation is the expected
+                // result of the stage order rather than of a missing probe.
                 new Row(
-                        "output schema validation delivers no output observation",
+                        "an output-schema-invalid result settles without reaching the output observation",
                         call(BAD_SHAPE_TOOL, "{}", new JsonObject()),
                         Setup.NONE,
                         Expect.internalError(THROUGH_INVOKE, McpErrorType.OUTPUT_VALIDATION)));
@@ -343,6 +357,12 @@ class McpPipelineOrderIT {
         assertThat(fixture.probe().stages())
                 .as("stages entered, in order (completion callbacks excluded)")
                 .isEqualTo(expect.stages());
+        if (expect.transport() == Transport.JSON) {
+            assertThat(response.getHeader("Content-Type")).startsWith("application/json");
+            assertThat(response.getHeader("X-Accel-Buffering"))
+                    .as("response transport selection must not have run")
+                    .isNull();
+        }
         if (expect.errorType() != null) {
             assertThat(fixture.probe().lastTerminal().errorType()).isEqualTo(expect.errorType());
         }
@@ -388,6 +408,8 @@ class McpPipelineOrderIT {
 
         assertThat(response.statusCode()).isEqualTo(200);
         assertThat(response.bodyAsString()).startsWith(SSE_PREFIX).contains("done");
+        assertThat(response.getHeader("Content-Type")).startsWith("text/event-stream");
+        assertThat(response.getHeader("X-Accel-Buffering")).isEqualTo("no");
         fixture.probe().awaitEvent(TOOL_OUTPUT);
         List<String> events = fixture.probe().events();
         assertThat(fixture.probe().stages())
@@ -395,6 +417,7 @@ class McpPipelineOrderIT {
                         + "before the tool-output observation")
                 .containsExactly(
                         OPEN,
+                        IDENTITY,
                         ADMITTED,
                         REQUEST_INTERCEPTOR,
                         ADMISSION,
@@ -524,6 +547,12 @@ class McpPipelineOrderIT {
                 test.fixture.rejectRequests().set(true);
             }
         },
+        FAIL_IDENTITY {
+            @Override
+            void apply(McpPipelineOrderIT test) {
+                test.fixture.failIdentity().set(true);
+            }
+        },
         REJECT_TOOLS {
             @Override
             void apply(McpPipelineOrderIT test) {
@@ -537,6 +566,7 @@ class McpPipelineOrderIT {
                 HttpResponse<Buffer> drain = test.send(call(LIMITED_TOOL, "{\"n\":1}", capability()));
                 assertThat(drain.statusCode()).isEqualTo(200);
                 test.fixture.probe().awaitCompletionWhenOpened();
+                test.fixture.probe().awaitEvent(TOOL_OUTPUT);
                 test.fixture.probe().clear();
             }
         };
@@ -550,27 +580,38 @@ class McpPipelineOrderIT {
             String bodyContains,
             List<String> stages,
             McpErrorType errorType,
-            String terminalTool) {
+            String terminalTool,
+            Transport transport) {
 
         static Expect status(int status, List<String> stages) {
-            return new Expect(status, null, null, stages, null, null);
+            return new Expect(status, null, null, stages, null, null, Transport.UNCHECKED);
         }
 
         static Expect rpc(int status, int rpcCode, List<String> stages) {
-            return new Expect(status, rpcCode, null, stages, null, null);
+            return new Expect(status, rpcCode, null, stages, null, null, Transport.UNCHECKED);
         }
 
         static Expect toolError(String bodyContains, List<String> stages, McpErrorType errorType) {
-            return new Expect(200, null, bodyContains, stages, errorType, null);
+            return new Expect(200, null, bodyContains, stages, errorType, null, Transport.UNCHECKED);
         }
 
         static Expect internalError(List<String> stages, McpErrorType errorType) {
-            return new Expect(500, -32603, null, stages, errorType, null);
+            return new Expect(500, -32603, null, stages, errorType, null, Transport.UNCHECKED);
         }
 
         Expect tool(String toolName) {
-            return new Expect(status, rpcCode, bodyContains, stages, errorType, toolName);
+            return new Expect(status, rpcCode, bodyContains, stages, errorType, toolName, transport);
         }
+
+        /** The response is plain JSON: response transport selection was never reached. */
+        Expect json() {
+            return new Expect(status, rpcCode, bodyContains, stages, errorType, terminalTool, Transport.JSON);
+        }
+    }
+
+    private enum Transport {
+        UNCHECKED,
+        JSON
     }
 
     private record Row(String name, Wire wire, Setup setup, Expect expect) {
@@ -769,9 +810,14 @@ class McpPipelineOrderIT {
 
     // --- framework wiring ---
 
-    private record AnonymousIdentityResolver() implements SecurityIdentityResolver {
+    /** Resolves the anonymous identity, records the stage, and fails on demand. */
+    private record ProbeIdentityResolver(Probe probe, AtomicBoolean fail) implements SecurityIdentityResolver {
         @Override
         public Future<Optional<SecurityIdentity>> resolve(SecurityIdentityResolutionContext context) {
+            probe.record(IDENTITY);
+            if (fail.get()) {
+                return Future.failedFuture(new RuntimeException("identity resolution failed by fixture"));
+            }
             return Future.succeededFuture(Optional.of(SecurityIdentity.anonymous()));
         }
     }
@@ -823,6 +869,7 @@ class McpPipelineOrderIT {
         private final Probe probe = new Probe();
         private final AtomicBoolean rejectRequests = new AtomicBoolean();
         private final AtomicBoolean rejectTools = new AtomicBoolean();
+        private final AtomicBoolean failIdentity = new AtomicBoolean();
 
         private Fixture(Vertx vertx) throws Exception {
             McpToolRateLimitConfig limited = new McpToolRateLimitConfig(LIMITED_TOOL, POLICY_NAME, null, null, 1L);
@@ -923,7 +970,7 @@ class McpPipelineOrderIT {
                     dispatcher,
                     Set.of(),
                     new IdentityResolutionMiddleware(
-                            Set.of(new AnonymousIdentityResolver()),
+                            Set.of(new ProbeIdentityResolver(probe, failIdentity)),
                             Optional.of(new DefaultSecurityClaimMapper()),
                             new SecurityEventEmitter(Set.of()),
                             securityRuntime,
@@ -959,6 +1006,10 @@ class McpPipelineOrderIT {
 
         AtomicBoolean rejectTools() {
             return rejectTools;
+        }
+
+        AtomicBoolean failIdentity() {
+            return failIdentity;
         }
     }
 }

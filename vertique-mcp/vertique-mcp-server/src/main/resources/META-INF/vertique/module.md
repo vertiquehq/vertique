@@ -1038,11 +1038,12 @@ delivered guarantee.
 **If tool names must stay confidential, do not rely on timing.** When timing equivalence matters for
 a deployment, publish opaque tool identifiers (names that carry no meaning an outsider could guess or
 enumerate) or use precomputed authorization (decide from already-resolved caller state, with no remote
-call on the denial path) rather than expecting the server to pad latency. The terminal event recorded for an unresolved
-name always carries the bounded `UNKNOWN` placeholder, never the caller-supplied string — an
-unresolved name touches no real
-`McpToolDescriptor`, so nothing would otherwise bound it before it reached every lifecycle observer
-and listener as internal telemetry except the wire's own very large string limit.
+call on the denial path) rather than expecting the server to pad latency.
+
+The terminal event recorded for an unresolved name always carries the bounded `UNKNOWN` placeholder,
+never the caller-supplied string — an unresolved name touches no real `McpToolDescriptor`, so nothing
+would otherwise bound it before it reached every lifecycle observer and listener as internal
+telemetry except the wire's own very large string limit.
 
 **SSE selection precedes invocation, unconditionally.** Only once a call is both known and
 authorized does the dispatcher select request-scoped SSE (`Content-Type: text/event-stream`,
