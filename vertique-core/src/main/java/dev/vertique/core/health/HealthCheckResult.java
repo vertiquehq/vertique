@@ -66,6 +66,7 @@ public record HealthCheckResult(HealthStatus status, Map<String, Object> data) {
      *
      * @param data diagnostic key-value pairs
      * @return a new UP result with data
+     * @throws NullPointerException if {@code data} holds a null key or value
      */
     public static HealthCheckResult up(Map<String, Object> data) {
         return new HealthCheckResult(HealthStatus.UP, data);
@@ -127,6 +128,7 @@ public record HealthCheckResult(HealthStatus status, Map<String, Object> data) {
      *
      * @param data diagnostic key-value pairs
      * @return a new DOWN result with data
+     * @throws NullPointerException if {@code data} holds a null key or value
      */
     public static HealthCheckResult down(Map<String, Object> data) {
         return new HealthCheckResult(HealthStatus.DOWN, data);

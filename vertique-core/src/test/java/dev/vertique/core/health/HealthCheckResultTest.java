@@ -202,8 +202,8 @@ class HealthCheckResultTest {
         @Test
         @DisplayName("data preserves the iteration order of the supplied map")
         void dataPreservesInsertionOrder() {
-            // Map.copyOf iterates in a per-JVM salted order, so sixteen keys make a coincidental
-            // match with insertion order vanishingly unlikely rather than merely unlikely.
+            // Map.copyOf places entries by hash and only salts the traversal start and direction, so
+            // none of its traversals of these sixteen keys equals this reverse insertion order.
             Map<String, Object> source = new LinkedHashMap<>();
             for (int i = 15; i >= 0; i--) {
                 source.put("service-" + i, i);

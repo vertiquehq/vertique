@@ -24,11 +24,14 @@ import io.vertx.junit5.Timeout;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Predicate;
+import java.util.stream.IntStream;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
@@ -194,6 +197,26 @@ class HealthCheckHandlerTest {
         @Override
         public Future<HealthCheckResult> check() {
             return Future.succeededFuture(HealthCheckResult.up(Map.of("pool.active", 2, "pool.idle", 8)));
+        }
+    }
+
+    /** Reports sixteen data entries in reverse alphabetical order, which no hash order reproduces. */
+    static class OrderedDataCheck implements HealthCheck {
+        static final List<String> KEYS = IntStream.iterate(15, i -> i - 1)
+                .limit(16)
+                .mapToObj(i -> "service-" + (char) ('a' + i))
+                .toList();
+
+        @Override
+        public String name() {
+            return "ordered";
+        }
+
+        @Override
+        public Future<HealthCheckResult> check() {
+            Map<String, Object> data = new LinkedHashMap<>();
+            KEYS.forEach(key -> data.put(key, "UP"));
+            return Future.succeededFuture(HealthCheckResult.up(data));
         }
     }
 
@@ -725,6 +748,20 @@ class HealthCheckHandlerTest {
                     assertNotNull(check.getJsonObject("data"));
                     assertEquals(2, check.getJsonObject("data").getInteger("pool.active"));
                     assertEquals(8, check.getJsonObject("data").getInteger("pool.idle"));
+                });
+                ctx.completeNow();
+            }));
+        }
+
+        @Test
+        @DisplayName("renders data fields in the order the check supplied them")
+        void rendersDataInSuppliedOrder(VertxTestContext ctx) {
+            HealthCheckHandler handler = new HealthCheckHandler(Set.of(new OrderedDataCheck()));
+            startServer(vertx, handler).compose(p -> request(vertx, p)).onComplete(ctx.succeeding(json -> {
+                ctx.verify(() -> {
+                    JsonObject data =
+                            json.getJsonArray("checks").getJsonObject(0).getJsonObject("data");
+                    assertEquals(OrderedDataCheck.KEYS, List.copyOf(data.fieldNames()));
                 });
                 ctx.completeNow();
             }));
