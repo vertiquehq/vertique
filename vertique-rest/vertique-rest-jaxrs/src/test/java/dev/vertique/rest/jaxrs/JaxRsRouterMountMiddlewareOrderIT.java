@@ -7,12 +7,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 
 import dev.vertique.core.extension.ExtensionPhase;
-import dev.vertique.rest.core.config.HttpConfig;
-import dev.vertique.rest.core.config.JaxRsConfig;
-import dev.vertique.rest.core.context.RestContextResolution;
 import dev.vertique.rest.core.middleware.Middleware;
 import dev.vertique.rest.core.middleware.MiddlewareScope;
-import dev.vertique.rest.jaxrs.validation.NoneValidationStrategy;
 import io.swagger.v3.oas.annotations.Operation;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
@@ -30,7 +26,6 @@ import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterEach;
@@ -242,6 +237,9 @@ public class JaxRsRouterMountMiddlewareOrderIT {
                             .map(resp -> resp.statusCode())
                             .onComplete(ctx.succeeding(status -> {
                                 ctx.verify(() -> {
+                                    // Router-level middlewares also run on a 404 or 500, so pin the
+                                    // dispatch: the operation must have answered, not just been routed.
+                                    assertEquals(200, status, "GET /ping must be dispatched to the operation");
                                     assertNotNull(executionLog, "Execution log must not be null");
                                     assertEquals(
                                             2,
@@ -275,46 +273,6 @@ public class JaxRsRouterMountMiddlewareOrderIT {
      * @return a fully constructed factory
      */
     private static JaxRsRouterMount.Factory buildFactory(Set<Middleware> middlewares) {
-        DefaultExceptionMapper defaultMapper = new DefaultExceptionMapper();
-        ExceptionMapperRegistry registry = new ExceptionMapperRegistry(defaultMapper, Set.of());
-        RestExceptionMapper restExceptionMapper = new RestExceptionMapper();
-        RestContextResolution restContextResolution = new RestContextResolution(Set.of());
-        DefaultResponseSerializer responseSerializer =
-                new DefaultResponseSerializer(List.of(), List.of(new JsonBodyEncoder()));
-        HttpConfig httpConfig = HttpConfig.builder().build();
-        JaxRsConfig jaxRsConfig = JaxRsConfig.builder()
-                .validationStrategy(NoneValidationStrategy.ID)
-                .build();
-
-        return new JaxRsRouterMount.Factory(
-                Set.of(), // routerLifecycleHooks
-                Set.of(), // operationInterceptors
-                Set.of(), // errorInterceptors
-                middlewares, // middlewares under test
-                Set.of(), // operationHandlerContributors
-                Set.of(), // securitySchemeHandlers
-                Set.of(), // requestInterceptors
-                restExceptionMapper,
-                registry,
-                Set.of(), // responseProducerBindings
-                responseSerializer,
-                restContextResolution,
-                dev.vertique.rest.jaxrs.convert.ConversionContexts.defaultResolver(), // paramConversionResolver
-                null, // securityPolicyValidator (nullable)
-                Optional.empty(), // authEnabled
-                List.of(), // sortedDecoders
-                List.of(new JsonBodyEncoder()), // sortedEncoders — needed for response serialization
-                httpConfig,
-                jaxRsConfig,
-                new dev.vertique.json.DefaultJsonMapperProfileRegistry(Set.of()), // jsonMapperProfileRegistry
-                dev.vertique.json.JsonConfig.defaults(), // jsonConfig (global json.jsonProfile default)
-                Optional.empty(), // beanValidator
-                Optional.empty(), // objectProcessor
-                Optional.empty(), // actionRegistry
-                Optional.empty(), // authorizer
-                Set.of(), // fileContentVerifiers
-                Set.of(new NoneValidationStrategy()), // validationStrategies
-                Optional.empty() // operationSchemaSource
-                );
+        return TestFactories.builder().middlewares(middlewares).build();
     }
 }

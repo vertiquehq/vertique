@@ -9,6 +9,7 @@ import dev.vertique.rest.core.config.JaxRsConfig;
 import dev.vertique.rest.core.context.RestContextResolution;
 import dev.vertique.rest.core.convert.ParamConversionResolver;
 import dev.vertique.rest.core.convert.ParamConverterRegistry;
+import dev.vertique.rest.core.interceptor.ErrorInterceptor;
 import dev.vertique.rest.core.interceptor.OperationInterceptor;
 import dev.vertique.rest.core.interceptor.RequestInterceptor;
 import dev.vertique.rest.core.middleware.Middleware;
@@ -61,6 +62,7 @@ final class TestFactories {
         private Set<Middleware> middlewares = Set.of();
         private Set<RequestInterceptor> requestInterceptors = Set.of();
         private Set<OperationInterceptor> operationInterceptors = Set.of();
+        private Set<ErrorInterceptor> errorInterceptors = Set.of();
         private List<RequestBodyDecoder> sortedDecoders = List.of(new JsonRequestBodyDecoder());
         private List<ResponseBodyEncoder> encoders = List.of(new StringBodyEncoder(), new JsonBodyEncoder());
         private JaxRsConfig jaxRsConfig = JaxRsConfig.builder()
@@ -170,6 +172,17 @@ final class TestFactories {
          */
         Builder operationInterceptors(Set<OperationInterceptor> interceptors) {
             this.operationInterceptors = interceptors;
+            return this;
+        }
+
+        /**
+         * Sets the error interceptors (defaults to none).
+         *
+         * @param interceptors the error interceptors
+         * @return this builder
+         */
+        Builder errorInterceptors(Set<ErrorInterceptor> interceptors) {
+            this.errorInterceptors = interceptors;
             return this;
         }
 
@@ -344,7 +357,7 @@ final class TestFactories {
                 return new JaxRsRouterMount.Factory(
                         Set.of(), // routerLifecycleHooks
                         operationInterceptors,
-                        Set.of(), // errorInterceptors
+                        errorInterceptors,
                         middlewares,
                         operationHandlerContributors,
                         securitySchemeHandlers,
@@ -378,7 +391,7 @@ final class TestFactories {
             return new JaxRsRouterMount.Factory(
                     Set.of(), // routerLifecycleHooks
                     operationInterceptors,
-                    Set.of(), // errorInterceptors
+                    errorInterceptors,
                     middlewares,
                     operationHandlerContributors,
                     securitySchemeHandlers,

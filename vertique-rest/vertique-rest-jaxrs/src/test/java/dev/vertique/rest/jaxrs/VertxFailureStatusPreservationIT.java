@@ -9,16 +9,10 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
 import dev.vertique.core.exception.UnavailableException;
-import dev.vertique.json.DefaultJsonMapperProfileRegistry;
-import dev.vertique.json.JsonConfig;
 import dev.vertique.rest.core.ProblemDetail;
-import dev.vertique.rest.core.config.HttpConfig;
-import dev.vertique.rest.core.config.JaxRsConfig;
-import dev.vertique.rest.core.context.RestContextResolution;
 import dev.vertique.rest.core.interceptor.ErrorInterceptor;
 import dev.vertique.rest.core.middleware.Middleware;
 import dev.vertique.rest.core.middleware.MiddlewareScope;
-import dev.vertique.rest.jaxrs.validation.NoneValidationStrategy;
 import io.swagger.v3.oas.annotations.Operation;
 import io.vertx.core.Future;
 import io.vertx.core.MultiMap;
@@ -481,44 +475,11 @@ public class VertxFailureStatusPreservationIT {
     private static JaxRsRouterMount.Factory buildFactory() {
         ExceptionMapperRegistry registry =
                 new ExceptionMapperRegistry(RestModule.defaultExceptionMapper(), Set.of(new MarkerExceptionMapper()));
-        RestExceptionMapper restExceptionMapper = new RestExceptionMapper();
-        RestContextResolution restContextResolution = new RestContextResolution(Set.of());
-        List<dev.vertique.rest.core.response.ResponseBodyEncoder> encoders = List.of(new JsonBodyEncoder());
-        DefaultResponseSerializer responseSerializer = new DefaultResponseSerializer(List.of(), encoders);
-        HttpConfig httpConfig = HttpConfig.builder().build();
-        JaxRsConfig jaxRsConfig = JaxRsConfig.builder()
-                .validationStrategy(NoneValidationStrategy.ID)
+        return TestFactories.builder()
+                .exceptionMapperRegistry(registry)
+                .errorInterceptors(Set.of(new HintCapture())) // observes the Vert.x status hint
+                .middlewares(Set.of(new FailModeMiddleware())) // raises the failure under test
+                .encoders(List.of(new JsonBodyEncoder()))
                 .build();
-
-        return new JaxRsRouterMount.Factory(
-                Set.of(), // routerLifecycleHooks
-                Set.of(), // operationInterceptors
-                Set.of(new HintCapture()), // errorInterceptors — observes the Vert.x status hint
-                Set.of(new FailModeMiddleware()), // middlewares — raises the failure under test
-                Set.of(), // operationHandlerContributors
-                Set.of(), // securitySchemeHandlers
-                Set.of(), // requestInterceptors
-                restExceptionMapper,
-                registry,
-                Set.of(), // responseProducerBindings
-                responseSerializer,
-                restContextResolution,
-                dev.vertique.rest.jaxrs.convert.ConversionContexts.defaultResolver(),
-                null, // securityPolicyValidator (nullable)
-                Optional.empty(), // authEnforcementCapability
-                List.of(), // sortedDecoders
-                encoders,
-                httpConfig,
-                jaxRsConfig,
-                new DefaultJsonMapperProfileRegistry(Set.of()),
-                JsonConfig.defaults(),
-                Optional.empty(), // beanValidator
-                Optional.empty(), // objectProcessor
-                Optional.empty(), // actionRegistry
-                Optional.empty(), // authorizer
-                Set.of(), // fileContentVerifiers
-                Set.of(new NoneValidationStrategy()),
-                Optional.empty() // operationSchemaSource
-                );
     }
 }

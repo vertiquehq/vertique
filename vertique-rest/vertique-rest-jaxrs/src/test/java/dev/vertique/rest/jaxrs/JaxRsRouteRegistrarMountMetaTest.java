@@ -6,12 +6,7 @@ package dev.vertique.rest.jaxrs;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 
-import dev.vertique.json.DefaultJsonMapperProfileRegistry;
-import dev.vertique.json.JsonConfig;
-import dev.vertique.rest.core.config.HttpConfig;
 import dev.vertique.rest.core.config.JaxRsConfig;
-import dev.vertique.rest.core.context.RestContextResolution;
-import dev.vertique.rest.core.response.ResponseBodyEncoder;
 import dev.vertique.rest.core.router.MountMeta;
 import dev.vertique.rest.jaxrs.routing.JaxRsOperationDescriptor;
 import dev.vertique.rest.jaxrs.validation.OperationSchemas;
@@ -79,45 +74,11 @@ class JaxRsRouteRegistrarMountMetaTest {
     }
 
     private static JaxRsRouterMount.Factory buildFactory(RequestValidationStrategy strategy) {
-        DefaultExceptionMapper defaultMapper = RestModule.defaultExceptionMapper();
-        ExceptionMapperRegistry registry = new ExceptionMapperRegistry(defaultMapper, Set.of());
-        RestExceptionMapper restExceptionMapper = new RestExceptionMapper();
-        RestContextResolution restContextResolution = new RestContextResolution(Set.of());
-        List<ResponseBodyEncoder> encoders = List.of(new StringBodyEncoder(), new JsonBodyEncoder());
-        DefaultResponseSerializer responseSerializer = new DefaultResponseSerializer(List.of(), encoders);
-        HttpConfig httpConfig = HttpConfig.builder().build();
-        JaxRsConfig jaxRsConfig =
-                JaxRsConfig.builder().validationStrategy(strategy.id()).build();
-
-        return new JaxRsRouterMount.Factory(
-                Set.of(),
-                Set.of(),
-                Set.of(),
-                Set.of(),
-                Set.of(),
-                Set.of(),
-                Set.of(),
-                restExceptionMapper,
-                registry,
-                Set.of(),
-                responseSerializer,
-                restContextResolution,
-                dev.vertique.rest.jaxrs.convert.ConversionContexts.defaultResolver(),
-                null,
-                Optional.empty(),
-                List.of(),
-                encoders,
-                httpConfig,
-                jaxRsConfig,
-                new DefaultJsonMapperProfileRegistry(Set.of()),
-                JsonConfig.defaults(),
-                Optional.empty(),
-                Optional.empty(),
-                Optional.empty(),
-                Optional.empty(),
-                Set.of(),
-                Set.of(strategy),
-                Optional.empty());
+        return TestFactories.builder()
+                .validationStrategies(Set.of(strategy))
+                .jaxRsConfig(
+                        JaxRsConfig.builder().validationStrategy(strategy.id()).build())
+                .build();
     }
 
     /** Minimal resource making each mount traverse strategy selection and route registration. */
