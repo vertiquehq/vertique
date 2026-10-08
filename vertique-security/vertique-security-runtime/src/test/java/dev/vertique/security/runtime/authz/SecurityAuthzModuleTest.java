@@ -80,7 +80,7 @@ class SecurityAuthzModuleTest {
 
     /**
      * Provides a bare {@link Vertx} instance for the test components below — {@link
-     * SecurityAuthzModule#authorizer} now needs {@link Vertx} to bound every wrapped {@code
+     * SecurityAuthzModule#authorizer} installs the resilience runtime, which needs {@link Vertx}, to bound every wrapped {@code
      * PrincipalAuthorityResolver} with a timeout, even when no resolver is actually installed.
      */
     @Module

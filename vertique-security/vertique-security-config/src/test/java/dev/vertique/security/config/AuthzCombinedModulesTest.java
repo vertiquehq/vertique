@@ -236,7 +236,7 @@ class AuthzCombinedModulesTest {
 
     /**
      * Provides a bare {@link Vertx} instance for the combined test components below —
-     * {@code SecurityAuthzModule#authorizer} now needs {@link Vertx} to bound every wrapped
+     * {@code SecurityAuthzModule#authorizer} installs the resilience runtime, which needs {@link Vertx}, to bound every wrapped
      * {@code PrincipalAuthorityResolver} with a timeout, even when no resolver is installed.
      */
     @Module
