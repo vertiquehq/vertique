@@ -248,14 +248,13 @@ final class McpRequestDispatcher {
 
     /**
      * The synthetic {@link McpAccessMode#DENY_ALL} descriptor evaluated for an unresolved {@code
-     * tools/call} name (existence-oracle-by-timing). A known-but-denied name
-     * reaches {@link McpPolicyEnforcer#decide} before its response is written; short-circuiting an
-     * unknown name straight to {@link #writeUnknownOrUnauthorized} without ever reaching that same
-     * decision point leaves the two paths' latency measurably different (milliseconds against an
-     * application-supplied async PDP), which restores the very existence oracle the shared
-     * {@code -32602} response exists to close. Evaluating this placeholder for every unresolved name
-     * routes both paths through the identical asynchronous decision point instead. Never registered,
-     * never listed, never actually reachable — its one and only role is to be denied.
+     * tools/call} name. A known-but-denied name reaches {@link McpPolicyEnforcer#decide} before its
+     * response is written; evaluating this placeholder for every unresolved name routes an unknown
+     * name through the same decision point, so the two paths do not differ by a missing evaluation. The
+     * placeholder is a static deny that settles synchronously, so a tool whose denial is decided by a
+     * remote policy decision point can still take longer than an unknown name: the responses are
+     * protocol-equivalent, not timing-equivalent. Never registered, never listed, never actually
+     * reachable — its one and only role is to be denied.
      */
     private static final McpToolDescriptor UNKNOWN_TOOL_PLACEHOLDER_DESCRIPTOR = new McpToolDescriptor(
             McpRequestTerminalEvent.UNKNOWN_TOOL_NAME,
@@ -1696,8 +1695,8 @@ final class McpRequestDispatcher {
      * at the first of: the page reaching {@code mcp.tools.pageSize} visible tools, examining {@code
      * 4 * mcp.tools.pageSize} candidates (the fan-out bound), or the registry being
      * exhausted. A present, malformed, or otherwise invalid cursor is rejected with the same
-     * indistinguishable {@code -32602} response {@link McpPolicyEnforcer#unknownOrUnauthorizedError()}
-     * produces for a denied or unknown tool, never a distinct code or status.
+     * {@code -32602} response {@link McpPolicyEnforcer#unknownOrUnauthorizedError()} produces for a
+     * denied or unknown tool, never a distinct code or status.
      *
      * <p>A valid cursor anchor is one of two forms (see {@link McpCursorCodec}): a name-form
      * anchor is a lexicographic position hint, not a registry membership proof — a nonmember anchor
@@ -2120,7 +2119,7 @@ final class McpRequestDispatcher {
     }
 
     /**
-     * Writes the same externally indistinguishable {@code -32602} response {@link
+     * Writes the same protocol-equivalent {@code -32602} response {@link
      * McpPolicyEnforcer#unknownOrUnauthorizedError()} defines, so an invalid cursor, a denied tool, and
      * an unknown tool all yield byte-identical bodies and the same HTTP status — the
      * status comes from the shared {@link #httpStatusFor} mapping, never a bespoke one. Always
@@ -2264,7 +2263,9 @@ final class McpRequestDispatcher {
      * <p>An unresolved name is never short-circuited straight to that response: it is first evaluated
      * against {@link #UNKNOWN_TOOL_PLACEHOLDER_DESCRIPTOR} through the same {@link
      * McpPolicyEnforcer#decide} decision point a known-but-denied name reaches, so the two paths carry
-     * the same asynchronous latency shape and cannot be distinguished by timing. The terminal event for
+     * the same decision point. The two responses are protocol-equivalent (same code, message and HTTP
+     * status); their timing can still differ when a remote policy decision point is in the path, because
+     * the placeholder settles synchronously. The terminal event for
      * an unresolved name carries {@link McpRequestTerminalEvent#UNKNOWN_TOOL_NAME}, never the
      * caller-supplied string: an unresolved name touches no real {@link McpToolDescriptor}, so nothing
      * bounds it except the wire's own 20,000,000-char string limit, and it would otherwise reach every
@@ -3398,8 +3399,8 @@ final class McpRequestDispatcher {
     void handleFailure(RoutingContext context) {
         if (context.response().ended()) {
             // The response was already ended (a handler wrote then failed). Do not attempt a second
-            // write — that throws — but still settle the completion coordinator so an admitted
-            // request does not leave its observation open without terminal/completion (T004 S-b).
+            // write — that throws — but still settle the completion coordinator, so an admitted
+            // request never leaves its observation open without a terminal and a completion.
             settleEndedFailure(context);
             return;
         }

@@ -1015,8 +1015,8 @@ invoker directly: no reflection, no scanning, the same `McpToolInvoker#prepare`/
 tool name, an unresolved name, and a denied decision all settle through the exact same code path
 `tools/list` uses for an invalid cursor: byte-identical `-32602`/`Invalid params` JSON, the same HTTP
 status, no tool ever invoked. This holds regardless of which of the three causes produced it — an
-unknown name and a `@DenyAll` tool are externally indistinguishable, matching the `tools/list`
-guarantee above.
+unknown name and a `@DenyAll` tool are protocol-equivalent (same JSON-RPC code, message and HTTP
+status), matching the `tools/list` guarantee above.
 
 The bytes are identical, but the *path* to them used to differ: an unknown name resolved from a plain
 registry-map lookup, while a denied name additionally traversed `McpPolicyEnforcer#decide`. An
@@ -1032,8 +1032,13 @@ whose latency an unknown name's synthetic `@DenyAll` evaluation never pays. A ca
 side channel may therefore distinguish a denied `RESTRICTED` tool name from an unknown name, even
 though the response bytes remain identical. Closing that residual gap would require deliberately
 padding the fast path's latency to match the slowest configured decision point — a designed
-latency-padding feature, not a documentation fix — and is tracked as an accepted residual risk
-(issue #420) rather than claimed as delivered here. The terminal event recorded for an unresolved
+latency-padding feature, not a documentation fix — and is an accepted residual risk rather than a
+delivered guarantee.
+
+**If tool names must stay confidential, do not rely on timing.** When timing equivalence matters for
+a deployment, publish opaque tool identifiers (names that carry no meaning an outsider could guess or
+enumerate) or use precomputed authorization (decide from already-resolved caller state, with no remote
+call on the denial path) rather than expecting the server to pad latency. The terminal event recorded for an unresolved
 name always carries the bounded `UNKNOWN` placeholder, never the caller-supplied string — an
 unresolved name touches no real
 `McpToolDescriptor`, so nothing would otherwise bound it before it reached every lifecycle observer
@@ -1134,12 +1139,12 @@ The mapping from a tool's declared access to its effective authorization result 
 | Tool declaration | Coarse gate | Fine gate | Effective result |
 |---|---|---|---|
 | Unannotated or `@PermitAll` | None | None | Public to anonymous and authenticated callers; no decision event |
-| `@DenyAll` | Static deny | None | Excluded from `tools/list`; a direct `tools/call` does not invoke it and returns the externally indistinguishable unknown-or-unauthorized `-32602` response |
+| `@DenyAll` | Static deny | None | Excluded from `tools/list`; a direct `tools/call` does not invoke it and returns the protocol-equivalent unknown-or-unauthorized `-32602` response |
 | `@RolesAllowed` | Direct role claim check | None | Permitted when the authenticated caller has an allowed role |
 | `@RequiresAction` | Authenticated caller required | Existing core `Authorizer` | Permitted when the role-to-policy-to-action decision permits |
 | `@RolesAllowed` plus `@RequiresAction` | Direct role claim check | Existing core `Authorizer` | Permitted only when both gates permit |
 
-Denial and absence are externally indistinguishable — an unknown tool name and a tool the caller may
+Denial and absence are protocol-equivalent — an unknown tool name and a tool the caller may
 not use both resolve to the same `-32602` response, with no detail identifying which — and a denied
 tool is never invoked. Every restrictive evaluation emits exactly one combined
 `AuthorizationDecisionEvent`.
