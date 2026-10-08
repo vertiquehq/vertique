@@ -96,7 +96,8 @@ public class HealthCheckHandler implements Handler<RoutingContext> {
      * aggregation observe them: a per-check {@code otherwise} could itself throw and strand the
      * response.
      *
-     * @param name   the check's name, or its class name when {@link HealthCheck#name()} threw
+     * @param name   the check's name, or its class name when {@link HealthCheck#name()} threw or returned
+     *               {@code null}
      * @param result the raw, possibly failed, result of invoking the check
      */
     private record CheckExecution(String name, Future<HealthCheckResult> result) {}

@@ -625,7 +625,8 @@ exception, so a failure that cannot describe itself still yields a `DOWN` result
 second failure. It rejects a `null` cause with a `NullPointerException`. Return a completed future
 carrying a `DOWN` result rather than a failed future — a failed future or a thrown exception is
 still reported as `DOWN`, but with the error text instead of your diagnostic data. `name()` must be
-unique within its qualifier set.
+unique within its qualifier set and must not return `null`; the management endpoint reports a `null`
+name under the check's implementing class name.
 
 ### `ApplicationStartupStep` and `ApplicationShutdownStep`
 
