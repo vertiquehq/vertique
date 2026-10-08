@@ -168,6 +168,21 @@ class RestInputProcessingCompositionTest {
         }
     }
 
+    /** A body whose only policy sits on the value type of a Map property. */
+    public static class MapOnlyBodyDto {
+        public java.util.Map<String, GovernedDto> entries;
+    }
+
+    /** Resource whose body declares a policy only behind a Map value. */
+    @Path("/map-only")
+    static class MapOnlyResource {
+
+        @POST
+        public Future<String> create(MapOnlyBodyDto dto) {
+            return Future.succeededFuture("ok");
+        }
+    }
+
     /**
      * Resource whose binary body carries a declared chain. Canonicalization and sanitization act on
      * string values, of which a {@code byte[]} or {@code Buffer} body has none, so the declaration can
@@ -319,6 +334,23 @@ class RestInputProcessingCompositionTest {
         assertDoesNotThrow(
                 () -> register(Set.of(new PolicyDeclaringResource()), new PassThroughProcessor()),
                 "declared policies with a bound processor must register normally");
+    }
+
+    @Test
+    @DisplayName("a policy declared only behind a Map value fails startup with no engine, and with one")
+    void shouldFailStartupForAPolicyOnlyBehindAMapValue() {
+        ConfigurationException unbound = assertThrows(
+                ConfigurationException.class,
+                () -> register(Set.of(new MapOnlyResource()), null),
+                "a policy the engine can never apply must still count as declared, or the route boots engine-less");
+        assertTrue(unbound.getMessage().contains(MapOnlyBodyDto.class.getName()), unbound.getMessage());
+
+        setUp();
+        ConfigurationException bound = assertThrows(
+                ConfigurationException.class,
+                () -> register(Set.of(new MapOnlyResource()), realEngine()),
+                "with an engine bound, registration refuses the shape instead of silently skipping the policy");
+        assertTrue(bound.getMessage().contains(GovernedDto.class.getName()), bound.getMessage());
     }
 
     @Test

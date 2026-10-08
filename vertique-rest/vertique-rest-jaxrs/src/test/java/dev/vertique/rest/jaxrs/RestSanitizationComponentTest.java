@@ -13,6 +13,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.annotation.JsonSubTypes;
 import com.fasterxml.jackson.annotation.JsonTypeInfo;
@@ -496,6 +497,56 @@ class RestSanitizationComponentTest {
 
     public static final class PlainSquare extends PlainShapeBody {
         public String label;
+    }
+
+    /** A body whose Map-typed fields the mapper never binds. */
+    public static final class UnboundMapBody {
+        @JsonIgnore
+        public Map<String, GovernedValue> ignored;
+
+        public transient Map<String, GovernedValue> transientMap;
+
+        public String name;
+    }
+
+    @JsonTypeInfo(use = JsonTypeInfo.Id.NAME, property = "kind")
+    @JsonSubTypes({
+        @JsonSubTypes.Type(value = SiblingCircle.class, name = "circle"),
+        @JsonSubTypes.Type(value = SiblingSquare.class, name = "square")
+    })
+    public abstract static class SiblingShape {}
+
+    public static final class SiblingCircle extends SiblingShape {
+        @Sanitize(UppercasingSanitizer.class)
+        public String label;
+    }
+
+    public static final class SiblingSquare extends SiblingShape {
+        public String label;
+    }
+
+    @Test
+    @DisplayName("Map properties the mapper never binds strand nothing and do not fail registration")
+    void shouldAcceptMapPropertiesTheMapperNeverBinds() {
+        InputObjectProcessor processor = DaggerRestSanitizationComponentTest_WithSanitizationComponent.create()
+                .inputObjectProcessor()
+                .orElseThrow(() -> new AssertionError("engine must be bound"));
+
+        processor.precomputeFieldNameResolution(UnboundMapBody.class, JacksonFieldNameResolver.forRoute(null));
+    }
+
+    @Test
+    @DisplayName("a sibling subtype's policy does not fail a field declared with another subtype")
+    void shouldNotRefuseAFieldDeclaredWithAnUnaffectedSubtype() {
+        InputObjectProcessor processor = DaggerRestSanitizationComponentTest_WithSanitizationComponent.create()
+                .inputObjectProcessor()
+                .orElseThrow(() -> new AssertionError("engine must be bound"));
+
+        processor.precomputeFieldNameResolution(SiblingSquare.class, JacksonFieldNameResolver.forRoute(null));
+        assertThrows(
+                ConfigurationException.class,
+                () -> processor.precomputeFieldNameResolution(
+                        SiblingShape.class, JacksonFieldNameResolver.forRoute(null)));
     }
 
     @Test

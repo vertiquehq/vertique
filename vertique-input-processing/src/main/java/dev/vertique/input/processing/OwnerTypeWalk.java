@@ -119,6 +119,10 @@ final class OwnerTypeWalk {
      * @param dispatcher       the engine's own dispatcher, consulted so a generated processor can
      *                         answer for its own type instead of having reflection infer it; must
      *                         not be {@code null}
+     * @throws ConfigurationException if a reachable owner strands a declared policy: a type held as a
+     *                                {@code Map} value, a polymorphic subtype the base does not cover,
+     *                                or one of the unroutable shapes {@link #checkPromotedFields}
+     *                                documents
      * @throws IllegalStateException if a reachable type declares conflicting policy annotations
      * @throws RuntimeException      if a reachable type has a generated processor that exists but
      *                               cannot be instantiated — a build defect, and failing at
@@ -173,7 +177,7 @@ final class OwnerTypeWalk {
             if (!isPlatformType(owner)) {
                 // Both shapes strand a declared policy without any schema-free dispatch the gates
                 // below would notice, so they run for every walked owner, whatever its field count.
-                checkMapValues(owner);
+                checkMapValues(owner, resolver);
                 checkPolymorphicSubtypes(owner, metadata, resolver, metadataResolver);
             }
             if (!metadata.fields().isEmpty()) {
@@ -224,13 +228,29 @@ final class OwnerTypeWalk {
      * whose value type declares nothing — {@code Map<String, String>}, {@code Map<String, Object>},
      * a raw {@code Map}, or a typed value that declares no chain — loses nothing and is accepted.
      *
-     * @param owner the walked class whose declared properties are inspected
+     * <p>A property the codec does not bind is skipped when the resolver can enumerate what it binds
+     * ({@link InputFieldNameResolver#boundJavaNames}); a resolver that cannot is trusted as a whole,
+     * as in {@link #checkGovernedFieldsAreBound}.
+     *
+     * @param owner    the walked class whose declared properties are inspected
+     * @param resolver the codec projection, consulted for which properties it binds
      * @throws ConfigurationException when a property binds a policy-declaring class behind a
      *                                {@code Map}
      */
-    private static void checkMapValues(Class<?> owner) {
-        for (Map.Entry<String, Set<Class<?>>> property :
-                InputPolicyMetadataResolver.mapValueClassesByProperty(owner).entrySet()) {
+    private static void checkMapValues(Class<?> owner, InputFieldNameResolver resolver) {
+        Map<String, Set<Class<?>>> candidates = InputPolicyMetadataResolver.mapValueClassesByProperty(owner);
+        if (candidates.isEmpty()) {
+            return;
+        }
+        // Asked only once a candidate exists: enumerating what the codec binds composes its projection,
+        // which a walked class that is never projected against must not be made to do.
+        Set<String> bound = resolver.boundJavaNames(owner);
+        for (Map.Entry<String, Set<Class<?>>> property : candidates.entrySet()) {
+            if (bound != null && !bound.contains(property.getKey())) {
+                // The codec never binds a wire key into this property (ignored, transient, or reached
+                // through an accessor of another name), so no policy is stranded behind it.
+                continue;
+            }
             rejectStrandedMapValues("Property '" + property.getKey() + "' of " + owner.getName(), property.getValue());
         }
     }
@@ -296,8 +316,8 @@ final class OwnerTypeWalk {
      * Describes the first policy {@code subtype} declares that {@code base}'s metadata does not
      * carry, or returns {@code null} when the base already covers everything the subtype declares.
      *
-     * <p>Compared per declaration: type-level chains and skips, then each field the subtype
-     * records. A field the base records identically is covered; a field with a different chain or
+     * <p>Compared per declaration: type-level chains and skips, then a {@code Map} property only the
+     * subtype declares, then each field the subtype records. A field the base records identically is covered; a field with a different chain or
      * skip, or one the base lacks, is stranded when it declares policy itself or holds a type whose
      * graph does.
      *
@@ -322,6 +342,21 @@ final class OwnerTypeWalk {
         }
         if (subtype.skipSanitization() && !base.skipSanitization()) {
             return "a type-level @SkipSanitization";
+        }
+        Set<String> baseMaps = InputPolicyMetadataResolver.mapValueClassesByProperty(
+                        Objects.requireNonNull(base.ownerType()))
+                .keySet();
+        for (Map.Entry<String, Set<Class<?>>> property : InputPolicyMetadataResolver.mapValueClassesByProperty(
+                        Objects.requireNonNull(subtype.ownerType()))
+                .entrySet()) {
+            if (baseMaps.contains(property.getKey())) {
+                continue;
+            }
+            for (Class<?> value : property.getValue()) {
+                if (InputObjectProcessor.declaresPolicies(value)) {
+                    return "policies on " + value.getName() + ", held as a Map value by '" + property.getKey() + "',";
+                }
+            }
         }
         for (FieldPolicyMetadata field : subtype.fields().values()) {
             FieldPolicyMetadata inherited = base.fields().get(field.fieldName());

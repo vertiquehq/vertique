@@ -261,6 +261,34 @@ class StrandedPolicyShapesTest {
                     fieldType(PlainValueMap.class, "values"), InputFieldNameResolver.IDENTITY));
         }
 
+        private InputFieldNameResolver binding(@jakarta.annotation.Nullable Set<String> bound) {
+            return new InputFieldNameResolver() {
+                @Override
+                public String logicalName(Class<?> ownerType, String wireName) {
+                    return wireName;
+                }
+
+                @Override
+                public Set<String> boundJavaNames(Class<?> ownerType) {
+                    return bound;
+                }
+            };
+        }
+
+        @Test
+        @DisplayName("is skipped when the codec binds no key into the property, and still refused when it does")
+        void propertiesTheCodecNeverBindsAreSkipped() {
+            assertDoesNotThrow(
+                    () -> processor.precomputeFieldNameResolution(MapHolder.class, binding(Set.of("other"))));
+            assertThrows(
+                    ConfigurationException.class,
+                    () -> processor.precomputeFieldNameResolution(MapHolder.class, binding(Set.of("values"))));
+            assertThrows(
+                    ConfigurationException.class,
+                    () -> processor.precomputeFieldNameResolution(MapHolder.class, binding(null)),
+                    "a resolver that cannot enumerate what it binds is trusted as a whole");
+        }
+
         @Test
         @DisplayName("is reported by the startup gate, so a transport cannot boot engine-less over it")
         void startupGateSeesThePolicy() {
@@ -317,6 +345,16 @@ class StrandedPolicyShapesTest {
     /** Holds a type whose graph declares nothing. */
     static class AddsPlainField extends Base {
         Plain nested;
+    }
+
+    /** Adds a Map property whose value type declares policy. */
+    static class AddsStrandedMap extends Base {
+        Map<String, Governed> extra;
+    }
+
+    /** Adds a Map property whose value type declares nothing. */
+    static class AddsPlainMap extends Base {
+        Map<String, Plain> extra;
     }
 
     /** A base with no fields of its own, so the emptiness gate never selects it. */
@@ -427,6 +465,17 @@ class StrandedPolicyShapesTest {
 
             assertDoesNotThrow(() -> processor.precomputeFieldNameResolution(Base.class, resolver));
             assertDoesNotThrow(() -> processor.precomputeFieldNameResolution(Shape.class, plainShape));
+        }
+
+        @Test
+        @DisplayName("is refused for a Map property only the subtype declares, and accepted when the value is plain")
+        void subtypeMapPropertyIsChecked() {
+            assertThrows(
+                    ConfigurationException.class,
+                    () -> processor.precomputeFieldNameResolution(
+                            Base.class, subtypes(Map.of(Base.class, Set.of(AddsStrandedMap.class)))));
+            assertDoesNotThrow(() -> processor.precomputeFieldNameResolution(
+                    Base.class, subtypes(Map.of(Base.class, Set.of(AddsPlainMap.class)))));
         }
 
         @Test
