@@ -21,6 +21,7 @@ import dev.vertique.mcp.tool.McpToolAnnotations;
 import dev.vertique.mcp.tool.McpToolDescriptor;
 import dev.vertique.mcp.tool.McpToolInvoker;
 import dev.vertique.mcp.tool.McpToolResult;
+import dev.vertique.resilience.Resilience;
 import dev.vertique.rest.core.config.HttpConfig;
 import dev.vertique.rest.core.middleware.RequestContextLifecycle;
 import dev.vertique.rest.core.security.RouteAuthHandler;
@@ -194,7 +195,8 @@ class McpOriginCaptureLifecycleIT {
                 emitter,
                 contextHolder,
                 securityRuntime,
-                Optional.empty()));
+                Optional.empty(),
+                Resilience.create(vertx)));
         McpRequestLifecycleObserver terminalObserver = startedAt -> new McpRequestObservation() {
             @Override
             public void onTerminal(McpRequestTerminalObservation observation) {

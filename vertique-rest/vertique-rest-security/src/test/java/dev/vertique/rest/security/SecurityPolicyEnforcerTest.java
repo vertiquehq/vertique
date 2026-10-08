@@ -217,7 +217,14 @@ class SecurityPolicyEnforcerTest {
 
     private SecurityPolicyEnforcer buildDefaultEnforcer() {
         return new SecurityPolicyEnforcer(
-                Optional.empty(), Optional.empty(), Set.of(), emitter, holder, securityRuntime, Optional.empty());
+                Optional.empty(),
+                Optional.empty(),
+                Set.of(),
+                emitter,
+                holder,
+                securityRuntime,
+                Optional.empty(),
+                TestResilience.shared());
     }
 
     // --- None and PermitAll ---
@@ -333,7 +340,14 @@ class SecurityPolicyEnforcerTest {
             when(dp.decide(any())).thenReturn(Future.succeededFuture(AuthorizationDecision.permit("PERMITTED")));
 
             SecurityPolicyEnforcer enforcer = new SecurityPolicyEnforcer(
-                    Optional.of(dp), Optional.empty(), Set.of(), emitter, holder, securityRuntime, Optional.empty());
+                    Optional.of(dp),
+                    Optional.empty(),
+                    Set.of(),
+                    emitter,
+                    holder,
+                    securityRuntime,
+                    Optional.empty(),
+                    TestResilience.shared());
 
             SecurityContext secCtx = stubSecCtx(AuthorizationClaims.empty());
             RoutingContext rc = stubRoutingContext(secCtx);
@@ -354,7 +368,14 @@ class SecurityPolicyEnforcerTest {
             when(dp.decide(any())).thenReturn(Future.succeededFuture(AuthorizationDecision.deny("ROLE_MISSING")));
 
             SecurityPolicyEnforcer enforcer = new SecurityPolicyEnforcer(
-                    Optional.of(dp), Optional.empty(), Set.of(), emitter, holder, securityRuntime, Optional.empty());
+                    Optional.of(dp),
+                    Optional.empty(),
+                    Set.of(),
+                    emitter,
+                    holder,
+                    securityRuntime,
+                    Optional.empty(),
+                    TestResilience.shared());
 
             SecurityContext secCtx = stubSecCtx(AuthorizationClaims.empty());
             RoutingContext rc = stubRoutingContext(secCtx);
@@ -374,7 +395,14 @@ class SecurityPolicyEnforcerTest {
             AuthorizationDecisionPoint dp = mock(AuthorizationDecisionPoint.class);
 
             SecurityPolicyEnforcer enforcer = new SecurityPolicyEnforcer(
-                    Optional.of(dp), Optional.empty(), Set.of(), emitter, holder, securityRuntime, Optional.empty());
+                    Optional.of(dp),
+                    Optional.empty(),
+                    Set.of(),
+                    emitter,
+                    holder,
+                    securityRuntime,
+                    Optional.empty(),
+                    TestResilience.shared());
 
             RoutingContext rc = stubRoutingContext(null);
 
@@ -395,7 +423,14 @@ class SecurityPolicyEnforcerTest {
             when(dp.decide(any())).thenReturn(Future.failedFuture(boom));
 
             SecurityPolicyEnforcer enforcer = new SecurityPolicyEnforcer(
-                    Optional.of(dp), Optional.empty(), Set.of(), emitter, holder, securityRuntime, Optional.empty());
+                    Optional.of(dp),
+                    Optional.empty(),
+                    Set.of(),
+                    emitter,
+                    holder,
+                    securityRuntime,
+                    Optional.empty(),
+                    TestResilience.shared());
 
             SecurityContext secCtx = stubSecCtx(AuthorizationClaims.empty());
             RoutingContext rc = stubRoutingContext(secCtx);
@@ -439,7 +474,14 @@ class SecurityPolicyEnforcerTest {
             };
 
             SecurityPolicyEnforcer enforcer = new SecurityPolicyEnforcer(
-                    Optional.of(dp), Optional.empty(), Set.of(), emitter, holder, securityRuntime, Optional.empty());
+                    Optional.of(dp),
+                    Optional.empty(),
+                    Set.of(),
+                    emitter,
+                    holder,
+                    securityRuntime,
+                    Optional.empty(),
+                    TestResilience.shared());
 
             SecurityContext secCtx = stubSecCtx(AuthorizationClaims.empty());
             RoutingContext rc = stubRoutingContext(secCtx);
@@ -475,7 +517,8 @@ class SecurityPolicyEnforcerTest {
                     emitter,
                     holder,
                     securityRuntime,
-                    Optional.empty());
+                    Optional.empty(),
+                    TestResilience.shared());
 
             assertSame(override, enforcer.decisionPoint(), "app override must win");
             verifyNoInteractions(policy);
@@ -493,7 +536,8 @@ class SecurityPolicyEnforcerTest {
                     emitter,
                     holder,
                     securityRuntime,
-                    Optional.empty());
+                    Optional.empty(),
+                    TestResilience.shared());
 
             assertInstanceOf(SyncPolicyDecisionPoint.class, enforcer.decisionPoint());
         }
@@ -502,7 +546,14 @@ class SecurityPolicyEnforcerTest {
         @DisplayName("default VertxProviderDecisionPoint used when no override and no sync policy")
         void defaultVertxProviderDecisionPointUsed() {
             SecurityPolicyEnforcer enforcer = new SecurityPolicyEnforcer(
-                    Optional.empty(), Optional.empty(), Set.of(), emitter, holder, securityRuntime, Optional.empty());
+                    Optional.empty(),
+                    Optional.empty(),
+                    Set.of(),
+                    emitter,
+                    holder,
+                    securityRuntime,
+                    Optional.empty(),
+                    TestResilience.shared());
 
             assertInstanceOf(VertxProviderDecisionPoint.class, enforcer.decisionPoint());
         }
@@ -520,7 +571,14 @@ class SecurityPolicyEnforcerTest {
             assertThrows(
                     NullPointerException.class,
                     () -> new SecurityPolicyEnforcer(
-                            null, Optional.empty(), Set.of(), emitter, holder, securityRuntime, Optional.empty()));
+                            null,
+                            Optional.empty(),
+                            Set.of(),
+                            emitter,
+                            holder,
+                            securityRuntime,
+                            Optional.empty(),
+                            TestResilience.shared()));
         }
 
         @Test
@@ -529,7 +587,14 @@ class SecurityPolicyEnforcerTest {
             assertThrows(
                     NullPointerException.class,
                     () -> new SecurityPolicyEnforcer(
-                            Optional.empty(), null, Set.of(), emitter, holder, securityRuntime, Optional.empty()));
+                            Optional.empty(),
+                            null,
+                            Set.of(),
+                            emitter,
+                            holder,
+                            securityRuntime,
+                            Optional.empty(),
+                            TestResilience.shared()));
         }
 
         @Test
@@ -544,7 +609,8 @@ class SecurityPolicyEnforcerTest {
                             emitter,
                             holder,
                             securityRuntime,
-                            Optional.empty()));
+                            Optional.empty(),
+                            TestResilience.shared()));
         }
 
         @Test
@@ -559,7 +625,8 @@ class SecurityPolicyEnforcerTest {
                             null,
                             holder,
                             securityRuntime,
-                            Optional.empty()));
+                            Optional.empty(),
+                            TestResilience.shared()));
         }
 
         @Test
@@ -574,7 +641,8 @@ class SecurityPolicyEnforcerTest {
                             emitter,
                             null,
                             securityRuntime,
-                            Optional.empty()));
+                            Optional.empty(),
+                            TestResilience.shared()));
         }
 
         @Test
@@ -583,7 +651,14 @@ class SecurityPolicyEnforcerTest {
             assertThrows(
                     NullPointerException.class,
                     () -> new SecurityPolicyEnforcer(
-                            Optional.empty(), Optional.empty(), Set.of(), emitter, holder, null, Optional.empty()));
+                            Optional.empty(),
+                            Optional.empty(),
+                            Set.of(),
+                            emitter,
+                            holder,
+                            null,
+                            Optional.empty(),
+                            TestResilience.shared()));
         }
 
         @Test
@@ -592,7 +667,14 @@ class SecurityPolicyEnforcerTest {
             assertThrows(
                     NullPointerException.class,
                     () -> new SecurityPolicyEnforcer(
-                            Optional.empty(), Optional.empty(), Set.of(), emitter, holder, securityRuntime, null));
+                            Optional.empty(),
+                            Optional.empty(),
+                            Set.of(),
+                            emitter,
+                            holder,
+                            securityRuntime,
+                            null,
+                            TestResilience.shared()));
         }
     }
 
@@ -612,7 +694,8 @@ class SecurityPolicyEnforcerTest {
                     capturingEmitter(events),
                     holder,
                     securityRuntime,
-                    Optional.empty());
+                    Optional.empty(),
+                    TestResilience.shared());
         }
 
         @Test
@@ -764,7 +847,8 @@ class SecurityPolicyEnforcerTest {
                     capturingEmitter(events),
                     emptyHolder(),
                     securityRuntime,
-                    Optional.empty());
+                    Optional.empty(),
+                    TestResilience.shared());
 
             RoutingContext rc = stubRoutingContext(stubSecCtx(AuthorizationClaims.empty()));
             assertDoesNotThrow(
@@ -828,7 +912,8 @@ class SecurityPolicyEnforcerTest {
                     capturingEmitter(events),
                     holder,
                     securityRuntime,
-                    Optional.empty());
+                    Optional.empty(),
+                    TestResilience.shared());
         }
 
         @Test
@@ -872,7 +957,8 @@ class SecurityPolicyEnforcerTest {
                     capturingEmitter(events),
                     holder,
                     securityRuntime,
-                    Optional.empty());
+                    Optional.empty(),
+                    TestResilience.shared());
         }
 
         @Test
@@ -961,7 +1047,8 @@ class SecurityPolicyEnforcerTest {
                     capturingEmitter(events),
                     flippableHolder,
                     securityRuntime,
-                    Optional.empty());
+                    Optional.empty(),
+                    TestResilience.shared());
 
             RoutingContext rc = stubRoutingContext(stubSecCtx(AuthorizationClaims.empty()));
             enforcer.createHandler(new SecurityPolicy.Constrained(List.of("admin"), List.of(), false))

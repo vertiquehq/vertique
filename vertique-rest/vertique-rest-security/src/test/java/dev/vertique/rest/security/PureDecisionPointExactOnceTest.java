@@ -161,7 +161,8 @@ class PureDecisionPointExactOnceTest {
                 capturingEmitter(events),
                 contextHolder,
                 securityRuntime,
-                Optional.empty());
+                Optional.empty(),
+                TestResilience.shared());
     }
 
     // --- Tests ---

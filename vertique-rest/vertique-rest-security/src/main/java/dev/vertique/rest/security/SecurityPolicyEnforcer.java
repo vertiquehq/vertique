@@ -5,6 +5,13 @@ package dev.vertique.rest.security;
 
 import dev.vertique.core.context.ContextHolder;
 import dev.vertique.core.correlation.CorrelationContext;
+import dev.vertique.resilience.Resilience;
+import dev.vertique.resilience.ResiliencePipeline;
+import dev.vertique.resilience.ResolvedResiliencePolicy;
+import dev.vertique.resilience.TimeoutConfig;
+import dev.vertique.resilience.adapter.AdapterOperationIdentity;
+import dev.vertique.resilience.exception.ResilienceClosedException;
+import dev.vertique.resilience.exception.ResilienceTimeoutException;
 import dev.vertique.rest.core.security.SecurityPolicy;
 import dev.vertique.rest.core.security.SecurityRuntime;
 import dev.vertique.security.AuthenticationState;
@@ -39,7 +46,6 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
-import java.util.concurrent.TimeUnit;
 import lombok.extern.slf4j.Slf4j;
 
 /**
@@ -103,6 +109,14 @@ import lombok.extern.slf4j.Slf4j;
 @Singleton
 public class SecurityPolicyEnforcer {
 
+    /** Resilience identity of the role/scope gate fence. */
+    private static final AdapterOperationIdentity ROLE_SCOPE_GATE =
+            new AdapterOperationIdentity("security.authz", List.of("gate", "role-scope"));
+
+    /** Resilience identity of the action gate fence. */
+    private static final AdapterOperationIdentity ACTION_GATE =
+            new AdapterOperationIdentity("security.authz", List.of("gate", "action"));
+
     private final AuthorizationDecisionPoint decisionPoint;
     private final SecurityRuntime securityRuntime;
     private final SecurityEventEmitter emitter;
@@ -120,23 +134,26 @@ public class SecurityPolicyEnforcer {
     private final Authorizer authorizer;
 
     /**
-     * The bound, in milliseconds, on every {@link #decide} gate future — {@link
-     * AuthorizationGateConfig#DEFAULT_GATE_DEADLINE_MS} by default, operator-configurable via the
-     * {@code security.authz} config section.
+     * The fence on the role/scope gate: every gate future that has not settled when it is handed to
+     * the fence is bounded by the operator-configured gate deadline ({@link
+     * AuthorizationGateConfig#DEFAULT_GATE_DEADLINE_MS} by default), through the resilience runtime.
      */
-    private final long gateDeadlineMs;
+    private final ResiliencePipeline roleScopeFence;
+
+    /** The fence on the action gate; same deadline and mechanism as {@link #roleScopeFence}. */
+    private final ResiliencePipeline actionFence;
 
     /**
      * Creates a new enforcer with the framework-default {@link AuthorizationGateConfig}.
-     * Equivalent to the eight-argument
+     * Equivalent to the injected
      * constructor with {@link Optional#empty()} for {@code authorizationGateConfig}.
      *
      * <p>Not {@code @Inject}-annotated — hand-wiring call sites (chiefly tests) that do not need to
      * thread a configured deadline use this overload. A transport that hand-constructs its own
      * {@link SecurityPolicyEnforcer} instance
-     * always does so through the eight-argument constructor below, threading the same operator-configured
+     * always does so through the injected constructor below, threading the same operator-configured
      * {@link AuthorizationGateConfig} every transport uses, not this deadline-less overload. Dagger itself
-     * always resolves the eight-argument constructor too.
+     * always resolves the injected constructor too.
      *
      * @param authorizationDecisionPoint optional app-provided async decision point; takes precedence
      *                                   over everything else
@@ -155,6 +172,8 @@ public class SecurityPolicyEnforcer {
      *                                   is not installed (in which case no {@code @RequiresAction} route
      *                                   can pass startup validation — slice 11). Must not be {@code null};
      *                                   {@link Optional#empty()} signals "engine absent".
+     * @param resilience                 the application's resilience runtime, which bounds the role/scope
+     *                                   and action gates; must not be {@code null}
      */
     public SecurityPolicyEnforcer(
             Optional<AuthorizationDecisionPoint> authorizationDecisionPoint,
@@ -163,7 +182,8 @@ public class SecurityPolicyEnforcer {
             SecurityEventEmitter emitter,
             ContextHolder contextHolder,
             SecurityRuntime securityRuntime,
-            Optional<Authorizer> authorizer) {
+            Optional<Authorizer> authorizer,
+            Resilience resilience) {
         this(
                 authorizationDecisionPoint,
                 authorizationPolicy,
@@ -172,11 +192,12 @@ public class SecurityPolicyEnforcer {
                 contextHolder,
                 securityRuntime,
                 authorizer,
-                Optional.empty());
+                Optional.empty(),
+                resilience);
     }
 
     /**
-     * As the seven-argument constructor above, but with an explicit, operator-configurable {@link
+     * As the hand-wiring constructor above, but with an explicit, operator-configurable {@link
      * #decide} gate deadline instead of the framework default.
      *
      * <p>{@code @Inject}-constructed instances receive {@code Optional<AuthorizationGateConfig>} —
@@ -203,6 +224,8 @@ public class SecurityPolicyEnforcer {
      *                                   {@link Optional#empty()} signals "engine absent".
      * @param authorizationGateConfig    the optional operator-configured gate deadline; empty defaults
      *                                   to {@link AuthorizationGateConfig#defaults()}
+     * @param resilience                 the application's resilience runtime, which bounds the role/scope
+     *                                   and action gates; must not be {@code null}
      */
     @Inject
     public SecurityPolicyEnforcer(
@@ -213,7 +236,8 @@ public class SecurityPolicyEnforcer {
             ContextHolder contextHolder,
             SecurityRuntime securityRuntime,
             Optional<Authorizer> authorizer,
-            Optional<AuthorizationGateConfig> authorizationGateConfig) {
+            Optional<AuthorizationGateConfig> authorizationGateConfig,
+            Resilience resilience) {
         Objects.requireNonNull(authorizationDecisionPoint, "authorizationDecisionPoint");
         Objects.requireNonNull(authorizationPolicy, "authorizationPolicy");
         Objects.requireNonNull(authorizationProviders, "authorizationProviders");
@@ -221,9 +245,12 @@ public class SecurityPolicyEnforcer {
         this.contextHolder = Objects.requireNonNull(contextHolder, "contextHolder");
         this.securityRuntime = Objects.requireNonNull(securityRuntime, "securityRuntime");
         this.authorizer = Objects.requireNonNull(authorizer, "authorizer").orElse(null);
-        this.gateDeadlineMs = Objects.requireNonNull(authorizationGateConfig, "authorizationGateConfig")
+        Objects.requireNonNull(resilience, "resilience");
+        long gateDeadlineMs = Objects.requireNonNull(authorizationGateConfig, "authorizationGateConfig")
                 .orElseGet(AuthorizationGateConfig::defaults)
                 .gateDeadlineMs();
+        this.roleScopeFence = gateFence(resilience, ROLE_SCOPE_GATE, gateDeadlineMs);
+        this.actionFence = gateFence(resilience, ACTION_GATE, gateDeadlineMs);
 
         if (authorizationDecisionPoint.isPresent()) {
             this.decisionPoint = authorizationDecisionPoint.get();
@@ -530,43 +557,32 @@ public class SecurityPolicyEnforcer {
             log.warn("Authorization decision point returned a null future at role/scope gate; failing closed");
             return Future.succeededFuture(failClosedInternalError(authzRequest, correlation));
         }
-        // Bound the gate: a non-blocking future that simply never resolves is not a
-        // synchronous throw, a null future, a failed future, or a null decision, so none of the
-        // existing fail-closed branches above ever catch it. .timeout() races the original future
-        // against gateDeadlineMs and forwards it unchanged when it settles first — inert for a gate
-        // that completes normally (verified by the unmodified SecurityPolicyEnforcerDecisionTest
-        // permit/deny suite still passing byte-for-byte after this change).
-        //
-        // Vert.x's FutureBase#timeout
-        // branches on the SOURCE future's context, not the caller's. A gate future built with the
-        // static Promise.promise() — or bridged from a CompletableFuture by a remote-PDP client, the
-        // exact case this deadline exists for — has context == null, so its .timeout() continuation
-        // runs on Netty's GlobalEventExecutor rather than any Vert.x event-loop thread. Left
-        // unaddressed, that thread would then be the one that eventually calls promise.complete(...)
-        // below, and a downstream request coordinator's non-volatile settlement latches may be
-        // documented as "mutated only on the request-owning Vert.x context" — a torn latch on such a
-        // path means double settlement or a lost completion. This method does not attempt to re-anchor
-        // roleScopeFuture/actionFuture themselves (their own timeout continuations may still run off
-        // any context); instead it re-anchors the one future this method actually hands back to its
-        // caller — see completeOnCallerContext, used at every promise.complete(...) call site below.
-        roleScopeFuture = roleScopeFuture.timeout(gateDeadlineMs, TimeUnit.MILLISECONDS);
+        // Bound the gate: a non-blocking future that simply never resolves is not a synchronous throw,
+        // a null future, a failed future, or a null decision, so none of the fail-closed branches above
+        // catch it. A gate that has not settled is handed to the resilience fence, which fails it with
+        // a timeout once the configured deadline elapses; a gate that is already complete is returned
+        // unchanged, so the synchronous fast path costs nothing. The fence settles on the Vert.x context
+        // that is current here.
+        try {
+            roleScopeFuture = fence(roleScopeFuture, roleScopeFence);
+        } catch (RuntimeException e) {
+            log.warn("Authorization role/scope gate fence failed; failing closed", e);
+            return Future.succeededFuture(failClosedInternalError(authzRequest, correlation));
+        }
 
         // {@code promise} itself stays the plain, context-less default — Vert.x's
         // {@link Context} exposes no {@code promise()} factory to anchor one to a context directly.
         // Every settlement of it instead goes through {@link #completeOnCallerContext}, which
-        // redispatches onto {@code callerContext} via {@link Context#runOnContext} before completing —
-        // the same {@code context.runOnContext(...)}
-        // re-anchoring idiom a downstream request coordinator uses — so every caller of decide() keeps observing this
-        // future settle on the same
-        // context it called decide() from, closing the gap a context-less gate future's own
-        // off-context timeout would otherwise reopen. When decide() is itself called off any Vert.x
-        // context (a unit test with no Vertx instance, matching this class's own pre-existing
-        // SecurityPolicyEnforcerGateDeadlineTest fixture), callerContext is null and this degrades to
-        // completing directly, on whichever thread settled the gate.
+        // redispatches onto {@code callerContext} via {@link Context#runOnContext} before completing,
+        // so every caller of decide() keeps observing this future settle on the same context it called
+        // decide() from, whichever thread settled the gate. When decide() is itself called off any
+        // Vert.x context (a unit test with no Vertx instance), callerContext is null and this
+        // completes directly, on whichever thread settled the gate.
         Promise<AuthorizationDecision> promise = Promise.promise();
         roleScopeFuture.onComplete(roleScopeAr -> {
             if (roleScopeAr.failed()) {
-                log.warn("Authorization decision point failed", roleScopeAr.cause());
+                logGateFailure(
+                        "Authorization decision point failed", "role/scope", roleScopeAr.cause(), roleScopeFence);
                 completeOnCallerContext(promise, callerContext, failClosedInternalError(authzRequest, correlation));
                 return;
             }
@@ -613,7 +629,18 @@ public class SecurityPolicyEnforcer {
             }
             // Bound the action gate exactly like the role/scope gate above: the same
             // amplification risk applies to a hanging Authorizer, not only a hanging decision point.
-            actionFuture.timeout(gateDeadlineMs, TimeUnit.MILLISECONDS).onComplete(actionAr -> {
+            Future<AuthorizationDecision> fencedAction;
+            try {
+                fencedAction = fence(actionFuture, actionFence);
+            } catch (RuntimeException e) {
+                log.warn("Authorization action gate fence failed; failing closed", e);
+                completeOnCallerContext(promise, callerContext, failClosedInternalError(authzRequest, correlation));
+                return;
+            }
+            fencedAction.onComplete(actionAr -> {
+                if (actionAr.failed()) {
+                    logGateFailure("Authorizer failed", "action", actionAr.cause(), actionFence);
+                }
                 AuthorizationDecision actionResult = actionAr.succeeded() ? actionAr.result() : null;
                 // The Authorizer contract forbids a failed future for a normal deny and forbids a
                 // null decision; fail closed (INTERNAL_AUTHZ_ERROR) if a misbehaving impl does either.
@@ -626,6 +653,69 @@ public class SecurityPolicyEnforcer {
             });
         });
         return promise.future();
+    }
+
+    /**
+     * Builds the timeout-only resilience pipeline that bounds one authorization gate.
+     *
+     * @param resilience     the application's resilience runtime
+     * @param identity       the gate's resilience identity
+     * @param gateDeadlineMs the deadline in milliseconds; positive
+     * @return the gate's fence
+     */
+    private static ResiliencePipeline gateFence(
+            Resilience resilience, AdapterOperationIdentity identity, long gateDeadlineMs) {
+        return resilience
+                .adapterSupport()
+                .pipeline(
+                        identity,
+                        new ResolvedResiliencePolicy(
+                                Optional.of(TimeoutConfig.ofMillis(gateDeadlineMs)),
+                                Optional.empty(),
+                                Optional.empty(),
+                                Optional.empty()));
+    }
+
+    /**
+     * Bounds {@code gate} with {@code fence} unless it has already settled.
+     *
+     * <p>A settled future is returned as is: it cannot hang, and returning it keeps the synchronous
+     * fast path of an in-memory decision point free of any scheduling. Callers subscribe only to the
+     * returned future, never to {@code gate}, so a late completion of an abandoned gate cannot
+     * produce a second outcome.
+     *
+     * @param gate  the gate future the decision point or authorizer returned; never {@code null}
+     * @param fence the fence for this gate
+     * @return {@code gate} when settled, otherwise a future that settles with the gate's outcome or
+     *     fails with a resilience timeout or closed failure of {@code fence}
+     */
+    private static Future<AuthorizationDecision> fence(Future<AuthorizationDecision> gate, ResiliencePipeline fence) {
+        return gate.isComplete() ? gate : fence.execute(() -> gate);
+    }
+
+    /**
+     * Returns whether {@code cause} is a timeout or closed-runtime failure raised by {@code fence}
+     * itself, as opposed to a failure that happened to be a resilience failure of some other
+     * operation (for example a remote policy client that applies its own resilience).
+     */
+    private static boolean isFenceFailure(Throwable cause, ResiliencePipeline fence) {
+        String key = fence.operationKey();
+        return (cause instanceof ResilienceTimeoutException timeout && key.equals(timeout.operationKey()))
+                || (cause instanceof ResilienceClosedException closed && key.equals(closed.operationKey()));
+    }
+
+    /**
+     * Logs a failed gate future. A fence failure names the gate and, for a closed runtime, is
+     * informational; any other failure keeps {@code failureMessage}.
+     */
+    private static void logGateFailure(String failureMessage, String gate, Throwable cause, ResiliencePipeline fence) {
+        if (!isFenceFailure(cause, fence)) {
+            log.warn(failureMessage, cause);
+        } else if (cause instanceof ResilienceClosedException) {
+            log.info("Authorization {} gate was fenced after the resilience runtime closed; failing closed", gate);
+        } else {
+            log.warn("Authorization {} gate exceeded its deadline; failing closed", gate, cause);
+        }
     }
 
     /**

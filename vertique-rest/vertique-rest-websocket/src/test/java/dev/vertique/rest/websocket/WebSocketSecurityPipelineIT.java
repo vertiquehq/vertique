@@ -14,6 +14,7 @@ import dev.vertique.core.context.DispatchBoundary;
 import dev.vertique.core.correlation.CorrelationContext;
 import dev.vertique.core.correlation.CorrelationIdentifier;
 import dev.vertique.correlation.CorrelationContextFactory;
+import dev.vertique.resilience.Resilience;
 import dev.vertique.rest.core.middleware.RequestContextLifecycle;
 import dev.vertique.rest.core.security.RouteAuthHandler;
 import dev.vertique.rest.security.DefaultChannelIdentityManager;
@@ -232,7 +233,8 @@ public class WebSocketSecurityPipelineIT {
                 emitter,
                 contextHolder,
                 securityRuntime,
-                Optional.empty());
+                Optional.empty(),
+                Resilience.create(vertx));
 
         // --- RouteAuthHandler: stub JWT-style auth ---
         RouteAuthHandler stubAuth = new StubBearerAuthHandler();
@@ -647,7 +649,8 @@ public class WebSocketSecurityPipelineIT {
                 Optional.empty(),
                 Set.of(),
                 Optional.empty(),
-                Optional.empty());
+                Optional.empty(),
+                TestResilience.shared());
 
         return new WebSocketMount.Factory(
                 new WebSocketMessageCodec(),
@@ -684,7 +687,8 @@ public class WebSocketSecurityPipelineIT {
                 Optional.empty(),
                 providers,
                 Optional.empty(),
-                Optional.empty());
+                Optional.empty(),
+                TestResilience.shared());
 
         return new WebSocketMount.Factory(
                 new WebSocketMessageCodec(),
@@ -761,7 +765,8 @@ public class WebSocketSecurityPipelineIT {
                 Optional.empty(),
                 Set.of(),
                 Optional.empty(),
-                Optional.empty());
+                Optional.empty(),
+                TestResilience.shared());
 
         WebSocketMount.Factory mountFactory = new WebSocketMount.Factory(
                 new WebSocketMessageCodec(),

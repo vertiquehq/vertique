@@ -810,7 +810,8 @@ public class TypedPolicyServiceWebSocketIT {
                     upgradeEmitter,
                     correlationHolder,
                     securityRuntime,
-                    Optional.empty());
+                    Optional.empty(),
+                    Resilience.create(vertx));
             WebSocketEndpointRegistrar registrar = new WebSocketEndpointRegistrar(
                     new WebSocketMessageCodec(),
                     enforcer,

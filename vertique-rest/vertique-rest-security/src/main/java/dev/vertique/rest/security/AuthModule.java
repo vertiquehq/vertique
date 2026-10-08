@@ -12,6 +12,8 @@ import dagger.multibindings.Multibinds;
 import dev.vertique.core.context.ContextHolder;
 import dev.vertique.core.context.ServiceDispatchContextDecoder;
 import dev.vertique.core.context.ServiceDispatchContextEncoder;
+import dev.vertique.resilience.Resilience;
+import dev.vertique.resilience.dagger.ResilienceModule;
 import dev.vertique.rest.core.middleware.Middleware;
 import dev.vertique.rest.core.router.OperationHandlerContributor;
 import dev.vertique.rest.core.security.AuthEnforcementCapability;
@@ -76,7 +78,7 @@ import java.util.Set;
  * }
  * }</pre>
  */
-@Module(includes = SecurityEventsModule.class)
+@Module(includes = {SecurityEventsModule.class, ResilienceModule.class})
 public abstract class AuthModule {
 
     /**
@@ -226,6 +228,7 @@ public abstract class AuthModule {
      * @param authorizationProviders     the Vert.x authorization provider multibinding set
      * @param authorizer                 the optional action authorizer
      * @param authorizationGateConfig    the optional operator-configured gate deadline
+     * @param resilience                 the application's resilience runtime
      * @return the single identity-pipeline assembly point
      */
     @Provides
@@ -242,7 +245,8 @@ public abstract class AuthModule {
             Optional<AuthorizationPolicy> authorizationPolicy,
             Set<AuthorizationProvider> authorizationProviders,
             Optional<dev.vertique.security.authz.Authorizer> authorizer,
-            Optional<AuthorizationGateConfig> authorizationGateConfig) {
+            Optional<AuthorizationGateConfig> authorizationGateConfig,
+            Resilience resilience) {
         return new IdentityPipelineFactory(
                 identityResolvers,
                 claimMapper,
@@ -255,7 +259,8 @@ public abstract class AuthModule {
                 authorizationPolicy,
                 authorizationProviders,
                 authorizer,
-                authorizationGateConfig);
+                authorizationGateConfig,
+                resilience);
     }
 
     /**

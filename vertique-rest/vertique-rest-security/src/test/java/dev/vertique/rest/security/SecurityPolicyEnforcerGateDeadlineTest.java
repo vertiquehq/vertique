@@ -12,6 +12,11 @@ import dev.vertique.core.config.JsonConfigPaths;
 import dev.vertique.core.context.ContextHolder;
 import dev.vertique.core.context.ContextValue;
 import dev.vertique.core.context.DispatchBoundary;
+import dev.vertique.resilience.Resilience;
+import dev.vertique.resilience.spi.ResilienceObserver;
+import dev.vertique.resilience.spi.event.ExecutionCompleted;
+import dev.vertique.resilience.spi.event.ResilienceEvent;
+import dev.vertique.resilience.spi.event.ResilienceOutcomeCategory;
 import dev.vertique.rest.core.security.SecurityPolicy;
 import dev.vertique.rest.core.security.SecurityRuntime;
 import dev.vertique.security.AuthenticationState;
@@ -35,12 +40,14 @@ import dev.vertique.security.events.SecurityEventObserver;
 import dev.vertique.security.runtime.events.SecurityEventEmitter;
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
+import io.vertx.core.Vertx;
 import io.vertx.core.json.JsonObject;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import org.junit.jupiter.api.DisplayName;
@@ -135,7 +142,8 @@ class SecurityPolicyEnforcerGateDeadlineTest {
                 NO_OP_CONTEXT_HOLDER,
                 NO_OP_SECURITY_RUNTIME,
                 Optional.ofNullable(authorizer),
-                Optional.of(new AuthorizationGateConfig(CONFIGURED_GATE_DEADLINE_MS)));
+                Optional.of(new AuthorizationGateConfig(CONFIGURED_GATE_DEADLINE_MS)),
+                TestResilience.shared());
         SecurityPolicy.Constrained policy = new SecurityPolicy.Constrained(List.of("ops"), List.of(), false);
 
         long startNanos = System.nanoTime();
@@ -265,7 +273,8 @@ class SecurityPolicyEnforcerGateDeadlineTest {
                 NO_OP_CONTEXT_HOLDER,
                 NO_OP_SECURITY_RUNTIME,
                 Optional.ofNullable(authorizer),
-                Optional.of(configDriven));
+                Optional.of(configDriven),
+                TestResilience.shared());
         SecurityPolicy.Constrained policy = new SecurityPolicy.Constrained(List.of("ops"), List.of(), false);
 
         long startNanos = System.nanoTime();
@@ -284,6 +293,151 @@ class SecurityPolicyEnforcerGateDeadlineTest {
                         + "behavior through the parser and opt-in module, not merely the record's own "
                         + "constructor")
                 .isLessThan(1_000L);
+    }
+
+    /**
+     * The fence is the resilience runtime, not a bare future timer: a hung role/scope gate is reported
+     * to the runtime's observers as a timed-out execution. DECISIVE: a {@code Future#timeout} fence
+     * reports nothing, so this test fails (no timeout event) if the runtime is not what bounds the gate.
+     */
+    @Test
+    @DisplayName("shouldReportAHungRoleScopeGateToTheResilienceObserver")
+    void shouldReportAHungRoleScopeGateToTheResilienceObserver() throws Exception {
+        withObservedRuntime((resilience, observed) -> {
+            List<AuthorizationDecisionEvent> events = new ArrayList<>();
+            NeverCompletingDecisionPoint dp = new NeverCompletingDecisionPoint();
+            SecurityPolicyEnforcer enforcer = enforcerWith(dp, RecordingAuthorizer.throwing(), events, resilience);
+
+            AuthorizationDecision decision = awaitDecision(enforcer, Optional.empty());
+
+            assertThat(decision.reasonCode()).isEqualTo(AuthzReasonCodes.INTERNAL_AUTHZ_ERROR);
+            assertThat(events).hasSize(1);
+            assertThat(observed.timeouts(AWAIT_BOUND_MS)).isEqualTo(1);
+        });
+    }
+
+    /** The action gate is bounded by the same runtime: a hung {@link Authorizer} is a timed-out execution. */
+    @Test
+    @DisplayName("shouldReportAHungActionGateToTheResilienceObserver")
+    void shouldReportAHungActionGateToTheResilienceObserver() throws Exception {
+        withObservedRuntime((resilience, observed) -> {
+            List<AuthorizationDecisionEvent> events = new ArrayList<>();
+            SecurityPolicyEnforcer enforcer = enforcerWith(
+                    RecordingDecisionPoint.roleChecking(), new NeverCompletingAuthorizer(), events, resilience);
+
+            AuthorizationDecision decision = awaitDecision(enforcer, Optional.of(SAMPLE_ACTION));
+
+            assertThat(decision.reasonCode()).isEqualTo(AuthzReasonCodes.INTERNAL_AUTHZ_ERROR);
+            assertThat(events).hasSize(1);
+            assertThat(observed.timeouts(AWAIT_BOUND_MS)).isEqualTo(1);
+        });
+    }
+
+    /**
+     * A gate that has already settled when it is handed to the fence is not fenced at all: the
+     * synchronous fast path of an in-memory decision point must cost the runtime nothing.
+     */
+    @Test
+    @DisplayName("shouldNotFenceAGateThatHasAlreadySettled")
+    void shouldNotFenceAGateThatHasAlreadySettled() throws Exception {
+        withObservedRuntime((resilience, observed) -> {
+            List<AuthorizationDecisionEvent> events = new ArrayList<>();
+            SecurityPolicyEnforcer enforcer = enforcerWith(
+                    RecordingDecisionPoint.roleChecking(), RecordingAuthorizer.throwing(), events, resilience);
+
+            AuthorizationDecision decision = awaitDecision(enforcer, Optional.empty());
+
+            assertThat(decision.permitted()).isTrue();
+            assertThat(events).hasSize(1);
+            assertThat(observed.all())
+                    .as("a gate that already settled must not reach the resilience runtime")
+                    .isEmpty();
+        });
+    }
+
+    /**
+     * Once the runtime has closed (application shutdown) a gate that is still pending is denied at
+     * once rather than left to hang, with exactly one event.
+     */
+    @Test
+    @DisplayName("shouldFailClosedOnceWhenTheResilienceRuntimeIsClosed")
+    void shouldFailClosedOnceWhenTheResilienceRuntimeIsClosed() throws Exception {
+        withObservedRuntime((resilience, observed) -> {
+            List<AuthorizationDecisionEvent> events = new ArrayList<>();
+            SecurityPolicyEnforcer enforcer = enforcerWith(
+                    new NeverCompletingDecisionPoint(), RecordingAuthorizer.throwing(), events, resilience);
+            resilience.close().toCompletionStage().toCompletableFuture().get(AWAIT_BOUND_MS, TimeUnit.MILLISECONDS);
+
+            long startNanos = System.nanoTime();
+            AuthorizationDecision decision = awaitDecision(enforcer, Optional.empty());
+            long elapsedMs = (System.nanoTime() - startNanos) / 1_000_000L;
+
+            assertThat(decision.permitted()).isFalse();
+            assertThat(decision.reasonCode()).isEqualTo(AuthzReasonCodes.INTERNAL_AUTHZ_ERROR);
+            assertThat(events).hasSize(1);
+            assertThat(elapsedMs)
+                    .as("a closed runtime denies at once, not after the gate deadline")
+                    .isLessThan(TEST_GATE_DEADLINE_MS * 2);
+        });
+    }
+
+    private static AuthorizationDecision awaitDecision(SecurityPolicyEnforcer enforcer, Optional<ActionRef> action)
+            throws Exception {
+        SecurityPolicy.Constrained policy = new SecurityPolicy.Constrained(List.of("ops"), List.of(), false);
+        return enforcer.decide(aliceContext(Set.of("ops")), policy, action, TOOL_RESOURCE, MCP_ORIGIN)
+                .toCompletionStage()
+                .toCompletableFuture()
+                .get(AWAIT_BOUND_MS, TimeUnit.MILLISECONDS);
+    }
+
+    /** Runs {@code body} against a fresh runtime whose events are recorded, then closes its Vert.x. */
+    private static void withObservedRuntime(ObservedBody body) throws Exception {
+        Vertx vertx = Vertx.vertx();
+        try {
+            ObservedEvents observed = new ObservedEvents();
+            body.run(Resilience.create(vertx, Set.of(observed)), observed);
+        } finally {
+            vertx.close().toCompletionStage().toCompletableFuture().get(AWAIT_BOUND_MS, TimeUnit.MILLISECONDS);
+        }
+    }
+
+    @FunctionalInterface
+    private interface ObservedBody {
+        void run(Resilience resilience, ObservedEvents observed) throws Exception;
+    }
+
+    /** Records every event a {@link Resilience} runtime publishes. */
+    private static final class ObservedEvents implements ResilienceObserver {
+        private final List<ResilienceEvent> events = new CopyOnWriteArrayList<>();
+
+        @Override
+        public void onEvent(ResilienceEvent event) {
+            events.add(event);
+        }
+
+        List<ResilienceEvent> all() {
+            return List.copyOf(events);
+        }
+
+        /** Counts completed executions that ended in a timeout, waiting up to {@code waitMs} for one. */
+        long timeouts(long waitMs) throws InterruptedException {
+            long deadline = System.nanoTime() + waitMs * 1_000_000L;
+            while (System.nanoTime() < deadline) {
+                if (countTimeouts() > 0) {
+                    break;
+                }
+                Thread.sleep(10L);
+            }
+            return countTimeouts();
+        }
+
+        private long countTimeouts() {
+            return events.stream()
+                    .filter(ExecutionCompleted.class::isInstance)
+                    .map(ExecutionCompleted.class::cast)
+                    .filter(e -> e.outcome() == ResilienceOutcomeCategory.TIMEOUT)
+                    .count();
+        }
     }
 
     // --- Shared fixture construction ---
@@ -343,6 +497,14 @@ class SecurityPolicyEnforcerGateDeadlineTest {
     /** Builds an enforcer bound at {@link #TEST_GATE_DEADLINE_MS} via the package-private test seam. */
     private static SecurityPolicyEnforcer enforcerWith(
             AuthorizationDecisionPoint dp, Authorizer authorizer, List<AuthorizationDecisionEvent> events) {
+        return enforcerWith(dp, authorizer, events, TestResilience.shared());
+    }
+
+    private static SecurityPolicyEnforcer enforcerWith(
+            AuthorizationDecisionPoint dp,
+            Authorizer authorizer,
+            List<AuthorizationDecisionEvent> events,
+            Resilience resilience) {
         return new SecurityPolicyEnforcer(
                 Optional.of(dp),
                 Optional.empty(),
@@ -351,7 +513,8 @@ class SecurityPolicyEnforcerGateDeadlineTest {
                 NO_OP_CONTEXT_HOLDER,
                 NO_OP_SECURITY_RUNTIME,
                 Optional.ofNullable(authorizer),
-                Optional.of(new AuthorizationGateConfig(TEST_GATE_DEADLINE_MS)));
+                Optional.of(new AuthorizationGateConfig(TEST_GATE_DEADLINE_MS)),
+                resilience);
     }
 
     // --- Test doubles ---

@@ -10,6 +10,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import dev.vertique.core.context.ContextHolder;
 import dev.vertique.core.context.ContextValue;
 import dev.vertique.core.exception.UnavailableException;
+import dev.vertique.resilience.Resilience;
 import dev.vertique.rest.core.middleware.RequestContextLifecycle;
 import dev.vertique.rest.core.security.SecurityPolicy;
 import dev.vertique.security.AuthenticationEvidence;
@@ -135,7 +136,8 @@ public class VertxAuthorizationImportIT {
                 emitter,
                 contextHolder,
                 securityRuntime,
-                Optional.empty());
+                Optional.empty(),
+                Resilience.create(vertx));
 
         IdentityResolutionMiddleware withImporter = middleware(
                 securityRuntime,

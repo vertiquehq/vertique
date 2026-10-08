@@ -20,6 +20,7 @@ import dev.vertique.mcp.tool.McpToolAccess;
 import dev.vertique.mcp.tool.McpToolAnnotations;
 import dev.vertique.mcp.tool.McpToolDescriptor;
 import dev.vertique.mcp.tool.McpToolInvoker;
+import dev.vertique.resilience.Resilience;
 import dev.vertique.rest.core.config.HttpConfig;
 import dev.vertique.rest.core.middleware.RequestContextLifecycle;
 import dev.vertique.rest.core.security.RouteAuthHandler;
@@ -168,7 +169,8 @@ public class McpToolsListAuthorizationInfrastructureFailureIT {
                     new SecurityEventEmitter(Set.of()),
                     NO_OP_CONTEXT,
                     runtime,
-                    Optional.empty()));
+                    Optional.empty(),
+                    Resilience.create(vertx)));
             McpRouterMount mount = new McpRouterMount(
                     config,
                     new McpServerConfigValidator(),

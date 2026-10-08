@@ -93,6 +93,7 @@ forbidden.each { String description, Closure<Boolean> matches ->
 // set is the release line's compatibility surface: any addition or removal is consumer-visible and
 // must be a deliberate, reviewed change to the ledger below.
 Set<String> expectedVertique = [
+        "vertique-aop",
         "vertique-application",
         "vertique-config-core",
         "vertique-context",
@@ -104,6 +105,7 @@ Set<String> expectedVertique = [
         "vertique-json-schema",
         "vertique-logging",
         "vertique-management",
+        "vertique-resilience",
         "vertique-rest-core",
         "vertique-rest-jaxrs",
         "vertique-rest-security",

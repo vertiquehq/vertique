@@ -15,6 +15,7 @@ import dev.vertique.mcp.server.McpTypedPolicyServiceITFixture.Outcome;
 import dev.vertique.mcp.server.McpTypedPolicyServiceITFixture.ToolSource;
 import dev.vertique.mcp.tool.McpToolDescriptor;
 import dev.vertique.mcp.tool.McpToolInvoker;
+import dev.vertique.resilience.Resilience;
 import dev.vertique.rest.security.HolderBackedSecurityRuntime;
 import dev.vertique.rest.security.SecurityPolicyEnforcer;
 import dev.vertique.security.AuthenticationState;
@@ -590,7 +591,8 @@ class McpPolicyBinaryCompatibilityTest {
                 new SecurityEventEmitter(Set.of()),
                 new DefaultContextHolder(),
                 new HolderBackedSecurityRuntime((securityContext, secure) -> null),
-                Optional.empty()));
+                Optional.empty(),
+                Resilience.create(vertx)));
         BiFunction<McpToolDescriptor, SecurityContext, Future<AuthorizationDecision>> decider = enforcer::decide;
         Class<?> type = load(isolated, OLD_CONSUMER);
         Object instance = type.getConstructor(BiFunction.class).newInstance(decider);

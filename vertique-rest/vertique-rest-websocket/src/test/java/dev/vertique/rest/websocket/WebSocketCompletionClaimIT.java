@@ -190,7 +190,8 @@ public class WebSocketCompletionClaimIT {
                 Optional.empty(),
                 Set.of(),
                 Optional.empty(),
-                Optional.empty());
+                Optional.empty(),
+                TestResilience.shared());
 
         WebSocketMount.Factory factory = new WebSocketMount.Factory(
                 new WebSocketMessageCodec(),

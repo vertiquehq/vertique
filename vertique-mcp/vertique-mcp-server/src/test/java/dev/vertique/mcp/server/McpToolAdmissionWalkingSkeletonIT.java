@@ -34,6 +34,7 @@ import dev.vertique.ratelimit.spi.RateLimitBackend;
 import dev.vertique.ratelimit.spi.RateLimitBackendRequest;
 import dev.vertique.ratelimit.spi.RateLimitBackendResult;
 import dev.vertique.ratelimit.spi.RateLimitSubject;
+import dev.vertique.resilience.Resilience;
 import dev.vertique.rest.core.config.HttpConfig;
 import dev.vertique.rest.core.middleware.RequestContextLifecycle;
 import dev.vertique.rest.core.security.SecurityRuntime;
@@ -308,7 +309,8 @@ class McpToolAdmissionWalkingSkeletonIT {
                     new SecurityEventEmitter(Set.of()),
                     NO_OP_CONTEXT_HOLDER,
                     securityRuntime,
-                    Optional.empty()));
+                    Optional.empty(),
+                    Resilience.create(vertx)));
             HttpConfig httpConfig = HttpConfig.builder().idleTimeoutSeconds(60).build();
             McpToolAdmission admission = McpToolAdmission.create(config, registry, rateLimiters);
             McpRequestDispatcher dispatcher = new McpRequestDispatcher(

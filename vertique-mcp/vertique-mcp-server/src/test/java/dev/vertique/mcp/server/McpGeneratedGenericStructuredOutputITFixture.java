@@ -17,6 +17,7 @@ import dev.vertique.json.JsonMapperProfiles;
 import dev.vertique.mcp.server.runtime.McpToolRuntimeFactory;
 import dev.vertique.mcp.server.runtime.McpToolRuntimeFactoryTestSupport;
 import dev.vertique.mcp.tool.McpToolInvoker;
+import dev.vertique.resilience.Resilience;
 import dev.vertique.rest.core.config.HttpConfig;
 import dev.vertique.rest.core.middleware.RequestContextLifecycle;
 import dev.vertique.rest.core.security.SecurityRuntime;
@@ -210,7 +211,8 @@ final class McpGeneratedGenericStructuredOutputITFixture {
                 new SecurityEventEmitter(Set.of()),
                 NO_OP_CONTEXT_HOLDER,
                 securityRuntime,
-                Optional.empty()));
+                Optional.empty(),
+                Resilience.create(vertx)));
         HttpConfig httpConfig = HttpConfig.builder().idleTimeoutSeconds(60).build();
 
         McpRouterMount mount = new McpRouterMount(

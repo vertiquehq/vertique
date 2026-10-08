@@ -131,7 +131,8 @@ class McpRouterMountEmptyRegistryWarnTest {
                 new SecurityEventEmitter(Set.of()),
                 NO_OP_CONTEXT_HOLDER,
                 securityRuntime,
-                Optional.empty()));
+                Optional.empty(),
+                TestResilience.shared()));
         McpRequestDispatcher dispatcher = new McpRequestDispatcher(
                 config,
                 securityRuntime,

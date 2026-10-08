@@ -118,7 +118,8 @@ class McpCacheHintsGoldenTest {
                     new SecurityEventEmitter(Set.of()),
                     NO_OP_CONTEXT_HOLDER,
                     mock(SecurityRuntime.class),
-                    Optional.empty());
+                    Optional.empty(),
+                    TestResilience.shared());
             McpPolicyEnforcer policyEnforcer = new McpPolicyEnforcer(securityPolicyEnforcer);
             SecurityRuntime securityRuntime = mock(SecurityRuntime.class);
             SecurityContext anonymous = SecurityContexts.unauthenticated(SecurityIdentity.anonymous());

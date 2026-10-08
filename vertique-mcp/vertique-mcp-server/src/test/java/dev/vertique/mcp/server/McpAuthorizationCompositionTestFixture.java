@@ -17,6 +17,7 @@ import dev.vertique.security.authz.AuthorizationDecision;
 import dev.vertique.security.authz.AuthorizationRequest;
 import dev.vertique.security.authz.AuthzReasonCodes;
 import io.vertx.core.Future;
+import io.vertx.core.Vertx;
 import jakarta.inject.Singleton;
 import java.lang.reflect.Field;
 import java.util.Optional;
@@ -147,7 +148,21 @@ final class McpAuthorizationCompositionTestFixture {
         static ContextHolder contextHolder() {
             return NO_OP_CONTEXT_HOLDER;
         }
+
+        /**
+         * Supplies the {@link Vertx} the resilience runtime installed by {@code AuthModule} needs. The
+         * wiring-only proof never runs a request, so the instance is shared and left to the JVM exit.
+         *
+         * @return the shared Vert.x instance
+         */
+        @Provides
+        @Singleton
+        static Vertx vertx() {
+            return SHARED_VERTX;
+        }
     }
+
+    private static final Vertx SHARED_VERTX = Vertx.vertx();
 
     private static final ContextHolder NO_OP_CONTEXT_HOLDER = new ContextHolder() {
         @Override

@@ -400,7 +400,8 @@ final class McpTypedPolicyServiceITFixture {
                     new SecurityEventEmitter(Set.of(recordingObserver(events))),
                     holder,
                     runtime,
-                    installedAuthorizer));
+                    installedAuthorizer,
+                    TestResilience.shared()));
             HttpConfig httpConfig = HttpConfig.builder().idleTimeoutSeconds(60).build();
             IdentityResolutionMiddleware identity = new IdentityResolutionMiddleware(
                     Set.of(new SubjectIdentityResolver()),
