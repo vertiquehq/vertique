@@ -558,14 +558,16 @@ class VertxAuthorizationImporterTest {
     @DisplayName("A provider pending when the resilience runtime closes fails the import at once")
     void providerPendingAtShutdownFailsTheImport() throws Exception {
         withObservedRuntime((resilience, observed) -> {
-            VertxAuthorizationImporter importer = boundedImporter(resilience, new HungProvider("slow"));
+            // A bound far beyond the await below: only the closed runtime can fail the import in time.
+            VertxAuthorizationImporter importer = new VertxAuthorizationImporter(
+                    Set.of(new HungProvider("slow")), resilience, new AuthorizationImportConfig(AWAIT_MS * 10));
             resilience.close().toCompletionStage().toCompletableFuture().get(AWAIT_MS, TimeUnit.MILLISECONDS);
 
             Future<AuthorizationClaims> future = importer.importInto(alice(), AuthorizationClaims.empty());
 
-            ExecutionException failure = assertThrows(ExecutionException.class, () -> future.toCompletionStage()
-                    .toCompletableFuture()
-                    .get(IMPORT_TIMEOUT_MS, TimeUnit.MILLISECONDS));
+            ExecutionException failure = assertThrows(
+                    ExecutionException.class,
+                    () -> future.toCompletionStage().toCompletableFuture().get(AWAIT_MS, TimeUnit.MILLISECONDS));
             assertInstanceOf(UnavailableException.class, failure.getCause());
         });
     }

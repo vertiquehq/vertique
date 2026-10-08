@@ -11,6 +11,8 @@ import dev.vertique.resilience.ResiliencePipeline;
 import dev.vertique.resilience.ResolvedResiliencePolicy;
 import dev.vertique.resilience.TimeoutConfig;
 import dev.vertique.resilience.adapter.AdapterOperationIdentity;
+import dev.vertique.resilience.exception.ResilienceClosedException;
+import dev.vertique.resilience.exception.ResilienceTimeoutException;
 import dev.vertique.security.authz.AuthorityClaim;
 import dev.vertique.security.authz.AuthorityKind;
 import dev.vertique.security.authz.AuthorizationClaims;
@@ -325,8 +327,22 @@ public final class VertxAuthorizationImporter {
      * @return an {@link UnavailableException} with the generic {@value #UNAVAILABLE_MESSAGE} detail,
      *         carrying {@code cause}
      */
-    private static UnavailableException unavailable(String providerId, Throwable cause) {
-        log.error("Vert.x authorization provider [{}] failed to resolve authorizations", providerId, cause);
+    private UnavailableException unavailable(String providerId, Throwable cause) {
+        String fenceKey = providerFence.operationKey();
+        if (cause instanceof ResilienceClosedException closed && fenceKey.equals(closed.operationKey())) {
+            // The runtime closed at application shutdown; no provider misbehaved.
+            log.info(
+                    "Vert.x authorization import for provider [{}] was fenced after the resilience runtime closed",
+                    providerId);
+        } else if (cause instanceof ResilienceTimeoutException timeout && fenceKey.equals(timeout.operationKey())) {
+            // The stack trace of the deadline itself says nothing; the provider and the bound do.
+            log.error(
+                    "Vert.x authorization provider [{}] did not complete within {} ms",
+                    providerId,
+                    timeout.timeoutMs());
+        } else {
+            log.error("Vert.x authorization provider [{}] failed to resolve authorizations", providerId, cause);
+        }
         return new UnavailableException(UNAVAILABLE_MESSAGE, cause);
     }
 

@@ -1162,7 +1162,7 @@ class IdentityResolutionMiddlewareTest {
                 + "mapper SCOPE claim is never re-imported as PERMISSION")
         void scopeKindFidelityPreservedForJwtApps(Vertx vertx, VertxTestContext ctx) {
             CapturingSecurityRuntime runtime = new CapturingSecurityRuntime();
-            // Safe 1-arg constructor: "jwt-claims" is excluded by default. The sentinel provider is
+            // Safe constructor: "jwt-claims" is excluded by default. The sentinel provider is
             // NOT excluded — its imported claim proves the importer actually ran, making the
             // "no PERMISSION twin" assertion non-vacuous.
             VertxAuthorizationImporter importer = new VertxAuthorizationImporter(

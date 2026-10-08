@@ -77,6 +77,10 @@ import java.util.Set;
  *     return claims -> { ... };
  * }
  * }</pre>
+ *
+ * <p><strong>Resilience.</strong> This module includes {@link ResilienceModule}, so the graph provides the
+ * application's single {@link Resilience} runtime, which bounds the authorization gates. The graph
+ * therefore <strong>must bind a {@link io.vertx.core.Vertx}</strong>.
  */
 @Module(includes = {SecurityEventsModule.class, ResilienceModule.class})
 public abstract class AuthModule {

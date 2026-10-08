@@ -75,8 +75,9 @@ import lombok.extern.slf4j.Slf4j;
  * {@link SecurityPolicy.Constrained} route with a missing {@code SecurityContext} (reason
  * {@link AuthzReasonCodes#AUTHENTICATION_REQUIRED}); and a decision-point failure or
  * contract violation — a {@link AuthorizationDecisionPoint}/{@link Authorizer} that throws
- * synchronously, returns a {@code null} future, or resolves to a {@code null} decision — which all
- * fail closed with reason {@link AuthzReasonCodes#INTERNAL_AUTHZ_ERROR}. {@link SecurityPolicy.None}
+ * synchronously, returns a {@code null} future, resolves to a {@code null} decision, or does not settle
+ * within the configured gate deadline — which all fail closed with reason
+ * {@link AuthzReasonCodes#INTERNAL_AUTHZ_ERROR}. {@link SecurityPolicy.None}
  * and {@link SecurityPolicy.PermitAll} install no handler, so they emit nothing. Event construction
  * never throws and never masks the security outcome: when no {@code CorrelationContext} is bound,
  * the event is built with a freshly
@@ -697,6 +698,10 @@ public class SecurityPolicyEnforcer {
      * Returns whether {@code cause} is a timeout or closed-runtime failure raised by {@code fence}
      * itself, as opposed to a failure that happened to be a resilience failure of some other
      * operation (for example a remote policy client that applies its own resilience).
+     *
+     * <p>The resilience runtime reports a plain {@link java.util.concurrent.TimeoutException} that a
+     * gate fails with as a timeout of the fence too, so a policy client that enforces its own deadline
+     * also lands here. That is the same fail-closed deny, only labelled as a deadline.
      */
     private static boolean isFenceFailure(Throwable cause, ResiliencePipeline fence) {
         String key = fence.operationKey();
@@ -714,7 +719,8 @@ public class SecurityPolicyEnforcer {
         } else if (cause instanceof ResilienceClosedException) {
             log.info("Authorization {} gate was fenced after the resilience runtime closed; failing closed", gate);
         } else {
-            log.warn("Authorization {} gate exceeded its deadline; failing closed", gate, cause);
+            // A deadline has no stack worth printing, and a hung policy point makes one per request.
+            log.warn("Authorization {} gate exceeded its deadline; failing closed", gate);
         }
     }
 

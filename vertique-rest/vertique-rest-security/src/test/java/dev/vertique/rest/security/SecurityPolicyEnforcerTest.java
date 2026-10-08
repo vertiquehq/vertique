@@ -13,6 +13,7 @@ import dev.vertique.core.correlation.CorrelationContext;
 import dev.vertique.core.correlation.CorrelationIdentifier;
 import dev.vertique.core.correlation.UnboundCorrelationContext;
 import dev.vertique.correlation.CorrelationContextFactory;
+import dev.vertique.resilience.Resilience;
 import dev.vertique.rest.core.security.SecurityPolicy;
 import dev.vertique.rest.core.security.SecurityRuntime;
 import dev.vertique.security.SecurityContext;
@@ -37,6 +38,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -1093,6 +1095,14 @@ class SecurityPolicyEnforcerTest {
         private final List<AuthorizationDecisionEvent> events = new ArrayList<>();
 
         private SecurityPolicyEnforcer enforcer(AuthorizationDecisionPoint dp, Optional<Authorizer> authorizer) {
+            return enforcer(dp, authorizer, HUNG_GATE_DEADLINE_MS, TestResilience.shared());
+        }
+
+        private SecurityPolicyEnforcer enforcer(
+                AuthorizationDecisionPoint dp,
+                Optional<Authorizer> authorizer,
+                long deadlineMs,
+                Resilience resilience) {
             return new SecurityPolicyEnforcer(
                     Optional.of(dp),
                     Optional.empty(),
@@ -1101,15 +1111,16 @@ class SecurityPolicyEnforcerTest {
                     holder,
                     securityRuntime,
                     authorizer,
-                    Optional.of(new AuthorizationGateConfig(HUNG_GATE_DEADLINE_MS)),
-                    TestResilience.shared());
+                    Optional.of(new AuthorizationGateConfig(deadlineMs)),
+                    resilience);
         }
 
-        private void awaitEvents(int expected) throws InterruptedException {
-            long deadline = System.nanoTime() + DENY_WITHIN_MS * 1_000_000L;
-            while (events.size() < expected && System.nanoTime() < deadline) {
-                Thread.sleep(10L);
-            }
+        private RoutingContext constrainedRoute() {
+            return stubRoutingContext(stubSecCtx(AuthorizationClaims.empty()));
+        }
+
+        private io.vertx.core.Handler<RoutingContext> constrainedHandler(SecurityPolicyEnforcer enforcer) {
+            return enforcer.createHandler(new SecurityPolicy.Constrained(List.of("admin"), List.of(), false));
         }
 
         @Test
@@ -1125,7 +1136,6 @@ class SecurityPolicyEnforcerTest {
 
             verify(rc, timeout(DENY_WITHIN_MS)).fail(403);
             verify(rc, never()).next();
-            awaitEvents(1);
             assertEquals(1, events.size(), "a hung gate must emit exactly one deny event");
             assertEquals(
                     AuthzReasonCodes.INTERNAL_AUTHZ_ERROR,
@@ -1147,7 +1157,6 @@ class SecurityPolicyEnforcerTest {
 
             verify(rc, timeout(DENY_WITHIN_MS)).fail(403);
             verify(rc, never()).next();
-            awaitEvents(1);
             assertEquals(1, events.size(), "a hung gate must emit exactly one deny event");
             assertEquals(
                     AuthzReasonCodes.INTERNAL_AUTHZ_ERROR,
@@ -1186,7 +1195,6 @@ class SecurityPolicyEnforcerTest {
 
             verify(rc, timeout(DENY_WITHIN_MS)).fail(403);
             verify(rc, never()).next();
-            awaitEvents(1);
             assertEquals(1, events.size(), "a hung gate must emit exactly one deny event");
             assertEquals(
                     AuthzReasonCodes.INTERNAL_AUTHZ_ERROR,
@@ -1195,6 +1203,104 @@ class SecurityPolicyEnforcerTest {
                     Boolean.TRUE,
                     events.get(0).decision().safeAttributes().get("actionEvaluated"),
                     "a timed-out action gate keeps the existing audit shape: it was evaluated");
+        }
+
+        @Test
+        @DisplayName("a gate that fails with another operation's resilience timeout keeps its own failure")
+        void foreignResilienceTimeoutIsNotMistakenForTheFence() {
+            io.vertx.core.Promise<AuthorizationDecision> pending = io.vertx.core.Promise.promise();
+            RoutingContext rc = constrainedRoute();
+            constrainedHandler(enforcer(request -> pending.future(), Optional.empty()))
+                    .handle(rc);
+            dev.vertique.resilience.exception.ResilienceTimeoutException foreign =
+                    new dev.vertique.resilience.exception.ResilienceTimeoutException("other-op:" + "0".repeat(64), 1L);
+
+            pending.fail(foreign);
+
+            verify(rc, timeout(DENY_WITHIN_MS)).fail(foreign);
+            verify(rc, never()).fail(403);
+            assertEquals(1, events.size(), "the failure still emits exactly one deny event");
+        }
+
+        @Test
+        @DisplayName("a gate that fails with its own plain TimeoutException is denied like a fence timeout")
+        void gatesOwnTimeoutExceptionIsDeniedLikeTheFence() {
+            io.vertx.core.Promise<AuthorizationDecision> pending = io.vertx.core.Promise.promise();
+            RoutingContext rc = constrainedRoute();
+            constrainedHandler(enforcer(request -> pending.future(), Optional.empty()))
+                    .handle(rc);
+
+            pending.fail(new java.util.concurrent.TimeoutException("policy client deadline"));
+
+            verify(rc, timeout(DENY_WITHIN_MS)).fail(403);
+            verify(rc, never()).next();
+            assertEquals(1, events.size());
+        }
+
+        @Test
+        @DisplayName("a gate that completes after the deadline changes nothing: one 403, no next(), one event")
+        void lateCompletionOfAnAbandonedGateChangesNothing() throws Exception {
+            io.vertx.core.Promise<AuthorizationDecision> pending = io.vertx.core.Promise.promise();
+            RoutingContext rc = constrainedRoute();
+            constrainedHandler(enforcer(request -> pending.future(), Optional.empty()))
+                    .handle(rc);
+            verify(rc, timeout(DENY_WITHIN_MS)).fail(403);
+
+            pending.complete(AuthorizationDecision.permit(AuthzReasonCodes.PERMITTED));
+            Thread.sleep(300L);
+
+            verify(rc, times(1)).fail(403);
+            verify(rc, never()).next();
+            assertEquals(1, events.size(), "the abandoned gate must not emit a second event");
+        }
+
+        @Test
+        @DisplayName("a hung handler gate is reported to the resilience observer as a timed-out execution")
+        void hungHandlerGateIsReportedToTheResilienceObserver() throws Exception {
+            io.vertx.core.Vertx vertx = io.vertx.core.Vertx.vertx();
+            try {
+                ObservedResilienceEvents observed = new ObservedResilienceEvents();
+                Resilience resilience = Resilience.create(vertx, Set.of(observed));
+                RoutingContext rc = constrainedRoute();
+
+                constrainedHandler(enforcer(
+                                request -> io.vertx.core.Promise.<AuthorizationDecision>promise()
+                                        .future(),
+                                Optional.empty(),
+                                HUNG_GATE_DEADLINE_MS,
+                                resilience))
+                        .handle(rc);
+
+                verify(rc, timeout(DENY_WITHIN_MS)).fail(403);
+                assertEquals(1, observed.timeouts(DENY_WITHIN_MS));
+            } finally {
+                vertx.close().toCompletionStage().toCompletableFuture().get(DENY_WITHIN_MS, TimeUnit.MILLISECONDS);
+            }
+        }
+
+        @Test
+        @DisplayName("a pending handler gate is denied at once when the resilience runtime has closed")
+        void pendingHandlerGateIsDeniedAtOnceWhenTheRuntimeIsClosed() throws Exception {
+            io.vertx.core.Vertx vertx = io.vertx.core.Vertx.vertx();
+            try {
+                Resilience resilience = Resilience.create(vertx);
+                // A deadline far longer than the wait below: only the closed runtime can deny in time.
+                SecurityPolicyEnforcer enforcer = enforcer(
+                        request -> io.vertx.core.Promise.<AuthorizationDecision>promise()
+                                .future(),
+                        Optional.empty(),
+                        60_000L,
+                        resilience);
+                resilience.close().toCompletionStage().toCompletableFuture().get(DENY_WITHIN_MS, TimeUnit.MILLISECONDS);
+                RoutingContext rc = constrainedRoute();
+
+                constrainedHandler(enforcer).handle(rc);
+
+                verify(rc, timeout(DENY_WITHIN_MS)).fail(403);
+                assertEquals(1, events.size());
+            } finally {
+                vertx.close().toCompletionStage().toCompletableFuture().get(DENY_WITHIN_MS, TimeUnit.MILLISECONDS);
+            }
         }
 
         private Authorizer authorizerReturningPermit() {

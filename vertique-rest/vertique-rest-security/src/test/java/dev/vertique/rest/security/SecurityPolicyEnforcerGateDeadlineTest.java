@@ -359,20 +359,24 @@ class SecurityPolicyEnforcerGateDeadlineTest {
     void shouldFailClosedOnceWhenTheResilienceRuntimeIsClosed() throws Exception {
         withObservedRuntime((resilience, observed) -> {
             List<AuthorizationDecisionEvent> events = new ArrayList<>();
-            SecurityPolicyEnforcer enforcer = enforcerWith(
-                    new NeverCompletingDecisionPoint(), RecordingAuthorizer.throwing(), events, resilience);
+            // A deadline far beyond the await bound: only the closed runtime can produce the deny in time.
+            SecurityPolicyEnforcer enforcer = new SecurityPolicyEnforcer(
+                    Optional.of(new NeverCompletingDecisionPoint()),
+                    Optional.empty(),
+                    Set.of(),
+                    capturingEmitter(events),
+                    NO_OP_CONTEXT_HOLDER,
+                    NO_OP_SECURITY_RUNTIME,
+                    Optional.of(RecordingAuthorizer.throwing()),
+                    Optional.of(new AuthorizationGateConfig(AWAIT_BOUND_MS * 10)),
+                    resilience);
             resilience.close().toCompletionStage().toCompletableFuture().get(AWAIT_BOUND_MS, TimeUnit.MILLISECONDS);
 
-            long startNanos = System.nanoTime();
             AuthorizationDecision decision = awaitDecision(enforcer, Optional.empty());
-            long elapsedMs = (System.nanoTime() - startNanos) / 1_000_000L;
 
             assertThat(decision.permitted()).isFalse();
             assertThat(decision.reasonCode()).isEqualTo(AuthzReasonCodes.INTERNAL_AUTHZ_ERROR);
             assertThat(events).hasSize(1);
-            assertThat(elapsedMs)
-                    .as("a closed runtime denies at once, not after the gate deadline")
-                    .isLessThan(TEST_GATE_DEADLINE_MS * 2);
         });
     }
 

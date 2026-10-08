@@ -385,7 +385,8 @@ timeout-only pipeline of the application's `Resilience` runtime, built once per 
 configured deadline. A gate whose future has already settled when it is returned is not timed at all,
 so an in-memory decision point costs the runtime nothing; a pending gate settles on the request's
 Vert.x context and is reported to any installed `ResilienceObserver` as a timed-out execution. The
-timeout does not cancel the gate's own work. Exceeding the deadline fails closed exactly like any
+timeout does not cancel the gate's own work. A policy client that fails with its own plain
+`TimeoutException` is denied the same way as a gate that exceeded the deadline. Exceeding the deadline fails closed exactly like any
 other gate contract violation: `AuthzReasonCodes.INTERNAL_AUTHZ_ERROR`, one emitted
 `AuthorizationDecisionEvent`, no propagation of the stalled future — `decide` returns that deny, and a
 REST or WebSocket handler answers `403`, with no resilience failure text in the response. When

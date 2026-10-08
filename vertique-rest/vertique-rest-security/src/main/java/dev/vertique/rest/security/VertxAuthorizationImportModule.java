@@ -12,6 +12,7 @@ import io.vertx.ext.auth.authorization.AuthorizationProvider;
 import jakarta.inject.Singleton;
 import java.util.Optional;
 import java.util.Set;
+import lombok.extern.slf4j.Slf4j;
 
 /**
  * Opt-in Dagger module that activates the import of Vert.x {@link AuthorizationProvider} grants into
@@ -38,7 +39,7 @@ import java.util.Set;
  * }</pre>
  *
  * <p><strong>Default exclusion.</strong> The importer provided here is always built with the safe
- * safe constructor, so the Vert.x
+ * constructor, so the Vert.x
  * {@value VertxAuthorizationImporter#EXCLUDED_JWT_CLAIMS_PROVIDER_ID} bucket is excluded: its
  * scope→permission projection is lossy, and the JWT principal already reaches
  * {@link dev.vertique.security.authz.AuthorizationClaims} with full kind fidelity (a {@code scope}
@@ -50,6 +51,7 @@ import java.util.Set;
  * @see AuthModule
  * @see IdentityResolutionMiddleware
  */
+@Slf4j
 @Module(includes = ResilienceModule.class)
 public abstract class VertxAuthorizationImportModule {
 
@@ -81,7 +83,11 @@ public abstract class VertxAuthorizationImportModule {
     @Singleton
     static VertxAuthorizationImporter vertxAuthorizationImporter(
             Set<AuthorizationProvider> providers, Optional<AuthorizationImportConfig> config, Resilience resilience) {
-        return new VertxAuthorizationImporter(
-                providers, resilience, config.orElseGet(AuthorizationImportConfig::defaults));
+        AuthorizationImportConfig effective = config.orElseGet(AuthorizationImportConfig::defaults);
+        log.info(
+                "security.authz.importTimeoutMs={} ({})",
+                effective.importTimeoutMs(),
+                config.isPresent() ? "configured" : "default");
+        return new VertxAuthorizationImporter(providers, resilience, effective);
     }
 }

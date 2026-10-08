@@ -458,10 +458,10 @@ public class VertxAuthorizationImportIT {
     }
 
     /**
-     * Builds an {@link AuthorizationProvider} whose resolution always fails.
+     * Builds an {@link AuthorizationProvider} whose resolution never completes.
      *
      * @param id the provider id
-     * @return the failing provider
+     * @return the hung provider
      */
     private static AuthorizationProvider hungProvider(String id) {
         return new AuthorizationProvider() {
@@ -477,6 +477,12 @@ public class VertxAuthorizationImportIT {
         };
     }
 
+    /**
+     * Builds an {@link AuthorizationProvider} whose resolution always fails.
+     *
+     * @param id the provider id
+     * @return the failing provider
+     */
     private static AuthorizationProvider failingProvider(String id) {
         return new AuthorizationProvider() {
             @Override
