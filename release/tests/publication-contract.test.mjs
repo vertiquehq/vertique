@@ -596,6 +596,22 @@ describe('PublicCiContractTest', () => {
   const CI_PATH = path.join(REPO_ROOT, '.github', 'workflows', 'ci.yml');
   const ci = () => readFileSync(CI_PATH, 'utf8');
 
+  it('runsOnPullRequestsAgainstAnyBaseAndGatesCoverageAgainstThePullRequestBase', () => {
+    // A stacked pull request targets the branch below it; a base-branch filter would leave
+    // every layer above the first without a check until it is retargeted.
+    const yaml = ci();
+    const trigger = yaml.match(/^on:\n([\s\S]*?)\n(?=\S)/m);
+    assert.ok(trigger, 'ci.yml must declare an on: block');
+    const pullRequest = trigger[1].match(/^ {2}pull_request:\n((?: {4}.*\n?)*)/m);
+    assert.ok(pullRequest, 'ci.yml must run on pull_request');
+    assert.doesNotMatch(pullRequest[1], /^ {4}branches:/m, 'pull_request must not filter by base branch');
+    assert.match(
+      yaml,
+      /DIFF_COVER_COMPARE_BRANCH: origin\/\$\{\{ github\.base_ref \}\}/,
+      'the diff coverage gate must compare against the pull request base'
+    );
+  });
+
   it('pullRequestBuildHasReadOnlyPermissionsAndNoSecrets', () => {
     const yaml = ci();
 
