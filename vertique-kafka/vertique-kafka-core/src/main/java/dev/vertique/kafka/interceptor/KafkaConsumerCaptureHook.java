@@ -12,9 +12,7 @@ import dev.vertique.core.extension.OrderedExtension;
  * <p>{@link #onTerminalOutcome} is called exactly once per record at the terminal point — after
  * all async work (DLQ publish, seek, interceptor recovery, etc.) has completed — with the final
  * {@link KafkaTerminalOutcome} value. This gives evidence, metrics, and tracing hooks a single,
- * deterministic point at which all pipeline decisions are known.
- *
- * <p>See also {@link #onPreDispatchTerminalOutcome} for records that exit before deserialization.
+ * deterministic point at which all pipeline decisions are known, on every path a record can take.
  *
  * <p><strong>Observer-only contract:</strong> implementations MUST NOT perform any action that
  * affects commit, retry, or delivery behaviour. The hook is called after those decisions have
@@ -28,6 +26,10 @@ import dev.vertique.core.extension.OrderedExtension;
  * ascending {@link #priority()} (lower runs first within a phase), then {@link #orderKey()} as
  * a stable tie-break.
  *
+ * <p>The method is abstract: a hook that still declares one of the pre-0.3.0 callbacks
+ * ({@code onTerminalOutcome(KafkaDispatchContext, KafkaTerminalOutcome)} or
+ * {@code onPreDispatchTerminalOutcome}) no longer compiles, with or without {@code @Override}.
+ *
  * <p>Register implementations via Dagger multibinding ({@code @IntoSet}).
  *
  * @see KafkaTerminalOutcome
@@ -36,42 +38,26 @@ import dev.vertique.core.extension.OrderedExtension;
 public interface KafkaConsumerCaptureHook extends OrderedExtension {
 
     /**
-     * Called once per record at the terminal point of the dispatch pipeline, after all async
-     * operations (DLQ publish, seek, recovery) have settled.
+     * Called once per record at the terminal point of the pipeline, after all async operations (DLQ
+     * publish, seek, recovery) have settled, for every record the consumer received: dispatched,
+     * filtered, unroutable, or failed before dispatch.
+     *
+     * <p>Take the record's coordinates, key, headers and raw bytes from
+     * {@link KafkaConsumerTerminal#identity()}, which the consumer owns and no interceptor can
+     * change. {@link KafkaConsumerTerminal#context()} is the interceptor chain's view of the record
+     * and is {@code null} when the record exited before the chain: a pre-deserialization filter
+     * rejection, a router-kind no-matching-route, or a deserialization failure.
+     *
+     * <p>For a record that exits before the chain, the outcome is {@link KafkaTerminalOutcome#SKIP} for
+     * a filter rejection or a missing route, and whatever {@code KafkaErrorHandler.handleError}
+     * returns for a deserialization failure (typically {@link KafkaTerminalOutcome#DLQ_PUBLISHED},
+     * {@link KafkaTerminalOutcome#RETRY_SCHEDULED}, {@link KafkaTerminalOutcome#DLQ_FAILED}, or
+     * {@link KafkaTerminalOutcome#SKIP}).
      *
      * <p>Exceptions thrown by this callback are caught, logged, and swallowed; they do not affect
      * the enclosing operation.
      *
-     * @param ctx     the dispatch context at the time of the terminal event; the context is
-     *                immutable and reflects the pre-dispatch state (deserialized value, headers,
-     *                topic/partition/offset, retry count)
-     * @param outcome the final disposition of this record
+     * @param terminal the record's identity, interceptor-visible context, and final outcome
      */
-    default void onTerminalOutcome(KafkaDispatchContext<?> ctx, KafkaTerminalOutcome outcome) {}
-
-    /**
-     * Called when a record exits the pipeline at a pre-dispatch point — before deserialization
-     * completes or a route is resolved — so no {@link KafkaDispatchContext} is available.
-     *
-     * <p>Three exit paths reach this method:
-     * <ol>
-     *   <li>Pre-deserialization filter rejection ({@code entry.filter().accept()} returned
-     *       {@code false}) — outcome is always {@link KafkaTerminalOutcome#SKIP}.</li>
-     *   <li>Router-kind no-matching-route — outcome is always {@link KafkaTerminalOutcome#SKIP}.</li>
-     *   <li>Deserialization failure — outcome is whatever {@code KafkaErrorHandler.handleError}
-     *       returns for the exception (typically {@link KafkaTerminalOutcome#DLQ_PUBLISHED},
-     *       {@link KafkaTerminalOutcome#RETRY_SCHEDULED}, {@link KafkaTerminalOutcome#DLQ_FAILED},
-     *       or {@link KafkaTerminalOutcome#SKIP}).</li>
-     * </ol>
-     *
-     * <p>The same observer-only contract applies: implementations MUST NOT affect commit, retry, or
-     * delivery behaviour.
-     *
-     * <p>Exceptions thrown by this callback are caught, logged, and swallowed; they do not affect
-     * the enclosing operation.
-     *
-     * @param disposition the raw record metadata available before deserialization; non-null
-     * @param outcome     the final disposition of this record; non-null
-     */
-    default void onPreDispatchTerminalOutcome(KafkaRawRecordDisposition disposition, KafkaTerminalOutcome outcome) {}
+    void onTerminalOutcome(KafkaConsumerTerminal terminal);
 }

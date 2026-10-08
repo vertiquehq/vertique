@@ -9,12 +9,14 @@ import java.util.Map;
 import java.util.Objects;
 
 /**
- * Immutable value type carrying the raw Kafka record metadata available at pre-dispatch exit
- * points (pre-deser filter, no-route, deserialization failure) — before a
- * {@link KafkaDispatchContext} can be constructed.
+ * Immutable, framework-owned identity of one Kafka consumer record: where it came from, its key,
+ * headers and raw bytes, exactly as the broker delivered them.
  *
- * <p>Passed to {@link KafkaConsumerCaptureHook#onPreDispatchTerminalOutcome} so hooks can observe
- * records that never reach the full dispatch pipeline.
+ * <p>The consumer builds it before any {@link KafkaConsumerInterceptor} runs, so unlike a
+ * {@link KafkaDispatchContext} it cannot be replaced by an interceptor. It reaches
+ * {@link KafkaConsumerCaptureHook} as {@link KafkaConsumerTerminal#identity()} on every path a
+ * record can take, including records that exit before a dispatch context exists (pre-deserialization
+ * filter, no matching route, deserialization failure).
  *
  * @param consumerName the Kafka consumer binding name; non-null
  * @param topic        the source topic; non-null
@@ -38,11 +40,12 @@ public record KafkaRawRecordDisposition(
         long timestamp,
         int retryCount) {
 
-    /** Validates required fields. */
+    /** Validates required fields and copies {@code headers} into an unmodifiable map. */
     public KafkaRawRecordDisposition {
         Objects.requireNonNull(consumerName, "consumerName");
         Objects.requireNonNull(topic, "topic");
         Objects.requireNonNull(headers, "headers");
+        headers = Map.copyOf(headers);
         Objects.requireNonNull(rawEvidence, "rawEvidence");
     }
 }

@@ -13,7 +13,7 @@ import dev.vertique.config.parser.DefaultConfigMapper;
 import dev.vertique.config.parser.DefaultConfigParser;
 import dev.vertique.kafka.config.KafkaConfig;
 import dev.vertique.kafka.interceptor.KafkaConsumerCaptureHook;
-import dev.vertique.kafka.interceptor.KafkaDispatchContext;
+import dev.vertique.kafka.interceptor.KafkaConsumerTerminal;
 import dev.vertique.kafka.interceptor.KafkaTerminalOutcome;
 import dev.vertique.kafka.producer.KafkaProducerFactory;
 import io.vertx.core.Future;
@@ -178,21 +178,12 @@ class KafkaTerminalOutcomeTest {
     class CaptureHookContract {
 
         @Test
-        @DisplayName("default onTerminalOutcome is a no-op — does not throw")
-        void defaultNoOp() {
-            KafkaConsumerCaptureHook hook = new KafkaConsumerCaptureHook() {
-                        // all-defaults
-                    };
-            KafkaDispatchContext<?> ctx =
-                    new KafkaDispatchContext<>("c", "t", 0, 1L, "k", "v", null, Map.of(), 0L, 0, false, Map.of());
-            // must not throw
-            hook.onTerminalOutcome(ctx, KafkaTerminalOutcome.SUCCESS);
-        }
-
-        @Test
         @DisplayName("hook implements OrderedExtension — default phase is APPLICATION")
         void implementsOrderedExtension() {
-            KafkaConsumerCaptureHook hook = new KafkaConsumerCaptureHook() {};
+            KafkaConsumerCaptureHook hook = new KafkaConsumerCaptureHook() {
+                @Override
+                public void onTerminalOutcome(KafkaConsumerTerminal terminal) {}
+            };
             assertEquals(
                     dev.vertique.core.extension.ExtensionPhase.APPLICATION,
                     hook.phase(),

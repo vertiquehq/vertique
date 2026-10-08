@@ -735,23 +735,35 @@ Kafka-native redeliveries, so a retry-topic routing decision in `recoverError` c
 
 ### `KafkaConsumerCaptureHook` (multibinding)
 
-Observer-only boundary hooks, ordered by `OrderedExtension`. They fire **after** the irrevocable
+Observer-only boundary hook, ordered by `OrderedExtension`. It fires **after** the irrevocable
 disposition decision and can never change commit, retry, or delivery; a thrown exception is
 swallowed.
 
 ```java
 public interface KafkaConsumerCaptureHook extends OrderedExtension {
-    default void onTerminalOutcome(KafkaDispatchContext<?> ctx, KafkaTerminalOutcome outcome) {}
-    default void onPreDispatchTerminalOutcome(
-            KafkaRawRecordDisposition disposition, KafkaTerminalOutcome outcome) {}
+    default void onTerminalOutcome(KafkaConsumerTerminal terminal) {}
 }
+
+public record KafkaConsumerTerminal(
+        KafkaRawRecordDisposition identity,
+        @Nullable KafkaDispatchContext<?> context,
+        KafkaTerminalOutcome outcome) {}
 ```
 
-`onTerminalOutcome` fires exactly once per dispatched record, at the terminal point after all async
-work — DLQ publish, seek, recovery. `onPreDispatchTerminalOutcome` covers records that never reach
-dispatch, such as a filtered record, and receives `KafkaRawRecordDisposition` —
-`(consumerName, topic, partition, offset, key, headers, rawEvidence, timestamp, retryCount)` —
-instead of a dispatch context.
+`onTerminalOutcome` fires exactly once per record the consumer received, at the terminal point after
+all async work — DLQ publish, seek, recovery — on every path: dispatched, interceptor-filtered,
+filtered before deserialization, no matching route, or failed before dispatch.
+
+`identity` is a `KafkaRawRecordDisposition` —
+`(consumerName, topic, partition, offset, key, headers, rawEvidence, timestamp, retryCount)`. The
+consumer builds it from the broker's record **before any interceptor runs** and no interceptor can
+replace it, so read a record's coordinates, key, headers and raw bytes from `identity`.
+
+`context` is the `KafkaDispatchContext` as the interceptor chain left it. A `beforeDispatch`
+interceptor may return a different context, so it is the chain's view of the record, not the record's
+identity. It is `null` when the record exited before the chain: a pre-deserialization filter
+rejection, a router-kind no-matching-route, or a deserialization failure. When a `beforeDispatch`
+interceptor fails, `context` is the context the chain was given.
 
 | `KafkaTerminalOutcome` | Meaning |
 |---|---|
@@ -763,9 +775,15 @@ instead of a dispatch context.
 | `DLQ_FAILED` | The DLQ publish failed; the offset was not committed |
 | `ERROR_HANDLER_FAILED` | The error handler's own future failed; the record's disposition is unknown |
 
-`KafkaDispatchContext.rawEvidence()` and `KafkaRawRecordDisposition.rawEvidence()` return a
+`KafkaRawRecordDisposition.rawEvidence()` and `KafkaDispatchContext.rawEvidence()` return a
 `PayloadSource` — a **no-copy** buffered view of the record bytes. A hook must copy before retaining
 it across threads.
+
+> **Breaking change (core 0.3.0).** `onTerminalOutcome(KafkaDispatchContext<?>, KafkaTerminalOutcome)`
+> and `onPreDispatchTerminalOutcome(KafkaRawRecordDisposition, KafkaTerminalOutcome)` are replaced by
+> the single `onTerminalOutcome(KafkaConsumerTerminal)`. A hook that overrode either old form fails to
+> compile. Move to `terminal.identity()` for coordinates, key, headers and raw bytes, and to
+> `terminal.context()` (nullable) only for what the interceptor chain added.
 
 ### `KafkaProducerCaptureHook` (multibinding)
 

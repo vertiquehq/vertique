@@ -4,6 +4,7 @@
 package dev.vertique.kafka;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.anyMap;
@@ -16,6 +17,7 @@ import dev.vertique.core.extension.OrderedExtension;
 import dev.vertique.core.payload.PayloadSources;
 import dev.vertique.kafka.interceptor.KafkaConsumerCaptureHook;
 import dev.vertique.kafka.interceptor.KafkaConsumerInterceptor;
+import dev.vertique.kafka.interceptor.KafkaConsumerTerminal;
 import dev.vertique.kafka.interceptor.KafkaDispatchContext;
 import dev.vertique.kafka.interceptor.KafkaRawRecordDisposition;
 import dev.vertique.kafka.interceptor.KafkaTerminalOutcome;
@@ -54,7 +56,8 @@ import org.mockito.junit.jupiter.MockitoExtension;
  *       side effects (commit / seek / resume) remain unchanged (verified via
  *       {@link KafkaTerminalOutcomeTest.CapturingConsumerControl})</li>
  *   <li>A throwing hook does not propagate the exception to the caller</li>
- *   <li>{@link KafkaConsumerCaptureHook#onPreDispatchTerminalOutcome} is invoked with
+ *   <li>A record that exits before the interceptor chain reaches
+ *       {@link KafkaConsumerCaptureHook#onTerminalOutcome} with no dispatch context and with
  *       {@link dev.vertique.kafka.interceptor.KafkaTerminalOutcome#SKIP} for pre-filter and
  *       no-route exits, and with the outcome from the error handler for deserialization failures</li>
  *   <li>A record filtered by an interceptor's {@code beforeDispatch} (post-deserialization) notifies
@@ -84,7 +87,8 @@ class KafkaConsumerCaptureHookInvocationTest {
      */
     static final class RecordingCaptureHook implements KafkaConsumerCaptureHook {
 
-        record Observed(KafkaDispatchContext<?> ctx, KafkaTerminalOutcome outcome) {}
+        record Observed(
+                KafkaRawRecordDisposition identity, KafkaDispatchContext<?> ctx, KafkaTerminalOutcome outcome) {}
 
         final List<Observed> observations = new CopyOnWriteArrayList<>();
         private final int hookPriority;
@@ -99,24 +103,24 @@ class KafkaConsumerCaptureHookInvocationTest {
         }
 
         @Override
-        public void onTerminalOutcome(KafkaDispatchContext<?> ctx, KafkaTerminalOutcome outcome) {
-            observations.add(new Observed(ctx, outcome));
+        public void onTerminalOutcome(KafkaConsumerTerminal terminal) {
+            observations.add(new Observed(terminal.identity(), terminal.context(), terminal.outcome()));
         }
     }
 
     /**
-     * Capture hook that records all (disposition, outcome) pairs observed via
-     * {@link KafkaConsumerCaptureHook#onPreDispatchTerminalOutcome}.
+     * Capture hook that records the (identity, outcome) pairs it observes, for tests that exercise
+     * records exiting before the interceptor chain.
      */
-    static final class RecordingPreDispatchHook implements KafkaConsumerCaptureHook {
+    static final class RecordingIdentityHook implements KafkaConsumerCaptureHook {
 
-        record PreDispatchObserved(KafkaRawRecordDisposition disposition, KafkaTerminalOutcome outcome) {}
+        record IdentityObserved(KafkaRawRecordDisposition disposition, KafkaTerminalOutcome outcome) {}
 
-        final List<PreDispatchObserved> observations = new CopyOnWriteArrayList<>();
+        final List<IdentityObserved> observations = new CopyOnWriteArrayList<>();
 
         @Override
-        public void onPreDispatchTerminalOutcome(KafkaRawRecordDisposition disposition, KafkaTerminalOutcome outcome) {
-            observations.add(new PreDispatchObserved(disposition, outcome));
+        public void onTerminalOutcome(KafkaConsumerTerminal terminal) {
+            observations.add(new IdentityObserved(terminal.identity(), terminal.outcome()));
         }
     }
 
@@ -126,8 +130,8 @@ class KafkaConsumerCaptureHookInvocationTest {
         final List<KafkaTerminalOutcome> seen = new CopyOnWriteArrayList<>();
 
         @Override
-        public void onTerminalOutcome(KafkaDispatchContext<?> ctx, KafkaTerminalOutcome outcome) {
-            seen.add(outcome);
+        public void onTerminalOutcome(KafkaConsumerTerminal terminal) {
+            seen.add(terminal.outcome());
             throw new RuntimeException("hook exploded");
         }
     }
@@ -188,7 +192,8 @@ class KafkaConsumerCaptureHookInvocationTest {
             List<KafkaConsumerCaptureHook> sortedHooks, KafkaDispatchContext<?> ctx, KafkaTerminalOutcome outcome) {
         for (KafkaConsumerCaptureHook hook : sortedHooks) {
             try {
-                hook.onTerminalOutcome(ctx, outcome);
+                hook.onTerminalOutcome(new KafkaConsumerTerminal(
+                        rawDisposition(ctx.consumerName(), ctx.topic(), ctx.partition(), ctx.offset()), ctx, outcome));
             } catch (Exception ex) {
                 // intentionally swallowed — hooks must not break dispatch
             }
@@ -196,17 +201,17 @@ class KafkaConsumerCaptureHookInvocationTest {
     }
 
     /**
-     * Invokes {@link KafkaConsumerCaptureHook#onPreDispatchTerminalOutcome} on each hook in order,
-     * swallowing exceptions. Mirrors the pre-dispatch notification pattern in
-     * {@link KafkaConsumerVerticle}.
+     * Invokes {@link KafkaConsumerCaptureHook#onTerminalOutcome} on each hook in order with no
+     * dispatch context, swallowing exceptions. Mirrors the notification for a record that exits before
+     * the interceptor chain in {@link KafkaConsumerVerticle}.
      */
-    static void invokePreDispatchHooks(
+    static void invokeHooksWithoutContext(
             List<KafkaConsumerCaptureHook> sortedHooks,
             KafkaRawRecordDisposition disposition,
             KafkaTerminalOutcome outcome) {
         for (KafkaConsumerCaptureHook hook : sortedHooks) {
             try {
-                hook.onPreDispatchTerminalOutcome(disposition, outcome);
+                hook.onTerminalOutcome(new KafkaConsumerTerminal(disposition, null, outcome));
             } catch (Exception ex) {
                 // intentionally swallowed — hooks must not break dispatch
             }
@@ -226,18 +231,12 @@ class KafkaConsumerCaptureHookInvocationTest {
     class HookContract {
 
         @Test
-        @DisplayName("default onTerminalOutcome is a no-op — does not throw")
-        void defaultNoOp() {
-            KafkaConsumerCaptureHook hook = new KafkaConsumerCaptureHook() {};
-            KafkaDispatchContext<?> ctx =
-                    new KafkaDispatchContext<>("c", "t", 0, 1L, "k", "v", null, Map.of(), 0L, 0, false, Map.of());
-            hook.onTerminalOutcome(ctx, KafkaTerminalOutcome.SUCCESS);
-        }
-
-        @Test
         @DisplayName("implements OrderedExtension — default phase is APPLICATION")
         void implementsOrderedExtension() {
-            KafkaConsumerCaptureHook hook = new KafkaConsumerCaptureHook() {};
+            KafkaConsumerCaptureHook hook = new KafkaConsumerCaptureHook() {
+                @Override
+                public void onTerminalOutcome(KafkaConsumerTerminal terminal) {}
+            };
             assertEquals(ExtensionPhase.APPLICATION, hook.phase());
         }
 
@@ -259,6 +258,9 @@ class KafkaConsumerCaptureHookInvocationTest {
         void systemFirstPhaseBeforeApplication() {
             KafkaConsumerCaptureHook sysFirst = new KafkaConsumerCaptureHook() {
                 @Override
+                public void onTerminalOutcome(KafkaConsumerTerminal terminal) {}
+
+                @Override
                 public ExtensionPhase phase() {
                     return ExtensionPhase.SYSTEM_FIRST;
                 }
@@ -269,6 +271,9 @@ class KafkaConsumerCaptureHookInvocationTest {
                 }
             };
             KafkaConsumerCaptureHook app = new KafkaConsumerCaptureHook() {
+                @Override
+                public void onTerminalOutcome(KafkaConsumerTerminal terminal) {}
+
                 @Override
                 public int priority() {
                     return Integer.MIN_VALUE;
@@ -414,11 +419,11 @@ class KafkaConsumerCaptureHookInvocationTest {
         @Test
         @DisplayName("pre-filter skip invokes hook with SKIP outcome")
         void preFilterSkip_invokesHookWithSkip() {
-            RecordingPreDispatchHook hook = new RecordingPreDispatchHook();
+            RecordingIdentityHook hook = new RecordingIdentityHook();
             KafkaRawRecordDisposition disposition = rawDisposition("consumer1", "topic.src", 0, 5L);
 
-            // The pre-filter exit path calls notifyPreDispatchTerminalOutcome(disposition, SKIP)
-            invokePreDispatchHooks(List.of(hook), disposition, KafkaTerminalOutcome.SKIP);
+            // The pre-filter exit path calls notifyTerminalOutcome(identity, null, SKIP)
+            invokeHooksWithoutContext(List.of(hook), disposition, KafkaTerminalOutcome.SKIP);
 
             assertEquals(1, hook.observations.size(), "hook must be invoked once");
             assertEquals(KafkaTerminalOutcome.SKIP, hook.observations.get(0).outcome());
@@ -430,11 +435,11 @@ class KafkaConsumerCaptureHookInvocationTest {
         @Test
         @DisplayName("no-route (ROUTER kind) invokes hook with SKIP outcome")
         void noRoute_invokesHookWithSkip() {
-            RecordingPreDispatchHook hook = new RecordingPreDispatchHook();
+            RecordingIdentityHook hook = new RecordingIdentityHook();
             KafkaRawRecordDisposition disposition = rawDisposition("router-consumer", "events.in", 2, 99L);
 
-            // The no-route exit path also calls notifyPreDispatchTerminalOutcome(disposition, SKIP)
-            invokePreDispatchHooks(List.of(hook), disposition, KafkaTerminalOutcome.SKIP);
+            // The no-route exit path also calls notifyTerminalOutcome(identity, null, SKIP)
+            invokeHooksWithoutContext(List.of(hook), disposition, KafkaTerminalOutcome.SKIP);
 
             assertEquals(1, hook.observations.size(), "hook must be invoked once");
             assertEquals(KafkaTerminalOutcome.SKIP, hook.observations.get(0).outcome());
@@ -446,7 +451,7 @@ class KafkaConsumerCaptureHookInvocationTest {
         @Test
         @DisplayName("deserialization failure invokes hook with outcome from handleError")
         void deserFailure_invokesHookWithOutcomeFromErrorHandler(VertxTestContext ctx) {
-            RecordingPreDispatchHook hook = new RecordingPreDispatchHook();
+            RecordingIdentityHook hook = new RecordingIdentityHook();
             ConsumerEntry entry = entryFor(ErrorStrategy.SKIP, null);
             KafkaProducerFactory factory = mock(KafkaProducerFactory.class);
             KafkaErrorHandler handler = new KafkaErrorHandler(entry, factory);
@@ -458,11 +463,11 @@ class KafkaConsumerCaptureHookInvocationTest {
             RuntimeException deserException = new RuntimeException("deser-failure");
 
             // Mirrors the deser-failure exit path: handleError returns the outcome Future,
-            // then notifyPreDispatchTerminalOutcome is called on success.
+            // then notifyTerminalOutcome is called on success.
             handler.handleError(rec, new byte[0], Map.of(), deserException, control)
                     .onComplete(ctx.succeeding(outcome -> {
                         ctx.verify(() -> {
-                            invokePreDispatchHooks(List.of(hook), disposition, outcome);
+                            invokeHooksWithoutContext(List.of(hook), disposition, outcome);
                             assertEquals(1, hook.observations.size(), "hook must be invoked once");
                             assertEquals(
                                     KafkaTerminalOutcome.SKIP,
@@ -474,22 +479,12 @@ class KafkaConsumerCaptureHookInvocationTest {
         }
 
         @Test
-        @DisplayName("default onPreDispatchTerminalOutcome is a no-op — does not throw")
-        void defaultNoOp() {
-            KafkaConsumerCaptureHook hook = new KafkaConsumerCaptureHook() {};
-            KafkaRawRecordDisposition disposition = rawDisposition("c", "t", 0, 0L);
-            // must not throw
-            hook.onPreDispatchTerminalOutcome(disposition, KafkaTerminalOutcome.SKIP);
-        }
-
-        @Test
-        @DisplayName("a throwing hook does not block subsequent hooks in onPreDispatchTerminalOutcome")
+        @DisplayName("a throwing hook does not block subsequent hooks for a record without a dispatch context")
         void throwingPreDispatchHookDoesNotBlockOtherHooks() {
-            RecordingPreDispatchHook recordingHook = new RecordingPreDispatchHook();
+            RecordingIdentityHook recordingHook = new RecordingIdentityHook();
             KafkaConsumerCaptureHook throwingHook = new KafkaConsumerCaptureHook() {
                 @Override
-                public void onPreDispatchTerminalOutcome(
-                        KafkaRawRecordDisposition disposition, KafkaTerminalOutcome outcome) {
+                public void onTerminalOutcome(KafkaConsumerTerminal terminal) {
                     throw new RuntimeException("pre-dispatch hook exploded");
                 }
             };
@@ -497,7 +492,7 @@ class KafkaConsumerCaptureHookInvocationTest {
             KafkaRawRecordDisposition disposition = rawDisposition("c", "t", 0, 0L);
 
             List<KafkaConsumerCaptureHook> hooks = List.of(throwingHook, recordingHook);
-            invokePreDispatchHooks(hooks, disposition, KafkaTerminalOutcome.SKIP);
+            invokeHooksWithoutContext(hooks, disposition, KafkaTerminalOutcome.SKIP);
 
             assertEquals(1, recordingHook.observations.size(), "recording hook must still run after throwing hook");
             assertEquals(
@@ -649,6 +644,190 @@ class KafkaConsumerCaptureHookInvocationTest {
         }
 
         @Test
+        @DisplayName("an interceptor that replaces the dispatch context cannot change the identity hooks receive")
+        void interceptorReplacedContextDoesNotChangeHookIdentity(Vertx vertx) throws ReflectiveOperationException {
+            RecordingCaptureHook hook = new RecordingCaptureHook(0);
+            ConsumerEntry entry = entryFor(ErrorStrategy.SKIP, null);
+
+            // A hostile (or merely buggy) interceptor hands back a wholesale-replaced context: different
+            // consumer, topic, partition, offset, key, raw bytes, headers and retry count.
+            KafkaDispatchContext<Object> forged = new KafkaDispatchContext<>(
+                    "forged-consumer",
+                    "forged.topic",
+                    9,
+                    999L,
+                    "forged-key",
+                    null,
+                    PayloadSources.buffered("forged".getBytes(java.nio.charset.StandardCharsets.UTF_8), null),
+                    Map.of("forged", "1"),
+                    0L,
+                    5,
+                    true,
+                    Map.of());
+            KafkaConsumerInterceptor replacingInterceptor = new KafkaConsumerInterceptor() {
+                @Override
+                public Future<KafkaDispatchContext<?>> beforeDispatch(KafkaDispatchContext<?> ctx) {
+                    return Future.succeededFuture(forged);
+                }
+            };
+
+            KafkaProducerFactory producerFactory = mock(KafkaProducerFactory.class);
+            ServiceRequestSender requestSender = mock(ServiceRequestSender.class);
+            KafkaConsumerVerticle verticle = new KafkaConsumerVerticle(
+                    entry,
+                    List.of(replacingInterceptor),
+                    Set.of(hook),
+                    producerFactory,
+                    requestSender,
+                    KafkaTestSupport.noOpTargetResolver(),
+                    KafkaTestSupport.eventBusClient(vertx),
+                    KafkaTestSupport.noOpInboundExecutionContextScope(),
+                    KafkaTestSupport.noOpEnvelopeBuilder(),
+                    KafkaTestSupport.jsonSerdeRegistry());
+
+            @SuppressWarnings("unchecked")
+            KafkaConsumer<String, byte[]> mockConsumer = mock(KafkaConsumer.class);
+            when(mockConsumer.commit(anyMap())).thenReturn(Future.succeededFuture(Map.of()));
+            setField(verticle, "consumer", mockConsumer);
+            setField(verticle, "errorHandler", new KafkaErrorHandler(entry, producerFactory));
+            setField(
+                    verticle,
+                    "dispatcher",
+                    new KafkaRecordDispatcher(
+                            entry,
+                            Map.of(),
+                            KafkaTestSupport.jsonSerdeRegistry(),
+                            requestSender,
+                            KafkaTestSupport.noOpTargetResolver(),
+                            KafkaTestSupport.eventBusClient(vertx),
+                            KafkaTestSupport.noOpInboundExecutionContextScope(),
+                            KafkaTestSupport.noOpEnvelopeBuilder()));
+            setField(
+                    verticle,
+                    "interceptorChain",
+                    new KafkaConsumerInterceptorChain(entry.name(), List.of(replacingInterceptor)));
+
+            KafkaConsumerRecord<String, byte[]> record = fakeRecord();
+            when(record.offset()).thenReturn(42L);
+            when(record.value()).thenReturn(null); // tombstone value — bypasses the (unset) deserializer
+            when(record.key()).thenReturn("real-key");
+            when(record.headers()).thenReturn(null);
+
+            invokeProcessRecord(verticle, record);
+
+            assertEquals(1, hook.observations.size(), "hook must be notified exactly once");
+            RecordingCaptureHook.Observed observed = hook.observations.get(0);
+            KafkaRawRecordDisposition identity = observed.identity();
+            assertEquals(entry.name(), identity.consumerName(), "identity must name the real consumer");
+            assertEquals("t", identity.topic(), "identity must carry the record's real topic");
+            assertEquals(0, identity.partition(), "identity must carry the record's real partition");
+            assertEquals(42L, identity.offset(), "identity must carry the record's real offset");
+            assertEquals("real-key", identity.key(), "identity must carry the record's real key");
+            assertEquals(Map.of(), identity.headers(), "identity must carry the record's real headers");
+            assertEquals(0, identity.retryCount(), "identity must carry the record's real retry count");
+            assertNotSame(
+                    forged.rawEvidence(), identity.rawEvidence(), "identity must not carry the interceptor's bytes");
+            assertSame(forged, observed.ctx(), "the context stays the chain's own view, forged values included");
+        }
+
+        @Test
+        @DisplayName("a replaced context cannot change the identity of a record whose dispatch then fails")
+        void interceptorReplacedContextDoesNotChangeIdentityOnDispatchFailure(Vertx vertx)
+                throws ReflectiveOperationException {
+            RecordingCaptureHook hook = new RecordingCaptureHook(0);
+            ConsumerEntry bindingEntry = entryFor(ErrorStrategy.SKIP, null);
+            // HANDLER kind with no handler configured: dispatchToHandler() fails naturally, so the record
+            // reaches the error handler after the interceptor chain handed back a replaced context.
+            ConsumerEntry entry = new ConsumerEntry(
+                    bindingEntry.name(),
+                    bindingEntry.config(),
+                    ConsumerEntry.Kind.HANDLER,
+                    Object.class,
+                    null,
+                    null,
+                    false,
+                    List.of(),
+                    null,
+                    null,
+                    false,
+                    null,
+                    bindingEntry.valueFormat());
+
+            KafkaDispatchContext<Object> forged = new KafkaDispatchContext<>(
+                    "forged-consumer",
+                    "forged.topic",
+                    9,
+                    999L,
+                    "forged-key",
+                    null,
+                    PayloadSources.buffered("forged".getBytes(java.nio.charset.StandardCharsets.UTF_8), null),
+                    Map.of("forged", "1"),
+                    0L,
+                    5,
+                    false,
+                    Map.of());
+            KafkaConsumerInterceptor replacingInterceptor = new KafkaConsumerInterceptor() {
+                @Override
+                public Future<KafkaDispatchContext<?>> beforeDispatch(KafkaDispatchContext<?> ctx) {
+                    return Future.succeededFuture(forged);
+                }
+            };
+
+            KafkaProducerFactory producerFactory = mock(KafkaProducerFactory.class);
+            ServiceRequestSender requestSender = mock(ServiceRequestSender.class);
+            KafkaConsumerVerticle verticle = new KafkaConsumerVerticle(
+                    entry,
+                    List.of(replacingInterceptor),
+                    Set.of(hook),
+                    producerFactory,
+                    requestSender,
+                    KafkaTestSupport.noOpTargetResolver(),
+                    KafkaTestSupport.eventBusClient(vertx),
+                    KafkaTestSupport.noOpInboundExecutionContextScope(),
+                    KafkaTestSupport.noOpEnvelopeBuilder(),
+                    KafkaTestSupport.jsonSerdeRegistry());
+
+            @SuppressWarnings("unchecked")
+            KafkaConsumer<String, byte[]> mockConsumer = mock(KafkaConsumer.class);
+            when(mockConsumer.commit(anyMap())).thenReturn(Future.succeededFuture(Map.of()));
+            setField(verticle, "consumer", mockConsumer);
+            setField(verticle, "errorHandler", new KafkaErrorHandler(entry, producerFactory));
+            setField(
+                    verticle,
+                    "dispatcher",
+                    new KafkaRecordDispatcher(
+                            entry,
+                            Map.of(),
+                            KafkaTestSupport.jsonSerdeRegistry(),
+                            requestSender,
+                            KafkaTestSupport.noOpTargetResolver(),
+                            KafkaTestSupport.eventBusClient(vertx),
+                            KafkaTestSupport.noOpInboundExecutionContextScope(),
+                            KafkaTestSupport.noOpEnvelopeBuilder()));
+            setField(
+                    verticle,
+                    "interceptorChain",
+                    new KafkaConsumerInterceptorChain(entry.name(), List.of(replacingInterceptor)));
+
+            KafkaConsumerRecord<String, byte[]> record = fakeRecord();
+            when(record.offset()).thenReturn(42L);
+            when(record.value()).thenReturn(null);
+            when(record.key()).thenReturn("real-key");
+            when(record.headers()).thenReturn(null);
+
+            invokeProcessRecord(verticle, record);
+
+            assertEquals(1, hook.observations.size(), "hook must be notified exactly once");
+            RecordingCaptureHook.Observed observed = hook.observations.get(0);
+            assertEquals(KafkaTerminalOutcome.SKIP, observed.outcome(), "the failed dispatch is skipped");
+            assertSame(forged, observed.ctx(), "this path must really have run the replacing interceptor");
+            assertEquals(entry.name(), observed.identity().consumerName());
+            assertEquals("t", observed.identity().topic());
+            assertEquals(42L, observed.identity().offset());
+            assertEquals("real-key", observed.identity().key());
+        }
+
+        @Test
         @DisplayName("before-interceptor failure notifies hooks with the error handler's outcome exactly once")
         void beforeInterceptorFailureNotifiesHooksWithErrorHandlerOutcome(Vertx vertx)
                 throws ReflectiveOperationException {
@@ -724,7 +903,7 @@ class KafkaConsumerCaptureHookInvocationTest {
         @DisplayName(
                 "error-handler failure on the pre-dispatch (deserialization) exit notifies ERROR_HANDLER_FAILED exactly once")
         void errorHandlerFailurePreDispatchNotifiesErrorHandlerFailed(Vertx vertx) throws ReflectiveOperationException {
-            RecordingPreDispatchHook hook = new RecordingPreDispatchHook();
+            RecordingIdentityHook hook = new RecordingIdentityHook();
             // BINDING kind with no deserializer configured: a non-tombstone value forces
             // deserializeRecord() to throw DeserializationException, exercising the pre-dispatch
             // (deserialization-failure) exit rather than the outer processRecord() catch.
@@ -883,8 +1062,8 @@ class KafkaConsumerCaptureHookInvocationTest {
             // Sort: throwingHook is anonymous (priority=0 by default), recordingHook has priority=1
             KafkaConsumerCaptureHook first = new KafkaConsumerCaptureHook() {
                 @Override
-                public void onTerminalOutcome(KafkaDispatchContext<?> cx, KafkaTerminalOutcome outcome) {
-                    throwingHook.onTerminalOutcome(cx, outcome);
+                public void onTerminalOutcome(KafkaConsumerTerminal terminal) {
+                    throwingHook.onTerminalOutcome(terminal);
                 }
             };
 
