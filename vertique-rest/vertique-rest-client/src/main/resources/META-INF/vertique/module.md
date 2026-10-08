@@ -132,7 +132,7 @@ Type-level annotation marking an interface as a declarative REST client.
 
 | Attribute | Default | Description |
 |-----------|---------|-------------|
-| `name` | `""` | Logical name for config lookup and circuit-breaker naming; falls back to the interface simple name when blank |
+| `name` | `""` | Logical name for config lookup and circuit-breaker naming; falls back to the interface simple name when blank; two different interfaces that resolve to one name are refused when the second is built unless both wrote it explicitly (see [client naming](#configuration)) |
 | `value` | `""` | Default base URL (e.g. `http://host:8080`); overridden by `builder.baseUrl(...)` and by external config |
 
 ### `RestClientBuilder`
@@ -786,6 +786,17 @@ and is never treated as a client name.
 The client name comes from `@RestClient#name()`, or the interface simple name when that is blank. All
 fields are optional; an absent field falls through to the builder or annotation value.
 
+The name is the only key into this section, so a name nobody chose must identify one interface. A factory
+records the first interface to claim each resolved name, and building a *different* interface that
+resolves to a claimed name fails with `RestClientConfigurationException` naming both interfaces whenever
+at least one of the two took the name from its *simple class name* — otherwise the second client would
+silently take the first one's overrides. That covers two interfaces with the same simple name, and an
+explicit `@RestClient(name = "Orders")` that happens to equal another interface's simple name `Orders`.
+The failure surfaces when the second interface is built, which for Dagger singletons is its first
+injection. Several interfaces that *all* write the same explicit name chose to share it and are accepted.
+Building the same interface again is fine; a build that fails after claiming still holds the name. A
+standalone `new RestClientBuilder(vertx)` has no factory and is not checked across builds.
+
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `restClient.{name}.baseUrl` | String | `@RestClient` value | Base URL override |
@@ -998,7 +1009,7 @@ client.getProduct("123")
 | Failure | Cause |
 |---|---|
 | `IllegalArgumentException` | not an interface; a method that does not return `Future<T>`; no base URL resolvable; any `@Url` placement rule violated |
-| `RestClientConfigurationException` | a parameter type with no resolvable converter; a JSON profile other than the reserved `system`, `vertique`, or `vertique-strict` selected on a standalone builder with no registry; a method-level `@JsonProfile` on a `@RestClient` interface; a `retry.backoffStrategy` FQCN that cannot be loaded or instantiated; a raw Vert.x duration key in the `webClient` bag |
+| `RestClientConfigurationException` | a parameter type with no resolvable converter; a JSON profile other than the reserved `system`, `vertique`, or `vertique-strict` selected on a standalone builder with no registry; a method-level `@JsonProfile` on a `@RestClient` interface; a `retry.backoffStrategy` FQCN that cannot be loaded or instantiated; a raw Vert.x duration key in the `webClient` bag; a second interface whose client name another interface on the same factory already holds, when at least one of them derived it from its simple class name |
 | `JsonProfileConfigurationException` | the selected profile id is unknown to the registry |
 | `ConfigurationException` | a blank `restClient.{name}` key, or `readTimeoutMs <= 0` |
 
