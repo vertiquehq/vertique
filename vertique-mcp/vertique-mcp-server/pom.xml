@@ -18,6 +18,8 @@ SPDX-License-Identifier: EUPL-1.2
     <dependencies>
         <dependency><groupId>${project.groupId}</groupId><artifactId>vertique-mcp-core</artifactId><version>${project.version}</version></dependency>
         <dependency><groupId>${project.groupId}</groupId><artifactId>vertique-core</artifactId></dependency>
+        <dependency><groupId>${project.groupId}</groupId><artifactId>vertique-rate-limit-core</artifactId></dependency>
+        <dependency><groupId>${project.groupId}</groupId><artifactId>vertique-resilience</artifactId></dependency>
         <!-- T014: mandatory InputObjectProcessor composition binding (contract §4.7). -->
         <dependency><groupId>${project.groupId}</groupId><artifactId>vertique-input-processing</artifactId></dependency>
         <dependency><groupId>${project.groupId}</groupId><artifactId>vertique-json</artifactId></dependency>

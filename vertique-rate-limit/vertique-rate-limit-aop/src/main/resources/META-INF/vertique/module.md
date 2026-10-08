@@ -44,9 +44,13 @@ never a template or format string — following the shared
 selector-path grammar documented in the `Selector-path grammar` section of the
 `dev.vertique:vertique-aop` module reference.
 `subject` (default `EFFECTIVE_PRINCIPAL`) and `anonymous` (default
-`SHARED_BUCKET`) control identity-scoped keying (see `vertique-rate-limit-core`'s
-`RateLimitSubjectResolver`/`RateLimitAdapterSupport`); `cost` (default `1`) is the
-per-invocation cost. An application that uses any `subject()` other than `NONE`
+`SHARED_BUCKET`) control identity- or origin-scoped keying (see
+`vertique-rate-limit-core`'s `RateLimitSubjectResolver`/`RateLimitAdapterSupport`);
+the origin-aware values are `IP`, `ACTOR_OR_IP`, and `CLIENT_OR_IP`. They use the
+trusted `RequestOrigin.clientIp()` captured in the security context and fail closed
+when it is absent. `CLIENT_OR_IP` falls back to that IP only when an authenticated
+identity has no client facet; strict `CLIENT` remains fail-closed. `cost` (default
+`1`) is the per-invocation cost. An application that uses any `subject()` other than `NONE`
 must co-install the existing `AuthModule`/`SecurityModule` (or `JwtAuthModule`) so a
 typed, possibly anonymous, `SecurityContext` exists before the aspect runs —
 otherwise every caller resolves as anonymous.

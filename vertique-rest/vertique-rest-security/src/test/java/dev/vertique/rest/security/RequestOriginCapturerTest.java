@@ -800,4 +800,54 @@ class RequestOriginCapturerTest {
             assertEquals("api.example.com", origin.host());
         }
     }
+
+    @Nested
+    @DisplayName("Unresolvable origin")
+    class UnresolvableOrigin {
+
+        @Test
+        @DisplayName("a missing peer address yields unknown addresses and never throws")
+        void shouldReportUnknownAddressesWhenThePeerAddressIsMissing() {
+            HttpServerRequest request = stubRequest("203.0.113.9", 4433, "https", "api.example.com");
+            when(request.remoteAddress()).thenReturn(null);
+
+            RequestOrigin origin = defaultCapturer().capture(request);
+
+            assertEquals(RequestOrigin.UNKNOWN, origin.remoteIp());
+            assertEquals(RequestOrigin.UNKNOWN, origin.clientIp());
+            assertEquals(0, origin.remotePort());
+            assertFalse(origin.clientIpKnown());
+            assertEquals("api.example.com", origin.host(), "resolvable parts are kept");
+        }
+
+        @Test
+        @DisplayName("an unresolved peer is never trusted, so forwarded headers cannot name the client")
+        void shouldNotTrustForwardedHeadersFromAnUnresolvedPeer() {
+            HttpServerRequest request = stubRequest("203.0.113.9", 4433, "https", "api.example.com");
+            when(request.remoteAddress()).thenReturn(null);
+            when(request.getHeader("X-Forwarded-For")).thenReturn("198.51.100.7");
+
+            RequestOrigin origin = capturerWithTrustedProxies("0.0.0.0/0").capture(request);
+
+            assertEquals(RequestOrigin.UNKNOWN, origin.clientIp());
+        }
+
+        @Test
+        @DisplayName("an out-of-range port is reported as zero")
+        void shouldReportPortZeroWhenThePortIsOutOfRange() {
+            RequestOrigin origin = defaultCapturer().capture(stubRequest("203.0.113.9", -1, "https", "h.example"));
+
+            assertEquals(0, origin.remotePort());
+            assertEquals("203.0.113.9", origin.remoteIp());
+        }
+
+        @Test
+        @DisplayName("a failure inside the capture yields the unknown origin instead of throwing")
+        void shouldReturnTheUnknownOriginWhenTheCaptureFails() {
+            HttpServerRequest request = stubRequest("203.0.113.9", 4433, "https", "api.example.com");
+            when(request.connection()).thenThrow(new IllegalStateException("connection closed"));
+
+            assertEquals(RequestOrigin.unknown(), defaultCapturer().capture(request));
+        }
+    }
 }

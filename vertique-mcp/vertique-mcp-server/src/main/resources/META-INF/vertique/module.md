@@ -4,7 +4,8 @@
 > **Package:** `dev.vertique.mcp.server`
 > **Artifact:** `vertique-mcp-server`
 > **Depends on:** `vertique-mcp-core`, `vertique-core`, `vertique-input-processing`, `vertique-json`,
-> `vertique-json-schema`, `vertique-rest-core`, `vertique-rest-security`
+> `vertique-json-schema`, `vertique-rate-limit-core`, `vertique-resilience`, `vertique-rest-core`,
+> `vertique-rest-security`
 
 `vertique-mcp-server` composes the optional HTTP Model Context Protocol server. Include
 `McpServerModule` explicitly in the application's Dagger component and supply an immutable
@@ -65,6 +66,22 @@ Jackson using the field names exactly as declared: `mcp.outputMaxBytes`, `mcp.in
 `mcp.jsonProfile`, not dotted nested objects. There is no nested `tools`, `output`, or `json` object.
 Ordinary unknown keys remain deliberately forward-compatible and are silently ignored, so use the
 declared field names rather than dotted prose spellings.
+
+### MCP tool rate-limit admission
+
+MCP can bind generated tools to the shared rate-limit engine with `mcp.rateLimit`. Its complete
+configuration surface is `mcp.rateLimit.defaultPolicy` (absent by default),
+`mcp.rateLimit.subject` (defaults to `EFFECTIVE_PRINCIPAL`),
+`mcp.rateLimit.anonymous` (defaults to `SHARED_BUCKET`), and the per-generated-tool entries
+`mcp.rateLimit.tools.<tool>.policy`, `.subject`, `.anonymous`, and `.cost` (defaults to `1`). A
+per-tool `subject` or `anonymous` inherits the corresponding parent value when omitted.
+
+Policy selection uses the generated MCP tool name, never a Java method name or `@RateLimited`
+annotation: `tools.<tool>.policy` wins, then `defaultPolicy`, then no admission. In a flat-key
+source, bracket-quote a dotted generated tool name so it remains one key, for example
+`mcp.rateLimit.tools.[weather.current].policy=mcp-weather`. JSON configuration already represents that dotted name as one object key, for example `"weather.current": { "policy": "mcp-weather" }`.
+
+Ordinary unknown properties under `mcp.rateLimit` are ignored; numeric limits, windows, backend selection, and policy capacities remain shared `rateLimit.*` configuration. Reference the shared policy by name from `mcp.rateLimit` rather than duplicating its settings.
 
 **`mcp.bodyTracePolicy` governs body-borne trace-reference extraction.** Enum
 `McpBodyTracePolicy`, `IGNORE` (`@Builder.Default`) or `LINK` — mirroring Vert.x's own `TracingPolicy`
@@ -1189,6 +1206,196 @@ behaves exactly as before.
 Only direct, runtime-retained requirements count. A requirement reached through a composed or
 non-runtime security annotation is unsupported and is never enforced as a requirement.
 
+## Rate-limit admission, origin, and resilience
+
+This section describes the final cross-cutting behavior of the MCP server. The
+configuration baseline above is the source for the record shape; this section
+documents how the configured admission stage, trusted origin, and opt-in AOP
+resilience interact at runtime.
+
+### Rate-limit configuration and precedence
+
+MCP uses the shared `vertique-rate-limit-core` engine. It does not define quota
+math, windows, backend selection, capacity, or a second policy registry. The
+available keys are:
+
+| Key | Default or requirement | Meaning |
+| --- | --- | --- |
+| `mcp.rateLimit.defaultPolicy` | absent | Names the default shared policy; absent means no default admission. |
+| `mcp.rateLimit.subject` | `EFFECTIVE_PRINCIPAL` | Selects the shared subject mode, including `IP`, `ACTOR_OR_IP`, and `CLIENT_OR_IP`. |
+| `mcp.rateLimit.anonymous` | `SHARED_BUCKET` | Selects `SHARED_BUCKET` or `BYPASS` for an unauthenticated caller. |
+| `mcp.rateLimit.tools.<tool>.policy` | required in an entry | Names a policy for the generated MCP tool name. |
+| `mcp.rateLimit.tools.<tool>.subject` | inherits the parent | Overrides the parent subject for one generated tool. |
+| `mcp.rateLimit.tools.<tool>.anonymous` | inherits the parent | Overrides the parent anonymous policy for one generated tool. |
+| `mcp.rateLimit.tools.<tool>.cost` | `1`, must be at least `1` | The shared-engine acquisition cost. |
+
+The precedence chain is **tools → default → none**: a matching
+`tools.<tool>.policy` wins, then `defaultPolicy`, and otherwise no MCP admission
+occurs. The tool key is the generated MCP tool name, never the Java method name.
+In a flat-key source, bracket-quote a dotted generated name so its dots remain
+part of the key:
+
+```properties
+mcp.rateLimit.tools.[weather.current].policy=mcp-weather
+```
+
+In JSON, the dotted name remains an ordinary object key:
+
+```json
+{"mcp":{"rateLimit":{"tools":{"weather.current":{"policy":"mcp-weather"}}}}}
+```
+
+Unknown properties under `mcp.rateLimit.*` are ignored, not rejected, because
+the injected `ConfigParser` is lenient. Put policy capacity, refill, failure
+mode, and backend settings under the shared `rateLimit.*` configuration; do not
+duplicate them under `mcp.rateLimit.*`.
+
+The admission plan is built and validated during Dagger composition, before the
+MCP route mounts. These four conditions fail composition with a named
+`ConfigurationException`:
+
+| Condition | Result |
+| --- | --- |
+| A configured tool entry names a tool absent from the generated registry | Configuration failure naming `mcp.rateLimit.tools[<tool>]`. |
+| A referenced default or tool policy cannot be resolved by the shared adapter | Configuration failure naming the referenced policy. |
+| A policy is referenced while `RateLimitCoreModule`/`RateLimiters` is absent | Configuration failure naming `mcp.rateLimit` and the required core module. |
+| An effective tool cost exceeds the resolved policy handle's capacity | Configuration failure naming the tool cost, policy, configured cost, and capacity. |
+
+An enabled/disabled shared engine or policy is not a composition failure; it
+produces the runtime `DISABLED` outcome. The runtime outcome mapping is:
+
+| `RateLimitOutcome` or condition | HTTP result | JSON-RPC | MCP terminal result |
+| --- | --- | --- | --- |
+| `PERMITTED` | continue to the handler | — | request proceeds |
+| `QUOTA_EXCEEDED` | `429`, `Retry-After` when supplied, `Cache-Control: no-store` | `-32022` | `REJECTED` / `RATE_LIMIT` |
+| `DISABLED` | continue to the handler | — | request proceeds |
+| `BACKEND_FAILURE_OPEN` | continue to the handler | — | request proceeds |
+| `BACKEND_FAILURE_CLOSED` | `503`, `Cache-Control: no-store` | `-32022` | `REJECTED` / `RATE_LIMIT` |
+| synchronous key-derivation throw, failed acquire future, or null decision | `503`, `Cache-Control: no-store` | `-32022` | `FAILED` / `RATE_LIMIT` |
+
+Only `PERMITTED` consumes a token. Unknown and unauthorized tools are rejected
+before admission and never consume one. Fixed responses do not disclose policy
+names, keys, backend details, or exception text.
+
+`@RateLimited` carries no inline rule or inline numerics; MCP configuration names policies; the
+MCP admission precedence is tools → default → none. A method carrying
+`@RateLimited` is a separate band-300 AOP aspect and is unrelated to this
+configuration-bound MCP admission stage. Binding the same policy through both
+paths creates intentional double-charge behavior: one MCP call consumes once in the admission
+stage and once in the generated `@RateLimited` aspect. There is no runtime
+deduplication. See the [`vertique-aop` module reference](../../../../../../../vertique-aop/src/main/resources/META-INF/vertique/module.md)
+for the single authoritative ordering registry; this page does not restate its
+bands.
+
+A mount with no `mcp.authenticationScheme` treats every caller as anonymous, so the default
+`EFFECTIVE_PRINCIPAL` subject puts all callers in one bucket per policy. Set `mcp.rateLimit.subject` to
+`ACTOR_OR_IP` (or `IP`) on such a mount; an IPv6 client is keyed by its /64 prefix.
+
+`SHARED_BUCKET` is aggregate anonymous protection, not per-caller isolation:
+one high-volume anonymous caller can exhaust the policy for every other
+anonymous caller. An application that binds a custom
+`RateLimitSubjectResolver` is also responsible for keeping the identity it
+resolves congruent with the identity MCP authorization established. The shipped
+default resolver reads the same `SecurityContext`; the framework cannot verify
+that a custom resolver preserves that relationship.
+
+For caller-separated unauthenticated protection before MCP identity exists, use
+the REST edge limiter's trusted `IP` dimension ahead of the MCP mount. The REST
+edge limiter is a separate adapter and its denial on a non-JAX-RS MCP mount has
+the documented limitation that Vert.x renders its plain-text failure body rather
+than an MCP JSON-RPC error. This page does not claim an MCP mount failure
+handler for that case.
+
+### Trusted request origin and subjects
+
+The enabled MCP mount reuses the common trusted-proxy-aware
+`RequestOriginCapturer`. It captures one immutable `RequestOrigin` after upload
+cleanup registration and before cheap admission, `BodyHandler`, authentication,
+authorization, or dispatch. The same value is placed under
+`RequestOrigin.class.getName()` for identity resolution and credential-rejection
+reporting. A terminal event carries that origin independently, so an
+authentication rejection retains origin even when its `security` snapshot is
+null. When security is present, the terminal origin and `security.origin()` are
+the same captured value.
+
+The HTTP request `Origin` header, raw forwarded headers, direct peer values
+outside the capturer, request-body fields, MCP responses, metrics, and spans are
+not origin sources. Origin is lifecycle and audit metadata only.
+
+The shared runtime owns the origin-aware subject modes; MCP adds no local enum,
+parser, resolver, or key framing:
+
+- `IP` uses trusted `RequestOrigin.clientIp()`.
+- `ACTOR_OR_IP` uses the authenticated actor and falls back to the trusted client
+  IP for a canonical anonymous caller.
+- `CLIENT_OR_IP` uses the client facet when present and otherwise falls back to
+  the trusted client IP.
+
+`SecurityIdentity.anonymous()` and an empty resolver result are normalized by the
+shared adapter to the same anonymous state before `SHARED_BUCKET` or `BYPASS` is
+applied. A valid JWT or other configured authentication result remains
+authenticated and subject-keyed. Strict `CLIENT` remains fail-closed when an
+authenticated identity has no client facet; missing origin for an origin-aware
+mode is `SUBJECT_UNRESOLVABLE`, not a raw-header or socket fallback.
+
+### Earlier draft rate-limit field names
+
+Earlier drafts of the MCP server named rate-limit fields that were never released, so
+there is no runtime migration or compatibility shim. These names are documented only for
+readers of those drafts:
+
+| Earlier draft field | Nearest shipped equivalent |
+| --- | --- |
+| `maxRequestsPerWindow` | `rateLimit.policies.<name>.algorithm.capacity` |
+| `windowMs` | `rateLimit.policies.<name>.algorithm.refill.*` (greedy or interval refill) |
+| `maxTrackedPrincipals` | `rateLimit.local.maxTrackedKeys` or `rateLimit.policies.<name>.local.maxTrackedKeys` |
+
+`McpRequestTerminalEvent.origin` is never `null`. A request that traversed the mount carries the
+origin captured before admission; if the capture could not resolve a part, that part is the literal
+`unknown` (an address or host) or `0` (a port), and a capture that fails outright yields
+`RequestOrigin.unknown()`. The factories take the origin as their last argument and reject `null`.
+An origin-aware rate-limit subject treats an unknown client IP as unresolvable and fails closed.
+
+### Opt-in AOP resilience for MCP tools
+
+MCP resilience is supplied by AOP at the application bean boundary. A public
+asynchronous method may carry `@McpTool`, `@Resilient`, and passive declarations
+such as `@Timeout`. The application must include the resilience annotation
+processor, `ResilienceAopModule` from `vertique-resilience`, and the generated
+AOP module. The generated MCP invoker then receives the Dagger-provided AOP
+proxy, so its direct method call enters the existing `ResiliencePipeline`.
+MCP codegen does not inspect or copy resilience annotations, and the MCP server
+does not create an MCP resilience engine, policy namespace, breaker, bulkhead, or
+automatic retry behavior.
+
+The resilience boundary starts at the handler invocation, after authorization,
+capability checks, input validation/materialization, value observation, and tool
+interceptors. A retry repeats only the handler method. `McpTool.idempotentHint`
+is informational and does not make retry safe or enable retry. The application
+author must explicitly declare retry and own replay safety for side-effecting
+tools.
+
+Handler-attempt timeout is not transport liveness. MCP does not create a
+whole-request deadline; deployments must configure the shared HTTP idle/read
+timeouts, and HTTP/2 stream liveness may still require a fronting proxy. A
+handler that accepts `McpCancellationSignal` receives cooperative cancellation,
+but the common resilience pipeline does not forcibly cancel an upstream future or
+its scheduler. MCP settlement still fences late results after disconnect.
+
+The bounded handler-failure mapping is:
+
+| Cause | Writable HTTP result | JSON-RPC | Terminal classification |
+| --- | --- | --- | --- |
+| `ResilienceTimeoutException` | `504`, `Cache-Control: no-store` | `-32603`, `Request timed out` | `FAILED` / `TIMEOUT` |
+| `ResilienceUnavailableException` | `503`, `Cache-Control: no-store` | `-32603`, `Service unavailable` | `FAILED` / `INTERNAL` |
+| `ResiliencePolicyException` or any other cause | existing `500` fallback | existing `-32603`, `Internal error` | existing `FAILED` / `INTERNAL` |
+
+The cause walk is bounded to eight hops and guarded against cycles. Once SSE
+headers are committed, HTTP status and headers cannot change; only the bounded
+JSON-RPC error payload can carry the selected classification. Operation keys,
+policy names, exception text, and resilience-specific protocol codes never cross
+the MCP boundary.
+
 ---
 
 ## Key Classes
@@ -1205,6 +1412,12 @@ explicitly — MCP is never auto-mounted.
 Immutable configuration deserialized from the flat `mcp` section. Closed type: fields and defaults
 are the configuration contract. An enabled mount validates required server identity, mount path,
 bounds, and authentication/authorization prerequisites before routes are installed.
+
+### `McpRateLimitConfig` and `McpToolRateLimitConfig`
+
+Immutable records bound under `mcp.rateLimit`: the default policy, subject and anonymous
+handling, and per-tool overrides keyed by generated tool name. See
+[Rate-limit configuration and precedence](#rate-limit-configuration-and-precedence).
 
 ### `McpBodyTracePolicy`
 
@@ -1224,7 +1437,9 @@ Enum for `mcp.bodyTracePolicy`: `IGNORE` (default) or `LINK`. Controls whether b
 | `Set<McpToolInvoker>` | `@Multibinds` | Generated (or hand-written) tool invokers |
 | `Validator` | `@BindsOptionalOf` | Optional Bean Validation for generated `prepare` |
 | `ActionRegistry` | `@BindsOptionalOf` | Optional action catalogue for typed-policy tools |
+| `RateLimiters` | `@BindsOptionalOf` | Shared rate-limit runtime; required only when a policy is configured |
 | `McpToolRegistry` | `@Provides` | Immutable registry built from invokers |
+| `McpToolAdmission` | `@Provides` | Immutable admission plan built and validated at composition time |
 | `ComposeValidator` | `@IntoSet` (several) | Profile default + input-processing composition guards |
 | `RouterMount` / auth wiring | `@Provides` / `@IntoSet` | HTTP mount and optional scheme identity path |
 
@@ -1254,6 +1469,12 @@ keys, not rejected.
 | `mcp.toolsPageSize` | `100` | `tools/list` page size |
 | `mcp.toolsTtlMs` | `300000` | Client cache-freshness hint |
 | `mcp.bodyTracePolicy` | `IGNORE` | `IGNORE` or `LINK` |
+| `mcp.rateLimit.defaultPolicy` | absent | Shared policy applied to every tool without its own entry |
+| `mcp.rateLimit.subject` / `mcp.rateLimit.anonymous` | `EFFECTIVE_PRINCIPAL` / `SHARED_BUCKET` | Subject and anonymous handling for admission |
+| `mcp.rateLimit.tools.<tool>.{policy,subject,anonymous,cost}` | absent | Per-tool override; `cost` defaults to `1` |
+
+The `mcp.rateLimit.*` keys are described in full under
+[Rate-limit configuration and precedence](#rate-limit-configuration-and-precedence).
 
 An enabled mount also requires `http.idleTimeoutSeconds` or `http.readIdleTimeoutSeconds` > 0.
 
@@ -1269,6 +1490,11 @@ An enabled mount also requires `http.idleTimeoutSeconds` or `http.readIdleTimeou
 | `vertique-json` / `vertique-json-schema` | Profile mappers and tool schema generation |
 | `vertique-rest-core` | HTTP config, router mounts, route auth handler SPI |
 | `vertique-rest-security` | Identity resolution middleware for optional schemes |
+| `vertique-rate-limit-core` | Shared limiter runtime and subject resolution for configured admission |
+| `vertique-resilience` | Typed timeout and unavailable failures mapped at the handler boundary |
+
+An application that mounts MCP therefore also puts the rate-limit and resilience jars on its
+classpath, even when it configures no `mcp.rateLimit` policy.
 
 Runtime Bean Validation providers and observability adapters are separate artifacts.
 

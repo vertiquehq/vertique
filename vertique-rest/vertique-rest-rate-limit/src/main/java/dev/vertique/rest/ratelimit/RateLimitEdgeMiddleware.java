@@ -303,7 +303,7 @@ public final class RateLimitEdgeMiddleware implements Middleware {
                 switch (dimension) {
                     case IP -> {
                         Object stashed = ctx.get(RequestOrigin.class.getName());
-                        if (!(stashed instanceof RequestOrigin origin)) {
+                        if (!(stashed instanceof RequestOrigin origin) || !origin.clientIpKnown()) {
                             return OriginAbsent.INSTANCE;
                         }
                         components.add(RateLimitEdgeKeyDimension.IP);

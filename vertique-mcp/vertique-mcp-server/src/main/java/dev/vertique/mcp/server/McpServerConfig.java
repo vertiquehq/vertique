@@ -106,6 +106,10 @@ public final class McpServerConfig {
     @Builder.Default
     private final McpBodyTracePolicy bodyTracePolicy = McpBodyTracePolicy.IGNORE;
 
+    /** Rate-limit admission configuration. Defaults to no MCP tool rate-limit policy. */
+    @Builder.Default
+    private final McpRateLimitConfig rateLimit = McpRateLimitConfig.defaults();
+
     /** Returns the complete, programmatic MCP default configuration. */
     public static McpServerConfig defaults() {
         return builder().build();

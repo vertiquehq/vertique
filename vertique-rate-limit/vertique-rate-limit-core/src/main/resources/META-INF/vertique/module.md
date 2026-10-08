@@ -94,8 +94,13 @@ signal an operator can alert on; see the `failureMode` caution above.
 
 A subject-resolution SPI (`RateLimitSubjectResolver`) and its shared framing helper
 (`RateLimitAdapterSupport`) let the annotation, REST, and future adapters resolve an
-identity-scoped `RateLimitKey` without hand-rolling identity encoding — see
-Extension Points.
+identity- or origin-scoped `RateLimitKey` without hand-rolling identity encoding — see
+Extension Points. `RateLimitSubject` supports the strict `NONE`, `ACTOR`,
+`EFFECTIVE_PRINCIPAL`, and `CLIENT` dimensions plus the origin-aware `IP`,
+`ACTOR_OR_IP`, and `CLIENT_OR_IP` dimensions. Origin-aware dimensions use only the
+trusted `RequestOrigin.clientIp()` value; they fail closed when no captured origin is
+available or its client IP is unresolved (`RequestOrigin.clientIpKnown()` is `false`), and never
+inspect raw headers or socket addresses.
 
 Every consumed decision reports one redacted, synchronous `RateLimitDecisionCompleted`
 event to the optional `RateLimitObserver` set: policy name/revision/mode/algorithm,
@@ -163,15 +168,38 @@ distinct canonical keys.
 ```java
 public interface RateLimitSubjectResolver {
     Optional<SecurityIdentity> current();
+
+    default Optional<RequestOrigin> currentOrigin() {
+        return Optional.empty();
+    }
 }
 ```
 
 It is declared `@BindsOptionalOf`. The framework default reads the current
-`SecurityContext` off the framework `ContextHolder`; supplying one custom
-`RateLimitSubjectResolver` binding replaces it application-wide. `RateLimitAdapterSupport`
-is the shared identity-framing seam the annotation and REST adapters use on top of the
-resolved identity — it is integration surface for adapters, not application API to call
-directly in ordinary business code.
+`SecurityContext` off the framework `ContextHolder`, including
+`SecurityContext.origin()`. Supplying one custom `RateLimitSubjectResolver` binding
+replaces it application-wide; existing implementations remain source-compatible because
+`currentOrigin()` defaults to empty. An origin-aware subject therefore fails closed unless
+the custom resolver supplies a trusted `RequestOrigin`.
+
+`RateLimitAdapterSupport` normalizes an empty resolver result and the canonical
+`SecurityIdentity.anonymous()` identity to the same unauthenticated state before applying
+`AnonymousRateLimitPolicy`. Authenticated identities resolved from JWT or another configured
+authentication mechanism remain subject-keyed. `ACTOR_OR_IP` falls back to the trusted
+client IP only for that unauthenticated state, while `CLIENT_OR_IP` also uses the trusted
+client IP when an authenticated identity has no client facet. Strict `CLIENT` behavior is
+unchanged and still fails closed when its client facet is absent. The helper is integration
+surface for adapters, not application API to call directly in ordinary business code.
+
+**Behavior change for existing `@RateLimited` callers.** Before this normalization, a caller
+carrying the canonical anonymous identity was keyed as a literal anonymous principal. It now
+follows `AnonymousRateLimitPolicy`:
+
+- With `anonymous = BYPASS`, those callers are no longer limited.
+- With strict `CLIENT`, they no longer fail with `SUBJECT_UNRESOLVABLE`; the anonymous policy applies.
+- `SHARED_BUCKET` key bytes changed, so clustered counters start fresh once after upgrade.
+
+`RateLimitSubject` may gain constants in a minor release; switch over it with a `default` branch.
 
 ## Configuration
 

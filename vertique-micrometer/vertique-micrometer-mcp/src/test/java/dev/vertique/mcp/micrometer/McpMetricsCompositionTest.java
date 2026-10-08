@@ -10,6 +10,7 @@ import dev.vertique.mcp.lifecycle.McpRequestCompletedEvent;
 import dev.vertique.mcp.lifecycle.McpRequestLifecycleObserver;
 import dev.vertique.mcp.lifecycle.McpRequestObservation;
 import dev.vertique.mcp.lifecycle.McpRequestTerminalEvent;
+import dev.vertique.security.origin.RequestOrigin;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 import io.micrometer.core.instrument.composite.CompositeMeterRegistry;
@@ -112,7 +113,8 @@ class McpMetricsCompositionTest {
                 null,
                 null,
                 null,
-                null);
+                null,
+                RequestOrigin.unknown());
         return McpRequestCompletedEvent.written(terminal, terminalAt.plusMillis(1));
     }
 }

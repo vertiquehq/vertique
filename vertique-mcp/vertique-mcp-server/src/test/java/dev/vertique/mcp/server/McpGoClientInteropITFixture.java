@@ -14,6 +14,7 @@ import dev.vertique.mcp.tool.McpToolAnnotations;
 import dev.vertique.mcp.tool.McpToolDescriptor;
 import dev.vertique.mcp.tool.McpToolInvoker;
 import dev.vertique.mcp.tool.McpToolResult;
+import dev.vertique.ratelimit.RateLimiters;
 import dev.vertique.rest.core.config.HttpConfig;
 import dev.vertique.rest.core.middleware.RequestContextLifecycle;
 import dev.vertique.rest.core.security.RouteAuthHandler;
@@ -67,6 +68,20 @@ record McpGoClientInteropITFixture(
     private static final String CLOSED_OBJECT_SCHEMA = "{\"type\":\"object\",\"additionalProperties\":false}";
 
     static Future<McpGoClientInteropITFixture> start(Vertx vertx) {
+        return start(vertx, McpRateLimitConfig.defaults(), Optional.empty());
+    }
+
+    static Future<McpGoClientInteropITFixture> start(
+            Vertx vertx, McpRateLimitConfig rateLimit, Optional<RateLimiters> rateLimiters) {
+        return start(vertx, rateLimit, rateLimiters, Set.of());
+    }
+
+    /** Starts the fixture with {@code additionalTools} registered next to the two interop tools. */
+    static Future<McpGoClientInteropITFixture> start(
+            Vertx vertx,
+            McpRateLimitConfig rateLimit,
+            Optional<RateLimiters> rateLimiters,
+            Set<McpToolInvoker> additionalTools) {
         AtomicInteger publicInvocations = new AtomicInteger();
         AtomicInteger restrictedInvocations = new AtomicInteger();
         AtomicInteger absentCredentials = new AtomicInteger();
@@ -77,8 +92,9 @@ record McpGoClientInteropITFixture(
                 .serverName("vertique-go-interop")
                 .serverVersion("1.0")
                 .authenticationScheme("bearer")
+                .rateLimit(rateLimit)
                 .build();
-        McpToolRegistry registry = McpToolRegistry.build(Set.of(
+        Set<McpToolInvoker> tools = new java.util.LinkedHashSet<>(Set.of(
                 tool(
                         PUBLIC_TOOL,
                         new McpToolAccess(McpAccessMode.PERMIT_ALL, List.of(), null),
@@ -89,6 +105,8 @@ record McpGoClientInteropITFixture(
                         new McpToolAccess(McpAccessMode.RESTRICTED, List.of("ops"), null),
                         RESTRICTED_RESULT,
                         restrictedInvocations)));
+        tools.addAll(additionalTools);
+        McpToolRegistry registry = McpToolRegistry.build(tools);
         RecordingSecurityRuntime securityRuntime = new RecordingSecurityRuntime();
         McpPolicyEnforcer policyEnforcer = new McpPolicyEnforcer(new SecurityPolicyEnforcer(
                 Optional.empty(),
@@ -99,6 +117,7 @@ record McpGoClientInteropITFixture(
                 securityRuntime,
                 Optional.empty()));
         HttpConfig httpConfig = HttpConfig.builder().idleTimeoutSeconds(60).build();
+        McpToolAdmission admission = McpToolAdmission.create(config, registry, rateLimiters);
         McpRouterMount mount = new McpRouterMount(
                 config,
                 new McpServerConfigValidator(),
@@ -112,6 +131,7 @@ record McpGoClientInteropITFixture(
                         httpConfig,
                         registry,
                         policyEnforcer,
+                        admission,
                         NO_OP_CONTEXT_HOLDER,
                         new CorrelationContextFactory(Optional.empty())),
                 Set.of(new BearerRouteAuthHandler(absentCredentials, validCredentials, invalidCredentials)),

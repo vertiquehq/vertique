@@ -50,6 +50,9 @@ import dev.vertique.mcp.tool.McpToolAnnotations;
 import dev.vertique.mcp.tool.McpToolDescriptor;
 import dev.vertique.mcp.tool.McpToolInvoker;
 import dev.vertique.mcp.tool.McpToolResult;
+import dev.vertique.ratelimit.exception.RateLimitUnavailableException;
+import dev.vertique.resilience.exception.ResilienceTimeoutException;
+import dev.vertique.resilience.exception.ResilienceUnavailableException;
 import dev.vertique.rest.core.config.HttpConfig;
 import dev.vertique.rest.core.events.RequestCompletionRecorder;
 import dev.vertique.rest.core.middleware.RequestContextLifecycle;
@@ -60,6 +63,7 @@ import dev.vertique.security.SecurityContexts;
 import dev.vertique.security.SecurityIdentity;
 import dev.vertique.security.authz.AuthorizationDecision;
 import dev.vertique.security.authz.AuthzReasonCodes;
+import dev.vertique.security.origin.RequestOrigin;
 import io.vertx.core.AsyncResult;
 import io.vertx.core.Context;
 import io.vertx.core.Future;
@@ -78,12 +82,16 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 
 /**
@@ -151,6 +159,11 @@ final class McpRequestDispatcher {
     private static final int METHOD_NOT_FOUND = -32601;
     private static final int INTERNAL_ERROR = -32603;
     private static final int MISSING_REQUIRED_CLIENT_CAPABILITY = -32021;
+    private static final int RATE_LIMITED = -32022;
+    /** Upper bound for a {@code Retry-After} value; keeps an extreme application-supplied duration from overflowing. */
+    private static final long MAX_RETRY_AFTER_SECONDS = 31_536_000L;
+
+    private static final int MAX_HANDLER_FAILURE_CAUSE_HOPS = 8;
 
     /**
      * The standard, non-leaking message paired with {@link #INTERNAL_ERROR}. Mirrors {@link
@@ -160,6 +173,18 @@ final class McpRequestDispatcher {
      * serialization step is unbounded (see {@link #boundedErrorResponse}).
      */
     private static final String INTERNAL_ERROR_MESSAGE = "Internal error";
+
+    /** The fixed, non-leaking response for an exhausted configured admission policy. */
+    private static final String RATE_LIMIT_EXCEEDED_MESSAGE = "Rate limit exceeded";
+
+    /** The fixed, non-leaking response for an unavailable admission decision. */
+    private static final String RATE_LIMIT_UNAVAILABLE_MESSAGE = "Rate limiting unavailable";
+
+    /** The fixed, non-leaking response for a resilience attempt timeout. */
+    private static final String RESILIENCE_TIMEOUT_MESSAGE = "Request timed out";
+
+    /** The fixed, non-leaking response for resilience runtime unavailability. */
+    private static final String RESILIENCE_UNAVAILABLE_MESSAGE = "Service unavailable";
 
     /**
      * The bounded JSON-RPC server-error-range code {@link McpProtocolCodec#validateNegotiation} settles
@@ -351,6 +376,7 @@ final class McpRequestDispatcher {
     private final McpProtocolCodec codec;
     private final McpToolRegistry toolRegistry;
     private final McpPolicyEnforcer policyEnforcer;
+    private final McpToolAdmission toolAdmission;
     private final McpCursorCodec cursorCodec;
     private final ContextHolder contextHolder;
     private final CorrelationContextFactory correlationContextFactory;
@@ -366,6 +392,7 @@ final class McpRequestDispatcher {
             HttpConfig httpConfig,
             McpToolRegistry toolRegistry,
             McpPolicyEnforcer policyEnforcer,
+            McpToolAdmission toolAdmission,
             ContextHolder contextHolder,
             CorrelationContextFactory correlationContextFactory) {
         this.config = config;
@@ -377,10 +404,38 @@ final class McpRequestDispatcher {
         this.codec = new McpProtocolCodec(httpConfig, config.ingressMaxTokens());
         this.toolRegistry = toolRegistry;
         this.policyEnforcer = policyEnforcer;
+        this.toolAdmission = toolAdmission;
         this.cursorCodec = new McpCursorCodec();
         this.contextHolder = contextHolder;
         this.correlationContextFactory = correlationContextFactory;
         this.normalizationDecoder = buildNormalizationDecoder(config.outputMaxBytes(), config.outputMaxTokens());
+    }
+
+    McpRequestDispatcher(
+            McpServerConfig config,
+            SecurityRuntime securityRuntime,
+            Set<McpRequestLifecycleObserver> lifecycleObservers,
+            Set<McpRequestCompletedListener> completedListeners,
+            Set<McpRequestInterceptor> requestInterceptors,
+            Set<McpToolInterceptor> toolInterceptors,
+            HttpConfig httpConfig,
+            McpToolRegistry toolRegistry,
+            McpPolicyEnforcer policyEnforcer,
+            ContextHolder contextHolder,
+            CorrelationContextFactory correlationContextFactory) {
+        this(
+                config,
+                securityRuntime,
+                lifecycleObservers,
+                completedListeners,
+                requestInterceptors,
+                toolInterceptors,
+                httpConfig,
+                toolRegistry,
+                policyEnforcer,
+                McpToolAdmission.noPolicy(),
+                contextHolder,
+                correlationContextFactory);
     }
 
     /**
@@ -1246,7 +1301,8 @@ final class McpRequestDispatcher {
                 protocolVersionOf(context),
                 authorizationOf(context),
                 security,
-                correlationOf(context));
+                correlationOf(context),
+                originOf(context));
         write(context, 500, fallback, terminal);
     }
 
@@ -1284,7 +1340,8 @@ final class McpRequestDispatcher {
                 protocolVersionOf(context),
                 authorizationOf(context),
                 security,
-                correlationOf(context));
+                correlationOf(context),
+                originOf(context));
         write(context, 500, fallback, terminal);
     }
 
@@ -1443,7 +1500,8 @@ final class McpRequestDispatcher {
                     protocolVersionOf(context),
                     authorizationOf(context),
                     security,
-                    correlationOf(context));
+                    correlationOf(context),
+                    originOf(context));
             write(context, 500, fallback, overCapTerminal);
             return;
         }
@@ -1458,7 +1516,8 @@ final class McpRequestDispatcher {
                 protocolVersionOf(context),
                 authorizationOf(context),
                 security,
-                correlationOf(context));
+                correlationOf(context),
+                originOf(context));
         write(context, status, responseBytes, terminal);
     }
 
@@ -1506,7 +1565,8 @@ final class McpRequestDispatcher {
                     null,
                     null,
                     security,
-                    correlationOf(context));
+                    correlationOf(context),
+                    originOf(context));
             write(context, 500, fallback, overCapTerminal);
             return;
         }
@@ -1521,7 +1581,8 @@ final class McpRequestDispatcher {
                 null,
                 null,
                 security,
-                correlationOf(context));
+                correlationOf(context),
+                originOf(context));
         write(context, status, errorBytes, terminal);
     }
 
@@ -1551,7 +1612,8 @@ final class McpRequestDispatcher {
                     protocolVersionOf(context),
                     authorizationOf(context),
                     security,
-                    correlationOf(context));
+                    correlationOf(context),
+                    originOf(context));
             write(context, 500, fallback, terminal);
             return;
         }
@@ -1564,7 +1626,8 @@ final class McpRequestDispatcher {
                 protocolVersionOf(context),
                 authorizationOf(context),
                 security,
-                correlationOf(context));
+                correlationOf(context),
+                originOf(context));
         write(context, 200, payload, terminal);
     }
 
@@ -1907,7 +1970,8 @@ final class McpRequestDispatcher {
                 protocolVersionOf(context),
                 authorizationOf(context),
                 security,
-                correlationOf(context));
+                correlationOf(context),
+                originOf(context));
         write(context, 500, fallback, terminal);
     }
 
@@ -1932,7 +1996,8 @@ final class McpRequestDispatcher {
                 protocolVersionOf(context),
                 authorizationOf(context),
                 security,
-                correlationOf(context));
+                correlationOf(context),
+                originOf(context));
         write(context, 500, fallback, terminal);
     }
 
@@ -1962,7 +2027,8 @@ final class McpRequestDispatcher {
                     protocolVersionOf(context),
                     authorizationOf(context),
                     security,
-                    correlationOf(context));
+                    correlationOf(context),
+                    originOf(context));
             write(context, 500, fallback, terminal);
             return;
         }
@@ -1975,7 +2041,8 @@ final class McpRequestDispatcher {
                 protocolVersionOf(context),
                 authorizationOf(context),
                 security,
-                correlationOf(context));
+                correlationOf(context),
+                originOf(context));
         write(context, 200, payload, terminal);
     }
 
@@ -2097,7 +2164,8 @@ final class McpRequestDispatcher {
                     protocolVersionOf(context),
                     authorizationOf(context),
                     security,
-                    correlationOf(context));
+                    correlationOf(context),
+                    originOf(context));
             write(context, 500, fallback, overCapTerminal);
             return;
         }
@@ -2112,8 +2180,75 @@ final class McpRequestDispatcher {
                 protocolVersionOf(context),
                 authorizationOf(context),
                 security,
-                correlationOf(context));
+                correlationOf(context),
+                originOf(context));
         write(context, status, body, terminal);
+    }
+
+    private void writeRateLimitExceeded(
+            RoutingContext context,
+            JsonNode envelope,
+            @Nullable SecurityContextSnapshot security,
+            String toolName,
+            Optional<Duration> retryAfter) {
+        retryAfter.ifPresent(duration -> context.response().putHeader("Retry-After", retryAfterSeconds(duration)));
+        writeRateLimitResponse(context, envelope, security, toolName, 429, RATE_LIMIT_EXCEEDED_MESSAGE, false);
+    }
+
+    private void writeRateLimitUnavailable(
+            RoutingContext context, JsonNode envelope, @Nullable SecurityContextSnapshot security, String toolName) {
+        writeRateLimitResponse(context, envelope, security, toolName, 503, RATE_LIMIT_UNAVAILABLE_MESSAGE, true);
+    }
+
+    private void writeRateLimitResponse(
+            RoutingContext context,
+            JsonNode envelope,
+            @Nullable SecurityContextSnapshot security,
+            String toolName,
+            int status,
+            String message,
+            boolean failed) {
+        byte[] body;
+        try {
+            body = encodeCapped(errorNode(envelope.get("id"), RATE_LIMITED, message));
+        } catch (OutputCapExceededException overCap) {
+            body = boundedErrorResponse(null, RATE_LIMITED, message);
+        }
+        context.response().putHeader("content-type", JSON_CONTENT_TYPE);
+        context.response().putHeader("Cache-Control", "no-store");
+        McpRequestTerminalEvent terminal = failed
+                ? McpRequestTerminalEvent.failed(
+                        startedAt(context),
+                        Instant.now(),
+                        McpMethod.TOOLS_CALL,
+                        toolName,
+                        McpErrorType.RATE_LIMIT,
+                        status,
+                        RATE_LIMITED,
+                        protocolVersionOf(context),
+                        authorizationOf(context),
+                        security,
+                        correlationOf(context),
+                        originOf(context))
+                : McpRequestTerminalEvent.rejected(
+                        startedAt(context),
+                        Instant.now(),
+                        McpMethod.TOOLS_CALL,
+                        toolName,
+                        McpErrorType.RATE_LIMIT,
+                        status,
+                        RATE_LIMITED,
+                        protocolVersionOf(context),
+                        authorizationOf(context),
+                        security,
+                        correlationOf(context),
+                        originOf(context));
+        write(context, status, body, terminal);
+    }
+
+    private static String retryAfterSeconds(Duration retryAfter) {
+        long seconds = retryAfter.getSeconds() + (retryAfter.getNano() > 0 ? 1L : 0L);
+        return Long.toString(Math.max(1L, Math.min(seconds, MAX_RETRY_AFTER_SECONDS)));
     }
 
     // --- tools/call ---
@@ -2271,7 +2406,8 @@ final class McpRequestDispatcher {
                 protocolVersionOf(context),
                 authorizationOf(context),
                 security,
-                correlationOf(context));
+                correlationOf(context),
+                originOf(context));
         write(context, status, body, terminal);
     }
 
@@ -2319,6 +2455,38 @@ final class McpRequestDispatcher {
         if (isSettled(context)) {
             return;
         }
+        Context owningContext = requestOwningContext(context);
+        anchoredOnContext(toolAdmission.admit(toolName), owningContext).onComplete(admission -> {
+            if (isSettled(context)) {
+                return;
+            }
+            if (admission.failed() || admission.result() == null) {
+                writeRateLimitUnavailable(context, envelope, security, toolName);
+                return;
+            }
+            switch (admission.result().outcome()) {
+                case CONTINUE -> invokeAfterAdmission(context, envelope, security, toolName, invoker);
+                case QUOTA_EXCEEDED ->
+                    writeRateLimitExceeded(
+                            context,
+                            envelope,
+                            security,
+                            toolName,
+                            admission.result().retryAfter());
+                case REJECTED ->
+                    writeRateLimitResponse(
+                            context, envelope, security, toolName, 503, RATE_LIMIT_UNAVAILABLE_MESSAGE, false);
+                case FAILED -> writeRateLimitUnavailable(context, envelope, security, toolName);
+            }
+        });
+    }
+
+    private void invokeAfterAdmission(
+            RoutingContext context,
+            JsonNode envelope,
+            @Nullable SecurityContextSnapshot security,
+            String toolName,
+            McpToolInvoker invoker) {
         selectSse(context);
         McpCompletionCoordinator progressCoordinator = context.get(COMPLETION_COORDINATOR_KEY);
         if (progressCoordinator != null) {
@@ -2719,7 +2887,8 @@ final class McpRequestDispatcher {
                 protocolVersionOf(context),
                 authorizationOf(context),
                 security,
-                correlationOf(context));
+                correlationOf(context),
+                originOf(context));
         writeSse(context, 500, fallback, terminal);
     }
 
@@ -2839,7 +3008,8 @@ final class McpRequestDispatcher {
                     protocolVersionOf(context),
                     authorizationOf(context),
                     security,
-                    correlationOf(context));
+                    correlationOf(context),
+                    originOf(context));
         }
         if (errorType == McpErrorType.INTERCEPTOR) {
             return McpRequestTerminalEvent.rejected(
@@ -2853,7 +3023,8 @@ final class McpRequestDispatcher {
                     protocolVersionOf(context),
                     authorizationOf(context),
                     security,
-                    correlationOf(context));
+                    correlationOf(context),
+                    originOf(context));
         }
         return McpRequestTerminalEvent.toolError(
                 startedAt(context),
@@ -2865,7 +3036,8 @@ final class McpRequestDispatcher {
                 protocolVersionOf(context),
                 authorizationOf(context),
                 security,
-                correlationOf(context));
+                correlationOf(context),
+                originOf(context));
     }
 
     /**
@@ -3025,23 +3197,124 @@ final class McpRequestDispatcher {
             String toolName,
             Throwable cause,
             McpErrorType errorType) {
-        // cause is deliberately never read (see writeDispatchByMethodFailure's identical note).
-        // boundedErrorResponse serializes through the capped stream rather than materializing the
-        // full response before measuring it.
-        byte[] fallback = boundedSseErrorResponse(envelope.get("id"), INTERNAL_ERROR, INTERNAL_ERROR_MESSAGE);
-        McpRequestTerminalEvent terminal = McpRequestTerminalEvent.failed(
-                startedAt(context),
-                Instant.now(),
-                McpMethod.TOOLS_CALL,
-                toolName,
-                errorType,
-                500,
-                INTERNAL_ERROR,
-                protocolVersionOf(context),
-                authorizationOf(context),
-                security,
-                correlationOf(context));
-        writeSse(context, 500, fallback, terminal);
+        HandlerFailureMapping mapping = errorType == McpErrorType.INTERNAL
+                ? classifyHandlerFailure(cause)
+                : HandlerFailureMapping.internal(errorType);
+        boolean responseCommitted = context.response().headWritten();
+        if (!responseCommitted) {
+            mapping.retryAfter()
+                    .ifPresent(duration -> context.response().putHeader("Retry-After", retryAfterSeconds(duration)));
+            if (mapping.noStore()) {
+                context.response().putHeader("Cache-Control", "no-store");
+            }
+        }
+        // boundedSseErrorResponse serializes through the capped stream rather than materializing the
+        // full response before measuring it. The selected mapping is still recorded on the terminal
+        // event after SSE has committed, while the write status is kept at the transport's already
+        // committed status in that case.
+        byte[] fallback = boundedSseErrorResponse(envelope.get("id"), mapping.protocolCode(), mapping.message());
+        McpRequestTerminalEvent terminal = mapping.rejected()
+                ? McpRequestTerminalEvent.rejected(
+                        startedAt(context),
+                        Instant.now(),
+                        McpMethod.TOOLS_CALL,
+                        toolName,
+                        mapping.errorType(),
+                        mapping.httpStatus(),
+                        mapping.protocolCode(),
+                        protocolVersionOf(context),
+                        authorizationOf(context),
+                        security,
+                        correlationOf(context),
+                        originOf(context))
+                : McpRequestTerminalEvent.failed(
+                        startedAt(context),
+                        Instant.now(),
+                        McpMethod.TOOLS_CALL,
+                        toolName,
+                        mapping.errorType(),
+                        mapping.httpStatus(),
+                        mapping.protocolCode(),
+                        protocolVersionOf(context),
+                        authorizationOf(context),
+                        security,
+                        correlationOf(context),
+                        originOf(context));
+        int writeStatus = responseCommitted ? context.response().getStatusCode() : mapping.httpStatus();
+        writeSse(context, writeStatus, fallback, terminal);
+    }
+
+    private static HandlerFailureMapping classifyHandlerFailure(Throwable failure) {
+        Set<Throwable> visited = Collections.newSetFromMap(new IdentityHashMap<>());
+        Throwable current = failure;
+        for (int hop = 0; current != null && hop <= MAX_HANDLER_FAILURE_CAUSE_HOPS; hop++) {
+            if (!visited.add(current)) {
+                break;
+            }
+            if (current instanceof dev.vertique.core.exception.TooManyRequestsException rateLimited) {
+                return new HandlerFailureMapping(
+                        McpErrorType.RATE_LIMIT,
+                        429,
+                        RATE_LIMITED,
+                        RATE_LIMIT_EXCEEDED_MESSAGE,
+                        rateLimited.retryAfter(),
+                        true,
+                        true);
+            }
+            if (current instanceof RateLimitUnavailableException) {
+                return new HandlerFailureMapping(
+                        McpErrorType.RATE_LIMIT,
+                        503,
+                        RATE_LIMITED,
+                        RATE_LIMIT_UNAVAILABLE_MESSAGE,
+                        Optional.empty(),
+                        true,
+                        true);
+            }
+            if (current instanceof ResilienceTimeoutException) {
+                return new HandlerFailureMapping(
+                        McpErrorType.TIMEOUT,
+                        504,
+                        INTERNAL_ERROR,
+                        RESILIENCE_TIMEOUT_MESSAGE,
+                        Optional.empty(),
+                        true,
+                        false);
+            }
+            if (current instanceof ResilienceUnavailableException) {
+                return new HandlerFailureMapping(
+                        McpErrorType.INTERNAL,
+                        503,
+                        INTERNAL_ERROR,
+                        RESILIENCE_UNAVAILABLE_MESSAGE,
+                        Optional.empty(),
+                        true,
+                        false);
+            }
+            current = current.getCause();
+        }
+        return HandlerFailureMapping.internal(McpErrorType.INTERNAL);
+    }
+
+    private record HandlerFailureMapping(
+            McpErrorType errorType,
+            int httpStatus,
+            int protocolCode,
+            String message,
+            Optional<Duration> retryAfter,
+            boolean noStore,
+            boolean rejected) {
+
+        private HandlerFailureMapping {
+            Objects.requireNonNull(errorType, "errorType");
+            Objects.requireNonNull(message, "message");
+            Objects.requireNonNull(retryAfter, "retryAfter");
+        }
+
+        private static HandlerFailureMapping internal(McpErrorType errorType) {
+            return new HandlerFailureMapping(
+                    errorType, 500, INTERNAL_ERROR, INTERNAL_ERROR_MESSAGE, Optional.empty(), false, false);
+        }
     }
 
     /**
@@ -3086,7 +3359,8 @@ final class McpRequestDispatcher {
                 terminal.protocolVersion(),
                 terminal.authorization(),
                 terminal.security(),
-                terminal.correlation());
+                terminal.correlation(),
+                terminal.origin());
     }
 
     /**
@@ -3183,7 +3457,8 @@ final class McpRequestDispatcher {
                 protocolVersionOf(context),
                 authorizationOf(context),
                 security,
-                correlationOf(context));
+                correlationOf(context),
+                originOf(context));
         RequestCompletionRecorder.claimForOtherTransport(context);
         boolean responseCommitted = context.response().headWritten();
         // WRITTEN requires a committed response; an ended response with no head is WRITE_FAILED.
@@ -3296,7 +3571,8 @@ final class McpRequestDispatcher {
                 protocolVersionOf(context),
                 authorizationOf(context),
                 establishedSecurity(),
-                correlationOf(context));
+                correlationOf(context),
+                originOf(context));
     }
 
     /**
@@ -3370,7 +3646,8 @@ final class McpRequestDispatcher {
                 protocolVersionOf(context),
                 authorizationOf(context),
                 security,
-                correlationOf(context));
+                correlationOf(context),
+                originOf(context));
         write(context, status, errorBytes, terminal);
     }
 
@@ -3402,6 +3679,12 @@ final class McpRequestDispatcher {
         return startedAt == null ? Instant.now() : startedAt;
     }
 
+    /** The origin the mount captured for this request, or {@link RequestOrigin#unknown()} if none was stored. */
+    private static RequestOrigin originOf(RoutingContext context) {
+        RequestOrigin origin = context.get(RequestOrigin.class.getName());
+        return origin != null ? origin : RequestOrigin.unknown();
+    }
+
     private static void reject(
             RoutingContext context,
             McpMethod method,
@@ -3423,7 +3706,8 @@ final class McpRequestDispatcher {
                         protocolVersionOf(context),
                         authorizationOf(context),
                         security,
-                        correlationOf(context)));
+                        correlationOf(context),
+                        originOf(context)));
     }
 
     // Package-private (not private) so McpWritePhaseSettlementTest can drive this exact

@@ -61,9 +61,11 @@ depends on it.
 It depends on foundation and security APIs, never HTTP, protocol, observability, or
 enterprise audit implementations. `vertique-mcp-server` owns the Router-mounted MCP
 transport composition and consumes that core API plus the existing REST security
-seams; observer adapters depend on the neutral MCP core contracts rather than on the
-server implementation. This keeps the protocol transport and its optional extensions
-on the application-facing side of the dependency direction.
+seams. It also consumes `vertique-rate-limit-core` and `vertique-resilience`
+exactly as the REST adapters already do for the shared APIs. Observer adapters depend
+on the neutral MCP core contracts rather than on the server implementation. This keeps
+the protocol transport and its optional extensions on the application-facing side of
+the dependency direction.
 
 The MCP request path is deliberately one adapter pipeline rather than a parallel application
 stack:

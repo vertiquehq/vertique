@@ -15,6 +15,7 @@ import dev.vertique.mcp.lifecycle.McpRequestLifecycleObserver;
 import dev.vertique.mcp.lifecycle.McpRequestObservation;
 import dev.vertique.mcp.lifecycle.McpRequestTerminalEvent;
 import dev.vertique.mcp.lifecycle.McpRequestTerminalObservation;
+import dev.vertique.security.origin.RequestOrigin;
 import io.vertx.core.Context;
 import io.vertx.core.Vertx;
 import java.time.Instant;
@@ -160,7 +161,8 @@ class McpLifecycleObservationTest {
                 null,
                 null,
                 null,
-                null);
+                null,
+                RequestOrigin.unknown());
     }
 
     /** Records open, terminal, and completion callbacks and their arrival order. */

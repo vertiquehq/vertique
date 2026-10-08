@@ -10,8 +10,12 @@ import dev.vertique.ratelimit.exception.RateLimitRequestException;
 import dev.vertique.ratelimit.exception.RateLimitRequestFailure;
 import dev.vertique.security.ClientRef;
 import dev.vertique.security.PrincipalRef;
+import dev.vertique.security.PrincipalType;
 import dev.vertique.security.SecurityIdentity;
+import dev.vertique.security.origin.RequestOrigin;
 import jakarta.inject.Singleton;
+import java.net.InetAddress;
+import java.net.UnknownHostException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
@@ -25,7 +29,8 @@ import java.util.Optional;
  * <p>{@link #subjectKey} distinguishes two situations that must never collapse into one:
  *
  * <ul>
- *   <li><b>anonymous caller</b> (no {@code SecurityIdentity} at all): governed by {@link
+ *   <li><b>anonymous caller</b> (an empty resolver result or the canonical {@code
+ *       SecurityIdentity.anonymous()}): governed by {@link
  *       AnonymousRateLimitPolicy} — {@code SHARED_BUCKET} frames one shared anonymous component;
  *       {@code BYPASS} yields {@link Optional#empty()} and the caller proceeds unlimited.
  *   <li><b>identity present but the requested facet absent</b> (e.g. {@code subject = CLIENT} under
@@ -37,6 +42,8 @@ import java.util.Optional;
  */
 @Singleton
 public final class RateLimitAdapterSupport {
+
+    private static final int IPV6_PREFIX_BITS = 64;
 
     /**
      * Distinct anonymous-bucket marker. Framed via {@link RateLimitKey}'s enum scalar encoding,
@@ -83,9 +90,20 @@ public final class RateLimitAdapterSupport {
         if (subject == RateLimitSubject.NONE) {
             return Optional.of(keyOf(extraComponents));
         }
+        Optional<RequestOrigin> origin = originFor(subject);
         Optional<SecurityIdentity> identity = subjectResolver.current();
+        if (identity.filter(RateLimitAdapterSupport::isCanonicalAnonymous).isPresent()) {
+            identity = Optional.empty();
+        }
         if (identity.isPresent()) {
-            return Optional.of(keyOf(withLeading(facetComponents(subject, identity.get()), extraComponents)));
+            return Optional.of(keyOf(withLeading(facetComponents(subject, identity.get(), origin), extraComponents)));
+        }
+        if (isOriginAware(subject)) {
+            if (subject == RateLimitSubject.IP || anonymous == AnonymousRateLimitPolicy.SHARED_BUCKET) {
+                return Optional.of(keyOf(withLeading(
+                        List.of(subject, ipKeyComponent(origin.orElseThrow().clientIp())), extraComponents)));
+            }
+            return Optional.empty();
         }
         return switch (anonymous) {
             case SHARED_BUCKET -> Optional.of(keyOf(withLeading(List.of(AnonymousMarker.SHARED), extraComponents)));
@@ -93,7 +111,33 @@ public final class RateLimitAdapterSupport {
         };
     }
 
-    private static List<Object> facetComponents(RateLimitSubject subject, SecurityIdentity identity) {
+    private Optional<RequestOrigin> originFor(RateLimitSubject subject) {
+        if (!isOriginAware(subject)) {
+            return Optional.empty();
+        }
+        Optional<RequestOrigin> origin = subjectResolver.currentOrigin();
+        if (origin.isEmpty() || !origin.get().clientIpKnown()) {
+            throw new RateLimitRequestException(RateLimitRequestFailure.SUBJECT_UNRESOLVABLE);
+        }
+        return origin;
+    }
+
+    private static boolean isOriginAware(RateLimitSubject subject) {
+        return subject == RateLimitSubject.IP
+                || subject == RateLimitSubject.ACTOR_OR_IP
+                || subject == RateLimitSubject.CLIENT_OR_IP;
+    }
+
+    private static boolean isCanonicalAnonymous(SecurityIdentity identity) {
+        return identity.actor().type() == PrincipalType.ANONYMOUS
+                && identity.actor().id().equals("anonymous")
+                && identity.subject().isEmpty()
+                && identity.delegation().isEmpty()
+                && identity.client().isEmpty();
+    }
+
+    private static List<Object> facetComponents(
+            RateLimitSubject subject, SecurityIdentity identity, Optional<RequestOrigin> origin) {
         return switch (subject) {
             case ACTOR -> principalComponents(subject, identity.actor());
             case EFFECTIVE_PRINCIPAL ->
@@ -103,9 +147,38 @@ public final class RateLimitAdapterSupport {
                         .orElseThrow(() -> new RateLimitRequestException(RateLimitRequestFailure.SUBJECT_UNRESOLVABLE));
                 yield List.of(subject, client.clientId());
             }
+            case IP -> List.of(subject, ipKeyComponent(origin.orElseThrow().clientIp()));
+            case ACTOR_OR_IP -> principalComponents(subject, identity.actor());
+            case CLIENT_OR_IP ->
+                identity.client()
+                        .<List<Object>>map(client -> List.of(subject, client.clientId()))
+                        .orElseGet(() -> List.of(
+                                subject, ipKeyComponent(origin.orElseThrow().clientIp())));
             case NONE ->
                 throw new IllegalStateException("unreachable: subjectKey short-circuits NONE before resolving a facet");
         };
+    }
+
+    /**
+     * Frames a client IP for use in a key. An IPv6 address is reduced to its {@value
+     * #IPV6_PREFIX_BITS}-bit network prefix, because one subscriber commonly controls a whole /64
+     * and would otherwise obtain a fresh bucket per address; an IPv4 address is kept whole.
+     */
+    private static String ipKeyComponent(String clientIp) {
+        if (!clientIp.contains(":")) {
+            return clientIp;
+        }
+        try {
+            byte[] bytes = InetAddress.getByName(clientIp).getAddress();
+            if (bytes.length != 16) {
+                return clientIp;
+            }
+            byte[] masked = new byte[16];
+            System.arraycopy(bytes, 0, masked, 0, IPV6_PREFIX_BITS / 8);
+            return InetAddress.getByAddress(masked).getHostAddress() + "/" + IPV6_PREFIX_BITS;
+        } catch (UnknownHostException e) {
+            return clientIp;
+        }
     }
 
     private static List<Object> principalComponents(RateLimitSubject subject, PrincipalRef principal) {

@@ -22,6 +22,7 @@ import dev.vertique.mcp.tool.McpContent;
 import dev.vertique.mcp.tool.McpPreparedToolCall;
 import dev.vertique.mcp.tool.McpToolInvoker;
 import dev.vertique.mcp.tool.McpToolResult;
+import dev.vertique.security.origin.RequestOrigin;
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
 import java.lang.reflect.Constructor;
@@ -259,7 +260,8 @@ class McpToolResultTest {
                                 null,
                                 null,
                                 null,
-                                null)
+                                null,
+                                RequestOrigin.unknown())
                         .resultType())
                 .as("a successful adaptation settles as the one completed result type")
                 .isEqualTo(McpResultType.COMPLETE);
@@ -306,7 +308,8 @@ class McpToolResultTest {
                                 null,
                                 null,
                                 null,
-                                null)
+                                null,
+                                RequestOrigin.unknown())
                         .resultType())
                 .as("a failed invocation never reaches a completed result")
                 .isEqualTo(McpResultType.NONE);
@@ -331,7 +334,8 @@ class McpToolResultTest {
                                 null,
                                 null,
                                 null,
-                                null)
+                                null,
+                                RequestOrigin.unknown())
                         .resultType())
                 .as("a tool execution error is still a completed result, distinct from a protocol-level failure")
                 .isEqualTo(McpResultType.COMPLETE);
@@ -356,7 +360,8 @@ class McpToolResultTest {
                 null,
                 null,
                 null,
-                null);
+                null,
+                RequestOrigin.unknown());
         assertThat(List.of(rejected))
                 .as("terminal event count for the rejected outcome")
                 .hasSize(1);
@@ -373,7 +378,8 @@ class McpToolResultTest {
                 null,
                 null,
                 null,
-                null);
+                null,
+                RequestOrigin.unknown());
         assertThat(List.of(failed))
                 .as("terminal event count for the failed outcome")
                 .hasSize(1);
@@ -390,7 +396,8 @@ class McpToolResultTest {
                 null,
                 null,
                 null,
-                null);
+                null,
+                RequestOrigin.unknown());
         assertThat(List.of(cancelled))
                 .as("terminal event count for the cancelled outcome")
                 .hasSize(1);

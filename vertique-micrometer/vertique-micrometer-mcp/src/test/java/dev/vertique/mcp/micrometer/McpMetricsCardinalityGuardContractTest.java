@@ -10,6 +10,7 @@ import dev.vertique.mcp.lifecycle.McpMethod;
 import dev.vertique.mcp.lifecycle.McpRequestCompletedEvent;
 import dev.vertique.mcp.lifecycle.McpRequestObservation;
 import dev.vertique.mcp.lifecycle.McpRequestTerminalEvent;
+import dev.vertique.security.origin.RequestOrigin;
 import io.micrometer.core.instrument.Meter;
 import io.micrometer.core.instrument.Tag;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -78,7 +79,8 @@ class McpMetricsCardinalityGuardContractTest {
                 null,
                 null,
                 null,
-                null);
+                null,
+                RequestOrigin.unknown());
         McpRequestObservation session = observer.open(STARTED_AT);
         session.onCompleted(McpRequestCompletedEvent.written(terminal, COMPLETED_AT));
 

@@ -18,5 +18,6 @@ public enum McpErrorType {
     SERIALIZATION,
     TIMEOUT,
     TRANSPORT,
-    INTERNAL
+    INTERNAL,
+    RATE_LIMIT
 }

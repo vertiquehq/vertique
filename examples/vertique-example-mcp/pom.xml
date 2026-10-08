@@ -27,8 +27,12 @@ SPDX-License-Identifier: EUPL-1.2
         <dependency><groupId>dev.vertique</groupId><artifactId>vertique-json</artifactId></dependency>
         <dependency><groupId>dev.vertique</groupId><artifactId>vertique-mcp-core</artifactId></dependency>
         <dependency><groupId>dev.vertique</groupId><artifactId>vertique-mcp-server</artifactId></dependency>
-        <dependency><groupId>dev.vertique</groupId><artifactId>vertique-rest-core</artifactId></dependency>
-        <dependency><groupId>dev.vertique</groupId><artifactId>vertique-rest-security</artifactId></dependency>
+        <dependency><groupId>dev.vertique</groupId><artifactId>vertique-rest-jaxrs</artifactId></dependency>
+        <dependency><groupId>dev.vertique</groupId><artifactId>vertique-rest-auth-jwt</artifactId></dependency>
+        <dependency><groupId>dev.vertique</groupId><artifactId>vertique-rate-limit-core</artifactId></dependency>
+        <dependency><groupId>dev.vertique</groupId><artifactId>vertique-rate-limit-aop</artifactId></dependency>
+        <dependency><groupId>dev.vertique</groupId><artifactId>vertique-rest-rate-limit</artifactId></dependency>
+        <dependency><groupId>dev.vertique</groupId><artifactId>vertique-resilience</artifactId></dependency>
         <dependency><groupId>dev.vertique</groupId><artifactId>vertique-sanitization</artifactId></dependency>
         <dependency><groupId>dev.vertique</groupId><artifactId>vertique-launcher</artifactId></dependency>
         <dependency><groupId>com.google.dagger</groupId><artifactId>dagger</artifactId></dependency>
@@ -37,12 +41,53 @@ SPDX-License-Identifier: EUPL-1.2
         <dependency><groupId>jakarta.inject</groupId><artifactId>jakarta.inject-api</artifactId></dependency>
         <dependency><groupId>jakarta.validation</groupId><artifactId>jakarta.validation-api</artifactId></dependency>
 
+        <!-- Test -->
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-application-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.vertx</groupId>
+            <artifactId>vertx-web-client</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.rest-assured</groupId>
+            <artifactId>rest-assured</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.assertj</groupId>
+            <artifactId>assertj-core</artifactId>
+            <version>3.27.7</version>
+            <scope>test</scope>
+        </dependency>
+
     </dependencies>
 
     <build>
         <plugins>
             <plugin><groupId>org.codehaus.mojo</groupId><artifactId>exec-maven-plugin</artifactId>
                 <configuration><mainClass>dev.vertique.launcher.VertiqueApplication</mainClass></configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <configuration>
+                    <annotationProcessorPaths combine.children="append">
+                        <path>
+                            <groupId>dev.vertique</groupId>
+                            <artifactId>vertique-codegen-resilience</artifactId>
+                            <version>${revision}</version>
+                        </path>
+                    </annotationProcessorPaths>
+                </configuration>
             </plugin>
         </plugins>
     </build>

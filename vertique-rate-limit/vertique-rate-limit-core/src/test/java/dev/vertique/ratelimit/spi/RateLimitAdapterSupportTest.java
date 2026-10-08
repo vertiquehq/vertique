@@ -17,6 +17,7 @@ import dev.vertique.ratelimit.TokenBucketRateLimit;
 import dev.vertique.ratelimit.exception.RateLimitRequestException;
 import dev.vertique.ratelimit.exception.RateLimitRequestFailure;
 import dev.vertique.security.SecurityIdentity;
+import dev.vertique.security.origin.RequestOrigin;
 import io.vertx.core.Vertx;
 import java.time.Duration;
 import java.util.List;
@@ -26,6 +27,7 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.function.Executable;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -143,10 +145,188 @@ class RateLimitAdapterSupportTest {
                 .isNotEqualTo(anonymousSharedKey);
     }
 
+    @Test
+    @DisplayName("canonical anonymous identity and empty resolver result share anonymous semantics")
+    void shouldTreatCanonicalAnonymousAndEmptyResolverAsSameState() {
+        RateLimitAdapterSupport empty = adapterSupport(Optional.empty(), Optional.empty());
+        RateLimitAdapterSupport canonical = adapterSupport(Optional.of(SecurityIdentity.anonymous()), Optional.empty());
+        SecurityIdentity authenticated = RateLimitIdentityFixtures.actorOnly("authenticated-user");
+        RateLimitAdapterSupport authenticatedSupport = adapterSupport(Optional.of(authenticated), Optional.empty());
+
+        assertThat(canonical.subjectKey(RateLimitSubject.ACTOR, AnonymousRateLimitPolicy.SHARED_BUCKET, List.of()))
+                .isEqualTo(empty.subjectKey(RateLimitSubject.ACTOR, AnonymousRateLimitPolicy.SHARED_BUCKET, List.of()))
+                .isNotEqualTo(authenticatedSupport.subjectKey(
+                        RateLimitSubject.ACTOR, AnonymousRateLimitPolicy.SHARED_BUCKET, List.of()));
+        assertThat(canonical.subjectKey(RateLimitSubject.ACTOR, AnonymousRateLimitPolicy.BYPASS, List.of()))
+                .isEmpty();
+        assertThat(empty.subjectKey(RateLimitSubject.ACTOR, AnonymousRateLimitPolicy.BYPASS, List.of()))
+                .isEmpty();
+    }
+
+    @Test
+    @DisplayName("origin-aware subjects use trusted client IP and preserve authenticated facets")
+    void shouldUseTrustedOriginForEveryOriginAwareMode() {
+        RequestOrigin trustedOrigin = origin("203.0.113.77");
+        RequestOrigin changedOrigin = origin("203.0.113.88");
+        SecurityIdentity actorWithClient = RateLimitIdentityFixtures.withClient("actor-1", "client-1");
+        SecurityIdentity actorWithoutClient = RateLimitIdentityFixtures.actorOnly("actor-1");
+
+        RateLimitKey ipKey = adapterSupport(Optional.of(actorWithClient), Optional.of(trustedOrigin))
+                .subjectKey(RateLimitSubject.IP, AnonymousRateLimitPolicy.BYPASS, List.of())
+                .orElseThrow();
+        RateLimitKey changedIpKey = adapterSupport(Optional.empty(), Optional.of(changedOrigin))
+                .subjectKey(RateLimitSubject.IP, AnonymousRateLimitPolicy.BYPASS, List.of())
+                .orElseThrow();
+        assertThat(ipKey).isNotEqualTo(changedIpKey);
+
+        RateLimitKey actorKey = adapterSupport(Optional.of(actorWithClient), Optional.of(trustedOrigin))
+                .subjectKey(RateLimitSubject.ACTOR_OR_IP, AnonymousRateLimitPolicy.BYPASS, List.of())
+                .orElseThrow();
+        RateLimitKey changedActorKey = adapterSupport(Optional.of(actorWithClient), Optional.of(changedOrigin))
+                .subjectKey(RateLimitSubject.ACTOR_OR_IP, AnonymousRateLimitPolicy.BYPASS, List.of())
+                .orElseThrow();
+        assertThat(actorKey).isEqualTo(changedActorKey);
+
+        RateLimitKey clientKey = adapterSupport(Optional.of(actorWithClient), Optional.of(trustedOrigin))
+                .subjectKey(RateLimitSubject.CLIENT_OR_IP, AnonymousRateLimitPolicy.BYPASS, List.of())
+                .orElseThrow();
+        RateLimitKey changedClientKey = adapterSupport(Optional.of(actorWithClient), Optional.of(changedOrigin))
+                .subjectKey(RateLimitSubject.CLIENT_OR_IP, AnonymousRateLimitPolicy.BYPASS, List.of())
+                .orElseThrow();
+        assertThat(clientKey).isEqualTo(changedClientKey);
+
+        RateLimitKey noClientFallback = adapterSupport(Optional.of(actorWithoutClient), Optional.of(trustedOrigin))
+                .subjectKey(RateLimitSubject.CLIENT_OR_IP, AnonymousRateLimitPolicy.BYPASS, List.of())
+                .orElseThrow();
+        RateLimitKey anonymousFallback = adapterSupport(
+                        Optional.of(SecurityIdentity.anonymous()), Optional.of(trustedOrigin))
+                .subjectKey(RateLimitSubject.CLIENT_OR_IP, AnonymousRateLimitPolicy.SHARED_BUCKET, List.of())
+                .orElseThrow();
+        assertThat(noClientFallback).isEqualTo(anonymousFallback);
+
+        RateLimitKey directPeerKey = adapterSupport(Optional.empty(), Optional.of(origin("198.51.100.10")))
+                .subjectKey(RateLimitSubject.IP, AnonymousRateLimitPolicy.BYPASS, List.of())
+                .orElseThrow();
+        RateLimitKey forwardedHeaderKey = adapterSupport(Optional.empty(), Optional.of(origin("198.51.100.11")))
+                .subjectKey(RateLimitSubject.IP, AnonymousRateLimitPolicy.BYPASS, List.of())
+                .orElseThrow();
+        assertThat(ipKey).isNotEqualTo(directPeerKey).isNotEqualTo(forwardedHeaderKey);
+    }
+
+    @Test
+    @DisplayName("origin-aware subjects fail closed when no captured origin exists")
+    void shouldFailClosedWhenOriginIsMissing() {
+        for (RateLimitSubject subject :
+                List.of(RateLimitSubject.IP, RateLimitSubject.ACTOR_OR_IP, RateLimitSubject.CLIENT_OR_IP)) {
+            assertThatThrownBy(() -> adapterSupport(Optional.empty(), Optional.empty())
+                            .subjectKey(subject, AnonymousRateLimitPolicy.SHARED_BUCKET, List.of()))
+                    .isInstanceOfSatisfying(RateLimitRequestException.class, thrown -> assertThat(thrown.reason())
+                            .isEqualTo(RateLimitRequestFailure.SUBJECT_UNRESOLVABLE));
+        }
+    }
+
+    @Test
+    @DisplayName("strict existing subjects retain their identity and failure semantics")
+    void shouldPreserveStrictExistingSubjects() {
+        SecurityIdentity actor = RateLimitIdentityFixtures.actorOnly("actor-1");
+        SecurityIdentity withSubject = RateLimitIdentityFixtures.withSubject("actor-1", "subject-1");
+        RateLimitAdapterSupport actorSupport = adapterSupport(Optional.of(actor), Optional.empty());
+        RateLimitAdapterSupport subjectSupport = adapterSupport(Optional.of(withSubject), Optional.empty());
+
+        assertThat(actorSupport.subjectKey(RateLimitSubject.NONE, AnonymousRateLimitPolicy.BYPASS, List.of()))
+                .contains(RateLimitKey.global());
+        assertThat(actorSupport.subjectKey(RateLimitSubject.ACTOR, AnonymousRateLimitPolicy.BYPASS, List.of()))
+                .isNotEqualTo(subjectSupport.subjectKey(
+                        RateLimitSubject.EFFECTIVE_PRINCIPAL, AnonymousRateLimitPolicy.BYPASS, List.of()));
+        assertThatThrownBy(() -> actorSupport.subjectKey(
+                        RateLimitSubject.CLIENT, AnonymousRateLimitPolicy.SHARED_BUCKET, List.of()))
+                .isInstanceOfSatisfying(RateLimitRequestException.class, thrown -> assertThat(thrown.reason())
+                        .isEqualTo(RateLimitRequestFailure.SUBJECT_UNRESOLVABLE));
+    }
+
     // --- Shared fixtures ---
 
     private static RateLimitAdapterSupport adapterSupport(Optional<SecurityIdentity> identity) {
-        return new RateLimitAdapterSupport(rateLimiters, () -> identity);
+        return adapterSupport(identity, Optional.empty());
+    }
+
+    private static RateLimitAdapterSupport adapterSupport(
+            Optional<SecurityIdentity> identity, Optional<RequestOrigin> origin) {
+        return new RateLimitAdapterSupport(rateLimiters, new RateLimitSubjectResolver() {
+            @Override
+            public Optional<SecurityIdentity> current() {
+                return identity;
+            }
+
+            @Override
+            public Optional<RequestOrigin> currentOrigin() {
+                return origin;
+            }
+        });
+    }
+
+    @Test
+    @DisplayName("IPv6 clients are keyed by their /64 so a subscriber cannot mint a bucket per address")
+    void shouldKeyIpv6ByNetworkPrefix() {
+        for (RateLimitSubject subject :
+                List.of(RateLimitSubject.IP, RateLimitSubject.ACTOR_OR_IP, RateLimitSubject.CLIENT_OR_IP)) {
+            RateLimitKey first = ipKey(subject, "2001:db8:1:2::1");
+            RateLimitKey sameSubnet = ipKey(subject, "2001:db8:1:2:ffff:ffff:ffff:ffff");
+            RateLimitKey otherSubnet = ipKey(subject, "2001:db8:1:3::1");
+
+            assertThat(sameSubnet)
+                    .as("same /64 shares a bucket for %s", subject)
+                    .isEqualTo(first);
+            assertThat(otherSubnet)
+                    .as("another /64 is separate for %s", subject)
+                    .isNotEqualTo(first);
+        }
+        assertThat(ipKey(RateLimitSubject.IP, "203.0.113.5"))
+                .as("IPv4 stays per-address")
+                .isNotEqualTo(ipKey(RateLimitSubject.IP, "203.0.113.6"));
+    }
+
+    @Test
+    @DisplayName("strict CLIENT applies the anonymous policy to the canonical anonymous identity")
+    void shouldApplyAnonymousPolicyToStrictClientForCanonicalAnonymous() {
+        RateLimitAdapterSupport canonical = adapterSupport(Optional.of(SecurityIdentity.anonymous()), Optional.empty());
+
+        assertThat(canonical.subjectKey(RateLimitSubject.CLIENT, AnonymousRateLimitPolicy.BYPASS, List.of()))
+                .isEmpty();
+        assertThat(canonical.subjectKey(RateLimitSubject.CLIENT, AnonymousRateLimitPolicy.SHARED_BUCKET, List.of()))
+                .isPresent();
+    }
+
+    @Test
+    @DisplayName("an origin whose client IP could not be resolved fails closed for every origin-aware subject")
+    void shouldFailClosedWhenTheClientIpIsUnknown() {
+        for (RateLimitSubject subject :
+                List.of(RateLimitSubject.IP, RateLimitSubject.ACTOR_OR_IP, RateLimitSubject.CLIENT_OR_IP)) {
+            RateLimitAdapterSupport support = adapterSupport(Optional.empty(), Optional.of(RequestOrigin.unknown()));
+
+            assertThatThrownBy(() -> support.subjectKey(subject, AnonymousRateLimitPolicy.SHARED_BUCKET, List.of()))
+                    .as("subject %s", subject)
+                    .isInstanceOf(RateLimitRequestException.class);
+        }
+    }
+
+    private static RateLimitKey ipKey(RateLimitSubject subject, String clientIp) {
+        return adapterSupport(Optional.empty(), Optional.of(origin(clientIp)))
+                .subjectKey(subject, AnonymousRateLimitPolicy.SHARED_BUCKET, List.of())
+                .orElseThrow();
+    }
+
+    private static RequestOrigin origin(String clientIp) {
+        return new RequestOrigin(
+                "198.51.100.10",
+                44321,
+                List.of("203.0.113.77"),
+                0,
+                false,
+                clientIp,
+                "https",
+                "api.example.test",
+                Optional.empty());
     }
 
     private static RateLimitPolicy probePolicy() {
