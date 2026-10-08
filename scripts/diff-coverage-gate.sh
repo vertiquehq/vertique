@@ -4,7 +4,8 @@
 #
 # Diff coverage gate: fails when the lines a change touches are covered below
 # the threshold. Reads the merged JaCoCo XML that vertique-coverage-report
-# produces during "mvnw verify" and compares against origin/main, so only
+# produces during "mvnw verify" and compares against origin/main (CI passes the pull request's own base via
+# DIFF_COVER_COMPARE_BRANCH), so only
 # changed lines are gated — legacy code is never punished, new code is always
 # measured. Locally runnable with the exact CI semantics:
 #
