@@ -81,4 +81,21 @@ SPDX-License-Identifier: EUPL-1.2
             <scope>test</scope>
         </dependency>
     </dependencies>
+
+    <build>
+        <plugins>
+            <!-- HealthCheckHandlerTest's encoder-breaking fixture must survive JsonObject.mapFrom
+                 before it reaches encode()'s nesting limit; where mapFrom overflows depends on the
+                 fork's stack size, so pin it rather than rest on the ambient JVM default. Reproduces
+                 the parent argLine (JaCoCo late-replacement + Mockito premain) and adds the stack
+                 size; a bare -D would drop both. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <argLine>@{argLine} -javaagent:${project.build.directory}/mockito-agent.jar -Xss2m</argLine>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
 </project>
