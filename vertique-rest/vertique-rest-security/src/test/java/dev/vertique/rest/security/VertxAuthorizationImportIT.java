@@ -23,6 +23,7 @@ import dev.vertique.security.resolver.SecurityIdentityResolver;
 import dev.vertique.security.runtime.events.SecurityEventEmitter;
 import dev.vertique.security.verification.CustomVerificationSource;
 import io.vertx.core.Future;
+import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
 import io.vertx.core.http.HttpServer;
 import io.vertx.core.json.JsonObject;
@@ -95,6 +96,9 @@ public class VertxAuthorizationImportIT {
     /** Id of the provider wired behind {@code /failing-importer}; must never reach the client. */
     private static final String FAILING_PROVIDER_ID = "teams-down";
 
+    /** Short enough to keep the hung-provider scenario fast; the scenario awaits several times this. */
+    private static final long HUNG_PROVIDER_TIMEOUT_MS = 200L;
+
     private static int port;
     private static HttpServer server;
     private static WebClient client;
@@ -144,14 +148,31 @@ public class VertxAuthorizationImportIT {
                 emitter,
                 contextHolder,
                 Optional.of(new VertxAuthorizationImporter(
-                        Set.of(grantingProvider("teams", RoleBasedAuthorization.create("team-lead"))), Set.of())));
+                        Set.of(grantingProvider("teams", RoleBasedAuthorization.create("team-lead"))),
+                        Set.of(),
+                        TestResilience.shared(),
+                        AuthorizationImportConfig.defaults())));
         IdentityResolutionMiddleware withoutImporter =
                 middleware(securityRuntime, emitter, contextHolder, Optional.empty());
         IdentityResolutionMiddleware failingImporter = middleware(
                 securityRuntime,
                 emitter,
                 contextHolder,
-                Optional.of(new VertxAuthorizationImporter(Set.of(failingProvider(FAILING_PROVIDER_ID)), Set.of())));
+                Optional.of(new VertxAuthorizationImporter(
+                        Set.of(failingProvider(FAILING_PROVIDER_ID)),
+                        Set.of(),
+                        TestResilience.shared(),
+                        AuthorizationImportConfig.defaults())));
+
+        IdentityResolutionMiddleware hungImporter = middleware(
+                securityRuntime,
+                emitter,
+                contextHolder,
+                Optional.of(new VertxAuthorizationImporter(
+                        Set.of(hungProvider("teams-hung")),
+                        Set.of(),
+                        Resilience.create(vertx),
+                        new AuthorizationImportConfig(HUNG_PROVIDER_TIMEOUT_MS))));
 
         OpenAPIContract.from(vertx, "vertx-authz-import-test-openapi.json")
                 .compose(contract -> {
@@ -161,6 +182,7 @@ public class VertxAuthorizationImportIT {
                     wire(routerBuilder.getRoute("withImporter"), withImporter, enforcer, policy);
                     wire(routerBuilder.getRoute("withoutImporter"), withoutImporter, enforcer, policy);
                     wire(routerBuilder.getRoute("failingImporter"), failingImporter, enforcer, policy);
+                    wire(routerBuilder.getRoute("hungImporter"), hungImporter, enforcer, policy);
 
                     Router apiRouter = routerBuilder.createRouter();
                     Router root = Router.router(vertx);
@@ -294,6 +316,32 @@ public class VertxAuthorizationImportIT {
                 })));
     }
 
+    /**
+     * A provider whose future never completes must not hold the request: the importer's bound turns it
+     * into the same 503 as a failing provider, with the same generic detail.
+     *
+     * @param ctx the test context
+     */
+    @Test
+    @DisplayName("provider that never completes yields 503 with the generic detail once the bound elapses")
+    void hungProviderYieldsServiceUnavailable(VertxTestContext ctx) {
+        get("/hung-importer", "alice|viewer")
+                .onComplete(ctx.succeeding(resp -> ctx.verify(() -> {
+                    assertEquals(
+                            503,
+                            resp.status(),
+                            () -> "a hung authorization provider must surface as 503; got " + resp.status()
+                                    + diagnosticSuffix(resp));
+                    assertTrue(
+                            resp.body().contains("Authorization is temporarily unavailable"),
+                            () -> "the 503 ProblemDetail must carry the generic detail; got " + resp.body());
+                    assertFalse(
+                            resp.body().contains("teams-hung"),
+                            () -> "the 503 body must never name the hung provider id; got " + resp.body());
+                    ctx.completeNow();
+                })));
+    }
+
     // --- Assembly helpers ---
 
     /**
@@ -415,6 +463,20 @@ public class VertxAuthorizationImportIT {
      * @param id the provider id
      * @return the failing provider
      */
+    private static AuthorizationProvider hungProvider(String id) {
+        return new AuthorizationProvider() {
+            @Override
+            public String getId() {
+                return id;
+            }
+
+            @Override
+            public Future<Void> getAuthorizations(User user) {
+                return Promise.<Void>promise().future();
+            }
+        };
+    }
+
     private static AuthorizationProvider failingProvider(String id) {
         return new AuthorizationProvider() {
             @Override

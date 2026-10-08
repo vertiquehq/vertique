@@ -13,10 +13,6 @@ import dev.vertique.core.context.ContextHolder;
 import dev.vertique.core.context.ContextValue;
 import dev.vertique.core.context.DispatchBoundary;
 import dev.vertique.resilience.Resilience;
-import dev.vertique.resilience.spi.ResilienceObserver;
-import dev.vertique.resilience.spi.event.ExecutionCompleted;
-import dev.vertique.resilience.spi.event.ResilienceEvent;
-import dev.vertique.resilience.spi.event.ResilienceOutcomeCategory;
 import dev.vertique.rest.core.security.SecurityPolicy;
 import dev.vertique.rest.core.security.SecurityRuntime;
 import dev.vertique.security.AuthenticationState;
@@ -47,7 +43,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
-import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import org.junit.jupiter.api.DisplayName;
@@ -394,7 +389,7 @@ class SecurityPolicyEnforcerGateDeadlineTest {
     private static void withObservedRuntime(ObservedBody body) throws Exception {
         Vertx vertx = Vertx.vertx();
         try {
-            ObservedEvents observed = new ObservedEvents();
+            ObservedResilienceEvents observed = new ObservedResilienceEvents();
             body.run(Resilience.create(vertx, Set.of(observed)), observed);
         } finally {
             vertx.close().toCompletionStage().toCompletableFuture().get(AWAIT_BOUND_MS, TimeUnit.MILLISECONDS);
@@ -403,41 +398,7 @@ class SecurityPolicyEnforcerGateDeadlineTest {
 
     @FunctionalInterface
     private interface ObservedBody {
-        void run(Resilience resilience, ObservedEvents observed) throws Exception;
-    }
-
-    /** Records every event a {@link Resilience} runtime publishes. */
-    private static final class ObservedEvents implements ResilienceObserver {
-        private final List<ResilienceEvent> events = new CopyOnWriteArrayList<>();
-
-        @Override
-        public void onEvent(ResilienceEvent event) {
-            events.add(event);
-        }
-
-        List<ResilienceEvent> all() {
-            return List.copyOf(events);
-        }
-
-        /** Counts completed executions that ended in a timeout, waiting up to {@code waitMs} for one. */
-        long timeouts(long waitMs) throws InterruptedException {
-            long deadline = System.nanoTime() + waitMs * 1_000_000L;
-            while (System.nanoTime() < deadline) {
-                if (countTimeouts() > 0) {
-                    break;
-                }
-                Thread.sleep(10L);
-            }
-            return countTimeouts();
-        }
-
-        private long countTimeouts() {
-            return events.stream()
-                    .filter(ExecutionCompleted.class::isInstance)
-                    .map(ExecutionCompleted.class::cast)
-                    .filter(e -> e.outcome() == ResilienceOutcomeCategory.TIMEOUT)
-                    .count();
-        }
+        void run(Resilience resilience, ObservedResilienceEvents observed) throws Exception;
     }
 
     // --- Shared fixture construction ---

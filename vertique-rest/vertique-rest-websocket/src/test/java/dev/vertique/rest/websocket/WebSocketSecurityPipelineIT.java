@@ -17,6 +17,7 @@ import dev.vertique.correlation.CorrelationContextFactory;
 import dev.vertique.resilience.Resilience;
 import dev.vertique.rest.core.middleware.RequestContextLifecycle;
 import dev.vertique.rest.core.security.RouteAuthHandler;
+import dev.vertique.rest.security.AuthorizationImportConfig;
 import dev.vertique.rest.security.DefaultChannelIdentityManager;
 import dev.vertique.rest.security.DefaultSecurityClaimMapper;
 import dev.vertique.rest.security.HolderBackedSecurityRuntime;
@@ -495,7 +496,9 @@ public class WebSocketSecurityPipelineIT {
     @DisplayName("provider-granted role authorizes a constrained WS endpoint via the import-aware factory")
     void providerGrantedRoleAuthorizesConstrainedWebSocketEndpoint(Vertx vertx, VertxTestContext ctx) {
         WebSocketMount.Factory factory = importAwareFactory(Optional.of(new VertxAuthorizationImporter(
-                Set.of(grantingProvider("teams", RoleBasedAuthorization.create("team-lead"))))));
+                Set.of(grantingProvider("teams", RoleBasedAuthorization.create("team-lead"))),
+                TestResilience.shared(),
+                AuthorizationImportConfig.defaults())));
 
         startTeamServer(vertx, factory)
                 .onComplete(ctx.succeeding(srv -> connectWithToken(srv.actualPort(), "/ws/team", TOKEN_ALICE_VIEWER)

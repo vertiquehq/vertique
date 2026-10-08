@@ -906,7 +906,10 @@ class IdentityResolutionMiddlewareTest {
         void importerPresentMergesProviderClaims(Vertx vertx, VertxTestContext ctx) {
             CapturingSecurityRuntime runtime = new CapturingSecurityRuntime();
             VertxAuthorizationImporter importer = new VertxAuthorizationImporter(
-                    Set.of(grantingProvider("p1", RoleBasedAuthorization.create("provider-role"))), Set.of());
+                    Set.of(grantingProvider("p1", RoleBasedAuthorization.create("provider-role"))),
+                    Set.of(),
+                    TestResilience.shared(),
+                    AuthorizationImportConfig.defaults());
             IdentityResolutionMiddleware mw = middleware(runtime, Optional.of(importer));
 
             Router router = Router.router(vertx);
@@ -942,7 +945,8 @@ class IdentityResolutionMiddlewareTest {
         void importerNotInvokedForAnonymousRequest(Vertx vertx, VertxTestContext ctx) {
             CapturingSecurityRuntime runtime = new CapturingSecurityRuntime();
             InvocationRecordingProvider provider = new InvocationRecordingProvider();
-            VertxAuthorizationImporter importer = new VertxAuthorizationImporter(Set.of(provider), Set.of());
+            VertxAuthorizationImporter importer = new VertxAuthorizationImporter(
+                    Set.of(provider), Set.of(), TestResilience.shared(), AuthorizationImportConfig.defaults());
             IdentityResolutionMiddleware mw = middleware(runtime, Optional.of(importer));
 
             Router router = Router.router(vertx);
@@ -979,7 +983,8 @@ class IdentityResolutionMiddlewareTest {
                     return Future.failedFuture(new IllegalStateException("provider down"));
                 }
             };
-            VertxAuthorizationImporter importer = new VertxAuthorizationImporter(Set.of(failing), Set.of());
+            VertxAuthorizationImporter importer = new VertxAuthorizationImporter(
+                    Set.of(failing), Set.of(), TestResilience.shared(), AuthorizationImportConfig.defaults());
             IdentityResolutionMiddleware mw = middleware(runtime, Optional.of(importer));
 
             Router router = Router.router(vertx);
@@ -1037,7 +1042,8 @@ class IdentityResolutionMiddlewareTest {
                     return Future.failedFuture(new IllegalStateException("provider down"));
                 }
             };
-            VertxAuthorizationImporter importer = new VertxAuthorizationImporter(Set.of(failing), Set.of());
+            VertxAuthorizationImporter importer = new VertxAuthorizationImporter(
+                    Set.of(failing), Set.of(), TestResilience.shared(), AuthorizationImportConfig.defaults());
             IdentityResolutionMiddleware mw = middleware(runtime, Optional.of(importer));
 
             Router router = Router.router(vertx);
@@ -1159,9 +1165,12 @@ class IdentityResolutionMiddlewareTest {
             // Safe 1-arg constructor: "jwt-claims" is excluded by default. The sentinel provider is
             // NOT excluded — its imported claim proves the importer actually ran, making the
             // "no PERMISSION twin" assertion non-vacuous.
-            VertxAuthorizationImporter importer = new VertxAuthorizationImporter(Set.of(
-                    grantingProvider("jwt-claims", PermissionBasedAuthorization.create("read")),
-                    grantingProvider("p2", RoleBasedAuthorization.create("sentinel-role"))));
+            VertxAuthorizationImporter importer = new VertxAuthorizationImporter(
+                    Set.of(
+                            grantingProvider("jwt-claims", PermissionBasedAuthorization.create("read")),
+                            grantingProvider("p2", RoleBasedAuthorization.create("sentinel-role"))),
+                    TestResilience.shared(),
+                    AuthorizationImportConfig.defaults());
             IdentityResolutionMiddleware mw = middleware(runtime, Optional.of(importer));
 
             Router router = Router.router(vertx);
