@@ -420,8 +420,10 @@ forwards a different one of the duplicated values than the one this codec observ
 `_meta` shape and supported protocol version must satisfy Phase-1 policy,
 and `tools/call.params` must carry neither reserved multi-round-trip field
 `inputResponses`/`requestState`. A missing applicable header, header/body disagreement, or Phase-1
-negotiation-policy violation is exclusively `-32020` *Header/body mismatch*, mapped to HTTP 400
-through the bounded, capped JSON writer. Negotiation still completes before the request-interceptor
+negotiation-policy violation is exclusively `-32020`, mapped to HTTP 400 through the bounded,
+capped JSON writer. Its `message` is *Header/body mismatch*, except *Unsupported protocol version*
+for an unsupported version; see [Negotiation rejection reasons](#negotiation-rejection-reasons)
+for the `error.data.reason` that identifies the cause. Negotiation still completes before the request-interceptor
 stage below and every later application stage — see
 [Request interceptor stage](#request-interceptor-stage).
 
@@ -436,22 +438,29 @@ boundary and owns the HTTP/router composition only.
 
 ### Negotiation rejection reasons
 
-The `-32020` code, the HTTP 400 status and the `message` text are the same for every cause, and the
-text is not always accurate for the cause (a rejected `requestState` is not a header mismatch). Every
-rejection therefore also carries a bounded `error.data.reason`. **Clients should switch on `reason`,
-not on `message`.** The values are a closed set of constants; a reason never repeats a header name,
-header value, field name or any other text from the request.
+The `-32020` code and the HTTP 400 status are the same for every cause. The `message` is
+`Header/body mismatch` for every cause except `UNSUPPORTED_VERSION`, which uses
+`Unsupported protocol version`, and the text is not always accurate for the cause (a rejected
+`requestState` is not a header mismatch). Every rejection therefore also carries a bounded
+`error.data.reason`. **Clients should switch on `reason`, not on `message`.** The values are a closed
+set of constants; a reason never repeats a header name, header value, field name or any other text
+from the request. The set may grow, so a client must treat a `reason` it does not recognize as a
+generic negotiation failure.
 
 | `error.data.reason` | Cause | What the client should do |
 | --- | --- | --- |
 | `MISSING_HEADER` | A required routing header is absent: `MCP-Protocol-Version`, `Mcp-Method`, or `Mcp-Name` on `tools/call`. | Send every required header. |
 | `HEADER_MISMATCH` | A required routing header is present but differs from its body value, or is sent more than once (even with identical values). | Send each header exactly once, equal to its body mirror. |
-| `META_SHAPE` | `params._meta` is absent or not an object; its `io.modelcontextprotocol/protocolVersion` is absent, blank, not a string, longer than 64 characters or contains control characters; or its `io.modelcontextprotocol/clientCapabilities` is absent or not an object. | Send a well-formed `_meta` object. |
+| `META_SHAPE` | `params._meta.io.modelcontextprotocol/protocolVersion` is a blank string, longer than 64 characters, or contains control characters. | Send a non-blank protocol-version string of at most 64 characters with no control characters. |
 | `RESERVED_FIELD` | A `tools/call` carries `inputResponses` or `requestState`, which this server does not implement. | Do not send them. |
 | `UNSUPPORTED_VERSION` | The version is well-formed but not supported. | Choose a version from `error.data.supported` and retry. |
 
-Several faults can coexist, and the first failing check decides the reason. The checks run in this
-order: `_meta` shape, `protocolVersion` shape, supported version, `clientCapabilities`, reserved
+A request whose `params._meta` is absent or not an object, or whose `protocolVersion` is missing or
+not a string, or whose `clientCapabilities` is missing or not an object, violates the official
+params schema and is rejected earlier as `-32602` *Invalid params*, never as `-32020`.
+
+Several faults can coexist, and the first failing check decides the reason. After official params
+validation the checks run in this order: `protocolVersion` bounds, supported version, reserved
 fields, then the headers (`MCP-Protocol-Version`, `Mcp-Method`, `Mcp-Name`).
 
 For every cause except `UNSUPPORTED_VERSION` the whole `data` object is `{"reason": "<value>"}`. An
@@ -513,7 +522,8 @@ and before any tool is resolved, authorized, or passed to the application input 
 failure never reaches this stage; it settles through
 [Bounded JSON-RPC envelope codec](#bounded-json-rpc-envelope-codec) exactly as before. An official
 params failure returns HTTP 400 JSON-RPC `-32602` *Invalid params* before this stage, while a
-header/body or Phase-1 negotiation failure returns HTTP 400 JSON-RPC `-32020` *Header/body mismatch*.
+header/body or Phase-1 negotiation failure returns HTTP 400 JSON-RPC `-32020` (*Header/body mismatch*,
+or *Unsupported protocol version* for an unsupported version).
 Neither this interceptor stage nor anything after it observes either rejected request.
 
 Contribute `McpRequestInterceptor` through Dagger set multibinding (`McpServerModule`). The

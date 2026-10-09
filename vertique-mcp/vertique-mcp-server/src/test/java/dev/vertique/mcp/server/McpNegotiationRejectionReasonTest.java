@@ -223,10 +223,25 @@ class McpNegotiationRejectionReasonTest {
         assertThat(wire.rawBody()).doesNotContain("script").doesNotContain("evil");
     }
 
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("schemaRejectedWireRows")
+    @DisplayName("shapes the official params schema rejects first are -32602, not -32020")
+    void shouldRejectSchemaShapesAsInvalidParamsBeforeNegotiation(Row row) {
+        Wire wire = drive(row.body(), row.headers());
+
+        assertThat(wire.status()).isEqualTo(400);
+        JsonObject error = wire.body().getJsonObject("error");
+        assertThat(error.getInteger("code")).isEqualTo(-32602);
+        assertThat(error.getString("message")).isEqualTo(row.expectedMessage());
+        assertThat(error.containsKey("data")).isFalse();
+    }
+
     // --- Rows ---
 
     private static Stream<Row> codecRows() {
-        return Stream.concat(Stream.concat(metaRows(), reservedRows()), Stream.concat(headerRows(), precedenceRows()));
+        return Stream.concat(
+                Stream.concat(metaRows(), reservedRows()),
+                Stream.concat(headerRows(), Stream.concat(headerOrderRows(), precedenceRows())));
     }
 
     private static Stream<Row> metaRows() {
@@ -341,6 +356,24 @@ class McpNegotiationRejectionReasonTest {
                         HEADER_MISMATCH));
     }
 
+    /**
+     * Several header faults at once: the protocol-version header is checked first, then the method
+     * header, then the name header. Each row would report {@code MISSING_HEADER} if the order changed.
+     */
+    private static Stream<Row> headerOrderRows() {
+        return Stream.of(
+                Row.codec(
+                        "mismatched protocol-version header outranks missing Mcp-Method",
+                        discover(),
+                        headers("server/discover", null).remove("Mcp-Method").set("MCP-Protocol-Version", "1999-01-01"),
+                        HEADER_MISMATCH),
+                Row.codec(
+                        "mismatched Mcp-Method outranks missing Mcp-Name",
+                        callBody(callParams()),
+                        headers("tools/call", null).set("Mcp-Method", "tools/list"),
+                        HEADER_MISMATCH));
+    }
+
     /** Several faults at once: the first failing check keeps deciding, as before. */
     private static Stream<Row> precedenceRows() {
         return Stream.of(
@@ -399,52 +432,95 @@ class McpNegotiationRejectionReasonTest {
 
     /** The causes a client can trigger through the dispatcher: the official params schema passes. */
     private static Stream<Row> wireRows() {
+        return Stream.concat(
+                headerOrderRows(),
+                Stream.of(
+                        Row.codec(
+                                "blank protocolVersion",
+                                discover(meta().put(META_VERSION, "   ")),
+                                headers("server/discover", null).set("MCP-Protocol-Version", "   "),
+                                META_SHAPE),
+                        Row.codec(
+                                "oversized protocolVersion",
+                                discover(meta().put(META_VERSION, "9".repeat(65))),
+                                headers("server/discover", null).set("MCP-Protocol-Version", "9".repeat(65)),
+                                META_SHAPE),
+                        Row.codec(
+                                "missing MCP-Protocol-Version",
+                                discover(),
+                                headers("server/discover", null).remove("MCP-Protocol-Version"),
+                                MISSING_HEADER),
+                        Row.codec(
+                                "mismatched MCP-Protocol-Version",
+                                discover(),
+                                headers("server/discover", null).set("MCP-Protocol-Version", "1999-01-01"),
+                                HEADER_MISMATCH),
+                        Row.codec(
+                                "missing Mcp-Method",
+                                discover(),
+                                headers("server/discover", null).remove("Mcp-Method"),
+                                MISSING_HEADER),
+                        Row.codec(
+                                "mismatched Mcp-Method",
+                                discover(),
+                                headers("server/discover", null).set("Mcp-Method", "tools/list"),
+                                HEADER_MISMATCH),
+                        Row.codec(
+                                "missing Mcp-Name on tools/call",
+                                callBody(callParams()),
+                                headers("tools/call", null),
+                                MISSING_HEADER),
+                        Row.codec(
+                                "mismatched Mcp-Name on tools/call",
+                                callBody(callParams()),
+                                headers("tools/call", "other"),
+                                HEADER_MISMATCH),
+                        Row.codec(
+                                "reserved requestState",
+                                callBody(callParams().put("requestState", "opaque")),
+                                headers("tools/call", TOOL),
+                                RESERVED_FIELD),
+                        Row.codec(
+                                "control character in protocolVersion",
+                                discover(meta().put(META_VERSION, VERSION + "\t")),
+                                headers("server/discover", null).set("MCP-Protocol-Version", VERSION + "\t"),
+                                META_SHAPE),
+                        Row.unsupported(
+                                "unsupported protocolVersion",
+                                discover(meta().put(META_VERSION, "1999-01-01")),
+                                headers("server/discover", null).set("MCP-Protocol-Version", "1999-01-01"),
+                                "1999-01-01")));
+    }
+
+    /**
+     * Shapes the codec also guards but the official params schema rejects first, so a client never
+     * sees {@code -32020} for them.
+     */
+    private static Stream<Row> schemaRejectedWireRows() {
         return Stream.of(
-                Row.codec(
-                        "missing MCP-Protocol-Version",
-                        discover(),
-                        headers("server/discover", null).remove("MCP-Protocol-Version"),
-                        MISSING_HEADER),
-                Row.codec(
-                        "mismatched MCP-Protocol-Version",
-                        discover(),
-                        headers("server/discover", null).set("MCP-Protocol-Version", "1999-01-01"),
-                        HEADER_MISMATCH),
-                Row.codec(
-                        "missing Mcp-Method",
-                        discover(),
-                        headers("server/discover", null).remove("Mcp-Method"),
-                        MISSING_HEADER),
-                Row.codec(
-                        "mismatched Mcp-Method",
-                        discover(),
-                        headers("server/discover", null).set("Mcp-Method", "tools/list"),
-                        HEADER_MISMATCH),
-                Row.codec(
-                        "missing Mcp-Name on tools/call",
-                        callBody(callParams()),
-                        headers("tools/call", null),
-                        MISSING_HEADER),
-                Row.codec(
-                        "mismatched Mcp-Name on tools/call",
-                        callBody(callParams()),
-                        headers("tools/call", "other"),
-                        HEADER_MISMATCH),
-                Row.codec(
-                        "reserved requestState",
-                        callBody(callParams().put("requestState", "opaque")),
-                        headers("tools/call", TOOL),
-                        RESERVED_FIELD),
-                Row.codec(
-                        "control character in protocolVersion",
-                        discover(meta().put(META_VERSION, VERSION + "\t")),
-                        headers("server/discover", null).set("MCP-Protocol-Version", VERSION + "\t"),
-                        META_SHAPE),
-                Row.unsupported(
-                        "unsupported protocolVersion",
-                        discover(meta().put(META_VERSION, "1999-01-01")),
-                        headers("server/discover", null).set("MCP-Protocol-Version", "1999-01-01"),
-                        "1999-01-01"));
+                schemaRejected("absent _meta", list(null), headers("tools/list", null)),
+                schemaRejected(
+                        "non-object _meta",
+                        list(null).put("params", new JsonObject().put("_meta", "not-an-object")),
+                        headers("tools/list", null)),
+                schemaRejected(
+                        "missing protocolVersion", list(without(meta(), META_VERSION)), headers("tools/list", null)),
+                schemaRejected(
+                        "non-string protocolVersion",
+                        list(meta().put(META_VERSION, 20260728)),
+                        headers("tools/list", null)),
+                schemaRejected(
+                        "missing clientCapabilities",
+                        list(without(meta(), META_CAPABILITIES)),
+                        headers("tools/list", null)),
+                schemaRejected(
+                        "non-object clientCapabilities",
+                        list(meta().put(META_CAPABILITIES, "none")),
+                        headers("tools/list", null)));
+    }
+
+    private static Row schemaRejected(String name, JsonObject body, MultiMap headers) {
+        return new Row(name, body, headers, null, "Invalid params", null);
     }
 
     // --- Fixture ---

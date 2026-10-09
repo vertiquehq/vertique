@@ -276,10 +276,16 @@ final class McpProtocolCodec {
      * official-schema check above does not catch this either; it is Phase 1's own policy, not a schema
      * violation.
      *
-     * <p><strong>Rejection reason.</strong> Every rejection keeps the same code and message, and
-     * carries a {@link NegotiationReason} as {@code error.data.reason}. The checks run in the order
-     * above and the first failing check decides the reason. Each reason is a fixed constant: it never
-     * echoes a header, field name, or value from the request.
+     * <p><strong>Rejection reason.</strong> Every rejection is code {@code -32020} and carries a
+     * {@link NegotiationReason} as {@code error.data.reason}. The message is {@value
+     * #MSG_NEGOTIATION_MISMATCH} except for an unsupported version, which uses {@value
+     * #MSG_UNSUPPORTED_PROTOCOL_VERSION}. The checks run in the order above and the first failing
+     * check decides the reason. Each reason is a fixed constant: it never echoes a header, field
+     * name, or value from the request. Through the HTTP dispatcher an absent or non-object {@code
+     * _meta}, a missing or non-string {@code protocolVersion}, and a missing or non-object {@code
+     * clientCapabilities} never reach this method, because {@link #validateOfficialParams} rejects
+     * them as {@code -32602} first; those branches are defensive and keep their reason for a caller
+     * that negotiates without that step.
      *
      * @param envelope a successfully decoded envelope, as {@link Decoded#envelope()} carries it
      * @param headers the request's HTTP headers
@@ -505,9 +511,12 @@ final class McpProtocolCodec {
         HEADER_MISMATCH,
 
         /**
-         * {@code params._meta} is absent or not an object, its {@code
-         * io.modelcontextprotocol/protocolVersion} is absent or not a non-blank, bounded string, or
-         * its {@code io.modelcontextprotocol/clientCapabilities} is absent or not an object.
+         * The {@code io.modelcontextprotocol/protocolVersion} string is blank, over the length
+         * bound, or contains a control character. The same reason also covers an absent or
+         * non-object {@code params._meta}, a missing or non-string {@code protocolVersion}, and a
+         * missing or non-object {@code io.modelcontextprotocol/clientCapabilities}, which the HTTP
+         * dispatcher never reports as {@code -32020} because the official params schema rejects them
+         * first as {@code -32602}.
          */
         META_SHAPE,
 
