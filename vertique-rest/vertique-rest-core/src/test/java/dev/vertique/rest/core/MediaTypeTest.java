@@ -277,4 +277,63 @@ class MediaTypeTest {
         MediaType fromValueOf = MediaType.valueOf("application/json");
         assertEquals(fromParse, fromValueOf);
     }
+
+    // --- Quote-aware parsing ---
+
+    @Test
+    @DisplayName("quoted semicolon and comma stay inside the parameter value, which is returned unquoted")
+    void quotedParameterValueIsUnquoted() {
+        MediaType mt = MediaType.parse("application/json;profile=\"a;b,c\";q=0.5");
+        assertNotNull(mt);
+        assertEquals("a;b,c", mt.parameters().get("profile"));
+        assertEquals(0.5, mt.qualityFactor(), 0.0001);
+    }
+
+    @Test
+    @DisplayName("escaped characters inside a quoted parameter value are unescaped")
+    void quotedParameterValueIsUnescaped() {
+        MediaType mt = MediaType.parse("text/plain;title=\"say \\\"hi\\\"\"");
+        assertNotNull(mt);
+        assertEquals("say \"hi\"", mt.parameters().get("title"));
+    }
+
+    @Test
+    @DisplayName("an unterminated quoted string makes the media type invalid")
+    void unterminatedQuoteReturnsNull() {
+        assertNull(MediaType.parse("application/json;profile=\"a,b"));
+    }
+
+    @Test
+    @DisplayName("an invalid, quoted or out-of-range q makes the media type invalid instead of defaulting to 1.0")
+    void invalidQualityReturnsNull() {
+        assertNull(MediaType.parse("application/json;q=abc"));
+        assertNull(MediaType.parse("application/json;q=\"0\""));
+        assertNull(MediaType.parse("application/json;q=1.5"));
+        assertNull(MediaType.parse("application/json;q=-1"));
+    }
+
+    @Test
+    @DisplayName("a comma outside quotes is not a separator for a single media type")
+    void commaIsNotSeparatorForSingleMediaType() {
+        MediaType mt = MediaType.parse("application/json, text/plain");
+        assertNotNull(mt);
+        assertEquals("application", mt.type());
+        assertEquals("json, text/plain", mt.subtype());
+    }
+
+    @Test
+    @DisplayName("toString quotes parameter values that are not tokens so the output parses back")
+    void toStringQuotesNonTokenValues() {
+        MediaType mt = MediaType.parse("application/json;profile=\"a,b\";charset=utf-8;note=\"\\\"x\\\"\"");
+        assertNotNull(mt);
+        String text = mt.toString();
+        assertEquals("application/json;profile=\"a,b\";charset=utf-8;note=\"\\\"x\\\"\"", text);
+        assertEquals(mt.parameters(), MediaType.parse(text).parameters());
+    }
+
+    @Test
+    @DisplayName("toString quotes an empty parameter value")
+    void toStringQuotesEmptyValue() {
+        assertEquals("a/b;x=\"\"", MediaType.parse("a/b;x=\"\"").toString());
+    }
 }

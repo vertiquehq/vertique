@@ -16,7 +16,8 @@ import java.util.Objects;
  * subtype are stored and compared in lowercase.
  *
  * <p>Use {@link #parse(String)} or {@link #valueOf(String)} to create instances from
- * raw header strings such as {@code "application/json;charset=utf-8;q=0.8"}.
+ * raw header strings such as {@code "application/json;charset=utf-8;q=0.8"}. Parsing is
+ * quote-aware (see {@link HeaderElement}), and quoted-string parameter values are exposed unquoted.
  *
  * <p>Wildcard matching is supported via {@link #isCompatible(MediaType)}: {@code *}{@code /*}
  * matches any media type, and {@code application/*} matches any application subtype.
@@ -51,22 +52,33 @@ public final class MediaType {
      * Parses a raw media type string into a {@code MediaType} instance.
      *
      * <p>The raw string must contain at least one {@code /} separator between type and subtype.
-     * Parameters are parsed from {@code key=value} tokens separated by semicolons. Whitespace
-     * around semicolons and equals signs is trimmed. The special {@code q} parameter is
+     * It is read as a single {@link HeaderElement}: parameters are {@code key=value} tokens
+     * separated by semicolons, and semicolons and commas inside a double-quoted parameter value do
+     * not split. Whitespace around semicolons and equals signs is trimmed. Quoted-string
+     * parameter values are returned unquoted and unescaped. The special {@code q} parameter is
      * extracted as the quality factor and excluded from the parameter map.
      *
-     * <p>Returns {@code null} if the input is {@code null}, blank, or does not contain a
-     * {@code /} separator in the type/subtype portion.
+     * <p>Returns {@code null} if the input is {@code null}, blank, does not contain a
+     * {@code /} separator in the type/subtype portion, or is malformed as described by
+     * {@link HeaderElement}: an unterminated quoted string, or a {@code q} that is not a valid
+     * qvalue (such a value is not clamped).
      *
      * @param raw the raw media type string to parse, e.g. {@code "application/json;q=0.8"}
      * @return the parsed {@code MediaType}, or {@code null} if the input is invalid
      */
     public static MediaType parse(String raw) {
-        if (raw == null || raw.isBlank()) {
+        return fromElement(HeaderElement.parse(raw));
+    }
+
+    /**
+     * Builds a media type from a parsed header element, or returns {@code null} when the
+     * element value has no {@code /} separator or a blank type or subtype.
+     */
+    static MediaType fromElement(HeaderElement element) {
+        if (element == null) {
             return null;
         }
-        String[] parts = raw.split(";");
-        String typeSubtype = parts[0].trim();
+        String typeSubtype = element.value();
         int slashIndex = typeSubtype.indexOf('/');
         if (slashIndex < 0) {
             return null;
@@ -76,33 +88,7 @@ public final class MediaType {
         if (type.isEmpty() || subtype.isEmpty()) {
             return null;
         }
-
-        Map<String, String> parameters = new LinkedHashMap<>();
-        double qualityFactor = 1.0;
-        for (int i = 1; i < parts.length; i++) {
-            String param = parts[i].trim();
-            if (param.isEmpty()) {
-                continue;
-            }
-            int eqIndex = param.indexOf('=');
-            if (eqIndex < 0) {
-                continue;
-            }
-            String key = param.substring(0, eqIndex).trim();
-            String value = param.substring(eqIndex + 1).trim();
-            if ("q".equalsIgnoreCase(key)) {
-                try {
-                    double q = Double.parseDouble(value);
-                    // Clamp to [0.0, 1.0] per RFC 9110 §12.4.2
-                    qualityFactor = Math.max(0.0, Math.min(1.0, q));
-                } catch (NumberFormatException ignored) {
-                    // retain default 1.0
-                }
-            } else {
-                parameters.put(key.toLowerCase(), value);
-            }
-        }
-        return new MediaType(type, subtype, parameters, qualityFactor);
+        return new MediaType(type, subtype, element.parameters(), element.quality());
     }
 
     /**
@@ -277,17 +263,48 @@ public final class MediaType {
     /**
      * Returns a string representation including type, subtype, parameters, and quality factor.
      * The format follows standard media type notation, e.g.
-     * {@code "application/json;charset=utf-8;q=0.8"}.
+     * {@code "application/json;charset=utf-8;q=0.8"}. A parameter value that is empty or contains
+     * anything other than token characters is written as a quoted string, so the output parses
+     * back to the same parameters.
      *
      * @return the string representation of this media type
      */
     @Override
     public String toString() {
         StringBuilder sb = new StringBuilder(type).append('/').append(subtype);
-        parameters.forEach((k, v) -> sb.append(';').append(k).append('=').append(v));
+        parameters.forEach((k, v) -> sb.append(';').append(k).append('=').append(isToken(v) ? v : quoted(v)));
         if (qualityFactor < 1.0) {
             sb.append(";q=").append(qualityFactor);
         }
         return sb.toString();
+    }
+
+    private static boolean isToken(String value) {
+        if (value.isEmpty()) {
+            return false;
+        }
+        for (int i = 0; i < value.length(); i++) {
+            char c = value.charAt(i);
+            boolean tokenChar = (c >= 'a' && c <= 'z')
+                    || (c >= 'A' && c <= 'Z')
+                    || (c >= '0' && c <= '9')
+                    || "!#$%&'*+-.^_`|~".indexOf(c) >= 0;
+            if (!tokenChar) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static String quoted(String value) {
+        StringBuilder sb = new StringBuilder(value.length() + 2).append('"');
+        for (int i = 0; i < value.length(); i++) {
+            char c = value.charAt(i);
+            if (c == '"' || c == '\\') {
+                sb.append('\\');
+            }
+            sb.append(c);
+        }
+        return sb.append('"').toString();
     }
 }

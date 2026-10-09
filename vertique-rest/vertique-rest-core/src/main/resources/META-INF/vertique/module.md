@@ -505,19 +505,53 @@ arbitrary object serialized by the SSE encoder, not a pre-rendered string.
 `BufferOverflowPolicy.FAIL` fails the `send(...)` future when the buffer is full;
 `DROP_OLDEST` evicts the oldest buffered event instead.
 
-### `MediaType` and `AcceptNegotiator`
+### `HeaderElement`, `MediaType` and `AcceptNegotiator`
+
+`HeaderElement` is the shared, typed parser for comma-separated header values of the shape
+`value *( ; parameter )` with an optional `q` weight — `Accept`, `Accept-Language` and
+`Accept-Encoding` all share it. `HeaderElement.parseList(String)` returns an immutable
+`List<HeaderElement>` in header order; `HeaderElement.parse(String)` reads one element, treating a
+comma as an ordinary character, and returns `null` for blank or malformed input. Each element
+carries `value` (the token before the first `;`, trimmed), `parameters` (lowercase names, header
+order, immutable, `q` excluded, last duplicate wins) and `quality` (`double` in [0, 1], default
+`1.0`). Neither method throws.
+
+Parsing follows RFC 9110:
+
+- Elements split on `,` and parameters on `;` only **outside** double-quoted strings. Inside a
+  quoted string a backslash escapes the next character, and a quoted parameter value is returned
+  unquoted and unescaped (`profile="a,b"` yields `a,b`). Outside quotes a backslash is literal.
+- A **malformed element is skipped**, never read leniently, so it cannot make anything
+  acceptable: an unterminated quoted string (which also swallows the rest of the header), characters
+  after a closing quote, a quote inside a parameter name, an empty value, or an invalid `q`.
+- `q` must be a valid qvalue: `0`, `1`, `0.xxx` or `1.000` (at most three decimals). A quoted `q`,
+  an unparsable `q`, a negative value and a value above `1` are malformed; none is clamped or
+  defaulted to `1.0`.
+- A parameter without `=` or with an empty name is ignored. Empty elements (`a,,b`, a trailing
+  comma) are skipped.
+- At most the first `HeaderElement.MAX_ELEMENTS` (50) non-empty elements are considered, counting
+  malformed ones; later elements are ignored.
 
 `MediaType` is an immutable RFC 9110 media type — type, subtype, parameters (excluding `q`), and
-quality factor, all lowercased. `MediaType.parse(String)` (aliased as `valueOf`) returns `null` for
-`null`, blank, or malformed input rather than throwing. `isCompatible(MediaType)` is wildcard-aware
+quality factor, all lowercased. `MediaType.parse(String)` (aliased as `valueOf`) reads one
+`HeaderElement` and returns `null` for `null`, blank, or malformed input (including the cases
+above) rather than throwing. Quoted-string parameter values appear unquoted in `parameters()`, and
+`toString()` re-quotes values that are not tokens. `isCompatible(MediaType)` is wildcard-aware
 and ignores parameters; `specificity()` returns 0 for `*/*`, 1 for `type/*`, 2 for `type/subtype`, and
 3 when parameters are present. Equality ignores the quality factor.
 
 `AcceptNegotiator.negotiate(String acceptHeader, List<String> serverTypes)` returns the best matching
 server type as `"type/subtype"`, or `null` when nothing matches — the signal a caller turns into a
-406. A `null`/blank Accept header yields the first server type; an empty `serverTypes` yields `null`.
-`parseAcceptHeader(String)` returns the header sorted by q-value then specificity, both descending,
-capped at 50 entries.
+406. A `null`/blank Accept header, or one with no usable entry, yields the first server type; an
+empty `serverTypes` yields `null`. `parseAcceptHeader(String)` returns the well-formed entries sorted
+by q-value then specificity, both descending, under the 50-element cap.
+
+`AcceptNegotiator.effectiveQuality(String acceptHeader, String mediaType)` (and the overload over
+parsed `List<MediaType>` entries and a `MediaType`) answers whether one exact type is acceptable:
+it returns the quality of the most specific compatible entry, and `0.0` — not acceptable — when no
+entry is compatible. Unlike `negotiate`, it does not fail open: a `null`, blank or entirely
+malformed `Accept` header and an unparsable `mediaType` all yield `0.0`. Use it to gate a single
+representation, and `negotiate` to choose among several.
 
 ### `MdcKeys`
 
