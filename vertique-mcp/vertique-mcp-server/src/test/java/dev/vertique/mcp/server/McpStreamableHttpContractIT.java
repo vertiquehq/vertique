@@ -80,6 +80,16 @@ public class McpStreamableHttpContractIT {
     private static final String INVALID_ACCEPT_ROW = "shouldRejectUnacceptableAcceptWithNotAcceptable";
     private static final String ZERO_QUALITY_ACCEPT_ROW = "shouldRejectZeroQualityAcceptWithNotAcceptable";
     private static final String ZERO_QUALITY_MIXED_ACCEPT_ROW = "shouldRejectZeroQualityMixedAcceptWithNotAcceptable";
+    private static final String QUOTED_COMMA_ZERO_QUALITY_ACCEPT_ROW =
+            "shouldRejectZeroQualityAfterQuotedCommaWithNotAcceptable";
+    private static final String ESCAPED_QUOTE_ZERO_QUALITY_ACCEPT_ROW =
+            "shouldRejectZeroQualityAfterEscapedQuoteWithNotAcceptable";
+    private static final String UNTERMINATED_QUOTE_ZERO_QUALITY_ACCEPT_ROW =
+            "shouldRejectUnterminatedQuoteBeforeZeroQualityWithNotAcceptable";
+    private static final String UNTERMINATED_QUOTE_ACCEPT_ROW = "shouldRejectUnterminatedQuoteWithNotAcceptable";
+    private static final String INVALID_QUALITY_ACCEPT_ROW = "shouldRejectInvalidQualityWithNotAcceptable";
+    private static final String QUOTED_COMMA_ACCEPT_ROW = "shouldAcceptQuotedCommaParameterWithoutZeroQuality";
+    private static final String QUOTED_ZERO_QUALITY_TEXT_ACCEPT_ROW = "shouldAcceptZeroQualityTextInsideQuotedValue";
     private static final String OVERSIZED_BODY_ROW = "shouldRejectOversizedBodyWithBoundedStatus";
     private static final String SESSION_HEADER_ROW = "shouldIgnoreUnsupportedSessionHeaderRemainingBounded";
 
@@ -109,6 +119,13 @@ public class McpStreamableHttpContractIT {
                 INVALID_ACCEPT_ROW,
                 ZERO_QUALITY_ACCEPT_ROW,
                 ZERO_QUALITY_MIXED_ACCEPT_ROW,
+                QUOTED_COMMA_ZERO_QUALITY_ACCEPT_ROW,
+                ESCAPED_QUOTE_ZERO_QUALITY_ACCEPT_ROW,
+                UNTERMINATED_QUOTE_ZERO_QUALITY_ACCEPT_ROW,
+                UNTERMINATED_QUOTE_ACCEPT_ROW,
+                INVALID_QUALITY_ACCEPT_ROW,
+                QUOTED_COMMA_ACCEPT_ROW,
+                QUOTED_ZERO_QUALITY_TEXT_ACCEPT_ROW,
                 OVERSIZED_BODY_ROW,
                 SESSION_HEADER_ROW);
     }
@@ -272,6 +289,85 @@ public class McpStreamableHttpContractIT {
                         .isEqualTo(406);
                 assertNoToolInvoked();
                 assertNoObservationOpened();
+            }
+            case QUOTED_COMMA_ZERO_QUALITY_ACCEPT_ROW -> {
+                // Given: a q=0 range whose quoted profile parameter contains a comma. The comma is part of
+                // the quoted value, not a range separator, so the q=0 still belongs to the JSON range.
+                HttpRequest<Buffer> request = post().putHeader("Accept", "application/json;profile=\"a,b\";q=0");
+                HttpResponse<Buffer> response = await(request.sendBuffer(discover.toBuffer()));
+
+                assertThat(response.statusCode())
+                        .as("a quoted comma must not hide the q=0 that rejects the range")
+                        .isEqualTo(406);
+                assertNoToolInvoked();
+                assertNoObservationOpened();
+            }
+            case ESCAPED_QUOTE_ZERO_QUALITY_ACCEPT_ROW -> {
+                // Given: a q=0 range whose quoted parameter holds a backslash-escaped quote before a
+                // comma; the escaped quote must not end the quoted string early.
+                HttpRequest<Buffer> request = post().putHeader("Accept", "application/json;profile=\"a\\\"b,c\";q=0");
+                HttpResponse<Buffer> response = await(request.sendBuffer(discover.toBuffer()));
+
+                assertThat(response.statusCode())
+                        .as("an escaped quote must not end the quoted string and expose the comma")
+                        .isEqualTo(406);
+                assertNoToolInvoked();
+                assertNoObservationOpened();
+            }
+            case UNTERMINATED_QUOTE_ZERO_QUALITY_ACCEPT_ROW -> {
+                // Given: a range whose quoted parameter never closes, so the q=0 after it is inside the
+                // unterminated string. The malformed range is skipped and admits nothing.
+                HttpRequest<Buffer> request = post().putHeader("Accept", "application/json;profile=\"x;q=0");
+                HttpResponse<Buffer> response = await(request.sendBuffer(discover.toBuffer()));
+
+                assertThat(response.statusCode())
+                        .as("a range with an unterminated quoted string is malformed and must not admit JSON")
+                        .isEqualTo(406);
+                assertNoToolInvoked();
+                assertNoObservationOpened();
+            }
+            case UNTERMINATED_QUOTE_ACCEPT_ROW -> {
+                // Given: a JSON range with an unterminated quoted string and no q=0 anywhere. It is
+                // malformed, so it is skipped rather than read leniently, and nothing else admits.
+                HttpRequest<Buffer> request = post().putHeader("Accept", "application/json;profile=\"x");
+                HttpResponse<Buffer> response = await(request.sendBuffer(discover.toBuffer()));
+
+                assertThat(response.statusCode())
+                        .as("a malformed range must not admit JSON even without a q=0")
+                        .isEqualTo(406);
+                assertNoToolInvoked();
+                assertNoObservationOpened();
+            }
+            case INVALID_QUALITY_ACCEPT_ROW -> {
+                // Given: a JSON range whose q is not a valid qvalue. The range is malformed and skipped,
+                // never treated as q=1, so with no other range the request is HTTP 406.
+                HttpRequest<Buffer> request = post().putHeader("Accept", "application/json;q=abc");
+                HttpResponse<Buffer> response = await(request.sendBuffer(discover.toBuffer()));
+
+                assertThat(response.statusCode())
+                        .as("a range with an invalid q must not be admitted as if it were q=1")
+                        .isEqualTo(406);
+                assertNoToolInvoked();
+                assertNoObservationOpened();
+            }
+            case QUOTED_COMMA_ACCEPT_ROW -> {
+                // Given: the same quoted-comma parameter with no q=0, so the range admits JSON.
+                HttpRequest<Buffer> request = post().putHeader("Accept", "application/json;profile=\"a,b\"");
+                HttpResponse<Buffer> response = await(request.sendBuffer(discover.toBuffer()));
+
+                assertThat(response.statusCode()).isEqualTo(200);
+                assertServerInfo(response);
+                assertNoToolInvoked();
+            }
+            case QUOTED_ZERO_QUALITY_TEXT_ACCEPT_ROW -> {
+                // Given: "q=0" appearing only inside a quoted parameter value, which is data and not a
+                // quality parameter, so the range still admits JSON.
+                HttpRequest<Buffer> request = post().putHeader("Accept", "application/json;profile=\"x;q=0;y\"");
+                HttpResponse<Buffer> response = await(request.sendBuffer(discover.toBuffer()));
+
+                assertThat(response.statusCode()).isEqualTo(200);
+                assertServerInfo(response);
+                assertNoToolInvoked();
             }
             case OVERSIZED_BODY_ROW -> {
                 // Given: a body larger than the configured maxBodySize.

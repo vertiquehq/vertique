@@ -169,12 +169,20 @@ request to any instance. Every request is admitted through the fixed pipeline be
   whose media type (parameters such as `; charset=utf-8` ignored) is not `application/json`. Admitting
   an absent `Content-Type` would reopen the CORS simple-request path (a cross-origin `Blob` with an
   empty type, or `navigator.sendBeacon`, both send none).
-- **Accept** — a request that carries an `Accept` admitting none of `application/json`,
-  `text/event-stream`, `application/*`, or `*/*` is rejected with HTTP `406`. A request with no
-  `Accept` header is never media-rejected. A range carrying `q=0` does not admit its type, and a
-  comma or semicolon inside a quoted parameter value (`profile="a,b"`) is part of that value, not a
-  range or parameter separator. Discovery always answers `application/json`, so a client
-  that accepts `application/json`, `text/event-stream`, or both receives the JSON discovery result.
+- **Accept** — a request with no `Accept` header is never media-rejected. A present `Accept` is
+  parsed by the shared quote-aware header parser of `vertique-rest-core` and admitted only when it
+  makes `application/json` or `text/event-stream` acceptable, judged per type by the most specific
+  compatible entry, so `application/json`, `text/event-stream`, `application/*`, `text/*` and
+  `*/*` can admit. Otherwise (including a blank header) the request is rejected with HTTP `406`.
+  An entry with `q=0` does not make its type acceptable. A comma or semicolon inside a quoted
+  parameter value (`profile="a,b"`) is part of that value, not an entry or parameter separator. A
+  malformed entry is skipped and never admits anything: an unterminated quoted string, characters
+  after a closing quote, an empty value, or a `q` that is not a valid qvalue (`0`, `1`, `0.xxx` or
+  `1.000`, at most three decimals — a quoted, negative, over-precise or above-1 `q` is malformed and
+  is not clamped or read as `1`). Only the first 50 non-empty entries are considered, so a type
+  listed after them is not admitted. Admission applies only the acceptable-or-not decision, not
+  q-value preference ranking. Discovery always answers `application/json`, so a client that accepts
+  `application/json`, `text/event-stream`, or both receives the JSON discovery result.
 - **Body limit** — a body larger than `http.maxBodySize` is a bounded HTTP failure, not a protocol
   result.
 - **Session headers** — the stateless protocol has no session concept, so an unsupported session
