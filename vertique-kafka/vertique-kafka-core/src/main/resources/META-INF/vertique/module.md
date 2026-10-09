@@ -830,7 +830,8 @@ context, so it can be logged or passed to a metrics observer as is.
   different `KafkaDispatchContext`, or a filter that edits the header map it is given, changes none
   of them.
 - `event.identity()` and `record.identity()` are the same instance.
-- A consumer with no interceptors builds no view.
+- A consumer with no interceptors builds no view. The headers are still extracted once per record,
+  because the filter and the deserializers need the header map.
 
 **`headers()` is the wire form.** It returns a `KafkaRecordHeaders`: every header in the order the
 broker delivered it, with repeated keys, `null` values, and the exact value bytes. It is an

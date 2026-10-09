@@ -115,6 +115,14 @@ class KafkaRecordHeaderTest {
     }
 
     @Test
+    @DisplayName("text decoding rejects a null charset, whatever the value")
+    void rejectsNullCharset() {
+        assertThrows(NullPointerException.class, () -> KafkaRecordHeader.ofUtf8("k", "v")
+                .valueAsString(null));
+        assertThrows(NullPointerException.class, () -> new KafkaRecordHeader("k", null).valueAsString(null));
+    }
+
+    @Test
     @DisplayName("text decoding uses the requested charset")
     void decodesWithCharset() {
         byte[] latin1 = {(byte) 0xE4};

@@ -947,6 +947,43 @@ class KafkaConsumerLifecycleCallbackTest {
         }
 
         @Test
+        @DisplayName("a header with a null key is skipped: the record is processed and its slot released")
+        void nullKeyHeaderIsSkipped(Vertx vertx) throws ReflectiveOperationException {
+            CompletionRecorder recorder = new CompletionRecorder();
+            AtomicReference<Map<String, String>> seenByFilter = new AtomicReference<>();
+            AtomicInteger handled = new AtomicInteger();
+            KafkaRecordFilter filter = (key, headers) -> {
+                seenByFilter.set(new HashMap<>(headers));
+                return true;
+            };
+            KafkaRecordHandler<Object> handler = message -> {
+                handled.incrementAndGet();
+                return Future.succeededFuture();
+            };
+            Fixture fixture =
+                    wire(vertx, handlerEntry(ErrorStrategy.SKIP, null, handler, null, filter), List.of(recorder));
+
+            fixture.process(record(
+                    1L,
+                    "k",
+                    null,
+                    List.of(
+                            KafkaHeader.header("a", "1"),
+                            KafkaHeader.header(null, "orphan"),
+                            KafkaHeader.header("b", "2"))));
+
+            CompletionRecorder.Completion completion =
+                    assertCompletedOnce(fixture, recorder, KafkaTerminalOutcome.SUCCESS);
+            assertEquals(1, handled.get(), "the record must be dispatched normally");
+            assertEquals(
+                    new KafkaRecordHeaders(
+                            List.of(KafkaRecordHeader.ofUtf8("a", "1"), KafkaRecordHeader.ofUtf8("b", "2"))),
+                    completion.record().headers());
+            assertEquals(Map.of("a", "1", "b", "2"), seenByFilter.get());
+            assertEquals(0, fixture.inFlight(), "the in-flight slot must be released");
+        }
+
+        @Test
         @DisplayName("a record without headers has the shared empty header collection")
         void noHeaders(Vertx vertx) throws ReflectiveOperationException {
             CompletionRecorder recorder = new CompletionRecorder();

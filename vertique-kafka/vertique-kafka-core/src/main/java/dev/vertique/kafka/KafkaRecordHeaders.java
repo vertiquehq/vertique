@@ -87,8 +87,9 @@ public record KafkaRecordHeaders(List<KafkaRecordHeader> entries) implements Ite
 
     /**
      * Returns the headers as a text map. This is a <strong>lossy text projection</strong>, kept for
-     * APIs that take a {@code Map<String, String>}; it is the map the consumer hands to the
-     * pre-deserialization filter, deserializers and handlers.
+     * APIs that take a {@code Map<String, String>}. It has the content of the map the consumer gives
+     * to the pre-deserialization filter, deserializers and handlers; they are given their own
+     * mutable copy, so an edit a filter or deserializer makes to that copy is not reflected here.
      *
      * <p>What is lost:
      *
@@ -106,12 +107,22 @@ public record KafkaRecordHeaders(List<KafkaRecordHeader> entries) implements Ite
      * <p>Read {@link #entries()}, {@link #headers(String)} or {@link #lastHeader(String)} when any
      * of that matters.
      *
-     * @return a new unmodifiable map; never {@code null}
+     * @return an unmodifiable map; never {@code null}
      */
     public Map<String, String> asMap() {
         if (entries.isEmpty()) {
             return Map.of();
         }
+        return Collections.unmodifiableMap(toMutableTextMap());
+    }
+
+    /**
+     * Builds the text projection described on {@link #asMap()} as a new mutable map. The consumer
+     * hands this map to filters and deserializers, which have always been given a mutable one.
+     *
+     * @return a new {@link HashMap} that the caller owns; never {@code null}
+     */
+    Map<String, String> toMutableTextMap() {
         Map<String, String> map = new HashMap<>();
         for (KafkaRecordHeader entry : entries) {
             String text = entry.valueAsLenientUtf8();
@@ -119,7 +130,7 @@ public record KafkaRecordHeaders(List<KafkaRecordHeader> entries) implements Ite
                 map.put(entry.key(), text);
             }
         }
-        return Collections.unmodifiableMap(map);
+        return map;
     }
 
     /**

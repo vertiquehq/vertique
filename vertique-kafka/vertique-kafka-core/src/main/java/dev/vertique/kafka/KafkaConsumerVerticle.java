@@ -281,10 +281,10 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
         incrementInFlight();
 
         // One faithful extraction per record. The text map handed to the filter, router, deserializers,
-        // dispatch context and error handler is derived from it, and stays a mutable copy because
-        // filters and deserializers have always been given one.
+        // dispatch context and error handler is derived from it, and is mutable because filters and
+        // deserializers have always been given a mutable one.
         KafkaRecordHeaders recordHeaders = extractHeaders(record);
-        Map<String, String> headers = new HashMap<>(recordHeaders.asMap());
+        Map<String, String> headers = recordHeaders.toMutableTextMap();
         byte[] rawBytes = record.value();
         String correlationId = sanitizeForMdc(
                 headers.getOrDefault(HEADER_CORRELATION_ID, UUID.randomUUID().toString()));
@@ -683,7 +683,10 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
     /**
      * Extracts all Kafka record headers as they are on the wire: every header in order, with repeated
      * keys, {@code null} values and the exact value bytes. The text map the rest of the pipeline uses
-     * is {@link KafkaRecordHeaders#asMap()} of the result.
+     * is the text projection of the result.
+     *
+     * <p>This runs before the guarded part of record processing, so it must not throw. A header with
+     * a {@code null} key is skipped: Kafka cannot deliver one, so only a test double can produce it.
      *
      * @param record the consumer record to extract headers from
      * @return the headers; {@link KafkaRecordHeaders#empty()} when the record has none
@@ -695,6 +698,9 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
         }
         List<KafkaRecordHeader> entries = new ArrayList<>(wireHeaders.size());
         for (KafkaHeader header : wireHeaders) {
+            if (header.key() == null) {
+                continue;
+            }
             Buffer value = header.value();
             entries.add(new KafkaRecordHeader(header.key(), value == null ? null : value.getBytes()));
         }

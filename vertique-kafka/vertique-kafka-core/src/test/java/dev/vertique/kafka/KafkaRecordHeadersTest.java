@@ -12,7 +12,6 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -197,8 +196,38 @@ class KafkaRecordHeadersTest {
         expected.put("mixed", "ok" + REPLACEMENT);
         expected.put("text", "ä");
         assertEquals(expected, headers.asMap());
+    }
+
+    @Test
+    @DisplayName("asMap keeps the only non-null value of a key whichever side the null is on")
+    void asMapNullBeforeOrAfterAValue() {
+        assertEquals(Map.of("a", "1"), new KafkaRecordHeaders(List.of(text("a", null), text("a", "1"))).asMap());
+        assertEquals(Map.of("a", "1"), new KafkaRecordHeaders(List.of(text("a", "1"), text("a", null))).asMap());
+    }
+
+    @Test
+    @DisplayName("lookups reject a null key")
+    void lookupsRejectNullKey() {
+        KafkaRecordHeaders headers = new KafkaRecordHeaders(List.of(text("a", "1")));
+
+        assertThrows(NullPointerException.class, () -> headers.headers(null));
+        assertThrows(NullPointerException.class, () -> headers.lastHeader(null));
+    }
+
+    @Test
+    @DisplayName("toString shows keys and value lengths, never a header value")
+    void toStringHidesTheValues() {
+        String text = new KafkaRecordHeaders(
+                        List.of(text("authorization", "s3cret"), new KafkaRecordHeader("bin", new byte[] {77, 78})))
+                .toString();
+
         assertEquals(
-                new String(NOT_UTF8, StandardCharsets.UTF_8), headers.asMap().get("binary"));
+                "KafkaRecordHeaders[entries=[KafkaRecordHeader[key=authorization, value=6 bytes],"
+                        + " KafkaRecordHeader[key=bin, value=2 bytes]]]",
+                text);
+        assertFalse(text.contains("s3cret"));
+        assertFalse(text.contains("77"));
+        assertFalse(text.contains("MN"));
     }
 
     @Test
