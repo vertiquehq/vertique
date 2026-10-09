@@ -10,6 +10,8 @@ import dev.vertique.kafka.interceptor.KafkaConsumerRecordView;
 import dev.vertique.kafka.interceptor.KafkaDispatchContext;
 import io.vertx.core.Future;
 import java.util.List;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 import lombok.extern.slf4j.Slf4j;
 
@@ -21,7 +23,10 @@ import lombok.extern.slf4j.Slf4j;
  * {@code onRecordCompleted}) run all interceptors in order under one isolation policy: an
  * {@link Exception}, {@link LinkageError} or {@link AssertionError} thrown by one interceptor is
  * logged and swallowed, so a failing observer can neither stop later interceptors nor change what
- * happens to the record. Async chain methods ({@code runBeforeInterceptors},
+ * happens to the record. An {@link Exception} or {@link AssertionError} is logged at warn level each
+ * time. A {@link LinkageError} means the callback cannot run at all and would repeat for every
+ * record, so it is logged at error level once per interceptor class and callback for the life of the
+ * chain. Async chain methods ({@code runBeforeInterceptors},
  * {@code runAfterInterceptors}, {@code runRecoverError}) compose interceptor futures sequentially
  * via {@link dev.vertique.core.async.Combinators}.
  */
@@ -30,6 +35,20 @@ final class KafkaConsumerInterceptorChain {
 
     private final String consumerName;
     private final List<KafkaConsumerInterceptor> interceptors;
+
+    /**
+     * Interceptor class and callback pairs already reported as unusable. Concurrent because the
+     * completion callback runs on any thread.
+     */
+    private final Set<UnusableCallback> reportedUnusable = ConcurrentHashMap.newKeySet();
+
+    /**
+     * One interceptor callback that failed with a {@link LinkageError}.
+     *
+     * @param interceptorClass the interceptor's class
+     * @param callback the callback name
+     */
+    private record UnusableCallback(Class<?> interceptorClass, String callback) {}
 
     /**
      * Creates a new interceptor chain for the given consumer.
@@ -86,8 +105,10 @@ final class KafkaConsumerInterceptorChain {
 
     /**
      * Calls one synchronous observer callback on every interceptor in order. An {@link Exception},
-     * {@link LinkageError} or {@link AssertionError} from one interceptor is logged at warn level
-     * and does not stop the remaining interceptors. Any other {@link Error} propagates.
+     * {@link LinkageError} or {@link AssertionError} from one interceptor does not stop the remaining
+     * interceptors. An {@link Exception} or {@link AssertionError} is logged at warn level each time.
+     * A {@link LinkageError} is logged at error level the first time it is seen for an interceptor
+     * class and callback, and not logged again for that pair. Any other {@link Error} propagates.
      *
      * @param callback the callback name, for the log message
      * @param action the invocation of that callback on one interceptor
@@ -96,7 +117,17 @@ final class KafkaConsumerInterceptorChain {
         for (KafkaConsumerInterceptor interceptor : interceptors) {
             try {
                 action.accept(interceptor);
-            } catch (Exception | LinkageError | AssertionError e) {
+            } catch (LinkageError e) {
+                if (reportedUnusable.add(new UnusableCallback(interceptor.getClass(), callback))) {
+                    log.error(
+                            "[{}] Interceptor {} callback {} is unusable and its notifications are being lost;"
+                                    + " further failures of this callback are not logged",
+                            consumerName,
+                            interceptor.getClass().getName(),
+                            callback,
+                            e);
+                }
+            } catch (Exception | AssertionError e) {
                 log.warn("[{}] Interceptor {} threw exception", consumerName, callback, e);
             }
         }

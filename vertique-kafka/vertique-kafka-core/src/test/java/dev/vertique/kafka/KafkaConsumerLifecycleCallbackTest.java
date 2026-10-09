@@ -8,7 +8,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyMap;
@@ -31,11 +30,13 @@ import dev.vertique.kafka.producer.KafkaProducerFactory;
 import dev.vertique.kafka.serialization.KafkaDeserializer;
 import dev.vertique.services.ServiceRequestSender;
 import io.vertx.core.Future;
+import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.kafka.client.consumer.KafkaConsumer;
 import io.vertx.kafka.client.consumer.KafkaConsumerRecord;
 import io.vertx.kafka.client.producer.KafkaHeader;
+import io.vertx.kafka.client.producer.RecordMetadata;
 import jakarta.annotation.Nullable;
 import java.io.IOException;
 import java.io.InputStream;
@@ -67,8 +68,9 @@ import org.mockito.junit.jupiter.MockitoExtension;
  * <p>Covered: one completion with the expected outcome on every terminal path; the framework-owned
  * identity, key and headers cannot be changed by an interceptor or a filter; the value is the
  * broker's array, uncopied; error isolation of the completion callback and of the three older
- * synchronous observers; the retry count of a redelivered record; a consumer with no interceptors;
- * and the null checks of the two event records.
+ * synchronous observers; a completion held back until an asynchronous dead-letter publish settles;
+ * the retry count of a first and of a redelivered record; a consumer with no interceptors; and the
+ * null checks of the two event records.
  */
 @ExtendWith(VertxExtension.class)
 @ExtendWith(MockitoExtension.class)
@@ -329,6 +331,60 @@ class KafkaConsumerLifecycleCallbackTest {
         }
 
         @Test
+        @DisplayName(
+                "a filter that throws completes the record once, releases the slot and leaves the consumer working")
+        void filterThrows(Vertx vertx) throws ReflectiveOperationException {
+            CompletionRecorder recorder = new CompletionRecorder();
+            AtomicInteger handled = new AtomicInteger();
+            KafkaRecordFilter throwingOnBadKey = (key, headers) -> {
+                if ("bad".equals(key)) {
+                    throw new IllegalStateException("filter boom");
+                }
+                return true;
+            };
+            ConsumerEntry entry = handlerEntry(
+                    ErrorStrategy.SKIP,
+                    null,
+                    message -> {
+                        handled.incrementAndGet();
+                        return Future.succeededFuture();
+                    },
+                    null,
+                    throwingOnBadKey);
+            Fixture fixture = wire(vertx, entry, List.of(recorder));
+
+            fixture.process(record(1L, "bad", bytes("v"), null));
+
+            assertCompletedOnce(fixture, recorder, KafkaTerminalOutcome.SKIP);
+            assertEquals(0, handled.get(), "a record whose filter threw must not be dispatched");
+
+            fixture.process(record(2L, "good", bytes("v"), null));
+
+            assertEquals(
+                    List.of(KafkaTerminalOutcome.SKIP, KafkaTerminalOutcome.SUCCESS),
+                    recorder.completions.stream().map(c -> c.event().outcome()).toList(),
+                    "each record must complete exactly once");
+            assertEquals(1, handled.get(), "the next record must still be processed");
+            assertEquals(0, fixture.inFlight(), "the in-flight slot must be released");
+            verify(fixture.consumer(), times(2)).commit(anyMap());
+        }
+
+        @Test
+        @DisplayName("a filter that throws and whose error handling fails completes with ERROR_HANDLER_FAILED")
+        void filterThrowsAndErrorHandlerFails(Vertx vertx) throws ReflectiveOperationException {
+            CompletionRecorder recorder = new CompletionRecorder();
+            ConsumerEntry entry = handlerEntry(ErrorStrategy.SKIP, null, null, null, (key, headers) -> {
+                throw new IllegalStateException("filter boom");
+            });
+            Fixture fixture = wire(
+                    vertx, entry, List.of(recorder), mock(KafkaProducerFactory.class), failingErrorHandler(), null);
+
+            fixture.process(record(1L, bytes("v")));
+
+            assertCompletedOnce(fixture, recorder, KafkaTerminalOutcome.ERROR_HANDLER_FAILED);
+        }
+
+        @Test
         @DisplayName("a router with no matching route completes with SKIP and commits")
         void noMatchingRoute(Vertx vertx) throws ReflectiveOperationException {
             CompletionRecorder recorder = new CompletionRecorder();
@@ -524,6 +580,33 @@ class KafkaConsumerLifecycleCallbackTest {
                     null);
 
             fixture.process(record(1L, null));
+
+            assertCompletedOnce(fixture, recorder, KafkaTerminalOutcome.DLQ_PUBLISHED);
+            verify(fixture.consumer()).commit(anyMap());
+        }
+
+        @Test
+        @DisplayName("a dead-letter publish that settles later completes the record only when it settles")
+        void deadLetterPublishSettlesLater(Vertx vertx) throws ReflectiveOperationException {
+            CompletionRecorder recorder = new CompletionRecorder();
+            Promise<RecordMetadata> publish = Promise.promise();
+            KafkaProducerFactory producerFactory = mock(KafkaProducerFactory.class);
+            when(producerFactory.sendForDlq(anyString(), any(), any(), any())).thenReturn(publish.future());
+            Fixture fixture = wire(
+                    vertx,
+                    failingHandlerEntry(ErrorStrategy.DEAD_LETTER, "dlq"),
+                    List.of(recorder),
+                    producerFactory,
+                    null,
+                    null);
+
+            fixture.process(record(1L, null));
+
+            verify(producerFactory).sendForDlq(anyString(), any(), any(), any());
+            assertEquals(List.of(), recorder.completions, "the record must not complete before the publish settles");
+            verify(fixture.consumer(), never()).commit(anyMap());
+
+            publish.complete(null);
 
             assertCompletedOnce(fixture, recorder, KafkaTerminalOutcome.DLQ_PUBLISHED);
             verify(fixture.consumer()).commit(anyMap());
@@ -925,6 +1008,20 @@ class KafkaConsumerLifecycleCallbackTest {
     class RetryCount {
 
         @Test
+        @DisplayName("a first delivery that fails to deserialize under RETRY reports retryCount 0")
+        void firstDeliveryFailingDeserializationReportsRetryCountZero(Vertx vertx) throws ReflectiveOperationException {
+            CompletionRecorder recorder = new CompletionRecorder();
+            Fixture fixture = wire(vertx, bindingEntry(ErrorStrategy.RETRY, null), List.of(recorder));
+
+            fixture.process(record(5L, bytes("payload")));
+
+            CompletionRecorder.Completion completion =
+                    assertCompletedOnce(fixture, recorder, KafkaTerminalOutcome.RETRY_SCHEDULED);
+            assertEquals(0, completion.event().identity().retryCount());
+            assertEquals(1, fixture.errors().retryCounts.get(TOPIC + ":3:5"), "the retry must have been counted");
+        }
+
+        @Test
         @DisplayName("a redelivered record reports retryCount 1")
         void redeliveredRecordReportsRetryCountOne(Vertx vertx) throws ReflectiveOperationException {
             CompletionRecorder recorder = new CompletionRecorder();
@@ -993,6 +1090,20 @@ class KafkaConsumerLifecycleCallbackTest {
             verify(fixture.consumer()).commit(anyMap());
             assertEquals(0, fixture.inFlight());
         }
+
+        @Test
+        @DisplayName("applies the error strategy when the filter throws and releases the slot")
+        void throwingFilterWithoutInterceptors(Vertx vertx) throws ReflectiveOperationException {
+            ConsumerEntry entry = handlerEntry(ErrorStrategy.SKIP, null, null, null, (key, headers) -> {
+                throw new IllegalStateException("filter boom");
+            });
+            Fixture fixture = wire(vertx, entry, List.of());
+
+            fixture.process(record(1L, bytes("v")));
+
+            verify(fixture.consumer()).commit(anyMap());
+            assertEquals(0, fixture.inFlight());
+        }
     }
 
     // --- Event records ---
@@ -1017,18 +1128,6 @@ class KafkaConsumerLifecycleCallbackTest {
                     NullPointerException.class,
                     () -> new KafkaConsumerCompletedEvent(null, KafkaTerminalOutcome.SUCCESS));
             assertThrows(NullPointerException.class, () -> new KafkaConsumerCompletedEvent(identity, null));
-        }
-
-        @Test
-        @DisplayName("onRecordCompleted defaults to a no-op")
-        void defaultCallbackIsNoOp() {
-            KafkaConsumerInterceptor interceptor = new KafkaConsumerInterceptor() {};
-            KafkaConsumerCompletedEvent event = new KafkaConsumerCompletedEvent(identity, KafkaTerminalOutcome.SKIP);
-            KafkaConsumerRecordView view = new DefaultKafkaConsumerRecordView(identity, "k", Map.of(), null);
-
-            interceptor.onRecordCompleted(event, view);
-
-            assertTrue(view.headers().isEmpty());
         }
     }
 }

@@ -8,6 +8,10 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import dev.vertique.core.extension.ExtensionPhase;
 import dev.vertique.core.payload.PayloadSources;
 import dev.vertique.kafka.interceptor.KafkaConsumerCompletedEvent;
@@ -28,6 +32,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.slf4j.LoggerFactory;
 
 /**
  * Characterization tests for {@link KafkaConsumerInterceptorChain} that pin the observable
@@ -753,6 +758,53 @@ class KafkaConsumerInterceptorChainTest {
                         new KafkaConsumerCompletedEvent(view.identity(), KafkaTerminalOutcome.SUCCESS), view);
 
                 assertEquals(List.of("next:SUCCESS:7"), callLog, "after " + thrown);
+            }
+        }
+
+        @Test
+        @DisplayName("a callback that keeps failing with a LinkageError never stops later interceptors, reported once")
+        void repeatedLinkageErrorIsIsolatedEveryTimeAndReportedOnce() {
+            Logger chainLogger = (Logger) LoggerFactory.getLogger(KafkaConsumerInterceptorChain.class);
+            ListAppender<ILoggingEvent> appender = new ListAppender<>();
+            appender.setContext(chainLogger.getLoggerContext());
+            appender.start();
+            chainLogger.addAppender(appender);
+            try {
+                List<String> callLog = new ArrayList<>();
+                KafkaConsumerInterceptorChain chain = new KafkaConsumerInterceptorChain(
+                        "c",
+                        List.of(
+                                throwingEverywhere(new NoSuchMethodError("linkage boom")),
+                                completionLogger("next", callLog)));
+                KafkaConsumerRecordView view = view();
+                KafkaConsumerCompletedEvent event =
+                        new KafkaConsumerCompletedEvent(view.identity(), KafkaTerminalOutcome.SUCCESS);
+
+                chain.runOnRecordCompleted(event, view);
+                chain.runOnRecordCompleted(event, view);
+
+                assertEquals(
+                        List.of("next:SUCCESS:7", "next:SUCCESS:7"),
+                        callLog,
+                        "the later interceptor must be notified both times");
+                List<ILoggingEvent> errors = appender.list.stream()
+                        .filter(e -> e.getLevel() == Level.ERROR)
+                        .toList();
+                assertEquals(1, errors.size(), "the unusable callback must be reported once, not per record");
+                assertTrue(errors.get(0).getFormattedMessage().contains("onRecordCompleted"));
+                assertTrue(errors.get(0).getFormattedMessage().contains("unusable"));
+
+                chain.runOnRecordObservers(ctx());
+
+                assertEquals(
+                        2,
+                        appender.list.stream()
+                                .filter(e -> e.getLevel() == Level.ERROR)
+                                .count(),
+                        "a different callback of the same interceptor is reported separately");
+            } finally {
+                chainLogger.detachAppender(appender);
+                appender.stop();
             }
         }
 

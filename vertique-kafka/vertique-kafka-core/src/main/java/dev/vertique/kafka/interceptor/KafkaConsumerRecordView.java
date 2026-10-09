@@ -59,6 +59,10 @@ public interface KafkaConsumerRecordView {
      * callback, and do not treat them as proof of the wire content when application code may have
      * edited the array.
      *
+     * <p>{@link PayloadSource#bufferedView()} on the returned source lazily creates and caches one
+     * mutable buffer that every observer of the record shares. Read through
+     * {@link PayloadSource#bufferedStream()} instead, and do not modify that buffer.
+     *
      * <p>The value is available for every record, including filtered, unroutable and
      * undeserializable ones.
      *

@@ -64,12 +64,14 @@ import lombok.extern.slf4j.Slf4j;
  * <p>When a record's disposition is final (after all async operations have settled), every
  * interceptor's {@link KafkaConsumerInterceptor#onRecordCompleted} is called exactly once with the
  * final {@link KafkaTerminalOutcome} and a framework-owned {@link KafkaConsumerRecordView}. This
- * happens on every path a record can take: filtered, unroutable, undeserializable, dispatched,
- * recovered or handed to the error strategy. The view is built once per record, before the filter,
- * route resolution, deserialization and the interceptor chain, so nothing downstream can replace it.
- * Its value is the array the broker delivered, never a copy. A failing observer is logged and
- * swallowed and can never affect commit, retry, or dead-lettering. A consumer with no interceptors
- * builds no view.
+ * happens on every path a record can take: filtered, rejected by a filter that throws, unroutable,
+ * undeserializable, dispatched, recovered or handed to the error strategy. The one limit: an
+ * asynchronous interceptor or handler future that never completes, or a throw from inside an
+ * asynchronous continuation, leaves the record without a completion. The view is built once per
+ * record, before the filter, route resolution, deserialization and the interceptor chain, so nothing
+ * downstream can replace it. Its value is the array the broker delivered, never a copy. A failing
+ * observer is logged and swallowed and can never affect commit, retry, or dead-lettering. A consumer
+ * with no interceptors builds no view.
  */
 @Slf4j
 public class KafkaConsumerVerticle extends AbstractVerticle {
@@ -286,8 +288,23 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
         // it, so none is built and no headers are copied.
         KafkaConsumerRecordView view = interceptors.isEmpty() ? null : buildRecordView(record, rawBytes, headers);
 
-        // Pre-deserialization filter
-        if (entry.filter() != null && !entry.filter().accept(record.key(), headers)) {
+        // Pre-deserialization filter. Only the filter call is guarded: a filter that throws is handled
+        // like a deserialization failure, so the record still completes and its slot is released.
+        boolean accepted;
+        try {
+            accepted = entry.filter() == null || entry.filter().accept(record.key(), headers);
+        } catch (Exception e) {
+            decrementInFlight();
+            errorHandler
+                    .handleError(record, rawBytes, headers, e, consumerControl())
+                    .onSuccess(outcome -> notifyCompleted(view, outcome))
+                    .onFailure(err -> {
+                        log.warn("[{}] Unexpected failure from handleError future", entry.name(), err);
+                        notifyCompleted(view, KafkaTerminalOutcome.ERROR_HANDLER_FAILED);
+                    });
+            return;
+        }
+        if (!accepted) {
             log.debug(
                     "[{}] Record filtered: topic={} partition={} offset={}",
                     entry.name(),

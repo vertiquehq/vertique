@@ -18,11 +18,15 @@ import io.vertx.core.Future;
  *   <li>{@link #onSuccess} — called after successful dispatch</li>
  *   <li>{@link #onError} — called on any dispatch failure</li>
  *   <li>{@link #onRecordCompleted} — called exactly once for every record the consumer received,
- *       when its disposition is final</li>
+ *       when its disposition is final. An asynchronous interceptor or handler future that never
+ *       completes, or a throw from inside an asynchronous continuation, leaves the record without a
+ *       completion.</li>
  * </ul>
  *
  * <p>An {@link Exception}, {@link LinkageError} or {@link AssertionError} thrown by a sync observer
- * is caught, logged and swallowed. It stops neither the remaining interceptors nor the record.
+ * is caught, logged and swallowed. It stops neither the remaining interceptors nor the record. A
+ * {@link LinkageError} means the callback cannot run at all, so it is logged at error level once per
+ * interceptor class and callback, not on every record.
  *
  * <h3>Which observer for which need</h3>
  * <ul>
@@ -69,9 +73,10 @@ public interface KafkaConsumerInterceptor extends OrderedExtension {
      * Synchronous observer called after deserialization and before {@link #beforeDispatch}
      * async handlers run. Suitable for structured logging or metrics.
      *
-     * <p>An {@link Exception}, {@link LinkageError} or {@link AssertionError} thrown by this callback
-     * is caught, logged, and swallowed; it does not affect the enclosing operation. Use
-     * {@link #beforeDispatch} to modify the context or filter the record.
+     * <p>Exceptions thrown by this callback are caught, logged, and swallowed; they do not affect the
+     * enclosing operation. A {@link LinkageError} or {@link AssertionError} is caught and swallowed the
+     * same way; a {@link LinkageError} is logged once per interceptor class and callback rather than
+     * on every record. Use {@link #beforeDispatch} to modify the context or filter the record.
      *
      * @param ctx the dispatch context (read-only; use {@link #beforeDispatch} to modify)
      */
@@ -81,8 +86,10 @@ public interface KafkaConsumerInterceptor extends OrderedExtension {
      * Synchronous observer called after successful dispatch. Suitable for success metrics or
      * structured logging.
      *
-     * <p>An {@link Exception}, {@link LinkageError} or {@link AssertionError} thrown by this callback
-     * is caught, logged, and swallowed; it does not affect the enclosing operation.
+     * <p>Exceptions thrown by this callback are caught, logged, and swallowed; they do not affect the
+     * enclosing operation. A {@link LinkageError} or {@link AssertionError} is caught and swallowed the
+     * same way; a {@link LinkageError} is logged once per interceptor class and callback rather than
+     * on every record.
      *
      * @param ctx the dispatch context
      */
@@ -92,8 +99,10 @@ public interface KafkaConsumerInterceptor extends OrderedExtension {
      * Synchronous observer called on any dispatch failure. Suitable for error metrics or
      * alerting. Cannot affect the error handling outcome — use {@link #recoverError} for that.
      *
-     * <p>An {@link Exception}, {@link LinkageError} or {@link AssertionError} thrown by this callback
-     * is caught, logged, and swallowed; it does not affect the enclosing operation.
+     * <p>Exceptions thrown by this callback are caught, logged, and swallowed; they do not affect the
+     * enclosing operation. A {@link LinkageError} or {@link AssertionError} is caught and swallowed the
+     * same way; a {@link LinkageError} is logged once per interceptor class and callback rather than
+     * on every record.
      *
      * @param ctx the dispatch context
      * @param error the dispatch failure
@@ -105,10 +114,13 @@ public interface KafkaConsumerInterceptor extends OrderedExtension {
      * asynchronous work (dead-letter publish, seek, recovery, {@link #afterDispatch}) has settled.
      *
      * <p>It is called for every record the consumer received, on every path: filtered before
-     * deserialization, matching no route, failing to deserialize, filtered or failed by
-     * {@link #beforeDispatch}, dispatched successfully, recovered by {@link #recoverError}, or handed
-     * to the error strategy. A record that is redelivered for a retry completes once per delivery,
-     * with a higher {@link KafkaConsumerRecordIdentity#retryCount()} each time.
+     * deserialization, rejected by a filter that throws, matching no route, failing to deserialize,
+     * filtered or failed by {@link #beforeDispatch}, dispatched successfully, recovered by
+     * {@link #recoverError}, or handed to the error strategy. A record that is redelivered for a
+     * retry completes once per delivery, with a higher
+     * {@link KafkaConsumerRecordIdentity#retryCount()} each time. An asynchronous interceptor or
+     * handler future that never completes, or a throw from inside an asynchronous continuation,
+     * leaves the record without a completion.
      *
      * <p><strong>Observer only.</strong> The decision is already made when this runs. An
      * implementation cannot change filtering, dispatch, commit, retry or dead-lettering, and must
@@ -126,9 +138,10 @@ public interface KafkaConsumerInterceptor extends OrderedExtension {
      * the array the broker delivered, uncopied; it is not a snapshot, and an in-place edit by a
      * deserializer or handler is visible through it.
      *
-     * <p>An {@link Exception}, {@link LinkageError} or {@link AssertionError} thrown by this callback
-     * is caught, logged, and swallowed; it does not affect the record, later interceptors or later
-     * records.
+     * <p>Exceptions thrown by this callback are caught, logged, and swallowed; they do not affect the
+     * enclosing operation. A {@link LinkageError} or {@link AssertionError} is caught and swallowed the
+     * same way; a {@link LinkageError} is logged once per interceptor class and callback rather than
+     * on every record. The record, later interceptors and later records are unaffected.
      *
      * @param event  the completion facts: the record's identity and final outcome; carries no
      *               payload, so it can be logged as is

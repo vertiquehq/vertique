@@ -302,7 +302,9 @@ KafkaRecordFilter.allOf(filter1, filter2)
 KafkaRecordFilter.anyOf(filter1, filter2)
 ```
 
-A filtered record is committed under `MANUAL` and reported to `onRecordCompleted` as `SKIP`.
+A filtered record is committed under `MANUAL` and reported to `onRecordCompleted` as `SKIP`. A
+filter that throws is handled like a deserialization failure: the record goes to the consumer's
+error strategy and is reported to `onRecordCompleted` with that outcome.
 
 ### `KafkaProducerFactory`
 
@@ -699,7 +701,10 @@ See `dev.vertique:vertique-kafka-avro` for a complete reference implementation.
 first.
 
 Sync observers are fire-and-forget. An `Exception`, `LinkageError` or `AssertionError` thrown by one
-is logged and swallowed; later interceptors still run and the record's outcome is unaffected.
+is logged and swallowed; later interceptors still run and the record's outcome is unaffected. An
+`Exception` or `AssertionError` is logged at WARN each time. A `LinkageError` means the callback
+cannot run at all, so it is logged at ERROR once per interceptor class and callback, saying that the
+callback is unusable and its notifications are being lost; later occurrences are not logged.
 
 | Callback | When |
 |---|---|
@@ -763,9 +768,12 @@ public interface KafkaConsumerRecordView {
 
 **When it runs.** Exactly once per delivered record, when the disposition is final and all async
 work — DLQ publish, seek, recovery, `afterDispatch` — has settled. It runs on every path: filtered
-before deserialization, no matching route, deserialization failure, filtered or failed in
-`beforeDispatch`, dispatched, recovered, or handed to the error strategy. A record redelivered for a
-retry completes once per delivery; `retryCount` is the number of retries before that attempt.
+before deserialization, rejected by a filter that throws, no matching route, deserialization
+failure, filtered or failed in `beforeDispatch`, dispatched, recovered, or handed to the error
+strategy. A record redelivered for a retry completes once per delivery; `retryCount` is the number
+of retries before that attempt. The one limit: an asynchronous interceptor or handler future that
+never completes, or a throw from inside an asynchronous continuation, leaves the record without a
+completion.
 
 **Observer only.** The decision is already made. The callback cannot change filtering, dispatch,
 commit, retry, or dead-lettering.
