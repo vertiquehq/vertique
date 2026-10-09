@@ -6,13 +6,12 @@ package dev.vertique.kafka;
 import dev.vertique.context.DispatchEnvelopeBuilder;
 import dev.vertique.context.InboundExecutionContextScope;
 import dev.vertique.core.eventbus.EventBusClient;
-import dev.vertique.core.extension.OrderedExtension;
 import dev.vertique.core.payload.PayloadSources;
-import dev.vertique.kafka.interceptor.KafkaConsumerCaptureHook;
+import dev.vertique.kafka.interceptor.KafkaConsumerCompletedEvent;
 import dev.vertique.kafka.interceptor.KafkaConsumerInterceptor;
-import dev.vertique.kafka.interceptor.KafkaConsumerTerminal;
+import dev.vertique.kafka.interceptor.KafkaConsumerRecordIdentity;
+import dev.vertique.kafka.interceptor.KafkaConsumerRecordView;
 import dev.vertique.kafka.interceptor.KafkaDispatchContext;
-import dev.vertique.kafka.interceptor.KafkaRawRecordDisposition;
 import dev.vertique.kafka.interceptor.KafkaTerminalOutcome;
 import dev.vertique.kafka.producer.KafkaProducerFactory;
 import dev.vertique.kafka.serialization.KafkaDeserializer;
@@ -28,11 +27,9 @@ import jakarta.annotation.Nullable;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
 
 /**
@@ -64,10 +61,15 @@ import lombok.extern.slf4j.Slf4j;
  * delegated to focused collaborators: {@link KafkaRecordDispatcher}, {@link KafkaErrorHandler},
  * and {@link KafkaConsumerInterceptorChain}.
  *
- * <p>At the terminal point of every record (after all async operations have settled), every
- * registered {@link KafkaConsumerCaptureHook} is notified exactly once with the final
- * {@link KafkaTerminalOutcome}. Hook exceptions are swallowed so that a misbehaving hook
- * can never affect commit, retry, or DLQ behaviour.
+ * <p>When a record's disposition is final (after all async operations have settled), every
+ * interceptor's {@link KafkaConsumerInterceptor#onRecordCompleted} is called exactly once with the
+ * final {@link KafkaTerminalOutcome} and a framework-owned {@link KafkaConsumerRecordView}. This
+ * happens on every path a record can take: filtered, unroutable, undeserializable, dispatched,
+ * recovered or handed to the error strategy. The view is built once per record, before the filter,
+ * route resolution, deserialization and the interceptor chain, so nothing downstream can replace it.
+ * Its value is the array the broker delivered, never a copy. A failing observer is logged and
+ * swallowed and can never affect commit, retry, or dead-lettering. A consumer with no interceptors
+ * builds no view.
  */
 @Slf4j
 public class KafkaConsumerVerticle extends AbstractVerticle {
@@ -88,7 +90,6 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
 
     private final ConsumerEntry entry;
     private final List<KafkaConsumerInterceptor> interceptors;
-    private final List<KafkaConsumerCaptureHook> captureHooks;
     private final Map<String, String> kafkaProps;
     private final KafkaProducerFactory producerFactory;
 
@@ -122,10 +123,8 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
      * Creates a new consumer verticle.
      *
      * @param entry           the consumer entry describing the binding, config, and dispatch target
-     * @param interceptors    sorted list of interceptors to run around dispatch
-     * @param captureHooks    set of terminal-outcome capture hooks; stored sorted by
-     *        {@link OrderedExtension#comparator()} and notified exactly once per record at the
-     *        terminal point after all async operations have settled
+     * @param interceptors    sorted list of interceptors to run around dispatch and to notify once
+     *        per record when its disposition is final
      * @param producerFactory the shared Kafka producer factory used for DLQ publishing
      * @param requestSender   the service request sender for target-aware dispatch
      * @param targetResolver  the resolver for looking up service targets by stable id
@@ -140,7 +139,6 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
     public KafkaConsumerVerticle(
             ConsumerEntry entry,
             List<KafkaConsumerInterceptor> interceptors,
-            Set<KafkaConsumerCaptureHook> captureHooks,
             KafkaProducerFactory producerFactory,
             ServiceRequestSender requestSender,
             ServiceTargetResolver targetResolver,
@@ -150,8 +148,6 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
             dev.vertique.kafka.serialization.KafkaSerdeRegistry serdeRegistry) {
         this.entry = entry;
         this.interceptors = List.copyOf(interceptors);
-        this.captureHooks =
-                captureHooks.stream().sorted(OrderedExtension.comparator()).collect(Collectors.toUnmodifiableList());
         this.producerFactory = producerFactory;
         this.requestSender = requestSender;
         this.targetResolver = targetResolver;
@@ -284,9 +280,11 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
         byte[] rawBytes = record.value();
         String correlationId = sanitizeForMdc(
                 headers.getOrDefault(HEADER_CORRELATION_ID, UUID.randomUUID().toString()));
-        // The record's identity is fixed here, before any interceptor can run, and is what capture hooks
-        // receive on every path. A dispatch context handed back by an interceptor never replaces it.
-        KafkaRawRecordDisposition identity = buildRawDisposition(record, rawBytes, headers);
+        // The record view is fixed here, before the filter, route resolution, deserialization and any
+        // interceptor, and is what completion observers receive on every path. A dispatch context
+        // handed back by an interceptor never replaces it. Without interceptors nothing can observe
+        // it, so none is built and no headers are copied.
+        KafkaConsumerRecordView view = interceptors.isEmpty() ? null : buildRecordView(record, rawBytes, headers);
 
         // Pre-deserialization filter
         if (entry.filter() != null && !entry.filter().accept(record.key(), headers)) {
@@ -298,24 +296,23 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
                     record.offset());
             decrementInFlight();
             commitIfManual(record);
-            notifyTerminalOutcome(identity, null, KafkaTerminalOutcome.SKIP);
+            notifyCompleted(view, KafkaTerminalOutcome.SKIP);
             return;
         }
 
         // Deserialize and dispatch
         try {
-            dispatchRecord(record, rawBytes, headers, correlationId, identity);
+            dispatchRecord(record, rawBytes, headers, correlationId, view);
         } catch (Exception e) {
             decrementInFlight();
             errorHandler
                     .handleError(record, rawBytes, headers, e, consumerControl())
-                    .onSuccess(outcome -> notifyTerminalOutcome(identity, null, outcome))
+                    .onSuccess(outcome -> notifyCompleted(view, outcome))
                     .onFailure(err -> {
                         log.warn("[{}] Unexpected failure from handleError future", entry.name(), err);
                         // The error handler's own future failed — the record's disposition is
-                        // unknown, but hooks must still be notified exactly once (FR exactly-once
-                        // terminal-notification guarantee).
-                        notifyTerminalOutcome(identity, null, KafkaTerminalOutcome.ERROR_HANDLER_FAILED);
+                        // unknown, but the record must still complete exactly once.
+                        notifyCompleted(view, KafkaTerminalOutcome.ERROR_HANDLER_FAILED);
                     });
         }
     }
@@ -327,14 +324,15 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
      * @param rawBytes the raw value bytes
      * @param headers extracted header map
      * @param correlationId the correlation ID for tracing
-     * @param identity the record's framework-owned identity, handed to capture hooks at the terminal point
+     * @param view the record's framework-owned view, handed to completion observers; {@code null}
+     *     when the consumer has no interceptors
      */
     private void dispatchRecord(
             KafkaConsumerRecord<String, byte[]> record,
             byte[] rawBytes,
             Map<String, String> headers,
             String correlationId,
-            KafkaRawRecordDisposition identity) {
+            @Nullable KafkaConsumerRecordView view) {
 
         // For router kind, find the matching route before deserialization
         KafkaRecordDispatcher.RouteResult routeResult = null;
@@ -348,7 +346,7 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
                         record.offset());
                 decrementInFlight();
                 commitIfManual(record);
-                notifyTerminalOutcome(identity, null, KafkaTerminalOutcome.SKIP);
+                notifyCompleted(view, KafkaTerminalOutcome.SKIP);
                 return;
             }
         }
@@ -363,10 +361,10 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
             decrementInFlight();
             errorHandler
                     .handleError(record, rawBytes, headers, e, consumerControl())
-                    .onSuccess(outcome -> notifyTerminalOutcome(identity, null, outcome))
+                    .onSuccess(outcome -> notifyCompleted(view, outcome))
                     .onFailure(err -> {
                         log.warn("[{}] Unexpected failure from handleError future", entry.name(), err);
-                        notifyTerminalOutcome(identity, null, KafkaTerminalOutcome.ERROR_HANDLER_FAILED);
+                        notifyCompleted(view, KafkaTerminalOutcome.ERROR_HANDLER_FAILED);
                     });
             return;
         }
@@ -395,14 +393,12 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
         interceptorChain.runBeforeInterceptors(dispatchCtx).onComplete(interceptorResult -> {
             if (interceptorResult.failed()) {
                 decrementInFlight();
-                // The chain failed before handing back a context, so the hook gets the context the
-                // chain was given.
                 errorHandler
                         .handleError(record, rawBytes, headers, interceptorResult.cause(), consumerControl())
-                        .onSuccess(outcome -> notifyTerminalOutcome(identity, dispatchCtx, outcome))
+                        .onSuccess(outcome -> notifyCompleted(view, outcome))
                         .onFailure(err -> {
                             log.warn("[{}] Unexpected failure from handleError future", entry.name(), err);
-                            notifyTerminalOutcome(identity, dispatchCtx, KafkaTerminalOutcome.ERROR_HANDLER_FAILED);
+                            notifyCompleted(view, KafkaTerminalOutcome.ERROR_HANDLER_FAILED);
                         });
                 return;
             }
@@ -417,7 +413,7 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
                 decrementInFlight();
                 interceptorChain.runAfterInterceptors(ctx).onComplete(v -> {
                     commitIfManual(record);
-                    notifyTerminalOutcome(identity, ctx, KafkaTerminalOutcome.SKIP);
+                    notifyCompleted(view, KafkaTerminalOutcome.SKIP);
                 });
                 return;
             }
@@ -467,7 +463,7 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
                     interceptorChain.runOnSuccessObservers(ctx);
                     interceptorChain.runAfterInterceptors(ctx).onComplete(v -> {
                         commitIfManual(record);
-                        notifyTerminalOutcome(identity, ctx, KafkaTerminalOutcome.SUCCESS);
+                        notifyCompleted(view, KafkaTerminalOutcome.SUCCESS);
                     });
                 } else {
                     Throwable cause = dispatchResult.cause();
@@ -477,22 +473,21 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
                             .onSuccess(v -> {
                                 // Error was recovered by an interceptor — commit and move on
                                 commitIfManual(record);
-                                notifyTerminalOutcome(identity, ctx, KafkaTerminalOutcome.RECOVERED);
+                                notifyCompleted(view, KafkaTerminalOutcome.RECOVERED);
                             })
                             .onFailure(e -> {
-                                // Not recovered — proceed with normal error strategy; chain hooks
-                                // onto the terminal-outcome future so hooks fire after all async
-                                // work (DLQ publish, seek, scheduleResume) has settled.
+                                // Not recovered — proceed with normal error strategy; complete the
+                                // record from the terminal-outcome future so observers run after all
+                                // async work (DLQ publish, seek, scheduleResume) has settled.
                                 errorHandler
                                         .handleError(record, rawBytes, headers, e, consumerControl())
-                                        .onSuccess(outcome -> notifyTerminalOutcome(identity, ctx, outcome))
+                                        .onSuccess(outcome -> notifyCompleted(view, outcome))
                                         .onFailure(err -> {
                                             log.warn(
                                                     "[{}] Unexpected failure from handleError future",
                                                     entry.name(),
                                                     err);
-                                            notifyTerminalOutcome(
-                                                    identity, ctx, KafkaTerminalOutcome.ERROR_HANDLER_FAILED);
+                                            notifyCompleted(view, KafkaTerminalOutcome.ERROR_HANDLER_FAILED);
                                         });
                             });
                 }
@@ -610,66 +605,40 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
         }
     }
 
-    // --- Capture hook notification ---
+    // --- Record completion ---
 
     /**
-     * Notifies every registered {@link KafkaConsumerCaptureHook} that a record has reached its
-     * terminal outcome. Hooks are invoked in {@link OrderedExtension} order (phase → priority →
-     * orderKey). Any exception thrown by a hook is caught and logged as a warning so that a
-     * misbehaving hook can never affect commit, retry, or DLQ behaviour.
+     * Tells every interceptor that a record has reached its final disposition. The interceptor chain
+     * runs the observers in order and isolates their failures, so a misbehaving observer can never
+     * affect commit, retry, or dead-lettering.
      *
-     * @param identity the record's framework-owned identity, built before any interceptor ran
-     * @param ctx      the dispatch context as the interceptor chain left it, or {@code null} when the
-     *                 record exited before the chain
-     * @param outcome  the final disposition of this record
+     * @param view    the record's framework-owned view, built before the filter and any interceptor
+     *                ran; {@code null} when the consumer has no interceptors
+     * @param outcome the final disposition of this record
      */
-    private void notifyTerminalOutcome(
-            KafkaRawRecordDisposition identity, @Nullable KafkaDispatchContext<?> ctx, KafkaTerminalOutcome outcome) {
-        if (captureHooks.isEmpty()) {
+    private void notifyCompleted(@Nullable KafkaConsumerRecordView view, KafkaTerminalOutcome outcome) {
+        if (view == null) {
             return;
         }
-        KafkaConsumerTerminal terminal = new KafkaConsumerTerminal(identity, ctx, outcome);
-        for (KafkaConsumerCaptureHook hook : captureHooks) {
-            try {
-                hook.onTerminalOutcome(terminal);
-            } catch (Exception | LinkageError | AssertionError e) {
-                log.warn("[{}] KafkaConsumerCaptureHook threw exception for outcome {}", entry.name(), outcome, e);
-            }
-        }
+        interceptorChain.runOnRecordCompleted(new KafkaConsumerCompletedEvent(view.identity(), outcome), view);
     }
 
     /**
-     * Returns the bytes the record identity exposes. When capture hooks are registered the identity gets
-     * its own copy, so a deserializer or interceptor that edits the array it was handed in place cannot
-     * change what a hook reads later.
-     */
-    private byte[] identityBytes(byte[] rawBytes) {
-        return captureHooks.isEmpty() ? rawBytes : rawBytes.clone();
-    }
-
-    /**
-     * Builds a {@link KafkaRawRecordDisposition} from the raw record data available at
-     * pre-dispatch exit points.
+     * Builds the framework-owned view of a record as the consumer received it. Headers are copied; the
+     * value array is not.
      *
      * @param record   the incoming consumer record
      * @param rawBytes the raw value bytes (may be null for tombstones)
      * @param headers  the extracted header map
-     * @return the disposition; never null
+     * @return the view; never null
      */
-    private KafkaRawRecordDisposition buildRawDisposition(
+    private KafkaConsumerRecordView buildRecordView(
             KafkaConsumerRecord<String, byte[]> record, byte[] rawBytes, Map<String, String> headers) {
         String retryKey = record.topic() + ":" + record.partition() + ":" + record.offset();
         int retryCount = errorHandler.retryCounts.getOrDefault(retryKey, 0);
-        return new KafkaRawRecordDisposition(
-                entry.name(),
-                record.topic(),
-                record.partition(),
-                record.offset(),
-                record.key(),
-                headers,
-                rawBytes == null ? PayloadSources.absent() : PayloadSources.buffered(identityBytes(rawBytes), null),
-                record.timestamp(),
-                retryCount);
+        KafkaConsumerRecordIdentity identity = new KafkaConsumerRecordIdentity(
+                entry.name(), record.topic(), record.partition(), record.offset(), record.timestamp(), retryCount);
+        return new DefaultKafkaConsumerRecordView(identity, record.key(), headers, rawBytes);
     }
 
     // --- Utilities ---

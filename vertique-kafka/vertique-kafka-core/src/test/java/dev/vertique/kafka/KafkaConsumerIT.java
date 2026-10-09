@@ -230,7 +230,6 @@ public class KafkaConsumerIT {
                 KafkaConsumerVerticle consumerVerticle = new KafkaConsumerVerticle(
                         entry,
                         List.of(),
-                        Set.of(),
                         producerFactory,
                         KafkaTestSupport.requestSender(vertx),
                         testResolver,
@@ -247,7 +246,6 @@ public class KafkaConsumerIT {
                 KafkaConsumerVerticle consumerVerticle = new KafkaConsumerVerticle(
                         entry,
                         List.of(),
-                        Set.of(),
                         producerFactory,
                         KafkaTestSupport.requestSender(vertx),
                         filteredResolver,

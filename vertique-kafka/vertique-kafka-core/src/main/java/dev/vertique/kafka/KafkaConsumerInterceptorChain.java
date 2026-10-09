@@ -4,21 +4,26 @@
 package dev.vertique.kafka;
 
 import dev.vertique.core.async.Combinators;
+import dev.vertique.kafka.interceptor.KafkaConsumerCompletedEvent;
 import dev.vertique.kafka.interceptor.KafkaConsumerInterceptor;
+import dev.vertique.kafka.interceptor.KafkaConsumerRecordView;
 import dev.vertique.kafka.interceptor.KafkaDispatchContext;
 import io.vertx.core.Future;
 import java.util.List;
+import java.util.function.Consumer;
 import lombok.extern.slf4j.Slf4j;
 
 /**
  * Executes Kafka consumer interceptor pipelines: synchronous fire-and-forget observers and
  * asynchronous handler chains.
  *
- * <p>Observer methods ({@code onRecord}, {@code onSuccess}, {@code onError}) run all interceptors
- * in order, swallowing individual exceptions so that a failing interceptor does not disrupt
- * dispatch. Async chain methods ({@code runBeforeInterceptors}, {@code runAfterInterceptors},
- * {@code runRecoverError}) compose interceptor futures sequentially via
- * {@link dev.vertique.core.async.Combinators}.
+ * <p>Observer methods ({@code onRecord}, {@code onSuccess}, {@code onError},
+ * {@code onRecordCompleted}) run all interceptors in order under one isolation policy: an
+ * {@link Exception}, {@link LinkageError} or {@link AssertionError} thrown by one interceptor is
+ * logged and swallowed, so a failing observer can neither stop later interceptors nor change what
+ * happens to the record. Async chain methods ({@code runBeforeInterceptors},
+ * {@code runAfterInterceptors}, {@code runRecoverError}) compose interceptor futures sequentially
+ * via {@link dev.vertique.core.async.Combinators}.
  */
 @Slf4j
 final class KafkaConsumerInterceptorChain {
@@ -40,41 +45,61 @@ final class KafkaConsumerInterceptorChain {
     // --- Sync observers ---
 
     /**
-     * Fires {@code onRecord} on every interceptor. Exceptions are swallowed and logged.
+     * Fires {@code onRecord} on every interceptor. Failures are swallowed and logged.
      *
      * @param ctx the dispatch context before any before-dispatch processing
      */
     void runOnRecordObservers(KafkaDispatchContext<Object> ctx) {
-        Combinators.forEachSwallowSync(
-                interceptors,
-                i -> i.onRecord(ctx),
-                (i, e) -> log.warn("[{}] Interceptor onRecord threw exception", consumerName, e));
+        forEachObserver("onRecord", i -> i.onRecord(ctx));
     }
 
     /**
-     * Fires {@code onSuccess} on every interceptor after a successful dispatch. Exceptions are
+     * Fires {@code onSuccess} on every interceptor after a successful dispatch. Failures are
      * swallowed and logged.
      *
      * @param ctx the dispatch context after successful dispatch
      */
     void runOnSuccessObservers(KafkaDispatchContext<Object> ctx) {
-        Combinators.forEachSwallowSync(
-                interceptors,
-                i -> i.onSuccess(ctx),
-                (i, e) -> log.warn("[{}] Interceptor onSuccess threw exception", consumerName, e));
+        forEachObserver("onSuccess", i -> i.onSuccess(ctx));
     }
 
     /**
-     * Fires {@code onError} on every interceptor. Exceptions are swallowed and logged.
+     * Fires {@code onError} on every interceptor. Failures are swallowed and logged.
      *
      * @param ctx the dispatch context at the time of the error
      * @param error the dispatch error
      */
     void runOnErrorObservers(KafkaDispatchContext<Object> ctx, Throwable error) {
-        Combinators.forEachSwallowSync(
-                interceptors,
-                i -> i.onError(ctx, error),
-                (i, e) -> log.warn("[{}] Interceptor onError threw exception", consumerName, e));
+        forEachObserver("onError", i -> i.onError(ctx, error));
+    }
+
+    /**
+     * Fires {@code onRecordCompleted} on every interceptor once the record's disposition is final.
+     * Failures are swallowed and logged.
+     *
+     * @param event the completion facts
+     * @param record the framework-owned view of the record
+     */
+    void runOnRecordCompleted(KafkaConsumerCompletedEvent event, KafkaConsumerRecordView record) {
+        forEachObserver("onRecordCompleted", i -> i.onRecordCompleted(event, record));
+    }
+
+    /**
+     * Calls one synchronous observer callback on every interceptor in order. An {@link Exception},
+     * {@link LinkageError} or {@link AssertionError} from one interceptor is logged at warn level
+     * and does not stop the remaining interceptors. Any other {@link Error} propagates.
+     *
+     * @param callback the callback name, for the log message
+     * @param action the invocation of that callback on one interceptor
+     */
+    private void forEachObserver(String callback, Consumer<KafkaConsumerInterceptor> action) {
+        for (KafkaConsumerInterceptor interceptor : interceptors) {
+            try {
+                action.accept(interceptor);
+            } catch (Exception | LinkageError | AssertionError e) {
+                log.warn("[{}] Interceptor {} threw exception", consumerName, callback, e);
+            }
+        }
     }
 
     // --- Async chains ---

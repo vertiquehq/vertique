@@ -302,7 +302,7 @@ KafkaRecordFilter.allOf(filter1, filter2)
 KafkaRecordFilter.anyOf(filter1, filter2)
 ```
 
-A filtered record is committed under `MANUAL` and reported to capture hooks as `SKIP`.
+A filtered record is committed under `MANUAL` and reported to `onRecordCompleted` as `SKIP`.
 
 ### `KafkaProducerFactory`
 
@@ -698,14 +698,15 @@ See `dev.vertique:vertique-kafka-avro` for a complete reference implementation.
 — phase, then ascending priority, then `orderKey()` (the FQCN by default). Lower priority runs
 first.
 
-Sync observers are fire-and-forget; a thrown exception is logged and swallowed, and the dispatch
-outcome is unaffected.
+Sync observers are fire-and-forget. An `Exception`, `LinkageError` or `AssertionError` thrown by one
+is logged and swallowed; later interceptors still run and the record's outcome is unaffected.
 
 | Callback | When |
 |---|---|
 | `void onRecord(KafkaDispatchContext<?> ctx)` | After deserialization, before `beforeDispatch` |
 | `void onSuccess(KafkaDispatchContext<?> ctx)` | After a successful dispatch |
 | `void onError(KafkaDispatchContext<?> ctx, Throwable error)` | On any dispatch failure |
+| `void onRecordCompleted(KafkaConsumerCompletedEvent event, KafkaConsumerRecordView record)` | Once per received record, when its disposition is final — see [Record completion](#record-completion-onrecordcompleted) |
 
 Async handlers can change the outcome.
 
@@ -733,57 +734,104 @@ value, rawEvidence, headers, timestamp, retryCount, filtered, attributes)` — w
 `withFiltered(boolean)` and `withAttribute(String, Object)`. `retryCount` is 0-based and counts
 Kafka-native redeliveries, so a retry-topic routing decision in `recoverError` can read it.
 
-### `KafkaConsumerCaptureHook` (multibinding)
+### Record completion: `onRecordCompleted`
 
-Observer-only boundary hook, ordered by `OrderedExtension`. It fires **after** the irrevocable
-disposition decision and can never change commit, retry, or delivery; a thrown exception is
-swallowed.
+`KafkaConsumerInterceptor.onRecordCompleted` is the one place that sees **every** record the
+consumer received, with its final outcome. It is a sync observer like the three above, on the same
+interceptor multibinding and in the same order.
 
 ```java
-public interface KafkaConsumerCaptureHook extends OrderedExtension {
-    default void onTerminalOutcome(KafkaConsumerTerminal terminal) {}
+public interface KafkaConsumerInterceptor extends OrderedExtension {
+    default void onRecordCompleted(
+            KafkaConsumerCompletedEvent event, KafkaConsumerRecordView record) {}
 }
 
-public record KafkaConsumerTerminal(
-        KafkaRawRecordDisposition identity,
-        @Nullable KafkaDispatchContext<?> context,
-        KafkaTerminalOutcome outcome) {}
+public record KafkaConsumerCompletedEvent(
+        KafkaConsumerRecordIdentity identity, KafkaTerminalOutcome outcome) {}
+
+public record KafkaConsumerRecordIdentity(
+        String consumerName, String topic, int partition, long offset,
+        long timestamp, int retryCount) {}
+
+public interface KafkaConsumerRecordView {
+    KafkaConsumerRecordIdentity identity();
+    @Nullable String key();
+    Map<String, String> headers();   // unmodifiable copy taken when the record was received
+    PayloadSource value();           // the broker's array, NOT copied; absent for a tombstone
+}
 ```
 
-`onTerminalOutcome` fires exactly once per record the consumer received, at the terminal point after
-all async work — DLQ publish, seek, recovery — on every path: dispatched, interceptor-filtered,
-filtered before deserialization, no matching route, or failed before dispatch.
+**When it runs.** Exactly once per delivered record, when the disposition is final and all async
+work — DLQ publish, seek, recovery, `afterDispatch` — has settled. It runs on every path: filtered
+before deserialization, no matching route, deserialization failure, filtered or failed in
+`beforeDispatch`, dispatched, recovered, or handed to the error strategy. A record redelivered for a
+retry completes once per delivery; `retryCount` is the number of retries before that attempt.
 
-`identity` is a `KafkaRawRecordDisposition` —
-`(consumerName, topic, partition, offset, key, headers, rawEvidence, timestamp, retryCount)`. The
-consumer builds it from the broker's record **before any interceptor runs** and no interceptor can
-replace it, so read a record's coordinates, key, headers and raw bytes from `identity`.
+**Observer only.** The decision is already made. The callback cannot change filtering, dispatch,
+commit, retry, or dead-lettering.
 
-`context` is the `KafkaDispatchContext` as the interceptor chain left it. A `beforeDispatch`
-interceptor may return a different context, so it is the chain's view of the record, not the record's
-identity. It is `null` when the record exited before the chain: a pre-deserialization filter
-rejection, a router-kind no-matching-route, or a deserialization failure. When a `beforeDispatch`
-interceptor fails, `context` is the context the chain was given.
+**Threading.** `onRecordCompleted` may run on **any thread**, and **concurrently for different
+records**. It runs on whichever thread settles the record's last future: the consumer's context, a
+handler's or interceptor's thread, or the producer's context on a dead-letter path. Implementations
+must be thread-safe.
+
+**The event is facts only.** `KafkaConsumerCompletedEvent` has no key, headers, value, or dispatch
+context, so it can be logged or passed to a metrics observer as is.
+
+**The view is framework-owned.** The consumer builds it once per record, before the
+`KafkaRecordFilter`, route resolution, deserialization, and the interceptor chain:
+
+- `identity()`, `key()` and `headers()` are the record's own. A `beforeDispatch` that returns a
+  different `KafkaDispatchContext`, or a filter that edits the header map it is given, changes none
+  of them.
+- `event.identity()` and `record.identity()` are the same instance.
+- A consumer with no interceptors builds no view and copies no headers.
+
+**`value()` is not a snapshot.** It is the array the broker delivered, **uncopied**. The
+deserializer, router property matching and — for a `byte[]` consumer — the handler were given the
+same array, so an in-place edit by any of them is visible through `value()`. The framework never
+copies a record value. Copy the bytes before retaining them past the callback, and do not treat
+them as proof of the wire content when application code may edit the array.
+`KafkaDispatchContext.rawEvidence()` is the same kind of no-copy view.
+
+| Need | Callback |
+|---|---|
+| The **deserialized value** of records that reached dispatch | `onRecord` |
+| **Every** record, its **outcome**, and its **raw form** (key, headers, value bytes) | `onRecordCompleted` |
+
+`onRecord` never sees a record that was filtered before deserialization, matched no route, or failed
+to deserialize, and it runs before the outcome is known.
+
+```java
+@Override
+public void onRecordCompleted(KafkaConsumerCompletedEvent event, KafkaConsumerRecordView record) {
+    KafkaConsumerRecordIdentity id = event.identity();
+    completions.merge(event.outcome(), 1L, Long::sum);   // a ConcurrentHashMap: thread-safe
+    if (event.outcome() == KafkaTerminalOutcome.DLQ_FAILED) {
+        log.warn("Lost record {}-{}@{} key={}",
+                id.topic(), id.partition(), id.offset(), record.key());
+    }
+}
+```
 
 | `KafkaTerminalOutcome` | Meaning |
 |---|---|
 | `SUCCESS` | The handler completed successfully |
-| `SKIP` | Skipped per `ErrorStrategy.SKIP`, or filtered pre-dispatch |
+| `SKIP` | Skipped per `ErrorStrategy.SKIP`, filtered, or no matching route |
 | `RECOVERED` | An interceptor's `recoverError` handled the error |
 | `RETRY_SCHEDULED` | Consumer paused, offset not committed, Kafka will redeliver |
 | `DLQ_PUBLISHED` | Forwarded to the dead-letter topic |
 | `DLQ_FAILED` | The DLQ publish failed; the offset was not committed |
 | `ERROR_HANDLER_FAILED` | The error handler's own future failed; the record's disposition is unknown |
 
-`KafkaRawRecordDisposition.rawEvidence()` and `KafkaDispatchContext.rawEvidence()` return a
-`PayloadSource` — a **no-copy** buffered view of the record bytes. A hook must copy before retaining
-it across threads.
-
-> **Breaking change (core 0.3.0).** `onTerminalOutcome(KafkaDispatchContext<?>, KafkaTerminalOutcome)`
-> and `onPreDispatchTerminalOutcome(KafkaRawRecordDisposition, KafkaTerminalOutcome)` are replaced by
-> the single `onTerminalOutcome(KafkaConsumerTerminal)`. A hook that overrode either old form fails to
-> compile. Move to `terminal.identity()` for coordinates, key, headers and raw bytes, and to
-> `terminal.context()` (nullable) only for what the interceptor chain added.
+> **Breaking change (core 0.3.0).** The separate consumer capture-hook SPI, its terminal and
+> raw-disposition records, and its `Set` multibinding are removed. Implement
+> `KafkaConsumerInterceptor.onRecordCompleted` and contribute the interceptor into
+> `Set<KafkaConsumerInterceptor>` instead. Read coordinates and `retryCount` from
+> `event.identity()`, and the key, headers and raw value from the `KafkaConsumerRecordView`. The
+> dispatch context is no longer delivered at completion. The record value is no longer cloned for
+> observers. `onRecord`, `onSuccess` and `onError` now also swallow `AssertionError` and
+> `LinkageError`.
 
 ### `KafkaProducerCaptureHook` (multibinding)
 
@@ -825,8 +873,7 @@ default accepts every producer interface.
 |---|---|---|
 | `Set<KafkaConsumerBinding<?>>` | — | Model-2 declarative bindings |
 | `Set<Object>` | `@KafkaConsumers` | Model-3 router `Class<?>` literals and model-4 handler instances |
-| `Set<KafkaConsumerInterceptor>` | — | Consumer pipeline interceptors |
-| `Set<KafkaConsumerCaptureHook>` | — | Consumer boundary capture hooks |
+| `Set<KafkaConsumerInterceptor>` | — | Consumer pipeline interceptors, including record-completion observers |
 | `Set<KafkaProducerCaptureHook>` | — | Producer boundary capture hooks |
 | `Set<KafkaSerdeProvider>` | — | Value-format providers |
 
