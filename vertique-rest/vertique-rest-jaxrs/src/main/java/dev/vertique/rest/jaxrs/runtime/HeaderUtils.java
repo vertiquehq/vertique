@@ -11,16 +11,25 @@ final class HeaderUtils {
     private HeaderUtils() {}
 
     /**
-     * Escapes a value for inclusion in a quoted-string within a Content-Disposition header.
-     * Backslashes and double-quotes are backslash-escaped; bare CR and LF characters are stripped.
+     * Escapes a value for inclusion in a quoted-string within a header value. Backslashes and
+     * double-quotes are backslash-escaped; CR, LF and the other control characters other than a
+     * horizontal tab are dropped, so a value can never carry a line break into a header.
      *
      * @param value the raw header value to escape
      * @return the escaped value safe for use in a quoted-string
      */
     static String escapeQuoted(String value) {
-        return value.replace("\\", "\\\\")
-                .replace("\"", "\\\"")
-                .replace("\r", "")
-                .replace("\n", "");
+        StringBuilder sb = new StringBuilder(value.length());
+        for (int i = 0; i < value.length(); i++) {
+            char c = value.charAt(i);
+            if ((c < 0x20 && c != '\t') || c == 0x7F) {
+                continue;
+            }
+            if (c == '\\' || c == '"') {
+                sb.append('\\');
+            }
+            sb.append(c);
+        }
+        return sb.toString();
     }
 }

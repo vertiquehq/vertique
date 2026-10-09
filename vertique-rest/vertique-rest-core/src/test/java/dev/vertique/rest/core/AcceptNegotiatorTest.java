@@ -330,4 +330,44 @@ class AcceptNegotiatorTest {
         assertEquals(0.0, AcceptNegotiator.effectiveQuality(client, MediaType.parse("text/plain")), 0.0);
         assertEquals(0.0, AcceptNegotiator.effectiveQuality(List.of(), MediaType.parse("text/plain")), 0.0);
     }
+
+    // --- Dropped malformed entries ---
+
+    @Test
+    @DisplayName("negotiate returns null when every entry was dropped as malformed")
+    void negotiateFailsClosedWhenEveryEntryIsMalformed() {
+        List<String> server = List.of("application/json");
+        assertNull(AcceptNegotiator.negotiate("application/xml;x=\"", server));
+        assertNull(AcceptNegotiator.negotiate("application/json;q=abc", server));
+        assertNull(AcceptNegotiator.negotiate("application/json;q=\"1\"", server));
+        assertNull(AcceptNegotiator.negotiate("application/json;q=2", server));
+        assertNull(AcceptNegotiator.negotiate("application/json;q=0;q=1", server));
+    }
+
+    @Test
+    @DisplayName("negotiate still serves the first type for tokens that merely lack a slash")
+    void negotiateKeepsFirstTypeForSlashlessTokens() {
+        assertEquals("application/json", AcceptNegotiator.negotiate("garbage", List.of("application/json")));
+    }
+
+    @Test
+    @DisplayName("negotiate ignores a dropped malformed entry when a usable entry remains")
+    void negotiateUsesRemainingEntries() {
+        assertEquals(
+                "application/json",
+                AcceptNegotiator.negotiate("application/xml;q=abc, application/json", List.of("application/json")));
+    }
+
+    @Test
+    @DisplayName("effectiveQuality treats an Accept entry with an unusable q as not acceptable")
+    void effectiveQualityRejectsUnusableQ() {
+        assertEquals(0.0, AcceptNegotiator.effectiveQuality("image/png;q=abc", "image/png"), 0.0);
+        assertEquals(0.0, AcceptNegotiator.effectiveQuality("image/png;q=0;q=1", "image/png"), 0.0);
+    }
+
+    @Test
+    @DisplayName("a server type with an unusable q is read leniently")
+    void serverTypeQualityIsLenient() {
+        assertEquals("application/json", AcceptNegotiator.negotiate("*/*", List.of("application/json;q=abc")));
+    }
 }

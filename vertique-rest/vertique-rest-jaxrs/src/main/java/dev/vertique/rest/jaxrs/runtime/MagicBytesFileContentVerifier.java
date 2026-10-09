@@ -21,8 +21,11 @@ import java.util.Objects;
  *
  * <p>The verifier is deliberately package-private: applications opt in through {@link
  * MagicBytesVerifierModule}, while the public extension contract remains {@link
- * FileContentVerifier}. Unknown or malformed declared media types are accepted without file I/O;
- * baseline declared-type validation remains the validation strategy's responsibility.
+ * FileContentVerifier}. An absent or blank declared media type, and a well-formed one this catalog
+ * does not map, are accepted without file I/O; baseline declared-type validation remains the
+ * validation strategy's responsibility. A declared media type that is present but cannot be parsed
+ * is rejected without file I/O: the verifier is a trust boundary, so a value it cannot read must not
+ * be a way to skip the signature check.
  */
 final class MagicBytesFileContentVerifier implements FileContentVerifier {
 
@@ -30,6 +33,8 @@ final class MagicBytesFileContentVerifier implements FileContentVerifier {
 
     private static final String MISMATCH_DETAIL = "file content does not match the declared content type";
     private static final String MISMATCH_TYPE = "fileSignatureMismatch";
+    private static final String MALFORMED_DETAIL = "declared content type is not a valid media type";
+    private static final String MALFORMED_TYPE = "fileContentTypeMalformed";
 
     private static final List<Signature> ZIP_SIGNATURES =
             List.of(prefix(0x50, 0x4B, 0x03, 0x04), prefix(0x50, 0x4B, 0x05, 0x06), prefix(0x50, 0x4B, 0x07, 0x08));
@@ -100,7 +105,15 @@ final class MagicBytesFileContentVerifier implements FileContentVerifier {
     @Override
     public Future<FileVerificationResult> verify(FileUpload part) {
         Objects.requireNonNull(part, "part");
-        List<Signature> acceptedSignatures = signaturesFor(part.contentType());
+        String declaredType = part.contentType();
+        if (declaredType == null || declaredType.isBlank()) {
+            return Future.succeededFuture(FileVerificationResult.accepted());
+        }
+        MediaType mediaType = MediaType.parse(declaredType);
+        if (mediaType == null) {
+            return Future.succeededFuture(FileVerificationResult.rejected(MALFORMED_DETAIL, MALFORMED_TYPE));
+        }
+        List<Signature> acceptedSignatures = SIGNATURES.get(mediaType.withoutParameters());
         if (acceptedSignatures == null) {
             return Future.succeededFuture(FileVerificationResult.accepted());
         }
@@ -111,11 +124,6 @@ final class MagicBytesFileContentVerifier implements FileContentVerifier {
                     .compose(ignored -> file.read(Buffer.buffer(HEAD_WINDOW_BYTES), 0, 0L, HEAD_WINDOW_BYTES));
             return read.map(head -> verdict(head, acceptedSignatures)).eventually(file::close);
         });
-    }
-
-    private static List<Signature> signaturesFor(String declaredType) {
-        MediaType mediaType = MediaType.parse(declaredType);
-        return mediaType == null ? null : SIGNATURES.get(mediaType.withoutParameters());
     }
 
     private static FileVerificationResult verdict(Buffer head, List<Signature> acceptedSignatures) {

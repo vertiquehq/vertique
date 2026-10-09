@@ -402,6 +402,89 @@ class HeaderElementTest {
     }
 
     @Nested
+    @DisplayName("duplicate q and bounded work")
+    class Bounds {
+
+        private long allocatedBytesOf(Runnable work) {
+            com.sun.management.ThreadMXBean mx =
+                    (com.sun.management.ThreadMXBean) java.lang.management.ManagementFactory.getThreadMXBean();
+            long id = Thread.currentThread().getId();
+            long before = mx.getThreadAllocatedBytes(id);
+            work.run();
+            return mx.getThreadAllocatedBytes(id) - before;
+        }
+
+        @Test
+        @DisplayName("a repeated q makes the element malformed")
+        void repeatedQualityIsMalformed() {
+            assertEquals(List.of(), values("application/json;q=0;q=1"));
+            assertNull(HeaderElement.parse("application/json;q=0.5;Q=0.7"));
+            assertEquals(List.of("a/b"), values("application/json;q=0;q=1, a/b"));
+        }
+
+        @Test
+        @DisplayName("32 parameters are accepted and 33 make the element malformed")
+        void parameterCap() {
+            StringBuilder ok = new StringBuilder("a/b");
+            for (int i = 0; i < 32; i++) {
+                ok.append(";p").append(i).append("=1");
+            }
+            assertEquals(32, only(ok.toString()).parameters().size());
+            assertNull(HeaderElement.parse(ok + ";p32=1"));
+            assertEquals(List.of("c/d"), values(ok + ";p32=1, c/d"));
+        }
+
+        @Test
+        @DisplayName("empty parameters do not count toward the parameter cap")
+        void emptyParametersDoNotCount() {
+            StringBuilder header = new StringBuilder("a/b");
+            for (int i = 0; i < 100; i++) {
+                header.append(';');
+            }
+            assertEquals(List.of("a/b"), values(header.toString()));
+        }
+
+        @Test
+        @DisplayName("a header of a million commas is read without allocating per comma")
+        void millionCommas() {
+            String header = ",".repeat(1_000_000);
+            long allocated = allocatedBytesOf(
+                    () -> org.junit.jupiter.api.Assertions.assertEquals(List.of(), HeaderElement.parseList(header)));
+            assertTrue(allocated < 256 * 1024, "allocated " + allocated + " bytes");
+        }
+
+        @Test
+        @DisplayName("an element with ten thousand parameters is rejected without materializing them")
+        void tenThousandParameters() {
+            StringBuilder header = new StringBuilder("a/b");
+            for (int i = 0; i < 10_000; i++) {
+                header.append(";p").append(i).append("=1");
+            }
+            String text = header.toString();
+            long allocated =
+                    allocatedBytesOf(() -> org.junit.jupiter.api.Assertions.assertNull(HeaderElement.parse(text)));
+            assertTrue(allocated < 128 * 1024, "allocated " + allocated + " bytes");
+            long listAllocated = allocatedBytesOf(
+                    () -> org.junit.jupiter.api.Assertions.assertEquals(List.of(), HeaderElement.parseList(text)));
+            assertTrue(listAllocated < 128 * 1024, "allocated " + listAllocated + " bytes");
+        }
+
+        @Test
+        @DisplayName("scanning stops at the fiftieth non-empty element")
+        void stopsAtFiftiethElement() {
+            StringBuilder header = new StringBuilder();
+            for (int i = 0; i < 50; i++) {
+                header.append("t/").append(i).append(',');
+            }
+            header.append("\"unterminated").append(",".repeat(500_000));
+            String text = header.toString();
+            long allocated = allocatedBytesOf(() -> org.junit.jupiter.api.Assertions.assertEquals(
+                    50, HeaderElement.parseList(text).size()));
+            assertTrue(allocated < 512 * 1024, "allocated " + allocated + " bytes");
+        }
+    }
+
+    @Nested
     @DisplayName("shared tokenizer")
     class Tokenizer {
 

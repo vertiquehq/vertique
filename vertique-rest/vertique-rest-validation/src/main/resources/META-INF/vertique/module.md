@@ -637,7 +637,12 @@ A verifier that does not apply returns an already-completed
 check by adding `MagicBytesVerifierModule.class` to their component. Its bounded catalog recognizes
 common image, document, archive/compression, audio/video container, WebAssembly, and web-font
 signatures within the first 12 bytes. It is a spoofing heuristic, not malware or structural format
-validation; unmapped declared types are accepted without I/O.
+validation; unmapped declared types are accepted without I/O. A declared type that is absent or
+blank has nothing to verify and is accepted; one that is present but cannot be parsed as a media
+type (an unterminated quote, no `/`) is rejected without I/O with type `fileContentTypeMalformed`
+and detail `declared content type is not a valid media type`, so an unreadable declaration is never a
+way to skip the signature check. A `q` or other parameter on a mapped type does not affect the
+check: `image/png; q=abc` is verified as `image/png`.
 
 ---
 

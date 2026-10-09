@@ -42,8 +42,13 @@ public final class AcceptNegotiator {
      *   <li>If {@code serverTypes} is empty — returns {@code null}.</li>
      *   <li>If no server type is compatible with any client-acceptable type — returns {@code null}
      *       (the caller should respond with {@code 406 Not Acceptable}).</li>
-     *   <li>Malformed entries in the {@code Accept} header (e.g. tokens without a {@code /}, an
-     *       unterminated quoted string, or an invalid {@code q}) are silently skipped.</li>
+     *   <li>Entries without a {@code /} are silently skipped. If the header holds only such
+     *       entries, the first server type is returned.</li>
+     *   <li>Entries that are malformed (an unterminated quoted string, an invalid, quoted,
+     *       out-of-range or repeated {@code q}, or too many parameters) are dropped and never make
+     *       a type acceptable. When every entry was dropped as malformed and none is usable, the
+     *       result is {@code null} (406), not the first server type: a header the client sent but
+     *       the server cannot read does not mean "anything".</li>
      * </ul>
      *
      * @param acceptHeader the value of the HTTP {@code Accept} header, may be {@code null}
@@ -59,9 +64,10 @@ public final class AcceptNegotiator {
             return serverTypes.get(0);
         }
 
-        List<MediaType> clientTypes = parseAcceptHeader(acceptHeader);
+        ParsedAccept accept = parseAccept(acceptHeader);
+        List<MediaType> clientTypes = accept.types();
         if (clientTypes.isEmpty()) {
-            return serverTypes.get(0);
+            return accept.droppedMalformed() ? null : serverTypes.get(0);
         }
 
         // Pre-parse server types once
@@ -154,19 +160,26 @@ public final class AcceptNegotiator {
      * as a tiebreaker (more specific types win ties). The header is split into entries and
      * parameters only outside quoted strings, so a quoted comma or semicolon does not change how
      * the entry is read. Malformed entries are silently excluded: those lacking a {@code /}
-     * separator, containing an unterminated quoted string, or carrying an invalid {@code q} (see
-     * {@link HeaderElement}). At most the first {@value HeaderElement#MAX_ELEMENTS} non-empty
-     * entries are considered.
+     * separator, containing an unterminated quoted string, carrying an invalid or repeated {@code q}, or
+     * having too many parameters (see {@link HeaderElement}). At most the first
+     * {@value HeaderElement#MAX_ELEMENTS} non-empty entries are considered.
      *
      * @param accept the raw {@code Accept} header value; must not be {@code null}
      * @return a sorted, unmodifiable list of parsed media types; never {@code null}
      */
     public static List<MediaType> parseAcceptHeader(String accept) {
+        return parseAccept(accept).types();
+    }
+
+    /** The sorted usable entries of an {@code Accept} header and whether any entry was dropped as malformed. */
+    private record ParsedAccept(List<MediaType> types, boolean droppedMalformed) {}
+
+    private static ParsedAccept parseAccept(String accept) {
         // HeaderElement caps the element count to prevent abuse via excessively complex Accept
         // headers. Vert.x already limits total header size (default 8192 bytes) at the HTTP layer.
-        List<HeaderElement> elements = HeaderElement.parseList(accept);
-        List<MediaType> result = new ArrayList<>(elements.size());
-        for (HeaderElement element : elements) {
+        HeaderElement.ParsedList parsed = HeaderElement.parseListChecked(accept);
+        List<MediaType> result = new ArrayList<>(parsed.elements().size());
+        for (HeaderElement element : parsed.elements()) {
             MediaType mt = MediaType.fromElement(element);
             if (mt != null) {
                 result.add(mt);
@@ -175,6 +188,6 @@ public final class AcceptNegotiator {
         result.sort(Comparator.comparingDouble(MediaType::qualityFactor)
                 .thenComparingInt(MediaType::specificity)
                 .reversed());
-        return List.copyOf(result);
+        return new ParsedAccept(List.copyOf(result), parsed.malformed() > 0);
     }
 }

@@ -58,16 +58,25 @@ public final class MediaType {
      * parameter values are returned unquoted and unescaped. The special {@code q} parameter is
      * extracted as the quality factor and excluded from the parameter map.
      *
+     * <p>This reads a media type the way a {@code Content-Type} is read, not an {@code Accept}
+     * entry: {@code q} is an ordinary parameter with a lenient value. A {@code q} that parses as a
+     * number is clamped to [0, 1]; one that does not (including a quoted value) is ignored and
+     * leaves the quality factor at {@code 1.0}. An unusable {@code q} never makes the media type
+     * invalid. Use {@link AcceptNegotiator#parseAcceptHeader(String)} for {@code Accept} entries,
+     * where an invalid {@code q} drops the entry.
+     *
      * <p>Returns {@code null} if the input is {@code null}, blank, does not contain a
      * {@code /} separator in the type/subtype portion, or is malformed as described by
-     * {@link HeaderElement}: an unterminated quoted string, or a {@code q} that is not a valid
-     * qvalue (such a value is not clamped).
+     * {@link HeaderElement}: an unterminated quoted string, characters after a closing quote, an
+     * empty value, or more than {@value HeaderElement#MAX_PARAMETERS} parameters. A caller that
+     * guards a trust boundary with the result must treat {@code null} for a non-blank input as
+     * a rejection, not as "nothing declared".
      *
      * @param raw the raw media type string to parse, e.g. {@code "application/json;q=0.8"}
      * @return the parsed {@code MediaType}, or {@code null} if the input is invalid
      */
     public static MediaType parse(String raw) {
-        return fromElement(HeaderElement.parse(raw));
+        return fromElement(HeaderElement.parseLenient(raw));
     }
 
     /**
@@ -265,7 +274,8 @@ public final class MediaType {
      * The format follows standard media type notation, e.g.
      * {@code "application/json;charset=utf-8;q=0.8"}. A parameter value that is empty or contains
      * anything other than token characters is written as a quoted string, so the output parses
-     * back to the same parameters.
+     * back to the same parameters; control characters other than a horizontal tab are dropped
+     * from a quoted value, so a value can never carry a line break into a header.
      *
      * @return the string representation of this media type
      */
@@ -300,6 +310,10 @@ public final class MediaType {
         StringBuilder sb = new StringBuilder(value.length() + 2).append('"');
         for (int i = 0; i < value.length(); i++) {
             char c = value.charAt(i);
+            if ((c < 0x20 && c != '\t') || c == 0x7F) {
+                // CR, LF and the other control characters cannot appear in a header value
+                continue;
+            }
             if (c == '"' || c == '\\') {
                 sb.append('\\');
             }

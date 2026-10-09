@@ -266,6 +266,14 @@ class SimpleRuntimeDelegateTest {
     }
 
     @Test
+    @DisplayName("MediaType.toString drops CR, LF and other control characters from a parameter value")
+    void shouldDropControlCharactersWhenWritingMediaType() {
+        MediaType mt = new MediaType(
+                "text", "plain", java.util.Map.of("note", "a\r\nb" + (char) 1 + "c" + (char) 127 + "d\te"));
+        assertEquals("text/plain;note=\"abcd\te\"", mt.toString());
+    }
+
+    @Test
     @DisplayName("MediaType round-trip writes non-token parameter values as quoted strings")
     void shouldRoundTripQuotedMediaTypeParameter() {
         MediaType original = MediaType.valueOf("application/json;profile=\"a;b \\\"c\\\"\";charset=utf-8");

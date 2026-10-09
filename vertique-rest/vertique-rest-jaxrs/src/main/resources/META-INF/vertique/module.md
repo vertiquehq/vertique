@@ -1826,7 +1826,9 @@ Beyond what `RestCoreModule` and `JsonRuntimeModule` contribute:
 | `Set<MountPublicationHook>` | `@Multibinds`; INTERNAL; empty by default; sibling framework modules contribute: the documentation module through `@ElementsIntoSet`, the `openapi-contract` validation module's contract-load check through `@IntoSet` |
 
 `dev.vertique.rest.jaxrs.runtime.MagicBytesVerifierModule` is a separate opt-in `@Module` that
-contributes the built-in magic-byte `FileContentVerifier`.
+contributes the built-in magic-byte `FileContentVerifier`. It fails closed on a declared content
+type that is present but unparsable (rejection type `fileContentTypeMalformed`), and reads a `q` or
+other parameter on a mapped type without letting it skip the signature check.
 
 Three INTERNAL framework packages back these sibling-module seams. Each is outside the maturity
 promise and not a stable application API.

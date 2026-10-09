@@ -304,12 +304,49 @@ class MediaTypeTest {
     }
 
     @Test
-    @DisplayName("an invalid, quoted or out-of-range q makes the media type invalid instead of defaulting to 1.0")
-    void invalidQualityReturnsNull() {
-        assertNull(MediaType.parse("application/json;q=abc"));
-        assertNull(MediaType.parse("application/json;q=\"0\""));
-        assertNull(MediaType.parse("application/json;q=1.5"));
-        assertNull(MediaType.parse("application/json;q=-1"));
+    @DisplayName(
+            "an invalid, quoted or out-of-range q is not malformed: it is clamped or ignored as for a Content-Type")
+    void parseKeepsLenientQualityHandling() {
+        assertQuality(1.0, "application/json;q=abc");
+        assertQuality(1.0, "application/json;q=\"0\"");
+        assertQuality(1.0, "application/json;q=\"\"");
+        assertQuality(1.0, "application/json;Q=x");
+        assertQuality(1.0, "application/json;q=2");
+        assertQuality(1.0, "application/json;q=1.5");
+        assertQuality(0.0, "application/json;q=-1");
+        assertQuality(0.5, "application/json;q=.5");
+        assertQuality(0.1234, "application/json;q=0.1234");
+        assertQuality(0.3, "application/json;q=0.3;q=abc");
+        assertQuality(0.7, "application/json;q=0.3;Q=0.7");
+        assertQuality(1.0, "application/json;q=NaN");
+    }
+
+    @Test
+    @DisplayName("a media type with an unusable q still splits and unquotes its other parameters")
+    void lenientQualityKeepsQuoteAwareParameters() {
+        MediaType mt = MediaType.parse("image/png; q=abc; profile=\"a;b\"; charset=utf-8");
+        assertNotNull(mt);
+        assertEquals(java.util.Map.of("profile", "a;b", "charset", "utf-8"), mt.parameters());
+        assertEquals(1.0, mt.qualityFactor(), 0.0);
+    }
+
+    @Test
+    @DisplayName("an unterminated quote, a quote followed by more characters and too many parameters are still invalid")
+    void structuralMalformationStillReturnsNull() {
+        assertNull(MediaType.parse("image/png; x=\""));
+        assertNull(MediaType.parse("image/png; x=\"a\"b"));
+        StringBuilder many = new StringBuilder("image/png");
+        for (int i = 0; i < 33; i++) {
+            many.append(";p").append(i).append("=1");
+        }
+        assertNull(MediaType.parse(many.toString()));
+    }
+
+    private static void assertQuality(double expected, String raw) {
+        MediaType mt = MediaType.parse(raw);
+        assertNotNull(mt, raw);
+        assertEquals(expected, mt.qualityFactor(), 0.0, raw);
+        assertTrue(mt.parameters().isEmpty(), raw);
     }
 
     @Test
@@ -335,5 +372,13 @@ class MediaTypeTest {
     @DisplayName("toString quotes an empty parameter value")
     void toStringQuotesEmptyValue() {
         assertEquals("a/b;x=\"\"", MediaType.parse("a/b;x=\"\"").toString());
+    }
+
+    @Test
+    @DisplayName("toString drops CR, LF and other control characters from a quoted parameter value")
+    void toStringDropsControlCharacters() {
+        MediaType mt = new MediaType(
+                "text", "plain", java.util.Map.of("note", "a\r\nb" + (char) 1 + "c" + (char) 127 + "d\te"), 1.0);
+        assertEquals("text/plain;note=\"abcd\te\"", mt.toString());
     }
 }
