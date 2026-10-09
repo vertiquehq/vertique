@@ -974,6 +974,14 @@ terminal event ordering, and connection cleanup.
 `Response.ok(entity).build()`, `Response.status(404).entity(body).type("application/problem+json").build()`,
 `UriBuilder`, and `Link` all work with no JAX-RS implementation on the classpath.
 
+The runtime's `MediaType`, `CacheControl` and `Link` parsers (`MediaType.valueOf`,
+`CacheControl.valueOf`, `Link.valueOf`) split on `;` and `,` only outside quoted strings, using the
+same tokenizer as `HeaderElement` in `vertique-rest-core`. Quoted parameter values are returned
+unquoted and unescaped (`charset="utf-8"` yields `utf-8`), and `toString()` quotes values that are not
+tokens. A malformed quoted string — unterminated, ending in a backslash, or followed by further
+characters — is rejected with `IllegalArgumentException`; `Response.getLinks()` skips such a `Link`
+value and `Response.getMediaType()` returns `null`.
+
 Two adapters are visible to resource code:
 
 | Class | Purpose |

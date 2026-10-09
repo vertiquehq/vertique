@@ -402,6 +402,104 @@ class HeaderElementTest {
     }
 
     @Nested
+    @DisplayName("shared tokenizer")
+    class Tokenizer {
+
+        @Test
+        @DisplayName("splitOutsideQuotes splits on the delimiter and keeps segments untrimmed")
+        void splitsOnDelimiter() {
+            assertEquals(List.of("a", " b", "c "), HeaderElement.splitOutsideQuotes("a; b;c ", ';'));
+        }
+
+        @Test
+        @DisplayName("splitOutsideQuotes keeps empty segments, including the one after a trailing delimiter")
+        void keepsEmptySegments() {
+            assertEquals(List.of("a", "", "b", ""), HeaderElement.splitOutsideQuotes("a,,b,", ','));
+            assertEquals(List.of(""), HeaderElement.splitOutsideQuotes("", ','));
+        }
+
+        @Test
+        @DisplayName("splitOutsideQuotes does not split on a delimiter inside a quoted string")
+        void keepsQuotedDelimiter() {
+            assertEquals(
+                    List.of("a=\"x,y\"", " b=\"z;w\""), HeaderElement.splitOutsideQuotes("a=\"x,y\", b=\"z;w\"", ','));
+        }
+
+        @Test
+        @DisplayName("splitOutsideQuotes treats an escaped quote as part of the quoted string")
+        void escapedQuoteDoesNotEndQuotedString() {
+            assertEquals(List.of("a=\"x\\\",y\"", "b"), HeaderElement.splitOutsideQuotes("a=\"x\\\",y\",b", ','));
+        }
+
+        @Test
+        @DisplayName("splitOutsideQuotes treats a backslash outside a quoted string as literal")
+        void backslashOutsideQuotesIsLiteral() {
+            assertEquals(List.of("a\\", "b"), HeaderElement.splitOutsideQuotes("a\\,b", ','));
+        }
+
+        @Test
+        @DisplayName("splitOutsideQuotes returns null for an unterminated quoted string")
+        void unterminatedQuoteIsNull() {
+            assertNull(HeaderElement.splitOutsideQuotes("a=\"x,y", ','));
+        }
+
+        @Test
+        @DisplayName("splitOutsideQuotes returns null when a trailing backslash escapes the closing quote")
+        void escapedClosingQuoteIsNull() {
+            assertNull(HeaderElement.splitOutsideQuotes("a=\"x\\\"", ','));
+        }
+
+        @Test
+        @DisplayName("splitOutsideQuotes rejects a quote or backslash delimiter and a null text")
+        void rejectsBadArguments() {
+            assertThrows(IllegalArgumentException.class, () -> HeaderElement.splitOutsideQuotes("a", '"'));
+            assertThrows(IllegalArgumentException.class, () -> HeaderElement.splitOutsideQuotes("a", '\\'));
+            assertThrows(NullPointerException.class, () -> HeaderElement.splitOutsideQuotes(null, ','));
+        }
+
+        @Test
+        @DisplayName("splitOutsideQuotes returns an unmodifiable list")
+        void resultIsUnmodifiable() {
+            List<String> segments = HeaderElement.splitOutsideQuotes("a,b", ',');
+            assertThrows(UnsupportedOperationException.class, () -> segments.add("c"));
+        }
+
+        @Test
+        @DisplayName("unquote returns a value that does not start with a quote unchanged")
+        void unquoteLeavesPlainValue() {
+            assertEquals("utf-8", HeaderElement.unquote("utf-8"));
+            assertEquals("", HeaderElement.unquote(""));
+            assertEquals("a\"b", HeaderElement.unquote("a\"b"));
+        }
+
+        @Test
+        @DisplayName("unquote removes the quotes and resolves backslash escapes")
+        void unquoteResolvesEscapes() {
+            assertEquals("a,b", HeaderElement.unquote("\"a,b\""));
+            assertEquals("a\"b", HeaderElement.unquote("\"a\\\"b\""));
+            assertEquals("a\\b", HeaderElement.unquote("\"a\\\\b\""));
+            assertEquals("", HeaderElement.unquote("\"\""));
+        }
+
+        @Test
+        @DisplayName("unquote returns null for a quoted string that is not complete")
+        void unquoteRejectsMalformed() {
+            assertNull(HeaderElement.unquote("\""));
+            assertNull(HeaderElement.unquote("\"abc"));
+            assertNull(HeaderElement.unquote("\"abc\\"));
+            assertNull(HeaderElement.unquote("\"abc\\\""));
+            assertNull(HeaderElement.unquote("\"abc\"def"));
+            assertNull(HeaderElement.unquote("\"a\"b\""));
+        }
+
+        @Test
+        @DisplayName("unquote rejects null")
+        void unquoteRejectsNull() {
+            assertThrows(NullPointerException.class, () -> HeaderElement.unquote(null));
+        }
+    }
+
+    @Nested
     @DisplayName("robustness")
     class Robustness {
 

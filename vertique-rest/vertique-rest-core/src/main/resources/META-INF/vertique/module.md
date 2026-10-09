@@ -532,6 +532,19 @@ Parsing follows RFC 9110:
 - At most the first `HeaderElement.MAX_ELEMENTS` (50) non-empty elements are considered, counting
   malformed ones; later elements are ignored.
 
+Two static helpers expose the same tokenizer for header grammars that are not
+`value *( ; parameter )` — `Cache-Control` directives, or the parameters after the `<uri>` of a
+`Link` value — so every parser here splits and unquotes identically:
+
+- `HeaderElement.splitOutsideQuotes(String text, char delimiter)` splits on `delimiter` only outside
+  double-quoted strings, honoring backslash escapes inside them. Segments are untrimmed and empty
+  segments are kept. It returns `null` when a quoted string is unterminated; `delimiter` must not be
+  `"` or `\`.
+- `HeaderElement.unquote(String value)` returns a value that does not start with `"` unchanged, and
+  otherwise the content of one complete quoted string with its escapes resolved. It returns `null`
+  when the closing quote is missing (including a trailing backslash or a final escaped quote) or
+  characters follow it.
+
 `MediaType` is an immutable RFC 9110 media type — type, subtype, parameters (excluding `q`), and
 quality factor, all lowercased. `MediaType.parse(String)` (aliased as `valueOf`) reads one
 `HeaderElement` and returns `null` for `null`, blank, or malformed input (including the cases

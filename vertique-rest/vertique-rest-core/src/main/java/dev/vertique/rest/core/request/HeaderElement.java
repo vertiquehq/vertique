@@ -92,34 +92,16 @@ public record HeaderElement(String value, Map<String, String> parameters, double
         if (headerValue == null || headerValue.isBlank()) {
             return List.of();
         }
+        List<String> texts = new ArrayList<>();
+        split(headerValue, ',', texts);
         List<HeaderElement> elements = new ArrayList<>();
         int considered = 0;
-        int start = 0;
-        boolean inQuote = false;
-        int length = headerValue.length();
-        for (int i = 0; i <= length && considered < MAX_ELEMENTS; i++) {
-            if (i < length) {
-                char c = headerValue.charAt(i);
-                if (inQuote) {
-                    if (c == '\\') {
-                        i++;
-                    } else if (c == '"') {
-                        inQuote = false;
-                    }
-                    continue;
-                }
-                if (c == '"') {
-                    inQuote = true;
-                    continue;
-                }
-                if (c != ',') {
-                    continue;
-                }
-            }
-            String text = headerValue.substring(start, i);
-            start = i + 1;
+        for (String text : texts) {
             if (text.isBlank()) {
                 continue;
+            }
+            if (considered == MAX_ELEMENTS) {
+                break;
             }
             considered++;
             HeaderElement element = parse(text);
@@ -144,7 +126,7 @@ public record HeaderElement(String value, Map<String, String> parameters, double
         if (element == null || element.isBlank()) {
             return null;
         }
-        List<String> segments = splitOutsideQuotes(element);
+        List<String> segments = splitOutsideQuotes(element, ';');
         if (segments == null) {
             return null;
         }
@@ -169,7 +151,7 @@ public record HeaderElement(String value, Map<String, String> parameters, double
             }
             String raw = segment.substring(eq + 1).trim();
             boolean quoted = raw.startsWith("\"");
-            String paramValue = quoted ? unquote(raw) : raw;
+            String paramValue = unquote(raw);
             if (paramValue == null) {
                 return null;
             }
@@ -188,9 +170,75 @@ public record HeaderElement(String value, Map<String, String> parameters, double
 
     // --- Tokenizing ---
 
-    /** Splits on {@code ;} outside quoted strings; returns {@code null} if a quoted string is unterminated. */
-    private static List<String> splitOutsideQuotes(String text) {
+    /**
+     * Splits {@code text} on {@code delimiter} wherever the delimiter is outside a double-quoted
+     * string. Inside a quoted string a backslash escapes the next character, so an escaped quote
+     * does not end it; outside quotes a backslash is literal. Segments are returned exactly as
+     * they appear, quote characters and whitespace included; none is trimmed, and empty segments
+     * (such as the one after a trailing delimiter) are kept.
+     *
+     * <p>This is the tokenizer {@link #parse(String)} and {@link #parseList(String)} use, exposed
+     * for header grammars that are not {@code value *( ";" parameter )} — such as the
+     * comma-separated directives of {@code Cache-Control} or the {@code ;}-separated parameters
+     * that follow the {@code <uri>} of a {@code Link} value — so they quote-split exactly as
+     * every other header here does.
+     *
+     * @param text      the text to split; must not be {@code null}
+     * @param delimiter the separator character; must not be {@code "} or {@code \}
+     * @return the segments, unmodifiable and never empty, or {@code null} if a quoted string is
+     *     not terminated, in which case the text cannot be split unambiguously
+     * @throws NullPointerException     if {@code text} is {@code null}
+     * @throws IllegalArgumentException if {@code delimiter} is {@code "} or {@code \}
+     */
+    public static List<String> splitOutsideQuotes(String text, char delimiter) {
+        Objects.requireNonNull(text, "text must not be null");
+        if (delimiter == '"' || delimiter == '\\') {
+            throw new IllegalArgumentException("delimiter must not be a double quote or a backslash");
+        }
         List<String> segments = new ArrayList<>();
+        return split(text, delimiter, segments) ? List.copyOf(segments) : null;
+    }
+
+    /**
+     * Unquotes a header parameter value. A value that does not start with {@code "} is returned
+     * unchanged. A value that starts with {@code "} must be one complete quoted string: the
+     * surrounding quotes are removed and each backslash escape is replaced by the character it
+     * escapes, so {@code "a\"b"} yields {@code a"b}.
+     *
+     * @param value the raw parameter value, already trimmed; must not be {@code null}
+     * @return the unquoted value, or {@code null} if the value starts with {@code "} but is not
+     *     one complete quoted string: it has no closing quote (including a final escaped quote or
+     *     a trailing backslash), or characters follow the closing quote
+     * @throws NullPointerException if {@code value} is {@code null}
+     */
+    public static String unquote(String value) {
+        Objects.requireNonNull(value, "value must not be null");
+        if (value.isEmpty() || value.charAt(0) != '"') {
+            return value;
+        }
+        StringBuilder out = new StringBuilder(value.length());
+        int length = value.length();
+        for (int i = 1; i < length; i++) {
+            char c = value.charAt(i);
+            if (c == '\\') {
+                if (i + 1 >= length) {
+                    return null;
+                }
+                out.append(value.charAt(++i));
+            } else if (c == '"') {
+                return i == length - 1 ? out.toString() : null;
+            } else {
+                out.append(c);
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Appends the segments of {@code text} to {@code out}; returns {@code false} when a quoted
+     * string is unterminated, in which case the last segment holds the rest of the text.
+     */
+    private static boolean split(String text, char delimiter, List<String> out) {
         int start = 0;
         boolean inQuote = false;
         int length = text.length();
@@ -204,39 +252,13 @@ public record HeaderElement(String value, Map<String, String> parameters, double
                 }
             } else if (c == '"') {
                 inQuote = true;
-            } else if (c == ';') {
-                segments.add(text.substring(start, i));
+            } else if (c == delimiter) {
+                out.add(text.substring(start, i));
                 start = i + 1;
             }
         }
-        if (inQuote) {
-            return null;
-        }
-        segments.add(text.substring(start));
-        return segments;
-    }
-
-    /**
-     * Unquotes a value that starts with {@code "}. Returns {@code null} when the closing quote is
-     * missing (including a final escaped quote) or when characters follow the closing quote.
-     */
-    private static String unquote(String raw) {
-        StringBuilder out = new StringBuilder(raw.length());
-        int length = raw.length();
-        for (int i = 1; i < length; i++) {
-            char c = raw.charAt(i);
-            if (c == '\\') {
-                if (i + 1 >= length) {
-                    return null;
-                }
-                out.append(raw.charAt(++i));
-            } else if (c == '"') {
-                return i == length - 1 ? out.toString() : null;
-            } else {
-                out.append(c);
-            }
-        }
-        return null;
+        out.add(text.substring(start));
+        return !inQuote;
     }
 
     /**

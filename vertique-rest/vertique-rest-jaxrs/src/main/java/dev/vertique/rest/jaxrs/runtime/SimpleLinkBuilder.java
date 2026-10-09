@@ -3,10 +3,12 @@
 
 package dev.vertique.rest.jaxrs.runtime;
 
+import dev.vertique.rest.core.request.HeaderElement;
 import jakarta.ws.rs.core.Link;
 import jakarta.ws.rs.core.UriBuilder;
 import java.net.URI;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -43,23 +45,30 @@ class SimpleLinkBuilder implements Link.Builder {
         if (!s.startsWith("<") || uriEnd < 0) {
             throw new IllegalArgumentException("Invalid link header format: " + link);
         }
-        this.uriBuilder = UriBuilder.fromUri(s.substring(1, uriEnd));
-        this.params.clear();
+        UriBuilder parsedUri = UriBuilder.fromUri(s.substring(1, uriEnd));
+        Map<String, String> parsedParams = new LinkedHashMap<>();
         String remaining = s.substring(uriEnd + 1).trim();
         if (!remaining.isEmpty()) {
-            for (String part : SimpleRuntimeDelegate.splitRespectingQuotes(remaining, ';')) {
+            List<String> parts = HeaderElement.splitOutsideQuotes(remaining, ';');
+            if (parts == null) {
+                throw new IllegalArgumentException("Invalid link header format: " + link);
+            }
+            for (String part : parts) {
                 String p = part.trim();
                 if (p.isEmpty()) continue;
                 int eq = p.indexOf('=');
                 if (eq < 0) continue;
                 String key = p.substring(0, eq).trim();
-                String val = p.substring(eq + 1).trim();
-                if (val.startsWith("\"") && val.endsWith("\"")) {
-                    val = SimpleRuntimeDelegate.unescapeQuotedPair(val.substring(1, val.length() - 1));
+                String val = HeaderElement.unquote(p.substring(eq + 1).trim());
+                if (val == null) {
+                    throw new IllegalArgumentException("Invalid link header format: " + link);
                 }
-                params.put(key, val);
+                parsedParams.put(key, val);
             }
         }
+        this.uriBuilder = parsedUri;
+        this.params.clear();
+        this.params.putAll(parsedParams);
         return this;
     }
 

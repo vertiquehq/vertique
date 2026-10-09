@@ -3,6 +3,7 @@
 
 package dev.vertique.rest.jaxrs.runtime;
 
+import dev.vertique.rest.core.request.HeaderElement;
 import jakarta.ws.rs.SeBootstrap;
 import jakarta.ws.rs.core.Application;
 import jakarta.ws.rs.core.CacheControl;
@@ -18,7 +19,7 @@ import jakarta.ws.rs.ext.RuntimeDelegate;
 import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
-import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -72,21 +73,28 @@ public class SimpleRuntimeDelegate extends RuntimeDelegate {
             if (value == null) {
                 throw new IllegalArgumentException("value must not be null");
             }
-            String[] parts = value.trim().split(";", 2);
-            String[] typeParts = parts[0].trim().split("/", 2);
+            List<String> segments = HeaderElement.splitOutsideQuotes(value.trim(), ';');
+            if (segments == null) {
+                throw new IllegalArgumentException("Invalid media type: " + value);
+            }
+            String[] typeParts = segments.get(0).trim().split("/", 2);
             if (typeParts.length != 2) {
                 throw new IllegalArgumentException("Invalid media type: " + value);
             }
             String type = typeParts[0].trim();
             String subtype = typeParts[1].trim();
-            if (parts.length == 1) {
+            if (segments.size() == 1) {
                 return new MediaType(type, subtype);
             }
-            Map<String, String> params = new java.util.LinkedHashMap<>();
-            for (String param : parts[1].split(";")) {
+            Map<String, String> params = new LinkedHashMap<>();
+            for (String param : segments.subList(1, segments.size())) {
                 String[] kv = param.trim().split("=", 2);
                 if (kv.length == 2) {
-                    params.put(kv[0].trim(), kv[1].trim());
+                    String paramValue = HeaderElement.unquote(kv[1].trim());
+                    if (paramValue == null) {
+                        throw new IllegalArgumentException("Invalid media type: " + value);
+                    }
+                    params.put(kv[0].trim(), paramValue);
                 }
             }
             return new MediaType(type, subtype, params);
@@ -99,7 +107,11 @@ public class SimpleRuntimeDelegate extends RuntimeDelegate {
             }
             StringBuilder sb = new StringBuilder(value.getType()).append('/').append(value.getSubtype());
             for (Map.Entry<String, String> param : value.getParameters().entrySet()) {
-                sb.append(';').append(param.getKey()).append('=').append(param.getValue());
+                String paramValue = param.getValue();
+                sb.append(';')
+                        .append(param.getKey())
+                        .append('=')
+                        .append(isToken(paramValue) ? paramValue : quoted(paramValue));
             }
             return sb.toString();
         }
@@ -113,7 +125,11 @@ public class SimpleRuntimeDelegate extends RuntimeDelegate {
             }
             CacheControl cc = new CacheControl();
             cc.setNoTransform(false); // default is true, but we only set if directive present
-            for (String directive : splitRespectingQuotes(value, ',')) {
+            List<String> directives = HeaderElement.splitOutsideQuotes(value, ',');
+            if (directives == null) {
+                throw new IllegalArgumentException("Invalid cache control value: " + value);
+            }
+            for (String directive : directives) {
                 String trimmed = directive.trim();
                 int eqPos = trimmed.indexOf('=');
                 String key = eqPos >= 0
@@ -142,10 +158,11 @@ public class SimpleRuntimeDelegate extends RuntimeDelegate {
                 } else if (!key.isEmpty()) {
                     // Cache extension — preserve original value case
                     if (rawVal != null) {
-                        if (rawVal.startsWith("\"") && rawVal.endsWith("\"")) {
-                            rawVal = unescapeQuotedPair(rawVal.substring(1, rawVal.length() - 1));
+                        String extensionValue = HeaderElement.unquote(rawVal);
+                        if (extensionValue == null) {
+                            throw new IllegalArgumentException("Invalid cache control value: " + value);
                         }
-                        cc.getCacheExtension().put(key, rawVal);
+                        cc.getCacheExtension().put(key, extensionValue);
                     } else {
                         cc.getCacheExtension().put(key, "");
                     }
@@ -168,7 +185,7 @@ public class SimpleRuntimeDelegate extends RuntimeDelegate {
             if (cc.getSMaxAge() >= 0) sj.add("s-maxage=" + cc.getSMaxAge());
             for (Map.Entry<String, String> ext : cc.getCacheExtension().entrySet()) {
                 if (ext.getValue() != null && !ext.getValue().isEmpty()) {
-                    sj.add(ext.getKey() + "=\"" + ext.getValue() + "\"");
+                    sj.add(ext.getKey() + "=" + quoted(ext.getValue()));
                 } else {
                     sj.add(ext.getKey());
                 }
@@ -283,9 +300,9 @@ public class SimpleRuntimeDelegate extends RuntimeDelegate {
         if (rawVal == null) {
             return;
         }
-        String v = rawVal.trim();
-        if (v.startsWith("\"") && v.endsWith("\"")) {
-            v = v.substring(1, v.length() - 1);
+        String v = HeaderElement.unquote(rawVal.trim());
+        if (v == null) {
+            throw new IllegalArgumentException("Invalid quoted field-name list: " + rawVal);
         }
         for (String field : v.split(",")) {
             String trimmed = field.trim();
@@ -295,52 +312,26 @@ public class SimpleRuntimeDelegate extends RuntimeDelegate {
         }
     }
 
-    /**
-     * Splits {@code input} on {@code delimiter} while respecting double-quoted strings
-     * and backslash escapes inside them (e.g. {@code \"} does not end the quoted region).
-     */
-    static List<String> splitRespectingQuotes(String input, char delimiter) {
-        List<String> parts = new ArrayList<>();
-        StringBuilder current = new StringBuilder();
-        boolean inQuotes = false;
-        for (int i = 0; i < input.length(); i++) {
-            char c = input.charAt(i);
-            if (c == '\\' && inQuotes && i + 1 < input.length()) {
-                // Escaped character inside quotes — pass through both chars
-                current.append(c);
-                i++;
-                current.append(input.charAt(i));
-            } else if (c == '"') {
-                inQuotes = !inQuotes;
-                current.append(c);
-            } else if (c == delimiter && !inQuotes) {
-                parts.add(current.toString());
-                current.setLength(0);
-            } else {
-                current.append(c);
-            }
+    /** Returns whether {@code value} is a non-empty RFC 9110 token, which needs no quoting as a parameter value. */
+    private static boolean isToken(String value) {
+        if (value.isEmpty()) {
+            return false;
         }
-        if (current.length() > 0) {
-            parts.add(current.toString());
-        }
-        return parts;
-    }
-
-    /** Unescapes RFC 7230 quoted-pair sequences: {@code \"} → {@code "} and {@code \\} → {@code \}. */
-    static String unescapeQuotedPair(String value) {
-        if (value == null || value.indexOf('\\') < 0) {
-            return value;
-        }
-        StringBuilder sb = new StringBuilder(value.length());
         for (int i = 0; i < value.length(); i++) {
             char c = value.charAt(i);
-            if (c == '\\' && i + 1 < value.length()) {
-                i++;
-                sb.append(value.charAt(i));
-            } else {
-                sb.append(c);
+            boolean tokenChar = (c >= 'a' && c <= 'z')
+                    || (c >= 'A' && c <= 'Z')
+                    || (c >= '0' && c <= '9')
+                    || "!#$%&'*+-.^_`|~".indexOf(c) >= 0;
+            if (!tokenChar) {
+                return false;
             }
         }
-        return sb.toString();
+        return true;
+    }
+
+    /** Writes {@code value} as a quoted-string: backslashes and double quotes are escaped, bare CR and LF are dropped. */
+    private static String quoted(String value) {
+        return "\"" + HeaderUtils.escapeQuoted(value) + "\"";
     }
 }
