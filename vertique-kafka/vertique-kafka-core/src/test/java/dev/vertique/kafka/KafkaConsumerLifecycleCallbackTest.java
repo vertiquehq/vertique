@@ -32,6 +32,7 @@ import dev.vertique.services.ServiceRequestSender;
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
+import io.vertx.core.buffer.Buffer;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.kafka.client.consumer.KafkaConsumer;
 import io.vertx.kafka.client.consumer.KafkaConsumerRecord;
@@ -45,6 +46,7 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -66,7 +68,9 @@ import org.mockito.junit.jupiter.MockitoExtension;
  * wires them by reflection so every terminal path runs offline and synchronously.
  *
  * <p>Covered: one completion with the expected outcome on every terminal path; the framework-owned
- * identity, key and headers cannot be changed by an interceptor or a filter; the value is the
+ * identity, key and headers cannot be changed by an interceptor or a filter; the view keeps
+ * duplicate, null-valued and binary headers while the filter, deserializer and handler still receive
+ * the text map; the value is the
  * broker's array, uncopied; error isolation of the completion callback and of the three older
  * synchronous observers; a completion held back until an asynchronous dead-letter publish settles;
  * the retry count of a first and of a redelivered record; a consumer with no interceptors; and the
@@ -727,7 +731,9 @@ class KafkaConsumerLifecycleCallbackTest {
                     completion.event().identity(),
                     "the identity must carry the record's own coordinates");
             assertEquals("real-key", completion.record().key());
-            assertEquals(Map.of("x-real", "1"), completion.record().headers());
+            assertEquals(
+                    new KafkaRecordHeaders(List.of(KafkaRecordHeader.ofUtf8("x-real", "1"))),
+                    completion.record().headers());
         }
 
         @Test
@@ -777,11 +783,43 @@ class KafkaConsumerLifecycleCallbackTest {
 
             fixture.process(record(1L, "k", null, List.of(KafkaHeader.header("x-real", "1"))));
 
-            Map<String, String> headers = assertCompletedOnce(fixture, recorder, KafkaTerminalOutcome.SUCCESS)
+            KafkaRecordHeaders headers = assertCompletedOnce(fixture, recorder, KafkaTerminalOutcome.SUCCESS)
                     .record()
                     .headers();
-            assertEquals(Map.of("x-real", "1"), headers);
-            assertThrows(UnsupportedOperationException.class, () -> headers.put("late", "1"));
+            assertEquals(new KafkaRecordHeaders(List.of(KafkaRecordHeader.ofUtf8("x-real", "1"))), headers);
+            assertEquals(Map.of("x-real", "1"), headers.asMap());
+            assertThrows(
+                    UnsupportedOperationException.class, () -> headers.asMap().put("late", "1"));
+            assertThrows(UnsupportedOperationException.class, () -> headers.entries()
+                    .add(KafkaRecordHeader.ofUtf8("late", "1")));
+        }
+
+        @Test
+        @DisplayName("a replaced dispatch context does not change duplicate and binary headers on the view")
+        void replacedContextKeepsFaithfulHeaders(Vertx vertx) throws ReflectiveOperationException {
+            CompletionRecorder recorder = new CompletionRecorder();
+            AtomicInteger calls = new AtomicInteger();
+            ConsumerEntry entry = succeedingHandlerEntry();
+            Fixture fixture = wire(vertx, entry, List.of(replacing(forgedContext(), calls), recorder));
+
+            fixture.process(record(
+                    42L,
+                    "real-key",
+                    null,
+                    List.of(
+                            KafkaHeader.header("x-real", "1"),
+                            KafkaHeader.header("x-bin", Buffer.buffer(new byte[] {(byte) 0xFF})),
+                            KafkaHeader.header("x-real", "2"))));
+
+            CompletionRecorder.Completion completion =
+                    assertCompletedOnce(fixture, recorder, KafkaTerminalOutcome.SUCCESS);
+            assertEquals(1, calls.get(), "the replacing interceptor must really have run");
+            assertEquals(
+                    new KafkaRecordHeaders(List.of(
+                            KafkaRecordHeader.ofUtf8("x-real", "1"),
+                            new KafkaRecordHeader("x-bin", new byte[] {(byte) 0xFF}),
+                            KafkaRecordHeader.ofUtf8("x-real", "2"))),
+                    completion.record().headers());
         }
 
         @Test
@@ -795,6 +833,132 @@ class KafkaConsumerLifecycleCallbackTest {
             assertNull(assertCompletedOnce(fixture, recorder, KafkaTerminalOutcome.SUCCESS)
                     .record()
                     .key());
+        }
+    }
+
+    // --- Faithful headers on the view, text map everywhere else ---
+
+    @Nested
+    @DisplayName("the view keeps every header; the filter, deserializer and handler get the text map")
+    class RecordHeaders {
+
+        /** Two bytes that are never valid in UTF-8. */
+        private final byte[] notUtf8 = {(byte) 0xFF, (byte) 0xFE};
+
+        /**
+         * Interleaved duplicates, a null value, a null that follows a value for the same key, an empty
+         * value and a binary value.
+         */
+        private List<KafkaHeader> wireHeaders() {
+            return List.of(
+                    KafkaHeader.header("a", "1"),
+                    KafkaHeader.header("b", "x"),
+                    KafkaHeader.header("a", "2"),
+                    KafkaHeader.header("nulled", (Buffer) null),
+                    KafkaHeader.header("empty", Buffer.buffer()),
+                    KafkaHeader.header("bin", Buffer.buffer(notUtf8)),
+                    KafkaHeader.header("b", (Buffer) null));
+        }
+
+        /** The text map the consumer built from {@link #wireHeaders()} before the view kept every header. */
+        private Map<String, String> textMap() {
+            String replacement = String.valueOf((char) 0xFFFD);
+            Map<String, String> expected = new HashMap<>();
+            expected.put("a", "2");
+            expected.put("b", "x");
+            expected.put("empty", "");
+            expected.put("bin", replacement + replacement);
+            return expected;
+        }
+
+        @Test
+        @DisplayName("duplicate, null, empty and binary headers reach the view in order, byte for byte")
+        void viewKeepsEveryHeader(Vertx vertx) throws ReflectiveOperationException {
+            CompletionRecorder recorder = new CompletionRecorder();
+            Fixture fixture = wire(vertx, succeedingHandlerEntry(), List.of(recorder));
+
+            fixture.process(record(1L, "k", null, wireHeaders()));
+
+            KafkaRecordHeaders headers = assertCompletedOnce(fixture, recorder, KafkaTerminalOutcome.SUCCESS)
+                    .record()
+                    .headers();
+            List<KafkaRecordHeader> entries = headers.entries();
+            assertEquals(
+                    List.of("a", "b", "a", "nulled", "empty", "bin", "b"),
+                    entries.stream().map(KafkaRecordHeader::key).toList());
+            assertArrayEquals(bytes("1"), entries.get(0).value());
+            assertArrayEquals(bytes("x"), entries.get(1).value());
+            assertArrayEquals(bytes("2"), entries.get(2).value());
+            assertNull(entries.get(3).value());
+            assertArrayEquals(new byte[0], entries.get(4).value());
+            assertArrayEquals(
+                    new byte[] {(byte) 0xFF, (byte) 0xFE}, entries.get(5).value());
+            assertNull(entries.get(6).value());
+            assertEquals(textMap(), headers.asMap());
+        }
+
+        @Test
+        @DisplayName("the filter, the deserializer and the handler receive the same text map as before")
+        void filterDeserializerAndHandlerGetTheTextMap(Vertx vertx) throws ReflectiveOperationException {
+            CompletionRecorder recorder = new CompletionRecorder();
+            AtomicReference<Map<String, String>> seenByFilter = new AtomicReference<>();
+            AtomicReference<Map<String, String>> seenByDeserializer = new AtomicReference<>();
+            AtomicReference<Map<String, String>> seenByHandler = new AtomicReference<>();
+            KafkaRecordFilter filter = (key, headers) -> {
+                seenByFilter.set(new HashMap<>(headers));
+                return true;
+            };
+            KafkaDeserializer<Object> deserializer = (data, topic, headers) -> {
+                seenByDeserializer.set(new HashMap<>(headers));
+                return "decoded";
+            };
+            KafkaRecordHandler<Object> handler = message -> {
+                seenByHandler.set(new HashMap<>(message.headers()));
+                return Future.succeededFuture();
+            };
+            ConsumerEntry entry = handlerEntry(ErrorStrategy.SKIP, null, handler, deserializer, filter);
+            Fixture fixture = wire(vertx, entry, List.of(recorder));
+
+            fixture.process(record(1L, "k", bytes("payload"), wireHeaders()));
+
+            CompletionRecorder.Completion completion =
+                    assertCompletedOnce(fixture, recorder, KafkaTerminalOutcome.SUCCESS);
+            assertEquals(textMap(), seenByFilter.get());
+            assertEquals(textMap(), seenByDeserializer.get());
+            assertEquals(textMap(), seenByHandler.get());
+            assertEquals(7, completion.record().headers().entries().size(), "the view must keep all seven headers");
+        }
+
+        @Test
+        @DisplayName("the text map is the same when the consumer has no interceptors")
+        void textMapWithoutInterceptors(Vertx vertx) throws ReflectiveOperationException {
+            AtomicReference<Map<String, String>> seenByFilter = new AtomicReference<>();
+            KafkaRecordFilter filter = (key, headers) -> {
+                seenByFilter.set(new HashMap<>(headers));
+                headers.put("still-mutable", "1");
+                return false;
+            };
+            Fixture fixture = wire(vertx, handlerEntry(ErrorStrategy.SKIP, null, null, null, filter), List.of());
+
+            fixture.process(record(1L, "k", null, wireHeaders()));
+
+            assertEquals(textMap(), seenByFilter.get());
+            assertEquals(0, fixture.inFlight(), "the in-flight slot must be released");
+        }
+
+        @Test
+        @DisplayName("a record without headers has the shared empty header collection")
+        void noHeaders(Vertx vertx) throws ReflectiveOperationException {
+            CompletionRecorder recorder = new CompletionRecorder();
+            Fixture fixture = wire(vertx, succeedingHandlerEntry(), List.of(recorder));
+
+            fixture.process(record(1L, null));
+
+            assertSame(
+                    KafkaRecordHeaders.empty(),
+                    assertCompletedOnce(fixture, recorder, KafkaTerminalOutcome.SUCCESS)
+                            .record()
+                            .headers());
         }
     }
 

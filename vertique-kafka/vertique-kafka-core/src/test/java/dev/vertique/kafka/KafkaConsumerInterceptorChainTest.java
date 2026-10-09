@@ -704,7 +704,10 @@ class KafkaConsumerInterceptorChainTest {
 
         private KafkaConsumerRecordView view() {
             return new DefaultKafkaConsumerRecordView(
-                    new KafkaConsumerRecordIdentity("c", "test.topic", 0, 7L, 0L, 0), null, Map.of(), null);
+                    new KafkaConsumerRecordIdentity("c", "test.topic", 0, 7L, 0L, 0),
+                    null,
+                    KafkaRecordHeaders.empty(),
+                    null);
         }
 
         private List<Throwable> isolatedThrowables() {

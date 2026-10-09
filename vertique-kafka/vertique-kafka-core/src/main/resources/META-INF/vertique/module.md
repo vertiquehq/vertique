@@ -288,6 +288,43 @@ public record KafkaMessage<V>(
 `key` may be `null`; `timestamp` is epoch milliseconds; `headers` is defensively copied and
 immutable. `message.header("name")` returns `Optional<String>`.
 
+### `KafkaRecordHeaders` and `KafkaRecordHeader`
+
+The headers of one record exactly as they are on the wire. `KafkaConsumerRecordView.headers()`
+returns this type; see [Record completion](#record-completion-onrecordcompleted).
+
+```java
+package dev.vertique.kafka;
+
+public record KafkaRecordHeader(String key, @Nullable byte[] value) {
+    public static KafkaRecordHeader ofUtf8(String key, @Nullable String value);
+    @Nullable public String valueAsUtf8();
+    @Nullable public String valueAsString(Charset charset);
+}
+
+public record KafkaRecordHeaders(List<KafkaRecordHeader> entries)
+        implements Iterable<KafkaRecordHeader> {
+    public static KafkaRecordHeaders empty();
+    public List<KafkaRecordHeader> headers(String key);
+    public Optional<KafkaRecordHeader> lastHeader(String key);
+    public Map<String, String> asMap();
+}
+```
+
+| Member | Behavior |
+|---|---|
+| `KafkaRecordHeader.value()` | A copy of the bytes. `null` (no value), empty, and non-empty stay distinct. The array is also copied on construction |
+| `valueAsUtf8()`, `valueAsString(Charset)` | Strict decoding: `null` for a `null` value, `""` for an empty one, `IllegalArgumentException` for bytes that are not valid in the charset |
+| `KafkaRecordHeader.toString()` | Key and value length only — never the bytes |
+| `entries()`, iteration | Every header in wire order. Duplicates are kept; keys are not trimmed or case-folded |
+| `headers(key)` | Every header with that exact key, in order; empty list when absent |
+| `lastHeader(key)` | The last header with that key. Empty only when the key is absent: a header present with a `null` value is returned |
+| `asMap()` | Unmodifiable `Map<String, String>`. **Lossy**: a repeated key keeps its last non-`null` value, `null` values are left out, values are decoded as UTF-8 with malformed bytes replaced |
+
+Both records are immutable and compare by content; `KafkaRecordHeaders` equality is order-sensitive.
+`KafkaMessage`, `KafkaRecordFilter`, deserializers, and `KafkaDispatchContext` still carry the
+`Map<String, String>` form, which has the content of `asMap()`.
+
 ### `KafkaRecordFilter`
 
 Functional interface applied **before** deserialization, so a rejected record never pays the
@@ -761,7 +798,7 @@ public record KafkaConsumerRecordIdentity(
 public interface KafkaConsumerRecordView {
     KafkaConsumerRecordIdentity identity();
     @Nullable String key();
-    Map<String, String> headers();   // unmodifiable copy taken when the record was received
+    KafkaRecordHeaders headers();    // every header as received: ordered, duplicates, raw bytes
     PayloadSource value();           // the broker's array, NOT copied; absent for a tombstone
 }
 ```
@@ -793,7 +830,33 @@ context, so it can be logged or passed to a metrics observer as is.
   different `KafkaDispatchContext`, or a filter that edits the header map it is given, changes none
   of them.
 - `event.identity()` and `record.identity()` are the same instance.
-- A consumer with no interceptors builds no view and copies no headers.
+- A consumer with no interceptors builds no view.
+
+**`headers()` is the wire form.** It returns a `KafkaRecordHeaders`: every header in the order the
+broker delivered it, with repeated keys, `null` values, and the exact value bytes. It is an
+immutable snapshot. See [`KafkaRecordHeaders`](#kafkarecordheaders-and-kafkarecordheader) for the
+lookups.
+
+```java
+KafkaRecordHeaders headers = record.headers();
+
+// The last header for a key. Empty only when the key is absent.
+String traceId = headers.lastHeader("trace-id")
+        .map(KafkaRecordHeader::valueAsUtf8)   // null for a null value; throws on invalid UTF-8
+        .orElse(null);
+
+// Every header for a repeated key, in order, as raw bytes.
+for (KafkaRecordHeader hop : headers.headers("x-forwarded-by")) {
+    byte[] raw = hop.value();                  // a copy; null when the header has no value
+}
+
+// The text map that filters, deserializers and handlers receive. Lossy.
+Map<String, String> text = headers.asMap();
+```
+
+`asMap()` is a **lossy text projection** for code that needs a `Map<String, String>`: a repeated
+key keeps only its last non-`null` value, a header with a `null` value is left out, and every value
+is decoded as UTF-8 with malformed bytes replaced, so a binary value cannot be recovered from it.
 
 **`value()` is not a snapshot.** It is the array the broker delivered, **uncopied**. The
 deserializer, router property matching and — for a `byte[]` consumer — the handler were given the
@@ -836,7 +899,8 @@ public void onRecordCompleted(KafkaConsumerCompletedEvent event, KafkaConsumerRe
 > raw-disposition records, and its `Set` multibinding are removed. Implement
 > `KafkaConsumerInterceptor.onRecordCompleted` and contribute the interceptor into
 > `Set<KafkaConsumerInterceptor>` instead. Read coordinates and `retryCount` from
-> `event.identity()`, and the key, headers and raw value from the `KafkaConsumerRecordView`. The
+> `event.identity()`, and the key, headers and raw value from the `KafkaConsumerRecordView`;
+> `record.headers().asMap()` gives the headers as a `Map<String, String>`. The
 > dispatch context is no longer delivered at completion. The record value is no longer cloned for
 > observers. `onRecord`, `onSuccess` and `onError` now also swallow `AssertionError` and
 > `LinkageError`.

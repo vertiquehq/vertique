@@ -20,10 +20,12 @@ import dev.vertique.services.ServiceTargetResolver;
 import io.vertx.core.AbstractVerticle;
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
+import io.vertx.core.buffer.Buffer;
 import io.vertx.kafka.client.consumer.KafkaConsumer;
 import io.vertx.kafka.client.consumer.KafkaConsumerRecord;
 import io.vertx.kafka.client.producer.KafkaHeader;
 import jakarta.annotation.Nullable;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -278,15 +280,19 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
     private void processRecord(KafkaConsumerRecord<String, byte[]> record) {
         incrementInFlight();
 
-        Map<String, String> headers = extractHeaders(record);
+        // One faithful extraction per record. The text map handed to the filter, router, deserializers,
+        // dispatch context and error handler is derived from it, and stays a mutable copy because
+        // filters and deserializers have always been given one.
+        KafkaRecordHeaders recordHeaders = extractHeaders(record);
+        Map<String, String> headers = new HashMap<>(recordHeaders.asMap());
         byte[] rawBytes = record.value();
         String correlationId = sanitizeForMdc(
                 headers.getOrDefault(HEADER_CORRELATION_ID, UUID.randomUUID().toString()));
         // The record view is fixed here, before the filter, route resolution, deserialization and any
         // interceptor, and is what completion observers receive on every path. A dispatch context
         // handed back by an interceptor never replaces it. Without interceptors nothing can observe
-        // it, so none is built and no headers are copied.
-        KafkaConsumerRecordView view = interceptors.isEmpty() ? null : buildRecordView(record, rawBytes, headers);
+        // it, so none is built.
+        KafkaConsumerRecordView view = interceptors.isEmpty() ? null : buildRecordView(record, rawBytes, recordHeaders);
 
         // Pre-deserialization filter. Only the filter call is guarded: a filter that throws is handled
         // like a deserialization failure, so the record still completes and its slot is released.
@@ -641,16 +647,16 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
     }
 
     /**
-     * Builds the framework-owned view of a record as the consumer received it. Headers are copied; the
-     * value array is not.
+     * Builds the framework-owned view of a record as the consumer received it. The headers are the
+     * immutable extracted collection; the value array is not copied.
      *
      * @param record   the incoming consumer record
      * @param rawBytes the raw value bytes (may be null for tombstones)
-     * @param headers  the extracted header map
+     * @param headers  the headers extracted from the record
      * @return the view; never null
      */
     private KafkaConsumerRecordView buildRecordView(
-            KafkaConsumerRecord<String, byte[]> record, byte[] rawBytes, Map<String, String> headers) {
+            KafkaConsumerRecord<String, byte[]> record, byte[] rawBytes, KafkaRecordHeaders headers) {
         String retryKey = record.topic() + ":" + record.partition() + ":" + record.offset();
         int retryCount = errorHandler.retryCounts.getOrDefault(retryKey, 0);
         KafkaConsumerRecordIdentity identity = new KafkaConsumerRecordIdentity(
@@ -675,22 +681,24 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
     }
 
     /**
-     * Extracts all Kafka record headers into a plain {@code Map<String, String>}. Header values are
-     * {@link io.vertx.core.buffer.Buffer} instances, converted to UTF-8 strings.
+     * Extracts all Kafka record headers as they are on the wire: every header in order, with repeated
+     * keys, {@code null} values and the exact value bytes. The text map the rest of the pipeline uses
+     * is {@link KafkaRecordHeaders#asMap()} of the result.
      *
      * @param record the consumer record to extract headers from
-     * @return a map of header key to string value
+     * @return the headers; {@link KafkaRecordHeaders#empty()} when the record has none
      */
-    private Map<String, String> extractHeaders(KafkaConsumerRecord<String, byte[]> record) {
-        Map<String, String> hdrs = new HashMap<>();
-        if (record.headers() != null) {
-            for (KafkaHeader header : record.headers()) {
-                if (header.value() != null) {
-                    hdrs.put(header.key(), header.value().toString());
-                }
-            }
+    private static KafkaRecordHeaders extractHeaders(KafkaConsumerRecord<String, byte[]> record) {
+        List<KafkaHeader> wireHeaders = record.headers();
+        if (wireHeaders == null || wireHeaders.isEmpty()) {
+            return KafkaRecordHeaders.empty();
         }
-        return hdrs;
+        List<KafkaRecordHeader> entries = new ArrayList<>(wireHeaders.size());
+        for (KafkaHeader header : wireHeaders) {
+            Buffer value = header.value();
+            entries.add(new KafkaRecordHeader(header.key(), value == null ? null : value.getBytes()));
+        }
+        return new KafkaRecordHeaders(entries);
     }
 
     /**

@@ -4,8 +4,8 @@
 package dev.vertique.kafka.interceptor;
 
 import dev.vertique.core.payload.PayloadSource;
+import dev.vertique.kafka.KafkaRecordHeaders;
 import jakarta.annotation.Nullable;
-import java.util.Map;
 
 /**
  * Framework-owned view of one Kafka consumer record as the consumer received it, passed to
@@ -41,14 +41,22 @@ public interface KafkaConsumerRecordView {
     String key();
 
     /**
-     * Returns the record's headers as text, copied when the consumer received the record.
+     * Returns the record's headers exactly as the broker delivered them: every header in wire
+     * order, including repeated keys, headers with a {@code null} value and binary values, byte for
+     * byte.
      *
-     * <p>The map is an unmodifiable copy. The pre-deserialization filter and deserializers receive
-     * a different, mutable map, so a change they make is not visible here.
+     * <p>The collection is an immutable snapshot taken when the consumer received the record. The
+     * pre-deserialization filter, deserializers and handlers receive a separate text map, so a
+     * change they make to that map is not visible here.
      *
-     * @return the headers; unmodifiable; never {@code null}
+     * <p>{@link KafkaRecordHeaders#asMap()} gives that text map's content for code that needs a
+     * {@code Map<String, String>}. It is lossy: repeated keys collapse to one value, headers with a
+     * {@code null} value are left out, and binary values are decoded as text.
+     *
+     * @return the headers; immutable; never {@code null}; {@link KafkaRecordHeaders#empty()} for a
+     *     record without headers
      */
-    Map<String, String> headers();
+    KafkaRecordHeaders headers();
 
     /**
      * Returns the record value: the array the broker delivered, <strong>uncopied</strong>.
