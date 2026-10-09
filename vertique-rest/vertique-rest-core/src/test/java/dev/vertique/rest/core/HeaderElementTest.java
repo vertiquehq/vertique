@@ -406,8 +406,11 @@ class HeaderElementTest {
     class Bounds {
 
         private long allocatedBytesOf(Runnable work) {
-            com.sun.management.ThreadMXBean mx =
-                    (com.sun.management.ThreadMXBean) java.lang.management.ManagementFactory.getThreadMXBean();
+            java.lang.management.ThreadMXBean bean = java.lang.management.ManagementFactory.getThreadMXBean();
+            org.junit.jupiter.api.Assumptions.assumeTrue(
+                    bean instanceof com.sun.management.ThreadMXBean sun && sun.isThreadAllocatedMemorySupported(),
+                    "per-thread allocation accounting is not available on this JVM");
+            com.sun.management.ThreadMXBean mx = (com.sun.management.ThreadMXBean) bean;
             long id = Thread.currentThread().getId();
             long before = mx.getThreadAllocatedBytes(id);
             work.run();
