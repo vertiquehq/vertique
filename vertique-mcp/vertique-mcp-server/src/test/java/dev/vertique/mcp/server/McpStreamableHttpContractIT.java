@@ -80,6 +80,13 @@ public class McpStreamableHttpContractIT {
     private static final String INVALID_ACCEPT_ROW = "shouldRejectUnacceptableAcceptWithNotAcceptable";
     private static final String ZERO_QUALITY_ACCEPT_ROW = "shouldRejectZeroQualityAcceptWithNotAcceptable";
     private static final String ZERO_QUALITY_MIXED_ACCEPT_ROW = "shouldRejectZeroQualityMixedAcceptWithNotAcceptable";
+    private static final String WILDCARD_ACCEPT_ROW = "shouldAcceptAnyMediaRangeAcceptHeader";
+    private static final String APPLICATION_WILDCARD_ACCEPT_ROW = "shouldAcceptApplicationWildcardAcceptHeader";
+    private static final String TEXT_WILDCARD_ACCEPT_ROW = "shouldAcceptTextWildcardAcceptHeader";
+    private static final String JSON_ZERO_QUALITY_APPLICATION_WILDCARD_ACCEPT_ROW =
+            "shouldRejectZeroQualityJsonBesideApplicationWildcardWithNotAcceptable";
+    private static final String ZERO_QUALITY_WILDCARD_ACCEPT_ROW = "shouldRejectZeroQualityWildcardWithNotAcceptable";
+    private static final String BLANK_ACCEPT_ROW = "shouldRejectBlankAcceptWithNotAcceptable";
     private static final String QUOTED_COMMA_ZERO_QUALITY_ACCEPT_ROW =
             "shouldRejectZeroQualityAfterQuotedCommaWithNotAcceptable";
     private static final String ESCAPED_QUOTE_ZERO_QUALITY_ACCEPT_ROW =
@@ -119,6 +126,12 @@ public class McpStreamableHttpContractIT {
                 INVALID_ACCEPT_ROW,
                 ZERO_QUALITY_ACCEPT_ROW,
                 ZERO_QUALITY_MIXED_ACCEPT_ROW,
+                WILDCARD_ACCEPT_ROW,
+                APPLICATION_WILDCARD_ACCEPT_ROW,
+                TEXT_WILDCARD_ACCEPT_ROW,
+                JSON_ZERO_QUALITY_APPLICATION_WILDCARD_ACCEPT_ROW,
+                ZERO_QUALITY_WILDCARD_ACCEPT_ROW,
+                BLANK_ACCEPT_ROW,
                 QUOTED_COMMA_ZERO_QUALITY_ACCEPT_ROW,
                 ESCAPED_QUOTE_ZERO_QUALITY_ACCEPT_ROW,
                 UNTERMINATED_QUOTE_ZERO_QUALITY_ACCEPT_ROW,
@@ -286,6 +299,73 @@ public class McpStreamableHttpContractIT {
 
                 assertThat(response.statusCode())
                         .as("when every matching Accept range carries q=0 and no other admits, HTTP 406")
+                        .isEqualTo(406);
+                assertNoToolInvoked();
+                assertNoObservationOpened();
+            }
+            case WILDCARD_ACCEPT_ROW -> {
+                // Given: a discovery POST that accepts any media type, which
+                // makes application/json acceptable.
+                HttpRequest<Buffer> request = post().putHeader("Accept", "*/*");
+                HttpResponse<Buffer> response = await(request.sendBuffer(discover.toBuffer()));
+
+                assertThat(response.statusCode()).isEqualTo(200);
+                assertServerInfo(response);
+                assertNoToolInvoked();
+            }
+            case APPLICATION_WILDCARD_ACCEPT_ROW -> {
+                // Given: a discovery POST that accepts every application/* type, which
+                // makes application/json acceptable.
+                HttpRequest<Buffer> request = post().putHeader("Accept", "application/*");
+                HttpResponse<Buffer> response = await(request.sendBuffer(discover.toBuffer()));
+
+                assertThat(response.statusCode()).isEqualTo(200);
+                assertServerInfo(response);
+                assertNoToolInvoked();
+            }
+            case TEXT_WILDCARD_ACCEPT_ROW -> {
+                // Given: a discovery POST that accepts every text/* type; that range covers
+                // text/event-stream, so the request is admitted.
+                HttpRequest<Buffer> request = post().putHeader("Accept", "text/*");
+                HttpResponse<Buffer> response = await(request.sendBuffer(discover.toBuffer()));
+
+                assertThat(response.statusCode()).isEqualTo(200);
+                assertServerInfo(response);
+                assertNoToolInvoked();
+            }
+            case JSON_ZERO_QUALITY_APPLICATION_WILDCARD_ACCEPT_ROW -> {
+                // Given: application/json is explicitly excluded with q=0 and application/* does not
+                // cover text/event-stream, so the more specific q=0 entry leaves nothing acceptable.
+                HttpRequest<Buffer> request = post().putHeader("Accept", "application/json;q=0, application/*");
+                HttpResponse<Buffer> response = await(request.sendBuffer(discover.toBuffer()));
+
+                assertThat(response.statusCode())
+                        .as(
+                                "a q=0 JSON entry must not be re-admitted through application/* when nothing else is acceptable")
+                        .isEqualTo(406);
+                assertNoToolInvoked();
+                assertNoObservationOpened();
+            }
+            case ZERO_QUALITY_WILDCARD_ACCEPT_ROW -> {
+                // Given: a discovery POST whose only range, */*, carries q=0, so neither JSON nor
+                // event-stream is acceptable.
+                HttpRequest<Buffer> request = post().putHeader("Accept", "*/*;q=0");
+                HttpResponse<Buffer> response = await(request.sendBuffer(discover.toBuffer()));
+
+                assertThat(response.statusCode())
+                        .as("a q=0 wildcard admits nothing and must be HTTP 406")
+                        .isEqualTo(406);
+                assertNoToolInvoked();
+                assertNoObservationOpened();
+            }
+            case BLANK_ACCEPT_ROW -> {
+                // Given: a discovery POST whose Accept header is present but blank, which names no
+                // acceptable media type.
+                HttpRequest<Buffer> request = post().putHeader("Accept", " ");
+                HttpResponse<Buffer> response = await(request.sendBuffer(discover.toBuffer()));
+
+                assertThat(response.statusCode())
+                        .as("a blank Accept is present but admits nothing and must be HTTP 406")
                         .isEqualTo(406);
                 assertNoToolInvoked();
                 assertNoObservationOpened();
