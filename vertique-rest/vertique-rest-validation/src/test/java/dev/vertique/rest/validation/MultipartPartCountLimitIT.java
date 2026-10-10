@@ -337,11 +337,11 @@ public class MultipartPartCountLimitIT {
     }
 
     private long spooledFileCount() throws IOException {
-        if (Files.notExists(uploadsDirectory)) {
-            return 0;
-        }
         try (var paths = Files.list(uploadsDirectory)) {
             return paths.count();
+        } catch (java.nio.file.NoSuchFileException notCreatedYetOrAlreadyGone) {
+            // Observing the directory races with its creation and removal; absent means nothing spooled.
+            return 0;
         }
     }
 
