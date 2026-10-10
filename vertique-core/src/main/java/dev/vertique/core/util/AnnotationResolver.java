@@ -6,11 +6,18 @@ package dev.vertique.core.util;
 import java.lang.annotation.Annotation;
 import java.lang.reflect.AnnotatedElement;
 import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
+import java.lang.reflect.Type;
+import java.lang.reflect.TypeVariable;
 import java.util.Collections;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 
 /**
  * General-purpose utility for annotation resolution over class hierarchies and meta-annotation
@@ -101,26 +108,10 @@ public final class AnnotationResolver {
     public static List<Annotation> resolveMethodAnnotations(Method method, Class<?> viewType) {
         Set<Annotation> annotations = new LinkedHashSet<>(List.of(method.getAnnotations()));
 
-        // Walk superclass chain from the declaring class (the method is already that class's view)
-        Class<?> current = method.getDeclaringClass().getSuperclass();
-        while (current != null && current != Object.class) {
-            try {
-                Method m = current.getMethod(method.getName(), method.getParameterTypes());
-                Collections.addAll(annotations, m.getAnnotations());
-            } catch (NoSuchMethodException ignored) {
-                // Method not declared on this superclass — continue traversal
-            }
-            current = current.getSuperclass();
-        }
-
-        // Walk interface hierarchy of the view type (may be more specific than the declaring class)
-        for (Class<?> iface : TypeResolver.getAllInterfaces(viewType)) {
-            try {
-                Method m = iface.getMethod(method.getName(), method.getParameterTypes());
-                Collections.addAll(annotations, m.getAnnotations());
-            } catch (NoSuchMethodException ignored) {
-                // Method not declared on this interface — continue traversal
-            }
+        // Declarations the method overrides: superclasses of its declaring class bottom-up, then the
+        // interfaces of the view type (which may be more specific than the declaring class).
+        for (Method declaration : inheritedDeclarations(method, viewType)) {
+            Collections.addAll(annotations, declaration.getAnnotations());
         }
 
         return List.copyOf(annotations);
@@ -163,10 +154,10 @@ public final class AnnotationResolver {
     }
 
     /**
-     * Resolves all annotations present on a single method parameter by walking the same erased
-     * signature on the method's superclass chain and the BFS-ordered interface hierarchy of the
-     * method's declaring class. This is the parameter-level analog of
-     * {@link #resolveMethodAnnotations(Method)}.
+     * Resolves all annotations present on a single method parameter by walking the declarations
+     * the method overrides (see {@link #inheritedDeclarations}) on the method's superclass chain
+     * and the BFS-ordered interface hierarchy of the method's declaring class. This is the
+     * parameter-level analog of {@link #resolveMethodAnnotations(Method)}.
      *
      * <p>Equivalent to {@link #resolveParameterAnnotations(Method, int, Class)
      * resolveParameterAnnotations(method, parameterIndex, method.getDeclaringClass())}.
@@ -182,10 +173,10 @@ public final class AnnotationResolver {
     }
 
     /**
-     * Resolves all annotations present on a single method parameter by walking the same erased
-     * signature on the method's superclass chain and the BFS-ordered interface hierarchy of
-     * {@code viewType}. This is the parameter-level analog of
-     * {@link #resolveMethodAnnotations(Method, Class)}.
+     * Resolves all annotations present on a single method parameter by walking the declarations
+     * the method overrides (see {@link #inheritedDeclarations}) on the method's superclass chain
+     * and the BFS-ordered interface hierarchy of {@code viewType}. This is the parameter-level
+     * analog of {@link #resolveMethodAnnotations(Method, Class)}.
      *
      * <p>Use case: a JAX-RS resource impl class declares
      * {@code public Response get(String id)} and the matching interface method declares
@@ -227,29 +218,100 @@ public final class AnnotationResolver {
         }
         Set<Annotation> annotations = new LinkedHashSet<>(List.of(method.getParameterAnnotations()[parameterIndex]));
 
-        // Walk superclass chain from the declaring class
-        Class<?> current = method.getDeclaringClass().getSuperclass();
-        while (current != null && current != Object.class) {
-            try {
-                Method m = current.getMethod(method.getName(), method.getParameterTypes());
-                Collections.addAll(annotations, m.getParameterAnnotations()[parameterIndex]);
-            } catch (NoSuchMethodException ignored) {
-                // Method not declared on this superclass — continue traversal
-            }
-            current = current.getSuperclass();
-        }
-
-        // Walk interface hierarchy of the view type (BFS, matching TypeResolver.getAllInterfaces)
-        for (Class<?> iface : TypeResolver.getAllInterfaces(viewType)) {
-            try {
-                Method m = iface.getMethod(method.getName(), method.getParameterTypes());
-                Collections.addAll(annotations, m.getParameterAnnotations()[parameterIndex]);
-            } catch (NoSuchMethodException ignored) {
-                // Method not declared on this interface — continue traversal
-            }
+        // The same declarations, in the same order, as resolveMethodAnnotations
+        for (Method declaration : inheritedDeclarations(method, viewType)) {
+            Collections.addAll(annotations, declaration.getParameterAnnotations()[parameterIndex]);
         }
 
         return annotations.toArray(new Annotation[0]);
+    }
+
+    // --- Inherited declarations ---
+
+    /**
+     * Returns the declarations {@code method} overrides or implements, in resolution order: the
+     * superclasses of its declaring class, bottom-up, then the interfaces of {@code viewType}. The
+     * method itself is not part of the result.
+     *
+     * <p>INTERNAL framework seam: shared by this class's hierarchy walks and by sibling framework
+     * modules that must see the same declarations; not an application contract and outside the
+     * module's compatibility promise.
+     *
+     * <p>A declaration corresponds in two steps, and both contribute. The exact erased lookup
+     * ({@link Class#getMethod}) is first, so every declaration matched by erased signature before
+     * is still matched. A binding-aware scan follows: the type variables of the declaring class and
+     * of {@code viewType} are bound through their superclasses, interfaces and owner types, and a
+     * public, non-static, non-bridge declaration of the same name and arity whose parameter types
+     * are equal after resolution corresponds as well. That is how
+     * {@code class Users implements Crud<String> { void delete(String id) }} is recognized as
+     * overriding {@code Crud<ID>.delete(ID)}. The rule for method type parameters is the Java
+     * one: a generic method corresponds only to a declaration with the same number of them whose
+     * bounds erase equally, and a non-generic method corresponds to a generic declaration by
+     * erasure. Members that are not public are not seen, exactly as for the exact lookup.
+     *
+     * @param method   the method whose overridden declarations are wanted; must not be {@code null}
+     * @param viewType the type whose interface hierarchy contributes declarations (the resource
+     *                 class, or the declaring interface for an interface default method); must not
+     *                 be {@code null}
+     * @return the corresponding declarations, de-duplicated, never {@code null}
+     */
+    public static List<Method> inheritedDeclarations(Method method, Class<?> viewType) {
+        return DECLARATIONS.get(viewType).computeIfAbsent(method, m -> computeDeclarations(m, viewType));
+    }
+
+    /**
+     * Declarations by view type and method. A {@link ClassValue} keeps the cache with the view
+     * class, so it never outlives the class loader that owns the type; the lookup is repeated per
+     * route, per parameter and per policy axis, and the walk behind it reflects over every
+     * supertype.
+     */
+    private static final ClassValue<ConcurrentMap<Method, List<Method>>> DECLARATIONS = new ClassValue<>() {
+        @Override
+        protected ConcurrentMap<Method, List<Method>> computeValue(Class<?> type) {
+            return new ConcurrentHashMap<>();
+        }
+    };
+
+    private static List<Method> computeDeclarations(Method method, Class<?> viewType) {
+        Class<?> declaring = method.getDeclaringClass();
+        Map<TypeVariable<?>, Type> bindings = new LinkedHashMap<>(GenericBindings.of(declaring));
+        GenericBindings.of(viewType).forEach(bindings::putIfAbsent);
+
+        Set<Method> found = new LinkedHashSet<>();
+        Class<?> current = declaring.getSuperclass();
+        while (current != null && current != Object.class) {
+            collectDeclarations(current, method, bindings, found);
+            current = current.getSuperclass();
+        }
+        for (Class<?> iface : TypeResolver.getAllInterfaces(viewType)) {
+            collectDeclarations(iface, method, bindings, found);
+        }
+        found.remove(method);
+        return List.copyOf(found);
+    }
+
+    private static void collectDeclarations(
+            Class<?> type, Method method, Map<TypeVariable<?>, Type> bindings, Set<Method> found) {
+        try {
+            found.add(type.getMethod(method.getName(), method.getParameterTypes()));
+        } catch (NoSuchMethodException ignored) {
+            // No declaration with the same erased signature on this type
+        }
+        // getMethods() loads public members only, as the exact lookup does, so the signature of a
+        // non-public member is never resolved here.
+        for (Method candidate : type.getMethods()) {
+            int modifiers = candidate.getModifiers();
+            if (candidate.getDeclaringClass() != type
+                    || !Modifier.isPublic(modifiers)
+                    || Modifier.isStatic(modifiers)
+                    || candidate.isBridge()
+                    || candidate.isSynthetic()) {
+                continue;
+            }
+            if (GenericBindings.corresponds(method, candidate, bindings)) {
+                found.add(candidate);
+            }
+        }
     }
 
     // --- Meta-annotation resolution ---

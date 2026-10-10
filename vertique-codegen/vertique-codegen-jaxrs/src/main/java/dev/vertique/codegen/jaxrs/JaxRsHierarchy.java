@@ -12,6 +12,7 @@ import java.util.List;
 import java.util.Set;
 import javax.lang.model.element.ElementKind;
 import javax.lang.model.element.ExecutableElement;
+import javax.lang.model.element.Modifier;
 import javax.lang.model.element.TypeElement;
 import javax.lang.model.type.TypeMirror;
 
@@ -19,7 +20,8 @@ import javax.lang.model.type.TypeMirror;
  * Internal codegen utility for JAX-RS interface/hierarchy walking, not a public API.
  *
  * <p>Provides shared BFS (breadth-first search) traversal over the interface hierarchy of a
- * concrete type element, and method-matching by erased signature. These helpers are used by both
+ * concrete type element, and the lookup of the declarations a method overrides. These helpers are
+ * used by both
  * {@link EffectiveJaxRsContractResolver} and
  * {@link dev.vertique.codegen.jaxrs.processor.validate.ContextParamValidator} to eliminate
  * duplication of the traversal logic.
@@ -83,8 +85,8 @@ public final class JaxRsHierarchy {
      * runtime {@code AnnotationResolver} starts when the method's declaring type is an interface.
      * For a method declared by a class it is {@link #allInterfaces(CodegenContext, TypeElement)} of
      * the resource class, matching the runtime walk that passes the resource class as the
-     * annotation view (vertiquehq/vertique-dev#636): a superclass-declared method still inherits
-     * annotations from interfaces the resource implements.
+     * annotation view: a superclass-declared method still inherits annotations from interfaces the
+     * resource implements.
      *
      * @param ctx           the shared codegen context; must not be {@code null}
      * @param method        the resource method; must not be {@code null}
@@ -100,26 +102,122 @@ public final class JaxRsHierarchy {
     }
 
     /**
-     * Finds the abstract method in the given interface that matches the concrete method's erased
-     * signature (simple name + erased parameter types).
+     * Returns the declarations {@code method} overrides, in resolution order: the methods of its
+     * declaring class's superclasses, bottom-up, then those of the interfaces from
+     * {@link #interfacesForMethod}. A method declared by an interface has no superclass walk, as at
+     * runtime. The method itself is not part of the result.
+     *
+     * @param ctx           the shared codegen context; must not be {@code null}
+     * @param method        the method whose overridden declarations are wanted
+     * @param resourceClass the resource class the method is a member of
+     * @param publicOnly    {@code true} to accept public (and interface) declarations only, the set
+     *                      the runtime resolver sees; {@code false} to accept every inherited
+     *                      declaration that is not private or static
+     * @return the corresponding declarations; never {@code null}
+     */
+    static List<ExecutableElement> inheritedDeclarations(
+            CodegenContext ctx, ExecutableElement method, TypeElement resourceClass, boolean publicOnly) {
+        List<ExecutableElement> result = new ArrayList<>();
+        if (method.getEnclosingElement() instanceof TypeElement owner && owner.getKind() != ElementKind.INTERFACE) {
+            TypeElement current = superClass(ctx, owner);
+            while (current != null
+                    && !"java.lang.Object".equals(current.getQualifiedName().toString())) {
+                result.addAll(findMatchingMethods(ctx, method, current, resourceClass, publicOnly));
+                current = superClass(ctx, current);
+            }
+        }
+        for (TypeElement iface : interfacesForMethod(ctx, method, resourceClass)) {
+            for (ExecutableElement declaration : findMatchingMethods(ctx, method, iface, resourceClass, publicOnly)) {
+                if (!result.contains(declaration)) {
+                    result.add(declaration);
+                }
+            }
+        }
+        return result;
+    }
+
+    /**
+     * Finds the methods of {@code type} that {@code method} overrides or implements as a member of
+     * {@code resourceClass}.
+     *
+     * <p>A declaration corresponds when it has the same erased signature (the match that has always
+     * applied) or when {@code method} overrides it according to the Java language rules for the
+     * resource class, which resolves a type variable bound in the hierarchy: {@code delete(String)}
+     * of {@code Users implements Crud<String>} overrides {@code Crud<ID>.delete(ID)}. A private or
+     * static declaration is never inherited and never corresponds. All matches are returned, not
+     * the first.
+     *
+     * @param ctx           the shared codegen context; must not be {@code null}
+     * @param method        the overriding method; must not be {@code null}
+     * @param type          the superclass or interface whose declarations are searched
+     * @param resourceClass the resource class the method is a member of
+     * @param publicOnly    whether only public (and interface) declarations are accepted
+     * @return the matching declarations in declaration order; never {@code null}
+     */
+    public static List<ExecutableElement> findMatchingMethods(
+            CodegenContext ctx,
+            ExecutableElement method,
+            TypeElement type,
+            TypeElement resourceClass,
+            boolean publicOnly) {
+        // The exact erased matches come first, as at runtime (the exact lookup precedes the
+        // binding-aware scan); overrides-only matches follow, each group in declaration order.
+        List<ExecutableElement> exact = new ArrayList<>();
+        List<ExecutableElement> bound = new ArrayList<>();
+        String key = null;
+        for (javax.lang.model.element.Element enclosed : type.getEnclosedElements()) {
+            if (enclosed.getKind() != ElementKind.METHOD || !(enclosed instanceof ExecutableElement candidate)) {
+                continue;
+            }
+            if (candidate.equals(method)
+                    || !candidate.getSimpleName().contentEquals(method.getSimpleName())
+                    || candidate.getParameters().size()
+                            != method.getParameters().size()) {
+                continue;
+            }
+            Set<Modifier> modifiers = candidate.getModifiers();
+            if (modifiers.contains(Modifier.PRIVATE) || modifiers.contains(Modifier.STATIC)) {
+                continue;
+            }
+            if (publicOnly && type.getKind() != ElementKind.INTERFACE && !modifiers.contains(Modifier.PUBLIC)) {
+                continue;
+            }
+            if (key == null) {
+                key = methodKey(ctx, method);
+            }
+            if (methodKey(ctx, candidate).equals(key)) {
+                exact.add(candidate);
+            } else if (ctx.elements().overrides(method, candidate, resourceClass)) {
+                bound.add(candidate);
+            }
+        }
+        exact.addAll(bound);
+        return exact;
+    }
+
+    /**
+     * Finds the method in the given type that matches the concrete method's erased signature
+     * (simple name + erased parameter types), and only that. Used where the question is JVM
+     * descriptor shadowing, not inheritance: a type variable bound in the hierarchy does not make
+     * two methods the same JVM method.
      *
      * @param ctx            the shared codegen context; must not be {@code null}
      * @param concreteMethod the concrete method to match; must not be {@code null}
-     * @param iface          the interface to search; must not be {@code null}
-     * @return the matching interface method, or {@code null} if not found
+     * @param type           the type to search; must not be {@code null}
+     * @return the matching method, or {@code null} if not found
      */
-    public static ExecutableElement findMatchingMethod(
-            CodegenContext ctx, ExecutableElement concreteMethod, TypeElement iface) {
+    public static ExecutableElement findErasedMatch(
+            CodegenContext ctx, ExecutableElement concreteMethod, TypeElement type) {
         String key = methodKey(ctx, concreteMethod);
-        for (javax.lang.model.element.Element enclosed : iface.getEnclosedElements()) {
+        for (javax.lang.model.element.Element enclosed : type.getEnclosedElements()) {
             if (enclosed.getKind() != ElementKind.METHOD) {
                 continue;
             }
-            if (!(enclosed instanceof ExecutableElement ifaceMethod)) {
+            if (!(enclosed instanceof ExecutableElement typeMethod)) {
                 continue;
             }
-            if (methodKey(ctx, ifaceMethod).equals(key)) {
-                return ifaceMethod;
+            if (methodKey(ctx, typeMethod).equals(key)) {
+                return typeMethod;
             }
         }
         return null;

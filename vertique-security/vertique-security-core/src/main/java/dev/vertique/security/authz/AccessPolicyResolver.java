@@ -480,9 +480,28 @@ public final class AccessPolicyResolver {
             if (generic.length != wanted.length) {
                 return false;
             }
+            // JLS 8.4.2: a method with type parameters of its own overrides only a declaration with
+            // the same number of them, mapped by position, whose bounds erase equally; a method
+            // with none overrides a generic declaration by erasure.
+            TypeVariable<Method>[] own = canonical.getTypeParameters();
+            TypeVariable<Method>[] other = candidate.getTypeParameters();
+            Map<TypeVariable<?>, Type> effective = bindings;
+            if (own.length > 0) {
+                if (own.length != other.length) {
+                    return false;
+                }
+                effective = new LinkedHashMap<>(bindings);
+                for (int i = 0; i < own.length; i++) {
+                    if (resolveErasure(own[i], bindings, new IdentityHashMap<>())
+                            != resolveErasure(other[i], bindings, new IdentityHashMap<>())) {
+                        return false;
+                    }
+                    effective.put(other[i], own[i]);
+                }
+            }
             for (int i = 0; i < generic.length; i++) {
-                Class<?> resolved = resolveErasure(generic[i], bindings, new IdentityHashMap<>());
-                Class<?> expected = resolveErasure(wanted[i], bindings, new IdentityHashMap<>());
+                Class<?> resolved = resolveErasure(generic[i], effective, new IdentityHashMap<>());
+                Class<?> expected = resolveErasure(wanted[i], effective, new IdentityHashMap<>());
                 if (resolved != expected) {
                     return false;
                 }
@@ -547,6 +566,11 @@ public final class AccessPolicyResolver {
         Type[] arguments = parameterized.getActualTypeArguments();
         for (int i = 0; i < parameters.length && i < arguments.length; i++) {
             bindings.putIfAbsent(parameters[i], arguments[i]);
+        }
+        // The argument of an owner type ({@code Outer<String>.Inner}) binds the inner class's
+        // variables from the enclosing class.
+        if (parameterized.getOwnerType() instanceof ParameterizedType owner) {
+            bind(owner, bindings);
         }
     }
 }

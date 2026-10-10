@@ -48,10 +48,12 @@ import java.lang.reflect.Parameter;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import lombok.extern.slf4j.Slf4j;
 
 /**
@@ -812,6 +814,7 @@ class ResourceScanner {
             }
             current = current.getSuperclass();
         }
+        dropOverriddenSuperclassMethods(clazz, seen);
         for (Method method : clazz.getMethods()) {
             // An interface bridge is a synthetic default method; it is never a resource method.
             if (method.isDefault() && !method.isBridge() && !method.isSynthetic()) {
@@ -826,6 +829,30 @@ class ResourceScanner {
             }
         }
         return List.copyOf(seen.values());
+    }
+
+    /**
+     * Removes the class-chain entries that an overriding class method has merged. A generic
+     * override such as {@code get(String)} of {@code Base<T>.get(T)} has another erased key than
+     * the method it overrides, so both were collected; the override now inherits the superclass
+     * method's annotations ({@link AnnotationResolver#inheritedDeclarations}) and is the route, so
+     * routing the superclass method as well would register the operation twice. A superclass
+     * method is dropped only when the override reached it: one that the lookup did not match stays
+     * a route of its own.
+     *
+     * @param clazz the resource class
+     * @param seen  the class-chain entries by key, modified in place
+     */
+    private void dropOverriddenSuperclassMethods(Class<?> clazz, Map<String, Method> seen) {
+        Set<Method> merged = new HashSet<>();
+        for (Method method : seen.values()) {
+            if (!method.getDeclaringClass().isInterface()) {
+                merged.addAll(AnnotationResolver.inheritedDeclarations(method, clazz));
+            }
+        }
+        if (!merged.isEmpty()) {
+            seen.values().removeIf(merged::contains);
+        }
     }
 
     /**
