@@ -1346,10 +1346,28 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
         /** One file-part declaration with its allowed types parsed once when the gate is built. */
         private record PreparedFilePart(FilePartDescriptor descriptor, List<MediaType> allowedTypes) {
 
+            /**
+             * Parses the descriptor's allowed types once. An allowed type that does not parse is a
+             * configuration error, not request data, so it fails here rather than as a
+             * {@code null} met on every upload.
+             *
+             * @throws RestConfigurationException if a declared allowed type is not a media type
+             */
             private static PreparedFilePart from(FilePartDescriptor descriptor) {
-                return new PreparedFilePart(
-                        descriptor,
-                        descriptor.allowedTypes().stream().map(MediaType::parse).toList());
+                List<MediaType> allowed =
+                        new ArrayList<>(descriptor.allowedTypes().size());
+                for (String declaredType : descriptor.allowedTypes()) {
+                    MediaType parsed = MediaType.parse(declaredType);
+                    if (parsed == null) {
+                        String part = descriptor.partName() == null
+                                ? "the aggregate file parameter"
+                                : "file part '" + descriptor.partName() + "'";
+                        throw new RestConfigurationException(
+                                "Invalid allowed media type '" + declaredType + "' declared for " + part);
+                    }
+                    allowed.add(parsed);
+                }
+                return new PreparedFilePart(descriptor, List.copyOf(allowed));
             }
 
             private boolean constrained() {

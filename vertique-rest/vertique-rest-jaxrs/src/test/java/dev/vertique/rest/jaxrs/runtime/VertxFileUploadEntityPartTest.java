@@ -166,15 +166,15 @@ class VertxFileUploadEntityPartTest {
     }
 
     @Test
-    @DisplayName("getHeaders() strips newlines from name")
-    void shouldStripNewlinesFromName() {
+    @DisplayName("getHeaders() replaces newlines in name with underscores")
+    void shouldReplaceNewlinesInName() {
         when(fileUpload.name()).thenReturn("field\r\nname");
         VertxFileUploadEntityPart part = new VertxFileUploadEntityPart(vertx, fileUpload);
         String disposition = part.getHeaders().getFirst("Content-Disposition");
         assertNotNull(disposition);
         assertTrue(
-                disposition.contains("name=\"fieldname\""),
-                "disposition should strip newlines from name: " + disposition);
+                disposition.contains("name=\"field__name\""),
+                "disposition should replace newlines in name: " + disposition);
     }
 
     // --- getContentAsync() ---

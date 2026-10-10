@@ -244,8 +244,82 @@ class MagicBytesFileContentVerifierTest {
     }
 
     @Test
+    @DisplayName("a parameter that is not a valid quality value does not skip the signature check")
+    void unusableQualityParameterStillVerifiesSignature() throws Exception {
+        for (String declared : List.of(
+                "image/png; q=abc",
+                "image/png; q=2",
+                "image/png; q=-1",
+                "image/png; q=.5",
+                "image/png; q=0.1234",
+                "image/png; q=\"\"",
+                "image/png; Q=x")) {
+            assertSignatureMismatch(verifyReal(declared, MISMATCH));
+            assertAccepted(verifyReal(declared, PNG));
+        }
+    }
+
+    @Test
+    @DisplayName("a declared type that does not parse is rejected, not accepted")
+    void unparsableDeclaredTypeIsRejected() throws Exception {
+        for (String declared : List.of(
+                "image/png; x=\"",
+                "image/png; x=\"a\"b",
+                "image/png; profile=\"a;b",
+                "garbage",
+                "image",
+                "image/png, image/gif; x=\"")) {
+            assertMalformedContentType(verifyReal(declared, MISMATCH));
+            assertMalformedContentType(verifyReal(declared, PNG));
+        }
+    }
+
+    @Test
+    @DisplayName("an unparsable declared type is rejected without opening the file")
+    void unparsableDeclaredTypeIsRejectedWithoutIo() throws Exception {
+        Vertx mockVertx = mock(Vertx.class);
+        FileSystem fileSystem = mock(FileSystem.class);
+        when(mockVertx.fileSystem()).thenReturn(fileSystem);
+        MagicBytesFileContentVerifier verifier = new MagicBytesFileContentVerifier(mockVertx);
+
+        Future<FileVerificationResult> result = verifier.verify(upload("/must-not-be-opened", "image/png; x=\""));
+
+        assertTrue(result.succeeded());
+        assertMalformedContentType(await(result));
+        verifyNoInteractions(fileSystem);
+    }
+
+    @Test
+    @DisplayName("an absent or blank declared type has nothing to verify and is accepted without I/O")
+    void absentOrBlankDeclaredTypeAcceptedImmediately() throws Exception {
+        Vertx mockVertx = mock(Vertx.class);
+        FileSystem fileSystem = mock(FileSystem.class);
+        when(mockVertx.fileSystem()).thenReturn(fileSystem);
+        MagicBytesFileContentVerifier verifier = new MagicBytesFileContentVerifier(mockVertx);
+
+        for (String declared : java.util.Arrays.asList(null, "", "   ")) {
+            assertAccepted(await(verifier.verify(upload("/must-not-be-opened", declared))));
+        }
+        verifyNoInteractions(fileSystem);
+    }
+
+    @Test
     void mediaTypeParametersAndCaseNormalized() throws Exception {
         assertAccepted(verifyReal("IMAGE/PNG; charset=binary", PNG));
+    }
+
+    @Test
+    @DisplayName("an upper-case declared type is verified under a locale that lowercases I to a dotless i")
+    void upperCaseDeclaredTypeVerifiedUnderTurkishLocale() throws Exception {
+        java.util.Locale previous = java.util.Locale.getDefault();
+        java.util.Locale.setDefault(java.util.Locale.forLanguageTag("tr"));
+        try {
+            assertSignatureMismatch(verifyReal("IMAGE/PNG", MISMATCH));
+            assertSignatureMismatch(verifyReal("IMAGE/TIFF", MISMATCH));
+            assertAccepted(verifyReal("IMAGE/PNG", PNG));
+        } finally {
+            java.util.Locale.setDefault(previous);
+        }
     }
 
     @Test
@@ -347,6 +421,13 @@ class MagicBytesFileContentVerifierTest {
         FileVerificationResult.Rejected rejected = assertInstanceOf(FileVerificationResult.Rejected.class, result);
         assertEquals(MISMATCH_DETAIL, rejected.detail());
         assertEquals(MISMATCH_TYPE, rejected.type());
+        assertNull(rejected.args());
+    }
+
+    private static void assertMalformedContentType(FileVerificationResult result) {
+        FileVerificationResult.Rejected rejected = assertInstanceOf(FileVerificationResult.Rejected.class, result);
+        assertEquals("declared content type is not a valid media type", rejected.detail());
+        assertEquals("fileContentTypeMalformed", rejected.type());
         assertNull(rejected.args());
     }
 

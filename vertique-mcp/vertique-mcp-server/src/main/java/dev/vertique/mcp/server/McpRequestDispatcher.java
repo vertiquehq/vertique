@@ -56,6 +56,8 @@ import dev.vertique.resilience.exception.ResilienceUnavailableException;
 import dev.vertique.rest.core.config.HttpConfig;
 import dev.vertique.rest.core.events.RequestCompletionRecorder;
 import dev.vertique.rest.core.middleware.RequestContextLifecycle;
+import dev.vertique.rest.core.request.AcceptNegotiator;
+import dev.vertique.rest.core.request.MediaType;
 import dev.vertique.rest.core.security.SecurityRuntime;
 import dev.vertique.security.SecurityContext;
 import dev.vertique.security.SecurityContextSnapshot;
@@ -147,19 +149,20 @@ final class McpRequestDispatcher {
     private static final String SERVER_INFO_META_KEY = "io.modelcontextprotocol/serverInfo";
     private static final String JSON_CONTENT_TYPE = "application/json";
     private static final String EVENT_STREAM_CONTENT_TYPE = "text/event-stream";
-    private static final String APPLICATION_WILDCARD_RANGE = "application/*";
-    private static final String WILDCARD_RANGE = "*/*";
+    private static final MediaType JSON_MEDIA_TYPE = MediaType.parse(JSON_CONTENT_TYPE);
+    private static final MediaType EVENT_STREAM_MEDIA_TYPE = MediaType.parse(EVENT_STREAM_CONTENT_TYPE);
     private static final byte[] SSE_PREFIX = "event: message\ndata: ".getBytes(StandardCharsets.UTF_8);
     private static final byte[] SSE_SUFFIX = "\n\n".getBytes(StandardCharsets.UTF_8);
     private static final int SSE_FRAME_OVERHEAD = SSE_PREFIX.length + SSE_SUFFIX.length;
     private static final int MAX_PROGRESS_TOKEN_BYTES = 4_096;
 
-    private static final int PARSE_ERROR = -32700;
-    private static final int INVALID_REQUEST = -32600;
-    private static final int METHOD_NOT_FOUND = -32601;
-    private static final int INTERNAL_ERROR = -32603;
-    private static final int MISSING_REQUIRED_CLIENT_CAPABILITY = -32021;
-    private static final int RATE_LIMITED = -32022;
+    static final int PARSE_ERROR = -32700;
+    static final int INVALID_REQUEST = -32600;
+    static final int METHOD_NOT_FOUND = -32601;
+    static final int INTERNAL_ERROR = -32603;
+    static final int MISSING_REQUIRED_CLIENT_CAPABILITY = -32021;
+    /** Server-defined rate-limit code; distinct from every code the protocol schema defines. */
+    static final int RATE_LIMITED = -32010;
     /** Upper bound for a {@code Retry-After} value; keeps an extreme application-supplied duration from overflowing. */
     private static final long MAX_RETRY_AFTER_SECONDS = 31_536_000L;
 
@@ -191,9 +194,11 @@ final class McpRequestDispatcher {
      * a protocol-negotiation failure as (contract §4.7 — "Header/body mismatch is HTTP
      * 400 with -32020"). Mirrors {@link McpProtocolCodec}'s own private constant of the same value —
      * this class already redeclares every other codec-classified code above for the same reason: {@link
-     * #httpStatusFor} needs it locally.
+     * #httpStatusFor} needs it locally. An unsupported protocol version is the one negotiation failure
+     * that is not this code: it is {@link McpProtocolCodec#UNSUPPORTED_PROTOCOL_VERSION} ({@code
+     * -32022}).
      */
-    private static final int NEGOTIATION_MISMATCH = -32020;
+    static final int NEGOTIATION_MISMATCH = -32020;
 
     /**
      * The bounded JSON-RPC server-error-range code a pre-dispatch {@link McpRequestInterceptor}
@@ -201,7 +206,7 @@ final class McpRequestDispatcher {
      * strictly for this stage, distinct from the protocol (-3270x/-3260x) and tool-authorization
      * (-32602) codes above.
      */
-    private static final int INTERCEPTOR_REJECTED = -32001;
+    static final int INTERCEPTOR_REJECTED = -32001;
 
     /**
      * The standard, non-leaking message paired with {@link #INTERCEPTOR_REJECTED}: no interceptor
@@ -248,14 +253,13 @@ final class McpRequestDispatcher {
 
     /**
      * The synthetic {@link McpAccessMode#DENY_ALL} descriptor evaluated for an unresolved {@code
-     * tools/call} name (existence-oracle-by-timing). A known-but-denied name
-     * reaches {@link McpPolicyEnforcer#decide} before its response is written; short-circuiting an
-     * unknown name straight to {@link #writeUnknownOrUnauthorized} without ever reaching that same
-     * decision point leaves the two paths' latency measurably different (milliseconds against an
-     * application-supplied async PDP), which restores the very existence oracle the shared
-     * {@code -32602} response exists to close. Evaluating this placeholder for every unresolved name
-     * routes both paths through the identical asynchronous decision point instead. Never registered,
-     * never listed, never actually reachable — its one and only role is to be denied.
+     * tools/call} name. A known-but-denied name reaches {@link McpPolicyEnforcer#decide} before its
+     * response is written; evaluating this placeholder for every unresolved name routes an unknown
+     * name through the same decision point, so the two paths do not differ by a missing evaluation. The
+     * placeholder is a static deny that settles synchronously, so a tool whose denial is decided by a
+     * remote policy decision point can still take longer than an unknown name: the responses are
+     * protocol-equivalent, not timing-equivalent. Never registered, never listed, never actually
+     * reachable — its one and only role is to be denied.
      */
     private static final McpToolDescriptor UNKNOWN_TOOL_PLACEHOLDER_DESCRIPTOR = new McpToolDescriptor(
             McpRequestTerminalEvent.UNKNOWN_TOOL_NAME,
@@ -959,12 +963,13 @@ final class McpRequestDispatcher {
 
     /**
      * Enforces the present-only {@code Accept} admission check: an absent header is admitted, and a
-     * present one is admitted only when at least one comma-separated media range matches
-     * {@code application/json}, {@code text/event-stream}, {@code application/*}, or {@code *&#47;*}
-     * (case-insensitive) <em>and</em> is not explicitly rejected with {@code q=0}. Per RFC 7231 a
-     * media-range with a quality value of zero is not acceptable, so such a range does not admit its
-     * media type; if every matching range carries {@code q=0} and no other range admits, the request
-     * is HTTP 406. This implements only the {@code q=0} exclusion, not full q-value preference ranking.
+     * present one is admitted only when it makes {@code application/json} or {@code text/event-stream}
+     * acceptable. Each type is judged by {@link AcceptNegotiator#effectiveQuality(List, MediaType)}
+     * over the quote-aware shared header parser: the most specific compatible entry decides, so
+     * {@code application/json}, {@code application/*}, {@code text/*} and {@code *&#47;*} can admit,
+     * while {@code q=0} and a malformed entry (an unterminated quoted string, an invalid {@code q})
+     * never do. If neither type is acceptable, including a blank header, the request is HTTP 406. This
+     * implements only the {@code q=0} exclusion, not full q-value preference ranking.
      *
      * @param context the request whose {@code Accept} header is inspected
      * @return {@code true} when the request may proceed, {@code false} when it is HTTP 406
@@ -974,54 +979,9 @@ final class McpRequestDispatcher {
         if (accept == null) {
             return true;
         }
-        for (String range : accept.split(",")) {
-            String mediaRange = mediaTypeOf(range);
-            if ((mediaRange.equalsIgnoreCase(JSON_CONTENT_TYPE)
-                            || mediaRange.equalsIgnoreCase(EVENT_STREAM_CONTENT_TYPE)
-                            || mediaRange.equalsIgnoreCase(APPLICATION_WILDCARD_RANGE)
-                            || mediaRange.equals(WILDCARD_RANGE))
-                    && !hasZeroQuality(range)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    /**
-     * Reports whether an {@code Accept} range explicitly rejects its media type with a zero quality
-     * value ({@code q=0}, {@code q=0.0}, {@code q=0.000}, …). The {@code q} parameter name is
-     * matched case-insensitively and surrounding whitespace is tolerated. A range with no {@code q}
-     * parameter, or a {@code q} greater than zero, is not zero-quality; a {@code q} token that cannot
-     * be parsed as a number is left permissive (treated as non-zero) rather than over-engineered into
-     * full q-value handling.
-     *
-     * @param range one comma-separated {@code Accept} range, possibly carrying parameters
-     * @return {@code true} when the range carries a numerically-zero {@code q} parameter
-     */
-    private static boolean hasZeroQuality(String range) {
-        int semicolon = range.indexOf(';');
-        if (semicolon < 0) {
-            return false;
-        }
-        for (String parameter : range.substring(semicolon + 1).split(";")) {
-            int equals = parameter.indexOf('=');
-            if (equals < 0) {
-                continue;
-            }
-            String name = parameter.substring(0, equals).trim();
-            if (!"q".equalsIgnoreCase(name)) {
-                continue;
-            }
-            String value = parameter.substring(equals + 1).trim();
-            try {
-                return Double.parseDouble(value) == 0.0;
-            } catch (NumberFormatException unparseable) {
-                // An unparseable q token is left permissive rather than over-engineering full RFC
-                // q-value handling; only a cleanly numerically-zero q rejects the media type.
-                return false;
-            }
-        }
-        return false;
+        List<MediaType> ranges = AcceptNegotiator.parseAcceptHeader(accept);
+        return AcceptNegotiator.effectiveQuality(ranges, JSON_MEDIA_TYPE) > 0.0
+                || AcceptNegotiator.effectiveQuality(ranges, EVENT_STREAM_MEDIA_TYPE) > 0.0;
     }
 
     /**
@@ -1053,9 +1013,9 @@ final class McpRequestDispatcher {
      * <p>After envelope decoding, the complete official per-method {@code params} schema validates
      * before negotiation or application policy. A violation is a JSON-RPC {@code -32602} response over
      * HTTP 400. Only then does header/body and Phase-1 negotiation run; those failures are {@code
-     * -32020}. A negotiated request enters the ordered, fail-closed pre-dispatch request-interceptor
-     * stage (contract §4.7 stage 5) before method dispatch, tool lookup, authorization, or
-     * application input processing.
+     * -32020}, except an unsupported version, which is {@code -32022}. A negotiated request enters
+     * the ordered, fail-closed pre-dispatch request-interceptor stage before method dispatch, tool
+     * lookup, authorization, or application input processing.
      */
     void dispatch(RoutingContext context) {
         SecurityContextSnapshot security = establishedSecurity();
@@ -1525,7 +1485,8 @@ final class McpRequestDispatcher {
      * Writes the bounded, non-leaking JSON-RPC error response for a failed official-params or
      * negotiation check. Official {@code params} validation produces {@code -32602 Invalid params};
      * header/body disagreement and Phase-1 negotiation policy produce {@code -32020 Header/body
-     * mismatch}. Both occur before negotiation completes, so the terminal event carries no {@code
+     * mismatch}, except an unsupported version, which is {@code -32022 Unsupported protocol version}.
+     * Both occur before negotiation completes, so the terminal event carries no {@code
      * protocolVersion}. This is unlike {@link #writeInterceptorRejection}, which runs only after
      * negotiation has succeeded and therefore does carry the negotiated version. Correlation and
      * security are already established and remain recorded.
@@ -1696,8 +1657,8 @@ final class McpRequestDispatcher {
      * at the first of: the page reaching {@code mcp.tools.pageSize} visible tools, examining {@code
      * 4 * mcp.tools.pageSize} candidates (the fan-out bound), or the registry being
      * exhausted. A present, malformed, or otherwise invalid cursor is rejected with the same
-     * indistinguishable {@code -32602} response {@link McpPolicyEnforcer#unknownOrUnauthorizedError()}
-     * produces for a denied or unknown tool, never a distinct code or status.
+     * {@code -32602} response {@link McpPolicyEnforcer#unknownOrUnauthorizedError()} produces for a
+     * denied or unknown tool, never a distinct code or status.
      *
      * <p>A valid cursor anchor is one of two forms (see {@link McpCursorCodec}): a name-form
      * anchor is a lexicographic position hint, not a registry membership proof — a nonmember anchor
@@ -2122,7 +2083,7 @@ final class McpRequestDispatcher {
     }
 
     /**
-     * Writes the same externally indistinguishable {@code -32602} response {@link
+     * Writes the same protocol-equivalent {@code -32602} response {@link
      * McpPolicyEnforcer#unknownOrUnauthorizedError()} defines, so an invalid cursor, a denied tool, and
      * an unknown tool all yield byte-identical bodies and the same HTTP status — the
      * status comes from the shared {@link #httpStatusFor} mapping, never a bespoke one. Always
@@ -2265,8 +2226,10 @@ final class McpRequestDispatcher {
      *
      * <p>An unresolved name is never short-circuited straight to that response: it is first evaluated
      * against {@link #UNKNOWN_TOOL_PLACEHOLDER_DESCRIPTOR} through the same {@link
-     * McpPolicyEnforcer#decide} decision point a known-but-denied name reaches, so the two paths carry
-     * the same asynchronous latency shape and cannot be distinguished by timing. The terminal event for
+     * McpPolicyEnforcer#decide} decision point a known-but-denied name reaches, so both paths reach
+     * the same decision point. The two responses are protocol-equivalent (same code, message and HTTP
+     * status); their timing can still differ when a remote policy decision point is in the path, because
+     * the placeholder settles synchronously. The terminal event for
      * an unresolved name carries {@link McpRequestTerminalEvent#UNKNOWN_TOOL_NAME}, never the
      * caller-supplied string: an unresolved name touches no real {@link McpToolDescriptor}, so nothing
      * bounds it except the wire's own 20,000,000-char string limit, and it would otherwise reach every
@@ -3400,8 +3363,8 @@ final class McpRequestDispatcher {
     void handleFailure(RoutingContext context) {
         if (context.response().ended()) {
             // The response was already ended (a handler wrote then failed). Do not attempt a second
-            // write — that throws — but still settle the completion coordinator so an admitted
-            // request does not leave its observation open without terminal/completion (T004 S-b).
+            // write — that throws — but still settle the completion coordinator, so an admitted
+            // request never leaves its observation open without a terminal and a completion.
             settleEndedFailure(context);
             return;
         }
@@ -3665,6 +3628,7 @@ final class McpRequestDispatcher {
             case PARSE_ERROR, INVALID_REQUEST -> 400;
             case McpPolicyEnforcer.UNKNOWN_OR_UNAUTHORIZED_CODE -> 400;
             case NEGOTIATION_MISMATCH -> 400;
+            case McpProtocolCodec.UNSUPPORTED_PROTOCOL_VERSION -> 400;
             case MISSING_REQUIRED_CLIENT_CAPABILITY -> 400;
             case INTERCEPTOR_REJECTED -> 403;
             default -> 500;

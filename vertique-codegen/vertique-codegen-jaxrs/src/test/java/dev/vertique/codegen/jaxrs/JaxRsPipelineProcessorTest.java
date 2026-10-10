@@ -106,6 +106,66 @@ class JaxRsPipelineProcessorTest {
         }
 
         @Test
+        @DisplayName("resource inheriting @Path from a superclass — descriptor and DI binding emitted")
+        void superclassInheritedPath_descriptorAndBindingEmitted() {
+            var result = ProcessorTestHarness.run(
+                    new JaxRsPipelineProcessor(),
+                    SourceFiles.inline("dev.vertique.test.BaseResource", """
+                            package dev.vertique.test;
+
+                            import jakarta.ws.rs.GET;
+                            import jakarta.ws.rs.Path;
+
+                            @Path("/base")
+                            public abstract class BaseResource {
+                                @GET
+                                public String get() { return ""; }
+                            }
+                            """),
+                    SourceFiles.inline("dev.vertique.test.DerivedResource", """
+                            package dev.vertique.test;
+
+                            import jakarta.inject.Inject;
+
+                            public class DerivedResource extends BaseResource {
+                                @Inject
+                                public DerivedResource() {}
+                            }
+                            """));
+
+            result.assertSuccess();
+            result.assertGeneratedSourceContains("dev.vertique.test.DerivedResource_JaxRsDescriptor", "/base");
+            result.assertGeneratedSourceContains(
+                    "dev.vertique.test.GeneratedJaxRsResourcesModule", "derivedResourceBinding");
+        }
+
+        @Test
+        @DisplayName("superclass-inherited @Path — compile-time validation applies to the subclass")
+        void superclassInheritedPath_validationApplies() {
+            var result = ProcessorTestHarness.run(
+                    new JaxRsPipelineProcessor(),
+                    SourceFiles.inline("dev.vertique.test.BaseResource", """
+                            package dev.vertique.test;
+
+                            import jakarta.ws.rs.GET;
+                            import jakarta.ws.rs.Path;
+
+                            @Path("/base/{id}")
+                            public abstract class BaseResource {
+                                @GET
+                                public String get() { return ""; }
+                            }
+                            """),
+                    SourceFiles.inline("dev.vertique.test.DerivedResource", """
+                            package dev.vertique.test;
+
+                            public class DerivedResource extends BaseResource {}
+                            """));
+
+            result.assertErrorMessage("@PathParam");
+        }
+
+        @Test
         @DisplayName("@NoAutoWire resource — excluded from DI module, no error emitted")
         void noAutoWireResource_excludedFromModule_noError() {
             var result = ProcessorTestHarness.run(

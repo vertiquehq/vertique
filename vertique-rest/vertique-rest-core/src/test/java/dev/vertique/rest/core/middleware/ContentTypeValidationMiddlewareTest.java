@@ -97,6 +97,26 @@ class ContentTypeValidationMiddlewareTest {
     }
 
     @Test
+    @DisplayName("Should call ctx.next() for upper-case Content-Types under a Turkish default locale")
+    void shouldAcceptUpperCaseContentTypesUnderTurkishLocale() {
+        java.util.Locale previous = java.util.Locale.getDefault();
+        java.util.Locale.setDefault(java.util.Locale.forLanguageTag("tr"));
+        try {
+            for (String contentType :
+                    java.util.List.of("APPLICATION/JSON", "MULTIPART/FORM-DATA; boundary=----boundary")) {
+                RoutingContext ctx = mockContext(HttpMethod.POST, contentType);
+
+                middleware.handle(ctx);
+
+                verify(ctx).next();
+                verify(ctx, never()).fail(anyInt(), any(Throwable.class));
+            }
+        } finally {
+            java.util.Locale.setDefault(previous);
+        }
+    }
+
+    @Test
     @DisplayName("Should call ctx.next() for POST with text/plain Content-Type")
     void shouldAcceptPostWithTextPlain() {
         RoutingContext ctx = mockContext(HttpMethod.POST, "text/plain");

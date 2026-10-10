@@ -61,7 +61,13 @@ public final class McpServerConfig {
     @Nullable
     private final String jsonProfile;
 
-    /** Exact normalized origins accepted when a request carries an {@code Origin}. Defaults to empty. */
+    /**
+     * Origins accepted when a request carries an {@code Origin}, matched literally. Each entry must be an
+     * exact serialized origin as a browser sends it ({@code scheme://host[:port]}, lowercase, no path,
+     * trailing slash, query, fragment, userinfo or default port); startup fails on any other entry.
+     * The opaque origin {@code null} is never allowlistable, since it would admit every sandboxed page.
+     * Defaults to empty, which rejects every request that carries an {@code Origin}.
+     */
     @Builder.Default
     private final Set<String> allowedOrigins = Set.of();
 

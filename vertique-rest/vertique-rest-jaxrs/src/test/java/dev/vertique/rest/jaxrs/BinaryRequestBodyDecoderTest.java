@@ -55,6 +55,18 @@ class BinaryRequestBodyDecoderTest {
         assertFalse(decoder.canDecode(Buffer.class, null));
     }
 
+    @Test
+    @DisplayName("Should accept an upper-case application/octet-stream under a Turkish default locale")
+    void shouldAcceptUpperCaseOctetStreamUnderTurkishLocale() {
+        java.util.Locale previous = java.util.Locale.getDefault();
+        java.util.Locale.setDefault(java.util.Locale.forLanguageTag("tr"));
+        try {
+            assertTrue(decoder.canDecode(Buffer.class, "APPLICATION/OCTET-STREAM"));
+        } finally {
+            java.util.Locale.setDefault(previous);
+        }
+    }
+
     // --- decode ---
 
     @Test

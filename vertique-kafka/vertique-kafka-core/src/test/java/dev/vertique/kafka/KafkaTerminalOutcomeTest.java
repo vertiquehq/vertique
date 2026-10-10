@@ -12,8 +12,6 @@ import static org.mockito.Mockito.when;
 import dev.vertique.config.parser.DefaultConfigMapper;
 import dev.vertique.config.parser.DefaultConfigParser;
 import dev.vertique.kafka.config.KafkaConfig;
-import dev.vertique.kafka.interceptor.KafkaConsumerCaptureHook;
-import dev.vertique.kafka.interceptor.KafkaDispatchContext;
 import dev.vertique.kafka.interceptor.KafkaTerminalOutcome;
 import dev.vertique.kafka.producer.KafkaProducerFactory;
 import io.vertx.core.Future;
@@ -23,7 +21,6 @@ import io.vertx.junit5.VertxTestContext;
 import io.vertx.kafka.client.consumer.KafkaConsumerRecord;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -40,12 +37,10 @@ import org.mockito.junit.jupiter.MockitoExtension;
  *   <li>{@link KafkaErrorHandler#handleError} returns the correct {@link KafkaTerminalOutcome} for
  *       each {@link ErrorStrategy} — and all existing side-effects (commit / seek / resume / DLQ
  *       publish) are still invoked exactly as before</li>
- *   <li>{@link KafkaConsumerCaptureHook} contract: observer-only SPI, default no-op, extends
- *       {@link dev.vertique.core.extension.OrderedExtension}</li>
  * </ul>
  *
- * <p>The hook invocation from {@link KafkaConsumerVerticle} is covered in
- * {@link KafkaConsumerCaptureHookInvocationTest}.
+ * <p>How {@link KafkaConsumerVerticle} reports each outcome to interceptors is covered in
+ * {@link KafkaConsumerLifecycleCallbackTest}.
  */
 @ExtendWith(VertxExtension.class)
 @ExtendWith(MockitoExtension.class)
@@ -171,35 +166,6 @@ class KafkaTerminalOutcomeTest {
         }
     }
 
-    // --- KafkaConsumerCaptureHook contract ---
-
-    @Nested
-    @DisplayName("KafkaConsumerCaptureHook contract")
-    class CaptureHookContract {
-
-        @Test
-        @DisplayName("default onTerminalOutcome is a no-op — does not throw")
-        void defaultNoOp() {
-            KafkaConsumerCaptureHook hook = new KafkaConsumerCaptureHook() {
-                        // all-defaults
-                    };
-            KafkaDispatchContext<?> ctx =
-                    new KafkaDispatchContext<>("c", "t", 0, 1L, "k", "v", null, Map.of(), 0L, 0, false, Map.of());
-            // must not throw
-            hook.onTerminalOutcome(ctx, KafkaTerminalOutcome.SUCCESS);
-        }
-
-        @Test
-        @DisplayName("hook implements OrderedExtension — default phase is APPLICATION")
-        void implementsOrderedExtension() {
-            KafkaConsumerCaptureHook hook = new KafkaConsumerCaptureHook() {};
-            assertEquals(
-                    dev.vertique.core.extension.ExtensionPhase.APPLICATION,
-                    hook.phase(),
-                    "default phase must be APPLICATION");
-        }
-    }
-
     // --- KafkaErrorHandler outcome values ---
 
     @Nested
@@ -218,13 +184,14 @@ class KafkaTerminalOutcomeTest {
             KafkaConsumerRecord<String, byte[]> rec = fakeRecord("t", 0, 0L);
             CapturingConsumerControl control = new CapturingConsumerControl();
 
-            handler.handleError(rec, new byte[0], Map.of(), cause, control).onComplete(ctx.succeeding(outcome -> {
-                ctx.verify(() -> {
-                    assertEquals(KafkaTerminalOutcome.SKIP, outcome);
-                    assertTrue(control.commitCalled, "commitIfManual must be called on SKIP");
-                });
-                ctx.completeNow();
-            }));
+            handler.handleError(rec, new byte[0], KafkaRecordHeaders.empty(), cause, control)
+                    .onComplete(ctx.succeeding(outcome -> {
+                        ctx.verify(() -> {
+                            assertEquals(KafkaTerminalOutcome.SKIP, outcome);
+                            assertTrue(control.commitCalled, "commitIfManual must be called on SKIP");
+                        });
+                        ctx.completeNow();
+                    }));
         }
 
         @Test
@@ -243,13 +210,15 @@ class KafkaTerminalOutcomeTest {
             KafkaConsumerRecord<String, byte[]> rec = fakeRecord("t", 0, 0L);
             CapturingConsumerControl control = new CapturingConsumerControl();
 
-            handler.handleError(rec, new byte[0], Map.of(), cause, control).onComplete(ctx.succeeding(outcome -> {
-                ctx.verify(() -> {
-                    assertEquals(KafkaTerminalOutcome.DLQ_PUBLISHED, outcome);
-                    assertTrue(control.commitCalled, "commitIfManual must be called after successful DLQ publish");
-                });
-                ctx.completeNow();
-            }));
+            handler.handleError(rec, new byte[0], KafkaRecordHeaders.empty(), cause, control)
+                    .onComplete(ctx.succeeding(outcome -> {
+                        ctx.verify(() -> {
+                            assertEquals(KafkaTerminalOutcome.DLQ_PUBLISHED, outcome);
+                            assertTrue(
+                                    control.commitCalled, "commitIfManual must be called after successful DLQ publish");
+                        });
+                        ctx.completeNow();
+                    }));
         }
 
         @Test
@@ -268,13 +237,15 @@ class KafkaTerminalOutcomeTest {
             KafkaConsumerRecord<String, byte[]> rec = fakeRecord("t", 0, 0L);
             CapturingConsumerControl control = new CapturingConsumerControl();
 
-            handler.handleError(rec, new byte[0], Map.of(), cause, control).onComplete(ctx.succeeding(outcome -> {
-                ctx.verify(() -> {
-                    assertEquals(KafkaTerminalOutcome.DLQ_FAILED, outcome);
-                    assertFalse(control.commitCalled, "commitIfManual must NOT be called when DLQ publish fails");
-                });
-                ctx.completeNow();
-            }));
+            handler.handleError(rec, new byte[0], KafkaRecordHeaders.empty(), cause, control)
+                    .onComplete(ctx.succeeding(outcome -> {
+                        ctx.verify(() -> {
+                            assertEquals(KafkaTerminalOutcome.DLQ_FAILED, outcome);
+                            assertFalse(
+                                    control.commitCalled, "commitIfManual must NOT be called when DLQ publish fails");
+                        });
+                        ctx.completeNow();
+                    }));
         }
 
         @Test
@@ -288,15 +259,16 @@ class KafkaTerminalOutcomeTest {
             KafkaConsumerRecord<String, byte[]> rec = fakeRecord("t", 0, 42L);
             CapturingConsumerControl control = new CapturingConsumerControl();
 
-            handler.handleError(rec, new byte[0], Map.of(), cause, control).onComplete(ctx.succeeding(outcome -> {
-                ctx.verify(() -> {
-                    assertEquals(KafkaTerminalOutcome.RETRY_SCHEDULED, outcome);
-                    assertTrue(control.pauseCalled, "pause must be called for RETRY");
-                    assertFalse(control.seekCalls.isEmpty(), "seekToOffset must be called for RETRY");
-                    assertTrue(control.scheduleResumeCalled, "scheduleResume must be called for RETRY");
-                });
-                ctx.completeNow();
-            }));
+            handler.handleError(rec, new byte[0], KafkaRecordHeaders.empty(), cause, control)
+                    .onComplete(ctx.succeeding(outcome -> {
+                        ctx.verify(() -> {
+                            assertEquals(KafkaTerminalOutcome.RETRY_SCHEDULED, outcome);
+                            assertTrue(control.pauseCalled, "pause must be called for RETRY");
+                            assertFalse(control.seekCalls.isEmpty(), "seekToOffset must be called for RETRY");
+                            assertTrue(control.scheduleResumeCalled, "scheduleResume must be called for RETRY");
+                        });
+                        ctx.completeNow();
+                    }));
         }
     }
 }

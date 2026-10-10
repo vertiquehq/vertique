@@ -974,6 +974,17 @@ terminal event ordering, and connection cleanup.
 `Response.ok(entity).build()`, `Response.status(404).entity(body).type("application/problem+json").build()`,
 `UriBuilder`, and `Link` all work with no JAX-RS implementation on the classpath.
 
+The runtime's `MediaType`, `CacheControl` and `Link` parsers (`MediaType.valueOf`,
+`CacheControl.valueOf`, `Link.valueOf`) split on `;` and `,` only outside quoted strings, using the
+same tokenizer as `HeaderElement` in `vertique-rest-core`. Quoted parameter values are returned
+unquoted and unescaped (`charset="utf-8"` yields `utf-8`), and `toString()` quotes values that are not
+tokens. A malformed quoted string — unterminated, ending in a backslash, or followed by further
+characters — is rejected with `IllegalArgumentException`; `Response.getLinks()` skips such a `Link`
+value and `Response.getMediaType()` returns `null`. Quoted strings the runtime writes (a media type
+parameter, a `Content-Disposition` name or filename) escape `\` and `"`, and write each control
+character other than a horizontal tab as `_` rather than deleting it, so a value can never carry a
+line break into a header and `evil.php` with U+0001 before the final `p` is not written as `evil.php`.
+
 Two adapters are visible to resource code:
 
 | Class | Purpose |
@@ -1818,7 +1829,10 @@ Beyond what `RestCoreModule` and `JsonRuntimeModule` contribute:
 | `Set<MountPublicationHook>` | `@Multibinds`; INTERNAL; empty by default; sibling framework modules contribute: the documentation module through `@ElementsIntoSet`, the `openapi-contract` validation module's contract-load check through `@IntoSet` |
 
 `dev.vertique.rest.jaxrs.runtime.MagicBytesVerifierModule` is a separate opt-in `@Module` that
-contributes the built-in magic-byte `FileContentVerifier`.
+contributes the built-in magic-byte `FileContentVerifier`. It fails closed on a declared content
+type that is present but unparsable (rejection type `fileContentTypeMalformed`), reads a `q` or
+other parameter on a mapped type without letting it skip the signature check, and looks the type up
+lowercased with `Locale.ROOT`, so the check does not depend on the JVM's default locale.
 
 Three INTERNAL framework packages back these sibling-module seams. Each is outside the maturity
 promise and not a stable application API.

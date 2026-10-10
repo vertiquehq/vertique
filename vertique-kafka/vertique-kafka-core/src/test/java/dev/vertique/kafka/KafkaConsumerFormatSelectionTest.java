@@ -24,7 +24,6 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -90,7 +89,7 @@ class KafkaConsumerFormatSelectionTest {
         public <V> KafkaDeserializer<V> deserializer(Class<V> type, JsonObject endpointConfig) {
             return new KafkaDeserializer<>() {
                 @Override
-                public V deserialize(byte[] data, String topic, Map<String, String> headers) {
+                public V deserialize(byte[] data, String topic, KafkaRecordHeaders headers) {
                     return (V) new FakeRecord(new String(data, StandardCharsets.UTF_8));
                 }
 
@@ -678,7 +677,7 @@ class KafkaConsumerFormatSelectionTest {
         /** A minimal blocking custom deserializer. */
         static final KafkaDeserializer<PlainPayload> BLOCKING_CUSTOM_DESER = new KafkaDeserializer<>() {
             @Override
-            public PlainPayload deserialize(byte[] data, String topic, Map<String, String> headers) {
+            public PlainPayload deserialize(byte[] data, String topic, KafkaRecordHeaders headers) {
                 return new PlainPayload(new String(data, StandardCharsets.UTF_8));
             }
 

@@ -299,7 +299,11 @@ class KafkaAvroRoutingDispatcherTest {
             // Must not throw despite the provider not supporting routingDeserializer.
             KafkaRecordDispatcher d =
                     new KafkaRecordDispatcher(entry, routeDeserializers, registry, null, null, null, null, null);
-            RouteResult result = d.resolveRoute(Map.of("event-type", "created"), bytes("1"), "orders");
+            RouteResult result = d.resolveRoute(
+                    KafkaRecordHeaders.of(Map.of("event-type", "created")),
+                    Map.of("event-type", "created"),
+                    bytes("1"),
+                    "orders");
             assertEquals("created", result.route().matchValue());
         }
     }
@@ -317,12 +321,12 @@ class KafkaAvroRoutingDispatcherTest {
                     defaultRoute(Void.class)));
             KafkaRecordDispatcher d = dispatcher(entry);
 
-            RouteResult result = d.resolveRoute(Map.of(), bytes("shipped:42"), "orders");
+            RouteResult result = d.resolveRoute(KafkaRecordHeaders.empty(), Map.of(), bytes("shipped:42"), "orders");
             assertEquals("shipped", result.route().matchValue());
             // routingValue carries the decoded record (no parsedTree in new shape)
             assertSame(
                     result.routingValue(),
-                    d.deserializeRecord(record("orders"), bytes("shipped:42"), Map.of(), result),
+                    d.deserializeRecord(record("orders"), bytes("shipped:42"), KafkaRecordHeaders.empty(), result),
                     "matched payload must reuse the routingValue (no second deserialize)");
             assertEquals(new OrderShipped("shipped", "42"), result.routingValue());
         }
@@ -334,7 +338,7 @@ class KafkaAvroRoutingDispatcherTest {
                     routerEntry(List.of(propertyRoute("created", OrderCreated.class), defaultRoute(Void.class)));
             KafkaRecordDispatcher d = dispatcher(entry);
 
-            RouteResult result = d.resolveRoute(Map.of(), bytes("shipped:7"), "orders");
+            RouteResult result = d.resolveRoute(KafkaRecordHeaders.empty(), Map.of(), bytes("shipped:7"), "orders");
             assertTrue(result.route().defaultHandler(), "Unmatched property should hit the default route");
             assertNull(result.routingValue());
         }
@@ -351,11 +355,16 @@ class KafkaAvroRoutingDispatcherTest {
                     List.of(headerRoute("event-type", "created", OrderCreated.class), defaultRoute(Void.class)));
             KafkaRecordDispatcher d = dispatcher(entry);
 
-            RouteResult result = d.resolveRoute(Map.of("event-type", "created"), bytes("created:1"), "orders");
+            RouteResult result = d.resolveRoute(
+                    KafkaRecordHeaders.of(Map.of("event-type", "created")),
+                    Map.of("event-type", "created"),
+                    bytes("created:1"),
+                    "orders");
             assertEquals("created", result.route().matchValue());
             assertNull(result.routingValue(), "Header match must not pre-deserialize");
 
-            Object payload = d.deserializeRecord(record("orders"), bytes("created:1"), Map.of(), result);
+            Object payload =
+                    d.deserializeRecord(record("orders"), bytes("created:1"), KafkaRecordHeaders.empty(), result);
             assertEquals(new OrderCreated("created", "1"), payload);
         }
     }
@@ -372,13 +381,14 @@ class KafkaAvroRoutingDispatcherTest {
                     routerEntry(List.of(propertyRoute("created", OrderShipped.class), defaultRoute(Void.class)));
             KafkaRecordDispatcher d = dispatcher(entry);
 
-            RouteResult result = d.resolveRoute(Map.of(), bytes("created:9"), "orders");
+            RouteResult result = d.resolveRoute(KafkaRecordHeaders.empty(), Map.of(), bytes("created:9"), "orders");
             assertEquals("created", result.route().matchValue());
             // The SPI default convertRouted throws DeserializationException when routingValue is not
             // assignable to the route type (FakeAvroProvider inherits the default).
             assertThrows(
                     DeserializationException.class,
-                    () -> d.deserializeRecord(record("orders"), bytes("created:9"), Map.of(), result));
+                    () -> d.deserializeRecord(
+                            record("orders"), bytes("created:9"), KafkaRecordHeaders.empty(), result));
         }
     }
 
@@ -393,8 +403,12 @@ class KafkaAvroRoutingDispatcherTest {
                     routerEntry(List.of(headerRoute("event-type", "ping", Void.class), defaultRoute(Void.class)));
             KafkaRecordDispatcher d = dispatcher(entry);
 
-            RouteResult result = d.resolveRoute(Map.of("event-type", "ping"), bytes("ping:0"), "orders");
-            assertNull(d.deserializeRecord(record("orders"), bytes("ping:0"), Map.of(), result));
+            RouteResult result = d.resolveRoute(
+                    KafkaRecordHeaders.of(Map.of("event-type", "ping")),
+                    Map.of("event-type", "ping"),
+                    bytes("ping:0"),
+                    "orders");
+            assertNull(d.deserializeRecord(record("orders"), bytes("ping:0"), KafkaRecordHeaders.empty(), result));
         }
     }
 

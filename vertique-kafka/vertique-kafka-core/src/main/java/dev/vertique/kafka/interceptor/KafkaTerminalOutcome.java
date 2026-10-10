@@ -9,8 +9,9 @@ package dev.vertique.kafka.interceptor;
  *
  * <p>Exactly one outcome is emitted per record at the terminal point — after all async work
  * (DLQ publish, seek, etc.) completes — and passed to every registered
- * {@link KafkaConsumerCaptureHook}. Observers MUST NOT use this value to affect commit,
- * retry, or delivery behaviour; it is a read-only observability signal.
+ * {@link KafkaConsumerInterceptor#onRecordCompleted} as
+ * {@link KafkaConsumerCompletedEvent#outcome()}. Observers MUST NOT use this value to affect
+ * commit, retry, or delivery behaviour; it is a read-only observability signal.
  *
  * <p>Error-path outcomes are produced by {@link dev.vertique.kafka.KafkaErrorHandler};
  * success-path and recovery outcomes are produced by
@@ -25,9 +26,10 @@ public enum KafkaTerminalOutcome {
     SUCCESS,
 
     /**
-     * The record was skipped according to the {@link dev.vertique.kafka.ErrorStrategy#SKIP}
-     * strategy after a dispatch failure. The offset is committed (when in MANUAL mode) and the
-     * record is not retried.
+     * The record was skipped: it was rejected by the pre-deserialization filter, matched no route,
+     * was filtered by an interceptor, or failed and was skipped according to the
+     * {@link dev.vertique.kafka.ErrorStrategy#SKIP} strategy. The offset is committed (when in MANUAL
+     * mode) and the record is not retried.
      */
     SKIP,
 

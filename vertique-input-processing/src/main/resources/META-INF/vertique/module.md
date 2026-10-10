@@ -270,7 +270,7 @@ Conflicts surface as the same `InvocationPolicyConflictException`, with the same
 
 ### Scenario matrix
 
-The test-jar (`dev.vertique:vertique-input-processing:test-jar`) ships `dev.vertique.input.processing.testkit.InvocationPolicyScenarios`, the precedence and conflict matrix used to prove `InvocationPolicyResolver`, `ReflectiveInvocationPolicies`, and `ElementInvocationPolicies` against the same expectations. A transport adopting any of them can reuse `InvocationPolicyScenarios.rows()` to parity-test its own adapter against the same scenarios (route/parameter overrides, interface and superclass inheritance, composed annotations, and every additive/skip conflict shape) instead of hand-rolling an equivalent fixture set.
+`dev.vertique.input.processing.testkit.InvocationPolicyScenarios` is the precedence and conflict matrix used to prove `InvocationPolicyResolver`, `ReflectiveInvocationPolicies`, and `ElementInvocationPolicies` against the same expectations, and `dev.vertique.input.processing.testkit.CrossTransportInputCorpus` is the cross-transport fixture corpus. Both live in this module's attached test JAR, which is an internal test fixture shared in-reactor between sibling modules. It is not a published artifact and not part of this module's public surface, so do not depend on it from an application: a transport that needs the same coverage writes its own fixtures against the published API above.
 
 ---
 

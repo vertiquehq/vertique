@@ -51,6 +51,7 @@ import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.NavigableSet;
 import java.util.Optional;
@@ -1090,7 +1091,7 @@ final class ParameterExtractor {
 
         String contentType = ctx.request().getHeader("Content-Type");
 
-        if (contentType != null && contentType.toLowerCase().startsWith("multipart/")) {
+        if (contentType != null && contentType.toLowerCase(Locale.ROOT).startsWith("multipart/")) {
             log.warn(
                     "Unexpected multipart body on operation '{}'; use @FormParam or List<EntityPart> instead of a body parameter",
                     meta.operationId());
@@ -1099,7 +1100,7 @@ final class ParameterExtractor {
         // Two-phase processing for structured bodies when a processor is active
         if (objectProcessor != null && isStructuredBodyTarget(targetType)) {
 
-            String lowerContentType = contentType != null ? contentType.toLowerCase() : "";
+            String lowerContentType = contentType != null ? contentType.toLowerCase(Locale.ROOT) : "";
             // FR-JSON-024B/022/023: a JSON profile whose mapper differs from the process codec's,
             // resolved for this method (slice 2.1), is stashed on the routing context under
             // KEY_RESOLVED_BODY_MAPPER. When present it owns the two-phase MATERIALIZATION of the

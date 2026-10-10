@@ -4,10 +4,10 @@
 package dev.vertique.kafka.producer;
 
 import dev.vertique.core.payload.PayloadSource;
+import dev.vertique.kafka.KafkaRecordHeaders;
 import io.vertx.core.AsyncResult;
 import io.vertx.kafka.client.producer.RecordMetadata;
 import jakarta.annotation.Nullable;
-import java.util.Map;
 
 /**
  * One settled Kafka producer send, as {@link KafkaProducerCaptureHook#onSend(KafkaProducerSend)}
@@ -18,8 +18,9 @@ import java.util.Map;
  * @param topic     the target topic; never {@code null}
  * @param key       the record key, or {@code null} if none was provided
  * @param value     a no-copy {@link PayloadSource} over the serialized wire bytes; never {@code null}
- * @param headers   the fully-merged wire headers (application + context propagation headers); never
- *                  {@code null}
+ * @param headers   the headers of the record as sent, in wire order: the application headers followed
+ *                  by the framework context headers, with repeated keys and binary values kept;
+ *                  never {@code null}
  * @param operation the {@code @KafkaProducer} operation for {@link KafkaSendOrigin#DIRECT_PRODUCER};
  *                  {@code null} for all other origins
  * @param result    the settled result of the send; never {@code null}
@@ -29,6 +30,6 @@ public record KafkaProducerSend(
         String topic,
         @Nullable String key,
         PayloadSource value,
-        Map<String, String> headers,
+        KafkaRecordHeaders headers,
         @Nullable KafkaProducerOperation operation,
         AsyncResult<RecordMetadata> result) {}

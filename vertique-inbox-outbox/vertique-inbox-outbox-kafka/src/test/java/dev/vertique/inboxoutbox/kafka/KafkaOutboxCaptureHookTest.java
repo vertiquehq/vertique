@@ -6,9 +6,13 @@ package dev.vertique.inboxoutbox.kafka;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -22,11 +26,14 @@ import dev.vertique.inboxoutbox.OutboxDeliveryMetadata;
 import dev.vertique.inboxoutbox.OutboxEnvelope;
 import dev.vertique.inboxoutbox.OutboxMetadata;
 import dev.vertique.inboxoutbox.OutboxPublishResult;
+import dev.vertique.kafka.KafkaRecordHeader;
+import dev.vertique.kafka.KafkaRecordHeaders;
 import dev.vertique.kafka.producer.KafkaProducerFactory;
 import io.vertx.core.Future;
 import io.vertx.core.json.JsonObject;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -35,6 +42,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -73,7 +81,7 @@ class KafkaOutboxCaptureHookTest {
                 String topic,
                 String key,
                 PayloadSource value,
-                Map<String, String> headers,
+                KafkaRecordHeaders headers,
                 OutboxPublishResult result,
                 String entryId) {}
 
@@ -84,7 +92,7 @@ class KafkaOutboxCaptureHookTest {
                 String topic,
                 String key,
                 PayloadSource value,
-                Map<String, String> headers,
+                KafkaRecordHeaders headers,
                 OutboxPublishResult result,
                 String entryId) {
             captures.add(new Capture(topic, key, value, headers, result, entryId));
@@ -101,7 +109,7 @@ class KafkaOutboxCaptureHookTest {
                 String topic,
                 String key,
                 PayloadSource value,
-                Map<String, String> headers,
+                KafkaRecordHeaders headers,
                 OutboxPublishResult result,
                 String entryId) {
             callCount++;
@@ -124,7 +132,7 @@ class KafkaOutboxCaptureHookTest {
                 String topic,
                 String key,
                 PayloadSource value,
-                Map<String, String> headers,
+                KafkaRecordHeaders headers,
                 OutboxPublishResult result,
                 String entryId) {
             seenTopics.add(topic);
@@ -159,7 +167,7 @@ class KafkaOutboxCaptureHookTest {
         void defaultNoOp() {
             KafkaOutboxCaptureHook hook = new KafkaOutboxCaptureHook() {};
             // Should not throw regardless of arguments
-            hook.onOutboxPublish("t", "k", null, Map.of(), OutboxPublishResult.success(), "42");
+            hook.onOutboxPublish("t", "k", null, KafkaRecordHeaders.empty(), OutboxPublishResult.success(), "42");
         }
 
         @Test
@@ -273,7 +281,9 @@ class KafkaOutboxCaptureHookTest {
         @DisplayName("hook receives the envelope headers")
         void receivesHeaders() {
             handler.publish(makeEnvelope("order-abc")).result();
-            assertEquals(Map.of("ce-type", "order.placed"), hook.captures.get(0).headers());
+            assertEquals(
+                    KafkaRecordHeaders.of(Map.of("ce-type", "order.placed")),
+                    hook.captures.get(0).headers());
         }
     }
 
@@ -443,7 +453,7 @@ class KafkaOutboxCaptureHookTest {
 
         /**
          * Builds an envelope whose metadata context carries a durable namespace so that
-         * {@link DurableMetadataHeaderCodec#mergeForEgress} would project at least one
+         * the Kafka egress would project at least one
          * {@code vertique-*} header onto the wire.
          */
         private OutboxEnvelope envelopeWithContext(DurableMetadata context) {
@@ -479,14 +489,14 @@ class KafkaOutboxCaptureHookTest {
             handler.publish(envelope).result();
 
             assertEquals(1, hook.captures.size());
-            Map<String, String> hookHeaders = hook.captures.get(0).headers();
+            Map<String, String> hookHeaders = hook.captures.get(0).headers().asMap();
             // The hook must receive the merged wire headers — application + framework reserved keys
             String expectedReservedKey = DurableMetadataHeaderCodec.RESERVED_PREFIX + "correlation";
             assertTrue(
                     hookHeaders.containsKey(expectedReservedKey),
                     "hook headers must contain the projected vertique-* durable-context entry '" + expectedReservedKey
                             + "'; got: " + hookHeaders.keySet());
-            // Application headers must also be present (not dropped by mergeForEgress)
+            // Application headers must also be present (not dropped by the merge)
             assertTrue(
                     hookHeaders.containsKey("ce-type"),
                     "hook headers must retain application headers alongside the framework keys");
@@ -514,7 +524,7 @@ class KafkaOutboxCaptureHookTest {
             assertInstanceOf(
                     OutboxPublishResult.PermanentFailure.class,
                     hook.captures.get(0).result());
-            Map<String, String> hookHeaders = hook.captures.get(0).headers();
+            Map<String, String> hookHeaders = hook.captures.get(0).headers().asMap();
             String expectedReservedKey = DurableMetadataHeaderCodec.RESERVED_PREFIX + "correlation";
             assertTrue(
                     hookHeaders.containsKey(expectedReservedKey),
@@ -543,7 +553,7 @@ class KafkaOutboxCaptureHookTest {
             assertInstanceOf(
                     OutboxPublishResult.RetryableFailure.class,
                     hook.captures.get(0).result());
-            Map<String, String> hookHeaders = hook.captures.get(0).headers();
+            Map<String, String> hookHeaders = hook.captures.get(0).headers().asMap();
             String expectedReservedKey = DurableMetadataHeaderCodec.RESERVED_PREFIX + "correlation";
             assertTrue(
                     hookHeaders.containsKey(expectedReservedKey),
@@ -567,11 +577,143 @@ class KafkaOutboxCaptureHookTest {
             handler.publish(makeEnvelope("order-empty-ctx")).result();
 
             assertEquals(1, hook.captures.size());
-            Map<String, String> hookHeaders = hook.captures.get(0).headers();
+            Map<String, String> hookHeaders = hook.captures.get(0).headers().asMap();
             long reservedCount = hookHeaders.keySet().stream()
                     .filter(DurableMetadataHeaderCodec::isReservedHeader)
                     .count();
             assertEquals(0, reservedCount, "empty context must produce no vertique-* headers in hook");
+        }
+    }
+
+    // --- Record headers ---
+
+    @Nested
+    @DisplayName("record headers")
+    class RecordHeaders {
+
+        private OutboxEnvelope envelope(Map<String, String> headers, DurableMetadata context) {
+            return new OutboxEnvelope(
+                    101L,
+                    "Order",
+                    "order-headers",
+                    "order.placed",
+                    "orders-topic",
+                    new JsonObject().put("orderId", "o-headers"),
+                    headers,
+                    new OutboxMetadata(context, OutboxDeliveryMetadata.empty()),
+                    null,
+                    0,
+                    Instant.now());
+        }
+
+        private KafkaRecordHeaders sentHeaders() {
+            ArgumentCaptor<KafkaRecordHeaders> sent = ArgumentCaptor.forClass(KafkaRecordHeaders.class);
+            verify(producerFactory).sendForOutbox(any(), any(), any(), sent.capture(), any());
+            return sent.getValue();
+        }
+
+        @Test
+        @DisplayName("the envelope's map is converted in its order; the hook gets it followed by the context headers")
+        void convertsEnvelopeMapAndHookGetsContextHeaders() throws Exception {
+            RecordingHook hook = new RecordingHook();
+            KafkaOutboxDestinationHandler handler =
+                    new KafkaOutboxDestinationHandler(producerFactory, objectMapper, Set.of(hook));
+            when(objectMapper.writeValueAsBytes(any())).thenReturn(new byte[] {1});
+            when(producerFactory.sendForOutbox(any(), any(), any(), any(), any()))
+                    .thenReturn(Future.succeededFuture(null));
+
+            Map<String, String> headers = new LinkedHashMap<>();
+            headers.put("zeta", "1");
+            headers.put("alpha", "2");
+            DurableMetadata context = DurableMetadata.of("correlation", new JsonObject().put("traceId", "t-1"));
+
+            handler.publish(envelope(headers, context)).result();
+
+            List<KafkaRecordHeader> converted =
+                    List.of(KafkaRecordHeader.ofUtf8("zeta", "1"), KafkaRecordHeader.ofUtf8("alpha", "2"));
+            assertEquals(converted, sentHeaders().entries(), "the send is given the application headers alone");
+            assertEquals(
+                    List.of(
+                            converted.get(0),
+                            converted.get(1),
+                            KafkaRecordHeader.ofUtf8("vertique-correlation", "{\"traceId\":\"t-1\"}")),
+                    hook.captures.get(0).headers().entries());
+        }
+
+        @Test
+        @DisplayName("a null or empty envelope map is converted to no headers")
+        void nullOrEmptyMapIsNoHeaders() throws Exception {
+            RecordingHook hook = new RecordingHook();
+            KafkaOutboxDestinationHandler handler =
+                    new KafkaOutboxDestinationHandler(producerFactory, objectMapper, Set.of(hook));
+            when(objectMapper.writeValueAsBytes(any())).thenReturn(new byte[] {1});
+            when(producerFactory.sendForOutbox(any(), any(), any(), any(), any()))
+                    .thenReturn(Future.succeededFuture(null));
+
+            handler.publish(envelope(null, DurableMetadata.empty())).result();
+            handler.publish(envelope(Map.of(), DurableMetadata.empty())).result();
+
+            ArgumentCaptor<KafkaRecordHeaders> sent = ArgumentCaptor.forClass(KafkaRecordHeaders.class);
+            verify(producerFactory, times(2)).sendForOutbox(any(), any(), any(), sent.capture(), any());
+            assertEquals(List.of(KafkaRecordHeaders.empty(), KafkaRecordHeaders.empty()), sent.getAllValues());
+            assertEquals(KafkaRecordHeaders.empty(), hook.captures.get(0).headers());
+            assertEquals(KafkaRecordHeaders.empty(), hook.captures.get(1).headers());
+        }
+
+        @Test
+        @DisplayName("an envelope with a reserved-prefix header gives the hook the converted headers alone")
+        void reservedPrefixHeaderFallsBackToConvertedHeaders() throws Exception {
+            RecordingHook hook = new RecordingHook();
+            KafkaOutboxDestinationHandler handler =
+                    new KafkaOutboxDestinationHandler(producerFactory, objectMapper, Set.of(hook));
+            when(objectMapper.writeValueAsBytes(any())).thenReturn(new byte[] {1});
+            when(producerFactory.sendForOutbox(any(), any(), any(), any(), any()))
+                    .thenReturn(Future.failedFuture(new IllegalArgumentException(
+                            "Application header uses reserved framework prefix 'vertique-': vertique-correlation")));
+
+            Map<String, String> headers = new LinkedHashMap<>();
+            headers.put("ce-type", "order.placed");
+            headers.put("vertique-correlation", "{\"traceId\":\"forged\"}");
+            DurableMetadata context = DurableMetadata.of("correlation", new JsonObject().put("traceId", "t-1"));
+
+            OutboxPublishResult result =
+                    handler.publish(envelope(headers, context)).result();
+
+            assertInstanceOf(OutboxPublishResult.PermanentFailure.class, result);
+            assertEquals(KafkaRecordHeaders.of(headers), sentHeaders());
+            assertEquals(KafkaRecordHeaders.of(headers), hook.captures.get(0).headers());
+        }
+
+        @Test
+        @DisplayName("a stored header map with a null value or a null key is a permanent failure, reported to the hook")
+        void nullHeaderValueOrKeyIsAPermanentFailure() {
+            RecordingHook hook = new RecordingHook();
+            KafkaOutboxDestinationHandler handler =
+                    new KafkaOutboxDestinationHandler(producerFactory, objectMapper, Set.of(hook));
+            Map<String, String> nullValue = new LinkedHashMap<>();
+            nullValue.put("ce-type", "order.placed");
+            nullValue.put("ce-source", null);
+            Map<String, String> nullKey = new LinkedHashMap<>();
+            nullKey.put(null, "orphan");
+            DurableMetadata context = DurableMetadata.of("correlation", new JsonObject().put("traceId", "t-1"));
+
+            Future<OutboxPublishResult> first = handler.publish(envelope(nullValue, context));
+            Future<OutboxPublishResult> second = handler.publish(envelope(nullKey, context));
+
+            assertTrue(first.succeeded(), "the failure is a result, not a failed future");
+            assertTrue(second.succeeded(), "the failure is a result, not a failed future");
+            OutboxPublishResult.PermanentFailure valueFailure =
+                    assertInstanceOf(OutboxPublishResult.PermanentFailure.class, first.result());
+            assertTrue(valueFailure.message().contains("ce-source"), valueFailure.message());
+            assertInstanceOf(OutboxPublishResult.PermanentFailure.class, second.result());
+            verify(producerFactory, never()).sendForOutbox(any(), any(), any(), any(), any());
+            assertEquals(2, hook.captures.size(), "the hook fires once per attempt");
+            for (RecordingHook.Capture capture : hook.captures) {
+                assertEquals("orders-topic", capture.topic());
+                assertNull(capture.value(), "nothing was serialized");
+                assertEquals(KafkaRecordHeaders.empty(), capture.headers());
+                assertInstanceOf(OutboxPublishResult.PermanentFailure.class, capture.result());
+            }
         }
     }
 }

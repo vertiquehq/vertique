@@ -154,9 +154,13 @@ public class JacksonKafkaSerializer<V> implements KafkaSerializer<V> {
     public JacksonKafkaSerializer(ObjectMapper mapper) { ... }
 
     @Override
-    public byte[] serialize(V value, String topic, Map<String, String> headers) { ... }
+    public byte[] serialize(V value, String topic, KafkaRecordHeaders headers) { ... }
 }
 ```
+
+`serialize` takes the record's application headers as a `dev.vertique.kafka.KafkaRecordHeaders`
+(never `null`; `KafkaRecordHeaders.empty()` when the record has none). The JSON serializer ignores
+both the topic and the headers.
 
 ---
 
@@ -174,10 +178,14 @@ public class JacksonKafkaDeserializer<V> implements KafkaDeserializer<V> {
     public JacksonKafkaDeserializer(Class<V> type, ObjectMapper mapper) { ... }
 
     @Override
-    public V deserialize(byte[] data, String topic, Map<String, String> headers)
+    public V deserialize(byte[] data, String topic, KafkaRecordHeaders headers)
             throws DeserializationException { ... }
 }
 ```
+
+`deserialize` takes the record's headers as received, as an immutable
+`dev.vertique.kafka.KafkaRecordHeaders` (never `null`). The JSON deserializer ignores them; the
+topic is used only in the failure message.
 
 ---
 

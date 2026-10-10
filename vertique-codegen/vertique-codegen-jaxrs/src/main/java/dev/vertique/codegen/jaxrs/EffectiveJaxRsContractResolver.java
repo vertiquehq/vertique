@@ -105,8 +105,8 @@ public final class EffectiveJaxRsContractResolver {
 
     /**
      * Returns {@code true} iff {@code concreteClass} is a concrete (non-abstract, non-interface)
-     * type AND either carries a direct {@code @Path} annotation or transitively implements an
-     * interface that carries {@code @Path}.
+     * type AND carries a class-level {@code @Path} directly, on a class in its superclass chain, or
+     * on an interface it transitively implements.
      *
      * <p>This is the cheap yes/no predicate used by candidate discovery (step 1). It does NOT
      * run the full resolver and does NOT check for class-level conflicts.
@@ -123,6 +123,10 @@ public final class EffectiveJaxRsContractResolver {
         }
         // Direct @Path on the concrete class
         if (AnnotationMirrors.isPresent(concreteClass, JaxRsAnnotations.PATH)) {
+            return true;
+        }
+        // Superclass chain, same stop condition as resolveClassPathFromSuperChain
+        if (resolveClassPathFromSuperChain(concreteClass) != null) {
             return true;
         }
         // Walk interfaces transitively via BFS

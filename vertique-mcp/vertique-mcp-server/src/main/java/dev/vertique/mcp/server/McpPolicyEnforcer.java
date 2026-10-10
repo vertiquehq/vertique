@@ -35,9 +35,10 @@ import lombok.extern.slf4j.Slf4j;
  * {@link McpToolDescriptor}'s {@link McpToolAccess} to the base {@link SecurityPolicy} plus an
  * optional {@link ActionRef}, supplies the tool {@link ResourceRef} and the MCP
  * {@link InvocationOrigin}, filters denied candidates out of {@code tools/list}, and maps a denied
- * or unknown {@code tools/call} to the same {@code -32602} response so absence and denial are
- * externally indistinguishable ({@code contracts/authorization-and-input-pipeline.md} §
- * Frozen programmatic decision operation).
+ * or unknown {@code tools/call} to the same {@code -32602} response (same JSON-RPC code, message and
+ * HTTP status), so absence and denial are protocol-equivalent. Timing is not equalized: a restricted
+ * tool denied by a remote policy decision point takes a network round trip, while an unknown name is
+ * evaluated against a synthetic static deny and settles synchronously.
  *
  * <p><strong>Frozen descriptor mapping</strong> (the frozen authorization matrix):
  *
@@ -71,7 +72,7 @@ class McpPolicyEnforcer {
 
     /**
      * The standard JSON-RPC error message paired with {@link #UNKNOWN_OR_UNAUTHORIZED_CODE}. Carries
-     * no tool-identifying detail so a denied tool and an unknown tool name are indistinguishable at
+     * no tool-identifying detail, so a denied tool and an unknown tool name carry the same message on
      * the wire.
      */
     static final String UNKNOWN_OR_UNAUTHORIZED_MESSAGE = "Invalid params";

@@ -1,0 +1,166 @@
+// SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
+// SPDX-License-Identifier: EUPL-1.2
+
+package dev.vertique.kafka;
+
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
+
+/**
+ * The headers of one Kafka record exactly as they are on the wire: an ordered list that keeps
+ * repeated keys, {@code null} values and binary values.
+ *
+ * <p>Kafka allows the same header key more than once and gives the order meaning. Nothing is
+ * normalized here: keys are compared exactly, with no trimming and no case folding, and no entry is
+ * dropped or merged.
+ *
+ * <p>The collection is an immutable snapshot. {@link #equals(Object)} and {@link #hashCode()} compare
+ * the entries by content and in order.
+ *
+ * <p>Use {@link #asMap()} only where an API takes a {@code Map<String, String>}; it is lossy.
+ *
+ * @param entries the headers in wire order; never {@code null}; unmodifiable
+ */
+public record KafkaRecordHeaders(List<KafkaRecordHeader> entries) implements Iterable<KafkaRecordHeader> {
+
+    private static final KafkaRecordHeaders EMPTY = new KafkaRecordHeaders(List.of());
+
+    /**
+     * Copies the list.
+     *
+     * @param entries the headers in wire order; must not be {@code null} and must not contain
+     *                {@code null}
+     * @throws NullPointerException if {@code entries} or one of its elements is {@code null}
+     */
+    public KafkaRecordHeaders {
+        entries = List.copyOf(entries);
+    }
+
+    /**
+     * Returns the header collection of a record that has no headers.
+     *
+     * @return the shared empty instance; never {@code null}
+     */
+    public static KafkaRecordHeaders empty() {
+        return EMPTY;
+    }
+
+    /**
+     * Creates headers from a text map: one header per entry, in the map's iteration order, each
+     * value encoded as UTF-8. Pass a {@link java.util.LinkedHashMap} or another ordered map when the
+     * order matters.
+     *
+     * <pre>{@code
+     * KafkaRecordHeaders headers = KafkaRecordHeaders.of(Map.of("event-type", "order.created"));
+     * }</pre>
+     *
+     * @param textHeaders the header keys and their text values; must not be {@code null} and must
+     *                    not contain a {@code null} key or a {@code null} value
+     * @return the headers; {@link #empty()} when the map is empty; never {@code null}
+     * @throws NullPointerException if {@code textHeaders}, one of its keys or one of its values is
+     *     {@code null}
+     */
+    public static KafkaRecordHeaders of(Map<String, String> textHeaders) {
+        Objects.requireNonNull(textHeaders, "textHeaders");
+        if (textHeaders.isEmpty()) {
+            return EMPTY;
+        }
+        List<KafkaRecordHeader> entries = new ArrayList<>(textHeaders.size());
+        for (Map.Entry<String, String> entry : textHeaders.entrySet()) {
+            String key = Objects.requireNonNull(entry.getKey(), "header key");
+            String value = Objects.requireNonNull(entry.getValue(), () -> "value of header '" + key + "'");
+            entries.add(KafkaRecordHeader.ofUtf8(key, value));
+        }
+        return new KafkaRecordHeaders(entries);
+    }
+
+    /**
+     * Returns every header with the given key, in wire order.
+     *
+     * @param key the exact key to look for; must not be {@code null}
+     * @return the matching headers, including those with a {@code null} value; unmodifiable; empty
+     *     when the key is absent; never {@code null}
+     * @throws NullPointerException if {@code key} is {@code null}
+     */
+    public List<KafkaRecordHeader> headers(String key) {
+        Objects.requireNonNull(key, "key");
+        return entries.stream().filter(entry -> entry.key().equals(key)).toList();
+    }
+
+    /**
+     * Returns the last header with the given key, which is the one Kafka's own "last header" lookup
+     * returns.
+     *
+     * <p>The result is empty only when the key is absent. A header that is present with a
+     * {@code null} value is returned, and its {@link KafkaRecordHeader#value()} is {@code null}.
+     *
+     * @param key the exact key to look for; must not be {@code null}
+     * @return the last matching header, or empty when no header has that key
+     * @throws NullPointerException if {@code key} is {@code null}
+     */
+    public Optional<KafkaRecordHeader> lastHeader(String key) {
+        Objects.requireNonNull(key, "key");
+        for (int i = entries.size() - 1; i >= 0; i--) {
+            KafkaRecordHeader entry = entries.get(i);
+            if (entry.key().equals(key)) {
+                return Optional.of(entry);
+            }
+        }
+        return Optional.empty();
+    }
+
+    /**
+     * Returns the headers as a text map. This is a <strong>lossy text projection</strong>, kept for
+     * APIs that take a {@code Map<String, String>} and for code that reads one text value per key.
+     * It follows the rule the framework itself uses when it reads a header as text (the correlation
+     * id, a route header, a filter factory, a durable context header). A new map is built on every
+     * call, so keep the result when you read more than one key.
+     *
+     * <p>What is lost:
+     *
+     * <ul>
+     *   <li><strong>Duplicates collapse.</strong> A repeated key keeps one value: the last one that
+     *       is not {@code null}.
+     *   <li><strong>Null values vanish.</strong> A header with a {@code null} value is skipped. It
+     *       does not appear, and it does not replace an earlier value of the same key.
+     *   <li><strong>Binary values are decoded as text.</strong> Every value is decoded as UTF-8, and
+     *       malformed input is replaced with the Unicode replacement character rather than
+     *       rejected, so the original bytes cannot be recovered.
+     *   <li><strong>Order is not kept.</strong>
+     * </ul>
+     *
+     * <p>Read {@link #entries()}, {@link #headers(String)} or {@link #lastHeader(String)} when any
+     * of that matters.
+     *
+     * @return an unmodifiable map; never {@code null}
+     */
+    public Map<String, String> asMap() {
+        if (entries.isEmpty()) {
+            return Map.of();
+        }
+        Map<String, String> map = new HashMap<>();
+        for (KafkaRecordHeader entry : entries) {
+            String text = entry.valueAsLenientUtf8();
+            if (text != null) {
+                map.put(entry.key(), text);
+            }
+        }
+        return Collections.unmodifiableMap(map);
+    }
+
+    /**
+     * Iterates the headers in wire order.
+     *
+     * @return an iterator that does not support removal
+     */
+    @Override
+    public Iterator<KafkaRecordHeader> iterator() {
+        return entries.iterator();
+    }
+}

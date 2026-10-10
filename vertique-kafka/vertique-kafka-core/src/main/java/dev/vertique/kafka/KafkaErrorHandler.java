@@ -7,8 +7,10 @@ import dev.vertique.kafka.interceptor.KafkaTerminalOutcome;
 import dev.vertique.kafka.producer.KafkaProducerFactory;
 import io.vertx.core.Future;
 import io.vertx.kafka.client.consumer.KafkaConsumerRecord;
-import java.util.HashMap;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import lombok.extern.slf4j.Slf4j;
 
@@ -24,11 +26,13 @@ final class KafkaErrorHandler {
 
     // --- DLQ header constants ---
 
-    private static final String DLQ_HEADER_SOURCE_TOPIC = "x-dlq-source-topic";
-    private static final String DLQ_HEADER_SOURCE_PARTITION = "x-dlq-source-partition";
-    private static final String DLQ_HEADER_SOURCE_OFFSET = "x-dlq-source-offset";
-    private static final String DLQ_HEADER_CONSUMER = "x-dlq-consumer";
-    private static final String DLQ_HEADER_ERROR = "x-dlq-error";
+    /** The header keys this handler writes; an inbound header with one of them is not forwarded. */
+    private static final Set<String> DLQ_HEADER_KEYS = Set.of(
+            KafkaDlqHeaders.SOURCE_TOPIC,
+            KafkaDlqHeaders.SOURCE_PARTITION,
+            KafkaDlqHeaders.SOURCE_OFFSET,
+            KafkaDlqHeaders.CONSUMER,
+            KafkaDlqHeaders.ERROR);
 
     private final ConsumerEntry entry;
     private final KafkaProducerFactory producerFactory;
@@ -97,7 +101,7 @@ final class KafkaErrorHandler {
      *
      * @param record   the failed consumer record
      * @param rawBytes the raw record bytes (for DLQ publishing)
-     * @param headers  the extracted headers
+     * @param headers  the record's headers as received; forwarded to the dead-letter topic
      * @param cause    the error that occurred
      * @param control  consumer control callbacks for pause/resume/seek/commit
      * @return a future that resolves with the terminal outcome after all async operations settle;
@@ -107,7 +111,7 @@ final class KafkaErrorHandler {
     Future<KafkaTerminalOutcome> handleError(
             KafkaConsumerRecord<String, byte[]> record,
             byte[] rawBytes,
-            Map<String, String> headers,
+            KafkaRecordHeaders headers,
             Throwable cause,
             ConsumerControl control) {
 
@@ -163,7 +167,8 @@ final class KafkaErrorHandler {
      *
      * @param record   the failed consumer record
      * @param rawBytes the raw record bytes (for DLQ publishing on exhaustion)
-     * @param headers  the extracted headers
+     * @param headers  the record's headers as received; forwarded on exhaustion to the dead-letter
+     *                 topic
      * @param cause    the dispatch error
      * @param control  consumer control callbacks for pause/resume/seek/commit
      * @return a future that resolves with the terminal outcome once all async operations settle
@@ -171,7 +176,7 @@ final class KafkaErrorHandler {
     private Future<KafkaTerminalOutcome> handleRetry(
             KafkaConsumerRecord<String, byte[]> record,
             byte[] rawBytes,
-            Map<String, String> headers,
+            KafkaRecordHeaders headers,
             Throwable cause,
             ConsumerControl control) {
 
@@ -262,16 +267,22 @@ final class KafkaErrorHandler {
 
     /**
      * Publishes a failed record to the dead-letter topic using the shared {@link KafkaProducerFactory}.
-     * Adds error metadata as Kafka headers.
+     *
+     * <p>The dead-letter record carries the failed record's headers as they were received, in
+     * order, with repeated keys, binary values and framework context headers kept verbatim, followed
+     * by five {@code x-dlq-*} headers that describe the failure. Two kinds of inbound header are left
+     * out: one whose key is exactly one of those five (a record that was dead-lettered before would
+     * otherwise carry stale ones next to the new ones), and one with a {@code null} value, which a
+     * producer record cannot carry.
      *
      * @param record the failed consumer record
      * @param rawBytes the raw record bytes to republish
-     * @param headers the extracted record headers
+     * @param headers the failed record's headers as received
      * @param cause the error that caused the DLQ publish
      * @return a future that completes when the DLQ publish has been attempted
      */
     Future<Void> publishToDlq(
-            KafkaConsumerRecord<String, byte[]> record, byte[] rawBytes, Map<String, String> headers, Throwable cause) {
+            KafkaConsumerRecord<String, byte[]> record, byte[] rawBytes, KafkaRecordHeaders headers, Throwable cause) {
 
         String dlqTopic = entry.config().deadLetterTopic();
         log.warn(
@@ -283,19 +294,24 @@ final class KafkaErrorHandler {
                 record.offset(),
                 cause.getMessage());
 
-        // Build error headers as Map<String, String> for KafkaProducerFactory.send()
-        Map<String, String> dlqHeaders = new HashMap<>(headers);
-        dlqHeaders.put(DLQ_HEADER_SOURCE_TOPIC, record.topic());
-        dlqHeaders.put(DLQ_HEADER_SOURCE_PARTITION, String.valueOf(record.partition()));
-        dlqHeaders.put(DLQ_HEADER_SOURCE_OFFSET, String.valueOf(record.offset()));
-        dlqHeaders.put(DLQ_HEADER_CONSUMER, entry.name());
+        // The header objects are immutable, so the forwarded ones are reused rather than copied.
+        List<KafkaRecordHeader> dlqHeaders = new ArrayList<>(headers.entries().size() + DLQ_HEADER_KEYS.size());
+        for (KafkaRecordHeader header : headers) {
+            if (header.hasValue() && !DLQ_HEADER_KEYS.contains(header.key())) {
+                dlqHeaders.add(header);
+            }
+        }
+        dlqHeaders.add(KafkaRecordHeader.ofUtf8(KafkaDlqHeaders.SOURCE_TOPIC, record.topic()));
+        dlqHeaders.add(KafkaRecordHeader.ofUtf8(KafkaDlqHeaders.SOURCE_PARTITION, String.valueOf(record.partition())));
+        dlqHeaders.add(KafkaRecordHeader.ofUtf8(KafkaDlqHeaders.SOURCE_OFFSET, String.valueOf(record.offset())));
+        dlqHeaders.add(KafkaRecordHeader.ofUtf8(KafkaDlqHeaders.CONSUMER, entry.name()));
         String msg = cause.getMessage();
         String errorDetail = cause.getClass().getSimpleName()
                 + (msg != null ? ": " + msg.substring(0, Math.min(msg.length(), 200)) : "");
-        dlqHeaders.put(DLQ_HEADER_ERROR, errorDetail);
+        dlqHeaders.add(KafkaRecordHeader.ofUtf8(KafkaDlqHeaders.ERROR, errorDetail));
 
         return producerFactory
-                .sendForDlq(dlqTopic, record.key(), rawBytes, dlqHeaders)
+                .sendForDlq(dlqTopic, record.key(), rawBytes, new KafkaRecordHeaders(dlqHeaders))
                 .mapEmpty();
     }
 }

@@ -25,8 +25,9 @@ import java.util.Optional;
  * <p>Component values are exposed as supplied, without defensive copying, so a caller that keeps a
  * reference to the list or {@link Optional} it passed in sees the very same instance back.
  *
- * <p>This type is published in this module's {@code test-jar}. Downstream test modules consume it by
- * declaring {@code vertique-rest-jaxrs} with {@code <type>test-jar</type><scope>test</scope>}.
+ * <p>This type is shared through this module's {@code test-jar}, which is in-reactor only and not a
+ * published artifact. Sibling test modules in this reactor consume it by declaring
+ * {@code vertique-rest-jaxrs} with {@code <type>test-jar</type><scope>test</scope>}.
  *
  * <pre>{@code
  * JaxRsOperationDescriptor op = StubOperationDescriptor.builder()
