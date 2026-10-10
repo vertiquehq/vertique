@@ -3,23 +3,25 @@
 
 package dev.vertique.kafka;
 
+import io.vertx.core.buffer.Buffer;
 import jakarta.annotation.Nullable;
 import java.nio.ByteBuffer;
 import java.nio.charset.CharacterCodingException;
 import java.nio.charset.Charset;
 import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
-import java.util.Arrays;
 import java.util.Objects;
 
 /**
- * One Kafka record header exactly as it is on the wire: a key and a value of raw bytes.
+ * One Kafka record header exactly as it is on the wire: a key and a value of raw bytes, held as a
+ * Vert.x {@link Buffer}.
  *
  * <p>A header value is bytes, not text, and may be {@code null}. This record keeps the three cases
- * apart: a {@code null} value, an empty value (a zero-length array) and a value with content.
+ * apart: a {@code null} value, an empty value (a zero-length buffer) and a value with content.
  *
- * <p>The record is an immutable snapshot. The array is copied when the header is created and again
- * on every {@link #value()} call, so neither the caller's array nor a returned array can change it.
+ * <p>The record is an immutable snapshot. A {@code Buffer} is mutable, so the buffer is copied when
+ * the header is created and again on every {@link #value()} call: neither the caller's buffer nor a
+ * returned buffer can change the header.
  *
  * <p>{@link #equals(Object)} and {@link #hashCode()} compare the key and the content of the value.
  * {@link #toString()} shows the key and the length of the value, never the bytes, so a header can be
@@ -28,10 +30,10 @@ import java.util.Objects;
  * @param key   the header key as received; never {@code null}; not trimmed and not case-folded
  * @param value the header value, or {@code null} when the header has none
  */
-public record KafkaRecordHeader(String key, @Nullable byte[] value) {
+public record KafkaRecordHeader(String key, @Nullable Buffer value) {
 
     /**
-     * Validates the key and copies the value array.
+     * Validates the key and copies the value buffer.
      *
      * @param key   the header key; must not be {@code null}
      * @param value the header value, or {@code null}; copied
@@ -39,7 +41,7 @@ public record KafkaRecordHeader(String key, @Nullable byte[] value) {
      */
     public KafkaRecordHeader {
         Objects.requireNonNull(key, "key");
-        value = value == null ? null : value.clone();
+        value = value == null ? null : value.copy();
     }
 
     /**
@@ -52,18 +54,19 @@ public record KafkaRecordHeader(String key, @Nullable byte[] value) {
      * @throws NullPointerException if {@code key} is {@code null}
      */
     public static KafkaRecordHeader ofUtf8(String key, @Nullable String value) {
-        return new KafkaRecordHeader(key, value == null ? null : value.getBytes(StandardCharsets.UTF_8));
+        return new KafkaRecordHeader(key, value == null ? null : Buffer.buffer(value.getBytes(StandardCharsets.UTF_8)));
     }
 
     /**
      * Returns a copy of the header value.
      *
-     * @return a new array holding the value bytes, or {@code null} when the header has no value
+     * @return a new buffer holding the value bytes, which the caller owns, or {@code null} when the
+     *     header has no value
      */
     @Override
     @Nullable
-    public byte[] value() {
-        return value == null ? null : value.clone();
+    public Buffer value() {
+        return value == null ? null : value.copy();
     }
 
     /**
@@ -87,12 +90,12 @@ public record KafkaRecordHeader(String key, @Nullable byte[] value) {
             return charset.newDecoder()
                     .onMalformedInput(CodingErrorAction.REPORT)
                     .onUnmappableCharacter(CodingErrorAction.REPORT)
-                    .decode(ByteBuffer.wrap(value))
+                    .decode(ByteBuffer.wrap(value.getBytes()))
                     .toString();
         } catch (CharacterCodingException e) {
             // The cause is left out: it adds nothing but the offset of the first bad byte.
             throw new IllegalArgumentException(
-                    "Header '" + key + "' is not valid " + charset.name() + " (" + value.length + " bytes)");
+                    "Header '" + key + "' is not valid " + charset.name() + " (" + value.length() + " bytes)");
         }
     }
 
@@ -110,13 +113,14 @@ public record KafkaRecordHeader(String key, @Nullable byte[] value) {
 
     /**
      * Decodes the value as UTF-8 text leniently, substituting the replacement character for malformed
-     * input, without copying the array. This is the decoding of the lossy text projection.
+     * input, reading the held buffer without copying it. This is the decoding of the lossy text
+     * projection.
      *
      * @return the decoded text, or {@code null} when the header has no value
      */
     @Nullable
     String valueAsLenientUtf8() {
-        return value == null ? null : new String(value, StandardCharsets.UTF_8);
+        return value == null ? null : value.toString(StandardCharsets.UTF_8);
     }
 
     /**
@@ -128,7 +132,7 @@ public record KafkaRecordHeader(String key, @Nullable byte[] value) {
      */
     @Override
     public boolean equals(Object other) {
-        return other instanceof KafkaRecordHeader that && key.equals(that.key) && Arrays.equals(value, that.value);
+        return other instanceof KafkaRecordHeader that && key.equals(that.key) && Objects.equals(value, that.value);
     }
 
     /**
@@ -138,7 +142,7 @@ public record KafkaRecordHeader(String key, @Nullable byte[] value) {
      */
     @Override
     public int hashCode() {
-        return 31 * key.hashCode() + Arrays.hashCode(value);
+        return 31 * key.hashCode() + Objects.hashCode(value);
     }
 
     /**
@@ -148,6 +152,6 @@ public record KafkaRecordHeader(String key, @Nullable byte[] value) {
      */
     @Override
     public String toString() {
-        return "KafkaRecordHeader[key=" + key + ", value=" + (value == null ? "null" : value.length + " bytes") + "]";
+        return "KafkaRecordHeader[key=" + key + ", value=" + (value == null ? "null" : value.length() + " bytes") + "]";
     }
 }

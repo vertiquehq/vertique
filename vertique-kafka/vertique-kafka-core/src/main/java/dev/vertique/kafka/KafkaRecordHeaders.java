@@ -3,6 +3,7 @@
 
 package dev.vertique.kafka;
 
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Iterator;
@@ -48,6 +49,35 @@ public record KafkaRecordHeaders(List<KafkaRecordHeader> entries) implements Ite
      */
     public static KafkaRecordHeaders empty() {
         return EMPTY;
+    }
+
+    /**
+     * Creates headers from a text map: one header per entry, in the map's iteration order, each
+     * value encoded as UTF-8. Pass a {@link java.util.LinkedHashMap} or another ordered map when the
+     * order matters.
+     *
+     * <pre>{@code
+     * KafkaRecordHeaders headers = KafkaRecordHeaders.of(Map.of("event-type", "order.created"));
+     * }</pre>
+     *
+     * @param textHeaders the header keys and their text values; must not be {@code null} and must
+     *                    not contain a {@code null} key or a {@code null} value
+     * @return the headers; {@link #empty()} when the map is empty; never {@code null}
+     * @throws NullPointerException if {@code textHeaders}, one of its keys or one of its values is
+     *     {@code null}
+     */
+    public static KafkaRecordHeaders of(Map<String, String> textHeaders) {
+        Objects.requireNonNull(textHeaders, "textHeaders");
+        if (textHeaders.isEmpty()) {
+            return EMPTY;
+        }
+        List<KafkaRecordHeader> entries = new ArrayList<>(textHeaders.size());
+        for (Map.Entry<String, String> entry : textHeaders.entrySet()) {
+            String key = Objects.requireNonNull(entry.getKey(), "header key");
+            String value = Objects.requireNonNull(entry.getValue(), () -> "value of header '" + key + "'");
+            entries.add(KafkaRecordHeader.ofUtf8(key, value));
+        }
+        return new KafkaRecordHeaders(entries);
     }
 
     /**

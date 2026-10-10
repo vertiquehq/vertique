@@ -301,8 +301,9 @@ returns this type; see [Record completion](#record-completion-onrecordcompleted)
 ```java
 package dev.vertique.kafka;
 
-public record KafkaRecordHeader(String key, @Nullable byte[] value) {
+public record KafkaRecordHeader(String key, @Nullable io.vertx.core.buffer.Buffer value) {
     public static KafkaRecordHeader ofUtf8(String key, @Nullable String value);
+    @Nullable public Buffer value();                       // a copy on every call
     @Nullable public String valueAsUtf8();
     @Nullable public String valueAsString(Charset charset);
 }
@@ -310,6 +311,7 @@ public record KafkaRecordHeader(String key, @Nullable byte[] value) {
 public record KafkaRecordHeaders(List<KafkaRecordHeader> entries)
         implements Iterable<KafkaRecordHeader> {
     public static KafkaRecordHeaders empty();
+    public static KafkaRecordHeaders of(Map<String, String> textHeaders);
     public List<KafkaRecordHeader> headers(String key);
     public Optional<KafkaRecordHeader> lastHeader(String key);
     public Map<String, String> asMap();
@@ -318,13 +320,19 @@ public record KafkaRecordHeaders(List<KafkaRecordHeader> entries)
 
 | Member | Behavior |
 |---|---|
-| `KafkaRecordHeader.value()` | A copy of the bytes. `null` (no value), empty, and non-empty stay distinct. The array is also copied on construction |
+| `KafkaRecordHeader.value()` | The value as a Vert.x `Buffer`. `null` (no value), empty, and non-empty stay distinct. A `Buffer` is mutable, so the header copies it on construction and returns a new copy on every call: changing the buffer you passed in, or one you got back, never changes the header. Read it once into a local when you need it more than once |
+| `KafkaRecordHeader.ofUtf8(key, text)` | A header whose value is the UTF-8 encoding of `text`; `null` text gives a header without a value |
 | `valueAsUtf8()`, `valueAsString(Charset)` | Strict decoding: `null` for a `null` value, `""` for an empty one, `IllegalArgumentException` for bytes that are not valid in the charset |
 | `KafkaRecordHeader.toString()` | Key and value length only — never the bytes |
+| `KafkaRecordHeaders.of(Map<String, String>)` | One UTF-8 header per entry, in the map's iteration order — pass a `LinkedHashMap` when order matters. A `null` map, key, or value throws `NullPointerException`; an empty map returns `empty()` |
 | `entries()`, iteration | Every header in wire order. Duplicates are kept; keys are not trimmed or case-folded |
 | `headers(key)` | Every header with that exact key, in order; empty list when absent |
 | `lastHeader(key)` | The last header with that key. Empty only when the key is absent: a header present with a `null` value is returned |
 | `asMap()` | Unmodifiable `Map<String, String>`. **Lossy**: a repeated key keeps its last non-`null` value, `null` values are left out, values are decoded as UTF-8 with malformed bytes replaced |
+
+```java
+KafkaRecordHeaders headers = KafkaRecordHeaders.of(Map.of("event-type", "order.created"));
+```
 
 Both records are immutable and compare by content; `KafkaRecordHeaders` equality is order-sensitive.
 `KafkaMessage`, `KafkaRecordFilter`, deserializers, and `KafkaDispatchContext` still carry the
@@ -854,7 +862,7 @@ String traceId = headers.lastHeader("trace-id")
 
 // Every header for a repeated key, in order, as raw bytes.
 for (KafkaRecordHeader hop : headers.headers("x-forwarded-by")) {
-    byte[] raw = hop.value();                  // a copy; null when the header has no value
+    Buffer raw = hop.value();                  // a copy; null when the header has no value
 }
 
 // The text map that filters, deserializers and handlers receive. Lossy.

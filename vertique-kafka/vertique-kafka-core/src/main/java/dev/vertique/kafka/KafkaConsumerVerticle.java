@@ -20,7 +20,6 @@ import dev.vertique.services.ServiceTargetResolver;
 import io.vertx.core.AbstractVerticle;
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
-import io.vertx.core.buffer.Buffer;
 import io.vertx.kafka.client.consumer.KafkaConsumer;
 import io.vertx.kafka.client.consumer.KafkaConsumerRecord;
 import io.vertx.kafka.client.producer.KafkaHeader;
@@ -701,8 +700,8 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
             if (header.key() == null) {
                 continue;
             }
-            Buffer value = header.value();
-            entries.add(new KafkaRecordHeader(header.key(), value == null ? null : value.getBytes()));
+            // The header copies the buffer: that is the only copy made of a header value on receipt.
+            entries.add(new KafkaRecordHeader(header.key(), header.value()));
         }
         return new KafkaRecordHeaders(entries);
     }

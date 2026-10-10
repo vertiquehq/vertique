@@ -817,7 +817,7 @@ class KafkaConsumerLifecycleCallbackTest {
             assertEquals(
                     new KafkaRecordHeaders(List.of(
                             KafkaRecordHeader.ofUtf8("x-real", "1"),
-                            new KafkaRecordHeader("x-bin", new byte[] {(byte) 0xFF}),
+                            new KafkaRecordHeader("x-bin", Buffer.buffer(new byte[] {(byte) 0xFF})),
                             KafkaRecordHeader.ofUtf8("x-real", "2"))),
                     completion.record().headers());
         }
@@ -886,15 +886,45 @@ class KafkaConsumerLifecycleCallbackTest {
             assertEquals(
                     List.of("a", "b", "a", "nulled", "empty", "bin", "b"),
                     entries.stream().map(KafkaRecordHeader::key).toList());
-            assertArrayEquals(bytes("1"), entries.get(0).value());
-            assertArrayEquals(bytes("x"), entries.get(1).value());
-            assertArrayEquals(bytes("2"), entries.get(2).value());
+            assertEquals(Buffer.buffer(bytes("1")), entries.get(0).value());
+            assertEquals(Buffer.buffer(bytes("x")), entries.get(1).value());
+            assertEquals(Buffer.buffer(bytes("2")), entries.get(2).value());
             assertNull(entries.get(3).value());
-            assertArrayEquals(new byte[0], entries.get(4).value());
-            assertArrayEquals(
-                    new byte[] {(byte) 0xFF, (byte) 0xFE}, entries.get(5).value());
+            assertEquals(Buffer.buffer(), entries.get(4).value());
+            assertEquals(
+                    Buffer.buffer(new byte[] {(byte) 0xFF, (byte) 0xFE}),
+                    entries.get(5).value());
             assertNull(entries.get(6).value());
             assertEquals(textMap(), headers.asMap());
+        }
+
+        @Test
+        @DisplayName("changing a wire header buffer after the record was received does not change the view")
+        void wireBufferMutatedAfterReceipt(Vertx vertx) throws ReflectiveOperationException {
+            CompletionRecorder recorder = new CompletionRecorder();
+            Fixture fixture = wire(vertx, succeedingHandlerEntry(), List.of(recorder));
+            Buffer wireValue = Buffer.buffer(new byte[] {1, 2, 3});
+
+            fixture.process(record(1L, "k", null, List.of(KafkaHeader.header("x-bin", wireValue))));
+
+            KafkaRecordHeaders headers = assertCompletedOnce(fixture, recorder, KafkaTerminalOutcome.SUCCESS)
+                    .record()
+                    .headers();
+            assertEquals(
+                    Buffer.buffer(new byte[] {1, 2, 3}),
+                    headers.entries().get(0).value());
+
+            // The consumer record caches this buffer and handler-kind consumers also receive it.
+            wireValue.setByte(0, (byte) 9);
+            wireValue.appendByte((byte) 4);
+
+            assertEquals(
+                    Buffer.buffer(new byte[] {1, 2, 3}),
+                    headers.entries().get(0).value());
+            assertEquals(
+                    new KafkaRecordHeaders(
+                            List.of(new KafkaRecordHeader("x-bin", Buffer.buffer(new byte[] {1, 2, 3})))),
+                    headers);
         }
 
         @Test
