@@ -1093,7 +1093,7 @@ public class SecurityPolicyEnforcer {
                     } else if (actionAr.failed()) {
                         // The action gate could not answer (it failed, timed out, or the runtime
                         // closed): unavailable, not denied. The event above is the same deny shape.
-                        ctx.fail(authorizationUnavailable());
+                        ctx.fail(503, authorizationUnavailable());
                     } else {
                         log.debug(
                                 "Authorization denied at action gate: reasonCode={}, path={}, method={}",
@@ -1135,7 +1135,8 @@ public class SecurityPolicyEnforcer {
      * deadline elapsed, or the resilience runtime closed. It is not a denial: it emits exactly one
      * {@link AuthzReasonCodes#INTERNAL_AUTHZ_ERROR} event (the audit marker for "could not decide")
      * and fails the request as unavailable (503) with the generic, client-safe detail, so a caller
-     * and a load balancer can tell an outage from a "no".
+     * and a load balancer can tell an outage from a "no". The status is set explicitly as well as the
+     * failure, so a router without the framework's exception mapper still answers 503, not 500.
      *
      * @param ctx          the routing context to fail; must not be {@code null}
      * @param authzRequest the request that was being evaluated; must not be {@code null}
@@ -1144,7 +1145,7 @@ public class SecurityPolicyEnforcer {
     private void unavailableDeny(
             RoutingContext ctx, AuthorizationRequest authzRequest, CorrelationContext correlation) {
         emitDecision(authzRequest, AuthorizationDecision.deny(AuthzReasonCodes.INTERNAL_AUTHZ_ERROR), correlation);
-        ctx.fail(authorizationUnavailable());
+        ctx.fail(503, authorizationUnavailable());
     }
 
     /**
@@ -1160,7 +1161,7 @@ public class SecurityPolicyEnforcer {
         AuthorizationDecision decision =
                 combinedDecision(AuthorizationDecision.deny(AuthzReasonCodes.INTERNAL_AUTHZ_ERROR), null);
         emitDecision(authzRequest, decision, correlation);
-        ctx.fail(authorizationUnavailable());
+        ctx.fail(503, authorizationUnavailable());
     }
 
     /**

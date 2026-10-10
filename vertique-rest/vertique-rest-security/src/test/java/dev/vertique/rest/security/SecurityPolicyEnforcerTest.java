@@ -447,7 +447,7 @@ class SecurityPolicyEnforcerTest {
                     enforcer.createHandler(new SecurityPolicy.Constrained(List.of("admin"), List.of(), false));
             handler.handle(rc);
 
-            verify(rc).fail(any(UnavailableException.class));
+            verify(rc).fail(eq(503), any(UnavailableException.class));
             verify(rc, never()).next();
             verify(rc, never()).fail(403);
         }
@@ -828,7 +828,7 @@ class SecurityPolicyEnforcerTest {
             assertEquals(
                     AuthzReasonCodes.INTERNAL_AUTHZ_ERROR,
                     events.get(0).decision().reasonCode());
-            verify(rc).fail(any(UnavailableException.class));
+            verify(rc).fail(eq(503), any(UnavailableException.class));
             verify(rc, never()).fail(403);
         }
 
@@ -1138,7 +1138,7 @@ class SecurityPolicyEnforcerTest {
                     .createHandler(new SecurityPolicy.Constrained(List.of("admin"), List.of(), false))
                     .handle(rc);
 
-            verify(rc, timeout(DENY_WITHIN_MS)).fail(any(UnavailableException.class));
+            verify(rc, timeout(DENY_WITHIN_MS)).fail(eq(503), any(UnavailableException.class));
             verify(rc, never()).next();
             assertEquals(1, events.size(), "a hung gate must emit exactly one deny event");
             assertEquals(
@@ -1159,7 +1159,7 @@ class SecurityPolicyEnforcerTest {
                             Optional.of(ActionRef.parse("orders.order.read")))
                     .handle(rc);
 
-            verify(rc, timeout(DENY_WITHIN_MS)).fail(any(UnavailableException.class));
+            verify(rc, timeout(DENY_WITHIN_MS)).fail(eq(503), any(UnavailableException.class));
             verify(rc, never()).next();
             assertEquals(1, events.size(), "a hung gate must emit exactly one deny event");
             assertEquals(
@@ -1197,7 +1197,7 @@ class SecurityPolicyEnforcerTest {
                             Optional.of(ActionRef.parse("orders.order.read")))
                     .handle(rc);
 
-            verify(rc, timeout(DENY_WITHIN_MS)).fail(any(UnavailableException.class));
+            verify(rc, timeout(DENY_WITHIN_MS)).fail(eq(503), any(UnavailableException.class));
             verify(rc, never()).next();
             assertEquals(1, events.size(), "a hung gate must emit exactly one deny event");
             assertEquals(
@@ -1221,7 +1221,7 @@ class SecurityPolicyEnforcerTest {
 
             pending.fail(foreign);
 
-            verify(rc, timeout(DENY_WITHIN_MS)).fail(any(UnavailableException.class));
+            verify(rc, timeout(DENY_WITHIN_MS)).fail(eq(503), any(UnavailableException.class));
             verify(rc, never()).fail(403);
             assertEquals(1, events.size(), "the failure still emits exactly one deny event");
         }
@@ -1236,7 +1236,7 @@ class SecurityPolicyEnforcerTest {
                             Optional.empty()))
                     .handle(rc);
 
-            verify(rc, timeout(DENY_WITHIN_MS)).fail(any(UnavailableException.class));
+            verify(rc, timeout(DENY_WITHIN_MS)).fail(eq(503), any(UnavailableException.class));
             verify(rc, never()).fail(403);
             verify(rc, never()).next();
             assertEquals(1, events.size());
@@ -1259,7 +1259,7 @@ class SecurityPolicyEnforcerTest {
                             Optional.of(ActionRef.parse("orders.order.read")))
                     .handle(rc);
 
-            verify(rc, timeout(DENY_WITHIN_MS)).fail(any(UnavailableException.class));
+            verify(rc, timeout(DENY_WITHIN_MS)).fail(eq(503), any(UnavailableException.class));
             verify(rc, never()).fail(403);
             assertEquals(1, events.size());
             assertEquals(
@@ -1278,7 +1278,7 @@ class SecurityPolicyEnforcerTest {
 
             pending.fail(new java.util.concurrent.TimeoutException("policy client deadline"));
 
-            verify(rc, timeout(DENY_WITHIN_MS)).fail(any(UnavailableException.class));
+            verify(rc, timeout(DENY_WITHIN_MS)).fail(eq(503), any(UnavailableException.class));
             verify(rc, never()).next();
             assertEquals(1, events.size());
         }
@@ -1290,12 +1290,12 @@ class SecurityPolicyEnforcerTest {
             RoutingContext rc = constrainedRoute();
             constrainedHandler(enforcer(request -> pending.future(), Optional.empty()))
                     .handle(rc);
-            verify(rc, timeout(DENY_WITHIN_MS)).fail(any(UnavailableException.class));
+            verify(rc, timeout(DENY_WITHIN_MS)).fail(eq(503), any(UnavailableException.class));
 
             pending.complete(AuthorizationDecision.permit(AuthzReasonCodes.PERMITTED));
             Thread.sleep(300L);
 
-            verify(rc, times(1)).fail(any(UnavailableException.class));
+            verify(rc, times(1)).fail(eq(503), any(UnavailableException.class));
             verify(rc, never()).next();
             assertEquals(1, events.size(), "the abandoned gate must not emit a second event");
         }
@@ -1317,7 +1317,7 @@ class SecurityPolicyEnforcerTest {
                                 resilience))
                         .handle(rc);
 
-                verify(rc, timeout(DENY_WITHIN_MS)).fail(any(UnavailableException.class));
+                verify(rc, timeout(DENY_WITHIN_MS)).fail(eq(503), any(UnavailableException.class));
                 assertEquals(1, observed.timeouts(DENY_WITHIN_MS));
             } finally {
                 vertx.close().toCompletionStage().toCompletableFuture().get(DENY_WITHIN_MS, TimeUnit.MILLISECONDS);
@@ -1342,7 +1342,7 @@ class SecurityPolicyEnforcerTest {
 
                 constrainedHandler(enforcer).handle(rc);
 
-                verify(rc, timeout(DENY_WITHIN_MS)).fail(any(UnavailableException.class));
+                verify(rc, timeout(DENY_WITHIN_MS)).fail(eq(503), any(UnavailableException.class));
                 assertEquals(1, events.size());
             } finally {
                 vertx.close().toCompletionStage().toCompletableFuture().get(DENY_WITHIN_MS, TimeUnit.MILLISECONDS);
@@ -1414,11 +1414,11 @@ class SecurityPolicyEnforcerTest {
                         .handle(rc);
 
                 resilience.close().toCompletionStage().toCompletableFuture().get(DENY_WITHIN_MS, TimeUnit.MILLISECONDS);
-                verify(rc, timeout(DENY_WITHIN_MS)).fail(any(UnavailableException.class));
+                verify(rc, timeout(DENY_WITHIN_MS)).fail(eq(503), any(UnavailableException.class));
                 pending.complete(AuthorizationDecision.permit(AuthzReasonCodes.PERMITTED));
                 Thread.sleep(200L);
 
-                verify(rc, times(1)).fail(any(UnavailableException.class));
+                verify(rc, times(1)).fail(eq(503), any(UnavailableException.class));
                 verify(rc, never()).next();
                 assertEquals(1, events.size());
             } finally {
