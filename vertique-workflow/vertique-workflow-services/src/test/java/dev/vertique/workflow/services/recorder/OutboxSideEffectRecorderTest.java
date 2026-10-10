@@ -271,6 +271,88 @@ class OutboxSideEffectRecorderTest {
         }
     }
 
+    // --- Intent header handling ---
+
+    @Nested
+    @DisplayName("intent headers")
+    class IntentHeaders {
+
+        @Test
+        @DisplayName("a null headers map is treated as no headers: only correlation headers are published")
+        void record_nullHeadersMap_publishesCorrelationHeadersOnly() {
+            stubValidTarget("svc.h.op");
+            when(outboxService.publish(eq(tx), any(OutboxEntry.class))).thenReturn(Future.succeededFuture(1L));
+            WorkflowSideEffectIntent intent = intentWithHeaders("svc.h.op", null);
+
+            Future<RecorderResult> result = org.junit.jupiter.api.Assertions.assertDoesNotThrow(
+                    () -> recorder.record(intent, tx), "record must not throw synchronously");
+
+            assertThat(result.succeeded()).isTrue();
+            ArgumentCaptor<OutboxEntry> entryCaptor = ArgumentCaptor.forClass(OutboxEntry.class);
+            verify(outboxService).publish(eq(tx), entryCaptor.capture());
+            assertThat(entryCaptor.getValue().headers())
+                    .containsOnlyKeys(
+                            "x-workflow-id",
+                            "x-workflow-step-sequence",
+                            "x-workflow-definition-id",
+                            "x-workflow-step-id");
+        }
+
+        @Test
+        @DisplayName("a null header value fails the Future with IllegalArgumentException naming the key")
+        void record_nullHeaderValue_failsFuture() {
+            stubValidTarget("svc.h.op");
+            java.util.Map<String, String> headers = new java.util.HashMap<>();
+            headers.put("x-tenant-id", null);
+            WorkflowSideEffectIntent intent = intentWithHeaders("svc.h.op", headers);
+
+            Future<RecorderResult> result = org.junit.jupiter.api.Assertions.assertDoesNotThrow(
+                    () -> recorder.record(intent, tx), "record must not throw synchronously");
+
+            assertThat(result.failed()).isTrue();
+            assertThat(result.cause())
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("x-tenant-id");
+            verify(outboxService, never()).publish(any(), any());
+        }
+
+        @Test
+        @DisplayName("a null header key fails the Future with IllegalArgumentException, without the value")
+        void record_nullHeaderKey_failsFuture() {
+            stubValidTarget("svc.h.op");
+            java.util.Map<String, String> headers = new java.util.HashMap<>();
+            headers.put(null, "secret-value");
+            WorkflowSideEffectIntent intent = intentWithHeaders("svc.h.op", headers);
+
+            Future<RecorderResult> result = org.junit.jupiter.api.Assertions.assertDoesNotThrow(
+                    () -> recorder.record(intent, tx), "record must not throw synchronously");
+
+            assertThat(result.failed()).isTrue();
+            assertThat(result.cause()).isInstanceOf(IllegalArgumentException.class);
+            assertThat(result.cause().getMessage()).doesNotContain("secret-value");
+            verify(outboxService, never()).publish(any(), any());
+        }
+
+        private void stubValidTarget(String targetId) {
+            ServiceMethodMeta meta = mock(ServiceMethodMeta.class);
+            when(meta.oneWay()).thenReturn(false);
+            doReturn(Void.class).when(meta).returnType();
+            when(meta.params()).thenReturn(List.of(new ParamMeta("req", ParamSource.PAYLOAD, Object.class)));
+            ResolvedServiceTarget target = mock(ResolvedServiceTarget.class);
+            when(target.meta()).thenReturn(meta);
+            lenient().when(target.targetId()).thenReturn(targetId);
+            lenient().when(target.operation()).thenReturn("op");
+            when(targetResolver.resolve(targetId)).thenReturn(target);
+        }
+
+        private WorkflowSideEffectIntent intentWithHeaders(String targetId, Map<String, String> headers) {
+            WorkflowInstanceId workflowId = new WorkflowInstanceId(UUID.randomUUID());
+            WorkflowSideEffectIntent.Correlation correlation =
+                    WorkflowSideEffectIntent.Correlation.singlePath(workflowId, 1L, "test-def", "test-step");
+            return new WorkflowSideEffectIntent(IntentKind.SERVICE, targetId, "payload", headers, correlation);
+        }
+    }
+
     // --- Helpers ---
 
     /** Creates a minimal intent for the given target id; correlation values are arbitrary. */

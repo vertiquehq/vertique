@@ -38,6 +38,7 @@ Recorder behavior:
 - Require the target to be a one-payload, `Future<Void>` service operation.
 - Write an outbox entry with workflow correlation headers.
 - Fail the workflow transaction on an unknown or invalid target.
+- Treat a `null` intent header map as no headers, and fail the returned future with an `IllegalArgumentException` naming the key when an intent header has a `null` key or value.
 
 The recorder must never make a live downstream call. The outbox row is the durable handoff.
 

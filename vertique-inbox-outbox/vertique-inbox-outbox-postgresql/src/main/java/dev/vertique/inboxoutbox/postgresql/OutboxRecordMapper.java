@@ -13,6 +13,7 @@ import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import lombok.extern.slf4j.Slf4j;
 
 /**
  * Maps a PostgreSQL {@link Row} from the {@code outbox} table to an {@link OutboxRecord} domain
@@ -21,12 +22,14 @@ import java.util.Map;
  * <p>All timestamp-with-timezone columns are read as {@link OffsetDateTime} and converted to
  * {@link Instant}. Nullable timestamps return {@code null}. The JSONB {@code headers} column is
  * converted from a {@link JsonObject} to an immutable {@code Map<String, String>}; a {@code null}
- * or empty headers value maps to {@link Map#of()}. The JSONB {@code metadata} column is
+ * or empty headers value maps to {@link Map#of()}, and an entry whose value is JSON {@code null}
+ * is dropped with a WARN. The JSONB {@code metadata} column is
  * deserialized via {@link OutboxMetadata#fromJson(JsonObject)}; a {@code null} column value
  * maps to {@link OutboxMetadata#empty()}.
  *
  * <p>This class is not instantiable — use the static factory {@link #fromRow(Row)}.
  */
+@Slf4j
 final class OutboxRecordMapper {
 
     /** Prevent instantiation. */
@@ -64,8 +67,9 @@ final class OutboxRecordMapper {
      * @return the mapped {@link OutboxRecord} domain object
      */
     static OutboxRecord fromRow(Row row) {
+        Long id = row.getLong(COL_ID);
         return new OutboxRecord(
-                row.getLong(COL_ID),
+                id,
                 row.getUUID(COL_CARRIER_ID),
                 row.getString(COL_AGGREGATE_TYPE),
                 row.getString(COL_AGGREGATE_ID),
@@ -73,7 +77,7 @@ final class OutboxRecordMapper {
                 row.getString(COL_DESTINATION),
                 DestinationType.of(row.getString(COL_DESTINATION_TYPE)),
                 row.getJsonObject(COL_PAYLOAD),
-                toHeadersMap(row.getJsonObject(COL_HEADERS)),
+                toHeadersMap(id, row.getJsonObject(COL_HEADERS)),
                 OutboxMetadata.fromJson(row.getJsonObject(COL_METADATA)),
                 toInstant(row.getOffsetDateTime(COL_SCHEDULED_AT)),
                 toInstant(row.getOffsetDateTime(COL_AVAILABLE_AT)),
@@ -92,18 +96,30 @@ final class OutboxRecordMapper {
     /**
      * Converts a nullable JSONB headers object to an immutable {@code Map<String, String>}.
      *
-     * <p>All entry values are coerced to strings via {@link String#valueOf(Object)}. Returns
-     * {@link Map#of()} when {@code json} is {@code null} or empty.
+     * <p>All non-null entry values are coerced to strings via {@link String#valueOf(Object)}. An
+     * entry whose stored value is JSON {@code null} has no value to deliver: it is left out of the
+     * map — it does not become the text {@code "null"} — and one WARN names the entry id and the
+     * header key. Returns {@link Map#of()} when {@code json} is {@code null} or empty.
      *
-     * @param json the JSONB headers value from the database, or {@code null}
+     * @param entryId the outbox entry id of the row, used only in the WARN
+     * @param json    the JSONB headers value from the database, or {@code null}
      * @return an immutable map of header name to header value
      */
-    private static Map<String, String> toHeadersMap(JsonObject json) {
+    private static Map<String, String> toHeadersMap(Long entryId, JsonObject json) {
         if (json == null || json.isEmpty()) {
             return Map.of();
         }
         Map<String, String> map = new LinkedHashMap<>();
-        json.forEach(entry -> map.put(entry.getKey(), String.valueOf(entry.getValue())));
+        json.forEach(entry -> {
+            if (entry.getValue() == null) {
+                log.warn(
+                        "Outbox entry {} has a stored null value for header '{}'; the header is dropped",
+                        entryId,
+                        entry.getKey());
+            } else {
+                map.put(entry.getKey(), String.valueOf(entry.getValue()));
+            }
+        });
         return Map.copyOf(map);
     }
 

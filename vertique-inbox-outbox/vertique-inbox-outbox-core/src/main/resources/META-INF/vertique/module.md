@@ -100,7 +100,7 @@ Lombok `@Builder` value object describing a single outbound side-effect.
 | `destinationType` | Yes | `DestinationType` open value type identifying the adapter to use (e.g., `DestinationType.SERVICE`) |
 | `destination` | Yes | Stable service target id, durable delayed-job target id, or Kafka topic |
 | `payload` | Yes | Jackson-serializable payload; stored as JSONB |
-| `headers` | No | Additional outbound metadata; may carry adapter-specific snapshot data |
+| `headers` | No | Additional outbound metadata; may carry adapter-specific snapshot data. A `null` map given to the builder reads back as an empty map. Keys and values must not be `null`, and keys must not start with the reserved `vertique-` prefix — `OutboxService.publish` fails for such an entry |
 | `scheduledAt` | No | Time after which the relay may publish |
 | `availableAt` | No | Internal retry scheduling override; applications normally omit |
 

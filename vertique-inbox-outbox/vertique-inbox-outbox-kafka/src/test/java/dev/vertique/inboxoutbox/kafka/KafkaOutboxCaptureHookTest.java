@@ -3,6 +3,7 @@
 
 package dev.vertique.inboxoutbox.kafka;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -114,6 +115,29 @@ class KafkaOutboxCaptureHookTest {
                 String entryId) {
             callCount++;
             throw new RuntimeException("hook exploded");
+        }
+    }
+
+    /** Hook that always throws the supplied {@link Error} — verifies errors are isolated too. */
+    static final class ErrorThrowingHook implements KafkaOutboxCaptureHook {
+
+        private final Error error;
+        int callCount;
+
+        ErrorThrowingHook(Error error) {
+            this.error = error;
+        }
+
+        @Override
+        public void onOutboxPublish(
+                String topic,
+                String key,
+                PayloadSource value,
+                KafkaRecordHeaders headers,
+                OutboxPublishResult result,
+                String entryId) {
+            callCount++;
+            throw error;
         }
     }
 
@@ -405,6 +429,71 @@ class KafkaOutboxCaptureHookTest {
             assertEquals(1, throwing.callCount, "throwing hook must be called");
             assertEquals(1, secondary.seenTopics.size(), "secondary hook must run even after throwing hook");
             assertEquals("orders-topic", secondary.seenTopics.get(0));
+        }
+
+        @Test
+        @DisplayName("a hook throwing AssertionError does not escape publish or change the result")
+        void assertionErrorFromHookIsIsolated() throws Exception {
+            ErrorThrowingHook throwing = new ErrorThrowingHook(new AssertionError("hook invariant broken"));
+            SecondaryRecordingHook secondary = new SecondaryRecordingHook();
+            KafkaOutboxDestinationHandler handler =
+                    new KafkaOutboxDestinationHandler(producerFactory, objectMapper, Set.of(throwing, secondary));
+
+            when(objectMapper.writeValueAsBytes(any())).thenReturn(new byte[] {3});
+            when(producerFactory.sendForOutbox(any(), any(), any(), any(), any()))
+                    .thenReturn(Future.succeededFuture(null));
+
+            Future<OutboxPublishResult> published =
+                    assertDoesNotThrow(() -> handler.publish(makeEnvelope("order-e")), "the Error must not escape");
+
+            assertEquals(1, throwing.callCount, "throwing hook must have been called");
+            assertTrue(published.succeeded(), "publish future must complete successfully");
+            assertInstanceOf(OutboxPublishResult.Success.class, published.result(), "result must still be Success");
+            assertEquals(1, secondary.seenTopics.size(), "secondary hook must run after the throwing hook");
+        }
+
+        @Test
+        @DisplayName("a hook throwing LinkageError does not escape publish or change the result")
+        void linkageErrorFromHookIsIsolated() throws Exception {
+            ErrorThrowingHook throwing = new ErrorThrowingHook(new NoClassDefFoundError("com/example/Missing"));
+            SecondaryRecordingHook secondary = new SecondaryRecordingHook();
+            KafkaOutboxDestinationHandler handler =
+                    new KafkaOutboxDestinationHandler(producerFactory, objectMapper, Set.of(throwing, secondary));
+
+            when(objectMapper.writeValueAsBytes(any())).thenReturn(new byte[] {4});
+            when(producerFactory.sendForOutbox(any(), any(), any(), any(), any()))
+                    .thenReturn(Future.failedFuture(new RuntimeException("broker down")));
+
+            Future<OutboxPublishResult> published =
+                    assertDoesNotThrow(() -> handler.publish(makeEnvelope("order-l")), "the Error must not escape");
+
+            assertEquals(1, throwing.callCount, "throwing hook must have been called");
+            assertTrue(published.succeeded(), "publish future must complete successfully");
+            assertInstanceOf(
+                    OutboxPublishResult.RetryableFailure.class,
+                    published.result(),
+                    "result must still be the classified retryable failure");
+            assertEquals(1, secondary.seenTopics.size(), "secondary hook must run after the throwing hook");
+        }
+
+        @Test
+        @DisplayName("a hook throwing AssertionError on the serialization-failure path does not escape publish")
+        void assertionErrorFromHookIsIsolatedOnPermanentFailure() throws Exception {
+            ErrorThrowingHook throwing = new ErrorThrowingHook(new AssertionError("hook invariant broken"));
+            KafkaOutboxDestinationHandler handler =
+                    new KafkaOutboxDestinationHandler(producerFactory, objectMapper, Set.of(throwing));
+
+            when(objectMapper.writeValueAsBytes(any())).thenThrow(new RuntimeException("cannot serialize"));
+
+            Future<OutboxPublishResult> published =
+                    assertDoesNotThrow(() -> handler.publish(makeEnvelope("order-p")), "the Error must not escape");
+
+            assertEquals(1, throwing.callCount, "throwing hook must have been called");
+            assertInstanceOf(
+                    OutboxPublishResult.PermanentFailure.class,
+                    published.result(),
+                    "result must still be the classified permanent failure");
+            verify(producerFactory, never()).sendForOutbox(any(), any(), any(), any(), any());
         }
     }
 

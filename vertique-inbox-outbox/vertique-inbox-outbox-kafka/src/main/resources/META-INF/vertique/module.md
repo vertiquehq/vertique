@@ -101,7 +101,7 @@ default void onOutboxPublish(
 
 Internally, the outbox relay uses `KafkaProducerFactory.sendForOutbox(...)`, which tags the send with `KafkaSendOrigin.OUTBOX` so the `KafkaProducerCaptureHook` in `vertique-kafka-core` also fires for the same send (see `dev.vertique:vertique-kafka-core`). The `KafkaOutboxCaptureHook` fires at the outbox-handler level (with the outbox envelope context) while the producer hook fires at the wire level.
 
-Throwing implementations are caught, warn-logged, and discarded; the publish result is unaffected. Hooks implement `OrderedExtension` (phase → priority → orderKey). Register via `@IntoSet Set<KafkaOutboxCaptureHook>` on `TransactionalMessagingKafkaModule`.
+Throwing implementations are caught, warn-logged, and discarded; the publish result is unaffected and the hooks after it still run. This covers an `AssertionError` or a `LinkageError` thrown by a hook as well as exceptions. Hooks implement `OrderedExtension` (phase → priority → orderKey). Register via `@IntoSet Set<KafkaOutboxCaptureHook>` on `TransactionalMessagingKafkaModule`.
 
 ---
 
