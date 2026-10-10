@@ -172,10 +172,11 @@ public record RouteRegistrationViolation(String operationId, ViolationType type,
          *
          * <p><b>Scoping.</b> Reported for the sources whose binding {@code findDescriptor} decides:
          * {@code PATH}, {@code QUERY}, {@code HEADER}, and {@code COOKIE}. Names are compared exactly as
-         * {@code findDescriptor} matches them — <em>case-insensitively</em> for {@code HEADER} and
-         * {@code COOKIE} (so {@code @HeaderParam("X-Id")} and {@code @HeaderParam("x-id")} do collide),
-         * <em>case-sensitively</em> for {@code PATH} and {@code QUERY} (so {@code @QueryParam("id")} and
-         * {@code @QueryParam("Id")} do not). Comparing them any other way would be a defect in either
+         * {@code findDescriptor} matches them — <em>case-insensitively</em> for {@code HEADER} (so
+         * {@code @HeaderParam("X-Id")} and {@code @HeaderParam("x-id")} do collide),
+         * <em>case-sensitively</em> for {@code PATH}, {@code QUERY}, and {@code COOKIE} (so
+         * {@code @QueryParam("id")} and {@code @QueryParam("Id")} do not; cookie names are
+         * case-sensitive per RFC 6265). Comparing them any other way would be a defect in either
          * direction: too loose rejects a legal declaration, too strict lets the mis-binding through.
          * Sources are never compared across each other — a {@code @HeaderParam("token")} and a
          * {@code @QueryParam("token")} read different maps and cannot conflict.

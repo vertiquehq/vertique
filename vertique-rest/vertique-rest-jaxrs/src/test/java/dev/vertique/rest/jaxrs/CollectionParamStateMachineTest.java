@@ -1063,6 +1063,11 @@ class CollectionParamStateMachineTest {
             BoundRequest req = realBoundRequest(meta, null, null, Set.of(cookie("session-tags", "a")));
             Object[] args = extractorFor(meta).extractArguments(null, req);
 
+            assertEquals(
+                    "a",
+                    req.cookies().get("session-tags").get(),
+                    "an unmatched cookie binds as its raw string: findDescriptor must not match a differently "
+                            + "cased declaration, which would wrap it as a collection");
             List<?> list = assertInstanceOf(List.class, args[0], "absence must yield the empty collection, not null");
             assertTrue(
                     list.isEmpty(),
