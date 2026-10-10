@@ -55,8 +55,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * <p>T020 re-points this proof at the real, mounted {@code JaxRsRouterMount} pipeline (via {@link
  * RestTestMounts}) rather than a bare, failure-handler-less {@code RouterMount}: the middleware now
  * delegates via {@code ctx.fail}, so the response is no longer byte-identical to a hand-built {@link
- * dev.vertique.rest.core.ProblemDetail} — {@code ErrorPipeline} enriches it with {@code instance}
- * (the request path), which the middleware's own T019 rendering never did. See {@code
+ * dev.vertique.rest.core.ProblemDetail} — {@code ErrorPipeline} runs its enrichment, which leaves
+ * {@code instance} absent for an edge denial because no operation route has matched yet. See {@code
  * RateLimitEdgeFullPipelineRenderingIT} for the full-pipeline dressing proof (transformResponse,
  * ErrorInterceptor.afterMapping, the new framework default); this class stays focused on precedence:
  * built-in vs. application-contributed mapper, and the mapper-throw fallback.
@@ -99,11 +99,10 @@ class RateLimitEdgeMiddlewareApplicationExceptionMapperIT {
                     JsonObject body = response.bodyAsJsonObject();
                     assertEquals(429, body.getInteger("status"));
                     assertNull(body.getString("detail"), "the built-in mapper's body carries no detail");
-                    assertEquals(
-                            ECHO_PATH,
+                    assertNull(
                             body.getString("instance"),
-                            "ErrorPipeline enriches instance from the request path — T019's own hand-built "
-                                    + "rendering never reached ErrorPipeline at all");
+                            "an edge denial happens before any operation route matches, so there is no route "
+                                    + "template to report and the request path is never reflected");
                     ctx.completeNow();
                 }));
     }
@@ -125,7 +124,7 @@ class RateLimitEdgeMiddlewareApplicationExceptionMapperIT {
                     assertNull(response.getHeader("Retry-After"));
                     JsonObject body = response.bodyAsJsonObject();
                     assertEquals(503, body.getInteger("status"));
-                    assertEquals(ECHO_PATH, body.getString("instance"));
+                    assertNull(body.getString("instance"), "no operation route matched at the edge");
                     ctx.completeNow();
                 }));
     }

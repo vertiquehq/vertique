@@ -13,7 +13,9 @@ import ch.qos.logback.core.read.ListAppender;
 import dev.vertique.rest.core.ProblemDetail;
 import dev.vertique.rest.core.ValidationErrorDetail;
 import dev.vertique.rest.core.ValidationProblemDetail;
+import dev.vertique.rest.core.events.RequestCompletionRecorder;
 import dev.vertique.rest.core.interceptor.ErrorInterceptor;
+import dev.vertique.rest.core.routing.RestOperationDescriptor;
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
 import io.vertx.core.http.HttpServerRequest;
@@ -44,6 +46,7 @@ class ErrorPipelineTest {
     private RoutingContext ctx;
     private HttpServerRequest request;
     private Map<String, Object> ctxData;
+    private Map<String, Object> ctxHolders;
     private ErrorPipeline pipeline;
 
     @BeforeEach
@@ -54,6 +57,19 @@ class ErrorPipelineTest {
         lenient().when(ctx.data()).thenReturn(ctxData);
         lenient().when(ctx.request()).thenReturn(request);
         lenient().when(request.path()).thenReturn("/test");
+        // The completion-state holder is read and written through RoutingContext.put/get, which the
+        // mock otherwise ignores.
+        ctxHolders = new HashMap<>();
+        lenient()
+                .doAnswer(invocation -> {
+                    ctxHolders.put(invocation.getArgument(0), invocation.getArgument(1));
+                    return ctx;
+                })
+                .when(ctx)
+                .put(anyString(), any());
+        lenient()
+                .when(ctx.get(anyString()))
+                .thenAnswer(invocation -> ctxHolders.get(invocation.<String>getArgument(0)));
 
         DefaultExceptionMapper defaults = new DefaultExceptionMapper().on(Throwable.class, ex -> Response.status(500)
                 .entity(ProblemDetail.of(500, "Internal Server Error"))
@@ -64,6 +80,14 @@ class ErrorPipelineTest {
         RestExceptionMapper failureMapper = new RestExceptionMapper();
 
         pipeline = new ErrorPipeline(List.of(), List.of(), failureMapper, registry);
+    }
+
+    /** Records {@code routeTemplate} as the operation the request matched, as the route handler does. */
+    private void recordMatchedOperation(String routeTemplate) {
+        RestOperationDescriptor operation = mock(RestOperationDescriptor.class);
+        lenient().when(operation.routeTemplate()).thenReturn(routeTemplate);
+        RequestCompletionRecorder.installHolder(ctx);
+        RequestCompletionRecorder.operationRouteHandler(operation).handle(ctx);
     }
 
     @Nested
@@ -491,8 +515,7 @@ class ErrorPipelineTest {
             ctxData.put(VertxFailureStatus.KEY, 415);
 
             Response authored = Response.status(415)
-                    .entity(ProblemDetail.of(
-                            415, "Unsupported Content-Type: text/xml; expected one of [application/json]"))
+                    .entity(ProblemDetail.of(415, "Unsupported Content-Type; expected one of [application/json]"))
                     .type("application/problem+json")
                     .build();
             Future<Response> future =
@@ -503,15 +526,17 @@ class ErrorPipelineTest {
             assertEquals(415, response.getStatus());
             ProblemDetail pd = assertInstanceOf(ProblemDetail.class, response.getEntity());
             assertEquals(
-                    "Unsupported Content-Type: text/xml; expected one of [application/json]",
+                    "Unsupported Content-Type; expected one of [application/json]",
                     pd.detail(),
                     "an authored WAE entity must survive equal-status sanitization");
         }
 
         @Test
-        @DisplayName("ProblemDetail instance field is populated from request path")
-        void problemDetailInstanceIsPopulated() {
+        @DisplayName("ProblemDetail instance is the matched route template, not the request path")
+        void problemDetailInstanceIsTheRouteTemplate() {
             ctxData.put(VertxFailureStatus.KEY, 401);
+            lenient().when(request.path()).thenReturn("/items/not-a-uuid");
+            recordMatchedOperation("/items/{id}");
 
             Future<Response> future = pipeline.mapToResponse(ctx, new RuntimeException("auth failed"));
             assertTrue(future.succeeded());
@@ -519,7 +544,55 @@ class ErrorPipelineTest {
             Response response = future.result();
             assertInstanceOf(ProblemDetail.class, response.getEntity());
             ProblemDetail pd = (ProblemDetail) response.getEntity();
-            assertEquals("/test", pd.instance());
+            assertEquals("/items/{id}", pd.instance());
+        }
+
+        @Test
+        @DisplayName("ProblemDetail instance drops a regex constraint from the route template")
+        void problemDetailInstanceDropsRegexConstraints() {
+            ctxData.put(VertxFailureStatus.KEY, 401);
+            recordMatchedOperation("/orders/{id: [0-9]{8}}/lines/{line:\\d+}");
+
+            Future<Response> future = pipeline.mapToResponse(ctx, new RuntimeException("auth failed"));
+            assertTrue(future.succeeded());
+
+            ProblemDetail pd =
+                    assertInstanceOf(ProblemDetail.class, future.result().getEntity());
+            assertEquals("/orders/{id}/lines/{line}", pd.instance());
+        }
+
+        @Test
+        @DisplayName("ProblemDetail instance stays absent when no operation route matched")
+        void problemDetailInstanceIsAbsentWithoutAMatchedOperation() {
+            ctxData.put(VertxFailureStatus.KEY, 404);
+            lenient().when(request.path()).thenReturn("/no-such-route/leaky-marker");
+
+            Future<Response> future = pipeline.mapToResponse(ctx, new RuntimeException("not found"));
+            assertTrue(future.succeeded());
+
+            ProblemDetail pd =
+                    assertInstanceOf(ProblemDetail.class, future.result().getEntity());
+            assertNull(pd.instance(), "an unmatched request has no template and must not echo its path");
+        }
+
+        @Test
+        @DisplayName("An instance the mapper set is kept")
+        void explicitInstanceIsKept() {
+            DefaultExceptionMapper defaults = new DefaultExceptionMapper()
+                    .on(Throwable.class, ex -> Response.status(409)
+                            .entity(ProblemDetail.of(409, "Conflict", "/orders/42"))
+                            .type("application/problem+json")
+                            .build());
+            ErrorPipeline customPipeline = new ErrorPipeline(
+                    List.of(), List.of(), new RestExceptionMapper(), new ExceptionMapperRegistry(defaults, Set.of()));
+            recordMatchedOperation("/orders/{id}");
+
+            Future<Response> future = customPipeline.mapToResponse(ctx, new RuntimeException("conflict"));
+            assertTrue(future.succeeded());
+
+            ProblemDetail pd =
+                    assertInstanceOf(ProblemDetail.class, future.result().getEntity());
+            assertEquals("/orders/42", pd.instance());
         }
 
         @Test
@@ -539,6 +612,8 @@ class ErrorPipelineTest {
                             .build());
             ExceptionMapperRegistry registry = new ExceptionMapperRegistry(defaults, Set.of());
             ErrorPipeline customPipeline = new ErrorPipeline(List.of(), List.of(), new RestExceptionMapper(), registry);
+
+            recordMatchedOperation("/test");
 
             Future<Response> future = customPipeline.mapToResponse(ctx, new RuntimeException("no credentials"));
             assertTrue(future.succeeded());
@@ -574,6 +649,8 @@ class ErrorPipelineTest {
                             .build());
             ExceptionMapperRegistry registry = new ExceptionMapperRegistry(defaults, Set.of());
             ErrorPipeline customPipeline = new ErrorPipeline(List.of(), List.of(), new RestExceptionMapper(), registry);
+
+            recordMatchedOperation("/test");
 
             Future<Response> future = customPipeline.mapToResponse(ctx, new RuntimeException("no credentials"));
             assertTrue(future.succeeded());

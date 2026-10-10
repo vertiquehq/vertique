@@ -235,7 +235,9 @@ written against an earlier version (such as a test descriptor) keeps compiling a
 
 RFC 9457 problem-details response body — the default error shape for every built-in exception mapper.
 All fields are optional and omitted from JSON when `null`. Extension members declared through
-`extension(...)` are serialized as sibling JSON fields.
+`extension(...)` are serialized as sibling JSON fields. When a response leaves the REST error
+pipeline without an `instance`, the pipeline fills it with the matched operation's route template,
+never the request path, and leaves it absent for a request that matched no operation route.
 
 ```java
 ProblemDetail simple = ProblemDetail.of(404, "Item 123 not found");
@@ -573,7 +575,9 @@ boundary with `MediaType.parse` must treat `null` for a non-blank input as a rej
 horizontal tab in them as `_`, so a value never carries a line break into a header and two values
 that differ by a control character stay different (`evil.php` with U+0001 before the final `p` is
 written `evil.ph_p`, never `evil.php`); a value that held a control character therefore parses back with `_` in its place. `isCompatible(MediaType)` is wildcard-aware
-and ignores parameters; `specificity()` returns 0 for `*/*`, 1 for `type/*`, 2 for `type/subtype`, and
+and ignores parameters. A wildcard type with a concrete subtype such as `*/xml` is not a media range:
+`MediaType.parse` returns `null` for it, an `Accept` entry of that shape is dropped as malformed, and
+`isCompatible` treats only `*/*` as matching every type. `specificity()` returns 0 for `*/*`, 1 for `type/*`, 2 for `type/subtype`, and
 3 when parameters are present. Equality ignores the quality factor.
 
 `AcceptNegotiator.negotiate(String acceptHeader, List<String> serverTypes)` returns the best matching
@@ -581,7 +585,8 @@ server type as `"type/subtype"`, or `null` when nothing matches — the signal a
 406. A `null`/blank Accept header, or one whose entries merely lack a `/` (`garbage`), yields the first
 server type; an empty `serverTypes` yields `null`. An `Accept` header with an entry dropped as
 **malformed** (an unterminated quote, an invalid, quoted, out-of-range or repeated `q`, too many
-parameters, or a `/` with an empty type or subtype such as `text/` or `/json`) and no usable entry is
+parameters, a `/` with an empty type or subtype such as `text/` or `/json`, or a wildcard type with a
+concrete subtype such as `*/xml`) and no usable entry is
 not "anything goes": the result is `null`. So is a header with a non-empty entry **past the 50-element
 cap** and no usable entry among the first 50: the entries beyond the cap are never read, and their
 existence counts as malformed, so 50 slashless tokens followed by `text/html;q=abc` is `null`, not the

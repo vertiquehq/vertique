@@ -55,10 +55,14 @@ public class ContentTypeValidationMiddleware implements Middleware {
         HttpMethod method = ctx.request().method();
 
         if (method == HttpMethod.POST || method == HttpMethod.PUT || method == HttpMethod.PATCH) {
-            // Skip validation if the request has no body
+            // Skip validation if the request has no body. An HTTP/2 request may carry DATA frames
+            // with neither Content-Length nor Transfer-Encoding, so a body already read counts too.
             String contentLength = ctx.request().getHeader("Content-Length");
             String transferEncoding = ctx.request().getHeader("Transfer-Encoding");
-            boolean hasBody = (contentLength != null && !"0".equals(contentLength)) || transferEncoding != null;
+            io.vertx.ext.web.RequestBody readBody = ctx.body();
+            boolean hasBody = (contentLength != null && !"0".equals(contentLength))
+                    || transferEncoding != null
+                    || (readBody != null && readBody.length() > 0);
 
             if (hasBody) {
                 String contentType = ctx.request().getHeader("Content-Type");

@@ -5,8 +5,10 @@ package dev.vertique.rest.jaxrs;
 
 import dev.vertique.core.async.Combinators;
 import dev.vertique.rest.core.ProblemDetail;
+import dev.vertique.rest.core.events.RequestCompletionRecorder;
 import dev.vertique.rest.core.interceptor.ErrorInterceptor;
 import dev.vertique.rest.core.interceptor.RequestInterceptor;
+import dev.vertique.rest.core.routing.RestOperationDescriptor;
 import io.vertx.core.Future;
 import io.vertx.ext.web.RoutingContext;
 import jakarta.ws.rs.WebApplicationException;
@@ -102,9 +104,10 @@ public class ErrorPipeline {
      *   <li>{@link ErrorInterceptor#beforeMapping} async chain (transforms the throwable)</li>
      *   <li>{@link RestExceptionMapper} (Throwable to Throwable pre-translation)</li>
      *   <li>{@link ExceptionMapperRegistry} (Throwable to {@link Response})</li>
-     *   <li>Instance enrichment — populates {@link ProblemDetail#instance()} from the
-     *       request path if the response entity is a {@link ProblemDetail} and
-     *       {@code instance} is not already set</li>
+     *   <li>Instance enrichment — populates {@link ProblemDetail#instance()} with the route
+     *       template of the matched operation if the response entity is a {@link ProblemDetail}
+     *       and {@code instance} is not already set; a request that matched no operation route
+     *       leaves it absent</li>
      *   <li>{@link ErrorInterceptor#afterMapping} async chain (transforms the response)</li>
      *   <li>Framework catch-all logging, once, using the status of the response leaving the chain</li>
      * </ol>
@@ -230,22 +233,66 @@ public class ErrorPipeline {
 
     /**
      * Enriches the response entity if it is a {@link ProblemDetail} without an instance set.
-     * The instance is populated from the request path. All response headers and media type
-     * are preserved.
+     * The instance is the route template of the operation the request matched, such as
+     * {@code /items/{id}}. It is never read from the request path: the path carries the caller's
+     * bytes, which a problem detail must not reflect. A request that matched no operation route (an
+     * unknown path, a method the route does not serve) has no template and keeps no instance. All
+     * response headers and media type are preserved.
      *
-     * @param ctx      the current routing context (used to read the request path)
+     * @param ctx      the current routing context (used to read the matched operation)
      * @param response the response produced by the exception mapper
      * @return the enriched response, or the original response unchanged
      */
     private static Response enrichProblemDetail(RoutingContext ctx, Response response) {
         Object entity = response.getEntity();
-        if (entity instanceof ProblemDetail pd && pd.instance() == null) {
-            ProblemDetail enriched =
-                    pd.toBuilder().instance(ctx.request().path()).build();
+        RestOperationDescriptor operation =
+                entity instanceof ProblemDetail ? RequestCompletionRecorder.recordedOperation(ctx) : null;
+        if (entity instanceof ProblemDetail pd && pd.instance() == null && operation != null) {
+            ProblemDetail enriched = pd.toBuilder()
+                    .instance(templateWithoutConstraints(operation.routeTemplate()))
+                    .build();
             Response.ResponseBuilder rb = Response.status(response.getStatus()).entity(enriched);
             return rebuildWithHeaders(response, rb, true);
         }
         return response;
+    }
+
+    /**
+     * Returns {@code template} with each variable's regular-expression constraint removed, so
+     * {@code /orders/{id: [0-9]{8}}} becomes {@code /orders/{id}}. The constraint is routing detail,
+     * not part of an occurrence identifier, and braces inside it would nest.
+     *
+     * @param template the operation's route template
+     * @return the template with variable names only
+     */
+    static String templateWithoutConstraints(String template) {
+        StringBuilder out = new StringBuilder(template.length());
+        int depth = 0;
+        boolean inConstraint = false;
+        for (int i = 0; i < template.length(); i++) {
+            char c = template.charAt(i);
+            if (c == '{') {
+                depth++;
+                if (depth == 1) {
+                    out.append(c);
+                } else if (!inConstraint) {
+                    out.append(c);
+                }
+            } else if (c == '}') {
+                if (depth == 1) {
+                    out.append(c);
+                    inConstraint = false;
+                } else if (!inConstraint) {
+                    out.append(c);
+                }
+                depth = Math.max(0, depth - 1);
+            } else if (c == ':' && depth == 1 && !inConstraint) {
+                inConstraint = true;
+            } else if (!inConstraint) {
+                out.append(c);
+            }
+        }
+        return out.toString();
     }
 
     /**

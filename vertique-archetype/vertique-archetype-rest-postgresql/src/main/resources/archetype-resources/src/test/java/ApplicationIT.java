@@ -147,18 +147,18 @@ class ApplicationIT {
                 .statusCode(400);
 
         // A malformed identifier is rejected by the built-in UUID parameter converter, which answers
-        // 400 with a detail naming the parameter and its target type rather than echoing the
-        // submitted value. (The RFC 9457 "instance" member still carries the request URI, as that
-        // specification intends — only the failure detail is asserted here.)
-        String malformedIdDetail = given().when()
+        // 400 with a detail naming the parameter and its target type. Neither that detail nor the RFC
+        // 9457 "instance" member (the matched route template, never the request path) carries the
+        // submitted value, so it is absent from the whole body.
+        String malformedIdBody = given().when()
                 .get("/items/not-a-uuid")
                 .then()
                 .statusCode(400)
                 .extract()
-                .path("detail");
+                .asString();
         assertFalse(
-                malformedIdDetail.contains("not-a-uuid"),
-                "the 400 detail for a malformed id must not echo the submitted value, found: " + malformedIdDetail);
+                malformedIdBody.contains("not-a-uuid"),
+                "the 400 body for a malformed id must not echo the submitted value, found: " + malformedIdBody);
 
         Response created = given().contentType(ContentType.JSON)
                 .body(new JsonObject()

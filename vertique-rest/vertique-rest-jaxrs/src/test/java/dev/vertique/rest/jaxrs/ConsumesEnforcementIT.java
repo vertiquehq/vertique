@@ -4,6 +4,7 @@
 package dev.vertique.rest.jaxrs;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -150,6 +151,65 @@ public class ConsumesEnforcementIT {
         }
     }
 
+    /** Body type for a route that declares no {@code @Consumes}. */
+    public static class Payload {
+        public String name;
+    }
+
+    /** Resource with a body parameter and NO {@code @Consumes}: the decoder lookup decides. */
+    @Path("/pojo")
+    public static class PojoBodyResource {
+
+        /**
+         * Accepts a decoded body and echoes {@code ok}.
+         *
+         * @param payload the decoded body
+         * @return the literal string {@code ok}
+         */
+        @POST
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "pojoPost")
+        public String post(Payload payload) {
+            return "ok";
+        }
+    }
+
+    /** Resource whose only declared type is not a media type, so it can match nothing. */
+    @Path("/typo")
+    public static class MalformedConsumesResource {
+
+        /**
+         * Declares a wildcard type with a concrete subtype.
+         *
+         * @return the literal string {@code ok}
+         */
+        @POST
+        @Consumes("*/json")
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "typoPost")
+        public String post() {
+            return "ok";
+        }
+    }
+
+    /** Resource declaring a wildcard subtype, which stays legal on the declared side. */
+    @Path("/wild")
+    public static class ApplicationWildcardResource {
+
+        /**
+         * Accepts any {@code application/*} body and echoes {@code ok}.
+         *
+         * @return the literal string {@code ok}
+         */
+        @POST
+        @Consumes("application/*")
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "wildcardEcho")
+        public String echo() {
+            return "ok";
+        }
+    }
+
     // --- Test 1: Mismatched Content-Type against @Consumes operation returns 415 ---
 
     @Test
@@ -272,10 +332,100 @@ public class ConsumesEnforcementIT {
         });
     }
 
+    // --- Wildcard request Content-Type never satisfies a declared @Consumes ---
+
+    @Test
+    @DisplayName("WildcardRequestContentTypeIsRejected — a full-wildcard Content-Type does not satisfy @Consumes → 415")
+    void fullWildcardRequestContentTypeIsRejected(Vertx vertx, VertxTestContext ctx) {
+        assertPostStatus(vertx, ctx, new JsonOnlyResource(), "/echo", "*/*", 415);
+    }
+
+    @Test
+    @DisplayName("WildcardSubtypeRequestContentTypeIsRejected — 'application/*' as Content-Type → 415")
+    void wildcardSubtypeRequestContentTypeIsRejected(Vertx vertx, VertxTestContext ctx) {
+        assertPostStatus(vertx, ctx, new JsonOnlyResource(), "/echo", "application/*", 415);
+    }
+
+    @Test
+    @DisplayName("WildcardTypeConcreteSubtypeRequestContentTypeIsRejected — '*/json' as Content-Type → 415")
+    void wildcardTypeConcreteSubtypeRequestContentTypeIsRejected(Vertx vertx, VertxTestContext ctx) {
+        assertPostStatus(vertx, ctx, new JsonOnlyResource(), "/echo", "*/json", 415);
+    }
+
+    @Test
+    @DisplayName("DeclaredWildcardAcceptsConcreteContentType — @Consumes('application/*'), request JSON → 200")
+    void declaredWildcardAcceptsConcreteContentType(Vertx vertx, VertxTestContext ctx) {
+        assertPostStatus(vertx, ctx, new ApplicationWildcardResource(), "/wild", "application/json", 200);
+    }
+
+    @Test
+    @DisplayName("DeclaredWildcardRejectsOtherType — @Consumes('application/*'), request 'text/plain' → 415")
+    void declaredWildcardRejectsOtherType(Vertx vertx, VertxTestContext ctx) {
+        assertPostStatus(vertx, ctx, new ApplicationWildcardResource(), "/wild", "text/plain", 415);
+    }
+
+    @Test
+    @DisplayName("DeclaredWildcardRejectsWildcardRequest — @Consumes('application/*'), request 'application/*' → 415")
+    void declaredWildcardRejectsWildcardRequest(Vertx vertx, VertxTestContext ctx) {
+        assertPostStatus(vertx, ctx, new ApplicationWildcardResource(), "/wild", "application/*", 415);
+    }
+
+    // --- No request bytes in a 415 raised after the gate ---
+
+    @Test
+    @DisplayName("NoDecoderFor415DoesNotEchoTheContentType — no @Consumes, unknown type → 415 without the header value")
+    void noDecoderMatchRejectionDoesNotEchoTheContentType(Vertx vertx, VertxTestContext ctx) {
+        deploy(vertx, ctx, Set.of(new PojoBodyResource()), (port, c) -> c.post(port, "127.0.0.1", "/pojo")
+                .putHeader("Content-Type", "application/x-q; note=leaky-marker")
+                .sendBuffer(Buffer.buffer("{}"))
+                .onComplete(ctx.succeeding(resp -> {
+                    ctx.verify(() -> {
+                        assertEquals(415, resp.statusCode(), "no decoder claims the type: " + resp.bodyAsString());
+                        assertFalse(
+                                String.valueOf(resp.bodyAsString()).contains("leaky-marker"),
+                                "the 415 body must not echo the Content-Type: " + resp.bodyAsString());
+                    });
+                    ctx.completeNow();
+                })));
+    }
+
+    // --- A declared type that is not a media type is diagnosed, not silently dropped ---
+
+    @Test
+    @DisplayName("MalformedDeclaredConsumesIsWarnedAndRejectsEveryBody — '*/json' declared → WARN at startup, 415")
+    void malformedDeclaredConsumesIsWarnedAndRejectsEveryBody(Vertx vertx, VertxTestContext ctx) {
+        ch.qos.logback.classic.Logger registrarLog =
+                (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(JaxRsRouteRegistrar.class);
+        ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> appender =
+                new ch.qos.logback.core.read.ListAppender<>();
+        appender.start();
+        registrarLog.addAppender(appender);
+        deploy(vertx, ctx, Set.of(new MalformedConsumesResource()), (port, c) -> {
+            registrarLog.detachAppender(appender);
+            c.post(port, "127.0.0.1", "/typo")
+                    .putHeader("Content-Type", "application/json")
+                    .sendBuffer(Buffer.buffer("{}"))
+                    .onComplete(ctx.succeeding(resp -> {
+                        ctx.verify(() -> {
+                            assertTrue(
+                                    appender.list.stream()
+                                            .anyMatch(e -> e.getLevel() == ch.qos.logback.classic.Level.WARN
+                                                    && e.getFormattedMessage().contains("typoPost")
+                                                    && e.getFormattedMessage().contains("*/json")),
+                                    "a declared @Consumes that is not a media type must be warned about at startup");
+                            assertEquals(
+                                    415, resp.statusCode(), "a route that declares nothing usable matches nothing");
+                        });
+                        ctx.completeNow();
+                    }));
+        });
+    }
+
     // --- Test 6 & 7: a 415 the framework authored keeps its own detail ---
 
     @Test
-    @DisplayName("PerRoute415KeepsItsAuthoredDetail — the Vert.x failure status equals the mapped status → detail kept")
+    @DisplayName(
+            "PerRoute415KeepsItsAuthoredDetail — the Vert.x failure status equals the mapped status → detail kept, no echo")
     void perRoute415KeepsItsAuthoredDetail(Vertx vertx, VertxTestContext ctx) {
         // ctx.fail(415, new NotSupportedException(authoredResponse)) stores 415 as the Vert.x failure
         // status AND maps to 415. Equal-status sanitization would drop a detail synthesized from
@@ -283,7 +433,7 @@ public class ConsumesEnforcementIT {
         // the diagnostic survives.
         deploy(vertx, ctx, Set.of(new JsonOnlyResource()), (port, c) -> {
             c.post(port, "127.0.0.1", "/echo")
-                    .putHeader("Content-Type", "text/xml")
+                    .putHeader("Content-Type", "text/xml; note=leaky-marker")
                     .sendBuffer(Buffer.buffer("hello"))
                     .map(resp -> new Object[] {resp.statusCode(), String.valueOf(resp.bodyAsString())})
                     .onComplete(ctx.succeeding(pair -> {
@@ -292,9 +442,9 @@ public class ConsumesEnforcementIT {
                             assertEquals(415, (Integer) pair[0], "mismatched Content-Type must be rejected with 415");
                             String detail = new io.vertx.core.json.JsonObject(body).getString("detail");
                             assertNotNull(detail, "the per-route 415's authored detail must not be cleared: " + body);
-                            assertTrue(
-                                    detail.contains("text/xml"),
-                                    "the detail must still name the actual content type; got: " + detail);
+                            assertFalse(
+                                    body.contains("leaky-marker") || detail.contains("text/xml"),
+                                    "the detail must not echo the request Content-Type; got: " + body);
                             assertTrue(
                                     detail.contains(MediaType.APPLICATION_JSON),
                                     "the detail must still name the expected content type; got: " + detail);
@@ -336,6 +486,28 @@ public class ConsumesEnforcementIT {
     }
 
     // --- Helper ---
+
+    /**
+     * Deploys {@code resource}, posts a small body with {@code contentType}, and asserts the status.
+     *
+     * @param vertx          the Vert.x instance
+     * @param ctx            the test context
+     * @param resource       the JAX-RS resource to mount
+     * @param path           the request path
+     * @param contentType    the {@code Content-Type} header value to send
+     * @param expectedStatus the expected response status
+     */
+    private void assertPostStatus(
+            Vertx vertx, VertxTestContext ctx, Object resource, String path, String contentType, int expectedStatus) {
+        deploy(vertx, ctx, Set.of(resource), (port, c) -> c.post(port, "127.0.0.1", path)
+                .putHeader("Content-Type", contentType)
+                .sendBuffer(Buffer.buffer("{}"))
+                .onComplete(ctx.succeeding(resp -> {
+                    ctx.verify(() -> assertEquals(
+                            expectedStatus, resp.statusCode(), "Content-Type '" + contentType + "' on " + path));
+                    ctx.completeNow();
+                })));
+    }
 
     /**
      * Deploys the given resources under the default {@code none} validation strategy, starts an
