@@ -450,7 +450,8 @@ Behavior for a dispatch through the generated or proxy client:
 - **Failures.** A denial, a throwing or `null` evaluation, a `null` or failed future are all
   non-recoverable denials; `recoverError` cannot turn them into success.
 - **Deadline.** An `Authorizer` whose future has not settled within `security.authz.gateDeadlineMs`
-  (default `5000`, the key that bounds the REST, WebSocket and MCP authorization gates) is denied with
+  (default `5000`; the same key bounds the REST, WebSocket and MCP authorization gates, which read it
+  through the opt-in `AuthorizationGateConfigModule`, while the services module always reads it) is denied with
   `INTERNAL_AUTHZ_ERROR` like any other failure, through the application's `Resilience` runtime. A
   future that is already complete is not timed. After the runtime has closed at application shutdown a
   pending authorization is denied at once. The deadline does not cancel the authorizer's own work.
@@ -634,7 +635,7 @@ Configuration lives under `services`. The empty namespace uses `_` as its config
 | Key | Default | Constraint |
 |---|---:|---|
 | `services.sendTimeoutMs` | `30000` | greater than 0 |
-| `security.authz.gateDeadlineMs` | `5000` | greater than 0; the authorizer-call deadline, shared with the REST, WebSocket and MCP gates |
+| `security.authz.gateDeadlineMs` | `5000` | greater than 0, a number or a numeric string; the authorizer-call deadline, the key the REST, WebSocket and MCP gates also read |
 | `contracts.{ns}.{name}.instances` | `1` | at least 1 |
 | `contracts.{ns}.{name}.worker` | `false` | boolean |
 | `contracts.{ns}.{name}.sendTimeoutMs` | global value | greater than 0 |

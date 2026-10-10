@@ -10,7 +10,9 @@ import io.vertx.core.json.JsonObject;
 /**
  * The deadline on the action {@link dev.vertique.security.authz.Authorizer} call a service dispatch
  * makes, read from the same {@code security.authz.gateDeadlineMs} key that bounds the REST,
- * WebSocket and MCP authorization gates, so one operator setting bounds every transport.
+ * WebSocket and MCP authorization gates. The services module always reads the key; the REST,
+ * WebSocket and MCP gates read it through the opt-in {@code AuthorizationGateConfigModule}, so a
+ * deployment that sets the key without installing that module bounds the service call only.
  *
  * <p>An authorizer whose future never completes would otherwise leave the service call, and the
  * caller waiting on it, hanging. When the deadline elapses the call is denied with {@code
@@ -59,9 +61,18 @@ public record ServiceAuthorizationConfig(long gateDeadlineMs) {
         if (raw == null) {
             return defaults();
         }
-        if (!(raw instanceof Number number)) {
-            throw new ConfigurationException("security.authz.gateDeadlineMs must be a number, got: " + raw);
+        if (raw instanceof Number number) {
+            return new ServiceAuthorizationConfig(number.longValue());
         }
-        return new ServiceAuthorizationConfig(number.longValue());
+        if (raw instanceof CharSequence text) {
+            // An environment-substituted value arrives as a string; the REST gate's parser accepts it too.
+            try {
+                return new ServiceAuthorizationConfig(
+                        Long.parseLong(text.toString().trim()));
+            } catch (NumberFormatException notANumber) {
+                throw new ConfigurationException("security.authz.gateDeadlineMs must be a number, got: " + raw);
+            }
+        }
+        throw new ConfigurationException("security.authz.gateDeadlineMs must be a number, got: " + raw);
     }
 }
