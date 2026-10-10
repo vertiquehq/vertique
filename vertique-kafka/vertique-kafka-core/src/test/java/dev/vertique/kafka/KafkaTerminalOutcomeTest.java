@@ -12,8 +12,6 @@ import static org.mockito.Mockito.when;
 import dev.vertique.config.parser.DefaultConfigMapper;
 import dev.vertique.config.parser.DefaultConfigParser;
 import dev.vertique.kafka.config.KafkaConfig;
-import dev.vertique.kafka.interceptor.KafkaConsumerCaptureHook;
-import dev.vertique.kafka.interceptor.KafkaDispatchContext;
 import dev.vertique.kafka.interceptor.KafkaTerminalOutcome;
 import dev.vertique.kafka.producer.KafkaProducerFactory;
 import io.vertx.core.Future;
@@ -40,12 +38,10 @@ import org.mockito.junit.jupiter.MockitoExtension;
  *   <li>{@link KafkaErrorHandler#handleError} returns the correct {@link KafkaTerminalOutcome} for
  *       each {@link ErrorStrategy} — and all existing side-effects (commit / seek / resume / DLQ
  *       publish) are still invoked exactly as before</li>
- *   <li>{@link KafkaConsumerCaptureHook} contract: observer-only SPI, default no-op, extends
- *       {@link dev.vertique.core.extension.OrderedExtension}</li>
  * </ul>
  *
- * <p>The hook invocation from {@link KafkaConsumerVerticle} is covered in
- * {@link KafkaConsumerCaptureHookInvocationTest}.
+ * <p>How {@link KafkaConsumerVerticle} reports each outcome to interceptors is covered in
+ * {@link KafkaConsumerLifecycleCallbackTest}.
  */
 @ExtendWith(VertxExtension.class)
 @ExtendWith(MockitoExtension.class)
@@ -168,35 +164,6 @@ class KafkaTerminalOutcomeTest {
             assertTrue(names.contains("DLQ_PUBLISHED"), "DLQ_PUBLISHED missing");
             assertTrue(names.contains("DLQ_FAILED"), "DLQ_FAILED missing");
             assertTrue(names.contains("ERROR_HANDLER_FAILED"), "ERROR_HANDLER_FAILED missing");
-        }
-    }
-
-    // --- KafkaConsumerCaptureHook contract ---
-
-    @Nested
-    @DisplayName("KafkaConsumerCaptureHook contract")
-    class CaptureHookContract {
-
-        @Test
-        @DisplayName("default onTerminalOutcome is a no-op — does not throw")
-        void defaultNoOp() {
-            KafkaConsumerCaptureHook hook = new KafkaConsumerCaptureHook() {
-                        // all-defaults
-                    };
-            KafkaDispatchContext<?> ctx =
-                    new KafkaDispatchContext<>("c", "t", 0, 1L, "k", "v", null, Map.of(), 0L, 0, false, Map.of());
-            // must not throw
-            hook.onTerminalOutcome(ctx, KafkaTerminalOutcome.SUCCESS);
-        }
-
-        @Test
-        @DisplayName("hook implements OrderedExtension — default phase is APPLICATION")
-        void implementsOrderedExtension() {
-            KafkaConsumerCaptureHook hook = new KafkaConsumerCaptureHook() {};
-            assertEquals(
-                    dev.vertique.core.extension.ExtensionPhase.APPLICATION,
-                    hook.phase(),
-                    "default phase must be APPLICATION");
         }
     }
 

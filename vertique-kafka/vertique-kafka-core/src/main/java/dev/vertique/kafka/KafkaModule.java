@@ -23,7 +23,6 @@ import dev.vertique.kafka.config.KafkaConfig;
 import dev.vertique.kafka.config.KafkaConsumerConfig;
 import dev.vertique.kafka.config.KafkaProducerConfig;
 import dev.vertique.kafka.health.KafkaConsumerHealthCheck;
-import dev.vertique.kafka.interceptor.KafkaConsumerCaptureHook;
 import dev.vertique.kafka.interceptor.KafkaConsumerInterceptor;
 import dev.vertique.kafka.producer.KafkaProducerCaptureHook;
 import dev.vertique.kafka.producer.KafkaProducerFactory;
@@ -94,16 +93,6 @@ public abstract class KafkaModule {
      */
     @Multibinds
     abstract Set<KafkaConsumerInterceptor> kafkaConsumerInterceptors();
-
-    /**
-     * Declares the (possibly empty) set of {@link KafkaConsumerCaptureHook} terminal-outcome
-     * observers. Applications and extension modules contribute implementations via
-     * {@code @IntoSet}. Observer-only — hooks never affect commit/retry/delivery.
-     *
-     * @return an empty set (elements contributed via {@code @IntoSet})
-     */
-    @Multibinds
-    abstract Set<KafkaConsumerCaptureHook> kafkaConsumerCaptureHooks();
 
     /**
      * Declares the empty-by-default multibinding for producer send capture hooks.
@@ -245,7 +234,6 @@ public abstract class KafkaModule {
             VerticleDeployer deployer,
             KafkaConsumerRegistry registry,
             Set<KafkaConsumerInterceptor> interceptors,
-            Set<KafkaConsumerCaptureHook> captureHooks,
             KafkaProducerFactory producerFactory,
             ServiceRequestSender requestSender,
             ServiceTargetResolver targetResolver,
@@ -258,7 +246,6 @@ public abstract class KafkaModule {
                 deployer,
                 registry,
                 interceptors,
-                captureHooks,
                 producerFactory,
                 requestSender,
                 targetResolver,

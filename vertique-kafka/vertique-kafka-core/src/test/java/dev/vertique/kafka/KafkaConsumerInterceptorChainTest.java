@@ -8,10 +8,18 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import dev.vertique.core.extension.ExtensionPhase;
 import dev.vertique.core.payload.PayloadSources;
+import dev.vertique.kafka.interceptor.KafkaConsumerCompletedEvent;
 import dev.vertique.kafka.interceptor.KafkaConsumerInterceptor;
+import dev.vertique.kafka.interceptor.KafkaConsumerRecordIdentity;
+import dev.vertique.kafka.interceptor.KafkaConsumerRecordView;
 import dev.vertique.kafka.interceptor.KafkaDispatchContext;
+import dev.vertique.kafka.interceptor.KafkaTerminalOutcome;
 import io.vertx.core.Future;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
@@ -24,6 +32,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.slf4j.LoggerFactory;
 
 /**
  * Characterization tests for {@link KafkaConsumerInterceptorChain} that pin the observable
@@ -36,8 +45,9 @@ import org.junit.jupiter.api.extension.ExtendWith;
  *   <li>{@code runAfterInterceptors} — sequential ordering, recover-and-continue (failure is
  *       logged and the chain continues), and the exact WARN message format</li>
  *   <li>{@code runRecoverError} — first-wins recovery, later interceptors skipped after success</li>
- *   <li>Sync observers ({@code onRecord}, {@code onSuccess}, {@code onError}) — in-order
- *       invocation and exception swallowing</li>
+ *   <li>Sync observers ({@code onRecord}, {@code onSuccess}, {@code onError},
+ *       {@code onRecordCompleted}) — in-order invocation, and swallowing of exceptions,
+ *       {@code AssertionError} and {@code LinkageError}</li>
  * </ul>
  */
 @ExtendWith(VertxExtension.class)
@@ -648,6 +658,173 @@ class KafkaConsumerInterceptorChainTest {
 
             assertEquals(List.of("after"), callLog, "observer after the throwing one must still run");
         }
+    }
+
+    // --- Observer error isolation and the completion observer ---
+
+    @Nested
+    @DisplayName("Sync observer isolation and onRecordCompleted")
+    class ObserverIsolation {
+
+        /** Interceptor whose every synchronous observer throws the given throwable. */
+        private KafkaConsumerInterceptor throwingEverywhere(Throwable thrown) {
+            return new KafkaConsumerInterceptor() {
+                @Override
+                public void onRecord(KafkaDispatchContext<?> ctx) {
+                    sneakyThrow(thrown);
+                }
+
+                @Override
+                public void onSuccess(KafkaDispatchContext<?> ctx) {
+                    sneakyThrow(thrown);
+                }
+
+                @Override
+                public void onError(KafkaDispatchContext<?> ctx, Throwable error) {
+                    sneakyThrow(thrown);
+                }
+
+                @Override
+                public void onRecordCompleted(KafkaConsumerCompletedEvent event, KafkaConsumerRecordView record) {
+                    sneakyThrow(thrown);
+                }
+            };
+        }
+
+        /** Interceptor that logs each completion it observes under the given name. */
+        private KafkaConsumerInterceptor completionLogger(String name, List<String> callLog) {
+            return new KafkaConsumerInterceptor() {
+                @Override
+                public void onRecordCompleted(KafkaConsumerCompletedEvent event, KafkaConsumerRecordView record) {
+                    callLog.add(name + ":" + event.outcome() + ":"
+                            + record.identity().offset());
+                }
+            };
+        }
+
+        private KafkaConsumerRecordView view() {
+            return new DefaultKafkaConsumerRecordView(
+                    new KafkaConsumerRecordIdentity("c", "test.topic", 0, 7L, 0L, 0),
+                    null,
+                    KafkaRecordHeaders.empty(),
+                    null);
+        }
+
+        private List<Throwable> isolatedThrowables() {
+            return List.of(
+                    new RuntimeException("boom"),
+                    new java.io.IOException("checked boom"),
+                    new AssertionError("assertion boom"),
+                    new NoClassDefFoundError("linkage boom"));
+        }
+
+        @Test
+        @DisplayName("onRecord / onSuccess / onError: exceptions, AssertionError and LinkageError are all swallowed")
+        void existingObserversSwallowErrors() {
+            for (Throwable thrown : isolatedThrowables()) {
+                List<String> callLog = new ArrayList<>();
+                KafkaConsumerInterceptorChain chain = new KafkaConsumerInterceptorChain(
+                        "c", List.of(throwingEverywhere(thrown), new OrderRecordingInterceptor("next", callLog)));
+
+                chain.runOnRecordObservers(ctx());
+                chain.runOnSuccessObservers(ctx());
+                chain.runOnErrorObservers(ctx(), new RuntimeException("dispatch-error"));
+
+                assertEquals(List.of("next", "next", "next"), callLog, "after " + thrown);
+            }
+        }
+
+        @Test
+        @DisplayName("onRecordCompleted: interceptors run in list order with the same event and view")
+        void completionRunsInOrder() {
+            List<String> callLog = new ArrayList<>();
+            KafkaConsumerInterceptorChain chain = new KafkaConsumerInterceptorChain(
+                    "c", List.of(completionLogger("first", callLog), completionLogger("second", callLog)));
+            KafkaConsumerRecordView view = view();
+
+            chain.runOnRecordCompleted(
+                    new KafkaConsumerCompletedEvent(view.identity(), KafkaTerminalOutcome.SKIP), view);
+
+            assertEquals(List.of("first:SKIP:7", "second:SKIP:7"), callLog);
+        }
+
+        @Test
+        @DisplayName("onRecordCompleted: exceptions, AssertionError and LinkageError are all swallowed")
+        void completionSwallowsErrors() {
+            for (Throwable thrown : isolatedThrowables()) {
+                List<String> callLog = new ArrayList<>();
+                KafkaConsumerInterceptorChain chain = new KafkaConsumerInterceptorChain(
+                        "c", List.of(throwingEverywhere(thrown), completionLogger("next", callLog)));
+                KafkaConsumerRecordView view = view();
+
+                chain.runOnRecordCompleted(
+                        new KafkaConsumerCompletedEvent(view.identity(), KafkaTerminalOutcome.SUCCESS), view);
+
+                assertEquals(List.of("next:SUCCESS:7"), callLog, "after " + thrown);
+            }
+        }
+
+        @Test
+        @DisplayName("a callback that keeps failing with a LinkageError never stops later interceptors, reported once")
+        void repeatedLinkageErrorIsIsolatedEveryTimeAndReportedOnce() {
+            Logger chainLogger = (Logger) LoggerFactory.getLogger(KafkaConsumerInterceptorChain.class);
+            ListAppender<ILoggingEvent> appender = new ListAppender<>();
+            appender.setContext(chainLogger.getLoggerContext());
+            appender.start();
+            chainLogger.addAppender(appender);
+            try {
+                List<String> callLog = new ArrayList<>();
+                KafkaConsumerInterceptorChain chain = new KafkaConsumerInterceptorChain(
+                        "c",
+                        List.of(
+                                throwingEverywhere(new NoSuchMethodError("linkage boom")),
+                                completionLogger("next", callLog)));
+                KafkaConsumerRecordView view = view();
+                KafkaConsumerCompletedEvent event =
+                        new KafkaConsumerCompletedEvent(view.identity(), KafkaTerminalOutcome.SUCCESS);
+
+                chain.runOnRecordCompleted(event, view);
+                chain.runOnRecordCompleted(event, view);
+
+                assertEquals(
+                        List.of("next:SUCCESS:7", "next:SUCCESS:7"),
+                        callLog,
+                        "the later interceptor must be notified both times");
+                List<ILoggingEvent> errors = appender.list.stream()
+                        .filter(e -> e.getLevel() == Level.ERROR)
+                        .toList();
+                assertEquals(1, errors.size(), "the unusable callback must be reported once, not per record");
+                assertTrue(errors.get(0).getFormattedMessage().contains("onRecordCompleted"));
+                assertTrue(errors.get(0).getFormattedMessage().contains("unusable"));
+
+                chain.runOnRecordObservers(ctx());
+
+                assertEquals(
+                        2,
+                        appender.list.stream()
+                                .filter(e -> e.getLevel() == Level.ERROR)
+                                .count(),
+                        "a different callback of the same interceptor is reported separately");
+            } finally {
+                chainLogger.detachAppender(appender);
+                appender.stop();
+            }
+        }
+
+        @Test
+        @DisplayName("an Error outside the isolation policy still propagates")
+        void otherErrorsPropagate() {
+            KafkaConsumerInterceptorChain chain = new KafkaConsumerInterceptorChain(
+                    "c", List.of(throwingEverywhere(new StackOverflowError("fatal"))));
+
+            org.junit.jupiter.api.Assertions.assertThrows(
+                    StackOverflowError.class, () -> chain.runOnRecordObservers(ctx()));
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static <T extends Throwable> void sneakyThrow(Throwable thrown) throws T {
+        throw (T) thrown;
     }
 
     // --- Context threading ---

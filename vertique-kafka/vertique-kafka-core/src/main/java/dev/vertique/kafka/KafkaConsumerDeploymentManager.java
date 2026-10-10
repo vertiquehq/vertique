@@ -12,7 +12,6 @@ import dev.vertique.core.lifecycle.LifecyclePhase;
 import dev.vertique.deploy.VerticleDeployer;
 import dev.vertique.deploy.VerticleDeployment;
 import dev.vertique.kafka.config.KafkaSecretKeys;
-import dev.vertique.kafka.interceptor.KafkaConsumerCaptureHook;
 import dev.vertique.kafka.interceptor.KafkaConsumerInterceptor;
 import dev.vertique.kafka.producer.KafkaProducerFactory;
 import dev.vertique.services.ServiceRequestSender;
@@ -52,7 +51,6 @@ public class KafkaConsumerDeploymentManager {
     private final VerticleDeployer deployer;
     private final KafkaConsumerRegistry registry;
     private final List<KafkaConsumerInterceptor> interceptors;
-    private final Set<KafkaConsumerCaptureHook> captureHooks;
     private final KafkaProducerFactory producerFactory;
     private final ServiceRequestSender requestSender;
     private final ServiceTargetResolver targetResolver;
@@ -73,8 +71,6 @@ public class KafkaConsumerDeploymentManager {
      * @param deployer        the verticle deployer for deployment lifecycle management
      * @param registry        the consumer registry providing all resolved consumer entries
      * @param interceptors    consumer interceptors contributed via Dagger multibinding
-     * @param captureHooks    terminal-outcome capture hooks contributed via Dagger multibinding;
-     *        passed through to each deployed {@link KafkaConsumerVerticle}
      * @param producerFactory the shared Kafka producer factory for DLQ publishing
      * @param requestSender   the service request sender for target-aware dispatch
      * @param targetResolver  the resolver for looking up service targets by stable id
@@ -91,7 +87,6 @@ public class KafkaConsumerDeploymentManager {
             VerticleDeployer deployer,
             KafkaConsumerRegistry registry,
             Set<KafkaConsumerInterceptor> interceptors,
-            Set<KafkaConsumerCaptureHook> captureHooks,
             KafkaProducerFactory producerFactory,
             ServiceRequestSender requestSender,
             ServiceTargetResolver targetResolver,
@@ -104,7 +99,6 @@ public class KafkaConsumerDeploymentManager {
         this.registry = registry;
         this.interceptors =
                 interceptors.stream().sorted(OrderedExtension.comparator()).collect(Collectors.toUnmodifiableList());
-        this.captureHooks = captureHooks;
         this.producerFactory = producerFactory;
         this.requestSender = requestSender;
         this.targetResolver = targetResolver;
@@ -205,7 +199,6 @@ public class KafkaConsumerDeploymentManager {
                 () -> new KafkaConsumerVerticle(
                         entry,
                         sortedInterceptors,
-                        captureHooks,
                         producerFactory,
                         requestSender,
                         targetResolver,

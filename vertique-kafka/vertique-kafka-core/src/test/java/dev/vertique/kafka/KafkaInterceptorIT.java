@@ -336,7 +336,6 @@ public class KafkaInterceptorIT {
                 deployments.add(vertx.deployVerticle(new KafkaConsumerVerticle(
                         entry,
                         mainInterceptors,
-                        Set.of(),
                         producerFactory,
                         KafkaTestSupport.requestSender(vertx),
                         mainResolver,
@@ -353,7 +352,6 @@ public class KafkaInterceptorIT {
                 deployments.add(vertx.deployVerticle(new KafkaConsumerVerticle(
                         entry,
                         mainInterceptors,
-                        Set.of(),
                         producerFactory,
                         KafkaTestSupport.requestSender(vertx),
                         failResolver,

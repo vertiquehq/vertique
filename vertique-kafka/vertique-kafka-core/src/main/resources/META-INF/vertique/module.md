@@ -288,6 +288,43 @@ public record KafkaMessage<V>(
 `key` may be `null`; `timestamp` is epoch milliseconds; `headers` is defensively copied and
 immutable. `message.header("name")` returns `Optional<String>`.
 
+### `KafkaRecordHeaders` and `KafkaRecordHeader`
+
+The headers of one record exactly as they are on the wire. `KafkaConsumerRecordView.headers()`
+returns this type; see [Record completion](#record-completion-onrecordcompleted).
+
+```java
+package dev.vertique.kafka;
+
+public record KafkaRecordHeader(String key, @Nullable byte[] value) {
+    public static KafkaRecordHeader ofUtf8(String key, @Nullable String value);
+    @Nullable public String valueAsUtf8();
+    @Nullable public String valueAsString(Charset charset);
+}
+
+public record KafkaRecordHeaders(List<KafkaRecordHeader> entries)
+        implements Iterable<KafkaRecordHeader> {
+    public static KafkaRecordHeaders empty();
+    public List<KafkaRecordHeader> headers(String key);
+    public Optional<KafkaRecordHeader> lastHeader(String key);
+    public Map<String, String> asMap();
+}
+```
+
+| Member | Behavior |
+|---|---|
+| `KafkaRecordHeader.value()` | A copy of the bytes. `null` (no value), empty, and non-empty stay distinct. The array is also copied on construction |
+| `valueAsUtf8()`, `valueAsString(Charset)` | Strict decoding: `null` for a `null` value, `""` for an empty one, `IllegalArgumentException` for bytes that are not valid in the charset |
+| `KafkaRecordHeader.toString()` | Key and value length only — never the bytes |
+| `entries()`, iteration | Every header in wire order. Duplicates are kept; keys are not trimmed or case-folded |
+| `headers(key)` | Every header with that exact key, in order; empty list when absent |
+| `lastHeader(key)` | The last header with that key. Empty only when the key is absent: a header present with a `null` value is returned |
+| `asMap()` | Unmodifiable `Map<String, String>`. **Lossy**: a repeated key keeps its last non-`null` value, `null` values are left out, values are decoded as UTF-8 with malformed bytes replaced |
+
+Both records are immutable and compare by content; `KafkaRecordHeaders` equality is order-sensitive.
+`KafkaMessage`, `KafkaRecordFilter`, deserializers, and `KafkaDispatchContext` still carry the
+`Map<String, String>` form, which has the content of `asMap()`.
+
 ### `KafkaRecordFilter`
 
 Functional interface applied **before** deserialization, so a rejected record never pays the
@@ -302,7 +339,9 @@ KafkaRecordFilter.allOf(filter1, filter2)
 KafkaRecordFilter.anyOf(filter1, filter2)
 ```
 
-A filtered record is committed under `MANUAL` and reported to capture hooks as `SKIP`.
+A filtered record is committed under `MANUAL` and reported to `onRecordCompleted` as `SKIP`. A
+filter that throws is handled like a deserialization failure: the record goes to the consumer's
+error strategy and is reported to `onRecordCompleted` with that outcome.
 
 ### `KafkaProducerFactory`
 
@@ -698,14 +737,18 @@ See `dev.vertique:vertique-kafka-avro` for a complete reference implementation.
 — phase, then ascending priority, then `orderKey()` (the FQCN by default). Lower priority runs
 first.
 
-Sync observers are fire-and-forget; a thrown exception is logged and swallowed, and the dispatch
-outcome is unaffected.
+Sync observers are fire-and-forget. An `Exception`, `LinkageError` or `AssertionError` thrown by one
+is logged and swallowed; later interceptors still run and the record's outcome is unaffected. An
+`Exception` or `AssertionError` is logged at WARN each time. A `LinkageError` means the callback
+cannot run at all, so it is logged at ERROR once per interceptor class and callback, saying that the
+callback is unusable and its notifications are being lost; later occurrences are not logged.
 
 | Callback | When |
 |---|---|
 | `void onRecord(KafkaDispatchContext<?> ctx)` | After deserialization, before `beforeDispatch` |
 | `void onSuccess(KafkaDispatchContext<?> ctx)` | After a successful dispatch |
 | `void onError(KafkaDispatchContext<?> ctx, Throwable error)` | On any dispatch failure |
+| `void onRecordCompleted(KafkaConsumerCompletedEvent event, KafkaConsumerRecordView record)` | Once per received record, when its disposition is final — see [Record completion](#record-completion-onrecordcompleted) |
 
 Async handlers can change the outcome.
 
@@ -733,39 +776,135 @@ value, rawEvidence, headers, timestamp, retryCount, filtered, attributes)` — w
 `withFiltered(boolean)` and `withAttribute(String, Object)`. `retryCount` is 0-based and counts
 Kafka-native redeliveries, so a retry-topic routing decision in `recoverError` can read it.
 
-### `KafkaConsumerCaptureHook` (multibinding)
+### Record completion: `onRecordCompleted`
 
-Observer-only boundary hooks, ordered by `OrderedExtension`. They fire **after** the irrevocable
-disposition decision and can never change commit, retry, or delivery; a thrown exception is
-swallowed.
+`KafkaConsumerInterceptor.onRecordCompleted` is the one place that sees **every** record the
+consumer received, with its final outcome. It is a sync observer like the three above, on the same
+interceptor multibinding and in the same order.
 
 ```java
-public interface KafkaConsumerCaptureHook extends OrderedExtension {
-    default void onTerminalOutcome(KafkaDispatchContext<?> ctx, KafkaTerminalOutcome outcome) {}
-    default void onPreDispatchTerminalOutcome(
-            KafkaRawRecordDisposition disposition, KafkaTerminalOutcome outcome) {}
+public interface KafkaConsumerInterceptor extends OrderedExtension {
+    default void onRecordCompleted(
+            KafkaConsumerCompletedEvent event, KafkaConsumerRecordView record) {}
+}
+
+public record KafkaConsumerCompletedEvent(
+        KafkaConsumerRecordIdentity identity, KafkaTerminalOutcome outcome) {}
+
+public record KafkaConsumerRecordIdentity(
+        String consumerName, String topic, int partition, long offset,
+        long timestamp, int retryCount) {}
+
+public interface KafkaConsumerRecordView {
+    KafkaConsumerRecordIdentity identity();
+    @Nullable String key();
+    KafkaRecordHeaders headers();    // every header as received: ordered, duplicates, raw bytes
+    PayloadSource value();           // the broker's array, NOT copied; absent for a tombstone
 }
 ```
 
-`onTerminalOutcome` fires exactly once per dispatched record, at the terminal point after all async
-work — DLQ publish, seek, recovery. `onPreDispatchTerminalOutcome` covers records that never reach
-dispatch, such as a filtered record, and receives `KafkaRawRecordDisposition` —
-`(consumerName, topic, partition, offset, key, headers, rawEvidence, timestamp, retryCount)` —
-instead of a dispatch context.
+**When it runs.** Exactly once per delivered record, when the disposition is final and all async
+work — DLQ publish, seek, recovery, `afterDispatch` — has settled. It runs on every path: filtered
+before deserialization, rejected by a filter that throws, no matching route, deserialization
+failure, filtered or failed in `beforeDispatch`, dispatched, recovered, or handed to the error
+strategy. A record redelivered for a retry completes once per delivery; `retryCount` is the number
+of retries before that attempt. The one limit: an asynchronous interceptor or handler future that
+never completes, or a throw from inside an asynchronous continuation, leaves the record without a
+completion.
+
+**Observer only.** The decision is already made. The callback cannot change filtering, dispatch,
+commit, retry, or dead-lettering.
+
+**Threading.** `onRecordCompleted` may run on **any thread**, and **concurrently for different
+records**. It runs on whichever thread settles the record's last future: the consumer's context, a
+handler's or interceptor's thread, or the producer's context on a dead-letter path. Implementations
+must be thread-safe.
+
+**The event is facts only.** `KafkaConsumerCompletedEvent` has no key, headers, value, or dispatch
+context, so it can be logged or passed to a metrics observer as is.
+
+**The view is framework-owned.** The consumer builds it once per record, before the
+`KafkaRecordFilter`, route resolution, deserialization, and the interceptor chain:
+
+- `identity()`, `key()` and `headers()` are the record's own. A `beforeDispatch` that returns a
+  different `KafkaDispatchContext`, or a filter that edits the header map it is given, changes none
+  of them.
+- `event.identity()` and `record.identity()` are the same instance.
+- A consumer with no interceptors builds no view. The headers are still extracted once per record,
+  because the filter and the deserializers need the header map.
+
+**`headers()` is the wire form.** It returns a `KafkaRecordHeaders`: every header in the order the
+broker delivered it, with repeated keys, `null` values, and the exact value bytes. It is an
+immutable snapshot. See [`KafkaRecordHeaders`](#kafkarecordheaders-and-kafkarecordheader) for the
+lookups.
+
+```java
+KafkaRecordHeaders headers = record.headers();
+
+// The last header for a key. Empty only when the key is absent.
+String traceId = headers.lastHeader("trace-id")
+        .map(KafkaRecordHeader::valueAsUtf8)   // null for a null value; throws on invalid UTF-8
+        .orElse(null);
+
+// Every header for a repeated key, in order, as raw bytes.
+for (KafkaRecordHeader hop : headers.headers("x-forwarded-by")) {
+    byte[] raw = hop.value();                  // a copy; null when the header has no value
+}
+
+// The text map that filters, deserializers and handlers receive. Lossy.
+Map<String, String> text = headers.asMap();
+```
+
+`asMap()` is a **lossy text projection** for code that needs a `Map<String, String>`: a repeated
+key keeps only its last non-`null` value, a header with a `null` value is left out, and every value
+is decoded as UTF-8 with malformed bytes replaced, so a binary value cannot be recovered from it.
+
+**`value()` is not a snapshot.** It is the array the broker delivered, **uncopied**. The
+deserializer, router property matching and — for a `byte[]` consumer — the handler were given the
+same array, so an in-place edit by any of them is visible through `value()`. The framework never
+copies a record value. Copy the bytes before retaining them past the callback, and do not treat
+them as proof of the wire content when application code may edit the array.
+`KafkaDispatchContext.rawEvidence()` is the same kind of no-copy view.
+
+| Need | Callback |
+|---|---|
+| The **deserialized value** of records that reached dispatch | `onRecord` |
+| **Every** record, its **outcome**, and its **raw form** (key, headers, value bytes) | `onRecordCompleted` |
+
+`onRecord` never sees a record that was filtered before deserialization, matched no route, or failed
+to deserialize, and it runs before the outcome is known.
+
+```java
+@Override
+public void onRecordCompleted(KafkaConsumerCompletedEvent event, KafkaConsumerRecordView record) {
+    KafkaConsumerRecordIdentity id = event.identity();
+    completions.merge(event.outcome(), 1L, Long::sum);   // a ConcurrentHashMap: thread-safe
+    if (event.outcome() == KafkaTerminalOutcome.DLQ_FAILED) {
+        log.warn("Lost record {}-{}@{} key={}",
+                id.topic(), id.partition(), id.offset(), record.key());
+    }
+}
+```
 
 | `KafkaTerminalOutcome` | Meaning |
 |---|---|
 | `SUCCESS` | The handler completed successfully |
-| `SKIP` | Skipped per `ErrorStrategy.SKIP`, or filtered pre-dispatch |
+| `SKIP` | Skipped per `ErrorStrategy.SKIP`, filtered, or no matching route |
 | `RECOVERED` | An interceptor's `recoverError` handled the error |
 | `RETRY_SCHEDULED` | Consumer paused, offset not committed, Kafka will redeliver |
 | `DLQ_PUBLISHED` | Forwarded to the dead-letter topic |
 | `DLQ_FAILED` | The DLQ publish failed; the offset was not committed |
 | `ERROR_HANDLER_FAILED` | The error handler's own future failed; the record's disposition is unknown |
 
-`KafkaDispatchContext.rawEvidence()` and `KafkaRawRecordDisposition.rawEvidence()` return a
-`PayloadSource` — a **no-copy** buffered view of the record bytes. A hook must copy before retaining
-it across threads.
+> **Breaking change (core 0.3.0).** The separate consumer capture-hook SPI, its terminal and
+> raw-disposition records, and its `Set` multibinding are removed. Implement
+> `KafkaConsumerInterceptor.onRecordCompleted` and contribute the interceptor into
+> `Set<KafkaConsumerInterceptor>` instead. Read coordinates and `retryCount` from
+> `event.identity()`, and the key, headers and raw value from the `KafkaConsumerRecordView`;
+> `record.headers().asMap()` gives the headers as a `Map<String, String>`. The
+> dispatch context is no longer delivered at completion. The record value is no longer cloned for
+> observers. `onRecord`, `onSuccess` and `onError` now also swallow `AssertionError` and
+> `LinkageError`.
 
 ### `KafkaProducerCaptureHook` (multibinding)
 
@@ -807,8 +946,7 @@ default accepts every producer interface.
 |---|---|---|
 | `Set<KafkaConsumerBinding<?>>` | — | Model-2 declarative bindings |
 | `Set<Object>` | `@KafkaConsumers` | Model-3 router `Class<?>` literals and model-4 handler instances |
-| `Set<KafkaConsumerInterceptor>` | — | Consumer pipeline interceptors |
-| `Set<KafkaConsumerCaptureHook>` | — | Consumer boundary capture hooks |
+| `Set<KafkaConsumerInterceptor>` | — | Consumer pipeline interceptors, including record-completion observers |
 | `Set<KafkaProducerCaptureHook>` | — | Producer boundary capture hooks |
 | `Set<KafkaSerdeProvider>` | — | Value-format providers |
 

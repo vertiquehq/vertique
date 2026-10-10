@@ -27,15 +27,13 @@ import org.junit.jupiter.api.Test;
  * {@code PipelineToolInvoker.prepare()} makes on stage 2 of the fixed request-time pipeline for a
  * real generated invoker.
  *
- * <p><strong>This fixture matrix was newly authored for this feature — it is NOT the published
- * INP-001 cross-transport fixture set the frozen contract text for TP-002 names.</strong> That
- * corpus does not exist: no resource, class, or test-jar anywhere in this repository is a published
- * cross-transport fixture set, and no dependency path makes one reachable from
- * {@code vertique-mcp-server}. The existing {@code *Parity*} tests are per-module, not a shared
- * corpus. Rather than fabricate one and call it "the published set" — which would make a parity
- * claim false — this test proves the substantive half that IS provable with what exists: that the
- * production traversal engine propagates {@link InputLocation#PAYLOAD}, never {@code BODY}, at
- * every depth of a nested/collection/map object graph.
+ * <p><strong>This fixture matrix is authored locally for this module.</strong> It is separate from
+ * the shared cross-transport fixture corpus in {@code vertique-input-processing}'s attached
+ * test-jar, which {@code vertique-mcp-server} consumes at test scope only (in-reactor, not a
+ * published artifact) and which {@code McpCrossTransportInputParityTest} uses for the REST parity
+ * claim. This test proves the half that does not need that corpus: that the production traversal
+ * engine propagates {@link InputLocation#PAYLOAD}, never {@code BODY}, at every depth of a
+ * nested/collection/map object graph.
  *
  * <p><strong>What this test proves.</strong> {@link InputLocation#PAYLOAD} is the {@link
  * InputValueContext#location()} every {@link Sanitizer} invocation observes, at all twelve leaf
@@ -48,8 +46,8 @@ import org.junit.jupiter.api.Test;
  *
  * <p><strong>What this test does NOT prove.</strong> Cross-transport parity against REST is not
  * established here and is not claimed anywhere in this class — no REST-side counterpart runs in
- * this test, and this fixture matrix has no relationship to any published corpus. That parity claim
- * remains unproven and is tracked separately from this task.
+ * this test, and this fixture matrix is not the shared corpus. That parity claim is made by
+ * {@code McpCrossTransportInputParityTest}, not by this class.
  */
 class McpInputPolicyFixtureMatrixTest {
 

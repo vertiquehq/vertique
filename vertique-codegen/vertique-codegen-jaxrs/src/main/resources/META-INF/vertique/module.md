@@ -33,7 +33,7 @@ responsibility for `@RestClient`, `@KafkaListener`/`@KafkaSource`, and `DelayedJ
 
 `JaxRsPipelineProcessor` runs in four logical steps per build:
 
-1. **Discover** — collects concrete (non-abstract, non-interface) classes with an effective `@Path` — direct on the class, or on any transitively implemented interface, including an interface a superclass implements. A class that inherits `@Path` only from a superclass's class-level annotation is not a candidate: it gets no descriptor and keeps the reflective runtime path, which serves the same routes.
+1. **Discover** — collects concrete (non-abstract, non-interface) classes with an effective `@Path` — direct on the class, on a class in its superclass chain, or on any transitively implemented interface, including an interface a superclass implements. A concrete subclass of an abstract `@Path` base is therefore a candidate: it gets a descriptor, execution plans, validation, and — with an `@Inject` constructor and no `@NoAutoWire` — an auto-wired binding. Annotate a subclass the application registers by hand with `@NoAutoWire` so it is not registered twice.
 2. **Resolve** — builds an `EffectiveResourceContract` for each candidate applying the precedence rule: direct annotations → superclass chain → BFS interfaces (see "EffectiveJaxRsContractResolver" below). The candidate methods are the ones declared along the superclass chain plus the interface `default` methods the class inherits without overriding (see "Interface-Declared Contracts" below).
 3. **Validate** — all five validators run against each resolved contract.
 4. **Emit** — four artifact types are written when applicable: the `GeneratedJaxRsResourcesModule` Dagger module, `{Resource}_JaxRsDescriptor` companions, `{Bean}_BeanParamModel` companions, and `{Resource}_{method}_{idx}_ExecutionPlan` companions.
@@ -503,7 +503,7 @@ None at runtime. `vertique-codegen-jaxrs` is a compile-time annotation processor
 | `swagger-annotations-jakarta` | compile | `@io.swagger.v3.oas.annotations.Operation`, whose `operationId` the processor reads by fully qualified name |
 | `com.palantir.javapoet:javapoet` | compile (transitive) | Source code emission, through `vertique-codegen-core` |
 
-Other test-only dependencies: `vertique-codegen-test` (compilation harness) and the `vertique-input-processing` test-jar (input-policy fixture stubs).
+Other test-only dependencies: `vertique-codegen-test` (compilation harness) and the in-reactor-only `vertique-input-processing` test JAR (input-policy fixture stubs; not a published artifact).
 
 ---
 

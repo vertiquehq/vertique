@@ -8,7 +8,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * The root (depth-1) record of {@link CrossTransportInputCorpus}'s published fixture graph: the same
+ * The root (depth-1) record of {@link CrossTransportInputCorpus}'s shared fixture graph: the same
  * scalar/list/map leaf shape as {@link CrossTransportFixtureLevel2}, plus one nested {@code Level2} —
  * so the corpus exercises record, collection, map, and nested-record traversal in a single shared
  * shape both REST and MCP materialize.

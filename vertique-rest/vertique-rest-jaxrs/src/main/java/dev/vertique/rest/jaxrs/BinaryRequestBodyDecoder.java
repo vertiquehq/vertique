@@ -7,6 +7,7 @@ import dev.vertique.rest.core.request.RequestBodyDecoder;
 import dev.vertique.rest.core.request.RequestValue;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.ext.web.RoutingContext;
+import java.util.Locale;
 
 /**
  * {@link RequestBodyDecoder} that handles binary ({@code application/octet-stream}) request bodies.
@@ -35,7 +36,7 @@ class BinaryRequestBodyDecoder implements RequestBodyDecoder {
     @Override
     public boolean canDecode(Class<?> targetType, String contentType) {
         return contentType != null
-                && contentType.toLowerCase().startsWith("application/octet-stream")
+                && contentType.toLowerCase(Locale.ROOT).startsWith("application/octet-stream")
                 && (targetType == Buffer.class || targetType == byte[].class);
     }
 

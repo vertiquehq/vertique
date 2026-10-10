@@ -156,16 +156,33 @@ request to any instance. Every request is admitted through the fixed pipeline be
   therefore rejects **every** present `Origin` rather than imposing no restriction — the MCP HTTP
   transport spec requires Origin validation specifically so a locally bound, unconfigured MCP server
   is not reachable from an arbitrary browser page or a DNS-rebound name. A request with no `Origin`
-  header (every non-browser client) is never origin-rejected.
+  header (every non-browser client) is never origin-rejected. The comparison is literal, so every
+  `mcp.allowedOrigins` entry must be an exact serialized origin as a browser sends it:
+  `scheme://host[:port]` in lowercase, with no path, trailing slash, query, fragment, userinfo, wildcard
+  or default port (`https://app.example.com`, `http://localhost:8080`). An entry of any other shape can
+  never match, so startup fails with a `ConfigurationException` naming the offending entry rather than
+  silently denying the intended caller; entries are never rewritten or normalized. The literal `null`
+  that browsers send for opaque origins (sandboxed frames, `data:` and `file:` pages) is never
+  allowlistable, because allowing it would admit every such page.
 - **Content-Type** — mandatory: every admitted request is a `POST` carrying the protocol's required
   JSON-RPC body, so an absent `Content-Type` is rejected with HTTP `415` exactly like a present one
   whose media type (parameters such as `; charset=utf-8` ignored) is not `application/json`. Admitting
   an absent `Content-Type` would reopen the CORS simple-request path (a cross-origin `Blob` with an
   empty type, or `navigator.sendBeacon`, both send none).
-- **Accept** — a request that carries an `Accept` admitting none of `application/json`,
-  `text/event-stream`, `application/*`, or `*/*` is rejected with HTTP `406`. A request with no
-  `Accept` header is never media-rejected. Discovery always answers `application/json`, so a client
-  that accepts `application/json`, `text/event-stream`, or both receives the JSON discovery result.
+- **Accept** — a request with no `Accept` header is never media-rejected. A present `Accept` is
+  parsed by the shared quote-aware header parser of `vertique-rest-core` and admitted only when it
+  makes `application/json` or `text/event-stream` acceptable, judged per type by the most specific
+  compatible entry, so `application/json`, `text/event-stream`, `application/*`, `text/*` and
+  `*/*` can admit. Otherwise (including a blank header) the request is rejected with HTTP `406`.
+  An entry with `q=0` does not make its type acceptable. A comma or semicolon inside a quoted
+  parameter value (`profile="a,b"`) is part of that value, not an entry or parameter separator. A
+  malformed entry is skipped and never admits anything: an unterminated quoted string, characters
+  after a closing quote, an empty value, or a `q` that is not a valid qvalue (`0`, `1`, `0.xxx` or
+  `1.000`, at most three decimals — a quoted, negative, over-precise or above-1 `q` is malformed and
+  is not clamped or read as `1`). Only the first 50 non-empty entries are considered, so a type
+  listed after them is not admitted. Admission applies only the acceptable-or-not decision, not
+  q-value preference ranking. Discovery always answers `application/json`, so a client that accepts
+  `application/json`, `text/event-stream`, or both receives the JSON discovery result.
 - **Body limit** — a body larger than `http.maxBodySize` is a bounded HTTP failure, not a protocol
   result.
 - **Session headers** — the stateless protocol has no session concept, so an unsupported session
@@ -1089,8 +1106,8 @@ invoker directly: no reflection, no scanning, the same `McpToolInvoker#prepare`/
 tool name, an unresolved name, and a denied decision all settle through the exact same code path
 `tools/list` uses for an invalid cursor: byte-identical `-32602`/`Invalid params` JSON, the same HTTP
 status, no tool ever invoked. This holds regardless of which of the three causes produced it — an
-unknown name and a `@DenyAll` tool are externally indistinguishable, matching the `tools/list`
-guarantee above.
+unknown name and a `@DenyAll` tool are protocol-equivalent (same JSON-RPC code, message and HTTP
+status), matching the `tools/list` guarantee above.
 
 The bytes are identical, but the *path* to them used to differ: an unknown name resolved from a plain
 registry-map lookup, while a denied name additionally traversed `McpPolicyEnforcer#decide`. An
@@ -1106,12 +1123,18 @@ whose latency an unknown name's synthetic `@DenyAll` evaluation never pays. A ca
 side channel may therefore distinguish a denied `RESTRICTED` tool name from an unknown name, even
 though the response bytes remain identical. Closing that residual gap would require deliberately
 padding the fast path's latency to match the slowest configured decision point — a designed
-latency-padding feature, not a documentation fix — and is tracked as an accepted residual risk
-(issue #420) rather than claimed as delivered here. The terminal event recorded for an unresolved
-name always carries the bounded `UNKNOWN` placeholder, never the caller-supplied string — an
-unresolved name touches no real
-`McpToolDescriptor`, so nothing would otherwise bound it before it reached every lifecycle observer
-and listener as internal telemetry except the wire's own very large string limit.
+latency-padding feature, not a documentation fix — and is an accepted residual risk rather than a
+delivered guarantee.
+
+**If tool names must stay confidential, do not rely on timing.** When timing equivalence matters for
+a deployment, publish opaque tool identifiers (names that carry no meaning an outsider could guess or
+enumerate) or use precomputed authorization (decide from already-resolved caller state, with no remote
+call on the denial path) rather than expecting the server to pad latency.
+
+The terminal event recorded for an unresolved name always carries the bounded `UNKNOWN` placeholder,
+never the caller-supplied string — an unresolved name touches no real `McpToolDescriptor`, so nothing
+would otherwise bound it before it reached every lifecycle observer and listener as internal
+telemetry except the wire's own very large string limit.
 
 **SSE selection precedes invocation, unconditionally.** Only once a call is both known and
 authorized does the dispatcher select request-scoped SSE (`Content-Type: text/event-stream`,
@@ -1208,12 +1231,12 @@ The mapping from a tool's declared access to its effective authorization result 
 | Tool declaration | Coarse gate | Fine gate | Effective result |
 |---|---|---|---|
 | Unannotated or `@PermitAll` | None | None | Public to anonymous and authenticated callers; no decision event |
-| `@DenyAll` | Static deny | None | Excluded from `tools/list`; a direct `tools/call` does not invoke it and returns the externally indistinguishable unknown-or-unauthorized `-32602` response |
+| `@DenyAll` | Static deny | None | Excluded from `tools/list`; a direct `tools/call` does not invoke it and returns the protocol-equivalent unknown-or-unauthorized `-32602` response |
 | `@RolesAllowed` | Direct role claim check | None | Permitted when the authenticated caller has an allowed role |
 | `@RequiresAction` | Authenticated caller required | Existing core `Authorizer` | Permitted when the role-to-policy-to-action decision permits |
 | `@RolesAllowed` plus `@RequiresAction` | Direct role claim check | Existing core `Authorizer` | Permitted only when both gates permit |
 
-Denial and absence are externally indistinguishable — an unknown tool name and a tool the caller may
+Denial and absence are protocol-equivalent — an unknown tool name and a tool the caller may
 not use both resolve to the same `-32602` response, with no detail identifying which — and a denied
 tool is never invoked. Every restrictive evaluation emits exactly one combined
 `AuthorizationDecisionEvent`.
@@ -1538,7 +1561,7 @@ keys, not rejected.
 | `mcp.instructions` | absent | Optional server instructions |
 | `mcp.authenticationScheme` | absent | Optional `RouteAuthHandler` scheme name |
 | `mcp.jsonProfile` | absent | MCP boundary default profile id (validated even when disabled) |
-| `mcp.allowedOrigins` | empty | DNS-rebinding allowlist; empty denies mismatched Origin |
+| `mcp.allowedOrigins` | empty | DNS-rebinding allowlist of exact `scheme://host[:port]` origins; empty denies mismatched Origin; any other entry shape fails startup |
 | `mcp.outputMaxBytes` | `2097152` | Shared response/output byte cap |
 | `mcp.ingressMaxTokens` | `65536` | Ingress JSON-RPC parser-token budget (1024–262144) |
 | `mcp.outputMaxTokens` | `65536` | Structured-output reparse token budget (1024–262144) |

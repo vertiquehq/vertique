@@ -33,6 +33,7 @@ import org.junit.jupiter.api.Test;
  * <ul>
  *   <li>Concrete class with a direct {@code @Path} — found in semantic set.</li>
  *   <li>Concrete class implementing a {@code @Path} interface — found in semantic set.</li>
+ *   <li>Concrete class inheriting {@code @Path} only from a superclass — found in semantic set.</li>
  *   <li>Abstract class with {@code @Path} — excluded from semantic set.</li>
  *   <li>Interface with {@code @Path} — excluded from semantic set.</li>
  *   <li>Concrete class with direct {@code @Path} but no {@code @Inject} constructor — in semantic
@@ -111,6 +112,118 @@ class JaxRsCandidateScannerTest {
             assertTrue(
                     semanticNames(result).contains("ItemsResource"),
                     "ItemsResource (no direct @Path, implements @Path interface) should be in the semantic set");
+        }
+    }
+
+    @Nested
+    @DisplayName("semantic candidates — @Path inherited from a superclass")
+    class SuperclassInheritedPath {
+
+        private static final String BASE = """
+                package dev.vertique.test;
+
+                import jakarta.ws.rs.GET;
+                import jakarta.ws.rs.Path;
+
+                @Path("/base")
+                public abstract class BaseResource {
+                    @GET
+                    public String get() { return ""; }
+                }
+                """;
+
+        @Test
+        @DisplayName("concrete subclass of an abstract @Path class — in semantic set and DI set")
+        void subclassOfAbstractPathBase_inBothSets() {
+            var result = ProcessorTestHarness.run(
+                    new ScannerProbe(),
+                    SourceFiles.inline("dev.vertique.test.BaseResource", BASE),
+                    SourceFiles.inline("dev.vertique.test.DerivedResource", """
+                            package dev.vertique.test;
+
+                            import jakarta.inject.Inject;
+
+                            public class DerivedResource extends BaseResource {
+                                @Inject
+                                public DerivedResource() {}
+                            }
+                            """));
+
+            result.assertSuccess();
+            assertTrue(
+                    semanticNames(result).contains("DerivedResource"),
+                    "DerivedResource inherits @Path from its superclass and should be in the semantic set");
+            assertTrue(
+                    diNames(result).contains("DerivedResource"),
+                    "DerivedResource has an @Inject constructor and should be in the DI set");
+            assertFalse(
+                    semanticNames(result).contains("BaseResource"), "the abstract base itself is never a candidate");
+        }
+
+        @Test
+        @DisplayName("@Path two levels up the superclass chain — in semantic set")
+        void pathTwoLevelsUp_inSemanticSet() {
+            var result = ProcessorTestHarness.run(
+                    new ScannerProbe(),
+                    SourceFiles.inline("dev.vertique.test.BaseResource", BASE),
+                    SourceFiles.inline("dev.vertique.test.MiddleResource", """
+                            package dev.vertique.test;
+
+                            public abstract class MiddleResource extends BaseResource {}
+                            """),
+                    SourceFiles.inline("dev.vertique.test.LeafResource", """
+                            package dev.vertique.test;
+
+                            public class LeafResource extends MiddleResource {}
+                            """));
+
+            result.assertSuccess();
+            assertTrue(semanticNames(result).contains("LeafResource"));
+            assertFalse(diNames(result).contains("LeafResource"), "no @Inject constructor, so semantic but NOT DI");
+        }
+
+        @Test
+        @DisplayName("@NoAutoWire subclass of a @Path base — semantic but NOT DI")
+        void noAutoWireSubclass_semanticButNotDi() {
+            var result = ProcessorTestHarness.run(
+                    new ScannerProbe(),
+                    SourceFiles.inline("dev.vertique.test.BaseResource", BASE),
+                    SourceFiles.inline("dev.vertique.test.ManualDerivedResource", """
+                            package dev.vertique.test;
+
+                            import dev.vertique.codegen.NoAutoWire;
+                            import jakarta.inject.Inject;
+
+                            @NoAutoWire
+                            public class ManualDerivedResource extends BaseResource {
+                                @Inject
+                                public ManualDerivedResource() {}
+                            }
+                            """));
+
+            result.assertSuccess();
+            assertTrue(semanticNames(result).contains("ManualDerivedResource"));
+            assertFalse(diNames(result).contains("ManualDerivedResource"));
+        }
+
+        @Test
+        @DisplayName("subclass of a class with no @Path anywhere in its chain — not a candidate")
+        void subclassWithoutAnyPath_notCandidate() {
+            var result = ProcessorTestHarness.run(
+                    new ScannerProbe(),
+                    SourceFiles.inline("dev.vertique.test.PlainBase", """
+                            package dev.vertique.test;
+
+                            public abstract class PlainBase {}
+                            """),
+                    SourceFiles.inline("dev.vertique.test.PlainDerived", """
+                            package dev.vertique.test;
+
+                            public class PlainDerived extends PlainBase {}
+                            """));
+
+            result.assertSuccess();
+            assertFalse(semanticNames(result).contains("PlainDerived"));
         }
     }
 
