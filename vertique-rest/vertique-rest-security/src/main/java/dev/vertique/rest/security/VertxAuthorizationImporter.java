@@ -75,7 +75,9 @@ import lombok.extern.slf4j.Slf4j;
  *       client-safe {@value #UNAVAILABLE_MESSAGE} and deliberately does <em>not</em> name the
  *       offending provider — that message is what reaches the caller as the 503 problem detail. The
  *       provider id is recorded server-side instead, in exactly one ERROR log event per failed
- *       import. No partially imported claim is ever observable.</li>
+ *       import. The one exception is an import failed only because the application's resilience
+ *       runtime had already closed at shutdown: no provider misbehaved, so it is logged at INFO.
+ *       No partially imported claim is ever observable.</li>
  *   <li><strong>Fail-closed mapping.</strong> Only resource-free {@link RoleBasedAuthorization} and
  *       {@link PermissionBasedAuthorization} grants with a non-blank value map to an
  *       {@link AuthorityClaim}. Everything else — wildcard permissions, {@code And}/{@code Or}/

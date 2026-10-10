@@ -384,7 +384,8 @@ fall back on (an MCP `tools/list` scan) and leaves a REST or WebSocket request o
 timeout-only pipeline of the application's `Resilience` runtime, built once per gate from the
 configured deadline. A gate whose future has already settled when it is returned is not timed at all,
 so an in-memory decision point costs the runtime nothing; a pending gate settles on the request's
-Vert.x context and is reported to any installed `ResilienceObserver` as a timed-out execution. The
+Vert.x context and is reported to any installed `ResilienceObserver` as an execution — a timed-out one when
+the deadline elapses, a successful one when the gate answers in time. The
 timeout does not cancel the gate's own work. A policy client that fails with its own plain
 `TimeoutException` is denied the same way as a gate that exceeded the deadline. Exceeding the deadline fails closed exactly like any
 other gate contract violation: `AuthzReasonCodes.INTERNAL_AUTHZ_ERROR`, one emitted
@@ -653,7 +654,8 @@ Execution contract:
 - **Generic client detail, provider id server-side.** The `UnavailableException` behind that 503
   carries the fixed detail `Authorization is temporarily unavailable`, so the response never
   discloses which provider failed. The failing provider id and its cause are recorded instead in
-  exactly one ERROR log event per failed import, emitted by the importer.
+  exactly one ERROR log event per failed import, emitted by the importer. An import that failed only
+  because the `Resilience` runtime had closed at shutdown is logged at INFO instead.
 - **Same-instance return on an empty import.** When the import contributes no claim — every
   provider excluded, or providers ran but granted nothing mappable — the base `AuthorizationClaims`
   instance is carried through unchanged rather than copied.

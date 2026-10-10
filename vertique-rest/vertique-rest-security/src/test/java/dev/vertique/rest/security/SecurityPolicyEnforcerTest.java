@@ -1092,7 +1092,7 @@ class SecurityPolicyEnforcerTest {
         /** Comfortably larger than the deadline; the decisive signal is that a deny arrives at all. */
         private static final long DENY_WITHIN_MS = 3_000L;
 
-        private final List<AuthorizationDecisionEvent> events = new ArrayList<>();
+        private final List<AuthorizationDecisionEvent> events = new java.util.concurrent.CopyOnWriteArrayList<>();
 
         private SecurityPolicyEnforcer enforcer(AuthorizationDecisionPoint dp, Optional<Authorizer> authorizer) {
             return enforcer(dp, authorizer, HUNG_GATE_DEADLINE_MS, TestResilience.shared());
@@ -1297,6 +1297,82 @@ class SecurityPolicyEnforcerTest {
                 constrainedHandler(enforcer).handle(rc);
 
                 verify(rc, timeout(DENY_WITHIN_MS)).fail(403);
+                assertEquals(1, events.size());
+            } finally {
+                vertx.close().toCompletionStage().toCompletableFuture().get(DENY_WITHIN_MS, TimeUnit.MILLISECONDS);
+            }
+        }
+
+        @Test
+        @DisplayName("a pending role/scope gate that permits before the deadline still permits: next() once")
+        void pendingRoleScopeGateThatPermitsInTimeStillPermits() {
+            io.vertx.core.Promise<AuthorizationDecision> pending = io.vertx.core.Promise.promise();
+            RoutingContext rc = constrainedRoute();
+            constrainedHandler(
+                            enforcer(request -> pending.future(), Optional.empty(), 60_000L, TestResilience.shared()))
+                    .handle(rc);
+
+            pending.complete(AuthorizationDecision.permit(AuthzReasonCodes.PERMITTED));
+
+            verify(rc, timeout(DENY_WITHIN_MS)).next();
+            verify(rc, never()).fail(anyInt());
+            assertEquals(1, events.size());
+            assertTrue(events.get(0).decision().permitted());
+        }
+
+        @Test
+        @DisplayName("a pending action gate that permits before the deadline still permits: next() once, "
+                + "action evaluated")
+        void pendingActionGateThatPermitsInTimeStillPermits() {
+            AuthorizationDecisionPoint permit =
+                    request -> Future.succeededFuture(AuthorizationDecision.permit(AuthzReasonCodes.PERMITTED));
+            io.vertx.core.Promise<AuthorizationDecision> pending = io.vertx.core.Promise.promise();
+            Authorizer pendingAuthorizer = new Authorizer() {
+                @Override
+                public Future<AuthorizationDecision> authorize(AuthorizationRequest request) {
+                    return pending.future();
+                }
+
+                @Override
+                public Future<AuthorizationDecision> authorize(
+                        SecurityContext ctx, ActionRef action, ResourceRef resource) {
+                    throw new UnsupportedOperationException("the handler uses the request overload only");
+                }
+            };
+            RoutingContext rc = constrainedRoute();
+            enforcer(permit, Optional.of(pendingAuthorizer), 60_000L, TestResilience.shared())
+                    .createHandler(
+                            new SecurityPolicy.Constrained(List.of("admin"), List.of(), false),
+                            Optional.of(ActionRef.parse("orders.order.read")))
+                    .handle(rc);
+
+            pending.complete(AuthorizationDecision.permit(AuthzReasonCodes.PERMITTED));
+
+            verify(rc, timeout(DENY_WITHIN_MS)).next();
+            verify(rc, never()).fail(anyInt());
+            assertEquals(1, events.size());
+            assertTrue(events.get(0).decision().permitted());
+            assertEquals(Boolean.TRUE, events.get(0).decision().safeAttributes().get("actionEvaluated"));
+        }
+
+        @Test
+        @DisplayName("a handler gate pending when the runtime closes is denied once; a late permit changes nothing")
+        void handlerGatePendingWhenTheRuntimeClosesIsDeniedOnce() throws Exception {
+            io.vertx.core.Vertx vertx = io.vertx.core.Vertx.vertx();
+            try {
+                Resilience resilience = Resilience.create(vertx);
+                io.vertx.core.Promise<AuthorizationDecision> pending = io.vertx.core.Promise.promise();
+                RoutingContext rc = constrainedRoute();
+                constrainedHandler(enforcer(request -> pending.future(), Optional.empty(), 60_000L, resilience))
+                        .handle(rc);
+
+                resilience.close().toCompletionStage().toCompletableFuture().get(DENY_WITHIN_MS, TimeUnit.MILLISECONDS);
+                verify(rc, timeout(DENY_WITHIN_MS)).fail(403);
+                pending.complete(AuthorizationDecision.permit(AuthzReasonCodes.PERMITTED));
+                Thread.sleep(200L);
+
+                verify(rc, times(1)).fail(403);
+                verify(rc, never()).next();
                 assertEquals(1, events.size());
             } finally {
                 vertx.close().toCompletionStage().toCompletableFuture().get(DENY_WITHIN_MS, TimeUnit.MILLISECONDS);

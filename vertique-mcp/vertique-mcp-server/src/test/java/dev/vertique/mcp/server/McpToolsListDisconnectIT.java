@@ -242,6 +242,9 @@ public class McpToolsListDisconnectIT {
     private static final class HeldDecisionPoint implements AuthorizationDecisionPoint {
         private final AtomicInteger calls = new AtomicInteger();
         private final CompletableFuture<Void> held = new CompletableFuture<>();
+        /** More context hops than the release can possibly set in motion. */
+        private static final int DRAIN_HOPS = 32;
+
         private final CompletableFuture<Void> lateDecisionHandlerDrained = new CompletableFuture<>();
         private volatile Promise<AuthorizationDecision> promise;
         private volatile Context decisionContext;
@@ -268,12 +271,23 @@ public class McpToolsListDisconnectIT {
 
         void releaseWithPermit() {
             promise.complete(AuthorizationDecision.permit("PERMITTED"));
-            // Completion first schedules SecurityPolicyEnforcer's continuation on this context. The
-            // first marker runs after that work; the second runs after any dispatcher task that first
-            // marker's predecessor queued. This gives the late first-decision handler a real chance to
-            // start another authorization decision without a wall-clock wait or poll.
-            decisionContext.runOnContext(
-                    ignored -> decisionContext.runOnContext(ignored2 -> lateDecisionHandlerDrained.complete(null)));
+            // Completing the held decision schedules the dispatcher's continuation on this context
+            // after a number of event-loop hops that depends on how the authorization gate is bounded
+            // (the resilience runtime settles through its own hops before the enforcer's). Drain well
+            // past that: a fixed, generous chain of context tasks, each queued by the one before, runs
+            // only after every task the release set in motion, so the late first-decision handler has
+            // had its chance to start another authorization decision without a wall-clock wait. A
+            // chain that were too short would let the "no further decision" assertion pass vacuously;
+            // disabling the scan's cancellation checks must turn this test red.
+            drain(decisionContext, DRAIN_HOPS);
+        }
+
+        private void drain(io.vertx.core.Context context, int remaining) {
+            if (remaining == 0) {
+                lateDecisionHandlerDrained.complete(null);
+                return;
+            }
+            context.runOnContext(ignored -> drain(context, remaining - 1));
         }
 
         boolean awaitLateDecisionHandler() throws Exception {

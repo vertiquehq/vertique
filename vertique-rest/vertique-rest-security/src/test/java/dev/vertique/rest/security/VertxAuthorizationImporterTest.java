@@ -572,6 +572,71 @@ class VertxAuthorizationImporterTest {
         });
     }
 
+    @Test
+    @DisplayName("A provider that is already pending when the runtime closes fails the import once; a late "
+            + "completion of that provider changes nothing")
+    void providerPendingWhenTheRuntimeClosesFailsTheImportOnce() throws Exception {
+        withObservedRuntime((resilience, observed) -> {
+            Promise<Void> held = Promise.promise();
+            AuthorizationProvider provider = new AuthorizationProvider() {
+                @Override
+                public String getId() {
+                    return "held";
+                }
+
+                @Override
+                public Future<Void> getAuthorizations(User user) {
+                    return held.future();
+                }
+            };
+            VertxAuthorizationImporter importer = new VertxAuthorizationImporter(
+                    Set.of(provider), resilience, new AuthorizationImportConfig(AWAIT_MS * 10));
+
+            Future<AuthorizationClaims> future = importer.importInto(alice(), AuthorizationClaims.empty());
+            assertFalse(future.isComplete(), "the provider is pending when the runtime closes");
+            resilience.close().toCompletionStage().toCompletableFuture().get(AWAIT_MS, TimeUnit.MILLISECONDS);
+
+            ExecutionException failure = assertThrows(
+                    ExecutionException.class,
+                    () -> future.toCompletionStage().toCompletableFuture().get(AWAIT_MS, TimeUnit.MILLISECONDS));
+            assertInstanceOf(UnavailableException.class, failure.getCause());
+            held.complete();
+            Thread.sleep(200L);
+            assertTrue(future.failed(), "a late completion of the abandoned provider must not revive the import");
+        });
+    }
+
+    @Test
+    @DisplayName("A pending provider that completes before the bound still imports its grants")
+    void pendingProviderThatCompletesInTimeStillImports() throws Exception {
+        withObservedRuntime((resilience, observed) -> {
+            Promise<Void> held = Promise.promise();
+            RecordingProvider granting = new RecordingProvider("g", RoleBasedAuthorization.create("admin"));
+            AuthorizationProvider delaying = new AuthorizationProvider() {
+                @Override
+                public String getId() {
+                    return "g";
+                }
+
+                @Override
+                public Future<Void> getAuthorizations(User user) {
+                    return held.future().compose(ignored -> granting.getAuthorizations(user));
+                }
+            };
+            VertxAuthorizationImporter importer = new VertxAuthorizationImporter(
+                    Set.of(delaying), resilience, new AuthorizationImportConfig(AWAIT_MS * 10));
+
+            Future<AuthorizationClaims> future = importer.importInto(alice(), AuthorizationClaims.empty());
+            held.complete();
+            AuthorizationClaims claims =
+                    future.toCompletionStage().toCompletableFuture().get(AWAIT_MS, TimeUnit.MILLISECONDS);
+
+            assertEquals(1, claims.claims().size());
+            assertTrue(granting.invoked.get());
+            assertTrue(observed.all().size() > 0, "the pending provider reached the runtime");
+        });
+    }
+
     // --- Atomic failure & empty set ---
 
     @Test

@@ -380,6 +380,86 @@ class SecurityPolicyEnforcerGateDeadlineTest {
         });
     }
 
+    /**
+     * A gate that is still pending when handed to the fence and permits before the deadline must still
+     * permit — the fence may only ever turn a missing answer into a deny, never a real answer. It is
+     * reported to the runtime as a successful execution.
+     */
+    @Test
+    @DisplayName("shouldPermitAPendingGateThatAnswersBeforeTheDeadline")
+    void shouldPermitAPendingGateThatAnswersBeforeTheDeadline() throws Exception {
+        withObservedRuntime((resilience, observed) -> {
+            List<AuthorizationDecisionEvent> events = new ArrayList<>();
+            Promise<AuthorizationDecision> pending = Promise.promise();
+            AuthorizationDecisionPoint dp = request -> pending.future();
+            SecurityPolicyEnforcer enforcer = new SecurityPolicyEnforcer(
+                    Optional.of(dp),
+                    Optional.empty(),
+                    Set.of(),
+                    capturingEmitter(events),
+                    NO_OP_CONTEXT_HOLDER,
+                    NO_OP_SECURITY_RUNTIME,
+                    Optional.of(RecordingAuthorizer.throwing()),
+                    Optional.of(new AuthorizationGateConfig(AWAIT_BOUND_MS * 10)),
+                    resilience);
+            SecurityPolicy.Constrained policy = new SecurityPolicy.Constrained(List.of("ops"), List.of(), false);
+
+            Future<AuthorizationDecision> result =
+                    enforcer.decide(aliceContext(Set.of("ops")), policy, Optional.empty(), TOOL_RESOURCE, MCP_ORIGIN);
+            assertThat(result.isComplete()).as("the gate is pending").isFalse();
+            pending.complete(AuthorizationDecision.permit(AuthzReasonCodes.PERMITTED));
+            AuthorizationDecision decision =
+                    result.toCompletionStage().toCompletableFuture().get(AWAIT_BOUND_MS, TimeUnit.MILLISECONDS);
+
+            assertThat(decision.permitted()).isTrue();
+            assertThat(events).hasSize(1);
+            assertThat(observed.all()).as("a pending gate reaches the runtime").isNotEmpty();
+            assertThat(observed.timeouts(0)).isZero();
+        });
+    }
+
+    /**
+     * The shutdown path that matters: the runtime closes while a gate is already pending. The pending
+     * gate is denied once, and a permit that arrives afterwards from the abandoned gate changes nothing.
+     */
+    @Test
+    @DisplayName("shouldFailClosedOnceWhenTheRuntimeClosesWhileAGateIsPending")
+    void shouldFailClosedOnceWhenTheRuntimeClosesWhileAGateIsPending() throws Exception {
+        withObservedRuntime((resilience, observed) -> {
+            List<AuthorizationDecisionEvent> events = new ArrayList<>();
+            Promise<AuthorizationDecision> pending = Promise.promise();
+            AuthorizationDecisionPoint dp = request -> pending.future();
+            SecurityPolicyEnforcer enforcer = new SecurityPolicyEnforcer(
+                    Optional.of(dp),
+                    Optional.empty(),
+                    Set.of(),
+                    capturingEmitter(events),
+                    NO_OP_CONTEXT_HOLDER,
+                    NO_OP_SECURITY_RUNTIME,
+                    Optional.of(RecordingAuthorizer.throwing()),
+                    Optional.of(new AuthorizationGateConfig(AWAIT_BOUND_MS * 10)),
+                    resilience);
+            SecurityPolicy.Constrained policy = new SecurityPolicy.Constrained(List.of("ops"), List.of(), false);
+
+            Future<AuthorizationDecision> result =
+                    enforcer.decide(aliceContext(Set.of("ops")), policy, Optional.empty(), TOOL_RESOURCE, MCP_ORIGIN);
+            assertThat(result.isComplete())
+                    .as("the gate is pending when the runtime closes")
+                    .isFalse();
+            resilience.close().toCompletionStage().toCompletableFuture().get(AWAIT_BOUND_MS, TimeUnit.MILLISECONDS);
+            AuthorizationDecision decision =
+                    result.toCompletionStage().toCompletableFuture().get(AWAIT_BOUND_MS, TimeUnit.MILLISECONDS);
+            pending.complete(AuthorizationDecision.permit(AuthzReasonCodes.PERMITTED));
+            Thread.sleep(200L);
+
+            assertThat(decision.permitted()).isFalse();
+            assertThat(decision.reasonCode()).isEqualTo(AuthzReasonCodes.INTERNAL_AUTHZ_ERROR);
+            assertThat(events)
+                    .as("a late permit from the abandoned gate emits nothing")
+                    .hasSize(1);
+        });
+    }
+
     private static AuthorizationDecision awaitDecision(SecurityPolicyEnforcer enforcer, Optional<ActionRef> action)
             throws Exception {
         SecurityPolicy.Constrained policy = new SecurityPolicy.Constrained(List.of("ops"), List.of(), false);
