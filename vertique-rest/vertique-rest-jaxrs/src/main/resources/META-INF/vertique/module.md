@@ -817,7 +817,7 @@ Parameters are matched in this order:
 | 1 | type `RequestPreconditions` | `PRECONDITIONS` | `RequestPreconditions` | Injected by type |
 | 2 | type annotated `@RequestParams` | Composite | any annotated record/class | No annotation needed on the method parameter |
 | 3 | `@BeanParam` | Composite | any class/record | Explicit form of the above |
-| 4 | `@PathParam` | `PATH` | any type with a resolvable converter | `@DefaultValue` supported; no collection shapes — a path segment is always single-valued |
+| 4 | `@PathParam` | `PATH` | any type with a resolvable converter | `@DefaultValue` supported; no collection shapes — a path parameter binds exactly one value (see [Collection parameter shapes](#collection-parameter-shapes)) |
 | 4 | `@QueryParam` / `@HeaderParam` / `@CookieParam` | `QUERY` / `HEADER` / `COOKIE` | any type with a resolvable converter, plus `List<T>`/`Set<T>`/`SortedSet<T>`/`NavigableSet<T>`/`Collection<T>`/`T[]` of one | `@DefaultValue` supported; see [Collection parameter shapes](#collection-parameter-shapes) |
 | 5 | `@FormParam` | `FORM` | `FileUpload`, `EntityPart`, `List<FileUpload>`, `List<EntityPart>`, `String`, primitives, and `List<T>`/`Set<T>`/`SortedSet<T>`/`NavigableSet<T>`/`Collection<T>`/`T[]` of a convertible text element type | `@DefaultValue` supported for text fields and collections; see [Collection parameter shapes](#collection-parameter-shapes) |
 | 6 | unannotated `List<FileUpload>` | `FILE_UPLOADS` | `List<FileUpload>` | All uploads on the request |
@@ -867,7 +867,10 @@ contract under [Collection parameter shapes](#collection-parameter-shapes).
 
 `@QueryParam`, `@HeaderParam`, `@CookieParam`, and `@FormParam` additionally accept `List<T>`, `Set<T>`,
 `SortedSet<T>`, `NavigableSet<T>`, `Collection<T>`, or `T[]` of a convertible element type; `@PathParam`
-does not — a path segment is always single-valued.
+does not. Jakarta REST defines no element-collection form for `@PathParam` beyond `List<PathSegment>`,
+which this module does not support, and a path value carries no standard separator for several
+elements, so a path parameter binds exactly one value. Declare the multiple values as a `@QueryParam`
+collection instead.
 
 - **Absent, no `@DefaultValue`** — an empty collection for the five collection interfaces; `null` for
   `T[]` (an array falls outside the Jakarta REST `@DefaultValue` collection rule).
