@@ -630,6 +630,13 @@ deliberately authored client output and keeps its body; the framework's own 415 
 `ProblemDetail` on that response before failing the context, so their content-type diagnostics still
 reach the client.
 
+**No request bytes in a problem detail.** The framework's own header-parse failures
+(`MediaType.valueOf`, `CacheControl.valueOf`, `Link.valueOf`, and the 415 of the `@Consumes` gate)
+carry a fixed message that names the failure but never the offending header value, so an oversized or
+control-character-laden header cannot be reflected into a `400` or `415` body or into a log line built
+from the message. The 415 detail names the declared types, which the server controls, and not the
+request's `Content-Type`.
+
 **Headers when the body is rebuilt.** Rebuilding the body — by this override, or by the `instance`
 enrichment every `ProblemDetail` gets — drops the headers your mapper set that describe the *octets*
 of the body it authored: `Content-Length`, `Content-Encoding`, `Content-Range`, `ETag`, and the

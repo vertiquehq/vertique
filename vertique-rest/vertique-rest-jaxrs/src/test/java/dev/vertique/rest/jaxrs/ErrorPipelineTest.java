@@ -491,8 +491,7 @@ class ErrorPipelineTest {
             ctxData.put(VertxFailureStatus.KEY, 415);
 
             Response authored = Response.status(415)
-                    .entity(ProblemDetail.of(
-                            415, "Unsupported Content-Type: text/xml; expected one of [application/json]"))
+                    .entity(ProblemDetail.of(415, "Unsupported Content-Type; expected one of [application/json]"))
                     .type("application/problem+json")
                     .build();
             Future<Response> future =
@@ -503,7 +502,7 @@ class ErrorPipelineTest {
             assertEquals(415, response.getStatus());
             ProblemDetail pd = assertInstanceOf(ProblemDetail.class, response.getEntity());
             assertEquals(
-                    "Unsupported Content-Type: text/xml; expected one of [application/json]",
+                    "Unsupported Content-Type; expected one of [application/json]",
                     pd.detail(),
                     "an authored WAE entity must survive equal-status sanitization");
         }

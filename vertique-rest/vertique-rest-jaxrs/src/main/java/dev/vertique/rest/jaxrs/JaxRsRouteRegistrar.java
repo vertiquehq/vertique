@@ -1364,9 +1364,7 @@ public class JaxRsRouteRegistrar {
             // and the REST error pipeline — the same path as ContentTypeValidationMiddleware. The
             // NotSupportedException carries an authored ProblemDetail entity so equal-status
             // sanitization (which drops synthesized ex.getMessage() details) leaves the diagnostic.
-            String message = "Unsupported Content-Type: "
-                    + (rawContentType != null ? rawContentType : "(none)")
-                    + "; expected one of " + consumes;
+            String message = "Unsupported Content-Type; expected one of " + consumes;
             Response unsupported = Response.status(415)
                     .entity(ProblemDetail.of(415, message))
                     .type("application/problem+json")

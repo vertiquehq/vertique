@@ -43,7 +43,7 @@ class SimpleLinkBuilder implements Link.Builder {
         // Parse RFC 5988 format: <uri>; param="value"; ...
         int uriEnd = s.indexOf('>');
         if (!s.startsWith("<") || uriEnd < 0) {
-            throw new IllegalArgumentException("Invalid link header format: " + link);
+            throw new IllegalArgumentException("Invalid link header format");
         }
         UriBuilder parsedUri = UriBuilder.fromUri(s.substring(1, uriEnd));
         Map<String, String> parsedParams = new LinkedHashMap<>();
@@ -51,7 +51,7 @@ class SimpleLinkBuilder implements Link.Builder {
         if (!remaining.isEmpty()) {
             List<String> parts = HeaderElement.splitOutsideQuotes(remaining, ';');
             if (parts == null) {
-                throw new IllegalArgumentException("Invalid link header format: " + link);
+                throw new IllegalArgumentException("Invalid link header format");
             }
             for (String part : parts) {
                 String p = part.trim();
@@ -61,7 +61,7 @@ class SimpleLinkBuilder implements Link.Builder {
                 String key = p.substring(0, eq).trim();
                 String val = HeaderElement.unquote(p.substring(eq + 1).trim());
                 if (val == null) {
-                    throw new IllegalArgumentException("Invalid link header format: " + link);
+                    throw new IllegalArgumentException("Invalid link header format");
                 }
                 parsedParams.put(key, val);
             }

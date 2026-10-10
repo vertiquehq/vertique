@@ -4,6 +4,7 @@
 package dev.vertique.rest.jaxrs;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -331,7 +332,8 @@ public class ConsumesEnforcementIT {
     // --- Test 6 & 7: a 415 the framework authored keeps its own detail ---
 
     @Test
-    @DisplayName("PerRoute415KeepsItsAuthoredDetail — the Vert.x failure status equals the mapped status → detail kept")
+    @DisplayName(
+            "PerRoute415KeepsItsAuthoredDetail — the Vert.x failure status equals the mapped status → detail kept, no echo")
     void perRoute415KeepsItsAuthoredDetail(Vertx vertx, VertxTestContext ctx) {
         // ctx.fail(415, new NotSupportedException(authoredResponse)) stores 415 as the Vert.x failure
         // status AND maps to 415. Equal-status sanitization would drop a detail synthesized from
@@ -339,7 +341,7 @@ public class ConsumesEnforcementIT {
         // the diagnostic survives.
         deploy(vertx, ctx, Set.of(new JsonOnlyResource()), (port, c) -> {
             c.post(port, "127.0.0.1", "/echo")
-                    .putHeader("Content-Type", "text/xml")
+                    .putHeader("Content-Type", "text/xml; note=leaky-marker")
                     .sendBuffer(Buffer.buffer("hello"))
                     .map(resp -> new Object[] {resp.statusCode(), String.valueOf(resp.bodyAsString())})
                     .onComplete(ctx.succeeding(pair -> {
@@ -348,9 +350,9 @@ public class ConsumesEnforcementIT {
                             assertEquals(415, (Integer) pair[0], "mismatched Content-Type must be rejected with 415");
                             String detail = new io.vertx.core.json.JsonObject(body).getString("detail");
                             assertNotNull(detail, "the per-route 415's authored detail must not be cleared: " + body);
-                            assertTrue(
-                                    detail.contains("text/xml"),
-                                    "the detail must still name the actual content type; got: " + detail);
+                            assertFalse(
+                                    body.contains("leaky-marker") || detail.contains("text/xml"),
+                                    "the detail must not echo the request Content-Type; got: " + body);
                             assertTrue(
                                     detail.contains(MediaType.APPLICATION_JSON),
                                     "the detail must still name the expected content type; got: " + detail);
