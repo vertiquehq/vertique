@@ -543,7 +543,7 @@ RequestInterceptor.onError sync observers, with the original cause
   → RestExceptionMapper.translate(cause)
   → ExceptionMapperRegistry.toResponse(translated)
   → Vert.x status-code fallback (only when no specific mapper matched)
-  → ProblemDetail instance enrichment from the request path
+  → ProblemDetail instance enrichment from the matched route template (absent when no operation matched)
   → ErrorInterceptor.afterMapping (async chain, Response → Response)
   → unhandled-exception logging (framework Throwable catch-all only; level follows the final status)
 ```
@@ -636,6 +636,13 @@ carry a fixed message that names the failure but never the offending header valu
 control-character-laden header cannot be reflected into a `400` or `415` body or into a log line built
 from the message. The 415 detail names the declared types, which the server controls, and not the
 request's `Content-Type`.
+
+The same rule covers `ProblemDetail.instance`. When a `ProblemDetail` leaves the error pipeline
+without one, the framework sets it to the route template of the operation the request matched, for
+example `/items/{id}`, never to the request path: the path of a failed request carries the very
+segment that failed conversion or validation. A request that matched no operation route (an unknown
+path, a method no route serves) gets no `instance`. An `instance` your own mapper sets is kept as
+written, so a mapper that wants an occurrence identifier supplies one.
 
 **Headers when the body is rebuilt.** Rebuilding the body — by this override, or by the `instance`
 enrichment every `ProblemDetail` gets — drops the headers your mapper set that describe the *octets*

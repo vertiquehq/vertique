@@ -235,7 +235,9 @@ written against an earlier version (such as a test descriptor) keeps compiling a
 
 RFC 9457 problem-details response body — the default error shape for every built-in exception mapper.
 All fields are optional and omitted from JSON when `null`. Extension members declared through
-`extension(...)` are serialized as sibling JSON fields.
+`extension(...)` are serialized as sibling JSON fields. When a response leaves the REST error
+pipeline without an `instance`, the pipeline fills it with the matched operation's route template,
+never the request path, and leaves it absent for a request that matched no operation route.
 
 ```java
 ProblemDetail simple = ProblemDetail.of(404, "Item 123 not found");

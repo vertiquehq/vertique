@@ -88,7 +88,7 @@ class RateLimitEdgeFullPipelineRenderingIT {
     // --- Row: packaged mapper installed — full pipeline dressing applied ---
 
     @Test
-    void packagedMapperRendersThroughFullPipelineWithTransformResponseInstanceAndAfterMapping(
+    void packagedMapperRendersThroughFullPipelineWithTransformResponseAndAfterMapping(
             Vertx vertx, VertxTestContext ctx) {
         RestTestContributions contributions = RestTestContributions.builder()
                 .addExceptionMapper(new RateLimitExceptionMapper.Exceeded())
@@ -112,11 +112,10 @@ class RateLimitEdgeFullPipelineRenderingIT {
                     assertEquals("no-store", response.getHeader("Cache-Control"));
                     JsonObject body = response.bodyAsJsonObject();
                     assertEquals(429, body.getInteger("status"));
-                    assertEquals(
-                            ECHO_PATH,
+                    assertNull(
                             body.getString("instance"),
-                            "ProblemDetail.instance must be enriched from the request path by ErrorPipeline, "
-                                    + "which never ran under the middleware's own hand-built rendering");
+                            "an edge denial happens before any operation route matches, so the pipeline has no "
+                                    + "route template to report and never reflects the request path");
                     ctx.completeNow();
                 }));
     }
@@ -137,7 +136,7 @@ class RateLimitEdgeFullPipelineRenderingIT {
                     assertNull(response.getHeader("Retry-After"));
                     JsonObject body = response.bodyAsJsonObject();
                     assertEquals(503, body.getInteger("status"));
-                    assertEquals(ECHO_PATH, body.getString("instance"));
+                    assertNull(body.getString("instance"), "no operation route matched at the edge");
                     ctx.completeNow();
                 }));
     }
@@ -276,7 +275,7 @@ class RateLimitEdgeFullPipelineRenderingIT {
                     assertEquals("application/problem+json", response.getHeader("Content-Type"));
                     JsonObject body = response.bodyAsJsonObject();
                     assertEquals(503, body.getInteger("status"));
-                    assertEquals(ECHO_PATH, body.getString("instance"));
+                    assertNull(body.getString("instance"), "no operation route matched at the edge");
                     ctx.completeNow();
                 }));
     }

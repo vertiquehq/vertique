@@ -4,7 +4,9 @@
 package dev.vertique.rest.jaxrs;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 
+import dev.vertique.rest.core.events.RequestCompletionRecorder;
 import io.swagger.v3.oas.annotations.Operation;
 import io.vertx.core.Future;
 import io.vertx.core.http.HttpServer;
@@ -261,6 +263,19 @@ public class ParamConversionRoutingIT {
     }
 
     @Test
+    @DisplayName("A malformed @PathParam UUID 400 carries the route template as instance, not the segment")
+    void badUuidProblemInstanceIsTheRouteTemplate(io.vertx.core.Vertx vertx, VertxTestContext ctx) {
+        get(vertx, ctx, "/convert/uuid/not-a-uuid", statusAndBody -> {
+            String body = statusAndBody.substring(statusAndBody.indexOf('|') + 1);
+            assertEquals(
+                    "/convert/uuid/{id}",
+                    new io.vertx.core.json.JsonObject(body).getString("instance"),
+                    "instance must be the matched route template: " + body);
+            assertFalse(body.contains("not-a-uuid"), "the body must not echo the malformed segment: " + body);
+        });
+    }
+
+    @Test
     @DisplayName("A malformed @QueryParam List<UUID> element returns 400 (fail-closed)")
     void collectionElementBadValueReturns400(io.vertx.core.Vertx vertx, VertxTestContext ctx) {
         UUID a = UUID.fromString("11111111-1111-1111-1111-111111111111");
@@ -310,6 +325,12 @@ public class ParamConversionRoutingIT {
         mount.createRouter(vertx)
                 .compose(apiRouter -> {
                     Router root = Router.router(vertx);
+                    // The root pipeline's completion emitter is what gives a request its state in
+                    // production; the matched operation route records its template into that state.
+                    root.route().handler(rc -> {
+                        RequestCompletionRecorder.installHolder(rc);
+                        rc.next();
+                    });
                     root.route("/*").subRouter(apiRouter);
                     return vertx.createHttpServer().requestHandler(root).listen(0, "127.0.0.1");
                 })
