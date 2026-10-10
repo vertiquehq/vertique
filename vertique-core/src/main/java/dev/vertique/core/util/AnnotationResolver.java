@@ -6,10 +6,15 @@ package dev.vertique.core.util;
 import java.lang.annotation.Annotation;
 import java.lang.reflect.AnnotatedElement;
 import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
+import java.lang.reflect.Type;
+import java.lang.reflect.TypeVariable;
 import java.util.Collections;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -250,6 +255,73 @@ public final class AnnotationResolver {
         }
 
         return annotations.toArray(new Annotation[0]);
+    }
+
+    // --- Inherited declarations ---
+
+    /**
+     * Returns the declarations {@code method} overrides or implements, in resolution order: the
+     * superclasses of its declaring class, bottom-up, then the interfaces of {@code viewType}. The
+     * method itself is not part of the result.
+     *
+     * <p>INTERNAL framework seam: shared by this class's hierarchy walks and by sibling framework
+     * modules that must see the same declarations; not an application contract and outside the
+     * module's compatibility promise.
+     *
+     * <p>A declaration corresponds in two steps, and both contribute. The exact erased lookup
+     * ({@link Class#getMethod}) is first, so every declaration matched by erased signature before
+     * is still matched. A binding-aware scan follows: the type variables of the declaring class and
+     * of {@code viewType} are bound through their superclasses, interfaces and owner types, and a
+     * public, non-static, non-bridge declaration of the same name and arity whose parameter types
+     * are equal after resolution corresponds as well. That is how
+     * {@code class Users implements Crud<String> { void delete(String id) }} is recognized as
+     * overriding {@code Crud<ID>.delete(ID)}. A generic method corresponds only to a declaration
+     * with the same number of method type parameters. Members that are not public are not seen,
+     * exactly as for the exact lookup.
+     *
+     * @param method   the method whose overridden declarations are wanted; must not be {@code null}
+     * @param viewType the type whose interface hierarchy contributes declarations (the resource
+     *                 class, or the declaring interface for an interface default method); must not
+     *                 be {@code null}
+     * @return the corresponding declarations, de-duplicated, never {@code null}
+     */
+    public static List<Method> inheritedDeclarations(Method method, Class<?> viewType) {
+        Class<?> declaring = method.getDeclaringClass();
+        Map<TypeVariable<?>, Type> bindings = new LinkedHashMap<>(GenericBindings.of(declaring));
+        GenericBindings.of(viewType).forEach(bindings::putIfAbsent);
+
+        Set<Method> found = new LinkedHashSet<>();
+        Class<?> current = declaring.getSuperclass();
+        while (current != null && current != Object.class) {
+            collectDeclarations(current, method, bindings, found);
+            current = current.getSuperclass();
+        }
+        for (Class<?> iface : TypeResolver.getAllInterfaces(viewType)) {
+            collectDeclarations(iface, method, bindings, found);
+        }
+        found.remove(method);
+        return List.copyOf(found);
+    }
+
+    private static void collectDeclarations(
+            Class<?> type, Method method, Map<TypeVariable<?>, Type> bindings, Set<Method> found) {
+        try {
+            found.add(type.getMethod(method.getName(), method.getParameterTypes()));
+        } catch (NoSuchMethodException ignored) {
+            // No declaration with the same erased signature on this type
+        }
+        for (Method candidate : type.getDeclaredMethods()) {
+            int modifiers = candidate.getModifiers();
+            if (!Modifier.isPublic(modifiers)
+                    || Modifier.isStatic(modifiers)
+                    || candidate.isBridge()
+                    || candidate.isSynthetic()) {
+                continue;
+            }
+            if (GenericBindings.corresponds(method, candidate, bindings)) {
+                found.add(candidate);
+            }
+        }
     }
 
     // --- Meta-annotation resolution ---
