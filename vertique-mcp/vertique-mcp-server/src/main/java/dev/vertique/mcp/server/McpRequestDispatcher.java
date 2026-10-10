@@ -159,7 +159,8 @@ final class McpRequestDispatcher {
     private static final int METHOD_NOT_FOUND = -32601;
     private static final int INTERNAL_ERROR = -32603;
     private static final int MISSING_REQUIRED_CLIENT_CAPABILITY = -32021;
-    private static final int RATE_LIMITED = -32022;
+    /** Server-defined rate-limit code; distinct from every code the protocol schema defines. */
+    static final int RATE_LIMITED = -32010;
     /** Upper bound for a {@code Retry-After} value; keeps an extreme application-supplied duration from overflowing. */
     private static final long MAX_RETRY_AFTER_SECONDS = 31_536_000L;
 

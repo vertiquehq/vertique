@@ -475,20 +475,26 @@ request value.
 
 ## Wire-code changes
 
-This section lists JSON-RPC code changes a client that switches on the numeric `error.code` must
-adopt. Only the code changes; messages, `data` members, HTTP statuses and headers are as described
-in the sections above.
+Two JSON-RPC codes changed. A client that switches on the numeric `error.code` must adopt them;
+messages, `data` members, HTTP statuses and headers are as described in the sections above.
 
 | Condition | Previous code | Current code | What to do |
 | --- | --- | --- | --- |
-| An unsupported protocol version | `-32020` | `-32022` (the protocol's *Unsupported protocol version* error; HTTP `400`; `data.supported` and `data.requested`) | Treat `-32022` as "choose one of `error.data.supported` and retry". Switch on `error.data.reason` (`UNSUPPORTED_VERSION`) rather than the numeric code where possible. |
+| An unsupported protocol version | `-32020` | `-32022`, the protocol's *Unsupported protocol version* error (HTTP `400`, `data.supported` and `data.requested`) | Treat `-32022` as "choose one of `error.data.supported` and retry", or switch on `error.data.reason` (`UNSUPPORTED_VERSION`). |
+| A rate-limit rejection: quota exceeded, admission unavailable, or a failed admission decision | `-32022` | `-32010`, a server-defined code | Switch on HTTP `429`/`503` and `Retry-After`, or on `-32010`; stop treating `-32022` as a rate-limit signal. |
 
 Every other negotiation rejection (`MISSING_HEADER`, `HEADER_MISMATCH`, `META_SHAPE`,
-`RESERVED_FIELD`) keeps `-32020`. A client that matched `-32020` alone to detect an unsupported
+`RESERVED_FIELD`) keeps `-32020`, so a client that matched `-32020` alone to detect an unsupported
 version must now also match `-32022`. A request whose body names an unsupported version but whose
 `MCP-Protocol-Version` header is absent or differs from it is a header fault (`-32020`,
 `MISSING_HEADER` or `HEADER_MISMATCH`), as the protocol's header-mismatch error requires; it was
 previously reported with the `UNSUPPORTED_VERSION` reason.
+
+Rate-limit responses previously used `-32022`, which the protocol reserves for an unsupported
+protocol version, so the two conditions could not be told apart by code. `-32010` is not defined by
+the protocol and is not used by this server for anything else. The rate-limit HTTP status (`429`, or
+`503` when admission is unavailable), the `Retry-After` and `Cache-Control` headers, the messages and
+the terminal facts are unchanged, so a client that already branches on the HTTP status is unaffected.
 
 ## Body trace-context extraction
 
@@ -1324,11 +1330,11 @@ produces the runtime `DISABLED` outcome. The runtime outcome mapping is:
 | `RateLimitOutcome` or condition | HTTP result | JSON-RPC | MCP terminal result |
 | --- | --- | --- | --- |
 | `PERMITTED` | continue to the handler | — | request proceeds |
-| `QUOTA_EXCEEDED` | `429`, `Retry-After` when supplied, `Cache-Control: no-store` | `-32022` | `REJECTED` / `RATE_LIMIT` |
+| `QUOTA_EXCEEDED` | `429`, `Retry-After` when supplied, `Cache-Control: no-store` | `-32010` | `REJECTED` / `RATE_LIMIT` |
 | `DISABLED` | continue to the handler | — | request proceeds |
 | `BACKEND_FAILURE_OPEN` | continue to the handler | — | request proceeds |
-| `BACKEND_FAILURE_CLOSED` | `503`, `Cache-Control: no-store` | `-32022` | `REJECTED` / `RATE_LIMIT` |
-| synchronous key-derivation throw, failed acquire future, or null decision | `503`, `Cache-Control: no-store` | `-32022` | `FAILED` / `RATE_LIMIT` |
+| `BACKEND_FAILURE_CLOSED` | `503`, `Cache-Control: no-store` | `-32010` | `REJECTED` / `RATE_LIMIT` |
+| synchronous key-derivation throw, failed acquire future, or null decision | `503`, `Cache-Control: no-store` | `-32010` | `FAILED` / `RATE_LIMIT` |
 
 Only `PERMITTED` consumes a token. Unknown and unauthorized tools are rejected
 before admission and never consume one. Fixed responses do not disclose policy
