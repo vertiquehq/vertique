@@ -817,7 +817,8 @@ public class KafkaProducerFactory {
      */
     private static void rejectNullValues(KafkaRecordHeaders headers) {
         for (KafkaRecordHeader header : headers) {
-            if (header.value() == null) {
+            // hasValue() does not copy the buffer; the wire conversion makes the only copy.
+            if (!header.hasValue()) {
                 throw new IllegalArgumentException(
                         "Record header has a null value and cannot be sent: " + header.key());
             }

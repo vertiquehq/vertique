@@ -345,6 +345,7 @@ package dev.vertique.kafka;
 public record KafkaRecordHeader(String key, @Nullable io.vertx.core.buffer.Buffer value) {
     public static KafkaRecordHeader ofUtf8(String key, @Nullable String value);
     @Nullable public Buffer value();                       // a copy on every call
+    public boolean hasValue();                             // no copy
     @Nullable public String valueAsUtf8();
     @Nullable public String valueAsString(Charset charset);
 }
@@ -362,6 +363,7 @@ public record KafkaRecordHeaders(List<KafkaRecordHeader> entries)
 | Member | Behavior |
 |---|---|
 | `KafkaRecordHeader.value()` | The value as a Vert.x `Buffer`. `null` (no value), empty, and non-empty stay distinct. A `Buffer` is mutable, so the header copies it on construction and returns a new copy on every call: changing the buffer you passed in, or one you got back, never changes the header. Read it once into a local when you need it more than once |
+| `KafkaRecordHeader.hasValue()` | `true` when the header carries a value, including an empty one; `false` when the value is `null`. It does not copy the buffer, so prefer it to `value() != null` |
 | `KafkaRecordHeader.ofUtf8(key, text)` | A header whose value is the UTF-8 encoding of `text`; `null` text gives a header without a value |
 | `valueAsUtf8()`, `valueAsString(Charset)` | Strict decoding: `null` for a `null` value, `""` for an empty one, `IllegalArgumentException` for bytes that are not valid in the charset |
 | `KafkaRecordHeader.toString()` | Key and value length only — never the bytes |

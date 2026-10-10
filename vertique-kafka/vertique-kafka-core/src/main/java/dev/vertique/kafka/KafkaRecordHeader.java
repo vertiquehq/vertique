@@ -112,12 +112,13 @@ public record KafkaRecordHeader(String key, @Nullable Buffer value) {
     }
 
     /**
-     * Tells whether the header has a value, without copying it.
+     * Tells whether the header carries a value, without copying it. Use it instead of comparing
+     * {@link #value()} with {@code null}, which copies the buffer just to discard it.
      *
-     * @return {@code false} when the value is {@code null}; {@code true} otherwise, including for an
-     *     empty value
+     * @return {@code true} when the header carries a value, including an empty one; {@code false}
+     *     when the value is {@code null}
      */
-    boolean hasValue() {
+    public boolean hasValue() {
         return value != null;
     }
 

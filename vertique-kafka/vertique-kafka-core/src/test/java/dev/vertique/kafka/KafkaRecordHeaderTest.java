@@ -9,6 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.vertx.core.buffer.Buffer;
 import java.nio.charset.StandardCharsets;
@@ -46,6 +47,16 @@ class KafkaRecordHeaderTest {
         assertEquals(Buffer.buffer(), new KafkaRecordHeader("k", Buffer.buffer()).value());
         assertEquals(0, new KafkaRecordHeader("k", Buffer.buffer()).value().length());
         assertEquals(buffer(1, 2), new KafkaRecordHeader("k", buffer(1, 2)).value());
+    }
+
+    @Test
+    @DisplayName("hasValue is false for a null value and true for an empty or non-empty one")
+    void hasValueTellsNullFromEmptyAndPresent() {
+        assertFalse(new KafkaRecordHeader("k", null).hasValue());
+        assertFalse(KafkaRecordHeader.ofUtf8("k", null).hasValue());
+        assertTrue(new KafkaRecordHeader("k", Buffer.buffer()).hasValue());
+        assertTrue(KafkaRecordHeader.ofUtf8("k", "").hasValue());
+        assertTrue(new KafkaRecordHeader("k", buffer(1, 2)).hasValue());
     }
 
     @Test
