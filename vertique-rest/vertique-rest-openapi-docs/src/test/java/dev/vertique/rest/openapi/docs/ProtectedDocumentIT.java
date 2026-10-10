@@ -886,9 +886,14 @@ public class ProtectedDocumentIT {
                                     + (condition == null ? "unconditional" : "If-None-Match " + condition);
                             refused++;
 
-                            // Then: the request fails closed with 403 and is never served or revalidated
-                            checks.add(() -> TypedDocumentExpectations.assertDenied(
-                                    row, TypedDocumentExpectations.Outcome.FORBIDDEN, method, reply));
+                            // Then: the request fails closed and is never served or revalidated: an
+                            // evaluator that throws violates its contract (403); one that fails could not
+                            // decide (503, distinct from a denial)
+                            TypedDocumentExpectations.Outcome expected =
+                                    caller.getKey().equals("failing")
+                                            ? TypedDocumentExpectations.Outcome.UNAVAILABLE
+                                            : TypedDocumentExpectations.Outcome.FORBIDDEN;
+                            checks.add(() -> TypedDocumentExpectations.assertDenied(row, expected, method, reply));
                             checks.add(() -> TypedDocumentExpectations.assertNeverServed(row, reply));
                         }
                     }

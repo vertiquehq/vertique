@@ -9,6 +9,7 @@ import dev.vertique.core.context.ContextHolder;
 import dev.vertique.core.context.ContextValue;
 import dev.vertique.core.correlation.CorrelationContext;
 import dev.vertique.core.extension.OrderedExtension;
+import dev.vertique.resilience.Resilience;
 import dev.vertique.rest.core.middleware.RequestContextLifecycle;
 import dev.vertique.rest.core.router.OperationHandlerContributor;
 import dev.vertique.rest.core.router.OperationRegistrationContext;
@@ -162,7 +163,8 @@ public class ScopedSecurityRequirementEnforcementIT {
                 emitter,
                 contextHolder,
                 securityRuntime,
-                Optional.empty());
+                Optional.empty(),
+                Resilience.create(vertx));
 
         List<OperationHandlerContributor> sortedContributors = List.of(
                         new AuthorizationContributor(policyEnforcer),

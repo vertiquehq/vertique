@@ -11,6 +11,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import dev.vertique.core.context.ContextHolder;
 import dev.vertique.core.context.ContextValue;
 import dev.vertique.core.context.DispatchBoundary;
+import dev.vertique.resilience.Resilience;
 import dev.vertique.rest.core.middleware.RequestContextLifecycle;
 import dev.vertique.rest.core.security.SecurityRuntime;
 import dev.vertique.security.AuthenticationEvidence;
@@ -238,7 +239,8 @@ class IdentityPipelineFactoryTest {
                 Optional.empty(),
                 Set.of(),
                 Optional.empty(),
-                Optional.empty());
+                Optional.empty(),
+                Resilience.create(vertx));
 
         Router router = Router.router(vertx);
         installLifecycle(router, "/ws");
@@ -333,7 +335,8 @@ class IdentityPipelineFactoryTest {
                 Optional.empty(),
                 Set.of(),
                 Optional.empty(),
-                Optional.empty());
+                Optional.empty(),
+                TestResilience.shared());
 
         IllegalArgumentException rejected = org.junit.jupiter.api.Assertions.assertThrows(
                 IllegalArgumentException.class,

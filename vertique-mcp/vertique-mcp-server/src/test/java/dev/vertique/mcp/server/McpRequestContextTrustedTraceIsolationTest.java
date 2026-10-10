@@ -11,6 +11,7 @@ import dev.vertique.core.correlation.CorrelationContextSnapshot;
 import dev.vertique.correlation.CorrelationContextFactory;
 import dev.vertique.mcp.interceptor.McpRequestContext;
 import dev.vertique.mcp.interceptor.McpRequestInterceptor;
+import dev.vertique.resilience.Resilience;
 import dev.vertique.rest.core.config.HttpConfig;
 import dev.vertique.rest.core.middleware.RequestContextLifecycle;
 import dev.vertique.rest.core.security.SecurityRuntime;
@@ -150,7 +151,8 @@ class McpRequestContextTrustedTraceIsolationTest {
                 emitter,
                 contextHolder,
                 securityRuntime,
-                Optional.empty());
+                Optional.empty(),
+                Resilience.create(vertx));
         McpPolicyEnforcer policyEnforcer = new McpPolicyEnforcer(securityPolicyEnforcer);
 
         McpRequestDispatcher dispatcher = new McpRequestDispatcher(

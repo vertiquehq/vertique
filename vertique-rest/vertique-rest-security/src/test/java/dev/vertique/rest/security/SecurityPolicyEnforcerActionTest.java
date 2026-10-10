@@ -177,7 +177,8 @@ class SecurityPolicyEnforcerActionTest {
                 capturingEmitter(events),
                 holder,
                 securityRuntime,
-                Optional.ofNullable(authorizer));
+                Optional.ofNullable(authorizer),
+                TestResilience.shared());
     }
 
     private static AuthorizationDecisionPoint permittingDecisionPoint() {
