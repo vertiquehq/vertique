@@ -21,13 +21,13 @@ import javax.tools.JavaFileObject;
 /**
  * Framework wiring for {@link McpCrossTransportInputParityTest} (R03 TP-001, finding #425): compiles
  * one real {@code com.example.parity.ParityTools} application source — a single parameter typed as the
- * <strong>published</strong> {@link dev.vertique.input.processing.testkit.CrossTransportFixtureLevel1}
+ * <strong>shared</strong> {@link dev.vertique.input.processing.testkit.CrossTransportFixtureLevel1}
  * corpus record, not a locally re-declared lookalike — with the real {@link McpToolProcessor}, and
  * loads the resulting generated {@code ParityTools_echo_McpToolInvoker} through its real four-argument
  * {@code @Inject} constructor. This is the same construction path {@link
  * McpGeneratedNullPreservingImmutableArgumentsTestFixture} uses, applied to the shared corpus type
  * instead of a locally declared one, so the proof runs the real generated stage-2 INP-001 call against
- * the exact published fixture — never a second, independently authored copy of it.
+ * the exact shared fixture — never a second, independently authored copy of it.
  */
 final class McpCrossTransportInputParityTestFixture {
 
