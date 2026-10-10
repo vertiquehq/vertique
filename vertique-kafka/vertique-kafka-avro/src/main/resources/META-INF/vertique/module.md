@@ -106,10 +106,17 @@ public final class ApicurioAvroSerdeProvider implements KafkaSerdeProvider {
      */
     @Override public <V> KafkaSerializer<V> serializer(Class<V> type, JsonObject endpointConfig) { ... }
 
-    /** Builds a per-endpoint AvroKafkaDeserializer. */
+    /**
+     * Builds a per-endpoint AvroKafkaDeserializer. The returned deserializer implements
+     * {@code deserialize(byte[] data, String topic, KafkaRecordHeaders headers)}: it uses the topic
+     * for the registry lookup and ignores the headers, since the schema id travels in the payload.
+     */
     @Override public <V> KafkaDeserializer<V> deserializer(Class<V> type, JsonObject endpointConfig) { ... }
 
-    /** Type-agnostic deserializer for Model-3 router property routing, built from the endpoint config. */
+    /**
+     * Type-agnostic deserializer for Model-3 router property routing, built from the endpoint
+     * config. It has the same {@code deserialize} signature and ignores the headers too.
+     */
     @Override public KafkaDeserializer<Object> routingDeserializer(JsonObject endpointConfig) { ... }
 
     /** Reads a discriminator field from a GenericRecord for Model-3 matchProperty routing. */

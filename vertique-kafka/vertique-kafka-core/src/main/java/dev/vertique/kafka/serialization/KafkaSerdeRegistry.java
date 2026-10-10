@@ -259,7 +259,7 @@ public final class KafkaSerdeRegistry {
     private static <V> KafkaDeserializer<V> wrap(KafkaSerdeProvider provider, KafkaDeserializer<V> raw) {
         return new KafkaDeserializer<V>() {
             @Override
-            public V deserialize(byte[] data, String topic, Map<String, String> headers)
+            public V deserialize(byte[] data, String topic, KafkaRecordHeaders headers)
                     throws DeserializationException {
                 return raw.deserialize(data, topic, headers);
             }

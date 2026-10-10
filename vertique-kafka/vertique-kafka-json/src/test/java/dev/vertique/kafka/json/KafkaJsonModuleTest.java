@@ -197,7 +197,7 @@ class KafkaJsonModuleTest {
 
         assertNotNull(bytes, "serialized bytes must not be null");
 
-        Payload deserialized = deser.deserialize(bytes, "topic", Map.of());
+        Payload deserialized = deser.deserialize(bytes, "topic", KafkaRecordHeaders.empty());
         assertEquals(original.name(), deserialized.name(), "name must round-trip");
         assertEquals(original.value(), deserialized.value(), "value must round-trip");
     }
@@ -228,8 +228,8 @@ class KafkaJsonModuleTest {
         org.junit.jupiter.api.Assertions.assertTrue(
                 json.contains("\"world\""), "serialized JSON must contain the name value");
 
-        Payload recovered =
-                registry.deserializer("json", Payload.class, new JsonObject()).deserialize(bytes, "t", Map.of());
+        Payload recovered = registry.deserializer("json", Payload.class, new JsonObject())
+                .deserialize(bytes, "t", KafkaRecordHeaders.empty());
         assertEquals("world", recovered.name());
         assertEquals(99, recovered.value());
     }

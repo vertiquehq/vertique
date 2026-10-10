@@ -14,7 +14,6 @@ import dev.vertique.kafka.serialization.KafkaSerializer;
 import io.vertx.core.json.JsonObject;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
-import java.util.Map;
 import java.util.Set;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -61,7 +60,7 @@ class VertiqueStrictProfileSerdeTest {
         KafkaDeserializer<Money> deserializer = provider.deserializer(Money.class, bag);
 
         byte[] bytes = "{\"amount\":\"1.50\"}".getBytes(StandardCharsets.UTF_8);
-        Money decoded = deserializer.deserialize(bytes, "t", Map.of());
+        Money decoded = deserializer.deserialize(bytes, "t", KafkaRecordHeaders.empty());
 
         assertEquals(0, decoded.amount().compareTo(new BigDecimal("1.50")));
         assertEquals(2, decoded.amount().scale(), "the wire scale must be preserved exactly");

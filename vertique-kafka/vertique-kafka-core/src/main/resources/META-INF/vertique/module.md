@@ -71,6 +71,8 @@ Handlers must therefore be idempotent under `MANUAL`.
 | Header | Direction | Meaning |
 |---|---|---|
 | `x-correlation-id` | read on consume | Seeds the record's correlation id. A record without it gets a generated UUID. Bound to MDC as `kafka.correlationId` for the dispatch |
+| the `matchHeader` of a route | read on consume | Selects a model-3 route |
+| `vertique-<namespace>` | read on consume | Decoded into the durable context that is bound for the dispatch. A value that is not a JSON object is skipped |
 | `x-dlq-source-topic` | written on DLQ publish | Original topic |
 | `x-dlq-source-partition` | written on DLQ publish | Original partition |
 | `x-dlq-source-offset` | written on DLQ publish | Original offset |
@@ -78,9 +80,17 @@ Handlers must therefore be idempotent under `MANUAL`.
 | `x-dlq-error` | written on DLQ publish | Exception simple name, plus up to 200 characters of its message |
 | `vertique-<namespace>` | written on every send except the DLQ publish | One text header per durable-context namespace, value = the namespace body as JSON. Appended after the application headers. The `vertique-` prefix is reserved: an application header that uses it fails the send |
 
-A dead-lettered record keeps its original key, its original value bytes, and all of its original
-headers; the five `x-dlq-*` headers are added on top. An original header of the same name is
-overwritten.
+The framework reads each of those headers as **text**: the last value of the key that is not
+`null`, decoded as UTF-8 with malformed bytes replaced. The `KafkaRecordFilter` factories read
+headers the same way. That is the rule of `KafkaRecordHeaders.asMap()`.
+
+A dead-lettered record keeps its original key and its original value bytes, and its headers are the
+failed record's headers **as received** — in order, with repeated keys and binary values byte for
+byte — followed by the five `x-dlq-*` headers. Two kinds of original header are left out:
+
+- one whose key is exactly one of the five `x-dlq-*` names, so a record that is dead-lettered a
+  second time carries only the new ones;
+- one with a `null` value, because a producer record cannot carry it.
 
 The original headers include the framework's own `vertique-<namespace>` context headers. They are
 forwarded as they were received, so the dead-letter record carries the failed record's context. No
@@ -249,7 +259,7 @@ public class OrderEventHandler implements KafkaRecordHandler<OrderEvent> {
 
     @Override
     public Future<Void> handle(KafkaMessage<OrderEvent> message) {
-        return switch (message.header("event-type").orElse("")) {
+        return switch (message.headers().asMap().getOrDefault("event-type", "")) {
             case "order.created" -> orderService.processOrder(message.value());
             case "inventory.reserved" -> inventoryService.confirmReservation(message.value());
             default -> Future.succeededFuture();
@@ -288,16 +298,46 @@ Immutable record handed to `KafkaRecordHandler.handle`.
 ```java
 public record KafkaMessage<V>(
         V value, String key, String topic, int partition,
-        long offset, long timestamp, Map<String, String> headers) {}
+        long offset, long timestamp, KafkaRecordHeaders headers) {}
 ```
 
-`key` may be `null`; `timestamp` is epoch milliseconds; `headers` is defensively copied and
-immutable. `message.header("name")` returns `Optional<String>`.
+`key` may be `null`; `timestamp` is epoch milliseconds. `headers` is the record's headers as
+received — every header in order, with repeated keys, `null` values and binary values — and is
+immutable; it is never `null` (`KafkaRecordHeaders.empty()` for a record without headers).
+
+```java
+// One header, as on the wire. Empty only when the key is absent.
+Optional<KafkaRecordHeader> signature = message.headers().lastHeader("signature");
+
+// One text value per key. Call asMap() once and keep the map when you read several keys.
+Map<String, String> text = message.headers().asMap();
+String eventType = text.get("event-type");            // null when absent or null-valued
+```
+
+There is no `message.header(name)`. Use `headers().lastHeader(name)` for the header itself, or
+`headers().asMap().get(name)` for its text value.
+
+### `KafkaRecordContext`
+
+The record's metadata on the service side of a model-1, -2 or -3 dispatch: declare it as a handler
+parameter, or call `KafkaRecordContext.current()`.
+
+```java
+public record KafkaRecordContext(
+        String consumerName, String topic, int partition, long offset, String key,
+        long timestamp, String correlationId, KafkaRecordHeaders headers) {}
+```
+
+`headers` is the same immutable header collection the rest of the pipeline is given. As on
+`KafkaMessage`, there is no `header(name)`: use `headers().lastHeader(name)` or
+`headers().asMap().get(name)`. The context travels by reference over the local event bus only.
 
 ### `KafkaRecordHeaders` and `KafkaRecordHeader`
 
-The headers of one record exactly as they are on the wire. `KafkaConsumerRecordView.headers()`
-returns this type; see [Record completion](#record-completion-onrecordcompleted).
+The headers of one record exactly as they are on the wire. The consumer extracts them once per
+record, and that one immutable instance is what `KafkaRecordFilter`, deserializers,
+`KafkaDispatchContext`, `KafkaRecordContext`, `KafkaMessage` and `KafkaConsumerRecordView` all hold.
+Nothing a filter, deserializer, interceptor or handler does can change what another one reads.
 
 ```java
 package dev.vertique.kafka;
@@ -336,13 +376,26 @@ KafkaRecordHeaders headers = KafkaRecordHeaders.of(Map.of("event-type", "order.c
 ```
 
 Both records are immutable and compare by content; `KafkaRecordHeaders` equality is order-sensitive.
-`KafkaMessage`, `KafkaRecordFilter`, deserializers, and `KafkaDispatchContext` still carry the
-`Map<String, String>` form, which has the content of `asMap()`.
+`asMap()` builds a new map on every call, so call it once and keep the result when you read several
+keys.
 
 ### `KafkaRecordFilter`
 
 Functional interface applied **before** deserialization, so a rejected record never pays the
 deserialization cost. It sees the key and headers only.
+
+```java
+boolean accept(String key, KafkaRecordHeaders headers);
+```
+
+`headers` is the record's headers as received and is immutable: a filter can read every value of a
+repeated key, raw bytes and `null` values, and cannot add, remove or change a header.
+
+```java
+KafkaRecordFilter signed = (key, headers) -> !headers.headers("signature").isEmpty();
+```
+
+The factories compare text — the last non-`null` value of the key, decoded as lenient UTF-8:
 
 ```java
 KafkaRecordFilter.headerEquals("event-type", "order.created")
@@ -352,6 +405,10 @@ KafkaRecordFilter.headerIn("event-type", "order.created", "order.updated")
 KafkaRecordFilter.allOf(filter1, filter2)
 KafkaRecordFilter.anyOf(filter1, filter2)
 ```
+
+`headerExists` is `false` when the key is absent or only has `null` values; a header with an empty
+value exists. `headerEquals` and `headerMatches` reject such a record. `headerIn` throws
+`NullPointerException` for it, so combine it with `headerExists` when the header is optional.
 
 A filtered record is committed under `MANUAL` and reported to `onRecordCompleted` as `SKIP`. A
 filter that throws is handled like a deserialization failure: the record goes to the consumer's
@@ -743,7 +800,7 @@ public interface KafkaSerializer<V> {
 }
 
 public interface KafkaDeserializer<V> {
-    V deserialize(byte[] data, String topic, Map<String, String> headers) throws DeserializationException;
+    V deserialize(byte[] data, String topic, KafkaRecordHeaders headers) throws DeserializationException;
     default boolean mayBlock() { return false; }
     default void close() {}
 }
@@ -752,7 +809,9 @@ public interface KafkaDeserializer<V> {
 Both carry `topic` and `headers` because schema-registry-backed formats need them for subject
 naming. A serializer is given the application headers of the record being sent as an immutable
 `KafkaRecordHeaders` — never `null`, and without the framework context headers, which are appended
-after serialization. A deserializer is given the record's headers as a text map.
+after serialization. A deserializer is given the record's headers as received, as the same
+immutable `KafkaRecordHeaders` the filter and the handler get — never `null`. It can read them, for
+example to pick a format from a `content-type` header, and cannot change them.
 
 ### Format precedence
 
@@ -852,8 +911,10 @@ later interceptors are not invoked.
 
 `KafkaDispatchContext<V>` is an immutable record — `(consumerName, topic, partition, offset, key,
 value, rawEvidence, headers, timestamp, retryCount, filtered, attributes)` — with copy-on-write
-`withFiltered(boolean)` and `withAttribute(String, Object)`. `retryCount` is 0-based and counts
-Kafka-native redeliveries, so a retry-topic routing decision in `recoverError` can read it.
+`withFiltered(boolean)` and `withAttribute(String, Object)`. `headers` is the record's
+`KafkaRecordHeaders` as received; both `with…` methods carry the same instance over. `retryCount` is
+0-based and counts Kafka-native redeliveries, so a retry-topic routing decision in `recoverError`
+can read it.
 
 ### Record completion: `onRecordCompleted`
 
@@ -906,11 +967,11 @@ context, so it can be logged or passed to a metrics observer as is.
 `KafkaRecordFilter`, route resolution, deserialization, and the interceptor chain:
 
 - `identity()`, `key()` and `headers()` are the record's own. A `beforeDispatch` that returns a
-  different `KafkaDispatchContext`, or a filter that edits the header map it is given, changes none
-  of them.
+  different `KafkaDispatchContext` changes none of them, and the headers are immutable, so no
+  filter or deserializer can edit them.
 - `event.identity()` and `record.identity()` are the same instance.
 - A consumer with no interceptors builds no view. The headers are still extracted once per record,
-  because the filter and the deserializers need the header map.
+  because the filter, the deserializers and the handler are given them.
 
 **`headers()` is the wire form.** It returns a `KafkaRecordHeaders`: every header in the order the
 broker delivered it, with repeated keys, `null` values, and the exact value bytes. It is an
@@ -1087,6 +1148,12 @@ default accepts every producer interface.
   startup.
 - **Declaring a `Map` header parameter on a `@KafkaProducer` method.** `factory.create(...)` rejects
   it. Declare `KafkaRecordHeaders` and pass `KafkaRecordHeaders.of(map)`.
+- **Calling `message.header(name)` or `recordContext.header(name)`.** They no longer exist. Use
+  `headers().lastHeader(name)` for the header as received, or `headers().asMap().get(name)` for its
+  text value.
+- **Trying to add or change a header in a filter or deserializer.** The headers are immutable;
+  `entries()` and `asMap()` reject changes, and a value `Buffer` is a copy.
+- **Calling `asMap()` for every key.** Each call builds a new map. Keep the result.
 - **Setting a `vertique-*` header yourself.** The prefix belongs to the framework; the send fails.
 
 ---

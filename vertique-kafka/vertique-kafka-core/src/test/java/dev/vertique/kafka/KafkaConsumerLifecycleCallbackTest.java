@@ -19,6 +19,12 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import dev.vertique.context.DurableContextPropagator;
+import dev.vertique.context.InboundDispatchScope;
+import dev.vertique.context.InboundExecutionContextScope;
+import dev.vertique.core.context.DurableMetadata;
+import dev.vertique.core.eventbus.DispatchEnvelope;
+import dev.vertique.core.eventbus.EventBusClient;
 import dev.vertique.core.payload.PayloadSources;
 import dev.vertique.kafka.interceptor.KafkaConsumerCompletedEvent;
 import dev.vertique.kafka.interceptor.KafkaConsumerInterceptor;
@@ -33,6 +39,8 @@ import io.vertx.core.Future;
 import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
+import io.vertx.core.internal.ContextInternal;
+import io.vertx.core.json.JsonObject;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.kafka.client.consumer.KafkaConsumer;
 import io.vertx.kafka.client.consumer.KafkaConsumerRecord;
@@ -49,8 +57,13 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.DisplayName;
@@ -69,8 +82,9 @@ import org.mockito.junit.jupiter.MockitoExtension;
  *
  * <p>Covered: one completion with the expected outcome on every terminal path; the framework-owned
  * identity, key and headers cannot be changed by an interceptor or a filter; the view keeps
- * duplicate, null-valued and binary headers while the filter, deserializer and handler still receive
- * the text map; the value is the
+ * duplicate, null-valued and binary headers, and the filter, deserializer, dispatch context, record
+ * context and handler receive that same header collection; the framework's own text reads
+ * (correlation id, header routing, durable context) keep their results; the value is the
  * broker's array, uncopied; error isolation of the completion callback and of the three older
  * synchronous observers; a completion held back until an asynchronous dead-letter publish settles;
  * the retry count of a first and of a redelivered record; a consumer with no interceptors; and the
@@ -213,13 +227,96 @@ class KafkaConsumerLifecycleCallbackTest {
                 KafkaTestSupport.noOpEnvelopeBuilder());
     }
 
+    /** What a {@link #recordingDispatcher} sent to the event bus and bound as durable context. */
+    record Dispatches(List<String> addresses, List<DispatchEnvelope<?>> envelopes, List<DurableMetadata> bound) {
+
+        Dispatches() {
+            this(new CopyOnWriteArrayList<>(), new CopyOnWriteArrayList<>(), new CopyOnWriteArrayList<>());
+        }
+
+        /** The record context carried by the only envelope sent. */
+        KafkaRecordContext onlyRecordContext() {
+            assertEquals(1, envelopes.size(), "exactly one envelope must have been sent");
+            return (KafkaRecordContext)
+                    envelopes.get(0).metadata().dispatchContext().get(KafkaRecordContext.class.getName());
+        }
+    }
+
+    /**
+     * A real dispatcher whose two outward seams are recorded: the event-bus send (address and
+     * envelope) and the durable context decoded from the record and handed to the context scope.
+     */
+    private static KafkaRecordDispatcher recordingDispatcher(ConsumerEntry entry, Dispatches dispatches) {
+        EventBusClient eventBus = mock(EventBusClient.class);
+        lenient()
+                .doAnswer(invocation -> {
+                    dispatches.addresses().add(invocation.getArgument(0));
+                    dispatches.envelopes().add(invocation.getArgument(1));
+                    return null;
+                })
+                .when(eventBus)
+                .send(anyString(), any());
+        DurableContextPropagator propagator = mock(DurableContextPropagator.class);
+        lenient().when(propagator.bindFrom(any(), anyString())).thenAnswer(invocation -> {
+            dispatches.bound().add(invocation.getArgument(0));
+            return (dev.vertique.core.context.ContextHolder.Scope) () -> {};
+        });
+        return new KafkaRecordDispatcher(
+                entry,
+                Map.of(),
+                KafkaTestSupport.jsonSerdeRegistry(),
+                mock(ServiceRequestSender.class),
+                KafkaTestSupport.noOpTargetResolver(),
+                eventBus,
+                new InboundExecutionContextScope(new InboundDispatchScope(), propagator, Set.of()),
+                KafkaTestSupport.noOpEnvelopeBuilder());
+    }
+
+    /**
+     * Processes a record on a duplicated Vert.x context, as the Kafka client does, and returns once
+     * everything queued on that context has run. Event-bus dispatch binds context values, which
+     * needs a duplicated context.
+     */
+    private static void processOnDuplicatedContext(
+            Vertx vertx, Fixture fixture, KafkaConsumerRecord<String, byte[]> record) {
+        ContextInternal duplicate = ((ContextInternal) vertx.getOrCreateContext()).duplicate();
+        CompletableFuture<Void> done = new CompletableFuture<>();
+        duplicate.runOnContext(v -> {
+            try {
+                fixture.process(record);
+                duplicate.runOnContext(drained -> done.complete(null));
+            } catch (Throwable t) {
+                done.completeExceptionally(t);
+            }
+        });
+        try {
+            done.get(10, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new AssertionError(e);
+        } catch (ExecutionException | TimeoutException e) {
+            throw new AssertionError(e);
+        }
+    }
+
+    /** Records every dispatch context handed to the synchronous {@code onRecord} observer. */
+    static final class DispatchContextRecorder implements KafkaConsumerInterceptor {
+
+        final List<KafkaDispatchContext<?>> contexts = new CopyOnWriteArrayList<>();
+
+        @Override
+        public void onRecord(KafkaDispatchContext<?> ctx) {
+            contexts.add(ctx);
+        }
+    }
+
     /** Mocked error handler whose own future always fails. */
     private static KafkaErrorHandler failingErrorHandler() throws ReflectiveOperationException {
         KafkaErrorHandler handler = mock(KafkaErrorHandler.class);
         Field retryCounts = KafkaErrorHandler.class.getDeclaredField("retryCounts");
         retryCounts.setAccessible(true);
         retryCounts.set(handler, new ConcurrentHashMap<String, Integer>());
-        when(handler.handleError(any(), any(), anyMap(), any(), any()))
+        when(handler.handleError(any(), any(), any(), any(), any()))
                 .thenReturn(Future.failedFuture(new RuntimeException("error handler boom")));
         return handler;
     }
@@ -406,7 +503,8 @@ class KafkaConsumerLifecycleCallbackTest {
             CompletionRecorder recorder = new CompletionRecorder();
             ConsumerEntry entry = routerEntry();
             KafkaRecordDispatcher dispatcher = mock(KafkaRecordDispatcher.class);
-            when(dispatcher.resolveRoute(anyMap(), any(), anyString())).thenThrow(new IllegalStateException("route"));
+            when(dispatcher.resolveRoute(any(), anyMap(), any(), anyString()))
+                    .thenThrow(new IllegalStateException("route"));
             Fixture fixture = wire(vertx, entry, List.of(recorder), mock(KafkaProducerFactory.class), null, dispatcher);
 
             fixture.process(record(1L, bytes("v")));
@@ -419,7 +517,8 @@ class KafkaConsumerLifecycleCallbackTest {
         void routeResolutionThrowsAndErrorHandlerFails(Vertx vertx) throws ReflectiveOperationException {
             CompletionRecorder recorder = new CompletionRecorder();
             KafkaRecordDispatcher dispatcher = mock(KafkaRecordDispatcher.class);
-            when(dispatcher.resolveRoute(anyMap(), any(), anyString())).thenThrow(new IllegalStateException("route"));
+            when(dispatcher.resolveRoute(any(), anyMap(), any(), anyString()))
+                    .thenThrow(new IllegalStateException("route"));
             Fixture fixture = wire(
                     vertx,
                     routerEntry(),
@@ -708,7 +807,7 @@ class KafkaConsumerLifecycleCallbackTest {
                     "forged-key",
                     null,
                     PayloadSources.buffered(bytes("forged"), null),
-                    Map.of("forged", "1"),
+                    KafkaRecordHeaders.of(Map.of("forged", "1")),
                     0L,
                     5,
                     false,
@@ -769,16 +868,50 @@ class KafkaConsumerLifecycleCallbackTest {
         }
 
         @Test
-        @DisplayName("a filter that mutates the header map it receives does not change the view's headers")
-        void filterMutatingHeaders(Vertx vertx) throws ReflectiveOperationException {
+        @DisplayName("a filter cannot change the headers: every attempt fails or changes only its own copy, "
+                + "and the handler and the view read the headers as received")
+        void filterCannotChangeHeaders(Vertx vertx) throws ReflectiveOperationException {
             CompletionRecorder recorder = new CompletionRecorder();
-            KafkaRecordFilter mutating = (key, headers) -> {
-                headers.put("injected", "1");
-                headers.remove("x-real");
+            List<String> rejected = new CopyOnWriteArrayList<>();
+            AtomicReference<KafkaRecordHeaders> seenByHandler = new AtomicReference<>();
+            KafkaRecordFilter tampering = (key, headers) -> {
+                try {
+                    headers.entries().add(KafkaRecordHeader.ofUtf8("injected", "1"));
+                } catch (UnsupportedOperationException e) {
+                    rejected.add("entries.add");
+                }
+                try {
+                    headers.entries().remove(0);
+                } catch (UnsupportedOperationException e) {
+                    rejected.add("entries.remove");
+                }
+                try {
+                    headers.asMap().put("injected", "1");
+                } catch (UnsupportedOperationException e) {
+                    rejected.add("asMap.put");
+                }
+                try {
+                    headers.asMap().remove("x-real");
+                } catch (UnsupportedOperationException e) {
+                    rejected.add("asMap.remove");
+                }
+                try {
+                    headers.iterator().next();
+                    java.util.Iterator<KafkaRecordHeader> iterator = headers.iterator();
+                    iterator.next();
+                    iterator.remove();
+                } catch (UnsupportedOperationException e) {
+                    rejected.add("iterator.remove");
+                }
+                // A value buffer is a copy: writing to it changes nothing but the copy.
+                headers.entries().get(0).value().setByte(0, (byte) '9');
                 return true;
             };
-            ConsumerEntry entry =
-                    handlerEntry(ErrorStrategy.SKIP, null, message -> Future.succeededFuture(), null, mutating);
+            KafkaRecordHandler<Object> handler = message -> {
+                seenByHandler.set(message.headers());
+                return Future.succeededFuture();
+            };
+            ConsumerEntry entry = handlerEntry(ErrorStrategy.SKIP, null, handler, null, tampering);
             Fixture fixture = wire(vertx, entry, List.of(recorder));
 
             fixture.process(record(1L, "k", null, List.of(KafkaHeader.header("x-real", "1"))));
@@ -786,12 +919,16 @@ class KafkaConsumerLifecycleCallbackTest {
             KafkaRecordHeaders headers = assertCompletedOnce(fixture, recorder, KafkaTerminalOutcome.SUCCESS)
                     .record()
                     .headers();
+            assertEquals(
+                    List.of("entries.add", "entries.remove", "asMap.put", "asMap.remove", "iterator.remove"),
+                    rejected,
+                    "every structural change must be rejected");
             assertEquals(new KafkaRecordHeaders(List.of(KafkaRecordHeader.ofUtf8("x-real", "1"))), headers);
             assertEquals(Map.of("x-real", "1"), headers.asMap());
-            assertThrows(
-                    UnsupportedOperationException.class, () -> headers.asMap().put("late", "1"));
-            assertThrows(UnsupportedOperationException.class, () -> headers.entries()
-                    .add(KafkaRecordHeader.ofUtf8("late", "1")));
+            assertSame(headers, seenByHandler.get(), "the handler reads the headers the view holds");
+            assertEquals(
+                    Buffer.buffer(bytes("1")),
+                    seenByHandler.get().entries().get(0).value());
         }
 
         @Test
@@ -836,10 +973,10 @@ class KafkaConsumerLifecycleCallbackTest {
         }
     }
 
-    // --- Faithful headers on the view, text map everywhere else ---
+    // --- One faithful header collection for the whole pipeline ---
 
     @Nested
-    @DisplayName("the view keeps every header; the filter, deserializer and handler get the text map")
+    @DisplayName("the view keeps every header, and the whole pipeline is given that same header collection")
     class RecordHeaders {
 
         /** Two bytes that are never valid in UTF-8. */
@@ -860,7 +997,7 @@ class KafkaConsumerLifecycleCallbackTest {
                     KafkaHeader.header("b", (Buffer) null));
         }
 
-        /** The text map the consumer built from {@link #wireHeaders()} before the view kept every header. */
+        /** The text projection of {@link #wireHeaders()}, written out by hand. */
         private Map<String, String> textMap() {
             String replacement = String.valueOf((char) 0xFFFD);
             Map<String, String> expected = new HashMap<>();
@@ -927,63 +1064,302 @@ class KafkaConsumerLifecycleCallbackTest {
                     headers);
         }
 
-        @Test
-        @DisplayName("the filter, the deserializer and the handler receive the same text map as before")
-        void filterDeserializerAndHandlerGetTheTextMap(Vertx vertx) throws ReflectiveOperationException {
-            CompletionRecorder recorder = new CompletionRecorder();
-            AtomicReference<Map<String, String>> seenByFilter = new AtomicReference<>();
-            AtomicReference<Map<String, String>> seenByDeserializer = new AtomicReference<>();
-            AtomicReference<Map<String, String>> seenByHandler = new AtomicReference<>();
-            KafkaRecordFilter filter = (key, headers) -> {
-                seenByFilter.set(new HashMap<>(headers));
-                return true;
-            };
-            KafkaDeserializer<Object> deserializer = (data, topic, headers) -> {
-                seenByDeserializer.set(new HashMap<>(headers));
-                return "decoded";
-            };
-            KafkaRecordHandler<Object> handler = message -> {
-                seenByHandler.set(new HashMap<>(message.headers()));
-                return Future.succeededFuture();
-            };
-            ConsumerEntry entry = handlerEntry(ErrorStrategy.SKIP, null, handler, deserializer, filter);
-            Fixture fixture = wire(vertx, entry, List.of(recorder));
-
-            fixture.process(record(1L, "k", bytes("payload"), wireHeaders()));
-
-            CompletionRecorder.Completion completion =
-                    assertCompletedOnce(fixture, recorder, KafkaTerminalOutcome.SUCCESS);
-            assertEquals(textMap(), seenByFilter.get());
-            assertEquals(textMap(), seenByDeserializer.get());
-            assertEquals(textMap(), seenByHandler.get());
-            assertEquals(7, completion.record().headers().entries().size(), "the view must keep all seven headers");
+        /** Asserts that {@code headers} is {@link #wireHeaders()} entry for entry, byte for byte. */
+        private void assertWireHeadersIntact(KafkaRecordHeaders headers) {
+            assertEquals(
+                    new KafkaRecordHeaders(List.of(
+                            KafkaRecordHeader.ofUtf8("a", "1"),
+                            KafkaRecordHeader.ofUtf8("b", "x"),
+                            KafkaRecordHeader.ofUtf8("a", "2"),
+                            new KafkaRecordHeader("nulled", null),
+                            new KafkaRecordHeader("empty", Buffer.buffer()),
+                            new KafkaRecordHeader("bin", Buffer.buffer(new byte[] {(byte) 0xFF, (byte) 0xFE})),
+                            new KafkaRecordHeader("b", null))),
+                    headers);
         }
 
         @Test
-        @DisplayName("the text map is the same when the consumer has no interceptors")
-        void textMapWithoutInterceptors(Vertx vertx) throws ReflectiveOperationException {
-            AtomicReference<Map<String, String>> seenByFilter = new AtomicReference<>();
+        @DisplayName("the filter, the deserializer, the dispatch context and the handler's message hold the "
+                + "header collection of the view, with every header intact")
+        void handlerPipelineSharesTheViewHeaders(Vertx vertx) throws ReflectiveOperationException {
+            CompletionRecorder recorder = new CompletionRecorder();
+            DispatchContextRecorder contexts = new DispatchContextRecorder();
+            AtomicReference<KafkaRecordHeaders> seenByFilter = new AtomicReference<>();
+            AtomicReference<KafkaRecordHeaders> seenByDeserializer = new AtomicReference<>();
+            AtomicReference<KafkaRecordHeaders> seenByHandler = new AtomicReference<>();
             KafkaRecordFilter filter = (key, headers) -> {
-                seenByFilter.set(new HashMap<>(headers));
-                headers.put("still-mutable", "1");
-                return false;
+                seenByFilter.set(headers);
+                return true;
             };
-            Fixture fixture = wire(vertx, handlerEntry(ErrorStrategy.SKIP, null, null, null, filter), List.of());
+            KafkaDeserializer<Object> deserializer = (data, topic, headers) -> {
+                seenByDeserializer.set(headers);
+                return "decoded";
+            };
+            KafkaRecordHandler<Object> handler = message -> {
+                seenByHandler.set(message.headers());
+                return Future.succeededFuture();
+            };
+            ConsumerEntry entry = handlerEntry(ErrorStrategy.SKIP, null, handler, deserializer, filter);
+            Fixture fixture = wire(vertx, entry, List.of(contexts, recorder));
+
+            fixture.process(record(1L, "k", bytes("payload"), wireHeaders()));
+
+            KafkaRecordHeaders view = assertCompletedOnce(fixture, recorder, KafkaTerminalOutcome.SUCCESS)
+                    .record()
+                    .headers();
+            assertWireHeadersIntact(view);
+            assertSame(view, seenByFilter.get(), "filter");
+            assertSame(view, seenByDeserializer.get(), "deserializer");
+            assertSame(view, seenByHandler.get(), "handler message");
+            assertEquals(1, contexts.contexts.size(), "the dispatch context must have been observed once");
+            assertSame(view, contexts.contexts.get(0).headers(), "dispatch context");
+        }
+
+        @Test
+        @DisplayName("on event-bus dispatch the record context in the envelope, the dispatch context, the "
+                + "filter and the deserializer hold the header collection of the view")
+        void eventBusPipelineSharesTheViewHeaders(Vertx vertx) throws ReflectiveOperationException {
+            CompletionRecorder recorder = new CompletionRecorder();
+            DispatchContextRecorder contexts = new DispatchContextRecorder();
+            AtomicReference<KafkaRecordHeaders> seenByFilter = new AtomicReference<>();
+            AtomicReference<KafkaRecordHeaders> seenByDeserializer = new AtomicReference<>();
+            KafkaRecordFilter filter = (key, headers) -> {
+                seenByFilter.set(headers);
+                return true;
+            };
+            KafkaDeserializer<Object> deserializer = (data, topic, headers) -> {
+                seenByDeserializer.set(headers);
+                return "decoded";
+            };
+            ConsumerEntry base = bindingEntry(ErrorStrategy.SKIP, null);
+            ConsumerEntry entry = new ConsumerEntry(
+                    base.name(),
+                    base.config(),
+                    ConsumerEntry.Kind.BINDING,
+                    Object.class,
+                    "addr",
+                    null,
+                    true,
+                    List.of(),
+                    null,
+                    deserializer,
+                    false,
+                    filter,
+                    base.valueFormat());
+            Dispatches dispatches = new Dispatches();
+            Fixture fixture = wire(
+                    vertx,
+                    entry,
+                    List.of(contexts, recorder),
+                    mock(KafkaProducerFactory.class),
+                    null,
+                    recordingDispatcher(entry, dispatches));
+
+            processOnDuplicatedContext(vertx, fixture, record(1L, "k", bytes("payload"), wireHeaders()));
+
+            KafkaRecordHeaders view = assertCompletedOnce(fixture, recorder, KafkaTerminalOutcome.SUCCESS)
+                    .record()
+                    .headers();
+            assertWireHeadersIntact(view);
+            assertEquals(List.of("addr"), dispatches.addresses());
+            assertEquals("decoded", dispatches.envelopes().get(0).payload());
+            assertSame(view, dispatches.onlyRecordContext().headers(), "record context in the envelope");
+            assertSame(view, seenByFilter.get(), "filter");
+            assertSame(view, seenByDeserializer.get(), "deserializer");
+            assertEquals(1, contexts.contexts.size(), "the dispatch context must have been observed once");
+            assertSame(view, contexts.contexts.get(0).headers(), "dispatch context");
+        }
+
+        @Test
+        @DisplayName("without interceptors the filter and the handler still share one faithful header collection")
+        void sharedHeadersWithoutInterceptors(Vertx vertx) throws ReflectiveOperationException {
+            AtomicReference<KafkaRecordHeaders> seenByFilter = new AtomicReference<>();
+            AtomicReference<KafkaRecordHeaders> seenByHandler = new AtomicReference<>();
+            KafkaRecordFilter filter = (key, headers) -> {
+                seenByFilter.set(headers);
+                return true;
+            };
+            KafkaRecordHandler<Object> handler = message -> {
+                seenByHandler.set(message.headers());
+                return Future.succeededFuture();
+            };
+            Fixture fixture = wire(vertx, handlerEntry(ErrorStrategy.SKIP, null, handler, null, filter), List.of());
 
             fixture.process(record(1L, "k", null, wireHeaders()));
 
-            assertEquals(textMap(), seenByFilter.get());
+            assertWireHeadersIntact(seenByFilter.get());
+            assertSame(seenByFilter.get(), seenByHandler.get());
+            assertEquals(textMap(), seenByFilter.get().asMap());
             assertEquals(0, fixture.inFlight(), "the in-flight slot must be released");
+        }
+
+        /** A header value that is {@code null}. */
+        private KafkaHeader nullValued(String key) {
+            return KafkaHeader.header(key, (Buffer) null);
+        }
+
+        /** Sends one tombstone record with the given headers through an event-bus consumer. */
+        private Dispatches dispatched(Vertx vertx, ConsumerEntry entry, List<KafkaHeader> headers)
+                throws ReflectiveOperationException {
+            Dispatches dispatches = new Dispatches();
+            Fixture fixture = wire(
+                    vertx,
+                    entry,
+                    List.of(),
+                    mock(KafkaProducerFactory.class),
+                    null,
+                    recordingDispatcher(entry, dispatches));
+            processOnDuplicatedContext(vertx, fixture, record(1L, "k", null, headers));
+            assertEquals(0, fixture.inFlight(), "the in-flight slot must be released");
+            return dispatches;
+        }
+
+        @Test
+        @DisplayName("the correlation id is the last non-null x-correlation-id value, decoded leniently")
+        void correlationIdKeepsItsTextRule(Vertx vertx) throws ReflectiveOperationException {
+            ConsumerEntry entry = bindingEntry(ErrorStrategy.SKIP, null);
+            String name = "x-correlation-id";
+
+            assertEquals(
+                    "second",
+                    dispatched(
+                                    vertx,
+                                    entry,
+                                    List.of(
+                                            KafkaHeader.header(name, "first"),
+                                            KafkaHeader.header("other", "x"),
+                                            KafkaHeader.header(name, "second")))
+                            .onlyRecordContext()
+                            .correlationId(),
+                    "duplicate");
+            assertEquals(
+                    "value",
+                    dispatched(vertx, entry, List.of(nullValued(name), KafkaHeader.header(name, "value")))
+                            .onlyRecordContext()
+                            .correlationId(),
+                    "null then value");
+            assertEquals(
+                    "value",
+                    dispatched(vertx, entry, List.of(KafkaHeader.header(name, "value"), nullValued(name)))
+                            .onlyRecordContext()
+                            .correlationId(),
+                    "value then null");
+            String replacement = String.valueOf((char) 0xFFFD);
+            assertEquals(
+                    replacement + replacement,
+                    dispatched(vertx, entry, List.of(KafkaHeader.header(name, Buffer.buffer(notUtf8))))
+                            .onlyRecordContext()
+                            .correlationId(),
+                    "malformed UTF-8");
+            // A header with only a null value is no correlation id: one is generated.
+            String generated = dispatched(vertx, entry, List.of(nullValued(name)))
+                    .onlyRecordContext()
+                    .correlationId();
+            assertEquals(36, generated.length(), "a generated id is a UUID: " + generated);
+        }
+
+        @Test
+        @DisplayName("header routing matches the last non-null value of the route header, decoded leniently")
+        void headerRoutingKeepsItsTextRule(Vertx vertx) throws ReflectiveOperationException {
+            String replacement = String.valueOf((char) 0xFFFD);
+            ConsumerEntry base = bindingEntry(ErrorStrategy.SKIP, null);
+            ConsumerEntry entry = new ConsumerEntry(
+                    base.name(),
+                    base.config(),
+                    ConsumerEntry.Kind.ROUTER,
+                    null,
+                    null,
+                    null,
+                    false,
+                    List.of(
+                            new ConsumerEntry.RouteEntry(
+                                    "event-type", "", "created", false, Void.class, "addr.created", null, true),
+                            new ConsumerEntry.RouteEntry(
+                                    "event-type", "", "updated", false, Void.class, "addr.updated", null, true),
+                            new ConsumerEntry.RouteEntry(
+                                    "event-type",
+                                    "",
+                                    replacement + replacement,
+                                    false,
+                                    Void.class,
+                                    "addr.replaced",
+                                    null,
+                                    true)),
+                    null,
+                    null,
+                    false,
+                    null,
+                    base.valueFormat());
+            String name = "event-type";
+
+            assertEquals(
+                    List.of("addr.updated"),
+                    dispatched(
+                                    vertx,
+                                    entry,
+                                    List.of(
+                                            KafkaHeader.header(name, "created"),
+                                            KafkaHeader.header("other", "x"),
+                                            KafkaHeader.header(name, "updated")))
+                            .addresses(),
+                    "duplicate");
+            assertEquals(
+                    List.of("addr.created"),
+                    dispatched(vertx, entry, List.of(nullValued(name), KafkaHeader.header(name, "created")))
+                            .addresses(),
+                    "null then value");
+            assertEquals(
+                    List.of("addr.updated"),
+                    dispatched(vertx, entry, List.of(KafkaHeader.header(name, "updated"), nullValued(name)))
+                            .addresses(),
+                    "value then null");
+            assertEquals(
+                    List.of("addr.replaced"),
+                    dispatched(vertx, entry, List.of(KafkaHeader.header(name, Buffer.buffer(notUtf8))))
+                            .addresses(),
+                    "malformed UTF-8");
+            assertEquals(
+                    List.of(),
+                    dispatched(vertx, entry, List.of(nullValued(name))).addresses(),
+                    "a header with only a null value matches no route");
+        }
+
+        @Test
+        @DisplayName("durable context is decoded from the last non-null value of each context header; a "
+                + "malformed one is skipped")
+        void durableContextKeepsItsTextRule(Vertx vertx) throws ReflectiveOperationException {
+            ConsumerEntry entry = bindingEntry(ErrorStrategy.SKIP, null);
+
+            Dispatches dispatches = dispatched(
+                    vertx,
+                    entry,
+                    List.of(
+                            KafkaHeader.header("vertique-correlation", "{\"id\":\"first\"}"),
+                            nullValued("vertique-tenant"),
+                            KafkaHeader.header("vertique-actor", "{\"id\":\"u1\"}"),
+                            KafkaHeader.header("vertique-correlation", "{\"id\":\"last\"}"),
+                            KafkaHeader.header("vertique-tenant", "{\"id\":\"acme\"}"),
+                            nullValued("vertique-actor"),
+                            KafkaHeader.header("vertique-binary", Buffer.buffer(notUtf8)),
+                            nullValued("vertique-cleared"),
+                            KafkaHeader.header("event-type", "{\"id\":\"not-context\"}")));
+
+            assertEquals(
+                    List.of(DurableMetadata.empty()
+                            .with("correlation", new JsonObject().put("id", "last"))
+                            .with("tenant", new JsonObject().put("id", "acme"))
+                            .with("actor", new JsonObject().put("id", "u1"))),
+                    dispatches.bound());
         }
 
         @Test
         @DisplayName("a header with a null key is skipped: the record is processed and its slot released")
         void nullKeyHeaderIsSkipped(Vertx vertx) throws ReflectiveOperationException {
             CompletionRecorder recorder = new CompletionRecorder();
-            AtomicReference<Map<String, String>> seenByFilter = new AtomicReference<>();
+            AtomicReference<KafkaRecordHeaders> seenByFilter = new AtomicReference<>();
             AtomicInteger handled = new AtomicInteger();
             KafkaRecordFilter filter = (key, headers) -> {
-                seenByFilter.set(new HashMap<>(headers));
+                seenByFilter.set(headers);
                 return true;
             };
             KafkaRecordHandler<Object> handler = message -> {
@@ -1009,7 +1385,8 @@ class KafkaConsumerLifecycleCallbackTest {
                     new KafkaRecordHeaders(
                             List.of(KafkaRecordHeader.ofUtf8("a", "1"), KafkaRecordHeader.ofUtf8("b", "2"))),
                     completion.record().headers());
-            assertEquals(Map.of("a", "1", "b", "2"), seenByFilter.get());
+            assertSame(completion.record().headers(), seenByFilter.get());
+            assertEquals(Map.of("a", "1", "b", "2"), seenByFilter.get().asMap());
             assertEquals(0, fixture.inFlight(), "the in-flight slot must be released");
         }
 

@@ -127,7 +127,7 @@ public class KafkaInterceptorIT {
 
         @Override
         public Future<KafkaDispatchContext<?>> beforeDispatch(KafkaDispatchContext<?> ctx) {
-            if ("skip-me".equals(ctx.headers().get("x-action"))) {
+            if ("skip-me".equals(ctx.headers().asMap().get("x-action"))) {
                 return Future.succeededFuture(ctx.withFiltered(true));
             }
             return Future.succeededFuture(ctx);

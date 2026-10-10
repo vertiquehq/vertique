@@ -8,6 +8,8 @@ import static org.junit.jupiter.api.Assertions.*;
 import dev.vertique.core.payload.PayloadKind;
 import dev.vertique.core.payload.PayloadSource;
 import dev.vertique.core.payload.PayloadSources;
+import dev.vertique.kafka.KafkaRecordHeader;
+import dev.vertique.kafka.KafkaRecordHeaders;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.Map;
@@ -32,7 +34,7 @@ class KafkaDispatchContextTest {
                 "key",
                 "value",
                 PayloadSources.buffered(new byte[0], null),
-                headers,
+                headers == null ? null : KafkaRecordHeaders.of(headers),
                 1_700_000_000_000L,
                 0,
                 false,
@@ -85,7 +87,8 @@ class KafkaDispatchContextTest {
             assertEquals("key", updated.key());
             assertEquals("value", updated.value());
             assertEquals(0, updated.retryCount());
-            assertEquals("v", updated.headers().get("h"));
+            assertEquals("v", updated.headers().asMap().get("h"));
+            assertSame(original.headers(), updated.headers(), "the header collection is carried over, not copied");
             assertEquals("attrValue", updated.attributes().get("attr"));
         }
 
@@ -102,7 +105,7 @@ class KafkaDispatchContextTest {
                     "key",
                     "value",
                     evidence,
-                    Map.of(),
+                    KafkaRecordHeaders.empty(),
                     1_700_000_000_000L,
                     0,
                     false,
@@ -171,7 +174,7 @@ class KafkaDispatchContextTest {
                     "key",
                     "value",
                     evidence,
-                    Map.of(),
+                    KafkaRecordHeaders.empty(),
                     1_700_000_000_000L,
                     0,
                     false,
@@ -201,7 +204,7 @@ class KafkaDispatchContextTest {
                     null,
                     "value",
                     PayloadSources.buffered(wireBytes, null),
-                    Map.of(),
+                    KafkaRecordHeaders.empty(),
                     0L,
                     0,
                     false,
@@ -222,7 +225,7 @@ class KafkaDispatchContextTest {
                     null,
                     "value",
                     PayloadSources.buffered(wireBytes, null),
-                    Map.of(),
+                    KafkaRecordHeaders.empty(),
                     0L,
                     0,
                     false,
@@ -247,7 +250,7 @@ class KafkaDispatchContextTest {
                     null,
                     "value",
                     PayloadSources.buffered(wireBytes, null),
-                    Map.of(),
+                    KafkaRecordHeaders.empty(),
                     0L,
                     0,
                     false,
@@ -268,7 +271,7 @@ class KafkaDispatchContextTest {
                     null,
                     "value",
                     PayloadSources.buffered(wireBytes, null),
-                    Map.of(),
+                    KafkaRecordHeaders.empty(),
                     0L,
                     0,
                     false,
@@ -283,7 +286,18 @@ class KafkaDispatchContextTest {
             byte[] wireBytes = {99};
             PayloadSource evidence = PayloadSources.buffered(wireBytes, null);
             KafkaDispatchContext<String> ctx = new KafkaDispatchContext<>(
-                    "consumer", "topic", 0, 0L, null, "value", evidence, Map.of(), 0L, 0, false, Map.of());
+                    "consumer",
+                    "topic",
+                    0,
+                    0L,
+                    null,
+                    "value",
+                    evidence,
+                    KafkaRecordHeaders.empty(),
+                    0L,
+                    0,
+                    false,
+                    Map.of());
 
             assertSame(evidence, ctx.rawEvidence(), "rawEvidence() must return the same PayloadSource instance");
         }
@@ -296,11 +310,41 @@ class KafkaDispatchContextTest {
     class DefensiveCopy {
 
         @Test
-        @DisplayName("null headers map is converted to an empty map")
-        void nullHeadersProducesEmptyMap() {
+        @DisplayName("null headers become the shared empty header collection")
+        void nullHeadersBecomeEmpty() {
             KafkaDispatchContext<String> ctx = minimalContext(null, Map.of());
-            assertNotNull(ctx.headers());
-            assertTrue(ctx.headers().isEmpty());
+            assertSame(KafkaRecordHeaders.empty(), ctx.headers());
+        }
+
+        @Test
+        @DisplayName("the headers are held as given, survive withAttribute, and cannot be changed")
+        void headersAreImmutable() {
+            KafkaRecordHeaders headers = new KafkaRecordHeaders(
+                    java.util.List.of(KafkaRecordHeader.ofUtf8("h", "1"), KafkaRecordHeader.ofUtf8("h", "2")));
+            KafkaDispatchContext<String> ctx = new KafkaDispatchContext<>(
+                    "consumer",
+                    "topic",
+                    0,
+                    0L,
+                    null,
+                    "value",
+                    PayloadSources.buffered(new byte[0], null),
+                    headers,
+                    0L,
+                    0,
+                    false,
+                    Map.of());
+
+            assertSame(headers, ctx.headers());
+            assertSame(headers, ctx.withAttribute("a", 1).headers());
+            assertSame(headers, ctx.withFiltered(true).headers());
+            assertThrows(
+                    UnsupportedOperationException.class,
+                    () -> ctx.headers().entries().add(KafkaRecordHeader.ofUtf8("late", "1")));
+            assertThrows(
+                    UnsupportedOperationException.class,
+                    () -> ctx.headers().asMap().put("late", "1"));
+            assertEquals(2, ctx.headers().headers("h").size());
         }
 
         @Test

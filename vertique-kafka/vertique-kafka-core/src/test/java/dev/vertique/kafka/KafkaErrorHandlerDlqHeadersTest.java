@@ -4,7 +4,6 @@
 package dev.vertique.kafka;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.config.parser.DefaultConfigMapper;
@@ -29,15 +28,14 @@ import dev.vertique.kafka.producer.KafkaProducerSend;
 import dev.vertique.kafka.producer.KafkaSendOrigin;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
+import io.vertx.core.buffer.Buffer;
 import io.vertx.core.internal.ContextInternal;
 import io.vertx.core.json.JsonObject;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
 import io.vertx.kafka.client.consumer.KafkaConsumerRecord;
 import io.vertx.kafka.client.producer.RecordMetadata;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
@@ -50,16 +48,14 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * Dead-lettering through the real {@link KafkaErrorHandler} and a real {@link KafkaProducerFactory}
  * whose wire send is captured: a failed record that carries a framework context header is
  * published, and the dead-letter record keeps the failed record's context rather than the context
- * that happens to be bound when the error is handled.
+ * that happens to be bound when the error is handled; and the failed record's headers are forwarded
+ * as they were received, followed by the dead-letter headers.
  */
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
 class KafkaErrorHandlerDlqHeadersTest {
 
     private static final String RECORD_CORRELATION = "{\"id\":\"from-the-record\"}";
-
-    private static final List<String> DLQ_HEADERS = List.of(
-            "x-dlq-source-topic", "x-dlq-source-partition", "x-dlq-source-offset", "x-dlq-consumer", "x-dlq-error");
 
     /** Ambient value encoded under the same namespace the failed record carries. */
     record AmbientCorrelation(String id) implements ContextValue {}
@@ -86,9 +82,9 @@ class KafkaErrorHandlerDlqHeadersTest {
                 KafkaTerminalOutcomeTest.entryFor(ErrorStrategy.DEAD_LETTER, "dlq-topic"), factory);
 
         KafkaConsumerRecord<String, byte[]> record = KafkaTerminalOutcomeTest.fakeRecord("src.topic", 3, 42L);
-        Map<String, String> recordHeaders = new HashMap<>();
-        recordHeaders.put("vertique-correlation", RECORD_CORRELATION);
-        recordHeaders.put("event-type", "order.created");
+        KafkaRecordHeaders recordHeaders = new KafkaRecordHeaders(List.of(
+                KafkaRecordHeader.ofUtf8("vertique-correlation", RECORD_CORRELATION),
+                KafkaRecordHeader.ofUtf8("event-type", "order.created")));
         CapturingConsumerControl control = new CapturingConsumerControl();
 
         ((ContextInternal) vertx.getOrCreateContext()).duplicate().runOnContext(v -> {
@@ -105,20 +101,23 @@ class KafkaErrorHandlerDlqHeadersTest {
                             assertTrue(control.commitCalled, "the offset is committed after the publish");
 
                             assertEquals(1, factory.wires.size(), "exactly one wire send");
-                            Map<String, String> wire = factory.wires.get(0).asMap();
-                            assertEquals(RECORD_CORRELATION, wire.get("vertique-correlation"));
-                            assertEquals("order.created", wire.get("event-type"));
-                            assertEquals("src.topic", wire.get("x-dlq-source-topic"));
-                            assertEquals("3", wire.get("x-dlq-source-partition"));
-                            assertEquals("42", wire.get("x-dlq-source-offset"));
-                            assertEquals("test", wire.get("x-dlq-consumer"));
-                            assertEquals("RuntimeException: boom", wire.get("x-dlq-error"));
-                            assertFalse(
-                                    wire.containsKey("vertique-tenant"),
+                            assertEquals(
+                                    new KafkaRecordHeaders(List.of(
+                                            KafkaRecordHeader.ofUtf8("vertique-correlation", RECORD_CORRELATION),
+                                            KafkaRecordHeader.ofUtf8("event-type", "order.created"),
+                                            KafkaRecordHeader.ofUtf8("x-dlq-source-topic", "src.topic"),
+                                            KafkaRecordHeader.ofUtf8("x-dlq-source-partition", "3"),
+                                            KafkaRecordHeader.ofUtf8("x-dlq-source-offset", "42"),
+                                            KafkaRecordHeader.ofUtf8("x-dlq-consumer", "test"),
+                                            KafkaRecordHeader.ofUtf8("x-dlq-error", "RuntimeException: boom"))),
+                                    factory.wires.get(0),
+                                    "the record's headers in order, then the dead-letter headers");
+                            assertTrue(
+                                    factory.wires
+                                            .get(0)
+                                            .headers("vertique-tenant")
+                                            .isEmpty(),
                                     "a context header that was not on the record must not be added");
-                            Set<String> expectedKeys = new java.util.HashSet<>(DLQ_HEADERS);
-                            expectedKeys.addAll(recordHeaders.keySet());
-                            assertEquals(expectedKeys, wire.keySet());
 
                             assertEquals(List.of(KafkaSendOrigin.DLQ), factory.origins);
                             assertEquals(1, hook.sends.size(), "the capture hook still fires");
@@ -132,6 +131,65 @@ class KafkaErrorHandlerDlqHeadersTest {
                 ctx.failNow(t);
             }
         });
+    }
+
+    @Test
+    @DisplayName("a dead-lettered record keeps repeated and binary headers in order, omits a null-valued "
+            + "header, drops inbound dead-letter headers and ends with the five new ones")
+    void deadLettersHeadersAsReceived(Vertx vertx, VertxTestContext ctx) {
+        DefaultContextHolder holder = new DefaultContextHolder();
+        DurableContextPropagator propagator = new DurableContextPropagator(
+                new DurableContextMetadataRegistry(Set.of(), Set.of()), holder, new ContextScopeBinder(holder));
+        RecordingHook hook = new RecordingHook();
+        WireCapturingFactory factory = new WireCapturingFactory(vertx, propagator, hook);
+        KafkaErrorHandler handler = new KafkaErrorHandler(
+                KafkaTerminalOutcomeTest.entryFor(ErrorStrategy.DEAD_LETTER, "dlq-topic"), factory);
+
+        byte[] notUtf8 = {(byte) 0xFF, (byte) 0xFE, 0x00};
+        KafkaConsumerRecord<String, byte[]> record = KafkaTerminalOutcomeTest.fakeRecord("src.topic", 3, 42L);
+        KafkaRecordHeaders recordHeaders = new KafkaRecordHeaders(List.of(
+                KafkaRecordHeader.ofUtf8("a", "1"),
+                new KafkaRecordHeader("bin", Buffer.buffer(notUtf8)),
+                KafkaRecordHeader.ofUtf8("x-dlq-error", "from an earlier dead-lettering"),
+                KafkaRecordHeader.ofUtf8("a", "2"),
+                new KafkaRecordHeader("nulled", null),
+                KafkaRecordHeader.ofUtf8("vertique-correlation", RECORD_CORRELATION),
+                KafkaRecordHeader.ofUtf8("x-dlq-source-topic", "older.topic"),
+                KafkaRecordHeader.ofUtf8("x-dlq-source-partition", "9"),
+                KafkaRecordHeader.ofUtf8("x-dlq-source-offset", "999"),
+                KafkaRecordHeader.ofUtf8("x-dlq-consumer", "older-consumer"),
+                KafkaRecordHeader.ofUtf8("x-dlq-error-detail", "not a dead-letter header of the framework"),
+                new KafkaRecordHeader("a", null),
+                KafkaRecordHeader.ofUtf8("empty", ""),
+                KafkaRecordHeader.ofUtf8("a", "1")));
+        CapturingConsumerControl control = new CapturingConsumerControl();
+
+        handler.handleError(record, new byte[] {1, 2, 3}, recordHeaders, new IllegalStateException("boom"), control)
+                .onComplete(ctx.succeeding(outcome -> ctx.verify(() -> {
+                    assertEquals(KafkaTerminalOutcome.DLQ_PUBLISHED, outcome);
+                    assertEquals(1, factory.wires.size(), "exactly one wire send");
+                    assertEquals(
+                            new KafkaRecordHeaders(List.of(
+                                    KafkaRecordHeader.ofUtf8("a", "1"),
+                                    new KafkaRecordHeader(
+                                            "bin", Buffer.buffer(new byte[] {(byte) 0xFF, (byte) 0xFE, 0x00})),
+                                    KafkaRecordHeader.ofUtf8("a", "2"),
+                                    KafkaRecordHeader.ofUtf8("vertique-correlation", RECORD_CORRELATION),
+                                    KafkaRecordHeader.ofUtf8(
+                                            "x-dlq-error-detail", "not a dead-letter header of the framework"),
+                                    KafkaRecordHeader.ofUtf8("empty", ""),
+                                    KafkaRecordHeader.ofUtf8("a", "1"),
+                                    KafkaRecordHeader.ofUtf8("x-dlq-source-topic", "src.topic"),
+                                    KafkaRecordHeader.ofUtf8("x-dlq-source-partition", "3"),
+                                    KafkaRecordHeader.ofUtf8("x-dlq-source-offset", "42"),
+                                    KafkaRecordHeader.ofUtf8("x-dlq-consumer", "test"),
+                                    KafkaRecordHeader.ofUtf8("x-dlq-error", "IllegalStateException: boom"))),
+                            factory.wires.get(0));
+                    assertEquals(14, recordHeaders.entries().size(), "the failed record's headers are untouched");
+                    assertEquals(1, hook.sends.size(), "the capture hook still fires");
+                    assertEquals(factory.wires.get(0), hook.sends.get(0).headers());
+                    ctx.completeNow();
+                })));
     }
 
     private static <T extends ContextValue> DurableContextMetadataEncoder<T> encoder(

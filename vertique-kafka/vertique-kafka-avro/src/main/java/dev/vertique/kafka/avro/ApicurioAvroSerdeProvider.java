@@ -117,7 +117,7 @@ public final class ApicurioAvroSerdeProvider implements KafkaSerdeProvider {
         deserializer.configure(deserializerConfig(endpointConfig), false);
         return new KafkaDeserializer<>() {
             @Override
-            public V deserialize(byte[] data, String topic, Map<String, String> headers) {
+            public V deserialize(byte[] data, String topic, KafkaRecordHeaders headers) {
                 V decoded = decode(deserializer, topic, data);
                 // Guard against a wire schema-id resolving to a different generated record than declared.
                 if (decoded != null && !type.isInstance(decoded)) {
@@ -143,7 +143,7 @@ public final class ApicurioAvroSerdeProvider implements KafkaSerdeProvider {
         deserializer.configure(deserializerConfig(endpointConfig), false);
         return new KafkaDeserializer<>() {
             @Override
-            public Object deserialize(byte[] data, String topic, Map<String, String> headers) {
+            public Object deserialize(byte[] data, String topic, KafkaRecordHeaders headers) {
                 return decode(deserializer, topic, data);
             }
 

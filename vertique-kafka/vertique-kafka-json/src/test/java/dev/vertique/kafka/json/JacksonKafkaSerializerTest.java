@@ -17,7 +17,6 @@ import dev.vertique.json.JacksonDefaults;
 import dev.vertique.kafka.DeserializationException;
 import dev.vertique.kafka.KafkaRecordHeaders;
 import java.nio.charset.StandardCharsets;
-import java.util.Map;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -128,7 +127,7 @@ class JacksonKafkaSerializerTest {
 
         byte[] payload = "{\"name\":\"shipment\",\"count\":7,\"unexpected\":\"x\"}".getBytes(StandardCharsets.UTF_8);
 
-        BoundEvent bound = deserializer.deserialize(payload, "test-topic", Map.of());
+        BoundEvent bound = deserializer.deserialize(payload, "test-topic", KafkaRecordHeaders.empty());
 
         assertEquals("shipment", bound.name());
         assertEquals(7, bound.count());
@@ -153,7 +152,7 @@ class JacksonKafkaSerializerTest {
             assertNotNull(bytes);
             assertTrue(bytes.length > 0);
 
-            TestEvent roundTripped = deserializer.deserialize(bytes, "test-topic", Map.of());
+            TestEvent roundTripped = deserializer.deserialize(bytes, "test-topic", KafkaRecordHeaders.empty());
             org.junit.jupiter.api.Assertions.assertEquals(original.name(), roundTripped.name());
             org.junit.jupiter.api.Assertions.assertEquals(original.count(), roundTripped.count());
         }

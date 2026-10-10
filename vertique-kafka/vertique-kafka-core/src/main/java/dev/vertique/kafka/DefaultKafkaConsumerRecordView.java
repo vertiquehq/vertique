@@ -14,9 +14,9 @@ import java.util.Objects;
  * The consumer's {@link KafkaConsumerRecordView}: built once per record before the filter, route
  * resolution, deserialization and the interceptor chain, and held for the record's lifetime.
  *
- * <p>The headers are the immutable collection the consumer extracted from the record; the filter and
- * deserializers receive a separate mutable text map derived from it, so the collection is held as
- * is. The value is not copied: the source aliases the array the broker delivered.
+ * <p>The headers are the immutable collection the consumer extracted from the record; the filter,
+ * deserializers, dispatch context and handler receive the same instance, and it is held as is. The
+ * value is not copied: the source aliases the array the broker delivered.
  */
 final class DefaultKafkaConsumerRecordView implements KafkaConsumerRecordView {
 

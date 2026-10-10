@@ -14,8 +14,8 @@ import com.fasterxml.jackson.databind.MapperFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 import dev.vertique.kafka.DeserializationException;
+import dev.vertique.kafka.KafkaRecordHeaders;
 import java.nio.charset.StandardCharsets;
-import java.util.Map;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -47,7 +47,7 @@ class JacksonKafkaDeserializerTest {
                     new JacksonKafkaDeserializer<>(TestEvent.class, new ObjectMapper());
             byte[] bytes = toBytes("{\"name\":\"order\",\"count\":5}");
 
-            TestEvent event = deserializer.deserialize(bytes, "test-topic", Map.of());
+            TestEvent event = deserializer.deserialize(bytes, "test-topic", KafkaRecordHeaders.empty());
 
             assertEquals("order", event.name());
             assertEquals(5, event.count());
@@ -67,7 +67,9 @@ class JacksonKafkaDeserializerTest {
                     new JacksonKafkaDeserializer<>(TestEvent.class, new ObjectMapper());
             byte[] bytes = toBytes("this is not json");
 
-            assertThrows(DeserializationException.class, () -> deserializer.deserialize(bytes, "test-topic", Map.of()));
+            assertThrows(
+                    DeserializationException.class,
+                    () -> deserializer.deserialize(bytes, "test-topic", KafkaRecordHeaders.empty()));
         }
 
         @Test
@@ -78,7 +80,7 @@ class JacksonKafkaDeserializerTest {
 
             assertThrows(
                     DeserializationException.class,
-                    () -> deserializer.deserialize(new byte[0], "test-topic", Map.of()));
+                    () -> deserializer.deserialize(new byte[0], "test-topic", KafkaRecordHeaders.empty()));
         }
     }
 
@@ -102,7 +104,7 @@ class JacksonKafkaDeserializerTest {
 
             assertThrows(
                     DeserializationException.class,
-                    () -> deserializer.deserialize(bytes, "test-topic", Map.of()),
+                    () -> deserializer.deserialize(bytes, "test-topic", KafkaRecordHeaders.empty()),
                     "Strict mapper should reject unknown properties");
         }
 
@@ -116,7 +118,7 @@ class JacksonKafkaDeserializerTest {
 
             byte[] bytes = toBytes("{\"name\":\"order\",\"count\":5,\"extra\":\"unknown\"}");
 
-            TestEvent event = deserializer.deserialize(bytes, "test-topic", Map.of());
+            TestEvent event = deserializer.deserialize(bytes, "test-topic", KafkaRecordHeaders.empty());
             assertEquals("order", event.name());
             assertEquals(5, event.count());
         }
@@ -152,7 +154,8 @@ class JacksonKafkaDeserializerTest {
             byte[] bytes = toBytes("{\"name\":\"ok\",\"count\":\"SENTINEL_999\"}");
 
             DeserializationException ex = assertThrows(
-                    DeserializationException.class, () -> deserializer.deserialize(bytes, "test-topic", Map.of()));
+                    DeserializationException.class,
+                    () -> deserializer.deserialize(bytes, "test-topic", KafkaRecordHeaders.empty()));
 
             // (a) type name must appear for operator context
             assertTrue(

@@ -112,6 +112,16 @@ public record KafkaRecordHeader(String key, @Nullable Buffer value) {
     }
 
     /**
+     * Tells whether the header has a value, without copying it.
+     *
+     * @return {@code false} when the value is {@code null}; {@code true} otherwise, including for an
+     *     empty value
+     */
+    boolean hasValue() {
+        return value != null;
+    }
+
+    /**
      * Decodes the value as UTF-8 text leniently, substituting the replacement character for malformed
      * input, reading the held buffer without copying it. This is the decoding of the lossy text
      * projection.

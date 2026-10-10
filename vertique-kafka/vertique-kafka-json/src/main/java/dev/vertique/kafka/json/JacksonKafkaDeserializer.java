@@ -6,9 +6,9 @@ package dev.vertique.kafka.json;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.vertique.core.json.VertiqueJson;
 import dev.vertique.kafka.DeserializationException;
+import dev.vertique.kafka.KafkaRecordHeaders;
 import dev.vertique.kafka.serialization.KafkaDeserializer;
 import jakarta.annotation.Nullable;
-import java.util.Map;
 
 /**
  * Default Jackson JSON deserializer for Kafka record values.
@@ -52,8 +52,17 @@ public class JacksonKafkaDeserializer<V> implements KafkaDeserializer<V> {
         this.mapper = mapper;
     }
 
+    /**
+     * Deserializes the bytes as JSON into the target type. The topic and the headers are not used.
+     *
+     * @param data the raw message bytes
+     * @param topic the source topic; used only in the failure message
+     * @param headers the record headers as received; ignored
+     * @return the deserialized value
+     * @throws DeserializationException if the bytes are not valid JSON for the target type
+     */
     @Override
-    public V deserialize(byte[] data, String topic, Map<String, String> headers) throws DeserializationException {
+    public V deserialize(byte[] data, String topic, KafkaRecordHeaders headers) throws DeserializationException {
         ObjectMapper resolved = mapper != null ? mapper : VertiqueJson.mapper();
         try {
             return resolved.readValue(data, type);

@@ -46,7 +46,7 @@ Processing steps:
 
 ```java
 KafkaRecordContext record = KafkaRecordContext.current().orElseThrow();
-String messageId = record.header("x-message-id").orElseThrow();
+String messageId = Objects.requireNonNull(record.headers().asMap().get("x-message-id"), "x-message-id");
 
 pool.withTransaction(tx ->
     inboxService.processOnce(messageId, "payments", tx, () ->
