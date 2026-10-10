@@ -123,7 +123,7 @@ class RestCrossTransportInputParityTest {
         assertEquals(
                 CrossTransportInputCorpus.expectedProcessedInput(),
                 asMap(materialized),
-                "DECISIVE: the real REST extraction path's materialized body matches the published corpus");
+                "DECISIVE: the real REST extraction path's materialized body matches the shared corpus");
 
         // And: the sanitizer transform is non-identity, so this assertion could not pass by the pipeline
         // silently doing nothing.

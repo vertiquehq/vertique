@@ -48,7 +48,7 @@ class McpCrossTransportInputParityTest {
         // restates itself, so a regression in either the corpus's transform or the real generated
         // pipeline shows up as a mismatch here, never a vacuous self-agreement.
         assertThat(prepared.normalizedArguments())
-                .as("DECISIVE: the real generated invoker's post-INP argument tree matches the published corpus")
+                .as("DECISIVE: the real generated invoker's post-INP argument tree matches the shared corpus")
                 .containsEntry("root", CrossTransportInputCorpus.expectedProcessedInput());
 
         // And: the corpus's transform is non-trivial — every leaf actually changed — so this assertion

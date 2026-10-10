@@ -52,7 +52,7 @@ final class McpCrossTransportInputParityTestFixture {
                     @Inject
                     public ParityTools() {}
 
-                    @McpTool(name = "parity.echo", description = "Echoes the published cross-transport corpus body.")
+                    @McpTool(name = "parity.echo", description = "Echoes the shared cross-transport corpus body.")
                     public String echo(
                             @McpToolParam(name = "root", description = "The corpus root record.")
                             CrossTransportFixtureLevel1 root) {
