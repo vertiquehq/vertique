@@ -30,7 +30,7 @@
  * Exits 0 when the derived inventory matches the policy, 1 otherwise.
  */
 
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -586,7 +586,26 @@ function parseArgs(argv) {
   return args;
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url))) {
+/**
+ * True when this module is the process entry point.
+ *
+ * `import.meta.url` is already symlink-resolved while `process.argv[1]` is the
+ * path as invoked, so comparing them unresolved makes the CLI silently not run
+ * — exit 0, no output — when the script is reached through a symlinked path
+ * (a macOS temp directory, or a linked checkout). That would fail this release
+ * gate open, so both sides are resolved to their real paths first.
+ */
+function isEntryPoint() {
+  if (!process.argv[1]) return false;
+  const self = fileURLToPath(import.meta.url);
+  try {
+    return realpathSync(process.argv[1]) === realpathSync(self);
+  } catch {
+    return path.resolve(process.argv[1]) === path.resolve(self);
+  }
+}
+
+if (isEntryPoint()) {
   try {
     const args = parseArgs(process.argv.slice(2));
     const repoRoot = path.resolve(args.root ?? path.join(path.dirname(fileURLToPath(import.meta.url)), '..'));

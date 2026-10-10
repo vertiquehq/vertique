@@ -20,7 +20,18 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -389,7 +400,9 @@ describe('PublishArtifactsTest', () => {
   // surface: staging must not deploy them, and verifying a staged repository that
   // does contain one must fail.
   it('neverStagesAttachedTestJarsAndRefusesAStagedRepositoryThatHoldsOne', (t) => {
-    const root = mkdtempSync(path.join(tmpdir(), 'vertique-publish-artifacts-'));
+    // Resolved up front so the paths handed to node are the real ones even
+    // where the temp directory is a symlink (macOS /var -> /private/var).
+    const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'vertique-publish-artifacts-')));
     t.after(() => rmSync(root, { recursive: true, force: true }));
     const { repo, localRepository } = fixtureRepository(root, [], ['fixture-archetype']);
     const installedDir = path.join(localRepository, ...GROUP_ID.split('.'), 'fixture-archetype', VERSION);
@@ -438,6 +451,8 @@ describe('PublishArtifactsTest', () => {
       );
     const clean = verifyStaged();
     assert.equal(clean.status, 0, `a clean staged repository failed verification:\n${clean.stdout}\n${clean.stderr}`);
+    // A silent exit 0 must never satisfy this half: the check has to have run.
+    assert.match(clean.stdout, /staged repository OK/);
 
     // Now one reaches the staged repository: verification must name it and fail.
     writeFileSync(path.join(stagedDir, `fixture-archetype-${VERSION}-tests.jar`), 'PK-fixture-test-jar');
