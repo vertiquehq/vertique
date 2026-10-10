@@ -57,7 +57,8 @@ import org.junit.jupiter.api.Test;
  *   <li>Constrained handler: permit → {@code ctx.next()} called</li>
  *   <li>Constrained handler: deny → {@code ctx.fail(403)} called</li>
  *   <li>Constrained handler: no bound SecurityContext → {@code ctx.fail(401)} called</li>
- *   <li>Constrained handler: decision point fails → {@code ctx.fail(cause)} called</li>
+ *   <li>Constrained handler: decision point fails → {@code ctx.fail(403)} and one deny event; the cause is
+ *       logged server-side and never handed to the failure pipeline</li>
  *   <li>Constrained policy with empty roles AND empty scopes → {@link IllegalStateException}</li>
  *   <li>Decision point chain: app override wins, else sync policy wrapped, else default provider</li>
  *   <li>Constructor null argument rejection</li>
@@ -421,8 +422,8 @@ class SecurityPolicyEnforcerTest {
         }
 
         @Test
-        @DisplayName("decision point fails → ctx.fail(cause) called")
-        void decisionPointFailurePropagatesToContext() {
+        @DisplayName("decision point fails → ctx.fail(403), cause not propagated")
+        void decisionPointFailureIsADeny() {
             RuntimeException boom = new RuntimeException("decision point error");
             AuthorizationDecisionPoint dp = mock(AuthorizationDecisionPoint.class);
             when(dp.decide(any())).thenReturn(Future.failedFuture(boom));
@@ -444,9 +445,9 @@ class SecurityPolicyEnforcerTest {
                     enforcer.createHandler(new SecurityPolicy.Constrained(List.of("admin"), List.of(), false));
             handler.handle(rc);
 
-            verify(rc).fail(boom);
+            verify(rc).fail(403);
             verify(rc, never()).next();
-            verify(rc, never()).fail(anyInt());
+            verify(rc, never()).fail(any(Throwable.class));
         }
 
         @Test
@@ -825,7 +826,8 @@ class SecurityPolicyEnforcerTest {
             assertEquals(
                     AuthzReasonCodes.INTERNAL_AUTHZ_ERROR,
                     events.get(0).decision().reasonCode());
-            verify(rc).fail(boom);
+            verify(rc).fail(403);
+            verify(rc, never()).fail(any(Throwable.class));
         }
 
         @Test
@@ -1206,8 +1208,8 @@ class SecurityPolicyEnforcerTest {
         }
 
         @Test
-        @DisplayName("a gate that fails with another operation's resilience timeout keeps its own failure")
-        void foreignResilienceTimeoutIsNotMistakenForTheFence() {
+        @DisplayName("a gate that fails with another operation's resilience timeout is a deny like any failure")
+        void foreignResilienceTimeoutIsADenyToo() {
             io.vertx.core.Promise<AuthorizationDecision> pending = io.vertx.core.Promise.promise();
             RoutingContext rc = constrainedRoute();
             constrainedHandler(enforcer(request -> pending.future(), Optional.empty()))
@@ -1217,9 +1219,50 @@ class SecurityPolicyEnforcerTest {
 
             pending.fail(foreign);
 
-            verify(rc, timeout(DENY_WITHIN_MS)).fail(foreign);
-            verify(rc, never()).fail(403);
+            verify(rc, timeout(DENY_WITHIN_MS)).fail(403);
+            verify(rc, never()).fail(any(Throwable.class));
             assertEquals(1, events.size(), "the failure still emits exactly one deny event");
+        }
+
+        @Test
+        @DisplayName("a gate that fails with an IllegalArgumentException is a 403 deny; its message never reaches "
+                + "the failure pipeline")
+        void gateIllegalArgumentExceptionIsADenyNotAClientError() {
+            RoutingContext rc = constrainedRoute();
+            constrainedHandler(enforcer(
+                            request -> Future.failedFuture(new IllegalArgumentException("pdp host db-7 refused")),
+                            Optional.empty()))
+                    .handle(rc);
+
+            verify(rc, timeout(DENY_WITHIN_MS)).fail(403);
+            verify(rc, never()).fail(any(Throwable.class));
+            verify(rc, never()).next();
+            assertEquals(1, events.size());
+            assertEquals(
+                    AuthzReasonCodes.INTERNAL_AUTHZ_ERROR,
+                    events.get(0).decision().reasonCode());
+        }
+
+        @Test
+        @DisplayName("a gate that fails with a framework UnavailableException is a 403 deny on the composed handler")
+        void gateUnavailableExceptionIsADenyOnTheComposedHandler() {
+            RoutingContext rc = constrainedRoute();
+            enforcer(
+                            request -> Future.failedFuture(
+                                    new dev.vertique.core.exception.UnavailableException("policy store unavailable")),
+                            Optional.of(authorizerReturningPermit()))
+                    .createHandler(
+                            new SecurityPolicy.Constrained(List.of("admin"), List.of(), false),
+                            Optional.of(ActionRef.parse("orders.order.read")))
+                    .handle(rc);
+
+            verify(rc, timeout(DENY_WITHIN_MS)).fail(403);
+            verify(rc, never()).fail(any(Throwable.class));
+            assertEquals(1, events.size());
+            assertEquals(
+                    Boolean.FALSE,
+                    events.get(0).decision().safeAttributes().get("actionEvaluated"),
+                    "a failed role/scope gate never reaches the action gate");
         }
 
         @Test

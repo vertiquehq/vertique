@@ -897,12 +897,14 @@ There is no warn-only mode. Every validation failure stops startup.
 | 401 | `AUTHENTICATION_REQUIRED` | No `SecurityContext` bound, or an anonymous actor on an `AuthenticatedOnly` or `Constrained` route |
 | 403 | `DENY_ALL` | `@DenyAll` |
 | 403 | the decision's own code | The decision point denied |
-| 403 | `INTERNAL_AUTHZ_ERROR` | The decision point or `Authorizer` threw, returned a `null` future, resolved to a `null` decision, or exceeded the configured [gate deadline](#authorization-gate-deadline-authorizationgateconfig) — fail-closed |
+| 403 | `INTERNAL_AUTHZ_ERROR` | The decision point or `Authorizer` threw, returned a `null` future, returned a failed future (with any exception), resolved to a `null` decision, or exceeded the configured [gate deadline](#authorization-gate-deadline-authorizationgateconfig) — fail-closed |
 | 503 | — | A provider failed during the opt-in [Vert.x authorization import](#vertx-authorization-import-opt-in) — fail-closed: the `SecurityContext` is never bound and no partially imported claim is observable. The problem detail is the generic `Authorization is temporarily unavailable`; the failing provider id is logged, never returned |
 | — | `PERMITTED` | Both gates passed |
 
-A failed (rather than denied) decision future propagates its cause through the error pipeline after
-the deny event is emitted. Every path that reaches authorization emits exactly one
+A failed (rather than denied) decision future is a fail-closed deny like any other contract violation:
+403, `INTERNAL_AUTHZ_ERROR` and one event. The cause is logged server-side and is not handed to the
+error pipeline, so a policy client's own exception, whatever its type or message, never decides the
+response status or appears in the response body. Every path that reaches authorization emits exactly one
 `AuthorizationDecisionEvent`; the credential-failure 401 and the import-failure 503 short-circuit
 the request before authorization runs, so no decision event is emitted for them.
 

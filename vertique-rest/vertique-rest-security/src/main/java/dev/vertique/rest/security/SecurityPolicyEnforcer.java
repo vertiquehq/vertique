@@ -880,20 +880,14 @@ public class SecurityPolicyEnforcer {
 
             fencedDecision.onComplete(ar -> {
                 if (ar.failed()) {
+                    // Fail-closed: whatever the gate failed with — the deadline, a closed runtime, or an
+                    // exception of the policy client — is a deny with one event (FR-054), exactly as a
+                    // gate that throws or returns null is. The cause is logged here and never handed to
+                    // the failure pipeline, whose mapper would render a third-party message to the
+                    // caller. The correlation captured at entry is used: the callback may run off the
+                    // request context.
                     logGateFailure("Authorization decision point failed", "role/scope", ar.cause(), roleScopeFence);
-                    if (isFenceFailure(ar.cause(), roleScopeFence)) {
-                        // The deadline elapsed or the runtime closed: the same fail-closed outcome as a
-                        // contract violation, and no resilience failure text reaches the response.
-                        internalErrorDeny(ctx, authzRequest, correlation);
-                        return;
-                    }
-                    // Fail-closed: an evaluation error still emits one deny event (FR-054). Use the
-                    // correlation captured at entry — the callback may run off the request context.
-                    emitDecision(
-                            authzRequest,
-                            AuthorizationDecision.deny(AuthzReasonCodes.INTERNAL_AUTHZ_ERROR),
-                            correlation);
-                    ctx.fail(ar.cause());
+                    internalErrorDeny(ctx, authzRequest, correlation);
                     return;
                 }
                 AuthorizationDecision decision = ar.result();
@@ -1013,17 +1007,11 @@ public class SecurityPolicyEnforcer {
 
             fencedRoleScope.onComplete(roleScopeAr -> {
                 if (roleScopeAr.failed()) {
-                    // Fail-closed: a role/scope evaluation error denies; the action gate is not reached.
+                    // Fail-closed: a role/scope evaluation error denies with one event; the action gate
+                    // is not reached. The cause is logged, never handed to the failure pipeline.
                     logGateFailure(
                             "Authorization decision point failed", "role/scope", roleScopeAr.cause(), roleScopeFence);
-                    if (isFenceFailure(roleScopeAr.cause(), roleScopeFence)) {
-                        internalErrorDenyComposed(ctx, authzRequest, correlation);
-                        return;
-                    }
-                    AuthorizationDecision decision =
-                            combinedDecision(AuthorizationDecision.deny(AuthzReasonCodes.INTERNAL_AUTHZ_ERROR), null);
-                    emitDecision(authzRequest, decision, correlation);
-                    ctx.fail(roleScopeAr.cause());
+                    internalErrorDenyComposed(ctx, authzRequest, correlation);
                     return;
                 }
                 AuthorizationDecision roleScope = roleScopeAr.result();

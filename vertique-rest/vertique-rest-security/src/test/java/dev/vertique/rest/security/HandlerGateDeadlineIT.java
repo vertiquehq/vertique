@@ -127,9 +127,18 @@ class HandlerGateDeadlineIT {
                         protectedHandlerRuns.incrementAndGet();
                         rc.response().end("protected");
                     });
-            router.route().failureHandler(rc -> rc.response()
-                    .setStatusCode(rc.statusCode() > 0 ? rc.statusCode() : 500)
-                    .end());
+            // Mirrors the production exception mapper for the case this class proves: a failure object
+            // that reaches the failure pipeline is rendered with its own message (an
+            // IllegalArgumentException becomes a 400 carrying it); a status-only failure keeps its status.
+            router.route().failureHandler(rc -> {
+                if (rc.failure() instanceof IllegalArgumentException illegal) {
+                    rc.response().setStatusCode(400).end(String.valueOf(illegal.getMessage()));
+                    return;
+                }
+                rc.response()
+                        .setStatusCode(rc.statusCode() > 0 ? rc.statusCode() : 500)
+                        .end();
+            });
             server = vertx.createHttpServer()
                     .requestHandler(router)
                     .listen(0, "127.0.0.1")
@@ -140,12 +149,15 @@ class HandlerGateDeadlineIT {
         }
 
         int get() throws Exception {
+            return response().statusCode();
+        }
+
+        io.vertx.ext.web.client.HttpResponse<io.vertx.core.buffer.Buffer> response() throws Exception {
             return client.get(server.actualPort(), "127.0.0.1", "/protected")
                     .send()
                     .toCompletionStage()
                     .toCompletableFuture()
-                    .get(CLIENT_WAIT_MS, TimeUnit.MILLISECONDS)
-                    .statusCode();
+                    .get(CLIENT_WAIT_MS, TimeUnit.MILLISECONDS);
         }
 
         @Override
@@ -228,6 +240,25 @@ class HandlerGateDeadlineIT {
 
             assertEquals(0, fixture.protectedHandlerRuns.get(), "a late permit must not run the handler");
             assertEquals(1, fixture.events.size(), "a late completion must not emit a second event");
+        }
+    }
+
+    @Test
+    @DisplayName("a gate that fails with an IllegalArgumentException is a 403 deny; its message is not in the response")
+    void gateFailureMessageNeverReachesTheCaller(Vertx vertx) throws Exception {
+        String secret = "pdp host db-7 refused the connection";
+        try (Fixture fixture = new Fixture(
+                vertx,
+                new AuthorizationPolicyGates(
+                        request -> Future.failedFuture(new IllegalArgumentException(secret)), null, null))) {
+            var response = fixture.response();
+
+            assertEquals(403, response.statusCode());
+            assertFalse(
+                    String.valueOf(response.bodyAsString()).contains(secret),
+                    "a policy client's failure message must not be rendered to the caller");
+            assertEquals(0, fixture.protectedHandlerRuns.get());
+            assertEquals(1, fixture.events.size());
         }
     }
 
