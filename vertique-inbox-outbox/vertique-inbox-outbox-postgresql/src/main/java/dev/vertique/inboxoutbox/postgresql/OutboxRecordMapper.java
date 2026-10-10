@@ -99,7 +99,7 @@ final class OutboxRecordMapper {
      * <p>All non-null entry values are coerced to strings via {@link String#valueOf(Object)}. An
      * entry whose stored value is JSON {@code null} has no value to deliver: it is left out of the
      * map — it does not become the text {@code "null"} — and one WARN names the entry id and the
-     * header key. Returns {@link Map#of()} when {@code json} is {@code null} or empty.
+     * header key, shown through {@link OutboxHeaderKeys#forDisplay(String)}. Returns {@link Map#of()} when {@code json} is {@code null} or empty.
      *
      * <p>The returned map is handed straight to the {@link OutboxRecord} constructor, which takes the
      * one unmodifiable copy; this method does not copy it a second time.
@@ -118,7 +118,7 @@ final class OutboxRecordMapper {
                 log.warn(
                         "Outbox entry {} has a stored null value for header '{}'; the header is dropped",
                         entryId,
-                        entry.getKey());
+                        OutboxHeaderKeys.forDisplay(entry.getKey()));
             } else {
                 map.put(entry.getKey(), String.valueOf(entry.getValue()));
             }

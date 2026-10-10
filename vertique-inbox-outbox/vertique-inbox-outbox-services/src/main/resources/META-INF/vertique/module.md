@@ -90,11 +90,11 @@ At relay time:
 8. Rejects `@OneWay` service targets — any operation resolving to a `@OneWay` method returns
    `OutboxPublishResult.permanent(...)`.
 9. A stored payload that cannot be decoded to the target's payload type, or a durable propagation
-   context that cannot be decoded, returns `OutboxPublishResult.permanent(message, cause)` instead
-   of being retried: the stored entry does not change between attempts. The message names the
-   target and never the payload content; the decode failure is the cause. During a rolling deploy
-   this also applies to a payload that only an older node cannot decode: if that node claims the
-   entry, the entry is dead-lettered at once instead of being retried until a newer node claims it.
+   context that cannot be decoded, returns `OutboxPublishResult.retryable(message, cause)`; nothing
+   escapes `publish`. The message names the target and the payload type and never the payload
+   content; the decode failure is the cause. It is retried because during a rolling deploy an older
+   node can claim an entry that only a newer node can decode — a later attempt lets the newer node
+   deliver it — while the entry's maximum attempts still dead-letter one that no node can decode.
 
 `SERVICE` delivery guarantee: at-least-once handoff to the service. The service must be idempotent
 or use `InboxService` for dedup if needed.

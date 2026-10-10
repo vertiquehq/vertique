@@ -883,11 +883,14 @@ See `dev.vertique:vertique-kafka-avro` for a complete reference implementation.
 — phase, then ascending priority, then `orderKey()` (the FQCN by default). Lower priority runs
 first.
 
-Sync observers are fire-and-forget. An `Exception`, `LinkageError` or `AssertionError` thrown by one
-is logged and swallowed; later interceptors still run and the record's outcome is unaffected. An
-`Exception` or `AssertionError` is logged at WARN each time. A `LinkageError` means the callback
-cannot run at all, so it is logged at ERROR once per interceptor class and callback, saying that the
-callback is unusable and its notifications are being lost; later occurrences are not logged.
+Sync observers are fire-and-forget. An `Exception`, `LinkageError`, `AssertionError` or
+`StackOverflowError` thrown by one is logged and swallowed; later interceptors still run and the
+record's outcome is unaffected. An `Exception`, `AssertionError` or `StackOverflowError` is logged
+at WARN each time, naming the interceptor class, the callback and the failure's class only; the
+failure itself, with its message, is logged at DEBUG. A `LinkageError` means the callback cannot run
+at all, so it is logged at ERROR at a limited rate per interceptor class and callback — the first
+time, then at most once every five minutes with the number of failures in between — saying that the
+callback is unusable and its notifications are being lost.
 
 | Callback | When |
 |---|---|
@@ -1058,10 +1061,11 @@ public void onRecordCompleted(KafkaConsumerCompletedEvent event, KafkaConsumerRe
 
 Fires exactly once per send, through the shared wire funnel in `KafkaProducerFactory`, after
 `producer.send(record)` settles. Also `extends OrderedExtension` and observer-only. An `Exception`,
-`LinkageError` or `AssertionError` thrown by `onSend` is logged and swallowed; later hooks still run
-and the send's result is unaffected. An `Exception` or `AssertionError` is logged at WARN each time,
-and a `LinkageError` at ERROR once per hook class, saying that the hook is unusable and its
-notifications are being lost.
+`LinkageError`, `AssertionError` or `StackOverflowError` thrown by `onSend` is logged and swallowed;
+later hooks still run and the send's result is unaffected. An `Exception`, `AssertionError` or
+`StackOverflowError` is logged at WARN each time, by class name, with the failure itself at DEBUG,
+and a `LinkageError` at ERROR at a limited rate per hook class — the first time, then at most once
+every five minutes — saying that the hook is unusable and its notifications are being lost.
 
 The framework calls `onSend(KafkaProducerSend send)`. Override this form: new send details are added
 to the record as components, never as further positional parameters. Read type-level annotations
@@ -1080,6 +1084,11 @@ from `operation.producerType()` — the `@KafkaProducer` interface the applicati
 | `operation` | A `KafkaProducerOperation(producerType, producerName, method)`; non-`null` only for `DIRECT_PRODUCER`. `operation().method()` is how a hook reaches method-level annotations on the direct-producer path |
 | `result` | The settled `AsyncResult<RecordMetadata>` |
 | `originRef` | The outbox entry id, as a string, for an `OUTBOX` send made through the `sendForOutbox` form that takes one; `null` for every other send. A hook uses it to join the wire bytes to the outbox entry they belong to |
+
+`originRef` is not authenticated. Any code that holds the `KafkaProducerFactory` can call
+`sendForOutbox` with origin `OUTBOX` and an arbitrary entry id, so the reference alone does not
+prove that the relay sent the record. A consumer of the hook that joins on it must also match a
+relay notification (`OutboxPublishObserver`) for the same entry id and destination.
 
 `originRef` is the last component. The seven-argument `KafkaProducerSend` constructor without it
 remains and gives a `null` `originRef`.

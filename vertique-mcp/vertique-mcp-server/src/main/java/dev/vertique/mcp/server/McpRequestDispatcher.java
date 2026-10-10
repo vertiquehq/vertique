@@ -21,6 +21,7 @@ import dev.vertique.core.correlation.CorrelationContextSnapshot;
 import dev.vertique.core.correlation.TraceReference;
 import dev.vertique.core.exception.TechnicalException;
 import dev.vertique.core.extension.ExtensionPhase;
+import dev.vertique.core.extension.ObserverFailureReporter;
 import dev.vertique.core.extension.OrderedExtension;
 import dev.vertique.correlation.CorrelationContextFactory;
 import dev.vertique.mcp.interceptor.McpRequestContext;
@@ -95,7 +96,6 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Dispatches the bounded discovery endpoint over the hardened stateless HTTP contract (§4.7).
@@ -377,12 +377,12 @@ final class McpRequestDispatcher {
     private final Set<McpRequestLifecycleObserver> lifecycleObservers;
 
     /**
-     * Lifecycle callbacks already reported as unusable, shared by every request's completion
-     * coordinator so that a callback failing with a {@link LinkageError} is reported once for the life
-     * of this dispatcher. Concurrent because requests run on different event loops.
+     * The reporter of swallowed lifecycle callback failures, shared by every request's completion
+     * coordinator so that a callback failing with a {@link LinkageError} is reported at a limited
+     * rate for the life of this dispatcher rather than once per request. Safe on any thread, as
+     * requests run on different event loops.
      */
-    private final Set<McpCompletionCoordinator.UnusableCallback> reportedUnusableCallbacks =
-            ConcurrentHashMap.newKeySet();
+    private final ObserverFailureReporter lifecycleFailureReporter = McpCompletionCoordinator.newFailureReporter();
 
     private final Set<McpRequestCompletedListener> completedListeners;
     private final List<McpRequestInterceptor> orderedRequestInterceptors;
@@ -684,7 +684,7 @@ final class McpRequestDispatcher {
                 context,
                 config.outputMaxBytes(),
                 () -> settlementTerminal(context, startedAt, McpErrorType.TRANSPORT),
-                reportedUnusableCallbacks);
+                lifecycleFailureReporter);
         byte[] terminalFallback = sseFrame(boundedSseErrorResponse(null, INTERNAL_ERROR, INTERNAL_ERROR_MESSAGE));
         coordinator.bindTerminalResponseBytes(terminalFallback.length);
         context.put(COMPLETION_COORDINATOR_KEY, coordinator);

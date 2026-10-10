@@ -3,6 +3,7 @@
 
 package dev.vertique.inboxoutbox.postgresql;
 
+import dev.vertique.core.extension.ObserverFailureReporter;
 import dev.vertique.core.extension.OrderedExtension;
 import dev.vertique.inboxoutbox.ClaimScope;
 import dev.vertique.inboxoutbox.DestinationType;
@@ -38,8 +39,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import lombok.extern.slf4j.Slf4j;
 
@@ -125,8 +124,9 @@ public class OutboxRelay extends AbstractVerticle {
      */
     private volatile Context relayContext;
 
-    /** Observer classes already reported as unusable. */
-    private final Set<Class<?>> reportedUnusable = ConcurrentHashMap.newKeySet();
+    /** Reports the swallowed failures of publish observers. */
+    private final ObserverFailureReporter observerFailureReporter =
+            new ObserverFailureReporter(log, "Outbox publish observer");
 
     /** Current adaptive poll delay in milliseconds. */
     private long currentPollDelay;
@@ -707,12 +707,12 @@ public class OutboxRelay extends AbstractVerticle {
 
     /**
      * Notifies every registered {@link OutboxPublishObserver} of one completed attempt, in sorted
-     * order. Called on the relay's context. An {@link Exception}, {@link LinkageError} or {@link AssertionError} from one observer
-     * does not stop the remaining observers and never reaches the caller. An {@link Exception} or
-     * {@link AssertionError} is logged at warn level each time. A {@link LinkageError} means the
-     * observer cannot run at all and would repeat for every attempt, so it is logged at error level
-     * the first time it is seen for an observer class, and not logged again for it. Any other
-     * {@link Error} propagates.
+     * order. Called on the relay's context. An {@link Exception}, {@link LinkageError},
+     * {@link AssertionError} or {@link StackOverflowError} from one observer does not stop the
+     * remaining observers and never reaches the caller; it is reported through the
+     * {@link ObserverFailureReporter}: a {@link LinkageError}, which means the observer cannot run at
+     * all and would repeat for every attempt, at error level at a limited rate per observer class,
+     * the others at warn level each time, by class name. Any other {@link Error} propagates.
      *
      * @param record              the outbox record that was processed
      * @param envelope            the envelope built for the record
@@ -757,20 +757,8 @@ public class OutboxRelay extends AbstractVerticle {
         for (OutboxPublishObserver observer : observers) {
             try {
                 observer.onPublishCompleted(event, envelope);
-            } catch (LinkageError e) {
-                if (reportedUnusable.add(observer.getClass())) {
-                    log.error(
-                            "OutboxRelay: publish observer {} is unusable and its notifications are being lost;"
-                                    + " further failures of this observer are not logged",
-                            observer.getClass().getName(),
-                            e);
-                }
-            } catch (Exception | AssertionError e) {
-                log.warn(
-                        "OutboxRelay: publish observer {} threw an exception — swallowing: {}",
-                        observer.getClass().getName(),
-                        e.getMessage(),
-                        e);
+            } catch (Exception | LinkageError | AssertionError | StackOverflowError e) {
+                observerFailureReporter.report(observer.getClass(), "onPublishCompleted", e);
             }
         }
     }

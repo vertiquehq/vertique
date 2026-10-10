@@ -536,6 +536,12 @@ class OutboxRelayPublishObserverTest {
         }
 
         @Test
+        @DisplayName("observer throws StackOverflowError: transition, later observers and polling unaffected")
+        void stackOverflowErrorIsIsolated() throws Exception {
+            assertIsolated(() -> new StackOverflowError("observer recursed too deep"));
+        }
+
+        @Test
         @DisplayName("observer throws LinkageError: transition, later observers and polling unaffected")
         void linkageErrorIsIsolated() throws Exception {
             assertIsolated(() -> new NoClassDefFoundError("com/example/Missing"));
@@ -563,8 +569,9 @@ class OutboxRelayPublishObserverTest {
         }
 
         @Test
-        @DisplayName("observer throws LinkageError on two attempts: logged at ERROR once, both attempts recorded")
-        void linkageErrorIsLoggedAtErrorOnceAcrossAttempts() throws Exception {
+        @DisplayName("observer throws LinkageError on two attempts: logged at ERROR once within the report interval,"
+                + " both attempts recorded")
+        void linkageErrorIsLoggedAtErrorOncePerIntervalAcrossAttempts() throws Exception {
             Logger relayLogger = (Logger) LoggerFactory.getLogger(OutboxRelay.class);
             ListAppender<ILoggingEvent> appender = new ListAppender<>();
             appender.start();
@@ -586,7 +593,10 @@ class OutboxRelayPublishObserverTest {
                 List<ILoggingEvent> errors = appender.list.stream()
                         .filter(event -> event.getLevel() == Level.ERROR)
                         .toList();
-                assertEquals(1, errors.size(), "a LinkageError is reported at ERROR once per observer class");
+                assertEquals(
+                        1,
+                        errors.size(),
+                        "a LinkageError is reported at ERROR once per observer class within the report interval");
                 assertTrue(
                         errors.get(0).getFormattedMessage().contains(ThrowingObserver.class.getName()),
                         "the ERROR names the observer class: " + errors.get(0).getFormattedMessage());

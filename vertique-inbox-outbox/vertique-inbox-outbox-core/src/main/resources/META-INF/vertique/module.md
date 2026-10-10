@@ -438,9 +438,16 @@ is reported as `UNRESOLVABLE` with `DEFERRED`.
 #### Invariants & Gotchas
 
 - **Observer-only.** Exceptions thrown by the callback are caught, logged, and swallowed; they do not
-  affect the enclosing operation. An `AssertionError` or a `LinkageError` is swallowed the same way. An
-  observer changes neither the entry's state transition nor the relay's in-flight count or poll loop,
-  and the observers after it still run.
+  affect the enclosing operation. An `AssertionError`, a `StackOverflowError` or a `LinkageError` is
+  swallowed the same way. An observer changes neither the entry's state transition nor the relay's
+  in-flight count or poll loop, and the observers after it still run. A swallowed failure is logged at
+  WARN by class name, with the failure itself at DEBUG; a `LinkageError` is logged at ERROR at a
+  limited rate per observer class — the first time, then at most once every five minutes.
+- **The envelope is shared.** The destination handler and every observer receive the same
+  `OutboxEnvelope` instance. Its payload object is not copied: do not modify it. It carries the
+  payload, the headers and the durable context (which can include an identity snapshot), and its
+  `toString()` prints all three: do not log the envelope or put it into an exception. Do not block
+  in the callback, and do not keep the envelope after the callback returns — copy what you need.
 - **Order.** `OrderedExtension`: phase, then ascending `priority()`, then `orderKey()`.
 - **`attempt` is not a unique key.** A deferral and a reclaim of a stale claim leave the stored
   attempt count unchanged, so the same `entryId` and `attempt` can be notified more than once. Use

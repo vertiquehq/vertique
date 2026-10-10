@@ -24,8 +24,10 @@ import java.lang.reflect.Method;
  * <p>Implementations <strong>MUST NOT</strong> perform any action that affects the send result,
  * record content, or the future returned to the caller. The hook fires <em>after</em> the result
  * has been irrevocably determined. Any exception thrown by an implementation is swallowed — it
- * does not change the send result or break processing of subsequent hooks. A {@link LinkageError}
- * or {@link AssertionError} is swallowed the same way.
+ * does not change the send result or break processing of subsequent hooks. A {@link LinkageError},
+ * {@link AssertionError} or {@link StackOverflowError} is swallowed the same way. A swallowed
+ * failure is logged by class name, with the failure itself at debug level only; a
+ * {@link LinkageError} is logged at error level at a limited rate per hook class.
  *
  * <h2>Origin and method</h2>
  *
@@ -68,7 +70,8 @@ public interface KafkaProducerCaptureHook extends OrderedExtension {
      *
      * <p>Exceptions thrown by this callback are caught, logged, and swallowed; they do not affect
      * the enclosing operation. A {@link LinkageError} and an {@link AssertionError} are
-     * contained the same way, and a {@link LinkageError} is reported once at error level.
+     * contained the same way, and so is a {@link StackOverflowError}; a {@link LinkageError} is
+     * reported at error level at a limited rate.
      *
      * @deprecated this positional form cannot carry the origin reference
      *     ({@link KafkaProducerSend#originRef()}) or any send detail added later. Override
@@ -116,7 +119,8 @@ public interface KafkaProducerCaptureHook extends OrderedExtension {
      *
      * <p>Exceptions thrown by this callback are caught, logged, and swallowed; they do not affect the
      * enclosing operation. A {@link LinkageError} and an {@link AssertionError} are
-     * contained the same way, and a {@link LinkageError} is reported once at error level.
+     * contained the same way, and so is a {@link StackOverflowError}; a {@link LinkageError} is
+     * reported at error level at a limited rate.
      *
      * @param send the settled send; never {@code null}
      */

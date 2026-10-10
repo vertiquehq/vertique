@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import dev.vertique.core.correlation.TraceReference;
+import dev.vertique.core.extension.ObserverFailureReporter;
 import dev.vertique.mcp.lifecycle.McpCompletionScope;
 import dev.vertique.mcp.lifecycle.McpRawEvidenceObservation;
 import dev.vertique.mcp.lifecycle.McpRequestAdmissionEvidence;
@@ -35,7 +36,6 @@ import java.time.InstantSource;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Supplier;
 import lombok.extern.slf4j.Slf4j;
 
@@ -60,12 +60,12 @@ final class McpCompletionCoordinator {
     private final Supplier<McpRequestTerminalEvent> progressWriteFailureTerminal;
 
     /**
-     * Observer, session or listener class and callback pairs already reported as unusable. The
-     * dispatcher owns the set and hands the same instance to every coordinator it builds, so a
-     * callback that cannot link is reported once for the dispatcher's life rather than once per
-     * request. Concurrent because requests settle on different event loops.
+     * Reports the swallowed failures of observers, sessions, listeners and completion scopes. The
+     * dispatcher owns the reporter and hands the same instance to every coordinator it builds, so a
+     * callback that cannot link is reported at a limited rate for the dispatcher's life rather than
+     * once per request. Safe on any thread, as requests settle on different event loops.
      */
-    private final Set<UnusableCallback> reportedUnusable;
+    private final ObserverFailureReporter failureReporter;
 
     @Nullable
     private final RoutingContext responseContext;
@@ -100,12 +100,14 @@ final class McpCompletionCoordinator {
     private TraceReference linkedTrace;
 
     /**
-     * One lifecycle callback that failed with a {@link LinkageError}.
+     * Creates the reporter one dispatcher shares between the coordinators of all its requests. It
+     * logs under this class's logger.
      *
-     * @param ownerClass the class of the observer, session or completion listener
-     * @param callback the callback name
+     * @return a new failure reporter for MCP lifecycle callbacks
      */
-    record UnusableCallback(Class<?> ownerClass, String callback) {}
+    static ObserverFailureReporter newFailureReporter() {
+        return new ObserverFailureReporter(log, "MCP lifecycle observer");
+    }
 
     McpCompletionCoordinator(
             Context context,
@@ -167,12 +169,12 @@ final class McpCompletionCoordinator {
                 responseContext,
                 responseMaxBytes,
                 progressWriteFailureTerminal,
-                ConcurrentHashMap.newKeySet());
+                newFailureReporter());
     }
 
     /**
-     * Constructs a coordinator that records the callbacks it reports as unusable in
-     * {@code reportedUnusable}, a set that outlives this request.
+     * Constructs a coordinator that reports callback failures through {@code failureReporter}, a
+     * reporter that outlives this request.
      *
      * @param context the request-owning Vert.x context every off-context completion is redispatched onto
      * @param observers the neutral lifecycle observers opened once for this request
@@ -184,8 +186,8 @@ final class McpCompletionCoordinator {
      * @param responseMaxBytes the response byte budget; must be positive
      * @param progressWriteFailureTerminal supplies the terminal a failed progress write settles with,
      *     or {@code null}
-     * @param reportedUnusable the concurrent set of callbacks already reported as unusable, shared by
-     *     every coordinator of one dispatcher
+     * @param failureReporter the reporter of swallowed callback failures, shared by every coordinator
+     *     of one dispatcher
      */
     McpCompletionCoordinator(
             Context context,
@@ -196,13 +198,13 @@ final class McpCompletionCoordinator {
             @Nullable RoutingContext responseContext,
             int responseMaxBytes,
             @Nullable Supplier<McpRequestTerminalEvent> progressWriteFailureTerminal,
-            Set<UnusableCallback> reportedUnusable) {
+            ObserverFailureReporter failureReporter) {
         if (responseMaxBytes <= 0) {
             throw new IllegalArgumentException("responseMaxBytes must be positive");
         }
         this.context = context;
-        this.reportedUnusable = reportedUnusable;
-        this.observations = openObservers(observers, startedAt, reportedUnusable);
+        this.failureReporter = failureReporter;
+        this.observations = openObservers(observers, startedAt, failureReporter);
         this.hasValueObservers =
                 this.observations.stream().anyMatch(session -> session instanceof McpToolValueObservation);
         this.hasRawEvidenceObservers =
@@ -715,11 +717,9 @@ final class McpCompletionCoordinator {
                     }
                 } catch (Throwable failure) {
                     // Throwable, not RuntimeException: an Error here must not abandon the
-                    // scopes already opened by earlier sessions in this same loop — never logs the
-                    // failure's own message, only the failing session's class.
-                    log.warn(
-                            "McpCompletionScope open failed on {}",
-                            session.getClass().getName());
+                    // scopes already opened by earlier sessions in this same loop. The report never
+                    // carries the failure's own message above debug level.
+                    failureReporter.report(session.getClass(), "openCompletionScope", failure);
                 }
             }
         }
@@ -732,18 +732,16 @@ final class McpCompletionCoordinator {
      *
      * @param scopes the scopes to close, in open order
      */
-    private static void closeCompletionScopes(List<AutoCloseable> scopes) {
+    private void closeCompletionScopes(List<AutoCloseable> scopes) {
         for (int i = scopes.size() - 1; i >= 0; i--) {
             AutoCloseable scope = scopes.get(i);
             try {
                 scope.close();
             } catch (Throwable failure) {
                 // Throwable, not Exception: an Error closing one scope must not prevent an
-                // earlier-opened scope from closing — never logs the failure's own message, only the
-                // failing scope's class.
-                log.warn(
-                        "McpCompletionScope close failed on {}",
-                        scope.getClass().getName());
+                // earlier-opened scope from closing. The report never carries the failure's own
+                // message above debug level.
+                failureReporter.report(scope.getClass(), "McpCompletionScope.close", failure);
             }
         }
     }
@@ -760,10 +758,11 @@ final class McpCompletionCoordinator {
      * so an escaping {@code Error} aborts the request before the coordinator exists at all — no
      * coordinator, no settlement hooks, no terminal event, and every later observer left unopened.
      *
-     * <p>An {@link Exception}, {@link AssertionError} or {@link StackOverflowError} is logged at warn
-     * level each time. A {@link LinkageError} means {@code open} cannot run at all and would repeat for
-     * every request, so it is logged at error level the first time it is seen for an observer class,
-     * and not logged again for it. Any other {@link Error} propagates.
+     * <p>The failure is reported through the {@link ObserverFailureReporter}: an {@link Exception},
+     * {@link AssertionError} or {@link StackOverflowError} at warn level each time, by class name; a
+     * {@link LinkageError}, which means {@code open} cannot run at all and would repeat for every
+     * request, at error level at a limited rate per observer class. Any other {@link Error}
+     * propagates.
      *
      * <p>Deliberately narrower than {@link #openCompletionScopes}/{@link #closeCompletionScopes}, which
      * catch {@link Throwable}: those two must additionally survive an {@code Error} that would otherwise
@@ -772,11 +771,11 @@ final class McpCompletionCoordinator {
      *
      * @param observers the contributed lifecycle observers
      * @param startedAt the instant this request began
-     * @param reportedUnusable the callbacks already reported as unusable
+     * @param failureReporter the reporter of swallowed callback failures
      * @return the successfully opened sessions, in iteration order
      */
     private static List<McpRequestObservation> openObservers(
-            Set<McpRequestLifecycleObserver> observers, Instant startedAt, Set<UnusableCallback> reportedUnusable) {
+            Set<McpRequestLifecycleObserver> observers, Instant startedAt, ObserverFailureReporter failureReporter) {
         List<McpRequestObservation> sessions = new ArrayList<>();
         observers.forEach(observer -> {
             try {
@@ -784,14 +783,9 @@ final class McpCompletionCoordinator {
                 if (session != null) {
                     sessions.add(session);
                 }
-            } catch (LinkageError failure) {
-                reportUnusable(reportedUnusable, observer, "open", failure);
-            } catch (Exception | AssertionError | StackOverflowError failure) {
-                // Observer failures are deliberately isolated from the protocol outcome; never logs the
-                // failure's own message, only the failing observer's class.
-                log.warn(
-                        "MCP lifecycle observer open failed on {}",
-                        observer.getClass().getName());
+            } catch (Exception | LinkageError | AssertionError | StackOverflowError failure) {
+                // Observer failures are deliberately isolated from the protocol outcome.
+                failureReporter.report(observer.getClass(), "open", failure);
             }
         });
         return List.copyOf(sessions);
@@ -817,14 +811,13 @@ final class McpCompletionCoordinator {
      * after it.
      *
      * <p>A failing observer/listener callback is logged, never silently and permanently discarded
-     * with no operator-visible signal. {@code owner} identifies which retained session or listener failed; never logs the
-     * failure's own message, matching {@link #openCompletionScopes}/{@link #closeCompletionScopes}'s
-     * established non-leaking pattern for this same class.
-     *
-     * <p>An {@link Exception}, {@link AssertionError} or {@link StackOverflowError} is logged at warn
-     * level each time. A {@link LinkageError} means the callback cannot run at all and would repeat for
-     * every request, so it is logged at error level the first time it is seen for an owner class and
-     * callback, and not logged again for that pair. Any other {@link Error} propagates.
+     * with no operator-visible signal. {@code owner} identifies which retained session or listener
+     * failed. The failure is reported through the {@link ObserverFailureReporter}: an
+     * {@link Exception}, {@link AssertionError} or {@link StackOverflowError} at warn level each
+     * time, by class name, with the failure's own message at debug level only; a
+     * {@link LinkageError}, which means the callback cannot run at all and would repeat for every
+     * request, at error level at a limited rate per owner class and callback. Any other
+     * {@link Error} propagates.
      *
      * <p>Isolates {@code Exception | AssertionError | StackOverflowError | LinkageError}, not
      * {@code Exception} alone. Every
@@ -837,39 +830,14 @@ final class McpCompletionCoordinator {
      * catch it. Deliberately not {@link Throwable}: see {@link #openObservers}.
      *
      * @param owner the observation session or completion listener {@code callback} was built from
-     * @param callbackName the callback name, for the unusable-callback report
+     * @param callbackName the callback name, for the failure report
      * @param callback the lifecycle invocation to run
      */
     private void invoke(Object owner, String callbackName, Runnable callback) {
         try {
             callback.run();
-        } catch (LinkageError failure) {
-            reportUnusable(reportedUnusable, owner, callbackName, failure);
-        } catch (Exception | AssertionError | StackOverflowError failure) {
-            log.warn("MCP lifecycle callback failed on {}", owner.getClass().getName());
-        }
-    }
-
-    /**
-     * Reports a lifecycle callback that failed with a {@link LinkageError}: logged at error level the
-     * first time it is seen for an owner class and callback, and not logged again for that pair.
-     * Like every other failure this class logs, the report carries class names only, never the
-     * failure's own message.
-     *
-     * @param reportedUnusable the callbacks already reported as unusable
-     * @param owner the observer, session or completion listener that failed
-     * @param callbackName the callback name
-     * @param failure the linkage failure; only its class is logged
-     */
-    private static void reportUnusable(
-            Set<UnusableCallback> reportedUnusable, Object owner, String callbackName, LinkageError failure) {
-        if (reportedUnusable.add(new UnusableCallback(owner.getClass(), callbackName))) {
-            log.error(
-                    "MCP lifecycle observer {} callback {} is unusable and its notifications are being lost ({});"
-                            + " further failures of this callback are not logged",
-                    owner.getClass().getName(),
-                    callbackName,
-                    failure.getClass().getName());
+        } catch (Exception | LinkageError | AssertionError | StackOverflowError failure) {
+            failureReporter.report(owner.getClass(), callbackName, failure);
         }
     }
 

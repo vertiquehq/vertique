@@ -70,8 +70,10 @@ import java.util.UUID;
  *   <li>If the handler throws an {@link OutboxPermanentFailure}, the result is
  *       {@link OutboxPublishResult#permanent} — the entry moves to dead-letter immediately.
  *   <li>If the stored payload cannot be decoded to the target's payload type, or the durable
- *       propagation context cannot be decoded, the result is {@link OutboxPublishResult#permanent}
- *       — the stored entry does not change between attempts, so a retry could never succeed.
+ *       propagation context cannot be decoded, the result is {@link OutboxPublishResult#retryable}
+ *       — during a rolling deploy an older node can claim an entry that only a newer node can
+ *       decode, and a retry lets the newer node deliver it. An entry no node can decode is still
+ *       bounded by its maximum attempts.
  *   <li>All other handler failures, including transport errors, are classified as
  *       {@link OutboxPublishResult#retryable}.
  * </ul>
@@ -146,7 +148,7 @@ public class ServiceOutboxDestinationHandler implements OutboxDestinationHandler
      * Delivers the outbox envelope to the resolved service handler.
      *
      * <p>A payload or a durable propagation context that cannot be decoded does not escape as an
-     * exception: it completes the returned future with a permanent failure that carries the decode
+     * exception: it completes the returned future with a retryable failure that carries the decode
      * failure as its cause. The failure message names the target and never the payload content.
      *
      * @param outboxEnvelope the outbox entry to deliver
@@ -174,8 +176,9 @@ public class ServiceOutboxDestinationHandler implements OutboxDestinationHandler
                 outboxEnvelope.aggregateId(),
                 outboxEnvelope.headers() != null ? outboxEnvelope.headers() : Map.of());
 
-        // A stored payload that cannot be decoded stays undecodable on every later attempt, so the
-        // failure is permanent rather than an exception the relay would classify as retryable.
+        // A payload this node cannot decode may be decodable by a newer node during a rolling deploy,
+        // so the failure is retryable; the entry's maximum attempts bound a payload no node decodes.
+        // It is caught here so that the message stored with the entry never carries payload content.
         Class<?> payloadType = target.meta().payloadType();
         Object deserializedPayload;
         try {
@@ -186,7 +189,7 @@ public class ServiceOutboxDestinationHandler implements OutboxDestinationHandler
                 deserializedPayload = outboxEnvelope.payload();
             }
         } catch (RuntimeException e) {
-            return Future.succeededFuture(OutboxPublishResult.permanent(
+            return Future.succeededFuture(OutboxPublishResult.retryable(
                     "Outbox payload cannot be decoded to "
                             + (payloadType != null ? payloadType.getName() : "its stored form")
                             + " for service target: " + outboxEnvelope.destination(),
@@ -206,7 +209,7 @@ public class ServiceOutboxDestinationHandler implements OutboxDestinationHandler
         // metadata JSONB) so a durable identity snapshot only verifies when decoded for the SAME
         // row it was signed for.
         //
-        // The stored context is as fixed as the payload: a decode that throws is permanent too.
+        // Like the payload, a context this node cannot decode is retried for a newer node.
         Map<String, Object> decodedDurable;
         try {
             decodedDurable = expectedCarrier(outboxEnvelope)
@@ -215,7 +218,7 @@ public class ServiceOutboxDestinationHandler implements OutboxDestinationHandler
                     .orElseGet(() -> propagator.decodeToDispatchContext(
                             outboxEnvelope.metadata().context(), BOUNDARY));
         } catch (RuntimeException e) {
-            return Future.succeededFuture(OutboxPublishResult.permanent(
+            return Future.succeededFuture(OutboxPublishResult.retryable(
                     "Outbox dispatch context cannot be decoded for service target: " + outboxEnvelope.destination(),
                     e));
         }

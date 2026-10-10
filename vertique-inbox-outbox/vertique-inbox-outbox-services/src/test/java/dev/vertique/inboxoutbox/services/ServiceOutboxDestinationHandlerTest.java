@@ -477,12 +477,12 @@ class ServiceOutboxDestinationHandlerTest {
     }
 
     @Nested
-    @DisplayName("conditions that can never succeed")
-    class PermanentConditions {
+    @DisplayName("stored values this node cannot decode")
+    class UndecodableStoredValues {
 
         @Test
-        @DisplayName("a payload that cannot be decoded to the target's payload type is a permanent failure")
-        void undecodablePayloadReturnsPermanentFailure() {
+        @DisplayName("a payload that cannot be decoded to the target's payload type is a retryable failure")
+        void undecodablePayloadReturnsRetryableFailure() {
             ServiceMethodMeta meta = mock(ServiceMethodMeta.class);
             when(meta.oneWay()).thenReturn(false);
             when(meta.payloadType()).thenAnswer(invocation -> UUID.class);
@@ -505,10 +505,13 @@ class ServiceOutboxDestinationHandlerTest {
             Future<OutboxPublishResult> published = assertDoesNotThrow(() -> handler.publish(envelope));
 
             assertTrue(published.succeeded(), "publish must complete with a result, not fail");
-            OutboxPublishResult.PermanentFailure failure =
-                    assertInstanceOf(OutboxPublishResult.PermanentFailure.class, published.result());
+            OutboxPublishResult.RetryableFailure failure =
+                    assertInstanceOf(OutboxPublishResult.RetryableFailure.class, published.result());
             assertNotNull(failure.cause(), "the decode failure must be attached as the cause");
             assertTrue(failure.message().contains("test.target"), "message must name the target: " + failure.message());
+            assertTrue(
+                    failure.message().contains(UUID.class.getName()),
+                    "message must name the payload type: " + failure.message());
             assertFalse(
                     failure.message().contains("not-a-uuid"),
                     "message must not carry payload content: " + failure.message());
@@ -516,8 +519,8 @@ class ServiceOutboxDestinationHandlerTest {
         }
 
         @Test
-        @DisplayName("a dispatch context that cannot be decoded is a permanent failure")
-        void undecodableDispatchContextReturnsPermanentFailure() {
+        @DisplayName("a dispatch context that cannot be decoded is a retryable failure")
+        void undecodableDispatchContextReturnsRetryableFailure() {
             IllegalStateException decodeFailure = new IllegalStateException("context cannot be decoded");
             dev.vertique.context.DurableContextPropagator throwingPropagator =
                     mock(dev.vertique.context.DurableContextPropagator.class);
@@ -537,8 +540,8 @@ class ServiceOutboxDestinationHandlerTest {
             Future<OutboxPublishResult> published = assertDoesNotThrow(() -> throwingHandler.publish(makeEnvelope()));
 
             assertTrue(published.succeeded(), "publish must complete with a result, not fail");
-            OutboxPublishResult.PermanentFailure failure =
-                    assertInstanceOf(OutboxPublishResult.PermanentFailure.class, published.result());
+            OutboxPublishResult.RetryableFailure failure =
+                    assertInstanceOf(OutboxPublishResult.RetryableFailure.class, published.result());
             assertSame(decodeFailure, failure.cause());
             assertTrue(failure.message().contains("test.target"), "message must name the target: " + failure.message());
             verifyNoInteractions(sender);

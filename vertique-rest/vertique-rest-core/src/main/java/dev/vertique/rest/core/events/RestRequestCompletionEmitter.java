@@ -7,6 +7,7 @@ import dev.vertique.core.context.ContextHolder;
 import dev.vertique.core.correlation.CorrelationContext;
 import dev.vertique.core.correlation.CorrelationContextSnapshot;
 import dev.vertique.core.extension.ExtensionPhase;
+import dev.vertique.core.extension.ObserverFailureReporter;
 import dev.vertique.rest.core.middleware.Middleware;
 import dev.vertique.rest.core.middleware.MiddlewareScope;
 import dev.vertique.rest.core.middleware.RequestContextLifecycle;
@@ -26,7 +27,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
 import lombok.extern.slf4j.Slf4j;
 
 /**
@@ -109,12 +109,15 @@ import lombok.extern.slf4j.Slf4j;
  * unordered.
  *
  * <p>Listener isolation: each listener is invoked in its own {@code try/catch}. An
- * {@link Exception}, {@link LinkageError} or {@link AssertionError} thrown by one is logged and
- * swallowed: it does not prevent the others from receiving the event or affect the HTTP response.
- * An {@link Exception} or {@link AssertionError} is logged at {@code WARN} each time. A
- * {@link LinkageError} means the listener cannot run at all and would repeat for every request, so
- * it is logged at {@code ERROR} once per listener class and callback for the life of the emitter.
- * Any other {@link Error} is not caught and propagates.
+ * {@link Exception}, {@link LinkageError}, {@link AssertionError} or {@link StackOverflowError}
+ * thrown by one is logged and swallowed: it does not prevent the others from receiving the event or
+ * affect the HTTP response. The failure is reported through an {@link ObserverFailureReporter}: an
+ * {@link Exception}, {@link AssertionError} or {@link StackOverflowError} at {@code WARN} each time,
+ * naming the listener class, the callback and the failure's class only, with the failure itself at
+ * {@code DEBUG}; a {@link LinkageError}, which means the listener cannot run at all and would
+ * repeat for every request, at {@code ERROR} at a limited rate per listener class and callback. Any
+ * other {@link Error} is not caught and propagates. A completion scope's {@code open} and
+ * {@code close} are isolated and reported the same way.
  *
  * <p>Safety: {@code safeFailureMessage} is intentionally left {@code null}. Raw exception messages
  * may contain SQL errors, upstream service details, or PII and must never be placed in the event
@@ -148,18 +151,11 @@ public final class RestRequestCompletionEmitter implements Middleware {
     private final Set<RequestCompletionScope> completionScopes;
 
     /**
-     * Listener class and callback pairs already reported as unusable. Concurrent because the
-     * emission runs on whichever thread ends the response.
+     * Reports the swallowed failures of listeners and completion scopes; safe on whichever thread
+     * ends the response.
      */
-    private final Set<UnusableCallback> reportedUnusable = ConcurrentHashMap.newKeySet();
-
-    /**
-     * One listener callback that failed with a {@link LinkageError}.
-     *
-     * @param listenerClass the listener's class
-     * @param callback the callback name, qualified by the listener interface
-     */
-    private record UnusableCallback(Class<?> listenerClass, String callback) {}
+    private final ObserverFailureReporter failureReporter =
+            new ObserverFailureReporter(log, "Request completion participant");
 
     /**
      * Creates the emitter with all its dependencies: both listener sets and the completion scopes.
@@ -401,8 +397,8 @@ public final class RestRequestCompletionEmitter implements Middleware {
      * Dispatches the event of a request a JAX-RS operation route claimed: opens the completion
      * scopes, calls {@code onCompleted(event, ctx)} on every {@link RestRequestCompletedListener} in
      * the set's own order, each isolated, and closes the scopes. An {@link Exception},
-     * {@link LinkageError} or {@link AssertionError} from one listener does not stop the remaining
-     * listeners; any other {@link Error} propagates.
+     * {@link LinkageError}, {@link AssertionError} or {@link StackOverflowError} from one listener
+     * does not stop the remaining listeners; any other {@link Error} propagates.
      *
      * @param ctx   the request's root routing context, passed to every listener
      * @param event the request's REST completion event
@@ -413,10 +409,8 @@ public final class RestRequestCompletionEmitter implements Middleware {
             for (RestRequestCompletedListener listener : listeners) {
                 try {
                     listener.onCompleted(event, ctx);
-                } catch (LinkageError e) {
-                    reportUnusable(listener, "RestRequestCompletedListener.onCompleted", e);
-                } catch (Exception | AssertionError e) {
-                    log.warn("RestRequestCompletedListener failed: {}", e.toString(), e);
+                } catch (Exception | LinkageError | AssertionError | StackOverflowError e) {
+                    failureReporter.report(listener.getClass(), "RestRequestCompletedListener.onCompleted", e);
                 }
             }
         } finally {
@@ -427,9 +421,9 @@ public final class RestRequestCompletionEmitter implements Middleware {
     /**
      * Dispatches the event of a request no transport claimed: opens the completion scopes, calls
      * {@code onCompleted(event, ctx)} on every {@link HttpRequestCompletedListener} in the set's own
-     * order, each isolated, and closes the scopes. An {@link Exception}, {@link LinkageError} or
-     * {@link AssertionError} from one listener does not stop the remaining listeners; any other
-     * {@link Error} propagates.
+     * order, each isolated, and closes the scopes. An {@link Exception}, {@link LinkageError},
+     * {@link AssertionError} or {@link StackOverflowError} from one listener does not stop the
+     * remaining listeners; any other {@link Error} propagates.
      *
      * @param ctx   the request's root routing context, passed to every listener
      * @param event the request's HTTP completion event
@@ -440,34 +434,12 @@ public final class RestRequestCompletionEmitter implements Middleware {
             for (HttpRequestCompletedListener listener : httpListeners) {
                 try {
                     listener.onCompleted(event, ctx);
-                } catch (LinkageError e) {
-                    reportUnusable(listener, "HttpRequestCompletedListener.onCompleted", e);
-                } catch (Exception | AssertionError e) {
-                    log.warn("HttpRequestCompletedListener failed: {}", e.toString(), e);
+                } catch (Exception | LinkageError | AssertionError | StackOverflowError e) {
+                    failureReporter.report(listener.getClass(), "HttpRequestCompletedListener.onCompleted", e);
                 }
             }
         } finally {
             closeScopesQuietly(opened);
-        }
-    }
-
-    /**
-     * Reports a listener or completion-scope callback that failed with a {@link LinkageError}:
-     * logged at {@code ERROR} the first time it is seen for a class and callback, and not logged
-     * again for that pair.
-     *
-     * @param listener the listener, completion scope or scope closeable that failed
-     * @param callback the callback name, qualified by the interface that declares it
-     * @param failure  the linkage failure
-     */
-    private void reportUnusable(Object listener, String callback, LinkageError failure) {
-        if (reportedUnusable.add(new UnusableCallback(listener.getClass(), callback))) {
-            log.error(
-                    "Listener {} callback {} is unusable and its notifications are being lost;"
-                            + " further failures of this callback are not logged",
-                    listener.getClass().getName(),
-                    callback,
-                    failure);
         }
     }
 
@@ -539,12 +511,11 @@ public final class RestRequestCompletionEmitter implements Middleware {
     /**
      * Opens all {@link RequestCompletionScope} implementations in iteration order. Each
      * scope's {@link RequestCompletionScope#open(RoutingContext)} is guarded: if it throws an
-     * {@link Exception}, {@link LinkageError} or {@link AssertionError}, the open is skipped — the
-     * remaining scopes are still attempted, the listeners still run and the scopes already opened
-     * are still closed. An {@link Exception} or {@link AssertionError} is logged at {@code WARN} for
-     * that scope (class name only) each time; a {@link LinkageError} is logged at {@code ERROR} once
-     * per scope class, like a listener's. Any other {@link Error} propagates. Returns a list of only
-     * the successfully-opened {@link AutoCloseable}s, in open order, ready for reverse-order close.
+     * {@link Exception}, {@link LinkageError}, {@link AssertionError} or {@link StackOverflowError},
+     * the open is skipped — the remaining scopes are still attempted, the listeners still run and
+     * the scopes already opened are still closed. The failure is reported like a listener's. Any
+     * other {@link Error} propagates. Returns a list of only the successfully-opened
+     * {@link AutoCloseable}s, in open order, ready for reverse-order close.
      *
      * <p>Returns an empty list immediately when {@link #completionScopes} is empty.
      *
@@ -560,12 +531,8 @@ public final class RestRequestCompletionEmitter implements Middleware {
             try {
                 AutoCloseable closeable = scope.open(rc);
                 opened.add(closeable);
-            } catch (LinkageError e) {
-                reportUnusable(scope, "RequestCompletionScope.open", e);
-            } catch (Exception | AssertionError e) {
-                log.warn(
-                        "RequestCompletionScope.open() failed ({}); listeners will still run",
-                        scope.getClass().getSimpleName());
+            } catch (Exception | LinkageError | AssertionError | StackOverflowError e) {
+                failureReporter.report(scope.getClass(), "RequestCompletionScope.open", e);
             }
         }
         return opened;
@@ -574,11 +541,10 @@ public final class RestRequestCompletionEmitter implements Middleware {
     /**
      * Closes successfully-opened scopes in <em>reverse</em> open order so that scopes
      * bracket correctly (last-opened closes first). Each close is guarded: an {@link Exception},
-     * {@link LinkageError} or {@link AssertionError} is caught and processing continues to the next
-     * scope. An {@link Exception} or {@link AssertionError} is logged at {@code WARN} (class name
-     * only) each time; a {@link LinkageError} is logged at {@code ERROR} once per closeable class,
-     * like a listener's. Any other {@link Error} (e.g. OOM) is not caught and propagates as fatal —
-     * consistent with standard event-loop practice.
+     * {@link LinkageError}, {@link AssertionError} or {@link StackOverflowError} is caught, reported
+     * like a listener's failure, and processing continues to the next scope. Any other {@link Error}
+     * (e.g. OOM) is not caught and propagates as fatal — consistent with standard event-loop
+     * practice.
      *
      * @param opened the list of closeables in the order they were opened; reverse-iterated here
      */
@@ -589,12 +555,8 @@ public final class RestRequestCompletionEmitter implements Middleware {
         for (AutoCloseable closeable : reversed) {
             try {
                 closeable.close();
-            } catch (LinkageError e) {
-                reportUnusable(closeable, "RequestCompletionScope.close", e);
-            } catch (Exception | AssertionError e) {
-                log.warn(
-                        "RequestCompletionScope.close() failed ({})",
-                        e.getClass().getSimpleName());
+            } catch (Exception | LinkageError | AssertionError | StackOverflowError e) {
+                failureReporter.report(closeable.getClass(), "RequestCompletionScope.close", e);
             }
         }
     }

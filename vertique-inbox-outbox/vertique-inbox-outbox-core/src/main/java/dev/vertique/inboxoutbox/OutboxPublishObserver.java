@@ -16,9 +16,23 @@ import dev.vertique.core.extension.OrderedExtension;
  * <h2>Observer-only contract</h2>
  *
  * <p>An observer cannot change the state transition of the entry, the relay's in-flight count or
- * its poll loop: the callback runs after all three are decided. A {@link LinkageError} or
- * {@link AssertionError} thrown by an observer is swallowed the same way as an exception, and the
- * observers after it still run.
+ * its poll loop: the callback runs after all three are decided. A {@link LinkageError},
+ * {@link AssertionError} or {@link StackOverflowError} thrown by an observer is swallowed the same
+ * way as an exception, and the observers after it still run. A swallowed failure is logged by class
+ * name, with the failure itself at debug level only; a {@link LinkageError} is logged at error level
+ * at a limited rate per observer class.
+ *
+ * <h2>The envelope is shared</h2>
+ *
+ * <p>The destination handler and every observer receive the same {@link OutboxEnvelope} instance.
+ * Its header map is an unmodifiable copy, but its payload object is not copied: an observer MUST NOT
+ * modify it. The envelope carries the entry's payload, its application headers and its durable
+ * context, which can include an identity snapshot, and its {@code toString()} prints all three — so
+ * an observer MUST NOT log the envelope, and MUST NOT put it or anything read from it into an
+ * exception it throws.
+ *
+ * <p>An implementation MUST NOT block, and MUST NOT keep the envelope after the callback returns;
+ * an observer that needs a value later copies that value while the callback runs.
  *
  * <h2>Limits</h2>
  *
@@ -50,12 +64,16 @@ public interface OutboxPublishObserver extends OrderedExtension {
      *
      * <p>Exceptions thrown by this callback are caught, logged, and swallowed; they do not affect
      * the enclosing operation. A {@link LinkageError} and an {@link AssertionError} are
-     * contained the same way, and a {@link LinkageError} is reported once at error level.
+     * contained the same way, and so is a {@link StackOverflowError}; a {@link LinkageError} is
+     * reported at error level at a limited rate.
+     *
+     * <p>An implementation MUST NOT block, MUST NOT modify or log the envelope, and MUST NOT keep
+     * the envelope after returning.
      *
      * @param event    the facts of the completed attempt; never {@code null}
-     * @param envelope the relay-built envelope of the entry, the one given to the destination
-     *                 handler; also present when no handler is registered for the destination type;
-     *                 never {@code null}
+     * @param envelope the relay-built envelope of the entry, the same instance given to the
+     *                 destination handler and to every other observer; also present when no handler
+     *                 is registered for the destination type; never {@code null}
      */
     default void onPublishCompleted(OutboxPublishCompletedEvent event, OutboxEnvelope envelope) {}
 }

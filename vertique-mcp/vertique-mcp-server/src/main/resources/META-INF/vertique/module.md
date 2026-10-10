@@ -239,8 +239,10 @@ a bounded `500`, while a `RuntimeException` from the same callback was isolated 
 succeeded. Both are now isolated and the call succeeds, which is what "never change the protocol or
 business outcome" always said. An `AssertionError` or a `LinkageError` from an observer's `open`,
 from any session callback, or from a completion listener is isolated the same way: an
-`AssertionError` is logged at WARN each time, and a `LinkageError` at ERROR once per observer class
-and callback, saying that the callback is unusable and its notifications are being lost. A failure
+`AssertionError` is logged at WARN each time, by class name, and a `LinkageError` at ERROR at a
+limited rate per observer class and callback — the first time, then at most once every five minutes
+with the number of failures in between — saying that the callback is unusable and its notifications
+are being lost. A failure
 the *framework* hits while building an observation — as
 opposed to one an observer throws — still degrades to the bounded internal-error response.
 

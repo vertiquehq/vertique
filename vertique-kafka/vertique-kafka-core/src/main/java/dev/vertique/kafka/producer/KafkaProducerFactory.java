@@ -7,6 +7,7 @@ import dev.vertique.context.DurableContextPropagator;
 import dev.vertique.core.context.DispatchBoundary;
 import dev.vertique.core.context.DurableMetadata;
 import dev.vertique.core.context.DurableMetadataHeaderCodec;
+import dev.vertique.core.extension.ObserverFailureReporter;
 import dev.vertique.core.extension.OrderedExtension;
 import dev.vertique.core.json.JsonProfile;
 import dev.vertique.core.payload.PayloadSources;
@@ -38,7 +39,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicReference;
 import lombok.extern.slf4j.Slf4j;
 
@@ -92,19 +92,9 @@ public class KafkaProducerFactory {
 
     // --- Runtime state ---
 
-    /**
-     * Hook class and callback pairs already reported as unusable. Concurrent because a send settles
-     * on any thread.
-     */
-    private final Set<UnusableCallback> reportedUnusable = ConcurrentHashMap.newKeySet();
-
-    /**
-     * One hook callback that failed with a {@link LinkageError}.
-     *
-     * @param hookClass the hook's class
-     * @param callback the callback name
-     */
-    private record UnusableCallback(Class<?> hookClass, String callback) {}
+    /** Reports the swallowed failures of capture hooks; safe on any thread, as a send settles on any. */
+    private final ObserverFailureReporter hookFailureReporter =
+            new ObserverFailureReporter(log, "Kafka producer capture hook");
 
     private final AtomicReference<io.vertx.kafka.client.producer.KafkaProducer<String, byte[]>> shared =
             new AtomicReference<>();
@@ -426,6 +416,11 @@ public class KafkaProducerFactory {
      *
      * <p>The record carries the application headers in the order given, followed by one text header
      * per namespace of the supplied {@code context}.
+     *
+     * <p>The origin reference is not authenticated: any code that holds this factory can call this
+     * method and so send with origin {@link KafkaSendOrigin#OUTBOX} and an arbitrary reference. A
+     * hook consumer that joins on {@link KafkaProducerSend#originRef()} must therefore also match a
+     * relay notification for the same entry id and destination before it trusts the join.
      *
      * @param topic   the target Kafka topic
      * @param key     the record key, or {@code null}
@@ -975,7 +970,8 @@ public class KafkaProducerFactory {
      *
      * <p>Hook invocation is observer-only: hooks are called after the result is determined and
      * each hook is isolated in a {@code try/catch}, so a hook that throws an {@link Exception},
-     * {@link LinkageError} or {@link AssertionError} never changes the result.
+     * {@link LinkageError}, {@link AssertionError} or {@link StackOverflowError} never changes the
+     * result.
      *
      * <p>A send without an origin reference fires the hooks through the seven-argument
      * {@code fireHooks}, so a subclass that overrides only that form still sees it; a send with an
@@ -1047,11 +1043,12 @@ public class KafkaProducerFactory {
 
     /**
      * Fires all registered {@link KafkaProducerCaptureHook} instances in sorted order, isolating
-     * each hook in a {@code try/catch}. An {@link Exception}, {@link LinkageError} or
-     * {@link AssertionError} from one hook never propagates to callers and does not stop the
-     * remaining hooks. An {@link Exception} or {@link AssertionError} is logged at warn level each
-     * time. A {@link LinkageError} is logged at error level the first time it is seen for a hook
-     * class, and not logged again for it. Any other {@link Error} propagates.
+     * each hook in a {@code try/catch}. An {@link Exception}, {@link LinkageError},
+     * {@link AssertionError} or {@link StackOverflowError} from one hook never propagates to callers
+     * and does not stop the remaining hooks; it is reported through the
+     * {@link ObserverFailureReporter}: a {@link LinkageError} at error level at a limited rate per
+     * hook class, the others at warn level each time, by class name. Any other {@link Error}
+     * propagates.
      *
      * @param origin         the send origin
      * @param topic          the target topic
@@ -1080,21 +1077,8 @@ public class KafkaProducerFactory {
         for (KafkaProducerCaptureHook hook : captureHooks) {
             try {
                 hook.onSend(send);
-            } catch (LinkageError ex) {
-                if (reportedUnusable.add(new UnusableCallback(hook.getClass(), "onSend"))) {
-                    log.error(
-                            "[KafkaProducerFactory] Capture hook {} callback {} is unusable and its notifications"
-                                    + " are being lost; further failures of this callback are not logged",
-                            hook.getClass().getName(),
-                            "onSend",
-                            ex);
-                }
-            } catch (Exception | AssertionError ex) {
-                log.warn(
-                        "[KafkaProducerFactory] Capture hook {} threw an exception — swallowing: {}",
-                        hook.getClass().getSimpleName(),
-                        ex.getMessage(),
-                        ex);
+            } catch (Exception | LinkageError | AssertionError | StackOverflowError ex) {
+                hookFailureReporter.report(hook.getClass(), "onSend", ex);
             }
         }
     }

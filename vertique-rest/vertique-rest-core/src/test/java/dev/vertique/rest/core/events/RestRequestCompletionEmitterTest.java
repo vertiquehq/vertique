@@ -1373,8 +1373,20 @@ class RestRequestCompletionEmitterTest {
                                 () -> Expected.ONE_HTTP_EVENT.assertOn(
                                         published.ofPath(PLAIN_PATH),
                                         PLAIN_PATH + ", after the throwing HTTP listener"),
+                                // the throwing listener's failure detail is the only DEBUG line: no skip line
                                 () -> assertEquals(
-                                        List.of(), debugByPath.get(PLAIN_PATH), PLAIN_PATH + ": no DEBUG line"),
+                                        1,
+                                        debugByPath.get(PLAIN_PATH).size(),
+                                        PLAIN_PATH + ": one DEBUG line, the throwing listener's failure detail: "
+                                                + debugByPath.get(PLAIN_PATH)),
+                                () -> assertTrue(
+                                        debugByPath.get(PLAIN_PATH).stream()
+                                                .allMatch(line -> line.contains(
+                                                                "callback HttpRequestCompletedListener.onCompleted"
+                                                                        + " failure detail")
+                                                        && !line.contains(PLAIN_PATH)),
+                                        PLAIN_PATH + ": the DEBUG line is the listener failure detail, without the"
+                                                + " path: " + debugByPath.get(PLAIN_PATH)),
                                 // /other: OTHER -> nothing, and one DEBUG line without the path
                                 () -> Expected.NO_EVENT.assertOn(published.ofPath(OTHER_PATH), OTHER_PATH),
                                 () -> assertSkipLine(debugByPath.get(OTHER_PATH)),
@@ -1522,6 +1534,18 @@ class RestRequestCompletionEmitterTest {
         }
 
         @Test
+        @DisplayName("A StackOverflowError from a REST listener does not stop later REST listeners or escape emit")
+        void restListenerStackOverflowErrorIsIsolated(VertxTestContext ctx) {
+            assertRestListenerIsolated(new StackOverflowError("rest-listener-stack"), ctx);
+        }
+
+        @Test
+        @DisplayName("A StackOverflowError from an HTTP listener does not stop later HTTP listeners or escape emit")
+        void httpListenerStackOverflowErrorIsIsolated(VertxTestContext ctx) {
+            assertHttpListenerIsolated(new StackOverflowError("http-listener-stack"), ctx);
+        }
+
+        @Test
         @DisplayName("An AssertionError from a REST listener does not stop later REST listeners or escape emit")
         void restListenerAssertionErrorIsIsolated(VertxTestContext ctx) {
             assertRestListenerIsolated(new AssertionError("rest-listener-assertion"), ctx);
@@ -1548,7 +1572,7 @@ class RestRequestCompletionEmitterTest {
         @Test
         @DisplayName("A LinkageError is logged at ERROR once per listener and callback, an AssertionError at WARN "
                 + "every time")
-        void linkageErrorIsReportedOnceAndAssertionErrorEveryTime(VertxTestContext ctx) {
+        void linkageErrorIsReportedOncePerIntervalAndAssertionErrorEveryTime(VertxTestContext ctx) {
             AtomicInteger delivered = new AtomicInteger();
             HttpRequestCompletedListener unusable = event -> {
                 throw new NoSuchMethodError("http-listener-linkage");
@@ -1579,7 +1603,10 @@ class RestRequestCompletionEmitterTest {
                             assertEquals(2, delivered.get(), "the later listener receives both events");
                             List<ILoggingEvent> errors = eventsAt(Level.ERROR);
                             assertEquals(
-                                    1, errors.size(), "the unusable listener is reported once, not once per request");
+                                    1,
+                                    errors.size(),
+                                    "the unusable listener is reported once within the report interval, not once per"
+                                            + " request");
                             String report = errors.get(0).getFormattedMessage();
                             assertTrue(
                                     report.contains("is unusable and its notifications are being lost"),
@@ -2113,8 +2140,8 @@ class RestRequestCompletionEmitterTest {
         }
 
         /**
-         * Asserts the row's single WARN starts with the failed listener type's name, carries the thrower's message,
-         * and does not carry the request path.
+         * Asserts the row's single WARN names the failed listener type's callback, does not carry the thrower's
+         * message, which could hold request data, and does not carry the request path.
          *
          * @param isolationCase the row
          * @param warnings      the emitter's WARN messages
@@ -2125,13 +2152,13 @@ class RestRequestCompletionEmitterTest {
                 return; // the count assertion reports it
             }
             String warning = warnings.get(0);
-            String expectedPrefix = isolationCase.path().equals(CLAIMED)
-                    ? "RestRequestCompletedListener failed: "
-                    : "HttpRequestCompletedListener failed: ";
+            String expectedCallback = isolationCase.path().equals(CLAIMED)
+                    ? "callback RestRequestCompletedListener.onCompleted threw "
+                    : "callback HttpRequestCompletedListener.onCompleted threw ";
             assertAll(
                     "the WARN: " + warning,
-                    () -> assertTrue(warning.startsWith(expectedPrefix), "it starts with " + expectedPrefix),
-                    () -> assertTrue(warning.contains(BOOM), "it carries the thrower's message " + BOOM),
+                    () -> assertTrue(warning.contains(expectedCallback), "it names " + expectedCallback),
+                    () -> assertFalse(warning.contains(BOOM), "it must not carry the thrower's message " + BOOM),
                     () -> assertFalse(warning.contains(isolationCase.path()), "it must not carry the request path"));
         }
 
@@ -2851,6 +2878,18 @@ class RestRequestCompletionEmitterTest {
         @DisplayName("scope whose open() throws LinkageError: listeners still notified, opened scopes closed")
         void linkageErrorFromOpenDoesNotStopListenersOrLeakScopes(VertxTestContext ctx) {
             assertScopeErrorIsContained(new NoClassDefFoundError("com/example/Missing"), true, ctx);
+        }
+
+        @Test
+        @DisplayName("scope whose open() throws StackOverflowError: listeners still notified, opened scopes closed")
+        void stackOverflowErrorFromOpenDoesNotStopListenersOrLeakScopes(VertxTestContext ctx) {
+            assertScopeErrorIsContained(new StackOverflowError("scope-open-stack"), true, ctx);
+        }
+
+        @Test
+        @DisplayName("scope whose close() throws StackOverflowError: listeners notified, the other scope still closed")
+        void stackOverflowErrorFromCloseDoesNotLeakOtherScopes(VertxTestContext ctx) {
+            assertScopeErrorIsContained(new StackOverflowError("scope-close-stack"), false, ctx);
         }
 
         @Test

@@ -4,6 +4,7 @@
 package dev.vertique.inboxoutbox.postgresql;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -71,6 +72,24 @@ class OutboxRecordMapperTest {
         String message = warnings.get(0).getFormattedMessage();
         assertTrue(message.contains("41"), "WARN must name the entry id: " + message);
         assertTrue(message.contains("x-broken"), "WARN must name the header key: " + message);
+    }
+
+    @Test
+    @DisplayName("the WARN for a dropped header shows its key without control characters and cut to the maximum length")
+    void droppedHeaderKeyIsSanitisedInTheWarning() {
+        String key = "x-broken\r\nforged log line\t" + "k".repeat(500);
+        Row row = rowWithHeaders(41L, new JsonObject().putNull(key));
+
+        OutboxRecordMapper.fromRow(row);
+
+        List<ILoggingEvent> warnings = appender.list.stream()
+                .filter(event -> event.getLevel() == Level.WARN)
+                .toList();
+        assertEquals(1, warnings.size(), "exactly one WARN per dropped header");
+        String message = warnings.get(0).getFormattedMessage();
+        assertTrue(message.contains("x-broken__forged log line_k"), "control characters become '_': " + message);
+        assertFalse(message.chars().anyMatch(Character::isISOControl), "no control character is left: " + message);
+        assertFalse(message.contains("k".repeat(OutboxHeaderKeys.MAX_SHOWN_LENGTH)), "the key is cut: " + message);
     }
 
     @Test

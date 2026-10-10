@@ -508,8 +508,15 @@ class KafkaProducerCaptureHookTest {
         }
 
         @Test
-        @DisplayName("a LinkageError is logged at ERROR once per hook, an AssertionError at WARN for every send")
-        void linkageErrorIsReportedOnceAndAssertionErrorEveryTime() {
+        @DisplayName("a hook throwing a StackOverflowError changes neither the send result nor the later hooks")
+        void stackOverflowErrorHookIsIsolated() {
+            assertErrorHookIsolated(new StackOverflowError("hook recursed too deep"));
+        }
+
+        @Test
+        @DisplayName("a LinkageError is logged at ERROR once per hook within the report interval, an AssertionError at"
+                + " WARN for every send")
+        void linkageErrorIsReportedOncePerIntervalAndAssertionErrorEveryTime() {
             Logger factoryLogger = (Logger) LoggerFactory.getLogger(KafkaProducerFactory.class);
             ListAppender<ILoggingEvent> appender = new ListAppender<>();
             appender.setContext(factoryLogger.getLoggerContext());
@@ -534,7 +541,10 @@ class KafkaProducerCaptureHookTest {
                 List<ILoggingEvent> errors = appender.list.stream()
                         .filter(e -> e.getLevel() == Level.ERROR)
                         .toList();
-                assertEquals(1, errors.size(), "the unusable hook must be reported once, not per send");
+                assertEquals(
+                        1,
+                        errors.size(),
+                        "the unusable hook must be reported once within the report interval, not per send");
                 String report = errors.get(0).getFormattedMessage();
                 assertTrue(report.contains("is unusable and its notifications are being lost"), report);
                 assertTrue(report.contains(ErrorThrowingHook.class.getName()), report);

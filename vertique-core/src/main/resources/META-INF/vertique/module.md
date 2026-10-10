@@ -109,6 +109,24 @@ A step declared in `SERVICES` therefore runs *before* the `SERVICES` verticles, 
 Shutdown runs the shutdown steps of the phases whose startup completed, in reversed comparator
 order, best-effort.
 
+### How a swallowed observer failure is logged
+
+Observer-style callbacks — observers, listeners, hooks and completion scopes whose contract says
+their exceptions are "caught, logged, and swallowed" — are all reported through one
+framework-internal class, `dev.vertique.core.extension.ObserverFailureReporter`. It is public only
+so that the framework's other modules can share it; applications do not use it. What it means for
+an implementer of such a callback:
+
+- An `Exception`, `AssertionError` or `StackOverflowError` is logged at WARN every time, naming the
+  observer class, the callback and the failure's class only. The failure itself, with its message
+  and stack, is logged at DEBUG, because an exception message can contain payload text.
+- A `LinkageError` means the callback cannot run at all. It is logged at ERROR with the failure the
+  first time it is seen for an observer class and callback, then at most once every five minutes
+  (`ObserverFailureReporter.REPORT_INTERVAL`) with the number of failures in between. It is never
+  silenced for good.
+- What happens to any other `Error` is stated by each callback's own contract; most sites let it
+  propagate.
+
 ### Exception semantics
 
 Framework and application exceptions extend a **semantic root** from `dev.vertique.core.exception`
