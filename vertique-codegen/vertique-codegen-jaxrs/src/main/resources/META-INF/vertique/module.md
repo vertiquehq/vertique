@@ -503,7 +503,7 @@ None at runtime. `vertique-codegen-jaxrs` is a compile-time annotation processor
 | `swagger-annotations-jakarta` | compile | `@io.swagger.v3.oas.annotations.Operation`, whose `operationId` the processor reads by fully qualified name |
 | `com.palantir.javapoet:javapoet` | compile (transitive) | Source code emission, through `vertique-codegen-core` |
 
-Other test-only dependencies: `vertique-codegen-test` (compilation harness) and the `vertique-input-processing` test-jar (input-policy fixture stubs).
+Other test-only dependencies: `vertique-codegen-test` (compilation harness) and the in-reactor-only `vertique-input-processing` test JAR (input-policy fixture stubs; not a published artifact).
 
 ---
 
