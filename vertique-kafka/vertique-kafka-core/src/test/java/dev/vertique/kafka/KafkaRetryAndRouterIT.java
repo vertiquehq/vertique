@@ -504,7 +504,6 @@ public class KafkaRetryAndRouterIT {
                 deployments.add(vertx.deployVerticle(new KafkaConsumerVerticle(
                         entry,
                         List.of(),
-                        Set.of(),
                         producerFactory,
                         KafkaTestSupport.requestSender(vertx),
                         retrySucceedResolver,
@@ -520,7 +519,6 @@ public class KafkaRetryAndRouterIT {
                 deployments.add(vertx.deployVerticle(new KafkaConsumerVerticle(
                         entry,
                         List.of(),
-                        Set.of(),
                         producerFactory,
                         KafkaTestSupport.requestSender(vertx),
                         retryExhaustResolver,
@@ -536,7 +534,6 @@ public class KafkaRetryAndRouterIT {
                 deployments.add(vertx.deployVerticle(new KafkaConsumerVerticle(
                         entry,
                         List.of(),
-                        Set.of(),
                         producerFactory,
                         KafkaTestSupport.requestSender(vertx),
                         routerResolver,
