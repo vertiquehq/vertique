@@ -83,6 +83,7 @@ final class McpServerConfigValidator {
         requireTokenBudget(config.outputMaxTokens(), "mcp.outputMaxTokens");
         requireRange(config.toolsPageSize(), 1, 500, "mcp.toolsPageSize");
         requireRange(config.toolsTtlMs(), 0, 3_600_000, "mcp.toolsTtlMs");
+        requireRange(config.requestDeadlineMs(), 0, 3_600_000, "mcp.requestDeadlineMs");
         validateOrigins(config.allowedOrigins());
         // Both McpBodyTracePolicy members (IGNORE and LINK) are equally valid; this only guards
         // against a null value reaching a builder that bypassed the @Builder.Default.
@@ -159,11 +160,12 @@ final class McpServerConfigValidator {
      * additionally refuses to start an enabled MCP mount when the shared HTTP layer arms no liveness
      * timeout at all.
      *
-     * <p>MCP arms no whole-request deadline of its own ({@code
-     * mcp.request.timeoutMs} does not exist): the only thing that can ever reclaim a hanging {@code
+     * <p>Unless the optional {@code mcp.requestDeadlineMs} is set, MCP arms no whole-request deadline
+     * of its own: the only thing that can ever reclaim a hanging {@code
      * McpRequestInterceptor}, a hanging {@code McpToolInterceptor}, a hanging tool handler, or a
      * client that stops reading mid-response is the shared {@link HttpConfig} idle/read timeout
-     * behavior. Both {@link HttpConfig#idleTimeoutSeconds()} and {@link
+     * behavior. That deadline does not satisfy this gate, because it is armed per request and so
+     * cannot reclaim a connection that never sends one. Both {@link HttpConfig#idleTimeoutSeconds()} and {@link
      * HttpConfig#readIdleTimeoutSeconds()} default to {@code 0} ("disabled"), so a default deployment
      * provides no deadline at all — an unauthenticated caller can strand a {@code @PermitAll} tool's
      * connection, coordinator, and every open observation indefinitely. This is the one place that

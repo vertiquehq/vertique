@@ -5,6 +5,14 @@ package dev.vertique.rest.security;
 
 import dev.vertique.core.context.ContextHolder;
 import dev.vertique.core.correlation.CorrelationContext;
+import dev.vertique.core.exception.UnavailableException;
+import dev.vertique.resilience.Resilience;
+import dev.vertique.resilience.ResiliencePipeline;
+import dev.vertique.resilience.ResolvedResiliencePolicy;
+import dev.vertique.resilience.TimeoutConfig;
+import dev.vertique.resilience.adapter.AdapterOperationIdentity;
+import dev.vertique.resilience.exception.ResilienceClosedException;
+import dev.vertique.resilience.exception.ResilienceTimeoutException;
 import dev.vertique.rest.core.security.SecurityPolicy;
 import dev.vertique.rest.core.security.SecurityRuntime;
 import dev.vertique.security.AuthenticationState;
@@ -28,6 +36,7 @@ import io.vertx.core.Future;
 import io.vertx.core.Handler;
 import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
+import io.vertx.core.http.HttpServerResponse;
 import io.vertx.ext.auth.authorization.AuthorizationProvider;
 import io.vertx.ext.web.RoutingContext;
 import jakarta.inject.Inject;
@@ -39,7 +48,6 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
-import java.util.concurrent.TimeUnit;
 import lombok.extern.slf4j.Slf4j;
 
 /**
@@ -69,8 +77,9 @@ import lombok.extern.slf4j.Slf4j;
  * {@link SecurityPolicy.Constrained} route with a missing {@code SecurityContext} (reason
  * {@link AuthzReasonCodes#AUTHENTICATION_REQUIRED}); and a decision-point failure or
  * contract violation — a {@link AuthorizationDecisionPoint}/{@link Authorizer} that throws
- * synchronously, returns a {@code null} future, or resolves to a {@code null} decision — which all
- * fail closed with reason {@link AuthzReasonCodes#INTERNAL_AUTHZ_ERROR}. {@link SecurityPolicy.None}
+ * synchronously, returns a {@code null} future, resolves to a {@code null} decision, or does not settle
+ * within the configured gate deadline — which all fail closed with reason
+ * {@link AuthzReasonCodes#INTERNAL_AUTHZ_ERROR}. {@link SecurityPolicy.None}
  * and {@link SecurityPolicy.PermitAll} install no handler, so they emit nothing. Event construction
  * never throws and never masks the security outcome: when no {@code CorrelationContext} is bound,
  * the event is built with a freshly
@@ -103,6 +112,14 @@ import lombok.extern.slf4j.Slf4j;
 @Singleton
 public class SecurityPolicyEnforcer {
 
+    /** Resilience identity of the role/scope gate fence. */
+    private static final AdapterOperationIdentity ROLE_SCOPE_GATE =
+            new AdapterOperationIdentity("security.authz", List.of("gate", "role-scope"));
+
+    /** Resilience identity of the action gate fence. */
+    private static final AdapterOperationIdentity ACTION_GATE =
+            new AdapterOperationIdentity("security.authz", List.of("gate", "action"));
+
     private final AuthorizationDecisionPoint decisionPoint;
     private final SecurityRuntime securityRuntime;
     private final SecurityEventEmitter emitter;
@@ -120,23 +137,33 @@ public class SecurityPolicyEnforcer {
     private final Authorizer authorizer;
 
     /**
-     * The bound, in milliseconds, on every {@link #decide} gate future — {@link
-     * AuthorizationGateConfig#DEFAULT_GATE_DEADLINE_MS} by default, operator-configurable via the
-     * {@code security.authz} config section.
+     * The fence on the role/scope gate: every gate future that has not settled when it is handed to
+     * the fence is bounded by the operator-configured gate deadline ({@link
+     * AuthorizationGateConfig#DEFAULT_GATE_DEADLINE_MS} by default), through the resilience runtime.
      */
-    private final long gateDeadlineMs;
+    private final ResiliencePipeline roleScopeFence;
+
+    /** The fence on the action gate; same deadline and mechanism as {@link #roleScopeFence}. */
+    private final ResiliencePipeline actionFence;
+
+    /**
+     * The {@code Retry-After} value, in whole seconds, sent with an "authorization unavailable" 503:
+     * the gate deadline rounded up, so a client or load balancer backs off for about as long as one
+     * hung attempt would have held its connection.
+     */
+    private final String retryAfterSeconds;
 
     /**
      * Creates a new enforcer with the framework-default {@link AuthorizationGateConfig}.
-     * Equivalent to the eight-argument
+     * Equivalent to the injected
      * constructor with {@link Optional#empty()} for {@code authorizationGateConfig}.
      *
      * <p>Not {@code @Inject}-annotated — hand-wiring call sites (chiefly tests) that do not need to
      * thread a configured deadline use this overload. A transport that hand-constructs its own
      * {@link SecurityPolicyEnforcer} instance
-     * always does so through the eight-argument constructor below, threading the same operator-configured
+     * always does so through the injected constructor below, threading the same operator-configured
      * {@link AuthorizationGateConfig} every transport uses, not this deadline-less overload. Dagger itself
-     * always resolves the eight-argument constructor too.
+     * always resolves the injected constructor too.
      *
      * @param authorizationDecisionPoint optional app-provided async decision point; takes precedence
      *                                   over everything else
@@ -155,6 +182,8 @@ public class SecurityPolicyEnforcer {
      *                                   is not installed (in which case no {@code @RequiresAction} route
      *                                   can pass startup validation — slice 11). Must not be {@code null};
      *                                   {@link Optional#empty()} signals "engine absent".
+     * @param resilience                 the application's resilience runtime, which bounds the role/scope
+     *                                   and action gates; must not be {@code null}
      */
     public SecurityPolicyEnforcer(
             Optional<AuthorizationDecisionPoint> authorizationDecisionPoint,
@@ -163,7 +192,8 @@ public class SecurityPolicyEnforcer {
             SecurityEventEmitter emitter,
             ContextHolder contextHolder,
             SecurityRuntime securityRuntime,
-            Optional<Authorizer> authorizer) {
+            Optional<Authorizer> authorizer,
+            Resilience resilience) {
         this(
                 authorizationDecisionPoint,
                 authorizationPolicy,
@@ -172,11 +202,12 @@ public class SecurityPolicyEnforcer {
                 contextHolder,
                 securityRuntime,
                 authorizer,
-                Optional.empty());
+                Optional.empty(),
+                resilience);
     }
 
     /**
-     * As the seven-argument constructor above, but with an explicit, operator-configurable {@link
+     * As the hand-wiring constructor above, but with an explicit, operator-configurable {@link
      * #decide} gate deadline instead of the framework default.
      *
      * <p>{@code @Inject}-constructed instances receive {@code Optional<AuthorizationGateConfig>} —
@@ -203,6 +234,8 @@ public class SecurityPolicyEnforcer {
      *                                   {@link Optional#empty()} signals "engine absent".
      * @param authorizationGateConfig    the optional operator-configured gate deadline; empty defaults
      *                                   to {@link AuthorizationGateConfig#defaults()}
+     * @param resilience                 the application's resilience runtime, which bounds the role/scope
+     *                                   and action gates; must not be {@code null}
      */
     @Inject
     public SecurityPolicyEnforcer(
@@ -213,7 +246,8 @@ public class SecurityPolicyEnforcer {
             ContextHolder contextHolder,
             SecurityRuntime securityRuntime,
             Optional<Authorizer> authorizer,
-            Optional<AuthorizationGateConfig> authorizationGateConfig) {
+            Optional<AuthorizationGateConfig> authorizationGateConfig,
+            Resilience resilience) {
         Objects.requireNonNull(authorizationDecisionPoint, "authorizationDecisionPoint");
         Objects.requireNonNull(authorizationPolicy, "authorizationPolicy");
         Objects.requireNonNull(authorizationProviders, "authorizationProviders");
@@ -221,9 +255,13 @@ public class SecurityPolicyEnforcer {
         this.contextHolder = Objects.requireNonNull(contextHolder, "contextHolder");
         this.securityRuntime = Objects.requireNonNull(securityRuntime, "securityRuntime");
         this.authorizer = Objects.requireNonNull(authorizer, "authorizer").orElse(null);
-        this.gateDeadlineMs = Objects.requireNonNull(authorizationGateConfig, "authorizationGateConfig")
+        Objects.requireNonNull(resilience, "resilience");
+        long gateDeadlineMs = Objects.requireNonNull(authorizationGateConfig, "authorizationGateConfig")
                 .orElseGet(AuthorizationGateConfig::defaults)
                 .gateDeadlineMs();
+        this.roleScopeFence = gateFence(resilience, ROLE_SCOPE_GATE, gateDeadlineMs);
+        this.actionFence = gateFence(resilience, ACTION_GATE, gateDeadlineMs);
+        this.retryAfterSeconds = Long.toString(Math.max(1L, (gateDeadlineMs + 999L) / 1000L));
 
         if (authorizationDecisionPoint.isPresent()) {
             this.decisionPoint = authorizationDecisionPoint.get();
@@ -530,43 +568,32 @@ public class SecurityPolicyEnforcer {
             log.warn("Authorization decision point returned a null future at role/scope gate; failing closed");
             return Future.succeededFuture(failClosedInternalError(authzRequest, correlation));
         }
-        // Bound the gate: a non-blocking future that simply never resolves is not a
-        // synchronous throw, a null future, a failed future, or a null decision, so none of the
-        // existing fail-closed branches above ever catch it. .timeout() races the original future
-        // against gateDeadlineMs and forwards it unchanged when it settles first — inert for a gate
-        // that completes normally (verified by the unmodified SecurityPolicyEnforcerDecisionTest
-        // permit/deny suite still passing byte-for-byte after this change).
-        //
-        // Vert.x's FutureBase#timeout
-        // branches on the SOURCE future's context, not the caller's. A gate future built with the
-        // static Promise.promise() — or bridged from a CompletableFuture by a remote-PDP client, the
-        // exact case this deadline exists for — has context == null, so its .timeout() continuation
-        // runs on Netty's GlobalEventExecutor rather than any Vert.x event-loop thread. Left
-        // unaddressed, that thread would then be the one that eventually calls promise.complete(...)
-        // below, and a downstream request coordinator's non-volatile settlement latches may be
-        // documented as "mutated only on the request-owning Vert.x context" — a torn latch on such a
-        // path means double settlement or a lost completion. This method does not attempt to re-anchor
-        // roleScopeFuture/actionFuture themselves (their own timeout continuations may still run off
-        // any context); instead it re-anchors the one future this method actually hands back to its
-        // caller — see completeOnCallerContext, used at every promise.complete(...) call site below.
-        roleScopeFuture = roleScopeFuture.timeout(gateDeadlineMs, TimeUnit.MILLISECONDS);
+        // Bound the gate: a non-blocking future that simply never resolves is not a synchronous throw,
+        // a null future, a failed future, or a null decision, so none of the fail-closed branches above
+        // catch it. A gate that has not settled is handed to the resilience fence, which fails it with
+        // a timeout once the configured deadline elapses; a gate that is already complete is returned
+        // unchanged, so the synchronous fast path costs nothing. The fence settles on the Vert.x context
+        // that is current here.
+        try {
+            roleScopeFuture = fence(roleScopeFuture, roleScopeFence);
+        } catch (RuntimeException e) {
+            log.warn("Authorization role/scope gate fence failed; failing closed", e);
+            return Future.succeededFuture(failClosedInternalError(authzRequest, correlation));
+        }
 
         // {@code promise} itself stays the plain, context-less default — Vert.x's
         // {@link Context} exposes no {@code promise()} factory to anchor one to a context directly.
         // Every settlement of it instead goes through {@link #completeOnCallerContext}, which
-        // redispatches onto {@code callerContext} via {@link Context#runOnContext} before completing —
-        // the same {@code context.runOnContext(...)}
-        // re-anchoring idiom a downstream request coordinator uses — so every caller of decide() keeps observing this
-        // future settle on the same
-        // context it called decide() from, closing the gap a context-less gate future's own
-        // off-context timeout would otherwise reopen. When decide() is itself called off any Vert.x
-        // context (a unit test with no Vertx instance, matching this class's own pre-existing
-        // SecurityPolicyEnforcerGateDeadlineTest fixture), callerContext is null and this degrades to
-        // completing directly, on whichever thread settled the gate.
+        // redispatches onto {@code callerContext} via {@link Context#runOnContext} before completing,
+        // so every caller of decide() keeps observing this future settle on the same context it called
+        // decide() from, whichever thread settled the gate. When decide() is itself called off any
+        // Vert.x context (a unit test with no Vertx instance), callerContext is null and this
+        // completes directly, on whichever thread settled the gate.
         Promise<AuthorizationDecision> promise = Promise.promise();
         roleScopeFuture.onComplete(roleScopeAr -> {
             if (roleScopeAr.failed()) {
-                log.warn("Authorization decision point failed", roleScopeAr.cause());
+                logGateFailure(
+                        "Authorization decision point failed", "role/scope", roleScopeAr.cause(), roleScopeFence);
                 completeOnCallerContext(promise, callerContext, failClosedInternalError(authzRequest, correlation));
                 return;
             }
@@ -613,7 +640,18 @@ public class SecurityPolicyEnforcer {
             }
             // Bound the action gate exactly like the role/scope gate above: the same
             // amplification risk applies to a hanging Authorizer, not only a hanging decision point.
-            actionFuture.timeout(gateDeadlineMs, TimeUnit.MILLISECONDS).onComplete(actionAr -> {
+            Future<AuthorizationDecision> fencedAction;
+            try {
+                fencedAction = fence(actionFuture, actionFence);
+            } catch (RuntimeException e) {
+                log.warn("Authorization action gate fence failed; failing closed", e);
+                completeOnCallerContext(promise, callerContext, failClosedInternalError(authzRequest, correlation));
+                return;
+            }
+            fencedAction.onComplete(actionAr -> {
+                if (actionAr.failed()) {
+                    logGateFailure("Authorizer failed", "action", actionAr.cause(), actionFence);
+                }
                 AuthorizationDecision actionResult = actionAr.succeeded() ? actionAr.result() : null;
                 // The Authorizer contract forbids a failed future for a normal deny and forbids a
                 // null decision; fail closed (INTERNAL_AUTHZ_ERROR) if a misbehaving impl does either.
@@ -626,6 +664,74 @@ public class SecurityPolicyEnforcer {
             });
         });
         return promise.future();
+    }
+
+    /**
+     * Builds the timeout-only resilience pipeline that bounds one authorization gate.
+     *
+     * @param resilience     the application's resilience runtime
+     * @param identity       the gate's resilience identity
+     * @param gateDeadlineMs the deadline in milliseconds; positive
+     * @return the gate's fence
+     */
+    private static ResiliencePipeline gateFence(
+            Resilience resilience, AdapterOperationIdentity identity, long gateDeadlineMs) {
+        return resilience
+                .adapterSupport()
+                .pipeline(
+                        identity,
+                        new ResolvedResiliencePolicy(
+                                Optional.of(TimeoutConfig.ofMillis(gateDeadlineMs)),
+                                Optional.empty(),
+                                Optional.empty(),
+                                Optional.empty()));
+    }
+
+    /**
+     * Bounds {@code gate} with {@code fence} unless it has already settled.
+     *
+     * <p>A settled future is returned as is: it cannot hang, and returning it keeps the synchronous
+     * fast path of an in-memory decision point free of any scheduling. Callers subscribe only to the
+     * returned future, never to {@code gate}, so a late completion of an abandoned gate cannot
+     * produce a second outcome.
+     *
+     * @param gate  the gate future the decision point or authorizer returned; never {@code null}
+     * @param fence the fence for this gate
+     * @return {@code gate} when settled, otherwise a future that settles with the gate's outcome or
+     *     fails with a resilience timeout or closed failure of {@code fence}
+     */
+    private static Future<AuthorizationDecision> fence(Future<AuthorizationDecision> gate, ResiliencePipeline fence) {
+        return gate.isComplete() ? gate : fence.execute(() -> gate);
+    }
+
+    /**
+     * Returns whether {@code cause} is a timeout or closed-runtime failure raised by {@code fence}
+     * itself, as opposed to a failure that happened to be a resilience failure of some other
+     * operation (for example a remote policy client that applies its own resilience).
+     *
+     * <p>The resilience runtime reports a plain {@link java.util.concurrent.TimeoutException} that a
+     * gate fails with as a timeout of the fence too, so a policy client that enforces its own deadline
+     * also lands here. That is the same fail-closed deny, only labelled as a deadline.
+     */
+    private static boolean isFenceFailure(Throwable cause, ResiliencePipeline fence) {
+        String key = fence.operationKey();
+        return (cause instanceof ResilienceTimeoutException timeout && key.equals(timeout.operationKey()))
+                || (cause instanceof ResilienceClosedException closed && key.equals(closed.operationKey()));
+    }
+
+    /**
+     * Logs a failed gate future. A fence failure names the gate and, for a closed runtime, is
+     * informational; any other failure keeps {@code failureMessage}.
+     */
+    private static void logGateFailure(String failureMessage, String gate, Throwable cause, ResiliencePipeline fence) {
+        if (!isFenceFailure(cause, fence)) {
+            log.warn(failureMessage, cause);
+        } else if (cause instanceof ResilienceClosedException) {
+            log.info("Authorization {} gate was fenced after the resilience runtime closed; failing closed", gate);
+        } else {
+            // A deadline has no stack worth printing, and a hung policy point makes one per request.
+            log.warn("Authorization {} gate exceeded its deadline; failing closed", gate);
+        }
     }
 
     /**
@@ -699,8 +805,9 @@ public class SecurityPolicyEnforcer {
      *       then {@code ctx.fail(401)}</li>
      *   <li>permit → emit the decision, then {@code ctx.next()}</li>
      *   <li>deny → emit the decision, then {@code ctx.fail(403)}</li>
-     *   <li>decision-point failure (failed future) → emit deny
-     *       ({@link AuthzReasonCodes#INTERNAL_AUTHZ_ERROR}), then {@code ctx.fail(cause)}</li>
+     *   <li>decision-point failure (failed future, deadline, closed runtime) → emit deny
+     *       ({@link AuthzReasonCodes#INTERNAL_AUTHZ_ERROR}), then fail as unavailable: {@code 503} with
+     *       the generic detail and a {@code Retry-After}; the cause is logged, never propagated</li>
      *   <li>decision-point contract violation (synchronous throw, {@code null} future, or {@code null}
      *       decision) → emit deny ({@link AuthzReasonCodes#INTERNAL_AUTHZ_ERROR}), then
      *       {@code ctx.fail(403)} (fail-closed; mirrors {@code ServiceAuthorizationInterceptor})</li>
@@ -772,16 +879,26 @@ public class SecurityPolicyEnforcer {
                 return;
             }
 
-            decisionFuture.onComplete(ar -> {
+            // A gate that never settles is bounded by the resilience fence; a settled one is untouched.
+            Future<AuthorizationDecision> fencedDecision;
+            try {
+                fencedDecision = fence(decisionFuture, roleScopeFence);
+            } catch (RuntimeException e) {
+                log.warn("Authorization role/scope gate fence failed; failing closed", e);
+                internalErrorDeny(ctx, authzRequest, correlation);
+                return;
+            }
+
+            fencedDecision.onComplete(ar -> {
                 if (ar.failed()) {
-                    log.warn("Authorization decision point failed", ar.cause());
-                    // Fail-closed: an evaluation error still emits one deny event (FR-054). Use the
-                    // correlation captured at entry — the callback may run off the request context.
-                    emitDecision(
-                            authzRequest,
-                            AuthorizationDecision.deny(AuthzReasonCodes.INTERNAL_AUTHZ_ERROR),
-                            correlation);
-                    ctx.fail(ar.cause());
+                    // Fail-closed, but not a denial: the gate could not answer — it failed, the deadline
+                    // elapsed, or the runtime closed. That is "unavailable" (503, generic detail, one
+                    // INTERNAL_AUTHZ_ERROR event), distinct from a real "no" (403). The cause is logged
+                    // here and never handed to the failure pipeline, whose mapper would render a
+                    // third-party message to the caller. The correlation captured at entry is used: the
+                    // callback may run off the request context.
+                    logGateFailure("Authorization decision point failed", "role/scope", ar.cause(), roleScopeFence);
+                    unavailableDeny(ctx, authzRequest, correlation);
                     return;
                 }
                 AuthorizationDecision decision = ar.result();
@@ -795,6 +912,10 @@ public class SecurityPolicyEnforcer {
                 emitDecision(authzRequest, decision, correlation);
                 if (decision.permitted()) {
                     ctx.next();
+                } else if (couldNotDecide(decision)) {
+                    // The engine itself reported that it could not decide (an internal error, or a
+                    // principal-authority resolution failure): unavailable, not denied.
+                    failUnavailable(ctx);
                 } else {
                     log.debug(
                             "Authorization denied: reasonCode={}, path={}, method={}",
@@ -889,14 +1010,24 @@ public class SecurityPolicyEnforcer {
                 return;
             }
 
-            roleScopeFuture.onComplete(roleScopeAr -> {
+            // A gate that never settles is bounded by the resilience fence; a settled one is untouched.
+            Future<AuthorizationDecision> fencedRoleScope;
+            try {
+                fencedRoleScope = fence(roleScopeFuture, roleScopeFence);
+            } catch (RuntimeException e) {
+                log.warn("Authorization role/scope gate fence failed; failing closed", e);
+                internalErrorDenyComposed(ctx, authzRequest, correlation);
+                return;
+            }
+
+            fencedRoleScope.onComplete(roleScopeAr -> {
                 if (roleScopeAr.failed()) {
-                    // Fail-closed: a role/scope evaluation error denies; the action gate is not reached.
-                    log.warn("Authorization decision point failed", roleScopeAr.cause());
-                    AuthorizationDecision decision =
-                            combinedDecision(AuthorizationDecision.deny(AuthzReasonCodes.INTERNAL_AUTHZ_ERROR), null);
-                    emitDecision(authzRequest, decision, correlation);
-                    ctx.fail(roleScopeAr.cause());
+                    // Fail-closed, but not a denial: the role/scope gate could not answer, so the request
+                    // is unavailable (503) with one event, and the action gate is not reached. The cause
+                    // is logged, never handed to the failure pipeline.
+                    logGateFailure(
+                            "Authorization decision point failed", "role/scope", roleScopeAr.cause(), roleScopeFence);
+                    unavailableDenyComposed(ctx, authzRequest, correlation);
                     return;
                 }
                 AuthorizationDecision roleScope = roleScopeAr.result();
@@ -911,6 +1042,10 @@ public class SecurityPolicyEnforcer {
                     // First failing predicate is the role/scope gate → action gate not evaluated.
                     AuthorizationDecision decision = combinedDecision(roleScope, null);
                     emitDecision(authzRequest, decision, correlation);
+                    if (couldNotDecide(roleScope)) {
+                        failUnavailable(ctx);
+                        return;
+                    }
                     log.debug(
                             "Authorization denied at role/scope gate: reasonCode={}, path={}, method={}",
                             roleScope.reasonCode(),
@@ -951,7 +1086,18 @@ public class SecurityPolicyEnforcer {
                     internalErrorDenyComposed(ctx, authzRequest, correlation);
                     return;
                 }
-                actionFuture.onComplete(actionAr -> {
+                Future<AuthorizationDecision> fencedAction;
+                try {
+                    fencedAction = fence(actionFuture, actionFence);
+                } catch (RuntimeException e) {
+                    log.warn("Authorization action gate fence failed; failing closed", e);
+                    internalErrorDenyComposed(ctx, authzRequest, correlation);
+                    return;
+                }
+                fencedAction.onComplete(actionAr -> {
+                    if (actionAr.failed()) {
+                        logGateFailure("Authorizer failed", "action", actionAr.cause(), actionFence);
+                    }
                     AuthorizationDecision actionResult = actionAr.succeeded() ? actionAr.result() : null;
                     // The Authorizer contract forbids a failed future for a normal deny and forbids a
                     // null decision; fail closed (INTERNAL_AUTHZ_ERROR) if a misbehaving impl does either.
@@ -962,6 +1108,10 @@ public class SecurityPolicyEnforcer {
                     emitDecision(authzRequest, decision, correlation);
                     if (decision.permitted()) {
                         ctx.next();
+                    } else if (actionAr.failed() || (actionResult != null && couldNotDecide(actionResult))) {
+                        // The action gate could not answer (it failed, timed out, or the runtime
+                        // closed): unavailable, not denied. The event above is the same deny shape.
+                        failUnavailable(ctx);
                     } else {
                         log.debug(
                                 "Authorization denied at action gate: reasonCode={}, path={}, method={}",
@@ -996,6 +1146,80 @@ public class SecurityPolicyEnforcer {
                 combinedDecision(AuthorizationDecision.deny(AuthzReasonCodes.INTERNAL_AUTHZ_ERROR), null);
         emitDecision(authzRequest, decision, correlation);
         ctx.fail(403);
+    }
+
+    /**
+     * Fail-closed outcome for a role/scope gate that could not answer — its future failed, its
+     * deadline elapsed, or the resilience runtime closed. It is not a denial: it emits exactly one
+     * {@link AuthzReasonCodes#INTERNAL_AUTHZ_ERROR} event (the audit marker for "could not decide")
+     * and fails the request as unavailable (503) with the generic, client-safe detail, so a caller
+     * and a load balancer can tell an outage from a "no". The status is set explicitly as well as the
+     * failure, so a router without the framework's exception mapper still answers 503, not 500.
+     *
+     * @param ctx          the routing context to fail; must not be {@code null}
+     * @param authzRequest the request that was being evaluated; must not be {@code null}
+     * @param correlation  the correlation captured at handler entry; must not be {@code null}
+     */
+    private void unavailableDeny(
+            RoutingContext ctx, AuthorizationRequest authzRequest, CorrelationContext correlation) {
+        emitDecision(authzRequest, AuthorizationDecision.deny(AuthzReasonCodes.INTERNAL_AUTHZ_ERROR), correlation);
+        failUnavailable(ctx);
+    }
+
+    /**
+     * As {@link #unavailableDeny} for the composed {@code @RequiresAction} handler: the event is the
+     * combined deny with the action gate recorded as not evaluated.
+     *
+     * @param ctx          the routing context to fail; must not be {@code null}
+     * @param authzRequest the request that was being evaluated; must not be {@code null}
+     * @param correlation  the correlation captured at handler entry; must not be {@code null}
+     */
+    private void unavailableDenyComposed(
+            RoutingContext ctx, AuthorizationRequest authzRequest, CorrelationContext correlation) {
+        AuthorizationDecision decision =
+                combinedDecision(AuthorizationDecision.deny(AuthzReasonCodes.INTERNAL_AUTHZ_ERROR), null);
+        emitDecision(authzRequest, decision, correlation);
+        failUnavailable(ctx);
+    }
+
+    /**
+     * Returns whether a gate's own, successfully returned decision reports that it could not decide —
+     * the engine's internal-error marker, or a failed principal-authority resolution — as opposed to an
+     * ordinary denial. Such a decision is unavailable (503), like a gate future that failed; the
+     * event still carries the decision's own reason code.
+     *
+     * @param decision a decision returned by a gate; must not be {@code null}
+     * @return {@code true} when the decision is a deny that marks an evaluation failure
+     */
+    private static boolean couldNotDecide(AuthorizationDecision decision) {
+        return !decision.permitted()
+                && (AuthzReasonCodes.INTERNAL_AUTHZ_ERROR.equals(decision.reasonCode())
+                        || AuthzReasonCodes.AUTHORITY_RESOLUTION_FAILED.equals(decision.reasonCode()));
+    }
+
+    /**
+     * Fails the request as "authorization unavailable": 503, the generic detail, and a {@code
+     * Retry-After} of about one gate deadline so a client or load balancer backs off rather than
+     * retrying straight into the same hung gate. The status is set explicitly as well as the failure,
+     * so a router without the framework's exception mapper still answers 503, not 500.
+     *
+     * @param ctx the routing context to fail; must not be {@code null}
+     */
+    private void failUnavailable(RoutingContext ctx) {
+        HttpServerResponse response = ctx.response();
+        if (response != null && !response.headWritten()) {
+            response.putHeader("Retry-After", retryAfterSeconds);
+        }
+        ctx.fail(503, authorizationUnavailable());
+    }
+
+    /**
+     * The failure a request carries when authorization could not be decided: the framework's
+     * {@link UnavailableException}, which maps to 503, with the same generic detail the Vert.x
+     * authorization import uses, so the response never names a policy client or its error.
+     */
+    private static UnavailableException authorizationUnavailable() {
+        return new UnavailableException(VertxAuthorizationImporter.UNAVAILABLE_MESSAGE);
     }
 
     /**

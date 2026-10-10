@@ -158,6 +158,9 @@ final class McpRouterMount implements RouterMount {
         // gap that admission ordering exists to close.
         router.route().order(Integer.MIN_VALUE).handler(context -> {
             context.addEndHandler(v -> context.cancelAndCleanupFileUploads());
+            // Armed here, ahead of cheap admission and BodyHandler, so the deadline also bounds a
+            // stalled upload; a no-op unless mcp.requestDeadlineMs is configured.
+            dispatcher.armRequestDeadline(context);
             context.next();
         });
         router.route().order(Integer.MIN_VALUE + 1).handler(context -> {
@@ -179,8 +182,12 @@ final class McpRouterMount implements RouterMount {
                 .handler(dispatcher::begin)
                 .handler(identityEstablisher::admit)
                 .handler(identityEstablisher::authenticate)
+                // A stage released after the request deadline answered the request must not run the
+                // stages that follow it.
+                .handler(dispatcher::continueWhileOpen)
                 .handler(identityEstablisher::verifyPostAuthenticationState)
                 .handler(identityEstablisher::resolveIdentity)
+                .handler(dispatcher::continueWhileOpen)
                 .handler(dispatcher::dispatch);
         router.route().failureHandler(dispatcher::handleFailure);
         return Future.succeededFuture(router);

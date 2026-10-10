@@ -8,7 +8,7 @@ SPDX-License-Identifier: EUPL-1.2
 > **Status:** Stable
 > **Package:** `dev.vertique.services`
 > **Artifact:** `vertique-services`
-> **Depends on:** core, context, correlation, deploy, logging, security-core, security-runtime
+> **Depends on:** core, context, correlation, deploy, logging, resilience, security-core, security-runtime
 
 `vertique-services` is Vertique's contract-based execution model. Applications define typed
 operations as annotated Java interfaces, implement them as ordinary injectable classes, and inject
@@ -449,6 +449,15 @@ Behavior for a dispatch through the generated or proxy client:
   `Authorizer` is called once with only the declared action. A local denial never reaches it.
 - **Failures.** A denial, a throwing or `null` evaluation, a `null` or failed future are all
   non-recoverable denials; `recoverError` cannot turn them into success.
+- **Deadline.** An `Authorizer` whose future has not settled within `security.authz.gateDeadlineMs`
+  (default `5000`; the same key bounds the REST, WebSocket and MCP authorization gates, which read it
+  through the opt-in `AuthorizationGateConfigModule`, while the services module always reads it) is denied with
+  `INTERNAL_AUTHZ_ERROR` like any other failure, through the application's `Resilience` runtime. A
+  future that is already complete is not timed. After the runtime has closed at application shutdown a
+  pending authorization is denied at once. The deadline does not cancel the authorizer's own work.
+  The component graph must bind a `Vertx`, which `DispatchModule` already requires, and
+  `ServiceAuthorizationInterceptor`'s constructor takes the `ServiceAuthorizationConfig` and the
+  `Resilience` runtime as its final parameters.
 
 Startup rules: the policy reference is resolved when the component is built, and every violation
 is reported in one `ServiceRegistrationException`. A declared action must parse and be registered,
@@ -626,6 +635,7 @@ Configuration lives under `services`. The empty namespace uses `_` as its config
 | Key | Default | Constraint |
 |---|---:|---|
 | `services.sendTimeoutMs` | `30000` | greater than 0 |
+| `security.authz.gateDeadlineMs` | `5000` | greater than 0, a number or a numeric string; the authorizer-call deadline, the key the REST, WebSocket and MCP gates also read |
 | `contracts.{ns}.{name}.instances` | `1` | at least 1 |
 | `contracts.{ns}.{name}.worker` | `false` | boolean |
 | `contracts.{ns}.{name}.sendTimeoutMs` | global value | greater than 0 |

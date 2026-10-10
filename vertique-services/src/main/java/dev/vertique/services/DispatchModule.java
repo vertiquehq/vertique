@@ -30,6 +30,7 @@ import dev.vertique.security.authz.Authorizer;
 import dev.vertique.security.runtime.IdentitySnapshotDegradationPolicy;
 import dev.vertique.security.runtime.events.SecurityEventEmitter;
 import dev.vertique.security.runtime.events.SecurityEventsModule;
+import dev.vertique.services.config.ServiceAuthorizationConfig;
 import dev.vertique.services.config.ServiceConfig;
 import dev.vertique.services.config.ServicesConfig;
 import dev.vertique.services.dispatch.ServiceMethodMeta;
@@ -264,6 +265,19 @@ public abstract class DispatchModule {
     @Singleton
     static ServicesConfig servicesConfig(@VertxConfig JsonObject config, ConfigParser parser) {
         return ServicesConfig.fromConfig(config, parser);
+    }
+
+    /**
+     * Reads the deadline on the action authorizer call from {@code security.authz.gateDeadlineMs}, the
+     * same key that bounds the REST, WebSocket and MCP authorization gates, defaulting to 5000 ms.
+     *
+     * @param config the application configuration
+     * @return the authorizer-call deadline configuration
+     */
+    @Provides
+    @Singleton
+    static ServiceAuthorizationConfig serviceAuthorizationConfig(@VertxConfig JsonObject config) {
+        return ServiceAuthorizationConfig.fromConfig(config);
     }
 
     /**

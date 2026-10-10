@@ -147,7 +147,8 @@ class InvocationOriginPropagationTest {
                 new SecurityEventEmitter(Set.of()),
                 holder,
                 securityRuntime,
-                Optional.empty());
+                Optional.empty(),
+                TestResilience.shared());
     }
 
     @Test
@@ -229,7 +230,8 @@ class InvocationOriginPropagationTest {
                 new SecurityEventEmitter(Set.of()),
                 holder,
                 securityRuntime,
-                Optional.of(authorizer));
+                Optional.of(authorizer),
+                TestResilience.shared());
 
         RoutingContext rc = stubRoutingContext(securityRuntime, stubSecCtx());
         Handler<RoutingContext> handler =
@@ -277,7 +279,8 @@ class InvocationOriginPropagationTest {
                 new SecurityEventEmitter(Set.of()),
                 holder,
                 securityRuntime,
-                Optional.of(authorizer));
+                Optional.of(authorizer),
+                TestResilience.shared());
 
         RoutingContext rc = stubRoutingContext(securityRuntime, stubSecCtx());
         Handler<RoutingContext> handler =

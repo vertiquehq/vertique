@@ -10,6 +10,7 @@ import dev.vertique.core.context.ContextHolder;
 import dev.vertique.core.extension.ExtensionPhase;
 import dev.vertique.core.extension.OrderedExtension;
 import dev.vertique.security.runtime.events.SecurityEventEmitter;
+import dev.vertique.services.config.ServiceAuthorizationConfig;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -95,8 +96,14 @@ class ServiceInterceptorOrderTest {
         // scan, so construction does not require a real registry/authorizer).
         ContextHolder holder = Mockito.mock(ContextHolder.class);
         SecurityEventEmitter emitter = new SecurityEventEmitter(Set.of());
-        ServiceAuthorizationInterceptor authzInterceptor =
-                new ServiceAuthorizationInterceptor(Optional.empty(), Optional.empty(), emitter, holder, Set.of());
+        ServiceAuthorizationInterceptor authzInterceptor = new ServiceAuthorizationInterceptor(
+                Optional.empty(),
+                Optional.empty(),
+                emitter,
+                holder,
+                Set.of(),
+                ServiceAuthorizationConfig.defaults(),
+                TestResilience.shared());
 
         TestInterceptor applicationInterceptor = new TestInterceptor(ExtensionPhase.APPLICATION, Integer.MIN_VALUE);
 

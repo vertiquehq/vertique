@@ -536,6 +536,7 @@ even where startup accepts it. Where a policy needs an action, the `ActionRegist
 | The chain admits the caller and the document is stored | `200` or `304` as for a public document (see [Responses](#responses)), with `Cache-Control: private, no-store` and the `Vary` of [Caching](#caching) |
 | The scheme does not authenticate the caller | `401` problem response |
 | A contributor denies the authenticated caller, or the policy denies every reader | `403` problem response, or the status the contributor fails the request with; a policy that denies every reader authenticates first, so an anonymous reader gets `401` |
+| The policy's `AuthorizationDecisionPoint` or `Authorizer` could not decide: its future failed, its deadline elapsed, or the resilience runtime had closed | `503` problem response, distinct from a `403` denial; the document is never served or revalidated |
 | The chain admits the caller on a trailing-slash variant of the URL | `404` problem response |
 | The chain admits the caller and the document is not stored | `503` problem response, logged at ERROR |
 | A failure without an explicit `4xx` or `5xx` status | `500` problem response, logged at ERROR |

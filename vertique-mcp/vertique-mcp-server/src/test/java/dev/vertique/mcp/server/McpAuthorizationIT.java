@@ -13,6 +13,7 @@ import dev.vertique.mcp.tool.McpAccessMode;
 import dev.vertique.mcp.tool.McpToolAccess;
 import dev.vertique.mcp.tool.McpToolAnnotations;
 import dev.vertique.mcp.tool.McpToolDescriptor;
+import dev.vertique.resilience.Resilience;
 import dev.vertique.rest.core.middleware.RequestContextLifecycle;
 import dev.vertique.rest.core.security.RouteAuthHandler;
 import dev.vertique.rest.core.security.SecurityRuntime;
@@ -384,7 +385,8 @@ class McpAuthorizationIT {
                 emitter,
                 NO_OP_CONTEXT_HOLDER,
                 securityRuntime,
-                Optional.of(authorizer));
+                Optional.of(authorizer),
+                Resilience.create(vertx));
         mcpPolicyEnforcer = new McpPolicyEnforcer(securityPolicyEnforcer);
 
         IdentityResolutionMiddleware identityResolution = new IdentityResolutionMiddleware(

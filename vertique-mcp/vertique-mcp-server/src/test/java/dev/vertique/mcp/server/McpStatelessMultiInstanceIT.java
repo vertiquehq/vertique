@@ -8,6 +8,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import dev.vertique.core.context.ContextHolder;
 import dev.vertique.core.context.ContextValue;
 import dev.vertique.correlation.CorrelationContextFactory;
+import dev.vertique.resilience.Resilience;
 import dev.vertique.rest.core.config.HttpConfig;
 import dev.vertique.rest.core.middleware.RequestContextLifecycle;
 import dev.vertique.rest.core.security.SecurityRuntime;
@@ -244,7 +245,8 @@ public class McpStatelessMultiInstanceIT {
                                     new SecurityEventEmitter(Set.of()),
                                     NO_OP_CONTEXT_HOLDER,
                                     securityRuntime,
-                                    Optional.empty())),
+                                    Optional.empty(),
+                                    Resilience.create(vertx))),
                             NO_OP_CONTEXT_HOLDER,
                             new CorrelationContextFactory(Optional.empty())),
                     Set.of(),

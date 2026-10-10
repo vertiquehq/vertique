@@ -86,6 +86,10 @@ final class McpCompletionCoordinator {
     private boolean completionEmitted;
     private McpRequestTerminalEvent writeTerminal;
 
+    // True only while the terminal response end() call is on the stack, so it is read and written
+    // on the request-owning context like the latches above. See endResponse.
+    private boolean endCallActive;
+
     /**
      * This request's optional linked trace reference, matching {@link
      * McpRequestTerminalObservation#linkedTrace()}, captured
@@ -552,13 +556,56 @@ final class McpCompletionCoordinator {
         publishCompletion(writeTerminal, transport, responseCommitted, completedAt);
     }
 
+    /**
+     * Runs the terminal response {@code end()} call, marking it as on the stack for the duration of
+     * the call so {@link #settleAfterEndCall} can tell a close delivered from inside it.
+     *
+     * <p>A response written outside the connection's read loop, such as from a timer task, can have
+     * its HTTP/2 stream closed by the transport while {@code end()} is still executing and before the
+     * returned future resolves; Vert.x Web reports that close to routing-context end handlers as a
+     * failed {@code "Connection closed"} outcome even though the write then succeeds.
+     *
+     * @param end the call that ends the response and returns its completion future
+     * @return the future {@code end} returned
+     */
+    Future<Void> endResponse(Supplier<Future<Void>> end) {
+        boolean outer = endCallActive;
+        endCallActive = true;
+        try {
+            return end.get();
+        } finally {
+            endCallActive = outer;
+        }
+    }
+
+    /**
+     * Runs a transport-failure settlement now, or one context turn later when it is requested from
+     * inside the terminal {@code end()} call of {@link #endResponse}.
+     *
+     * <p>A failure signalled from inside {@code end()} was produced by that write, not by the peer,
+     * so the {@code end()} future is the authority: by the next turn it has normally resolved and
+     * {@link #finishWrite} with {@code WRITTEN} or {@code WRITE_FAILED} has already won the
+     * completion latch, which makes the deferred settlement a no-op. If the future is still pending
+     * then, the deferred settlement recovers the stalled write exactly as an out-of-call close does.
+     *
+     * @param settle the settlement to run, normally {@link #settleDisconnected} or {@link #settleReset}
+     */
+    void settleAfterEndCall(Runnable settle) {
+        if (!endCallActive) {
+            settle.run();
+            return;
+        }
+        context.runOnContext(ignored -> settle.run());
+    }
+
     // --- Settlement seam ---
     //
     // The disconnect and reset settlement entries below are the internal seam the dispatcher
-    // calls once a client disconnects or the response stream resets. MCP arms no whole-request timer
-    // of its own: a shared HttpConfig idle/read/write liveness expiry closes the connection, so
-    // it reaches this same seam through the ordinary disconnect/reset path rather than a distinct
-    // timeout entry. Each drives exactly one terminal and exactly one completion through the same
+    // calls once a client disconnects or the response stream resets. A shared HttpConfig
+    // idle/read/write liveness expiry closes the connection, so it reaches this same seam through
+    // the ordinary disconnect/reset path rather than a distinct timeout entry; the optional request
+    // deadline settles through settleReset with a TIMEOUT terminal. Each drives exactly one terminal and exactly one
+    // completion through the same
     // first-observed-wins completed-guard as the write path, on the request-owning Vert.x context
     // (inline when already current, otherwise redispatched), with the completion instant read from
     // the injected clock. A signal that arrives after settlement has already won is suppressed, so

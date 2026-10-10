@@ -8,7 +8,7 @@ SPDX-License-Identifier: EUPL-1.2
 > **Status:** Stable
 > **Package:** `dev.vertique.rest.security`
 > **Artifact:** `vertique-rest-security`
-> **Depends on:** rest-core, security-core, security-runtime, context, logging
+> **Depends on:** rest-core, security-core, security-runtime, context, logging, resilience
 
 `vertique-rest-security` is the authentication, identity-resolution, and authorization layer for
 Vertique's HTTP transport. It turns whatever an authentication handler proved about a request into
@@ -375,18 +375,26 @@ throw; it logs a warning and emits no event. `vertique-mcp-server` is the framew
 caller, using it to authorize a tool invocation against the caller's already-resolved
 `SecurityContext` instead of a Vert.x route.
 
-**Gate deadline (issue #417, `AuthorizationGateConfig`).** Every role/scope and action gate future
-`decide` (and every handler `SecurityPolicyEnforcer` builds) awaits is bounded by a deadline — a
+**Gate deadline (`AuthorizationGateConfig`).** Every role/scope and action gate future that
+`decide` and every handler `SecurityPolicyEnforcer` builds awaits is bounded by a deadline. A
 non-blocking future from an app-provided `AuthorizationDecisionPoint` or `Authorizer` that simply
 never resolves (a remote PDP or OPA sidecar with no timeout of its own) would otherwise stall the
 caller indefinitely, which is a real failure for a caller with no `RoutingContext` idle timeout to
-fall back on (an MCP `tools/list` scan). Exceeding the deadline fails closed exactly like any other
-gate contract violation: `AuthzReasonCodes.INTERNAL_AUTHZ_ERROR`, one emitted
-`AuthorizationDecisionEvent`, no propagation of the stalled future. See
-[Configuration](#configuration) for the operator key and default. A general resilience/circuit-breaker
-module (issue #453) is the intended longer-term successor for bounding and recovering from a
-misbehaving decision point or authorizer; `AuthorizationGateConfig` is scoped to this one timeout
-value in the meantime.
+fall back on (an MCP `tools/list` scan) and leaves a REST or WebSocket request open. The bound is a
+timeout-only pipeline of the application's `Resilience` runtime, built once per gate from the
+configured deadline. A gate whose future has already settled when it is returned is not timed at all,
+so an in-memory decision point costs the runtime nothing; a pending gate settles on the request's
+Vert.x context and is reported to any installed `ResilienceObserver` as an execution — a timed-out one when
+the deadline elapses, a successful one when the gate answers in time. The
+timeout does not cancel the gate's own work. A policy client that fails with its own plain
+`TimeoutException` is treated the same way as a gate that exceeded the deadline. Exceeding the
+deadline fails closed with `AuthzReasonCodes.INTERNAL_AUTHZ_ERROR` — the marker for "authorization
+could not decide", as opposed to a denial — and exactly one emitted `AuthorizationDecisionEvent`, with
+no propagation of the stalled future. `decide` returns that decision; a REST or WebSocket handler
+answers `503` with the generic `Authorization is temporarily unavailable`, never a resilience failure
+text. When the `Resilience` runtime has closed at application shutdown, a gate that is still pending
+is treated the same way at once. See [Configuration](#configuration) for the operator key and
+default.
 
 ### `IdentityPipelineFactory`
 
@@ -648,12 +656,19 @@ Execution contract:
 - **Generic client detail, provider id server-side.** The `UnavailableException` behind that 503
   carries the fixed detail `Authorization is temporarily unavailable`, so the response never
   discloses which provider failed. The failing provider id and its cause are recorded instead in
-  exactly one ERROR log event per failed import, emitted by the importer.
+  exactly one ERROR log event per failed import, emitted by the importer. An import that failed only
+  because the `Resilience` runtime had closed at shutdown is logged at INFO instead.
 - **Same-instance return on an empty import.** When the import contributes no claim — every
   provider excluded, or providers ran but granted nothing mappable — the base `AuthorizationClaims`
   instance is carried through unchanged rather than copied.
-- **No importer-level timeout.** Providers must not block the event loop and own their own
-  timeouts; a provider whose future never completes stalls that request's authorization.
+- **Bounded invocation.** Providers must not block the event loop. A provider whose future has not
+  completed within `security.authz.importTimeoutMs` (default `5000`) is treated as failed, through the
+  application's `Resilience` runtime, exactly like any other provider failure above: the request fails
+  with the same 503 and generic detail, and the provider id is logged once at ERROR. A future the
+  provider returns already complete is not timed. The bound applies to each provider separately, so an
+  import across `N` providers can wait up to `N × importTimeoutMs` before failing, and a request that
+  also has an action gate can then wait a further `2 × gateDeadlineMs`. The timeout does not cancel the
+  provider's own work. See [Authorization import deadline](#authorization-import-deadline-authorizationimportconfig).
 
 Mapping is fail-closed. Only these grants become claims:
 
@@ -692,6 +707,12 @@ What the two modules put in the graph, and where each instance comes from:
 hand-wiring outside a Dagger graph, but the explicit `AuthModule` bindings above take precedence
 wherever both could apply — so a graph including `AuthModule` holds exactly one of each, obtained
 from the factory.
+
+`AuthModule` includes `ResilienceModule`, so the graph provides the application's single `Resilience`
+runtime and **must bind a `Vertx`**. The `SecurityPolicyEnforcer` and `IdentityPipelineFactory`
+constructors take that `Resilience` as their final parameter, and `VertxAuthorizationImportModule`
+includes `ResilienceModule` too. A hand-wired call site passes the runtime it owns, created once per
+application with `Resilience.create(vertx)` and not per enforcer.
 
 ### Replaceable bindings
 
@@ -793,8 +814,8 @@ A non-empty `trustedProxyCidrs` is what makes forwarded headers trustworthy. Set
 
 ### Authorization gate deadline (`AuthorizationGateConfig`)
 
-`AuthorizationGateConfig` bounds every `SecurityPolicyEnforcer#decide` role/scope and action gate
-future (issue #417). By default `SecurityPolicyEnforcer` uses
+`AuthorizationGateConfig` bounds every `SecurityPolicyEnforcer` role/scope and action gate future —
+the one `decide` awaits and the one each REST and WebSocket handler awaits. By default `SecurityPolicyEnforcer` uses
 `AuthorizationGateConfig.DEFAULT_GATE_DEADLINE_MS` (`5000`) — no application wiring is required to get
 this default. To config-drive it instead, install `AuthorizationGateConfigModule` alongside
 `AuthModule`:
@@ -824,6 +845,34 @@ An application may instead bind `AuthorizationGateConfig` programmatically (a `@
 returning a constructed instance) rather than installing `AuthorizationGateConfigModule`, if it needs
 the value from a source other than the standard config file.
 
+### Authorization import deadline (`AuthorizationImportConfig`)
+
+`AuthorizationImportConfig` bounds each Vert.x `AuthorizationProvider` invocation made by the opt-in
+`VertxAuthorizationImporter`. `VertxAuthorizationImportModule` uses
+`AuthorizationImportConfig.DEFAULT_IMPORT_TIMEOUT_MS` (`5000`) with no further wiring. To config-drive
+it, install `AuthorizationImportConfigModule` alongside it:
+
+```java
+@Component(modules = {..., AuthModule.class, VertxAuthorizationImportModule.class,
+        AuthorizationImportConfigModule.class})
+public interface AppComponent { ... }
+```
+
+```yaml
+security:
+  authz:
+    importTimeoutMs: 5000
+```
+
+| Component | Config key | Default | Meaning |
+|---|---|---|---|
+| `importTimeoutMs` | `security.authz.importTimeoutMs` | `5000` | Milliseconds bounding each provider invocation; must be `> 0` |
+
+Setting the key without installing `AuthorizationImportConfigModule` has no effect, as for
+`gateDeadlineMs`. Both keys share the `security.authz` section; each record reads only its own. A
+provider that exceeds the bound fails the import with the generic 503 described under
+[Authorization import](#vertx-authorization-import-opt-in).
+
 ---
 
 ## Failures, Constraints, and Common Mistakes
@@ -850,12 +899,22 @@ There is no warn-only mode. Every validation failure stops startup.
 | 401 | `AUTHENTICATION_REQUIRED` | No `SecurityContext` bound, or an anonymous actor on an `AuthenticatedOnly` or `Constrained` route |
 | 403 | `DENY_ALL` | `@DenyAll` |
 | 403 | the decision's own code | The decision point denied |
-| 403 | `INTERNAL_AUTHZ_ERROR` | The decision point or `Authorizer` threw, returned a `null` future, resolved to a `null` decision, or exceeded the configured [gate deadline](#authorization-gate-deadline-authorizationgateconfig) — fail-closed |
+| 403 | `INTERNAL_AUTHZ_ERROR` | The decision point or `Authorizer` threw synchronously, returned a `null` future, or resolved to a `null` decision — a contract violation, fail-closed |
+| 503 | `INTERNAL_AUTHZ_ERROR` or `AUTHORITY_RESOLUTION_FAILED` | The decision point or `Authorizer` could not answer: it returned a failed future (with any exception), exceeded the configured [gate deadline](#authorization-gate-deadline-authorizationgateconfig), the `Resilience` runtime had closed, or it *returned* a decision whose reason code is `INTERNAL_AUTHZ_ERROR` (an engine-internal error) or `AUTHORITY_RESOLUTION_FAILED` (a Mode-2 principal-authority resolution failed or timed out) — fail-closed. The event keeps the decision's own reason code. The problem detail is the generic `Authorization is temporarily unavailable`, with a `Retry-After` of the gate deadline rounded up to whole seconds; the cause is logged, never returned |
 | 503 | — | A provider failed during the opt-in [Vert.x authorization import](#vertx-authorization-import-opt-in) — fail-closed: the `SecurityContext` is never bound and no partially imported claim is observable. The problem detail is the generic `Authorization is temporarily unavailable`; the failing provider id is logged, never returned |
 | — | `PERMITTED` | Both gates passed |
 
-A failed (rather than denied) decision future propagates its cause through the error pipeline after
-the deny event is emitted. Every path that reaches authorization emits exactly one
+A decision future that fails, as opposed to one that denies, means the gate could not answer: the
+request fails closed as unavailable — 503, `INTERNAL_AUTHZ_ERROR` and one event — and is distinct
+from a 403 denial. The cause is logged server-side and is not handed to the error pipeline, so a
+policy client's own exception, whatever its type or message, never decides the response status or
+appears in the response body. The 503 carries `Retry-After` (the gate deadline in whole seconds,
+at least one). Load balancers and meshes that retry on another upstream or eject a host after
+consecutive 5xx will act on it, and a WebSocket client that reconnects on 5xx re-enters authorization
+each time; a failing or hung policy point therefore becomes visible to them as an outage, which is the
+point of not answering 403, and rate limiting belongs ahead of authorization to bound how often the
+policy point is asked. A deterministic fault on one request (a policy client rejecting a crafted
+value) is also a 503 for that request. Every path that reaches authorization emits exactly one
 `AuthorizationDecisionEvent`; the credential-failure 401 and the import-failure 503 short-circuit
 the request before authorization runs, so no decision event is emitted for them.
 

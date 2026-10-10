@@ -6,12 +6,14 @@ package dev.vertique.rest.websocket;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import dagger.BindsInstance;
 import dagger.Component;
 import dev.vertique.rest.security.AuthModule;
 import dev.vertique.rest.security.SecurityModule;
 import dev.vertique.rest.security.VertxAuthorizationImportModule;
 import dev.vertique.rest.security.VertxAuthorizationImporter;
 import dev.vertique.rest.websocket.dagger.WebSocketModule;
+import io.vertx.core.Vertx;
 import jakarta.inject.Singleton;
 import java.util.Optional;
 import org.junit.jupiter.api.DisplayName;
@@ -59,18 +61,46 @@ class WebSocketImportComponentWiringTest {
          *         in the component
          */
         Optional<VertxAuthorizationImporter> vertxAuthorizationImporter();
+
+        /** Supplies the {@link Vertx} the resilience runtime that the import module installs needs. */
+        @Component.Builder
+        interface Builder {
+
+            /**
+             * Binds the Vert.x instance the graph uses.
+             *
+             * @param vertx the Vert.x instance bound into the graph
+             * @return this builder
+             */
+            @BindsInstance
+            Builder vertx(Vertx vertx);
+
+            /**
+             * Builds the component.
+             *
+             * @return the component
+             */
+            WiringComponent build();
+        }
     }
 
     @Test
     @DisplayName("component with WebSocketModule + VertxAuthorizationImportModule resolves a present importer")
     void componentWithBothModulesResolvesImporterPresent() {
-        Optional<VertxAuthorizationImporter> importer =
-                DaggerWebSocketImportComponentWiringTest_WiringComponent.create()
-                        .vertxAuthorizationImporter();
+        Vertx vertx = Vertx.vertx();
+        try {
+            Optional<VertxAuthorizationImporter> importer =
+                    DaggerWebSocketImportComponentWiringTest_WiringComponent.builder()
+                            .vertx(vertx)
+                            .build()
+                            .vertxAuthorizationImporter();
 
-        assertTrue(
-                importer.isPresent(),
-                "Optional<VertxAuthorizationImporter> must be present when VertxAuthorizationImportModule is wired");
-        assertNotNull(importer.get(), "the resolved importer must be non-null");
+            assertTrue(
+                    importer.isPresent(),
+                    "Optional<VertxAuthorizationImporter> must be present when VertxAuthorizationImportModule is wired");
+            assertNotNull(importer.get(), "the resolved importer must be non-null");
+        } finally {
+            vertx.close().toCompletionStage().toCompletableFuture().join();
+        }
     }
 }

@@ -9,6 +9,7 @@ import dev.vertique.core.context.ContextHolder;
 import dev.vertique.core.context.ContextValue;
 import dev.vertique.core.correlation.CorrelationContext;
 import dev.vertique.core.extension.OrderedExtension;
+import dev.vertique.resilience.Resilience;
 import dev.vertique.rest.core.middleware.RequestContextLifecycle;
 import dev.vertique.rest.core.router.OperationHandlerContributor;
 import dev.vertique.rest.core.router.OperationRegistrationContext;
@@ -182,7 +183,8 @@ public class ActionOnlyRouteClaimsValidatorIT {
                 emitter,
                 contextHolder,
                 securityRuntime,
-                Optional.of(new EditorActionAuthorizer()));
+                Optional.of(new EditorActionAuthorizer()),
+                Resilience.create(vertx));
 
         // The custom claims validator rejects any token carrying a "reject" claim set to true. This
         // models a real custom rejection (tenant mismatch, revoked token version, missing required

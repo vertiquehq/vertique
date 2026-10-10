@@ -101,6 +101,17 @@ public final class McpServerConfig {
     private final long toolsTtlMs = 300_000;
 
     /**
+     * Wall-clock deadline for one request on this mount, in milliseconds, measured from the moment the
+     * mount first sees the request until its response has ended. {@code 0} (the default) disables it.
+     * Range 0–3,600,000. It bounds a hung request interceptor, authorization decision, tool handler,
+     * or stalled upload, and it also cuts a long streaming response, so it must exceed the longest
+     * legitimate request on the mount. It does not replace the shared {@code HttpConfig} idle and read
+     * timeouts, which the mount still requires.
+     */
+    @Builder.Default
+    private final long requestDeadlineMs = 0;
+
+    /**
      * Governs whether the request body's optional {@code _meta.traceparent}/{@code tracestate} W3C
      * trace reference is parsed and, once extracted, linked onto the request's OpenTelemetry span
      * Defaults to {@link McpBodyTracePolicy#IGNORE} — mirroring Vert.x's own

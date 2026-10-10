@@ -12,11 +12,13 @@ import ch.qos.logback.classic.spi.IThrowableProxy;
 import ch.qos.logback.classic.spi.ThrowableProxy;
 import ch.qos.logback.core.read.ListAppender;
 import dev.vertique.core.exception.UnavailableException;
+import dev.vertique.resilience.Resilience;
 import dev.vertique.security.authz.AuthorityClaim;
 import dev.vertique.security.authz.AuthorityKind;
 import dev.vertique.security.authz.AuthorizationClaims;
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
+import io.vertx.core.Vertx;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.auth.User;
 import io.vertx.ext.auth.authorization.AndAuthorization;
@@ -33,6 +35,8 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.DisplayName;
@@ -157,6 +161,53 @@ class VertxAuthorizationImporterTest {
         return User.create(new JsonObject().put("sub", "alice"));
     }
 
+    /** Short enough to keep a hung-provider proof fast; long enough never to fire for a healthy provider. */
+    private static final long IMPORT_TIMEOUT_MS = 100L;
+
+    /** The bound a hung-provider proof awaits within; the decisive signal is that the import settles at all. */
+    private static final long AWAIT_MS = 3_000L;
+
+    /** A provider whose returned future never completes. */
+    private static final class HungProvider implements AuthorizationProvider {
+        private final String id;
+
+        HungProvider(String id) {
+            this.id = id;
+        }
+
+        @Override
+        public String getId() {
+            return id;
+        }
+
+        @Override
+        public Future<Void> getAuthorizations(User user) {
+            return Promise.<Void>promise().future();
+        }
+    }
+
+    private static VertxAuthorizationImporter boundedImporter(
+            Resilience resilience, AuthorizationProvider... providers) {
+        return new VertxAuthorizationImporter(
+                Set.of(providers), resilience, new AuthorizationImportConfig(IMPORT_TIMEOUT_MS));
+    }
+
+    /** Runs {@code body} against a fresh runtime whose events are recorded, then closes its Vert.x. */
+    private static void withObservedRuntime(ObservedBody body) throws Exception {
+        Vertx vertx = Vertx.vertx();
+        try {
+            ObservedResilienceEvents observed = new ObservedResilienceEvents();
+            body.run(Resilience.create(vertx, Set.of(observed)), observed);
+        } finally {
+            vertx.close().toCompletionStage().toCompletableFuture().get(AWAIT_MS, TimeUnit.MILLISECONDS);
+        }
+    }
+
+    @FunctionalInterface
+    private interface ObservedBody {
+        void run(Resilience resilience, ObservedResilienceEvents observed) throws Exception;
+    }
+
     // --- Constructor validation ---
 
     @Test
@@ -165,7 +216,10 @@ class VertxAuthorizationImporterTest {
         for (String badId : new String[] {"", "  ", null}) {
             IllegalStateException ex = assertThrows(
                     IllegalStateException.class,
-                    () -> new VertxAuthorizationImporter(Set.of(new BlankIdProvider(badId))),
+                    () -> new VertxAuthorizationImporter(
+                            Set.of(new BlankIdProvider(badId)),
+                            TestResilience.shared(),
+                            AuthorizationImportConfig.defaults()),
                     "id [" + badId + "] must be rejected at construction");
             assertTrue(
                     ex.getMessage().contains("BlankIdProvider"),
@@ -178,7 +232,10 @@ class VertxAuthorizationImporterTest {
     void constructorRejectsDuplicateProviderIds() {
         IllegalStateException ex = assertThrows(
                 IllegalStateException.class,
-                () -> new VertxAuthorizationImporter(Set.of(new DupProviderOne(), new DupProviderTwo())));
+                () -> new VertxAuthorizationImporter(
+                        Set.of(new DupProviderOne(), new DupProviderTwo()),
+                        TestResilience.shared(),
+                        AuthorizationImportConfig.defaults()));
         assertTrue(
                 ex.getMessage().contains("DupProviderOne"),
                 "message must name the first provider class: " + ex.getMessage());
@@ -194,7 +251,8 @@ class VertxAuthorizationImporterTest {
     void importsRolesAndPermissionsWithProvenance() {
         RecordingProvider p1 = new RecordingProvider(
                 "p1", RoleBasedAuthorization.create("admin"), PermissionBasedAuthorization.create("orders:read"));
-        VertxAuthorizationImporter importer = new VertxAuthorizationImporter(Set.of(p1));
+        VertxAuthorizationImporter importer = new VertxAuthorizationImporter(
+                Set.of(p1), TestResilience.shared(), AuthorizationImportConfig.defaults());
 
         Future<AuthorizationClaims> future = importer.importInto(alice(), AuthorizationClaims.empty());
 
@@ -214,7 +272,8 @@ class VertxAuthorizationImporterTest {
         AuthorityClaim baseClaim = role("admin", "");
         AuthorizationClaims base = new AuthorizationClaims(Set.of(baseClaim), Map.of("k", "v"));
         RecordingProvider p1 = new RecordingProvider("p1", RoleBasedAuthorization.create("admin"));
-        VertxAuthorizationImporter importer = new VertxAuthorizationImporter(Set.of(p1));
+        VertxAuthorizationImporter importer = new VertxAuthorizationImporter(
+                Set.of(p1), TestResilience.shared(), AuthorizationImportConfig.defaults());
 
         Future<AuthorizationClaims> future = importer.importInto(alice(), base);
 
@@ -240,7 +299,8 @@ class VertxAuthorizationImporterTest {
                 PermissionBasedAuthorization.create("p").setResource("res2"));
         AuthorityClaim baseClaim = role("base-role", "");
         AuthorizationClaims base = new AuthorizationClaims(Set.of(baseClaim), Map.of());
-        VertxAuthorizationImporter importer = new VertxAuthorizationImporter(Set.of(provider));
+        VertxAuthorizationImporter importer = new VertxAuthorizationImporter(
+                Set.of(provider), TestResilience.shared(), AuthorizationImportConfig.defaults());
 
         Future<AuthorizationClaims> future = importer.importInto(alice(), base);
 
@@ -259,7 +319,8 @@ class VertxAuthorizationImporterTest {
     void neverMutatesTheCallersUser() {
         User caller = alice();
         RecordingProvider p1 = new RecordingProvider("p1", RoleBasedAuthorization.create("admin"));
-        VertxAuthorizationImporter importer = new VertxAuthorizationImporter(Set.of(p1));
+        VertxAuthorizationImporter importer = new VertxAuthorizationImporter(
+                Set.of(p1), TestResilience.shared(), AuthorizationImportConfig.defaults());
 
         Future<AuthorizationClaims> future = importer.importInto(caller, AuthorizationClaims.empty());
 
@@ -280,7 +341,8 @@ class VertxAuthorizationImporterTest {
         User caller = alice();
         RecordingProvider a = new RecordingProvider("a", RoleBasedAuthorization.create("admin"));
         FailingProvider b = new FailingProvider("b");
-        VertxAuthorizationImporter importer = new VertxAuthorizationImporter(Set.of(a, b));
+        VertxAuthorizationImporter importer = new VertxAuthorizationImporter(
+                Set.of(a, b), TestResilience.shared(), AuthorizationImportConfig.defaults());
         AuthorizationClaims base = AuthorizationClaims.empty();
 
         Future<AuthorizationClaims> first = importer.importInto(caller, base);
@@ -304,7 +366,7 @@ class VertxAuthorizationImporterTest {
 
     @Test
     @DisplayName("Providers are invoked sequentially in ascending provider-id order")
-    void invokesProvidersSequentiallyInIdOrder() {
+    void invokesProvidersSequentiallyInIdOrder() throws Exception {
         List<String> events = new ArrayList<>();
         Promise<Void> aGate = Promise.promise();
         AuthorizationProvider a = new AuthorizationProvider() {
@@ -333,12 +395,15 @@ class VertxAuthorizationImporterTest {
         };
         // Registered as "b" then "a": ascending id order must still run "a" first.
         Set<AuthorizationProvider> registeredBThenA = new LinkedHashSet<>(List.of(b, a));
-        VertxAuthorizationImporter importer = new VertxAuthorizationImporter(registeredBThenA);
+        VertxAuthorizationImporter importer = new VertxAuthorizationImporter(
+                registeredBThenA, TestResilience.shared(), AuthorizationImportConfig.defaults());
 
         Future<AuthorizationClaims> future = importer.importInto(alice(), AuthorizationClaims.empty());
 
         assertEquals(List.of("a-start"), events, "b must not start while a is still pending");
         aGate.complete();
+        // A provider future that was still pending settles on the request's context after a short hop.
+        future.toCompletionStage().toCompletableFuture().get(AWAIT_MS, TimeUnit.MILLISECONDS);
         assertTrue(future.succeeded(), () -> "import must succeed: " + future.cause());
         assertEquals(
                 List.of("a-start", "a-complete", "b-start", "b-complete"),
@@ -357,12 +422,13 @@ class VertxAuthorizationImporterTest {
             // 1-arg constructor: "jwt-claims" is always excluded.
             RecordingProvider jwtClaims = new RecordingProvider(
                     VertxAuthorizationImporter.EXCLUDED_JWT_CLAIMS_PROVIDER_ID, RoleBasedAuthorization.create("admin"));
-            VertxAuthorizationImporter defaultImporter = new VertxAuthorizationImporter(Set.of(jwtClaims));
+            VertxAuthorizationImporter defaultImporter = new VertxAuthorizationImporter(
+                    Set.of(jwtClaims), TestResilience.shared(), AuthorizationImportConfig.defaults());
 
             // 2-arg constructor: an explicitly excluded arbitrary id gets the same treatment.
             RecordingProvider custom = new RecordingProvider("custom", RoleBasedAuthorization.create("admin"));
-            VertxAuthorizationImporter explicitImporter =
-                    new VertxAuthorizationImporter(Set.of(custom), Set.of("custom"));
+            VertxAuthorizationImporter explicitImporter = new VertxAuthorizationImporter(
+                    Set.of(custom), Set.of("custom"), TestResilience.shared(), AuthorizationImportConfig.defaults());
 
             // Each excluded-and-present provider must be named once at INFO at wiring time —
             // already present after construction, before any importInto call — so an operator can
@@ -417,6 +483,160 @@ class VertxAuthorizationImporterTest {
         }
     }
 
+    // --- Bounded provider invocation ---
+
+    @Test
+    @DisplayName("A provider that never completes fails the whole import with the generic UnavailableException "
+            + "within the bound, logging the provider id once at ERROR")
+    void hungProviderFailsTheWholeImportWithinTheBound() throws Exception {
+        Logger logbackLogger = (Logger) LoggerFactory.getLogger(VertxAuthorizationImporter.class);
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        logbackLogger.addAppender(appender);
+        try {
+            User caller = alice();
+            RecordingProvider healthy = new RecordingProvider("a", RoleBasedAuthorization.create("admin"));
+            HungProvider hung = new HungProvider("teams-hung");
+            VertxAuthorizationImporter importer = boundedImporter(TestResilience.shared(), healthy, hung);
+
+            Future<AuthorizationClaims> future = importer.importInto(caller, AuthorizationClaims.empty());
+
+            // DECISIVE: without the bound this get(...) times out instead of returning a failure.
+            ExecutionException failure = assertThrows(
+                    ExecutionException.class,
+                    () -> future.toCompletionStage().toCompletableFuture().get(AWAIT_MS, TimeUnit.MILLISECONDS));
+            UnavailableException cause = assertInstanceOf(UnavailableException.class, failure.getCause());
+            assertEquals("Authorization is temporarily unavailable", cause.getMessage());
+            assertFalse(cause.getMessage().contains("teams-hung"), "the response detail must not name the provider");
+            assertTrue(healthy.invoked.get(), "the healthy provider ran before the hung one");
+            assertFalse(
+                    caller.authorizations().contains("a"),
+                    "a hung provider must not leak partial grants to the caller");
+
+            List<ILoggingEvent> errors = appender.list.stream()
+                    .filter(event -> event.getLevel() == Level.ERROR)
+                    .toList();
+            assertEquals(1, errors.size(), "exactly one ERROR must be logged for the failed import: " + errors);
+            assertTrue(errors.get(0).getFormattedMessage().contains("teams-hung"));
+        } finally {
+            logbackLogger.detachAppender(appender);
+            appender.stop();
+        }
+    }
+
+    @Test
+    @DisplayName("A hung provider is reported to the resilience runtime as a timed-out execution")
+    void hungProviderIsReportedToTheResilienceObserver() throws Exception {
+        withObservedRuntime((resilience, observed) -> {
+            VertxAuthorizationImporter importer = boundedImporter(resilience, new HungProvider("slow"));
+
+            Future<AuthorizationClaims> future = importer.importInto(alice(), AuthorizationClaims.empty());
+
+            assertThrows(
+                    ExecutionException.class,
+                    () -> future.toCompletionStage().toCompletableFuture().get(AWAIT_MS, TimeUnit.MILLISECONDS));
+            assertEquals(1, observed.timeouts(AWAIT_MS));
+        });
+    }
+
+    @Test
+    @DisplayName("A provider future that is already complete never reaches the resilience runtime")
+    void settledProviderIsNotFenced() throws Exception {
+        withObservedRuntime((resilience, observed) -> {
+            RecordingProvider provider = new RecordingProvider("a", RoleBasedAuthorization.create("admin"));
+            VertxAuthorizationImporter importer = boundedImporter(resilience, provider);
+
+            Future<AuthorizationClaims> future = importer.importInto(alice(), AuthorizationClaims.empty());
+
+            assertTrue(
+                    future.succeeded(), "a provider that completes synchronously completes the import synchronously");
+            assertTrue(observed.all().isEmpty(), "an already-complete provider future must not be fenced");
+        });
+    }
+
+    @Test
+    @DisplayName("A provider pending when the resilience runtime closes fails the import at once")
+    void providerPendingAtShutdownFailsTheImport() throws Exception {
+        withObservedRuntime((resilience, observed) -> {
+            // A bound far beyond the await below: only the closed runtime can fail the import in time.
+            VertxAuthorizationImporter importer = new VertxAuthorizationImporter(
+                    Set.of(new HungProvider("slow")), resilience, new AuthorizationImportConfig(AWAIT_MS * 10));
+            resilience.close().toCompletionStage().toCompletableFuture().get(AWAIT_MS, TimeUnit.MILLISECONDS);
+
+            Future<AuthorizationClaims> future = importer.importInto(alice(), AuthorizationClaims.empty());
+
+            ExecutionException failure = assertThrows(
+                    ExecutionException.class,
+                    () -> future.toCompletionStage().toCompletableFuture().get(AWAIT_MS, TimeUnit.MILLISECONDS));
+            assertInstanceOf(UnavailableException.class, failure.getCause());
+        });
+    }
+
+    @Test
+    @DisplayName("A provider that is already pending when the runtime closes fails the import once; a late "
+            + "completion of that provider changes nothing")
+    void providerPendingWhenTheRuntimeClosesFailsTheImportOnce() throws Exception {
+        withObservedRuntime((resilience, observed) -> {
+            Promise<Void> held = Promise.promise();
+            AuthorizationProvider provider = new AuthorizationProvider() {
+                @Override
+                public String getId() {
+                    return "held";
+                }
+
+                @Override
+                public Future<Void> getAuthorizations(User user) {
+                    return held.future();
+                }
+            };
+            VertxAuthorizationImporter importer = new VertxAuthorizationImporter(
+                    Set.of(provider), resilience, new AuthorizationImportConfig(AWAIT_MS * 10));
+
+            Future<AuthorizationClaims> future = importer.importInto(alice(), AuthorizationClaims.empty());
+            assertFalse(future.isComplete(), "the provider is pending when the runtime closes");
+            resilience.close().toCompletionStage().toCompletableFuture().get(AWAIT_MS, TimeUnit.MILLISECONDS);
+
+            ExecutionException failure = assertThrows(
+                    ExecutionException.class,
+                    () -> future.toCompletionStage().toCompletableFuture().get(AWAIT_MS, TimeUnit.MILLISECONDS));
+            assertInstanceOf(UnavailableException.class, failure.getCause());
+            held.complete();
+            Thread.sleep(200L);
+            assertTrue(future.failed(), "a late completion of the abandoned provider must not revive the import");
+        });
+    }
+
+    @Test
+    @DisplayName("A pending provider that completes before the bound still imports its grants")
+    void pendingProviderThatCompletesInTimeStillImports() throws Exception {
+        withObservedRuntime((resilience, observed) -> {
+            Promise<Void> held = Promise.promise();
+            RecordingProvider granting = new RecordingProvider("g", RoleBasedAuthorization.create("admin"));
+            AuthorizationProvider delaying = new AuthorizationProvider() {
+                @Override
+                public String getId() {
+                    return "g";
+                }
+
+                @Override
+                public Future<Void> getAuthorizations(User user) {
+                    return held.future().compose(ignored -> granting.getAuthorizations(user));
+                }
+            };
+            VertxAuthorizationImporter importer = new VertxAuthorizationImporter(
+                    Set.of(delaying), resilience, new AuthorizationImportConfig(AWAIT_MS * 10));
+
+            Future<AuthorizationClaims> future = importer.importInto(alice(), AuthorizationClaims.empty());
+            held.complete();
+            AuthorizationClaims claims =
+                    future.toCompletionStage().toCompletableFuture().get(AWAIT_MS, TimeUnit.MILLISECONDS);
+
+            assertEquals(1, claims.claims().size());
+            assertTrue(granting.invoked.get());
+            assertTrue(observed.all().size() > 0, "the pending provider reached the runtime");
+        });
+    }
+
     // --- Atomic failure & empty set ---
 
     @Test
@@ -433,7 +653,8 @@ class VertxAuthorizationImporterTest {
             // A distinctive id so "the client-visible message does not name the provider" is a real
             // assertion — a one-letter id would appear by accident inside the generic wording.
             FailingProvider failing = new FailingProvider("teams-down");
-            VertxAuthorizationImporter importer = new VertxAuthorizationImporter(Set.of(a, failing));
+            VertxAuthorizationImporter importer = new VertxAuthorizationImporter(
+                    Set.of(a, failing), TestResilience.shared(), AuthorizationImportConfig.defaults());
 
             Future<AuthorizationClaims> future = importer.importInto(caller, AuthorizationClaims.empty());
 
@@ -478,14 +699,16 @@ class VertxAuthorizationImporterTest {
         AuthorizationClaims base = new AuthorizationClaims(Set.of(role("admin", "")), Map.of("k", "v"));
 
         // No providers at all.
-        VertxAuthorizationImporter empty = new VertxAuthorizationImporter(Set.of());
+        VertxAuthorizationImporter empty =
+                new VertxAuthorizationImporter(Set.of(), TestResilience.shared(), AuthorizationImportConfig.defaults());
         Future<AuthorizationClaims> emptyResult = empty.importInto(alice(), base);
         assertTrue(emptyResult.succeeded(), "future must already be completed — no async hop");
         assertSame(base, emptyResult.result(), "the same base instance must be returned");
 
         // All providers excluded.
         RecordingProvider only = new RecordingProvider("x", RoleBasedAuthorization.create("r"));
-        VertxAuthorizationImporter allExcluded = new VertxAuthorizationImporter(Set.of(only), Set.of("x"));
+        VertxAuthorizationImporter allExcluded = new VertxAuthorizationImporter(
+                Set.of(only), Set.of("x"), TestResilience.shared(), AuthorizationImportConfig.defaults());
         Future<AuthorizationClaims> excludedResult = allExcluded.importInto(alice(), base);
         assertTrue(excludedResult.succeeded(), "future must already be completed — no async hop");
         assertSame(base, excludedResult.result(), "the same base instance must be returned");
@@ -500,7 +723,8 @@ class VertxAuthorizationImporterTest {
         RecordingProvider provider =
                 new RecordingProvider("p1", WildcardPermissionBasedAuthorization.create("orders:*"));
         AuthorizationClaims base = new AuthorizationClaims(Set.of(role("base-role", "")), Map.of("k", "v"));
-        VertxAuthorizationImporter importer = new VertxAuthorizationImporter(Set.of(provider));
+        VertxAuthorizationImporter importer = new VertxAuthorizationImporter(
+                Set.of(provider), TestResilience.shared(), AuthorizationImportConfig.defaults());
 
         Future<AuthorizationClaims> future = importer.importInto(alice(), base);
 
@@ -530,7 +754,8 @@ class VertxAuthorizationImporterTest {
                 return Future.succeededFuture();
             }
         };
-        VertxAuthorizationImporter importer = new VertxAuthorizationImporter(Set.of(mutating));
+        VertxAuthorizationImporter importer = new VertxAuthorizationImporter(
+                Set.of(mutating), TestResilience.shared(), AuthorizationImportConfig.defaults());
 
         User caller = User.create(new JsonObject().put("sub", "alice"), new JsonObject().put("attr", "v"));
         Future<AuthorizationClaims> future = importer.importInto(caller, AuthorizationClaims.empty());

@@ -55,6 +55,7 @@ import dev.vertique.security.runtime.events.SecurityEventEmitter;
 import dev.vertique.services.ServiceContract;
 import dev.vertique.services.ServiceExceptionMapper;
 import dev.vertique.services.ServiceOperation;
+import dev.vertique.services.config.ServiceAuthorizationConfig;
 import dev.vertique.services.dispatch.ServiceMethodDescriptor;
 import dev.vertique.services.dispatch.ServiceMethodInvoker;
 import dev.vertique.services.dispatch.ServiceMethodMeta;
@@ -261,7 +262,13 @@ public class ServiceAuthorizationInterceptorIT {
         String address = uniqueAddress();
         ServiceMethodMeta meta = runMeta(new EchoImpl(), address);
         ServiceAuthorizationInterceptor wiredInterceptor = new ServiceAuthorizationInterceptor(
-                Optional.of(authorizer), Optional.of(registry), emitter, holder, Set.of(meta));
+                Optional.of(authorizer),
+                Optional.of(registry),
+                emitter,
+                holder,
+                Set.of(meta),
+                ServiceAuthorizationConfig.defaults(),
+                TestResilience.shared());
 
         ServiceMethodInvoker invoker =
                 new ServiceMethodInvoker(meta, new ServiceExceptionMapper(), List.of(wiredInterceptor), null);
@@ -297,7 +304,13 @@ public class ServiceAuthorizationInterceptorIT {
         String address = uniqueAddress();
         ServiceMethodMeta meta = runMeta(new EchoImpl(), address);
         ServiceAuthorizationInterceptor wiredInterceptor = new ServiceAuthorizationInterceptor(
-                Optional.of(authorizer), Optional.of(registry), emitter, holder, Set.of(meta));
+                Optional.of(authorizer),
+                Optional.of(registry),
+                emitter,
+                holder,
+                Set.of(meta),
+                ServiceAuthorizationConfig.defaults(),
+                TestResilience.shared());
 
         ServiceMethodInvoker invoker =
                 new ServiceMethodInvoker(meta, new ServiceExceptionMapper(), List.of(wiredInterceptor), null);
@@ -336,7 +349,13 @@ public class ServiceAuthorizationInterceptorIT {
         String address = uniqueAddress();
         ServiceMethodMeta meta = runMeta(new EchoImpl(), address);
         ServiceAuthorizationInterceptor wiredInterceptor = new ServiceAuthorizationInterceptor(
-                Optional.of(authorizer), Optional.of(registry), emitter, holder, Set.of(meta));
+                Optional.of(authorizer),
+                Optional.of(registry),
+                emitter,
+                holder,
+                Set.of(meta),
+                ServiceAuthorizationConfig.defaults(),
+                TestResilience.shared());
 
         ServiceMethodInvoker invoker =
                 new ServiceMethodInvoker(meta, new ServiceExceptionMapper(), List.of(wiredInterceptor), null);
@@ -371,7 +390,13 @@ public class ServiceAuthorizationInterceptorIT {
         String address = uniqueAddress();
         ServiceMethodMeta meta = runMeta(new EchoImpl(), address);
         ServiceAuthorizationInterceptor wiredInterceptor = new ServiceAuthorizationInterceptor(
-                Optional.of(authorizer), Optional.of(registry), emitter, holder, Set.of(meta));
+                Optional.of(authorizer),
+                Optional.of(registry),
+                emitter,
+                holder,
+                Set.of(meta),
+                ServiceAuthorizationConfig.defaults(),
+                TestResilience.shared());
 
         // A broadly permissive recoverError that recovers EVERY failure. It is ordered after the
         // action gate (gate is SYSTEM_FIRST/-100; this app interceptor is later), so a deny reaches it

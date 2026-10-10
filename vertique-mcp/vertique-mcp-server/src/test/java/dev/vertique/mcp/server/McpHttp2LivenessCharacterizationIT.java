@@ -20,6 +20,7 @@ import dev.vertique.mcp.tool.McpToolAnnotations;
 import dev.vertique.mcp.tool.McpToolDescriptor;
 import dev.vertique.mcp.tool.McpToolInvoker;
 import dev.vertique.mcp.tool.McpToolResult;
+import dev.vertique.resilience.Resilience;
 import dev.vertique.rest.core.config.HttpConfig;
 import dev.vertique.rest.core.middleware.RequestContextLifecycle;
 import dev.vertique.rest.core.security.SecurityRuntime;
@@ -63,7 +64,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
 /**
- * Repair task R50 (issue #458) — real-transport characterization of the shared {@link HttpConfig}
+ * Real-transport characterization of the shared {@link HttpConfig}
  * liveness bound that {@link McpRequestDispatcher#write} and {@link McpServerConfigValidator}'s
  * startup gate both document as the <em>only</em> mechanism that can ever reclaim a hanging tool
  * handler: does {@code http.idleTimeoutSeconds}/{@code http.readIdleTimeoutSeconds} still reclaim a
@@ -153,7 +154,7 @@ class McpHttp2LivenessCharacterizationIT {
     }
 
     @Test
-    @DisplayName("R50 control (HTTP/1.1): the armed idle/read-idle timers reclaim a hung tools/call "
+    @DisplayName("control (HTTP/1.1): the armed idle/read-idle timers reclaim a hung tools/call "
             + "with no sibling traffic — validates the harness")
     void httpOneDotOneControlRowReclaimsTheHungRequest() throws Exception {
         fixture = Fixture.start(vertx, ARMED_TIMEOUT_SECONDS);
@@ -186,7 +187,7 @@ class McpHttp2LivenessCharacterizationIT {
     }
 
     @Test
-    @DisplayName("R50 experiment (HTTP/2 h2c): observed liveness outcome for a hung tools/call while "
+    @DisplayName("experiment (HTTP/2 h2c): observed liveness outcome for a hung tools/call while "
             + "sibling server/discover traffic multiplexes on the same connection")
     void http2ExperimentRowPinsTheObservedLivenessOutcome() throws Exception {
         fixture = Fixture.start(vertx, ARMED_TIMEOUT_SECONDS);
@@ -243,28 +244,25 @@ class McpHttp2LivenessCharacterizationIT {
                 .hasSize(1);
 
         /*
-         * PINNED OBSERVED BEHAVIOR (R50 / issue #458, HTTP/2 h2c, vertx-core):
+         * PINNED OBSERVED BEHAVIOR (HTTP/2 h2c, vertx-core):
          *
          * The armed http.idleTimeoutSeconds/readIdleTimeoutSeconds bound is applied at the whole
          * connection's socket level (Netty IdleStateHandler), not per HTTP/2 stream. Continuous
          * sibling server/discover traffic on the same multiplexed connection resets that
          * connection-level idle clock on every sibling exchange, so the connection itself never goes
-         * idle long enough to trip — even though one of its streams (the hung tools/call) never
+         * idle long enough to trip, even though one of its streams (the hung tools/call) never
          * produces or consumes another byte for the entire observation window. The hung request is
          * therefore NEVER reclaimed while sibling traffic keeps the shared connection alive.
          *
-         * Decision consequence: the rebaseline's assumption that the shared HttpConfig liveness bound
-         * alone is sufficient to reclaim any hung MCP request is NOT proven for HTTP/2 multiplexed
-         * connections carrying sibling traffic. Per the task contract, this pins an accepted residual
-         * and issue #458 stays open, reopening the per-request-deadline design question (candidate
-         * mechanism: the resilience module's timeout primitive; MCP-002 admission-control
-         * implications). No production code changes accompany this characterization result.
+         * Consequence: the shared HttpConfig liveness bound alone does not reclaim a hung MCP request
+         * on an HTTP/2 connection carrying sibling traffic. This is the residual the optional
+         * mcp.requestDeadlineMs closes (see McpRequestDeadlineIT); this characterization runs
+         * without it and pins the default.
          */
         assertThat(settledWithinWindow)
-                .as("DECISIVE (issue #458): a hung tools/call is NOT reclaimed by the shared HttpConfig "
+                .as("DECISIVE: a hung tools/call is NOT reclaimed by the shared HttpConfig "
                         + "idle/read-idle timers while sibling server/discover traffic keeps the same "
-                        + "multiplexed HTTP/2 connection non-idle — see the comment above this assertion "
-                        + "for the pinned decision consequence")
+                        + "multiplexed HTTP/2 connection non-idle — see the comment above this assertion")
                 .isFalse();
         assertThat(fixture.observer().terminalCount())
                 .as("no terminal was ever published for the hung request within the observation window")
@@ -400,7 +398,7 @@ class McpHttp2LivenessCharacterizationIT {
         private final McpToolDescriptor descriptor = new McpToolDescriptor(
                 TOOL_NAME,
                 null,
-                "R50 characterization fixture tool: gated, deliberately never released.",
+                "Characterization fixture tool: gated, deliberately never released.",
                 new McpToolAnnotations(true, false, true, false),
                 "{\"type\":\"object\",\"additionalProperties\":false}",
                 null,
@@ -570,7 +568,8 @@ class McpHttp2LivenessCharacterizationIT {
                     new SecurityEventEmitter(Set.of()),
                     NO_OP_CONTEXT_HOLDER,
                     securityRuntime,
-                    Optional.empty()));
+                    Optional.empty(),
+                    Resilience.create(vertx)));
             HttpConfig httpConfig = HttpConfig.builder()
                     .idleTimeoutSeconds(armedTimeoutSeconds)
                     .readIdleTimeoutSeconds(armedTimeoutSeconds)

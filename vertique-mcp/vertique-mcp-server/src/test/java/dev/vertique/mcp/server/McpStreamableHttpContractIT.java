@@ -13,6 +13,7 @@ import dev.vertique.mcp.lifecycle.McpMethod;
 import dev.vertique.mcp.lifecycle.McpRequestLifecycleObserver;
 import dev.vertique.mcp.lifecycle.McpRequestObservation;
 import dev.vertique.mcp.lifecycle.McpRequestTerminalObservation;
+import dev.vertique.resilience.Resilience;
 import dev.vertique.rest.core.config.HttpConfig;
 import dev.vertique.rest.core.middleware.RequestContextLifecycle;
 import dev.vertique.rest.core.security.SecurityRuntime;
@@ -581,7 +582,8 @@ public class McpStreamableHttpContractIT {
                                     new SecurityEventEmitter(Set.of()),
                                     NO_OP_CONTEXT_HOLDER,
                                     securityRuntime,
-                                    Optional.empty())),
+                                    Optional.empty(),
+                                    Resilience.create(vertx))),
                             NO_OP_CONTEXT_HOLDER,
                             new CorrelationContextFactory(Optional.empty())),
                     Set.of(),

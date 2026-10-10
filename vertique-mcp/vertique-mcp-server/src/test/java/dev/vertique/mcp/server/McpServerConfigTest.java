@@ -61,6 +61,9 @@ class McpServerConfigTest {
         assertThat(defaults.outputMaxBytes()).isEqualTo(2_097_152);
         assertThat(defaults.toolsPageSize()).isEqualTo(100);
         assertThat(defaults.toolsTtlMs()).isEqualTo(300_000L);
+        assertThat(defaults.requestDeadlineMs())
+                .as("no request deadline by default")
+                .isZero();
     }
 
     /**
@@ -508,8 +511,12 @@ class McpServerConfigTest {
                         (builder, value) -> builder.outputMaxBytes(Math.toIntExact(value))),
                 new NumericProperty(
                         "mcp.toolsPageSize", 1, 500, (builder, value) -> builder.toolsPageSize(Math.toIntExact(value))),
+                new NumericProperty("mcp.toolsTtlMs", 0, 3_600_000, McpServerConfig.McpServerConfigBuilder::toolsTtlMs),
                 new NumericProperty(
-                        "mcp.toolsTtlMs", 0, 3_600_000, McpServerConfig.McpServerConfigBuilder::toolsTtlMs));
+                        "mcp.requestDeadlineMs",
+                        0,
+                        3_600_000,
+                        McpServerConfig.McpServerConfigBuilder::requestDeadlineMs));
     }
 
     // --- Row tables: identity and instructions (W4) ---
