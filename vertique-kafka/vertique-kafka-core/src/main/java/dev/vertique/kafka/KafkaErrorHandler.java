@@ -26,19 +26,13 @@ final class KafkaErrorHandler {
 
     // --- DLQ header constants ---
 
-    private static final String DLQ_HEADER_SOURCE_TOPIC = "x-dlq-source-topic";
-    private static final String DLQ_HEADER_SOURCE_PARTITION = "x-dlq-source-partition";
-    private static final String DLQ_HEADER_SOURCE_OFFSET = "x-dlq-source-offset";
-    private static final String DLQ_HEADER_CONSUMER = "x-dlq-consumer";
-    private static final String DLQ_HEADER_ERROR = "x-dlq-error";
-
     /** The header keys this handler writes; an inbound header with one of them is not forwarded. */
     private static final Set<String> DLQ_HEADER_KEYS = Set.of(
-            DLQ_HEADER_SOURCE_TOPIC,
-            DLQ_HEADER_SOURCE_PARTITION,
-            DLQ_HEADER_SOURCE_OFFSET,
-            DLQ_HEADER_CONSUMER,
-            DLQ_HEADER_ERROR);
+            KafkaDlqHeaders.SOURCE_TOPIC,
+            KafkaDlqHeaders.SOURCE_PARTITION,
+            KafkaDlqHeaders.SOURCE_OFFSET,
+            KafkaDlqHeaders.CONSUMER,
+            KafkaDlqHeaders.ERROR);
 
     private final ConsumerEntry entry;
     private final KafkaProducerFactory producerFactory;
@@ -307,14 +301,14 @@ final class KafkaErrorHandler {
                 dlqHeaders.add(header);
             }
         }
-        dlqHeaders.add(KafkaRecordHeader.ofUtf8(DLQ_HEADER_SOURCE_TOPIC, record.topic()));
-        dlqHeaders.add(KafkaRecordHeader.ofUtf8(DLQ_HEADER_SOURCE_PARTITION, String.valueOf(record.partition())));
-        dlqHeaders.add(KafkaRecordHeader.ofUtf8(DLQ_HEADER_SOURCE_OFFSET, String.valueOf(record.offset())));
-        dlqHeaders.add(KafkaRecordHeader.ofUtf8(DLQ_HEADER_CONSUMER, entry.name()));
+        dlqHeaders.add(KafkaRecordHeader.ofUtf8(KafkaDlqHeaders.SOURCE_TOPIC, record.topic()));
+        dlqHeaders.add(KafkaRecordHeader.ofUtf8(KafkaDlqHeaders.SOURCE_PARTITION, String.valueOf(record.partition())));
+        dlqHeaders.add(KafkaRecordHeader.ofUtf8(KafkaDlqHeaders.SOURCE_OFFSET, String.valueOf(record.offset())));
+        dlqHeaders.add(KafkaRecordHeader.ofUtf8(KafkaDlqHeaders.CONSUMER, entry.name()));
         String msg = cause.getMessage();
         String errorDetail = cause.getClass().getSimpleName()
                 + (msg != null ? ": " + msg.substring(0, Math.min(msg.length(), 200)) : "");
-        dlqHeaders.add(KafkaRecordHeader.ofUtf8(DLQ_HEADER_ERROR, errorDetail));
+        dlqHeaders.add(KafkaRecordHeader.ofUtf8(KafkaDlqHeaders.ERROR, errorDetail));
 
         return producerFactory
                 .sendForDlq(dlqTopic, record.key(), rawBytes, new KafkaRecordHeaders(dlqHeaders))

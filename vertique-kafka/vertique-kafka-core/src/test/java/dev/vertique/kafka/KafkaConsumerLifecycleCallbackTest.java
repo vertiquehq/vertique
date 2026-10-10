@@ -1259,6 +1259,19 @@ class KafkaConsumerLifecycleCallbackTest {
         }
 
         @Test
+        @DisplayName(
+                "an x-correlation-id header with an empty value gives an empty correlation id, not a generated one")
+        void emptyCorrelationIdHeaderIsKept(Vertx vertx) throws ReflectiveOperationException {
+            ConsumerEntry entry = bindingEntry(ErrorStrategy.SKIP, null);
+
+            assertEquals(
+                    "",
+                    dispatched(vertx, entry, List.of(KafkaHeader.header("x-correlation-id", Buffer.buffer())))
+                            .onlyRecordContext()
+                            .correlationId());
+        }
+
+        @Test
         @DisplayName("header routing matches the last non-null value of the route header, decoded leniently")
         void headerRoutingKeepsItsTextRule(Vertx vertx) throws ReflectiveOperationException {
             String replacement = String.valueOf((char) 0xFFFD);

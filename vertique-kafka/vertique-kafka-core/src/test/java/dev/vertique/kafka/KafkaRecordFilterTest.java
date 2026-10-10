@@ -286,11 +286,10 @@ class KafkaRecordFilterTest {
             assertFalse(KafkaRecordFilter.headerIn("h", "first", "zzz").accept(KEY, duplicate));
             assertTrue(KafkaRecordFilter.headerIn("h", "value").accept(KEY, nullThenValue));
             assertTrue(KafkaRecordFilter.headerIn("h", "value").accept(KEY, valueThenNull));
-            // A header without a text value has always made this factory throw rather than reject.
-            assertThrows(NullPointerException.class, () -> KafkaRecordFilter.headerIn("h", "value", "")
-                    .accept(KEY, onlyNull));
-            assertThrows(NullPointerException.class, () -> KafkaRecordFilter.headerIn("missing", "value")
-                    .accept(KEY, duplicate));
+            // A header without a text value is not one of the values, the empty string included.
+            assertFalse(KafkaRecordFilter.headerIn("h", "value", "").accept(KEY, onlyNull));
+            assertFalse(KafkaRecordFilter.headerIn("missing", "value").accept(KEY, duplicate));
+            assertFalse(KafkaRecordFilter.headerIn("h", "value").accept(KEY, KafkaRecordHeaders.empty()));
             assertTrue(KafkaRecordFilter.headerIn("h", REPLACED).accept(KEY, malformed));
         }
 

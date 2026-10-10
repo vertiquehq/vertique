@@ -86,7 +86,8 @@ headers the same way. That is the rule of `KafkaRecordHeaders.asMap()`.
 
 A dead-lettered record keeps its original key and its original value bytes, and its headers are the
 failed record's headers **as received** — in order, with repeated keys and binary values byte for
-byte — followed by the five `x-dlq-*` headers. Two kinds of original header are left out:
+byte — followed by the five `x-dlq-*` headers. Their names are constants on `KafkaDlqHeaders`. Two kinds of
+original header are left out:
 
 - one whose key is exactly one of the five `x-dlq-*` names, so a record that is dead-lettered a
   second time carries only the new ones;
@@ -409,8 +410,7 @@ KafkaRecordFilter.anyOf(filter1, filter2)
 ```
 
 `headerExists` is `false` when the key is absent or only has `null` values; a header with an empty
-value exists. `headerEquals` and `headerMatches` reject such a record. `headerIn` throws
-`NullPointerException` for it, so combine it with `headerExists` when the header is optional.
+value exists. `headerEquals`, `headerMatches` and `headerIn` reject such a record.
 
 A filtered record is committed under `MANUAL` and reported to `onRecordCompleted` as `SKIP`. A
 filter that throws is handled like a deserialization failure: the record goes to the consumer's
@@ -426,7 +426,7 @@ Creates typed producer proxies and exposes raw sends.
 | `send(String topic, String key, byte[] value, KafkaRecordHeaders headers)` | Raw send with pre-serialized bytes; the ambient durable context is captured and appended as context headers |
 | `send(String topic, String key, byte[] value, KafkaRecordHeaders headers, DurableMetadata context)` | The same, with an explicit durable context instead of the ambient one |
 | `sendForOutbox(String topic, String key, byte[] value, KafkaRecordHeaders headers, DurableMetadata context)` | Raw send with an explicit durable context, tagged with `KafkaSendOrigin.OUTBOX` for capture hooks |
-| `sendForDlq(String topic, String key, byte[] value, KafkaRecordHeaders headers)` | The framework's dead-letter send, tagged with `KafkaSendOrigin.DLQ`. It forwards the given headers verbatim, including reserved `vertique-*` context headers, and adds no ambient context. Not for application sends |
+| `sendForDlq(String topic, String key, byte[] value, KafkaRecordHeaders headers)` | The framework's dead-letter send, tagged with `KafkaSendOrigin.DLQ`. It forwards the given headers verbatim, including reserved `vertique-*` context headers, and adds no ambient context. The headers must contain `x-dlq-source-topic`, which the error handling always writes; without it the send fails with `IllegalArgumentException`. Not for application sends — use `send` |
 | `close()` | Closes the underlying producer |
 
 Every send takes its headers as a [`KafkaRecordHeaders`](#kafkarecordheaders-and-kafkarecordheader);
@@ -496,6 +496,11 @@ the key. Two consequences:
 | `(V value, Map headers)`, `(String key, V value, Map headers)` | A `Map` is not accepted as headers. Declare `KafkaRecordHeaders` and build it with `KafkaRecordHeaders.of(Map)` |
 | A value of type `KafkaRecordHeaders` | `KafkaRecordHeaders` is only the last parameter, after the value |
 | No parameters, more than three, headers before the value, or two leading parameters whose first is not a `String` | Not one of the four shapes |
+
+Method names must be unique within a `@KafkaProducer` interface. The topic and the serializer of a
+method are configured by its name, so `factory.create(...)` also throws `IllegalArgumentException`,
+naming the interface and both methods, when two methods share a name — for example `send(Order)`
+and `send(Order, KafkaRecordHeaders)`. Give each its own name.
 
 ### Headers on a sent record
 
@@ -1150,9 +1155,9 @@ default accepts every producer interface.
   startup.
 - **Declaring a `Map` header parameter on a `@KafkaProducer` method.** `factory.create(...)` rejects
   it. Declare `KafkaRecordHeaders` and pass `KafkaRecordHeaders.of(map)`.
-- **Calling `message.header(name)` or `recordContext.header(name)`.** They no longer exist. Use
-  `headers().lastHeader(name)` for the header as received, or `headers().asMap().get(name)` for its
-  text value.
+- **Looking for a single-header accessor on `KafkaMessage` or `KafkaRecordContext`.** There is none.
+  Use `headers().lastHeader(name)` for the header as received, or `headers().asMap().get(name)` for
+  its text value.
 - **Trying to add or change a header in a filter or deserializer.** The headers are immutable;
   `entries()` and `asMap()` reject changes, and a value `Buffer` is a copy.
 - **Calling `asMap()` for every key.** Each call builds a new map. Keep the result.

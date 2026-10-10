@@ -46,6 +46,7 @@ At relay time:
 5. On success: returns `OutboxPublishResult.success()`.
 6. On transport/timeout/broker failure: returns `OutboxPublishResult.retryable(message, cause)`.
 7. On a reserved-prefix header collision (see below): returns `OutboxPublishResult.permanent(message, cause)`.
+8. When the stored header map has a `null` key or a `null` value: nothing is sent, the handler returns `OutboxPublishResult.permanent(message, cause)`, and capture hooks are called with no value and empty headers.
 
 `KafkaProducerFactory` owns **one** shared Kafka producer per application, created lazily on first
 send and reused for every topic and every send path (typed producers, DLQ, outbox relay). There is

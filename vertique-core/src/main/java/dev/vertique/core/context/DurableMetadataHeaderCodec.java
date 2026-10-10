@@ -16,9 +16,12 @@ import java.util.Objects;
  * carried by this codec.
  *
  * <p>The {@link #RESERVED_PREFIX} carves out a header sub-keyspace for framework context so it cannot
- * collide with application headers. {@link #mergeForEgress(Map, DurableMetadata)} is the single
- * enforcement point: it rejects any application header that uses the reserved prefix, then overlays
- * the projected context headers — reused by both the direct producer path and the outbox→Kafka relay.
+ * collide with application headers. Every carrier keeps the prefix for the framework in one of two
+ * ways. A carrier whose headers are a text map calls {@link #mergeForEgress(Map, DurableMetadata)},
+ * which rejects any application header that uses the reserved prefix, then overlays the projected
+ * context headers. A carrier that must keep header order and repeated keys cannot merge through a
+ * map: it enforces the same rule with {@link #isReservedHeader(String)} and appends the headers of
+ * {@link #toHeaders(DurableMetadata)} itself. Kafka egress does the latter.
  */
 public final class DurableMetadataHeaderCodec {
 
@@ -82,7 +85,8 @@ public final class DurableMetadataHeaderCodec {
 
     /**
      * Builds the outbound header set for a durable boundary: application headers with the projected
-     * context headers overlaid. This is the single collision-enforcement point.
+     * context headers overlaid. An application header that uses the reserved prefix is rejected, so the
+     * two can never collide.
      *
      * @param appHeaders application/transport headers (may be {@code null})
      * @param context    the durable context to project; must not be {@code null}

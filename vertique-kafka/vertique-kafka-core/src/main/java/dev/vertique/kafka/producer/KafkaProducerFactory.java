@@ -12,6 +12,7 @@ import dev.vertique.core.json.JsonProfile;
 import dev.vertique.core.payload.PayloadSources;
 import dev.vertique.core.util.Strings;
 import dev.vertique.kafka.KafkaConfigHelper;
+import dev.vertique.kafka.KafkaDlqHeaders;
 import dev.vertique.kafka.KafkaRecordHeader;
 import dev.vertique.kafka.KafkaRecordHeaders;
 import dev.vertique.kafka.config.KafkaConfig;
@@ -29,6 +30,7 @@ import jakarta.annotation.Nullable;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -165,12 +167,17 @@ public class KafkaProducerFactory {
      * a value of type {@link KafkaRecordHeaders}, no parameters, more than three, or two leading
      * parameters whose first is not a {@code String}.
      *
+     * <p>Producer method names must be unique: the topic and the serializer of a method are
+     * configured by its name, so two methods with the same name and different parameters are
+     * rejected here as well.
+     *
      * @param <T> the producer interface type
      * @param producerInterface the interface class annotated with {@link KafkaProducer}
      * @return a proxy instance implementing {@code producerInterface}
      * @throws IllegalArgumentException if the interface is not annotated with {@link KafkaProducer},
-     *     a method is missing a {@link Topic} annotation, or a method has a parameter shape that is
-     *     not one of the four; the message names the method
+     *     a method is missing a {@link Topic} annotation, a method has a parameter shape that is not
+     *     one of the four, or two methods have the same name; the message names the method or
+     *     methods
      * @throws RuntimeException if a {@link KafkaProducerCaptureHook} rejects the interface in
      *     {@link KafkaProducerCaptureHook#validateProducer(Class)}
      */
@@ -188,6 +195,7 @@ public class KafkaProducerFactory {
 
         KafkaProducerConfig producerConfig = producerIndex.get(producerName);
 
+        rejectOverloadedMethods(producerInterface);
         Map<String, String> methodTopics = resolveMethodTopics(producerInterface, producerConfig);
         // Resolved before any serializer is built, so a method with an unsupported shape fails the
         // proxy creation without leaving a serializer open.
@@ -327,13 +335,19 @@ public class KafkaProducerFactory {
      * or a {@link KafkaProducer @KafkaProducer} proxy, which keep the reserved prefix for the
      * framework.
      *
+     * <p>To keep an application send from taking this path by mistake, the headers must contain the
+     * {@link KafkaDlqHeaders#SOURCE_TOPIC} header the error handling writes on every dead-letter
+     * record; a send without it fails.
+     *
      * @param topic   the dead-letter topic
      * @param key     the record key, or {@code null}
      * @param value   the raw record bytes to republish
-     * @param headers the headers of the dead-letter record, forwarded verbatim, or {@code null} for
-     *                none; must not contain a header with a {@code null} value
-     * @return a future of the record metadata; fails with {@link IllegalArgumentException}, naming
-     *     the key, if a header has a {@code null} value
+     * @param headers the headers of the dead-letter record, forwarded verbatim; must contain the
+     *                {@link KafkaDlqHeaders#SOURCE_TOPIC} header and must not contain a header with a
+     *                {@code null} value
+     * @return a future of the record metadata; fails with {@link IllegalArgumentException} if a
+     *     header has a {@code null} value, naming the key, or if the headers are {@code null} or
+     *     lack the {@link KafkaDlqHeaders#SOURCE_TOPIC} header
      */
     public Future<RecordMetadata> sendForDlq(String topic, String key, byte[] value, KafkaRecordHeaders headers) {
         KafkaRecordHeaders wire = headers == null ? KafkaRecordHeaders.empty() : headers;
@@ -341,6 +355,11 @@ public class KafkaProducerFactory {
             rejectNullValues(wire);
         } catch (IllegalArgumentException e) {
             return Future.failedFuture(e);
+        }
+        if (wire.lastHeader(KafkaDlqHeaders.SOURCE_TOPIC).isEmpty()) {
+            return Future.failedFuture(
+                    new IllegalArgumentException("sendForDlq is the framework's dead-letter path and requires the '"
+                            + KafkaDlqHeaders.SOURCE_TOPIC + "' header; application sends must use send"));
         }
         return sendWire(topic, key, value, wire, KafkaSendOrigin.DLQ, null);
     }
@@ -622,6 +641,34 @@ public class KafkaProducerFactory {
                     + " KafkaRecordHeaders is accepted only as the last parameter, after the value");
         }
         return new MethodShape(keyAndValue ? 0 : -1, valueIndex, hasHeaders ? count - 1 : -1, valueType);
+    }
+
+    /**
+     * Rejects a producer interface that has two methods with the same name and different parameters.
+     * The topic and the serializer of a method are configured by its name, so such methods would
+     * share one topic and one serializer.
+     *
+     * @param producerInterface the producer interface
+     * @throws IllegalArgumentException naming the interface and both methods
+     */
+    private static void rejectOverloadedMethods(Class<?> producerInterface) {
+        Map<String, Method> byName = new HashMap<>();
+        for (Method method : producerInterface.getMethods()) {
+            if (method.getDeclaringClass() == Object.class) {
+                continue;
+            }
+            Method other = byName.putIfAbsent(method.getName(), method);
+            // The same signature inherited from two interfaces is one method, not an overload.
+            if (other != null && !Arrays.equals(other.getParameterTypes(), method.getParameterTypes())) {
+                // Sorted, so the message does not depend on reflection order.
+                List<String> both = new ArrayList<>(List.of(describe(other), describe(method)));
+                Collections.sort(both);
+                throw new IllegalArgumentException(producerInterface.getName() + " has more than one method named '"
+                        + method.getName() + "': " + both.get(0) + " and " + both.get(1)
+                        + "; producer method names must be unique,"
+                        + " because the topic and the serializer of a method are configured by its name");
+            }
+        }
     }
 
     /**

@@ -6,9 +6,11 @@ package dev.vertique.inboxoutbox.kafka;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -680,6 +682,38 @@ class KafkaOutboxCaptureHookTest {
             assertInstanceOf(OutboxPublishResult.PermanentFailure.class, result);
             assertEquals(KafkaRecordHeaders.of(headers), sentHeaders());
             assertEquals(KafkaRecordHeaders.of(headers), hook.captures.get(0).headers());
+        }
+
+        @Test
+        @DisplayName("a stored header map with a null value or a null key is a permanent failure, reported to the hook")
+        void nullHeaderValueOrKeyIsAPermanentFailure() {
+            RecordingHook hook = new RecordingHook();
+            KafkaOutboxDestinationHandler handler =
+                    new KafkaOutboxDestinationHandler(producerFactory, objectMapper, Set.of(hook));
+            Map<String, String> nullValue = new LinkedHashMap<>();
+            nullValue.put("ce-type", "order.placed");
+            nullValue.put("ce-source", null);
+            Map<String, String> nullKey = new LinkedHashMap<>();
+            nullKey.put(null, "orphan");
+            DurableMetadata context = DurableMetadata.of("correlation", new JsonObject().put("traceId", "t-1"));
+
+            Future<OutboxPublishResult> first = handler.publish(envelope(nullValue, context));
+            Future<OutboxPublishResult> second = handler.publish(envelope(nullKey, context));
+
+            assertTrue(first.succeeded(), "the failure is a result, not a failed future");
+            assertTrue(second.succeeded(), "the failure is a result, not a failed future");
+            OutboxPublishResult.PermanentFailure valueFailure =
+                    assertInstanceOf(OutboxPublishResult.PermanentFailure.class, first.result());
+            assertTrue(valueFailure.message().contains("ce-source"), valueFailure.message());
+            assertInstanceOf(OutboxPublishResult.PermanentFailure.class, second.result());
+            verify(producerFactory, never()).sendForOutbox(any(), any(), any(), any(), any());
+            assertEquals(2, hook.captures.size(), "the hook fires once per attempt");
+            for (RecordingHook.Capture capture : hook.captures) {
+                assertEquals("orders-topic", capture.topic());
+                assertNull(capture.value(), "nothing was serialized");
+                assertEquals(KafkaRecordHeaders.empty(), capture.headers());
+                assertInstanceOf(OutboxPublishResult.PermanentFailure.class, capture.result());
+            }
         }
     }
 }

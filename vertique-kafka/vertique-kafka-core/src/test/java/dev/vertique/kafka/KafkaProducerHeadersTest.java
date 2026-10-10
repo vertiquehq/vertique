@@ -234,6 +234,26 @@ class KafkaProducerHeadersTest {
         Future<RecordMetadata> publishTooMany(String key, Integer value, Integer extra, KafkaRecordHeaders headers);
     }
 
+    /** Two methods with the same name: their topic and serializer could not be told apart. */
+    @KafkaProducer(name = "overloaded")
+    interface OverloadedProducer {
+
+        /**
+         * @param value the record value
+         * @return a future of the record metadata
+         */
+        @Topic("t.plain")
+        Future<RecordMetadata> send(Integer value);
+
+        /**
+         * @param value   the record value
+         * @param headers the record headers
+         * @return a future of the record metadata
+         */
+        @Topic("t.with-headers")
+        Future<RecordMetadata> send(Integer value, KafkaRecordHeaders headers);
+    }
+
     /** Ambient value that the propagator encodes into a context header. */
     record AmbientTenant(String id) implements ContextValue {}
 
@@ -417,6 +437,15 @@ class KafkaProducerHeadersTest {
             assertTrue(e.getMessage().contains("publishTooMany"), e.getMessage());
         }
 
+        @Test
+        @DisplayName("two methods with the same name, naming both and the unique-name rule")
+        void overloadedMethods(Vertx vertx) {
+            IllegalArgumentException e = rejected(vertx, OverloadedProducer.class);
+            assertTrue(e.getMessage().contains("#send(Integer)"), e.getMessage());
+            assertTrue(e.getMessage().contains("#send(Integer, KafkaRecordHeaders)"), e.getMessage());
+            assertTrue(e.getMessage().contains("producer method names must be unique"), e.getMessage());
+        }
+
         private IllegalArgumentException rejected(Vertx vertx, Class<?> producerInterface) {
             WireCapturingFactory factory = factory(vertx);
             IllegalArgumentException e =
@@ -526,9 +555,8 @@ class KafkaProducerHeadersTest {
                     .succeeded());
             assertTrue(factory.sendForOutbox("t", "k", new byte[] {1}, null, DurableMetadata.empty())
                     .succeeded());
-            assertTrue(factory.sendForDlq("t", "k", new byte[] {1}, null).succeeded());
 
-            assertEquals(4, factory.wires.size());
+            assertEquals(3, factory.wires.size());
             for (Wire wire : factory.wires) {
                 assertSame(KafkaRecordHeaders.empty(), wire.headers());
             }
@@ -540,6 +568,7 @@ class KafkaProducerHeadersTest {
             WireCapturingFactory factory = factory(vertx);
             KafkaRecordHeaders headers = new KafkaRecordHeaders(List.of(
                     KafkaRecordHeader.ofUtf8("vertique-correlation", "{\"id\":\"from-the-record\"}"),
+                    KafkaRecordHeader.ofUtf8("x-dlq-source-topic", "orders"),
                     KafkaRecordHeader.ofUtf8("trace", "first"),
                     new KafkaRecordHeader("signature", Buffer.buffer(BINARY)),
                     KafkaRecordHeader.ofUtf8("trace", "second")));
@@ -602,6 +631,30 @@ class KafkaProducerHeadersTest {
                 assertInstanceOf(IllegalArgumentException.class, send.cause());
                 assertTrue(
                         send.cause().getMessage().contains("tombstone"),
+                        send.cause().getMessage());
+            }
+            assertTrue(factory.wires.isEmpty(), "nothing reaches the wire");
+        }
+
+        @Test
+        @DisplayName("the dead-letter send refuses headers without the source-topic header and points to send")
+        void deadLetterSendWithoutSourceTopicHeader(Vertx vertx) {
+            WireCapturingFactory factory = factory(vertx);
+            KafkaRecordHeaders forged = new KafkaRecordHeaders(List.of(
+                    KafkaRecordHeader.ofUtf8("vertique-correlation", "{\"id\":\"forged\"}"),
+                    KafkaRecordHeader.ofUtf8("x-dlq-consumer", "orders")));
+
+            List<Future<RecordMetadata>> sends = List.of(
+                    factory.sendForDlq("t", "k", new byte[] {1}, null),
+                    factory.sendForDlq("t", "k", new byte[] {1}, KafkaRecordHeaders.empty()),
+                    factory.sendForDlq("t", "k", new byte[] {1}, forged));
+
+            for (Future<RecordMetadata> send : sends) {
+                assertTrue(send.failed());
+                assertInstanceOf(IllegalArgumentException.class, send.cause());
+                assertEquals(
+                        "sendForDlq is the framework's dead-letter path and requires the 'x-dlq-source-topic'"
+                                + " header; application sends must use send",
                         send.cause().getMessage());
             }
             assertTrue(factory.wires.isEmpty(), "nothing reaches the wire");

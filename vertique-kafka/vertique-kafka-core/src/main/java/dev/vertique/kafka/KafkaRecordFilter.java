@@ -93,13 +93,15 @@ public interface KafkaRecordFilter {
      *
      * @param name the header name
      * @param values the acceptable values
-     * @return the filter; it throws {@link NullPointerException} for a record where the header is
-     *     absent or only has {@code null} values, so combine it with {@link #headerExists(String)}
-     *     when the header is optional
+     * @return the filter; it rejects a record where the header is absent or only has {@code null}
+     *     values
      */
     static KafkaRecordFilter headerIn(String name, String... values) {
         Set<String> valueSet = Set.copyOf(Arrays.asList(values));
-        return (key, headers) -> valueSet.contains(textValue(headers, name));
+        return (key, headers) -> {
+            String val = textValue(headers, name);
+            return val != null && valueSet.contains(val);
+        };
     }
 
     /**

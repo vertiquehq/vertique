@@ -131,8 +131,9 @@ public class KafkaOutboxDestinationHandler implements OutboxDestinationHandler {
      * are converted with {@link KafkaRecordHeaders#of(Map)} and forwarded as Kafka record headers;
      * a {@code null} or empty header map gives a record without application headers.
      *
-     * <p>Serialization failures produce a {@link OutboxPublishResult#permanent permanent} result
-     * so the entry is dead-lettered rather than retried indefinitely. Kafka transport failures
+     * <p>A header map with a {@code null} key or value, and a serialization failure, each produce a
+     * {@link OutboxPublishResult#permanent permanent} result so the entry is dead-lettered rather
+     * than retried indefinitely. Kafka transport failures
      * produce a {@link OutboxPublishResult#retryable retryable} result so the relay backs off
      * and tries again later.
      *
@@ -148,7 +149,23 @@ public class KafkaOutboxDestinationHandler implements OutboxDestinationHandler {
         String topic = envelope.destination();
         String key = envelope.aggregateId();
         String entryId = String.valueOf(envelope.entryId());
-        KafkaRecordHeaders headers = recordHeaders(envelope);
+        KafkaRecordHeaders headers;
+        try {
+            headers = recordHeaders(envelope);
+        } catch (NullPointerException e) {
+            // A null key or value in the stored header map is an authoring bug: the stored row cannot
+            // change, so retrying is futile — fail permanently (dead-letter). Nothing was converted or
+            // serialized, so the hooks get no value and no headers.
+            log.warn(
+                    "Outbox entry {} to topic {} has a header map with a null key or value; dead-lettering: {}",
+                    envelope.entryId(),
+                    topic,
+                    e.getMessage());
+            OutboxPublishResult result =
+                    OutboxPublishResult.permanent("Outbox header map has a null key or value: " + e.getMessage(), e);
+            fireHooks(topic, key, null, KafkaRecordHeaders.empty(), result, entryId);
+            return Future.succeededFuture(result);
+        }
 
         byte[] value;
         try {
