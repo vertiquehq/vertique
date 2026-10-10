@@ -51,6 +51,9 @@ import lombok.extern.slf4j.Slf4j;
  * captured via {@link DurableContextPropagator#mergeCaptured} and merged into the record
  * headers (FR-CTX-173).
  *
+ * <p>The dead-letter send is the exception: {@link #sendForDlq(String, String, byte[], Map)}
+ * forwards the headers it is given verbatim and captures no context.
+ *
  * <p>Every send converges at
  * {@link #sendWire(String, String, byte[], Map, KafkaSendOrigin, KafkaProducerOperation)},
  * which fires all registered {@link KafkaProducerCaptureHook} instances (observer-only) after the
@@ -233,8 +236,8 @@ public class KafkaProducerFactory {
     /**
      * Sends a raw byte array message to the specified topic, capturing ambient context from the
      * current {@link ContextHolder} scope into Kafka headers via
-     * {@link DurableMetadataHeaderCodec#mergeForEgress}. Used internally for DLQ publishing and
-     * direct send callers that want ambient context propagated automatically.
+     * {@link DurableMetadataHeaderCodec#mergeForEgress}. For direct send callers that want ambient
+     * context propagated automatically.
      *
      * <p>This overload uses origin {@link KafkaSendOrigin#INTERNAL}. Prefer the origin-explicit
      * overloads for callers that know their send origin.
@@ -281,21 +284,34 @@ public class KafkaProducerFactory {
     }
 
     /**
-     * Sends a raw byte array message to the DLQ topic, capturing ambient context from the
-     * current scope into Kafka headers. Fires capture hooks with origin
-     * {@link KafkaSendOrigin#DLQ} and a {@code null} producer method.
+     * Republishes a failed record to a dead-letter topic. This is the framework's dead-letter path,
+     * called by the consumer error handling; it is not for application sends.
      *
-     * <p>Use this overload from {@link dev.vertique.kafka.KafkaErrorHandler} to ensure the
-     * send is correctly classified as a dead-letter publish.
+     * <p>The headers are forwarded verbatim, so the dead-letter record keeps the failed record's own
+     * context. Unlike every other send on this class:
+     *
+     * <ul>
+     *   <li>a header with the {@link DurableMetadataHeaderCodec#RESERVED_PREFIX} prefix is
+     *       <strong>not</strong> rejected: the framework context headers the failed record carried
+     *       are forwarded as they were received;
+     *   <li>the ambient context of the current scope is <strong>not</strong> captured or overlaid:
+     *       it is not the failed record's context, and no context header that was not given is
+     *       added.
+     * </ul>
+     *
+     * <p>Fires capture hooks with origin {@link KafkaSendOrigin#DLQ} and a {@code null} producer
+     * operation. Application code must use {@link #send(String, String, byte[], Map)} or a
+     * {@link KafkaProducer @KafkaProducer} proxy, which keep the reserved prefix for the framework.
      *
      * @param topic   the dead-letter topic
      * @param key     the record key, or {@code null}
      * @param value   the raw record bytes to republish
-     * @param headers the application message headers, or {@code null}
+     * @param headers the headers of the dead-letter record, forwarded verbatim, or {@code null} for
+     *                none; must not contain a {@code null} key or value
      * @return a future of the record metadata
      */
     public Future<RecordMetadata> sendForDlq(String topic, String key, byte[] value, Map<String, String> headers) {
-        return sendRaw(topic, key, value, headers, KafkaSendOrigin.DLQ, null);
+        return sendWire(topic, key, value, headers == null ? Map.of() : Map.copyOf(headers), KafkaSendOrigin.DLQ, null);
     }
 
     /**

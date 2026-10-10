@@ -81,6 +81,11 @@ A dead-lettered record keeps its original key, its original value bytes, and all
 headers; the five `x-dlq-*` headers are added on top. An original header of the same name is
 overwritten.
 
+The original headers include the framework's own `vertique-<namespace>` context headers. They are
+forwarded as they were received, so the dead-letter record carries the failed record's context. No
+context is captured from the scope that handles the error, and no context header that the failed
+record did not carry is added.
+
 ---
 
 ## Getting Started
@@ -351,7 +356,8 @@ Creates typed producer proxies and exposes raw sends.
 |---|---|
 | `create(Class<T> producerInterface)` | Builds the typed proxy for a `@KafkaProducer` interface |
 | `send(String topic, String key, byte[] value, Map<String, String> headers)` | Raw send with pre-serialized bytes |
-| `sendForDlq(...)` / `sendForOutbox(...)` | Raw sends tagged with the matching `KafkaSendOrigin` for capture hooks |
+| `sendForOutbox(...)` | Raw send tagged with `KafkaSendOrigin.OUTBOX` for capture hooks |
+| `sendForDlq(...)` | The framework's dead-letter send, tagged with `KafkaSendOrigin.DLQ`. It forwards the given headers verbatim, including reserved `vertique-*` context headers, and adds no ambient context. Not for application sends |
 | `close()` | Closes the underlying producer |
 
 ### `KafkaConsumerDeploymentManager`
