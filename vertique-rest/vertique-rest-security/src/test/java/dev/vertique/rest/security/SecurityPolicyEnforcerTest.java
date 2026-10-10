@@ -12,6 +12,7 @@ import dev.vertique.core.context.ContextValue;
 import dev.vertique.core.correlation.CorrelationContext;
 import dev.vertique.core.correlation.CorrelationIdentifier;
 import dev.vertique.core.correlation.UnboundCorrelationContext;
+import dev.vertique.core.exception.UnavailableException;
 import dev.vertique.correlation.CorrelationContextFactory;
 import dev.vertique.resilience.Resilience;
 import dev.vertique.rest.core.security.SecurityPolicy;
@@ -57,8 +58,9 @@ import org.junit.jupiter.api.Test;
  *   <li>Constrained handler: permit → {@code ctx.next()} called</li>
  *   <li>Constrained handler: deny → {@code ctx.fail(403)} called</li>
  *   <li>Constrained handler: no bound SecurityContext → {@code ctx.fail(401)} called</li>
- *   <li>Constrained handler: decision point fails → {@code ctx.fail(403)} and one deny event; the cause is
- *       logged server-side and never handed to the failure pipeline</li>
+ *   <li>Constrained handler: decision point fails → 503 unavailable (generic detail) and one
+ *       {@code INTERNAL_AUTHZ_ERROR} event; the cause is logged server-side and never handed to the
+ *       failure pipeline. A gate that throws or returns {@code null} is a contract violation: 403</li>
  *   <li>Constrained policy with empty roles AND empty scopes → {@link IllegalStateException}</li>
  *   <li>Decision point chain: app override wins, else sync policy wrapped, else default provider</li>
  *   <li>Constructor null argument rejection</li>
@@ -422,8 +424,8 @@ class SecurityPolicyEnforcerTest {
         }
 
         @Test
-        @DisplayName("decision point fails → ctx.fail(403), cause not propagated")
-        void decisionPointFailureIsADeny() {
+        @DisplayName("decision point fails → 503 unavailable, cause not propagated")
+        void decisionPointFailureIsUnavailable() {
             RuntimeException boom = new RuntimeException("decision point error");
             AuthorizationDecisionPoint dp = mock(AuthorizationDecisionPoint.class);
             when(dp.decide(any())).thenReturn(Future.failedFuture(boom));
@@ -445,9 +447,9 @@ class SecurityPolicyEnforcerTest {
                     enforcer.createHandler(new SecurityPolicy.Constrained(List.of("admin"), List.of(), false));
             handler.handle(rc);
 
-            verify(rc).fail(403);
+            verify(rc).fail(any(UnavailableException.class));
             verify(rc, never()).next();
-            verify(rc, never()).fail(any(Throwable.class));
+            verify(rc, never()).fail(403);
         }
 
         @Test
@@ -826,8 +828,8 @@ class SecurityPolicyEnforcerTest {
             assertEquals(
                     AuthzReasonCodes.INTERNAL_AUTHZ_ERROR,
                     events.get(0).decision().reasonCode());
-            verify(rc).fail(403);
-            verify(rc, never()).fail(any(Throwable.class));
+            verify(rc).fail(any(UnavailableException.class));
+            verify(rc, never()).fail(403);
         }
 
         @Test
@@ -1126,7 +1128,7 @@ class SecurityPolicyEnforcerTest {
         }
 
         @Test
-        @DisplayName("hung decision point, role/scope-only handler → 403, one INTERNAL_AUTHZ_ERROR deny")
+        @DisplayName("hung decision point, role/scope-only handler → 503 unavailable, one INTERNAL_AUTHZ_ERROR event")
         void hungDecisionPointOnTheRoleScopeOnlyHandler() throws Exception {
             AuthorizationDecisionPoint dp = request ->
                     io.vertx.core.Promise.<AuthorizationDecision>promise().future();
@@ -1136,7 +1138,7 @@ class SecurityPolicyEnforcerTest {
                     .createHandler(new SecurityPolicy.Constrained(List.of("admin"), List.of(), false))
                     .handle(rc);
 
-            verify(rc, timeout(DENY_WITHIN_MS)).fail(403);
+            verify(rc, timeout(DENY_WITHIN_MS)).fail(any(UnavailableException.class));
             verify(rc, never()).next();
             assertEquals(1, events.size(), "a hung gate must emit exactly one deny event");
             assertEquals(
@@ -1145,7 +1147,7 @@ class SecurityPolicyEnforcerTest {
         }
 
         @Test
-        @DisplayName("hung decision point, composed handler → 403, one deny, action gate not evaluated")
+        @DisplayName("hung decision point, composed handler → 503 unavailable, one event, action gate not evaluated")
         void hungDecisionPointOnTheComposedHandler() throws Exception {
             AuthorizationDecisionPoint dp = request ->
                     io.vertx.core.Promise.<AuthorizationDecision>promise().future();
@@ -1157,7 +1159,7 @@ class SecurityPolicyEnforcerTest {
                             Optional.of(ActionRef.parse("orders.order.read")))
                     .handle(rc);
 
-            verify(rc, timeout(DENY_WITHIN_MS)).fail(403);
+            verify(rc, timeout(DENY_WITHIN_MS)).fail(any(UnavailableException.class));
             verify(rc, never()).next();
             assertEquals(1, events.size(), "a hung gate must emit exactly one deny event");
             assertEquals(
@@ -1170,7 +1172,7 @@ class SecurityPolicyEnforcerTest {
         }
 
         @Test
-        @DisplayName("hung authorizer on the composed handler → 403, one deny, action gate evaluated")
+        @DisplayName("hung authorizer on the composed handler → 503 unavailable, one event, action gate evaluated")
         void hungAuthorizerOnTheComposedHandler() throws Exception {
             AuthorizationDecisionPoint permit =
                     request -> Future.succeededFuture(AuthorizationDecision.permit(AuthzReasonCodes.PERMITTED));
@@ -1195,7 +1197,7 @@ class SecurityPolicyEnforcerTest {
                             Optional.of(ActionRef.parse("orders.order.read")))
                     .handle(rc);
 
-            verify(rc, timeout(DENY_WITHIN_MS)).fail(403);
+            verify(rc, timeout(DENY_WITHIN_MS)).fail(any(UnavailableException.class));
             verify(rc, never()).next();
             assertEquals(1, events.size(), "a hung gate must emit exactly one deny event");
             assertEquals(
@@ -1208,7 +1210,7 @@ class SecurityPolicyEnforcerTest {
         }
 
         @Test
-        @DisplayName("a gate that fails with another operation's resilience timeout is a deny like any failure")
+        @DisplayName("a gate that fails with another operation's resilience timeout is unavailable like any failure")
         void foreignResilienceTimeoutIsADenyToo() {
             io.vertx.core.Promise<AuthorizationDecision> pending = io.vertx.core.Promise.promise();
             RoutingContext rc = constrainedRoute();
@@ -1219,13 +1221,13 @@ class SecurityPolicyEnforcerTest {
 
             pending.fail(foreign);
 
-            verify(rc, timeout(DENY_WITHIN_MS)).fail(403);
-            verify(rc, never()).fail(any(Throwable.class));
+            verify(rc, timeout(DENY_WITHIN_MS)).fail(any(UnavailableException.class));
+            verify(rc, never()).fail(403);
             assertEquals(1, events.size(), "the failure still emits exactly one deny event");
         }
 
         @Test
-        @DisplayName("a gate that fails with an IllegalArgumentException is a 403 deny; its message never reaches "
+        @DisplayName("a gate that fails with an IllegalArgumentException is 503 unavailable; its message never reaches "
                 + "the failure pipeline")
         void gateIllegalArgumentExceptionIsADenyNotAClientError() {
             RoutingContext rc = constrainedRoute();
@@ -1234,8 +1236,8 @@ class SecurityPolicyEnforcerTest {
                             Optional.empty()))
                     .handle(rc);
 
-            verify(rc, timeout(DENY_WITHIN_MS)).fail(403);
-            verify(rc, never()).fail(any(Throwable.class));
+            verify(rc, timeout(DENY_WITHIN_MS)).fail(any(UnavailableException.class));
+            verify(rc, never()).fail(403);
             verify(rc, never()).next();
             assertEquals(1, events.size());
             assertEquals(
@@ -1244,7 +1246,8 @@ class SecurityPolicyEnforcerTest {
         }
 
         @Test
-        @DisplayName("a gate that fails with a framework UnavailableException is a 403 deny on the composed handler")
+        @DisplayName(
+                "a gate that fails with a framework UnavailableException is 503 unavailable on the composed handler")
         void gateUnavailableExceptionIsADenyOnTheComposedHandler() {
             RoutingContext rc = constrainedRoute();
             enforcer(
@@ -1256,8 +1259,8 @@ class SecurityPolicyEnforcerTest {
                             Optional.of(ActionRef.parse("orders.order.read")))
                     .handle(rc);
 
-            verify(rc, timeout(DENY_WITHIN_MS)).fail(403);
-            verify(rc, never()).fail(any(Throwable.class));
+            verify(rc, timeout(DENY_WITHIN_MS)).fail(any(UnavailableException.class));
+            verify(rc, never()).fail(403);
             assertEquals(1, events.size());
             assertEquals(
                     Boolean.FALSE,
@@ -1266,7 +1269,7 @@ class SecurityPolicyEnforcerTest {
         }
 
         @Test
-        @DisplayName("a gate that fails with its own plain TimeoutException is denied like a fence timeout")
+        @DisplayName("a gate that fails with its own plain TimeoutException is unavailable like a fence timeout")
         void gatesOwnTimeoutExceptionIsDeniedLikeTheFence() {
             io.vertx.core.Promise<AuthorizationDecision> pending = io.vertx.core.Promise.promise();
             RoutingContext rc = constrainedRoute();
@@ -1275,24 +1278,24 @@ class SecurityPolicyEnforcerTest {
 
             pending.fail(new java.util.concurrent.TimeoutException("policy client deadline"));
 
-            verify(rc, timeout(DENY_WITHIN_MS)).fail(403);
+            verify(rc, timeout(DENY_WITHIN_MS)).fail(any(UnavailableException.class));
             verify(rc, never()).next();
             assertEquals(1, events.size());
         }
 
         @Test
-        @DisplayName("a gate that completes after the deadline changes nothing: one 403, no next(), one event")
+        @DisplayName("a gate that completes after the deadline changes nothing: one 503, no next(), one event")
         void lateCompletionOfAnAbandonedGateChangesNothing() throws Exception {
             io.vertx.core.Promise<AuthorizationDecision> pending = io.vertx.core.Promise.promise();
             RoutingContext rc = constrainedRoute();
             constrainedHandler(enforcer(request -> pending.future(), Optional.empty()))
                     .handle(rc);
-            verify(rc, timeout(DENY_WITHIN_MS)).fail(403);
+            verify(rc, timeout(DENY_WITHIN_MS)).fail(any(UnavailableException.class));
 
             pending.complete(AuthorizationDecision.permit(AuthzReasonCodes.PERMITTED));
             Thread.sleep(300L);
 
-            verify(rc, times(1)).fail(403);
+            verify(rc, times(1)).fail(any(UnavailableException.class));
             verify(rc, never()).next();
             assertEquals(1, events.size(), "the abandoned gate must not emit a second event");
         }
@@ -1314,7 +1317,7 @@ class SecurityPolicyEnforcerTest {
                                 resilience))
                         .handle(rc);
 
-                verify(rc, timeout(DENY_WITHIN_MS)).fail(403);
+                verify(rc, timeout(DENY_WITHIN_MS)).fail(any(UnavailableException.class));
                 assertEquals(1, observed.timeouts(DENY_WITHIN_MS));
             } finally {
                 vertx.close().toCompletionStage().toCompletableFuture().get(DENY_WITHIN_MS, TimeUnit.MILLISECONDS);
@@ -1322,7 +1325,7 @@ class SecurityPolicyEnforcerTest {
         }
 
         @Test
-        @DisplayName("a pending handler gate is denied at once when the resilience runtime has closed")
+        @DisplayName("a pending handler gate is unavailable at once when the resilience runtime has closed")
         void pendingHandlerGateIsDeniedAtOnceWhenTheRuntimeIsClosed() throws Exception {
             io.vertx.core.Vertx vertx = io.vertx.core.Vertx.vertx();
             try {
@@ -1339,7 +1342,7 @@ class SecurityPolicyEnforcerTest {
 
                 constrainedHandler(enforcer).handle(rc);
 
-                verify(rc, timeout(DENY_WITHIN_MS)).fail(403);
+                verify(rc, timeout(DENY_WITHIN_MS)).fail(any(UnavailableException.class));
                 assertEquals(1, events.size());
             } finally {
                 vertx.close().toCompletionStage().toCompletableFuture().get(DENY_WITHIN_MS, TimeUnit.MILLISECONDS);
@@ -1399,7 +1402,8 @@ class SecurityPolicyEnforcerTest {
         }
 
         @Test
-        @DisplayName("a handler gate pending when the runtime closes is denied once; a late permit changes nothing")
+        @DisplayName(
+                "a handler gate pending when the runtime closes is unavailable once; a late permit changes nothing")
         void handlerGatePendingWhenTheRuntimeClosesIsDeniedOnce() throws Exception {
             io.vertx.core.Vertx vertx = io.vertx.core.Vertx.vertx();
             try {
@@ -1410,11 +1414,11 @@ class SecurityPolicyEnforcerTest {
                         .handle(rc);
 
                 resilience.close().toCompletionStage().toCompletableFuture().get(DENY_WITHIN_MS, TimeUnit.MILLISECONDS);
-                verify(rc, timeout(DENY_WITHIN_MS)).fail(403);
+                verify(rc, timeout(DENY_WITHIN_MS)).fail(any(UnavailableException.class));
                 pending.complete(AuthorizationDecision.permit(AuthzReasonCodes.PERMITTED));
                 Thread.sleep(200L);
 
-                verify(rc, times(1)).fail(403);
+                verify(rc, times(1)).fail(any(UnavailableException.class));
                 verify(rc, never()).next();
                 assertEquals(1, events.size());
             } finally {

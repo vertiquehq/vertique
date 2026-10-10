@@ -5,6 +5,7 @@ package dev.vertique.rest.security;
 
 import dev.vertique.core.context.ContextHolder;
 import dev.vertique.core.correlation.CorrelationContext;
+import dev.vertique.core.exception.UnavailableException;
 import dev.vertique.resilience.Resilience;
 import dev.vertique.resilience.ResiliencePipeline;
 import dev.vertique.resilience.ResolvedResiliencePolicy;
@@ -880,14 +881,14 @@ public class SecurityPolicyEnforcer {
 
             fencedDecision.onComplete(ar -> {
                 if (ar.failed()) {
-                    // Fail-closed: whatever the gate failed with — the deadline, a closed runtime, or an
-                    // exception of the policy client — is a deny with one event (FR-054), exactly as a
-                    // gate that throws or returns null is. The cause is logged here and never handed to
-                    // the failure pipeline, whose mapper would render a third-party message to the
-                    // caller. The correlation captured at entry is used: the callback may run off the
-                    // request context.
+                    // Fail-closed, but not a denial: the gate could not answer — it failed, the deadline
+                    // elapsed, or the runtime closed. That is "unavailable" (503, generic detail, one
+                    // INTERNAL_AUTHZ_ERROR event), distinct from a real "no" (403). The cause is logged
+                    // here and never handed to the failure pipeline, whose mapper would render a
+                    // third-party message to the caller. The correlation captured at entry is used: the
+                    // callback may run off the request context.
                     logGateFailure("Authorization decision point failed", "role/scope", ar.cause(), roleScopeFence);
-                    internalErrorDeny(ctx, authzRequest, correlation);
+                    unavailableDeny(ctx, authzRequest, correlation);
                     return;
                 }
                 AuthorizationDecision decision = ar.result();
@@ -1007,11 +1008,12 @@ public class SecurityPolicyEnforcer {
 
             fencedRoleScope.onComplete(roleScopeAr -> {
                 if (roleScopeAr.failed()) {
-                    // Fail-closed: a role/scope evaluation error denies with one event; the action gate
-                    // is not reached. The cause is logged, never handed to the failure pipeline.
+                    // Fail-closed, but not a denial: the role/scope gate could not answer, so the request
+                    // is unavailable (503) with one event, and the action gate is not reached. The cause
+                    // is logged, never handed to the failure pipeline.
                     logGateFailure(
                             "Authorization decision point failed", "role/scope", roleScopeAr.cause(), roleScopeFence);
-                    internalErrorDenyComposed(ctx, authzRequest, correlation);
+                    unavailableDenyComposed(ctx, authzRequest, correlation);
                     return;
                 }
                 AuthorizationDecision roleScope = roleScopeAr.result();
@@ -1088,6 +1090,10 @@ public class SecurityPolicyEnforcer {
                     emitDecision(authzRequest, decision, correlation);
                     if (decision.permitted()) {
                         ctx.next();
+                    } else if (actionAr.failed()) {
+                        // The action gate could not answer (it failed, timed out, or the runtime
+                        // closed): unavailable, not denied. The event above is the same deny shape.
+                        ctx.fail(authorizationUnavailable());
                     } else {
                         log.debug(
                                 "Authorization denied at action gate: reasonCode={}, path={}, method={}",
@@ -1122,6 +1128,48 @@ public class SecurityPolicyEnforcer {
                 combinedDecision(AuthorizationDecision.deny(AuthzReasonCodes.INTERNAL_AUTHZ_ERROR), null);
         emitDecision(authzRequest, decision, correlation);
         ctx.fail(403);
+    }
+
+    /**
+     * Fail-closed outcome for a role/scope gate that could not answer — its future failed, its
+     * deadline elapsed, or the resilience runtime closed. It is not a denial: it emits exactly one
+     * {@link AuthzReasonCodes#INTERNAL_AUTHZ_ERROR} event (the audit marker for "could not decide")
+     * and fails the request as unavailable (503) with the generic, client-safe detail, so a caller
+     * and a load balancer can tell an outage from a "no".
+     *
+     * @param ctx          the routing context to fail; must not be {@code null}
+     * @param authzRequest the request that was being evaluated; must not be {@code null}
+     * @param correlation  the correlation captured at handler entry; must not be {@code null}
+     */
+    private void unavailableDeny(
+            RoutingContext ctx, AuthorizationRequest authzRequest, CorrelationContext correlation) {
+        emitDecision(authzRequest, AuthorizationDecision.deny(AuthzReasonCodes.INTERNAL_AUTHZ_ERROR), correlation);
+        ctx.fail(authorizationUnavailable());
+    }
+
+    /**
+     * As {@link #unavailableDeny} for the composed {@code @RequiresAction} handler: the event is the
+     * combined deny with the action gate recorded as not evaluated.
+     *
+     * @param ctx          the routing context to fail; must not be {@code null}
+     * @param authzRequest the request that was being evaluated; must not be {@code null}
+     * @param correlation  the correlation captured at handler entry; must not be {@code null}
+     */
+    private void unavailableDenyComposed(
+            RoutingContext ctx, AuthorizationRequest authzRequest, CorrelationContext correlation) {
+        AuthorizationDecision decision =
+                combinedDecision(AuthorizationDecision.deny(AuthzReasonCodes.INTERNAL_AUTHZ_ERROR), null);
+        emitDecision(authzRequest, decision, correlation);
+        ctx.fail(authorizationUnavailable());
+    }
+
+    /**
+     * The failure a request carries when authorization could not be decided: the framework's
+     * {@link UnavailableException}, which maps to 503, with the same generic detail the Vert.x
+     * authorization import uses, so the response never names a policy client or its error.
+     */
+    private static UnavailableException authorizationUnavailable() {
+        return new UnavailableException(VertxAuthorizationImporter.UNAVAILABLE_MESSAGE);
     }
 
     /**

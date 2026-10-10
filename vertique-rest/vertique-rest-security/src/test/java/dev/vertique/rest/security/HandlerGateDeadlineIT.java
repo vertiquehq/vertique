@@ -51,7 +51,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
  * Proves, over a real {@link Router} and a real HTTP request, that an authorization gate that never
- * settles is denied rather than left hanging: the request gets {@code 403} once the gate deadline
+ * settles is answered rather than left hanging: the request gets {@code 503} once the gate deadline
  * elapses, the protected handler never runs, exactly one decision event is emitted, and a gate that
  * completes after the deadline changes nothing.
  *
@@ -135,6 +135,10 @@ class HandlerGateDeadlineIT {
                     rc.response().setStatusCode(400).end(String.valueOf(illegal.getMessage()));
                     return;
                 }
+                if (rc.failure() instanceof dev.vertique.core.exception.UnavailableException unavailable) {
+                    rc.response().setStatusCode(503).end(String.valueOf(unavailable.getMessage()));
+                    return;
+                }
                 rc.response()
                         .setStatusCode(rc.statusCode() > 0 ? rc.statusCode() : 500)
                         .end();
@@ -185,11 +189,11 @@ class HandlerGateDeadlineIT {
     private static final AuthorizationDecision PERMIT = AuthorizationDecision.permit(AuthzReasonCodes.PERMITTED);
 
     @Test
-    @DisplayName("a decision point that never answers yields 403 once the deadline elapses; the handler never runs")
+    @DisplayName("a decision point that never answers yields 503 once the deadline elapses; the handler never runs")
     void hungDecisionPointYieldsForbidden(Vertx vertx) throws Exception {
         Promise<AuthorizationDecision> hung = Promise.promise();
         try (Fixture fixture = new Fixture(vertx, new AuthorizationPolicyGates(request -> hung.future(), null, null))) {
-            assertEquals(403, fixture.get());
+            assertEquals(503, fixture.get());
 
             assertEquals(0, fixture.protectedHandlerRuns.get(), "the protected handler must never run");
             assertEquals(1, fixture.events.size(), "exactly one decision event");
@@ -200,7 +204,7 @@ class HandlerGateDeadlineIT {
     }
 
     @Test
-    @DisplayName("an action authorizer that never answers yields 403 once the deadline elapses")
+    @DisplayName("an action authorizer that never answers yields 503 once the deadline elapses")
     void hungAuthorizerYieldsForbidden(Vertx vertx) throws Exception {
         Authorizer hungAuthorizer = new Authorizer() {
             @Override
@@ -220,7 +224,7 @@ class HandlerGateDeadlineIT {
                         request -> Future.succeededFuture(PERMIT),
                         hungAuthorizer,
                         ActionRef.parse("orders.order.read")))) {
-            assertEquals(403, fixture.get());
+            assertEquals(503, fixture.get());
 
             assertEquals(0, fixture.protectedHandlerRuns.get());
             assertEquals(1, fixture.events.size());
@@ -229,11 +233,11 @@ class HandlerGateDeadlineIT {
 
     @Test
     @DisplayName(
-            "a gate that completes after the deadline changes nothing: still 403, handler still not run, one event")
+            "a gate that completes after the deadline changes nothing: still 503, handler still not run, one event")
     void lateCompletionAfterTheDeadlineChangesNothing(Vertx vertx) throws Exception {
         Promise<AuthorizationDecision> late = Promise.promise();
         try (Fixture fixture = new Fixture(vertx, new AuthorizationPolicyGates(request -> late.future(), null, null))) {
-            assertEquals(403, fixture.get());
+            assertEquals(503, fixture.get());
 
             late.complete(PERMIT);
             Thread.sleep(300L);
@@ -244,7 +248,8 @@ class HandlerGateDeadlineIT {
     }
 
     @Test
-    @DisplayName("a gate that fails with an IllegalArgumentException is a 403 deny; its message is not in the response")
+    @DisplayName(
+            "a gate that fails with an IllegalArgumentException is 503 unavailable; its message is not in the response")
     void gateFailureMessageNeverReachesTheCaller(Vertx vertx) throws Exception {
         String secret = "pdp host db-7 refused the connection";
         try (Fixture fixture = new Fixture(
@@ -253,10 +258,14 @@ class HandlerGateDeadlineIT {
                         request -> Future.failedFuture(new IllegalArgumentException(secret)), null, null))) {
             var response = fixture.response();
 
-            assertEquals(403, response.statusCode());
+            assertEquals(503, response.statusCode());
             assertFalse(
                     String.valueOf(response.bodyAsString()).contains(secret),
                     "a policy client's failure message must not be rendered to the caller");
+            assertEquals(
+                    "Authorization is temporarily unavailable",
+                    response.bodyAsString(),
+                    "the response carries only the generic, client-safe detail");
             assertEquals(0, fixture.protectedHandlerRuns.get());
             assertEquals(1, fixture.events.size());
         }

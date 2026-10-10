@@ -387,12 +387,14 @@ so an in-memory decision point costs the runtime nothing; a pending gate settles
 Vert.x context and is reported to any installed `ResilienceObserver` as an execution — a timed-out one when
 the deadline elapses, a successful one when the gate answers in time. The
 timeout does not cancel the gate's own work. A policy client that fails with its own plain
-`TimeoutException` is denied the same way as a gate that exceeded the deadline. Exceeding the deadline fails closed exactly like any
-other gate contract violation: `AuthzReasonCodes.INTERNAL_AUTHZ_ERROR`, one emitted
-`AuthorizationDecisionEvent`, no propagation of the stalled future — `decide` returns that deny, and a
-REST or WebSocket handler answers `403`, with no resilience failure text in the response. When
-the `Resilience` runtime has closed at application shutdown, a gate that is still pending is denied the
-same way at once. See [Configuration](#configuration) for the operator key and default.
+`TimeoutException` is treated the same way as a gate that exceeded the deadline. Exceeding the
+deadline fails closed with `AuthzReasonCodes.INTERNAL_AUTHZ_ERROR` — the marker for "authorization
+could not decide", as opposed to a denial — and exactly one emitted `AuthorizationDecisionEvent`, with
+no propagation of the stalled future. `decide` returns that decision; a REST or WebSocket handler
+answers `503` with the generic `Authorization is temporarily unavailable`, never a resilience failure
+text. When the `Resilience` runtime has closed at application shutdown, a gate that is still pending
+is treated the same way at once. See [Configuration](#configuration) for the operator key and
+default.
 
 ### `IdentityPipelineFactory`
 
@@ -897,14 +899,16 @@ There is no warn-only mode. Every validation failure stops startup.
 | 401 | `AUTHENTICATION_REQUIRED` | No `SecurityContext` bound, or an anonymous actor on an `AuthenticatedOnly` or `Constrained` route |
 | 403 | `DENY_ALL` | `@DenyAll` |
 | 403 | the decision's own code | The decision point denied |
-| 403 | `INTERNAL_AUTHZ_ERROR` | The decision point or `Authorizer` threw, returned a `null` future, returned a failed future (with any exception), resolved to a `null` decision, or exceeded the configured [gate deadline](#authorization-gate-deadline-authorizationgateconfig) — fail-closed |
+| 403 | `INTERNAL_AUTHZ_ERROR` | The decision point or `Authorizer` threw synchronously, returned a `null` future, or resolved to a `null` decision — a contract violation, fail-closed |
+| 503 | `INTERNAL_AUTHZ_ERROR` | The decision point or `Authorizer` could not answer: it returned a failed future (with any exception), exceeded the configured [gate deadline](#authorization-gate-deadline-authorizationgateconfig), or the `Resilience` runtime had closed — fail-closed. The problem detail is the generic `Authorization is temporarily unavailable`; the cause is logged, never returned |
 | 503 | — | A provider failed during the opt-in [Vert.x authorization import](#vertx-authorization-import-opt-in) — fail-closed: the `SecurityContext` is never bound and no partially imported claim is observable. The problem detail is the generic `Authorization is temporarily unavailable`; the failing provider id is logged, never returned |
 | — | `PERMITTED` | Both gates passed |
 
-A failed (rather than denied) decision future is a fail-closed deny like any other contract violation:
-403, `INTERNAL_AUTHZ_ERROR` and one event. The cause is logged server-side and is not handed to the
-error pipeline, so a policy client's own exception, whatever its type or message, never decides the
-response status or appears in the response body. Every path that reaches authorization emits exactly one
+A decision future that fails, as opposed to one that denies, means the gate could not answer: the
+request fails closed as unavailable — 503, `INTERNAL_AUTHZ_ERROR` and one event — and is distinct
+from a 403 denial. The cause is logged server-side and is not handed to the error pipeline, so a
+policy client's own exception, whatever its type or message, never decides the response status or
+appears in the response body. Every path that reaches authorization emits exactly one
 `AuthorizationDecisionEvent`; the credential-failure 401 and the import-failure 503 short-circuit
 the request before authorization runs, so no decision event is emitted for them.
 
