@@ -13,7 +13,9 @@ final class HeaderUtils {
     /**
      * Escapes a value for inclusion in a quoted-string within a header value. Backslashes and
      * double-quotes are backslash-escaped; CR, LF and the other control characters other than a
-     * horizontal tab are dropped, so a value can never carry a line break into a header.
+     * horizontal tab are each replaced by one {@code _}, so a value can never carry a line break
+     * into a header, the length and positions of the other characters are unchanged, and two
+     * values that differ by a control character stay different.
      *
      * @param value the raw header value to escape
      * @return the escaped value safe for use in a quoted-string
@@ -23,6 +25,7 @@ final class HeaderUtils {
         for (int i = 0; i < value.length(); i++) {
             char c = value.charAt(i);
             if ((c < 0x20 && c != '\t') || c == 0x7F) {
+                sb.append('_');
                 continue;
             }
             if (c == '\\' || c == '"') {

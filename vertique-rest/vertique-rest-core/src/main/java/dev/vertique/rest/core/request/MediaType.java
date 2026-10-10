@@ -5,6 +5,7 @@ package dev.vertique.rest.core.request;
 
 import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 
@@ -13,7 +14,8 @@ import java.util.Objects;
  *
  * <p>A media type consists of a {@code type}, a {@code subtype}, optional parameters
  * (excluding the {@code q} quality parameter), and a quality factor. Both type and
- * subtype are stored and compared in lowercase.
+ * subtype are stored and compared in lowercase, using {@link Locale#ROOT} so the result does not
+ * depend on the JVM's default locale.
  *
  * <p>Use {@link #parse(String)} or {@link #valueOf(String)} to create instances from
  * raw header strings such as {@code "application/json;charset=utf-8;q=0.8"}. Parsing is
@@ -38,10 +40,16 @@ public final class MediaType {
      * @param subtype       the subtype (e.g. {@code "json"}), stored lowercase
      * @param parameters    the media type parameters excluding {@code q}, may be empty
      * @param qualityFactor the quality factor in range [0.0, 1.0]; defaults to 1.0
+     * @throws IllegalArgumentException if the type, the subtype or a parameter name contains a
+     *                                  control character (below {@code U+0020}, or {@code U+007F}),
+     *                                  which could otherwise split a header line when written
      */
     public MediaType(String type, String subtype, Map<String, String> parameters, double qualityFactor) {
-        this.type = type.toLowerCase();
-        this.subtype = subtype.toLowerCase();
+        requireNoControlCharacters("type", type);
+        requireNoControlCharacters("subtype", subtype);
+        parameters.keySet().forEach(name -> requireNoControlCharacters("parameter name", name));
+        this.type = type.toLowerCase(Locale.ROOT);
+        this.subtype = subtype.toLowerCase(Locale.ROOT);
         this.parameters = Collections.unmodifiableMap(new LinkedHashMap<>(parameters));
         this.qualityFactor = qualityFactor;
     }
@@ -81,7 +89,8 @@ public final class MediaType {
 
     /**
      * Builds a media type from a parsed header element, or returns {@code null} when the
-     * element value has no {@code /} separator or a blank type or subtype.
+     * element value has no {@code /} separator, a blank type or subtype, or a control character
+     * in the type, the subtype or a parameter name.
      */
     static MediaType fromElement(HeaderElement element) {
         if (element == null) {
@@ -95,6 +104,11 @@ public final class MediaType {
         String type = typeSubtype.substring(0, slashIndex).trim();
         String subtype = typeSubtype.substring(slashIndex + 1).trim();
         if (type.isEmpty() || subtype.isEmpty()) {
+            return null;
+        }
+        if (hasControlCharacter(type)
+                || hasControlCharacter(subtype)
+                || element.parameters().keySet().stream().anyMatch(MediaType::hasControlCharacter)) {
             return null;
         }
         return new MediaType(type, subtype, element.parameters(), element.quality());
@@ -274,8 +288,10 @@ public final class MediaType {
      * The format follows standard media type notation, e.g.
      * {@code "application/json;charset=utf-8;q=0.8"}. A parameter value that is empty or contains
      * anything other than token characters is written as a quoted string, so the output parses
-     * back to the same parameters; control characters other than a horizontal tab are dropped
-     * from a quoted value, so a value can never carry a line break into a header.
+     * back to the same parameters. Each control character other than a horizontal tab is written
+     * as {@code _}, so a value can never carry a line break into a header and two values that
+     * differ by a control character stay different; such a value parses back with {@code _} in
+     * place of the control character.
      *
      * @return the string representation of this media type
      */
@@ -310,8 +326,10 @@ public final class MediaType {
         StringBuilder sb = new StringBuilder(value.length() + 2).append('"');
         for (int i = 0; i < value.length(); i++) {
             char c = value.charAt(i);
-            if ((c < 0x20 && c != '\t') || c == 0x7F) {
-                // CR, LF and the other control characters cannot appear in a header value
+            if (isControl(c) && c != '\t') {
+                // CR, LF and the other control characters cannot appear in a header value; a
+                // placeholder keeps lengths and positions, so no two values collapse into one
+                sb.append('_');
                 continue;
             }
             if (c == '"' || c == '\\') {
@@ -320,5 +338,24 @@ public final class MediaType {
             sb.append(c);
         }
         return sb.append('"').toString();
+    }
+
+    private static boolean isControl(char c) {
+        return c < 0x20 || c == 0x7F;
+    }
+
+    private static boolean hasControlCharacter(String value) {
+        for (int i = 0; i < value.length(); i++) {
+            if (isControl(value.charAt(i))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static void requireNoControlCharacters(String what, String value) {
+        if (hasControlCharacter(value)) {
+            throw new IllegalArgumentException(what + " must not contain control characters");
+        }
     }
 }

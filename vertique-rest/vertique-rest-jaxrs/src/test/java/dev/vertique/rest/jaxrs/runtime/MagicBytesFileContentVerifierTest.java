@@ -309,6 +309,20 @@ class MagicBytesFileContentVerifierTest {
     }
 
     @Test
+    @DisplayName("an upper-case declared type is verified under a locale that lowercases I to a dotless i")
+    void upperCaseDeclaredTypeVerifiedUnderTurkishLocale() throws Exception {
+        java.util.Locale previous = java.util.Locale.getDefault();
+        java.util.Locale.setDefault(java.util.Locale.forLanguageTag("tr"));
+        try {
+            assertSignatureMismatch(verifyReal("IMAGE/PNG", MISMATCH));
+            assertSignatureMismatch(verifyReal("IMAGE/TIFF", MISMATCH));
+            assertAccepted(verifyReal("IMAGE/PNG", PNG));
+        } finally {
+            java.util.Locale.setDefault(previous);
+        }
+    }
+
+    @Test
     void readsAtMostHeadWindowOnce() throws Exception {
         MockIo io = mockIo(Future.succeededFuture(Buffer.buffer(PNG)), Future.succeededFuture());
 

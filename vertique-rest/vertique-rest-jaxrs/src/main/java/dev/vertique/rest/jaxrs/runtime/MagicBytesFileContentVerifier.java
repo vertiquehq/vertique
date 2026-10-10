@@ -13,6 +13,7 @@ import io.vertx.core.file.FileSystem;
 import io.vertx.core.file.OpenOptions;
 import io.vertx.ext.web.FileUpload;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 
@@ -113,7 +114,9 @@ final class MagicBytesFileContentVerifier implements FileContentVerifier {
         if (mediaType == null) {
             return Future.succeededFuture(FileVerificationResult.rejected(MALFORMED_DETAIL, MALFORMED_TYPE));
         }
-        List<Signature> acceptedSignatures = SIGNATURES.get(mediaType.withoutParameters());
+        // the catalog keys are lowercase; the lookup does not depend on the default locale
+        List<Signature> acceptedSignatures =
+                SIGNATURES.get(mediaType.withoutParameters().toLowerCase(Locale.ROOT));
         if (acceptedSignatures == null) {
             return Future.succeededFuture(FileVerificationResult.accepted());
         }

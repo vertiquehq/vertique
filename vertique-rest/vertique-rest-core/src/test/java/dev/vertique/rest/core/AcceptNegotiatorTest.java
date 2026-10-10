@@ -359,6 +359,62 @@ class AcceptNegotiatorTest {
     }
 
     @Test
+    @DisplayName("negotiate fails closed when a malformed entry falls after the 50-element cap")
+    void negotiateFailsClosedWhenMalformedEntryIsPastTheCap() {
+        String header = "garbage,".repeat(50) + "text/html;q=abc";
+        assertNull(AcceptNegotiator.negotiate(header, List.of("application/json")));
+        assertNull(AcceptNegotiator.negotiate(header, List.of("text/html")));
+    }
+
+    @Test
+    @DisplayName("negotiate fails closed when a well-formed entry falls after the cap and nothing before it is usable")
+    void negotiateFailsClosedWhenUsableEntryIsPastTheCap() {
+        String header = "garbage,".repeat(50) + "text/html";
+        assertNull(AcceptNegotiator.negotiate(header, List.of("text/html")));
+    }
+
+    @Test
+    @DisplayName("negotiate keeps the first type when exactly 50 slashless tokens fill the cap")
+    void negotiateKeepsFirstTypeForExactlyFiftySlashlessTokens() {
+        String header = "garbage,".repeat(49) + "garbage";
+        assertEquals("application/json", AcceptNegotiator.negotiate(header, List.of("application/json")));
+        assertEquals(
+                "application/json",
+                AcceptNegotiator.negotiate(header + ", ,,  ,", List.of("application/json")),
+                "trailing empty elements are not elements");
+    }
+
+    @Test
+    @DisplayName("negotiate still uses a usable entry inside the cap when elements follow it")
+    void negotiateUsesUsableEntryInsideTheCap() {
+        String header = "text/html," + "garbage,".repeat(60);
+        assertEquals("text/html", AcceptNegotiator.negotiate(header, List.of("text/html")));
+    }
+
+    @Test
+    @DisplayName("negotiate fails closed for an entry with a slash but an empty type or subtype")
+    void negotiateFailsClosedForEmptyTypeOrSubtype() {
+        List<String> server = List.of("application/json");
+        assertNull(AcceptNegotiator.negotiate("text/", server));
+        assertNull(AcceptNegotiator.negotiate("/json", server));
+        assertNull(AcceptNegotiator.negotiate("/", server));
+        assertNull(AcceptNegotiator.negotiate("text/ ;q=0.5", server));
+        assertEquals("application/json", AcceptNegotiator.negotiate("text/, application/json", server));
+    }
+
+    @Test
+    @DisplayName("negotiate fails closed for an entry whose type carries a control character")
+    void negotiateFailsClosedForControlCharacterInType() {
+        assertNull(AcceptNegotiator.negotiate("te" + (char) 1 + "xt/html", List.of("text/html")));
+    }
+
+    @Test
+    @DisplayName("parseAcceptHeader excludes an entry with an empty type or subtype")
+    void parseAcceptHeaderExcludesEmptyTypeOrSubtype() {
+        assertEquals(List.of(), AcceptNegotiator.parseAcceptHeader("text/, /json"));
+    }
+
+    @Test
     @DisplayName("effectiveQuality treats an Accept entry with an unusable q as not acceptable")
     void effectiveQualityRejectsUnusableQ() {
         assertEquals(0.0, AcceptNegotiator.effectiveQuality("image/png;q=abc", "image/png"), 0.0);

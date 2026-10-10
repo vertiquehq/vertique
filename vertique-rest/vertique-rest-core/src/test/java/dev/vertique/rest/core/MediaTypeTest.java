@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.rest.core.request.MediaType;
@@ -375,10 +376,64 @@ class MediaTypeTest {
     }
 
     @Test
-    @DisplayName("toString drops CR, LF and other control characters from a quoted parameter value")
-    void toStringDropsControlCharacters() {
+    @DisplayName("toString replaces CR, LF and other control characters in a quoted parameter value with an underscore")
+    void toStringReplacesControlCharacters() {
         MediaType mt = new MediaType(
                 "text", "plain", java.util.Map.of("note", "a\r\nb" + (char) 1 + "c" + (char) 127 + "d\te"), 1.0);
-        assertEquals("text/plain;note=\"abcd\te\"", mt.toString());
+        assertEquals("text/plain;note=\"a__b_c_d\te\"", mt.toString());
+    }
+
+    @Test
+    @DisplayName("toString keeps a value with a control character distinct from the value without it")
+    void toStringKeepsDistinctValuesDistinct() {
+        MediaType withControl =
+                new MediaType("text", "plain", java.util.Map.of("filename", "evil.ph" + (char) 1 + "p"), 1.0);
+        MediaType without = new MediaType("text", "plain", java.util.Map.of("filename", "evil.php"), 1.0);
+
+        assertEquals("text/plain;filename=\"evil.ph_p\"", withControl.toString());
+        assertNotEquals(without.toString(), withControl.toString());
+        assertEquals(
+                "evil.ph_p",
+                MediaType.parse(withControl.toString()).parameters().get("filename"));
+    }
+
+    @Test
+    @DisplayName("type and subtype are lowercased without regard to the default locale")
+    void typeAndSubtypeLowercasedWithRootLocale() {
+        java.util.Locale previous = java.util.Locale.getDefault();
+        java.util.Locale.setDefault(java.util.Locale.forLanguageTag("tr"));
+        try {
+            MediaType parsed = MediaType.parse("IMAGE/TIFF; Charset=UTF-8");
+            assertNotNull(parsed);
+            assertEquals("image", parsed.type());
+            assertEquals("tiff", parsed.subtype());
+            assertEquals("image/tiff", parsed.withoutParameters());
+            assertEquals("image/tiff", new MediaType("IMAGE", "TIFF", java.util.Map.of(), 1.0).withoutParameters());
+            assertTrue(parsed.isCompatible(MediaType.parse("image/tiff")));
+        } finally {
+            java.util.Locale.setDefault(previous);
+        }
+    }
+
+    @Test
+    @DisplayName("the constructor rejects a control character in the type, subtype or a parameter name")
+    void constructorRejectsControlCharacters() {
+        java.util.Map<String, String> none = java.util.Map.of();
+        assertThrows(IllegalArgumentException.class, () -> new MediaType("te\r\nxt", "plain", none, 1.0));
+        assertThrows(IllegalArgumentException.class, () -> new MediaType("text", "pl\nain", none, 1.0));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> new MediaType("text", "plain", java.util.Map.of("a\r\nSet-Cookie: x", "v"), 1.0));
+        assertThrows(IllegalArgumentException.class, () -> new MediaType("text", "pl" + (char) 127 + "ain", none, 1.0));
+    }
+
+    @Test
+    @DisplayName(
+            "parse returns null instead of throwing for a control character in the type, subtype or a parameter name")
+    void parseReturnsNullForControlCharacters() {
+        assertNull(MediaType.parse("te" + (char) 1 + "xt/plain"));
+        assertNull(MediaType.parse("text/pl" + (char) 1 + "ain"));
+        assertNull(MediaType.parse("text/plain;ch" + (char) 1 + "arset=utf-8"));
+        assertNotNull(MediaType.parse("text/plain;charset=\"ut" + (char) 1 + "f\""));
     }
 }

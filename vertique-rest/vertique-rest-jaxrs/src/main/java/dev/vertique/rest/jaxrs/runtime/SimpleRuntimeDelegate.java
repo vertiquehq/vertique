@@ -330,7 +330,7 @@ public class SimpleRuntimeDelegate extends RuntimeDelegate {
         return true;
     }
 
-    /** Writes {@code value} as a quoted-string: backslashes and double quotes are escaped, bare CR and LF are dropped. */
+    /** Writes {@code value} as a quoted-string: backslashes and double quotes are escaped, control characters become {@code _}. */
     private static String quoted(String value) {
         return "\"" + HeaderUtils.escapeQuoted(value) + "\"";
     }

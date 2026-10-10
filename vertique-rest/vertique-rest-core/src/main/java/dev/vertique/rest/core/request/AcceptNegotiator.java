@@ -45,10 +45,14 @@ public final class AcceptNegotiator {
      *   <li>Entries without a {@code /} are silently skipped. If the header holds only such
      *       entries, the first server type is returned.</li>
      *   <li>Entries that are malformed (an unterminated quoted string, an invalid, quoted,
-     *       out-of-range or repeated {@code q}, or too many parameters) are dropped and never make
-     *       a type acceptable. When every entry was dropped as malformed and none is usable, the
-     *       result is {@code null} (406), not the first server type: a header the client sent but
-     *       the server cannot read does not mean "anything".</li>
+     *       out-of-range or repeated {@code q}, too many parameters, or a {@code /} with an empty
+     *       type or subtype such as {@code text/} or {@code /json}) are dropped and never make
+     *       a type acceptable. So are the entries past the first
+     *       {@value HeaderElement#MAX_ELEMENTS} non-empty ones: they are never read, and their
+     *       existence counts as a malformed entry. When no usable entry remains and at least one
+     *       entry was dropped as malformed or lies past that cap, the result is {@code null} (406),
+     *       not the first server type: a header the client sent but the server cannot read does
+     *       not mean "anything".</li>
      * </ul>
      *
      * @param acceptHeader the value of the HTTP {@code Accept} header, may be {@code null}
@@ -160,9 +164,11 @@ public final class AcceptNegotiator {
      * as a tiebreaker (more specific types win ties). The header is split into entries and
      * parameters only outside quoted strings, so a quoted comma or semicolon does not change how
      * the entry is read. Malformed entries are silently excluded: those lacking a {@code /}
-     * separator, containing an unterminated quoted string, carrying an invalid or repeated {@code q}, or
-     * having too many parameters (see {@link HeaderElement}). At most the first
-     * {@value HeaderElement#MAX_ELEMENTS} non-empty entries are considered.
+     * separator, having an empty type or subtype, containing an unterminated quoted string,
+     * carrying an invalid or repeated {@code q}, or having too many parameters (see
+     * {@link HeaderElement}). At most the first {@value HeaderElement#MAX_ELEMENTS} non-empty
+     * entries are considered; this method does not report that more followed, while
+     * {@link #negotiate(String, List)} treats them as a malformed entry.
      *
      * @param accept the raw {@code Accept} header value; must not be {@code null}
      * @return a sorted, unmodifiable list of parsed media types; never {@code null}
@@ -171,7 +177,10 @@ public final class AcceptNegotiator {
         return parseAccept(accept).types();
     }
 
-    /** The sorted usable entries of an {@code Accept} header and whether any entry was dropped as malformed. */
+    /**
+     * The sorted usable entries of an {@code Accept} header and whether an entry was dropped as
+     * malformed or lay past the element cap.
+     */
     private record ParsedAccept(List<MediaType> types, boolean droppedMalformed) {}
 
     private static ParsedAccept parseAccept(String accept) {
@@ -179,15 +188,19 @@ public final class AcceptNegotiator {
         // headers. Vert.x already limits total header size (default 8192 bytes) at the HTTP layer.
         HeaderElement.ParsedList parsed = HeaderElement.parseListChecked(accept);
         List<MediaType> result = new ArrayList<>(parsed.elements().size());
+        boolean droppedMalformed = parsed.malformed() > 0 || parsed.truncated();
         for (HeaderElement element : parsed.elements()) {
             MediaType mt = MediaType.fromElement(element);
             if (mt != null) {
                 result.add(mt);
+            } else if (element.value().indexOf('/') >= 0) {
+                // a slash with an empty type or subtype is unreadable, not merely "not a media type"
+                droppedMalformed = true;
             }
         }
         result.sort(Comparator.comparingDouble(MediaType::qualityFactor)
                 .thenComparingInt(MediaType::specificity)
                 .reversed());
-        return new ParsedAccept(List.copyOf(result), parsed.malformed() > 0);
+        return new ParsedAccept(List.copyOf(result), droppedMalformed);
     }
 }

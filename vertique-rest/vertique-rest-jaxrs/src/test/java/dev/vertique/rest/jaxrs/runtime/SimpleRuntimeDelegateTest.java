@@ -266,11 +266,12 @@ class SimpleRuntimeDelegateTest {
     }
 
     @Test
-    @DisplayName("MediaType.toString drops CR, LF and other control characters from a parameter value")
-    void shouldDropControlCharactersWhenWritingMediaType() {
+    @DisplayName(
+            "MediaType.toString replaces CR, LF and other control characters in a parameter value with an underscore")
+    void shouldReplaceControlCharactersWhenWritingMediaType() {
         MediaType mt = new MediaType(
                 "text", "plain", java.util.Map.of("note", "a\r\nb" + (char) 1 + "c" + (char) 127 + "d\te"));
-        assertEquals("text/plain;note=\"abcd\te\"", mt.toString());
+        assertEquals("text/plain;note=\"a__b_c_d\te\"", mt.toString());
     }
 
     @Test

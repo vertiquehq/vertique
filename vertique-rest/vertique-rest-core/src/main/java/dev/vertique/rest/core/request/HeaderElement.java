@@ -53,7 +53,7 @@ public record HeaderElement(String value, Map<String, String> parameters, double
 
     /**
      * The maximum number of non-empty elements {@link #parseList(String)} considers; later
-     * elements are ignored. This bounds the work an excessively long header can cause.
+     * elements are not parsed. This bounds the work an excessively long header can cause.
      */
     public static final int MAX_ELEMENTS = 50;
 
@@ -98,7 +98,12 @@ public record HeaderElement(String value, Map<String, String> parameters, double
      * <p>Empty elements (such as {@code a,,b} or a trailing comma) are skipped, as are malformed
      * ones. At most the first {@value #MAX_ELEMENTS} non-empty elements are considered, counting
      * malformed ones; scanning stops once they have been found, so the rest of an excessively
-     * long header is never read. This method never throws.
+     * long header is never parsed. This method never throws.
+     *
+     * <p>Elements past the cap are not returned, and this method does not report that they
+     * existed. A caller that guards a trust boundary with the list must not read a header that
+     * held more than {@value #MAX_ELEMENTS} elements as complete; {@link AcceptNegotiator} counts
+     * such a header as holding a malformed entry.
      *
      * @param headerValue the raw header value; may be {@code null}
      * @return an unmodifiable list of the well-formed elements; empty for {@code null} or blank input
@@ -109,18 +114,21 @@ public record HeaderElement(String value, Map<String, String> parameters, double
 
     /**
      * A parsed element list together with the number of non-empty elements that were dropped as
-     * malformed, so a caller can tell "nothing usable was sent" from "something unreadable was
-     * sent".
+     * malformed and whether further non-empty elements followed the {@value #MAX_ELEMENTS}
+     * considered ones, so a caller can tell "nothing usable was sent" from "something unreadable
+     * was sent".
      */
-    record ParsedList(List<HeaderElement> elements, int malformed) {}
+    record ParsedList(List<HeaderElement> elements, int malformed, boolean truncated) {}
 
     /** Same as {@link #parseList(String)}, additionally counting the dropped malformed elements. */
     static ParsedList parseListChecked(String headerValue) {
         if (headerValue == null || headerValue.isBlank()) {
-            return new ParsedList(List.of(), 0);
+            return new ParsedList(List.of(), 0, false);
         }
         List<String> texts = new ArrayList<>();
-        scan(headerValue, ',', MAX_ELEMENTS, false, texts);
+        int[] stoppedAt = new int[1];
+        boolean truncated = scan(headerValue, ',', MAX_ELEMENTS, false, texts, stoppedAt) == Scan.LIMIT
+                && hasElementAfter(headerValue, stoppedAt[0]);
         List<HeaderElement> elements = new ArrayList<>(texts.size());
         int malformed = 0;
         for (String text : texts) {
@@ -131,7 +139,21 @@ public record HeaderElement(String value, Map<String, String> parameters, double
                 malformed++;
             }
         }
-        return new ParsedList(List.copyOf(elements), malformed);
+        return new ParsedList(List.copyOf(elements), malformed, truncated);
+    }
+
+    /**
+     * Returns whether {@code text} holds a non-empty element at or after {@code from}, a position
+     * just past a delimiter and so outside any quoted string. Nothing is allocated.
+     */
+    private static boolean hasElementAfter(String text, int from) {
+        for (int i = from; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (c != ',' && !Character.isWhitespace(c)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -173,7 +195,7 @@ public record HeaderElement(String value, Map<String, String> parameters, double
         }
         // The value plus MAX_PARAMETERS parameters; reaching one more means too many parameters.
         List<String> segments = new ArrayList<>();
-        if (scan(element, ';', MAX_PARAMETERS + 2, false, segments) != Scan.COMPLETE) {
+        if (scan(element, ';', MAX_PARAMETERS + 2, false, segments, null) != Scan.COMPLETE) {
             return null;
         }
         String value = segments.get(0).trim();
@@ -269,7 +291,9 @@ public record HeaderElement(String value, Map<String, String> parameters, double
             throw new IllegalArgumentException("delimiter must not be a double quote or a backslash");
         }
         List<String> segments = new ArrayList<>();
-        return scan(text, delimiter, Integer.MAX_VALUE, true, segments) == Scan.COMPLETE ? List.copyOf(segments) : null;
+        return scan(text, delimiter, Integer.MAX_VALUE, true, segments, null) == Scan.COMPLETE
+                ? List.copyOf(segments)
+                : null;
     }
 
     /**
@@ -322,9 +346,12 @@ public record HeaderElement(String value, Map<String, String> parameters, double
      * Appends the segments of {@code text} to {@code out}. Unless {@code keepBlank}, blank
      * segments are skipped without being materialized and scanning stops as soon as
      * {@code maxNonBlank} segments have been appended, so the work is bounded by the segments
-     * kept rather than by the length of the text.
+     * kept rather than by the length of the text. When it stops for that reason and
+     * {@code stoppedAt} is not {@code null}, {@code stoppedAt[0]} receives the position at which
+     * scanning would resume.
      */
-    private static Scan scan(String text, char delimiter, int maxNonBlank, boolean keepBlank, List<String> out) {
+    private static Scan scan(
+            String text, char delimiter, int maxNonBlank, boolean keepBlank, List<String> out, int[] stoppedAt) {
         int start = 0;
         boolean inQuote = false;
         int length = text.length();
@@ -342,6 +369,9 @@ public record HeaderElement(String value, Map<String, String> parameters, double
                 if (keepBlank || !isBlank(text, start, i)) {
                     out.add(text.substring(start, i));
                     if (!keepBlank && out.size() >= maxNonBlank) {
+                        if (stoppedAt != null) {
+                            stoppedAt[0] = i + 1;
+                        }
                         return Scan.LIMIT;
                     }
                 }
@@ -351,6 +381,9 @@ public record HeaderElement(String value, Map<String, String> parameters, double
         if (keepBlank || !isBlank(text, start, length)) {
             out.add(text.substring(start));
             if (!keepBlank && out.size() >= maxNonBlank) {
+                if (stoppedAt != null) {
+                    stoppedAt[0] = length;
+                }
                 return Scan.LIMIT;
             }
         }
