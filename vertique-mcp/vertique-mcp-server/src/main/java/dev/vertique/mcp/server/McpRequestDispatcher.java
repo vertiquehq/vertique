@@ -95,6 +95,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Supplier;
 
 /**
  * Dispatches the bounded discovery endpoint over the hardened stateless HTTP contract (§4.7).
@@ -3440,11 +3441,18 @@ final class McpRequestDispatcher {
      * every registered handler and which fires on normal end, on an exception, and on a connection
      * close. A failed outcome is a premature disconnect or a stream reset, classified by cause; a
      * succeeded outcome is a normal end, already settled by the two-phase write path, so nothing is done
-     * with it. Each settlement drives the coordinator's first-observed-wins guard, so a hook that fires
-     * after a normal write is suppressed. MCP arms no whole-request timer of its own: transport liveness
-     * is shared {@link HttpConfig} idle/read/write timeout behavior, so an idle or slow connection is
-     * closed by the shared HTTP layer and reaches this same hook, classified as transport
-     * cancellation rather than a distinct timeout.
+     * with it. A failed outcome signalled from inside this request's own terminal {@code end()} call
+     * (see {@link McpCompletionCoordinator#endResponse}) was produced by that write rather than by
+     * the peer: a response written outside the connection's read loop, such as from a timer task, is
+     * reported that way over HTTP/2 although the write succeeds. It is settled one context turn
+     * later, by which time the {@code end()} future has normally decided {@code WRITTEN} or {@code
+     * WRITE_FAILED}; a write that is still pending then is recovered like any stalled write. Each
+     * settlement drives the coordinator's first-observed-wins guard, so a hook that fires after a
+     * normal write is suppressed. MCP arms no
+     * whole-request timer of its own: transport liveness is shared {@link HttpConfig}
+     * idle/read/write timeout behavior, so an idle or slow connection is closed by the shared HTTP
+     * layer and reaches this same hook, classified as transport cancellation rather than a distinct
+     * timeout.
      *
      * <p><strong>Why not the response handlers.</strong> {@code context.response().closeHandler(...)}
      * and {@code .exceptionHandler(...)} are single-slot setters: last writer wins. Vert.x Web's {@code
@@ -3494,13 +3502,17 @@ final class McpRequestDispatcher {
                 return;
             }
             RequestCompletionRecorder.claimForOtherTransport(context);
-            McpRequestTerminalEvent terminal = settlementTerminal(context, startedAt, McpErrorType.TRANSPORT);
-            boolean responseCommitted = context.response().headWritten();
-            if (outcome.cause() instanceof HttpClosedException) {
-                coordinator.settleDisconnected(terminal, responseCommitted);
-            } else {
-                coordinator.settleReset(terminal, responseCommitted);
-            }
+            // A failure signalled from inside this request's own terminal end() call is settled a
+            // turn later, after the end() future has had its say (see settleAfterEndCall).
+            coordinator.settleAfterEndCall(() -> {
+                McpRequestTerminalEvent terminal = settlementTerminal(context, startedAt, McpErrorType.TRANSPORT);
+                boolean responseCommitted = context.response().headWritten();
+                if (outcome.cause() instanceof HttpClosedException) {
+                    coordinator.settleDisconnected(terminal, responseCommitted);
+                } else {
+                    coordinator.settleReset(terminal, responseCommitted);
+                }
+            });
         });
     }
 
@@ -3789,14 +3801,29 @@ final class McpRequestDispatcher {
                         Instant.now());
             }
         };
+        // Without a coordinator there is no settlement hook, so there is nothing to mark.
         if (effectiveBody == null) {
-            context.response().end().onComplete(onEnd);
+            endResponse(coordinator, () -> context.response().end()).onComplete(onEnd);
             return true;
         }
         // SSE may already contain request-scoped progress frames, so the response is explicitly
         // chunked by selectSse and this terminal frame is appended to that same stream.
-        context.response().end(Buffer.buffer(effectiveBody)).onComplete(onEnd);
+        Buffer terminalBody = Buffer.buffer(effectiveBody);
+        endResponse(coordinator, () -> context.response().end(terminalBody)).onComplete(onEnd);
         return true;
+    }
+
+    /**
+     * Runs the terminal response {@code end()} through the request's coordinator so a close the
+     * transport delivers from inside that call is recognized as caused by the write itself.
+     *
+     * @param coordinator the request's coordinator, or {@code null} for the admission rejection
+     * @param end the call that ends the response
+     * @return the future {@code end} returned
+     */
+    private static Future<Void> endResponse(
+            @Nullable McpCompletionCoordinator coordinator, Supplier<Future<Void>> end) {
+        return coordinator == null ? end.get() : coordinator.endResponse(end);
     }
 
     /**
