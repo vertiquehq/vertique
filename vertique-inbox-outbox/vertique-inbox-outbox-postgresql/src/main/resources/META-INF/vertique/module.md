@@ -109,14 +109,17 @@ When `LISTEN_NOTIFY` is configured but the notification channel is unavailable o
 
 **Relay cycle (per batch item):**
 1. `claimBatch()` — short transaction selects and marks `PROCESSING` rows.
-2. For each claimed row, build `OutboxEnvelope` — application `headers` (app-only), durable context in `metadata.context`, and relay control projected into `metadata.delivery.outbox` from the row columns (no framework keys merged into `headers`).
+2. For each claimed row, build `OutboxEnvelope` before the handler lookup, so a row whose destination type has no handler has an envelope too — application `headers` (app-only), durable context in `metadata.context`, and relay control projected into `metadata.delivery.outbox` from the row columns (no framework keys merged into `headers`).
 3. Call `OutboxDestinationHandler.publish(envelope)` — outside the claim transaction.
 4. On success: `markPublished()`.
 5. On retryable failure: `markRetry()` with incremented attempt and backoff-computed `availableAt`.
 6. On permanent failure or exhausted attempts: `markDeadLetter()`.
 7. On `unresolvable`: `markUnresolvable()` with short delay; attempt count unchanged.
 8. A failed future from `publish()` is treated as retryable.
-9. A handler that throws synchronously from `publish()` — an exception, an `AssertionError` or a `LinkageError` — or returns `null` instead of a future is treated as retryable too: it costs that one entry an attempt, the rest of the claimed batch is still delivered, and polling continues.
+9. A handler that throws synchronously from `publish()` — an exception, an `AssertionError` or a `LinkageError` — returns `null` instead of a future, or completes its future with `null` is treated as retryable too: it costs that one entry an attempt, the rest of the claimed batch is still delivered, and polling continues.
+10. When the `mark*` call of steps 4–7 has settled — succeeded, failed, or thrown — every registered `OutboxPublishObserver` (see `dev.vertique:vertique-inbox-outbox-core`) is notified once with the attempt's facts and the envelope from step 2. `dispositionRecorded` is `true` only when the `mark*` call returned `true`.
+
+The relay releases the entry's in-flight slot and schedules the next poll as soon as the `mark*` call has been made; only the observer notification waits for it to settle. A `mark*` call or a backoff computation that throws is handled as a failed `mark*` call: the slot is released, polling continues, and observers are notified with `dispositionRecorded` `false`. If building the envelope throws, the slot is released, the row stays claimed until stale-lease recovery, and — with no envelope and no attempt — observers are not notified.
 
 **`ClaimScopeException` (package-private, extends `InboxOutboxConfigurationException`):** When a `ClaimScope.Destinations` supplier misbehaves during `buildClaimEligibility`, the WHOLE claim cycle is aborted with a `ClaimScopeException`. The returned future is failed with zero rows claimed. Failure conditions:
 
@@ -248,7 +251,7 @@ Index: `idx_inbox_processed_at` (for cleanup queries).
 | `PgInboxOutboxRepository` | Singleton | PostgreSQL repository |
 | `OutboxRelayConfig` | Singleton | Relay configuration deserialized from `inboxOutbox.relay` |
 | `InboxOutboxCleanupConfig` | Singleton | Cleanup configuration deserialized from `inboxOutbox.cleanup` |
-| `Set<VerticleDeployment>` | `@ElementsIntoSet` | `OutboxRelay` verticle; SERVICES phase, priority 100 |
+| `Set<VerticleDeployment>` | `@ElementsIntoSet` | `OutboxRelay` verticle; SERVICES phase, priority 100. Every relay instance is given the contributed `Set<OutboxPublishObserver>`, sorted once per instance by `OrderedExtension` order |
 | `@Services Set<Object>` | `@IntoSet` | `OutboxMaintenanceCron` — provides cluster-singleton `@CronJob` entry points for stale-lease recovery and table cleanup |
 
 `RelayCapabilities` are derived at startup by `OutboxRelay.deriveCapabilities(handlerMap)` from the registered `Set<OutboxDestinationHandler>`. No `@ServiceTargetIds`- or `@DelayedJobTargetIds`-qualified `Set<String>` bindings are provided by this module — each adapter handler owns its own claim scope.

@@ -19,6 +19,7 @@ import dev.vertique.inboxoutbox.InboxOutboxCleanupConfig;
 import dev.vertique.inboxoutbox.InboxRepository;
 import dev.vertique.inboxoutbox.InboxService;
 import dev.vertique.inboxoutbox.OutboxDestinationHandler;
+import dev.vertique.inboxoutbox.OutboxPublishObserver;
 import dev.vertique.inboxoutbox.OutboxRelayConfig;
 import dev.vertique.inboxoutbox.OutboxRepository;
 import dev.vertique.inboxoutbox.OutboxService;
@@ -32,6 +33,7 @@ import io.vertx.core.DeploymentOptions;
 import io.vertx.core.json.JsonObject;
 import io.vertx.pgclient.PgConnectOptions;
 import jakarta.inject.Singleton;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -46,7 +48,9 @@ import java.util.concurrent.atomic.AtomicInteger;
  * <p>Includes {@link TransactionalMessagingModule} so that the {@link OutboxDestinationHandler}
  * multibinding is available for adapter modules to contribute to. Each registered handler declares
  * its own {@link ClaimScope} via {@link OutboxDestinationHandler#claimScope()}, which is collected
- * at startup to build the {@link RelayCapabilities} that drive the dynamic claim query.
+ * at startup to build the {@link RelayCapabilities} that drive the dynamic claim query. The same
+ * included module declares the {@link OutboxPublishObserver} multibinding; every contributed
+ * observer is handed to each relay instance.
  *
  * <p>Usage:
  * <pre>{@code
@@ -213,6 +217,8 @@ public abstract class TransactionalMessagingPostgresqlModule {
      * @param relayConfig      outbox relay configuration (polling interval, batch size, etc.)
      * @param pgRepository     the concrete PostgreSQL repository (provides nodeId)
      * @param handlers         the set of destination handlers contributed by adapter modules
+     * @param observers        the set of publish observers contributed by applications and adapter
+     *                         modules; empty when nothing observes publish attempts
      * @param connectOptions   PostgreSQL connect options for the LISTEN/NOTIFY connection
      * @param composeValidator compose-time validation guard; its presence as a parameter forces
      *                         Dagger to construct the validator (and the cron bindings it depends
@@ -227,10 +233,12 @@ public abstract class TransactionalMessagingPostgresqlModule {
             OutboxRelayConfig relayConfig,
             PgInboxOutboxRepository pgRepository,
             Set<OutboxDestinationHandler> handlers,
+            Set<OutboxPublishObserver> observers,
             PgConnectOptions connectOptions,
             @SuppressWarnings("unused") InboxOutboxPostgresqlComposeValidator composeValidator) {
         Map<DestinationType, OutboxDestinationHandler> handlerMap = OutboxRelay.buildHandlerMap(handlers);
         RelayCapabilities capabilities = OutboxRelay.deriveCapabilities(handlerMap);
+        List<OutboxPublishObserver> observerList = List.copyOf(observers);
 
         String baseNodeId = pgRepository.nodeId();
         AtomicInteger instanceCounter = new AtomicInteger();
@@ -243,7 +251,8 @@ public abstract class TransactionalMessagingPostgresqlModule {
                         handlerMap,
                         capabilities,
                         connectOptions,
-                        baseNodeId + "-" + instanceCounter.getAndIncrement()),
+                        baseNodeId + "-" + instanceCounter.getAndIncrement(),
+                        observerList),
                 new DeploymentOptions().setInstances(relayConfig.instances()),
                 LifecyclePhase.SERVICES,
                 100));
