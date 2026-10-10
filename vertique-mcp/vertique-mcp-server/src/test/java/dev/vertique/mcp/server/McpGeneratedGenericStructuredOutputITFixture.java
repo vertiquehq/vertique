@@ -82,7 +82,7 @@ final class McpGeneratedGenericStructuredOutputITFixture {
     private final ProcessorTestHarness.Result result;
     private final McpToolInvoker validInvoker;
     private final McpToolInvoker invalidInvoker;
-    private final McpOutputPipelineITFixture.CapableObserver outputObserver;
+    private final McpRecordingCompletedListener listener = new McpRecordingCompletedListener();
     private final HttpServer server;
     private final int port;
 
@@ -202,7 +202,6 @@ final class McpGeneratedGenericStructuredOutputITFixture {
                 .jsonProfile(PROFILE_ID)
                 .build();
         McpToolRegistry registry = McpToolRegistry.build(invokers);
-        this.outputObserver = new McpOutputPipelineITFixture.CapableObserver();
         RecordingSecurityRuntime securityRuntime = new RecordingSecurityRuntime();
         McpPolicyEnforcer policyEnforcer = new McpPolicyEnforcer(new SecurityPolicyEnforcer(
                 Optional.empty(),
@@ -221,8 +220,8 @@ final class McpGeneratedGenericStructuredOutputITFixture {
                 new McpRequestDispatcher(
                         config,
                         securityRuntime,
-                        Set.of(outputObserver),
                         Set.of(),
+                        Set.of(listener),
                         Set.of(),
                         Set.of(),
                         httpConfig,
@@ -263,12 +262,26 @@ final class McpGeneratedGenericStructuredOutputITFixture {
         return invalidInvoker;
     }
 
-    int outputObservationCount() {
-        return outputObserver.session().toolOutputCount();
+    /** The completion listener contributed to the dispatcher, recording each request's view. */
+    McpRecordingCompletedListener listener() {
+        return listener;
     }
 
+    /** Counts the completed requests whose view reported a written tool output. */
+    int outputObservationCount() {
+        return (int) listener.completions().stream()
+                .filter(completion -> completion.toolOutput().isPresent())
+                .count();
+    }
+
+    /** Returns the normalized structured output the view reported for the one request that wrote it. */
     Object observedOutput() {
-        return outputObserver.session().observedOutput().normalizedOutput();
+        return listener.completions().stream()
+                .filter(completion -> completion.toolOutput().isPresent())
+                .findFirst()
+                .orElseThrow()
+                .structuredOutput()
+                .orElseThrow();
     }
 
     void resetNoteAccessCount() throws Exception {

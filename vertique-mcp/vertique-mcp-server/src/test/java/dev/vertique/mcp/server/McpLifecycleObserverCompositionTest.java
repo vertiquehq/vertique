@@ -353,8 +353,11 @@ class McpLifecycleObserverCompositionTest {
     }
 
     private static McpRequestCompletedListener throwingListener() {
-        return event -> {
-            throw new IllegalStateException("synthetic listener failure");
+        return new McpRequestCompletedListener() {
+            @Override
+            public void onCompleted(McpRequestCompletedEvent event) {
+                throw new IllegalStateException("synthetic listener failure");
+            }
         };
     }
 

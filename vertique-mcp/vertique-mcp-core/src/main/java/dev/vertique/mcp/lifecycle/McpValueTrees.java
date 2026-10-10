@@ -18,14 +18,10 @@ import java.util.function.Supplier;
  * Recursively wraps a JSON-compatible value tree (nested {@code Map}/{@code List}/scalar) into
  * unmodifiable views at every level.
  *
- * <p>A value-observation record's normalized tree must reject mutation anywhere in its nested
- * structure, not only at the outermost map or list, regardless of whether the tree handed to the
- * record's compact constructor was itself already immutable. This helper is the one place both
- * {@link McpToolInputObservation} and {@link McpToolOutputObservation} enforce that.
- *
- * <p>Public — beyond the two observation records above, {@code McpToolInvokerEmitter}-generated code
- * (a different module, a different package per generated invoker) also calls {@link
- * #deepUnmodifiableMap} to build the deeply immutable {@code normalizedArguments} map {@link
+ * <p>A normalized argument tree must reject mutation anywhere in its nested structure, not only at
+ * the outermost map or list. {@code McpToolInvokerEmitter}-generated code (a different module, a
+ * different package per generated invoker) calls {@link #deepUnmodifiableMap} to build the deeply
+ * immutable {@code normalizedArguments} map {@link
  * dev.vertique.mcp.tool.McpPreparedToolCall#normalizedArguments()} contractually promises, in place
  * of {@code Map.copyOf} — which both throws on an explicit {@code null} value (INP-001 deliberately
  * preserves an explicit-null {@code Optional<T>} argument all the way through materialization) and

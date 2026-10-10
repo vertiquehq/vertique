@@ -12,8 +12,8 @@ import dev.vertique.mcp.lifecycle.McpRequestCompletedEvent;
 import dev.vertique.mcp.lifecycle.McpRequestLifecycleObserver;
 import dev.vertique.mcp.lifecycle.McpRequestObservation;
 import dev.vertique.mcp.lifecycle.McpRequestTerminalObservation;
-import dev.vertique.mcp.lifecycle.McpToolOutputObservation;
-import dev.vertique.mcp.lifecycle.McpToolValueObservation;
+import dev.vertique.mcp.lifecycle.McpTransportOutcome;
+import dev.vertique.mcp.server.McpRecordingCompletedListener.Completion;
 import dev.vertique.mcp.tool.McpAccessMode;
 import dev.vertique.mcp.tool.McpCancellationSignal;
 import dev.vertique.mcp.tool.McpPreparedToolCall;
@@ -55,7 +55,6 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
@@ -63,21 +62,18 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
 /**
- * RED proof for repair task R32 defect 3: {@code writeToolResult} publishes the opt-in {@code
- * onToolOutput} value observation before {@code beginWrite} has actually won settlement, so a value
- * observer can be handed a result the client never received.
+ * Proves that a tool's result becomes visible through the request view only when its own terminal
+ * write won settlement: a request that settled by disconnect before the tool's gated result resolved
+ * reports no tool output, and the plain written path reports exactly one.
  *
- * <p>{@code writeToolResult} calls {@code coordinator.publishToolOutput(...)} unconditionally once
- * its own {@code encodeCapped} call succeeds — strictly before the terminal writer's {@code
- * write}/{@code writeSse} call, which is the only place {@code beginWrite} ever runs. When the client
- * has already disconnected before the tool's result future resolves, {@code beginWrite} is guaranteed
- * to lose (settlement was already claimed by the disconnect), so the write is correctly suppressed —
- * but the observation was already delivered moments earlier regardless. This proof settles the
- * request via disconnect strictly before releasing the tool's gated result, then releases it so
- * {@code writeToolResult} runs against an already-settled coordinator, and asserts the value observer
- * received nothing. The sibling "plain path" case in the same class proves the opposite half — a
- * request that is never disconnected must still deliver exactly one output observation — stays green
- * throughout.
+ * <p>When the client has already disconnected before the tool's result future resolves, the terminal
+ * writer's settlement claim is guaranteed to lose, so the write is correctly suppressed and the
+ * result must never be reported as the tool output. This proof settles the request via disconnect
+ * strictly before releasing the tool's gated result, then releases it so {@code writeToolResult} runs
+ * against an already-settled coordinator, and asserts that the one view the listener received
+ * reported no output and that no second view arrives. The sibling "plain path" case in the same class
+ * proves the opposite half — a request that is never disconnected must still report its output —
+ * stays green throughout.
  */
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
 class McpToolOutputObservationOrderingIT {
@@ -126,9 +122,9 @@ class McpToolOutputObservationOrderingIT {
     }
 
     @Test
-    @DisplayName("R32 defect 3: a value observer must receive nothing once the client disconnected "
-            + "before the tool's gated result was released")
-    void shouldDeliverNoOutputObservationWhenTheClientDisconnectsBeforeTheToolResultIsReleased() throws Exception {
+    @DisplayName("the view must report no tool output once the client disconnected before the tool's "
+            + "gated result was released")
+    void shouldReportNoToolOutputWhenTheClientDisconnectsBeforeTheToolResultIsReleased() throws Exception {
         fixture = Fixture.start(vertx);
         server = fixture.server();
         rawClient = vertx.createHttpClient();
@@ -153,24 +149,43 @@ class McpToolOutputObservationOrderingIT {
         assertThat(settled.responseCommitted())
                 .as("no response byte was ever committed before disconnect settlement")
                 .isFalse();
+        assertThat(settled.transportOutcome()).isEqualTo(McpTransportOutcome.DISCONNECTED);
+
+        // The listener runs right after the observer's completion on the same settlement, so its one
+        // view is awaited before the tool's result is released.
+        List<Completion> settledViews = fixture.listener().await(1);
+        assertThat(settledViews.get(0).toolInput())
+                .as("the call was prepared before the disconnect, so its arguments are reported")
+                .isPresent();
+        assertThat(settledViews.get(0).toolOutput())
+                .as("DECISIVE: no tool output is reported for a request that settled by disconnect")
+                .isEmpty();
+        assertThat(settledViews.get(0).hasResponseBody())
+                .as("no terminal write happened, so no response body is reported")
+                .isFalse();
 
         // Only now — strictly after settlement was already observed — does the tool's result resolve,
         // so writeToolResult runs against a coordinator that has already lost the race.
         fixture.tool().complete(McpToolResult.text("late"));
         drainRequestContext(fixture.observer().expectedContext());
 
-        boolean outputObservedWithinWindow = fixture.observer().anyOutputObservedWithin(CONFIRMATION_WINDOW);
-        assertThat(outputObservedWithinWindow)
-                .as("DECISIVE: a value observer must never receive an output observation for a result "
-                        + "that resolved after the client had already disconnected")
+        assertThat(fixture.listener().arrivesWithin(2, CONFIRMATION_WINDOW))
+                .as("DECISIVE: the late result must not produce a second view")
                 .isFalse();
+        assertThat(fixture.listener().completions())
+                .as("the one view already delivered is unchanged")
+                .hasSize(1);
+        assertThat(fixture.listener().completions().get(0).toolOutput())
+                .as("DECISIVE: a result that resolved after the client had already disconnected must "
+                        + "never be reported as the tool output")
+                .isEmpty();
 
         fixture.observer().assertExactlyOneTerminalThenOneCompletion(); // no further settlement occurred
     }
 
     @Test
-    @DisplayName("the plain written path must still deliver exactly one output observation")
-    void shouldDeliverExactlyOneOutputObservationOnThePlainWrittenPath() throws Exception {
+    @DisplayName("the plain written path must still report exactly one tool output")
+    void shouldReportExactlyOneToolOutputOnThePlainWrittenPath() throws Exception {
         fixture = Fixture.start(vertx);
         server = fixture.server();
         rawClient = vertx.createHttpClient();
@@ -192,10 +207,19 @@ class McpToolOutputObservationOrderingIT {
         assertThat(fixture.observer().awaitSettlement()).isTrue();
         fixture.observer().assertExactlyOneTerminalThenOneCompletion();
 
-        assertThat(fixture.observer().outputs())
-                .as("NON-VACUITY / regression: the plain written path must still deliver exactly one "
-                        + "output observation once the tool's result actually reached the wire")
+        List<Completion> completions = fixture.listener().await(1);
+        assertThat(completions)
+                .as("NON-VACUITY / regression: the plain written path must still report exactly one "
+                        + "view once the tool's result actually reached the wire")
                 .hasSize(1);
+        assertThat(completions.get(0).toolOutput())
+                .as("the result's own write won settlement, so the tool output is reported")
+                .isPresent();
+        assertThat(completions.get(0).responseBody())
+                .as("the view's response is the bytes the client received")
+                .isEqualTo(response.bodyAsString())
+                .contains("done");
+        assertThat(completions.get(0).event().transportOutcome()).isEqualTo(McpTransportOutcome.WRITTEN);
     }
 
     /**
@@ -270,15 +294,13 @@ class McpToolOutputObservationOrderingIT {
         }
     }
 
-    /** Records this request's lifecycle facts and every delivered {@code onToolOutput} observation. */
-    private static final class RecordingObserver implements McpRequestLifecycleObserver, McpToolValueObservation {
+    /** Records this request's lifecycle facts. */
+    private static final class RecordingObserver implements McpRequestLifecycleObserver, McpRequestObservation {
         private volatile Context expectedContext;
         private final CountDownLatch settlement = new CountDownLatch(2);
         private final List<String> order = new CopyOnWriteArrayList<>();
         private final AtomicInteger terminalCount = new AtomicInteger();
         private final AtomicInteger completionCount = new AtomicInteger();
-        private final List<McpToolOutputObservation> outputs = new CopyOnWriteArrayList<>();
-        private final CompletableFuture<Void> anyOutputObserved = new CompletableFuture<>();
         private volatile McpRequestCompletedEvent completed;
 
         @Override
@@ -302,12 +324,6 @@ class McpToolOutputObservationOrderingIT {
             settlement.countDown();
         }
 
-        @Override
-        public void onToolOutput(McpToolOutputObservation observation) {
-            outputs.add(observation);
-            anyOutputObserved.complete(null);
-        }
-
         private Context expectedContext() {
             return expectedContext;
         }
@@ -318,19 +334,6 @@ class McpToolOutputObservationOrderingIT {
 
         private McpRequestCompletedEvent completed() {
             return completed;
-        }
-
-        private List<McpToolOutputObservation> outputs() {
-            return outputs;
-        }
-
-        private boolean anyOutputObservedWithin(Duration window) throws Exception {
-            try {
-                anyOutputObserved.get(window.toMillis(), TimeUnit.MILLISECONDS);
-                return true;
-            } catch (TimeoutException neverObserved) {
-                return false;
-            }
         }
 
         private void assertExactlyOneTerminalThenOneCompletion() {
@@ -390,6 +393,7 @@ class McpToolOutputObservationOrderingIT {
         private final int port;
         private final ControlledToolInvoker tool = new ControlledToolInvoker();
         private final RecordingObserver observer = new RecordingObserver();
+        private final McpRecordingCompletedListener listener = new McpRecordingCompletedListener();
 
         private Fixture(Vertx vertx) throws Exception {
             McpServerConfig config = McpServerConfig.builder()
@@ -416,7 +420,7 @@ class McpToolOutputObservationOrderingIT {
                             config,
                             securityRuntime,
                             Set.of(observer),
-                            Set.of(),
+                            Set.of(listener),
                             Set.of(),
                             Set.of(),
                             httpConfig,
@@ -453,6 +457,10 @@ class McpToolOutputObservationOrderingIT {
 
         RecordingObserver observer() {
             return observer;
+        }
+
+        McpRecordingCompletedListener listener() {
+            return listener;
         }
 
         private static IdentityResolutionMiddleware identityResolution(SecurityRuntime securityRuntime) {

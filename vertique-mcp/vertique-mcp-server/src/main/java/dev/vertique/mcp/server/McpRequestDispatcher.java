@@ -31,13 +31,9 @@ import dev.vertique.mcp.lifecycle.McpAuthorizationSummary;
 import dev.vertique.mcp.lifecycle.McpErrorType;
 import dev.vertique.mcp.lifecycle.McpMethod;
 import dev.vertique.mcp.lifecycle.McpOutcome;
-import dev.vertique.mcp.lifecycle.McpRequestAdmissionEvidence;
 import dev.vertique.mcp.lifecycle.McpRequestCompletedListener;
 import dev.vertique.mcp.lifecycle.McpRequestLifecycleObserver;
 import dev.vertique.mcp.lifecycle.McpRequestTerminalEvent;
-import dev.vertique.mcp.lifecycle.McpResponseEvidence;
-import dev.vertique.mcp.lifecycle.McpToolInputObservation;
-import dev.vertique.mcp.lifecycle.McpToolOutputObservation;
 import dev.vertique.mcp.lifecycle.McpTransportOutcome;
 import dev.vertique.mcp.tool.McpAccessMode;
 import dev.vertique.mcp.tool.McpCancellationSignal;
@@ -94,6 +90,7 @@ import java.util.Collections;
 import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -692,6 +689,14 @@ final class McpRequestDispatcher {
         context.put(COMPLETION_COORDINATOR_KEY, coordinator);
         context.put(TERMINAL_FALLBACK_BODY_KEY, terminalFallback);
         context.put(REQUEST_CONTEXT_KEY, owningContext);
+        if (coordinator.hasListeners()) {
+            // The request as received, taken before any interceptor can alter it, for a completion
+            // listener's read-only view. The snapshot is taken only when a listener can read it.
+            coordinator.bindRequest(
+                    headerListsOf(context.request().headers()),
+                    bodyBytes(context),
+                    context.request().getHeader("Content-Type"));
+        }
         registerSettlementHooks(context, coordinator, startedAt);
         context.next();
     }
@@ -823,7 +828,7 @@ final class McpRequestDispatcher {
      *
      * <p>Every async-stage continuation on the {@code tools/call} (and shared pre-dispatch) path must
      * call this at entry, before any side effect it would otherwise perform — SSE selection, the input
-     * pipeline, {@code publishToolInput}, an interceptor or tool invocation, output normalization, or a
+     * pipeline, the tool-input bind, an interceptor or tool invocation, output normalization, or a
      * response write — and return immediately, without writing anything, when it reports {@code true}.
      * A settled request's lifecycle emission is already owned by the disconnect/reset settlement path;
      * a guarded return here is deliberately silent and must never itself construct or write a terminal
@@ -1032,7 +1037,9 @@ final class McpRequestDispatcher {
      */
     void dispatch(RoutingContext context) {
         SecurityContextSnapshot security = establishedSecurity();
-        byte[] body = bodyBytes(context);
+        McpCompletionCoordinator requestCoordinator = ownedCoordinator(context);
+        byte[] boundBody = requestCoordinator == null ? null : requestCoordinator.boundRequestBody();
+        byte[] body = boundBody != null ? boundBody : bodyBytes(context);
         McpProtocolCodec.Decoded decoded = codec.decodeEnvelope(body);
         if (decoded.isError()) {
             emitProtocolError(context, decoded, security);
@@ -1044,14 +1051,11 @@ final class McpRequestDispatcher {
         // this request — however far it later progresses — reports the identity already legitimately
         // known here, rather than always inventing McpMethod.OTHER (see settlementTerminal).
         context.put(METHOD_KEY, method);
-        // Admission-time raw-evidence capture, on the
-        // mcp.tool.call surface only, before tool-name resolution or authorization — so an opt-in
-        // McpRawEvidenceObservation session observes the raw request even for a request later rejected
-        // before the input pipeline runs (an unknown tool, an authorization denial, a protocol-level
-        // rejection). Gated on hasRawEvidenceObservers() before the evidence record is even built,
-        // exactly like the existing hasValueObservers() gate protects publishToolInput's deep copy: a
-        // deployment with no raw-evidence-capable observer installed pays nothing for this seam.
-        publishRequestAdmittedIfCapable(context, method, envelope, body, security);
+        // The client-supplied id, bound for a completion listener's view. The request's headers and
+        // body were bound in begin(), so a request rejected before this point carries them too.
+        if (requestCoordinator != null) {
+            requestCoordinator.bindJsonRpcId(jsonRpcIdOf(envelope));
+        }
         McpProtocolCodec.ParamsValidationResult paramsValidation = codec.validateOfficialParams(envelope);
         if (paramsValidation.isError()) {
             writePreDispatchProtocolRejection(context, envelope, method, security, paramsValidation.error());
@@ -1107,55 +1111,21 @@ final class McpRequestDispatcher {
     }
 
     /**
-     * Builds and publishes this request's raw admission-time evidence
-     * when {@code method} is {@link McpMethod#TOOLS_CALL} and this request's
-     * coordinator retains at least one {@link
-     * dev.vertique.mcp.lifecycle.McpRawEvidenceObservation}-capable session. A no-op for every other
-     * method (the audit-capture surface this evidence supports is {@code mcp.tool.call} only, exactly
-     * like {@link McpAuditEvidenceCapturer}'s own resolution surface) or when no coordinator exists
-     * (a fixture dispatch that bypasses {@link #begin}) or retains no capable session — in either case
-     * the raw body/header copy below is never built.
-     *
-     * @param context the request context
-     * @param method this request's classified method, as {@link #classifyMethod} produced it
-     * @param envelope the decoded envelope, read only for its {@code id}
-     * @param body the raw request-body bytes already read to decode {@code envelope}
-     * @param security the established security snapshot, read only for its principal id
-     */
-    private static void publishRequestAdmittedIfCapable(
-            RoutingContext context,
-            McpMethod method,
-            JsonNode envelope,
-            byte[] body,
-            @Nullable SecurityContextSnapshot security) {
-        if (method != McpMethod.TOOLS_CALL) {
-            return;
-        }
-        McpCompletionCoordinator coordinator = context.get(COMPLETION_COORDINATOR_KEY);
-        if (coordinator == null || !coordinator.hasRawEvidenceObservers()) {
-            return;
-        }
-        coordinator.publishRequestAdmitted(new McpRequestAdmissionEvidence(
-                body,
-                headerMapOf(context.request().headers()),
-                context.request().getHeader("Content-Type"),
-                jsonRpcIdOf(envelope),
-                principalIdOf(security)));
-    }
-
-    /**
-     * Converts a Vert.x {@link io.vertx.core.MultiMap} into a plain, last-value-wins {@code
-     * Map<String, String>}.
+     * Converts a Vert.x {@link io.vertx.core.MultiMap} into a faithful, immutable map: lower-cased
+     * names, each mapped to its values in wire order.
      *
      * @param multiMap the multi-value map; non-null
      * @return an unmodifiable map; never null; empty when {@code multiMap} is empty
      */
-    private static Map<String, String> headerMapOf(io.vertx.core.MultiMap multiMap) {
+    private static Map<String, List<String>> headerListsOf(io.vertx.core.MultiMap multiMap) {
         if (multiMap.isEmpty()) {
             return Map.of();
         }
-        Map<String, String> result = new LinkedHashMap<>(multiMap.size());
-        multiMap.forEach(entry -> result.put(entry.getKey(), entry.getValue()));
+        Map<String, List<String>> result = new LinkedHashMap<>(multiMap.size());
+        multiMap.forEach(
+                entry -> result.computeIfAbsent(entry.getKey().toLowerCase(Locale.ROOT), name -> new ArrayList<>())
+                        .add(entry.getValue()));
+        result.replaceAll((name, values) -> List.copyOf(values));
         return Collections.unmodifiableMap(result);
     }
 
@@ -1171,16 +1141,6 @@ final class McpRequestDispatcher {
             return null;
         }
         return id.isTextual() ? id.asText() : id.toString();
-    }
-
-    /**
-     * Extracts the resolved principal id from {@code security}.
-     *
-     * @param security the established security snapshot, or {@code null} when none was established
-     * @return the actor principal's id, or {@code null} when {@code security} is {@code null}
-     */
-    private static @Nullable String principalIdOf(@Nullable SecurityContextSnapshot security) {
-        return security == null ? null : security.identity().actor().id();
     }
 
     /**
@@ -2481,7 +2441,6 @@ final class McpRequestDispatcher {
                     McpToolResult.error(SCHEMA_REJECTION_MESSAGE),
                     null,
                     McpErrorType.INPUT_VALIDATION,
-                    null,
                     null);
             return;
         }
@@ -2512,7 +2471,6 @@ final class McpRequestDispatcher {
                     McpToolResult.error(rejected.getMessage()),
                     null,
                     McpErrorType.INPUT_PROCESSING,
-                    null,
                     null);
             return;
         } catch (RuntimeException | StackOverflowError | LinkageError prepareFailure) {
@@ -2547,31 +2505,12 @@ final class McpRequestDispatcher {
         McpToolInvocationContext toolContext = new McpToolInvocationContext(
                 new McpRequestContext(McpMethod.TOOLS_CALL, establishedSecurityContext(), correlationOf(context)),
                 invoker.descriptor());
-        // The opt-in, capability-gated value-observation callback fires here — after Bean
-        // Validation (prepare() above already ran it) but strictly before the tool-interceptor stage
-        // just below (contract §4.4 callback order). Delivered only to a session implementing
-        // McpToolValueObservation; the coordinator retains no reference to the observation once every
-        // onToolInput call has returned (McpCompletionCoordinator#publishToolInput). Gated on
-        // hasValueObservers() BEFORE the observation is even constructed: McpToolInputObservation's
-        // compact constructor deep-copies the entire normalized argument tree, so a request with no
-        // capable session never pays that copy for an attacker-sized argument tree.
-        if (coordinator != null && coordinator.hasValueObservers()) {
-            // Mirrors stage 7's guard below. Constructing the
-            // observation deep-copies the whole normalized argument tree (McpToolInputObservation's
-            // compact constructor), and every capable session's onToolInput callback runs
-            // synchronously inside publishToolInput (e.g. an audit adapter's String.valueOf on a
-            // nested Map/List value recurses natively). A pathologically deep or wide argument tree
-            // — the envelope codec permits 1,000 levels of nesting — can therefore throw a
-            // RuntimeException or drive a native-recursion StackOverflowError here, which would
-            // otherwise escape before any response was ever begun: no response, no terminal, no
-            // completion, permanently stranding the request (compounded by the fact that MCP relies
-            // on the shared HttpConfig liveness bound, not a stage-local timer, to ever reclaim it).
-            try {
-                coordinator.publishToolInput(new McpToolInputObservation(toolContext, prepared.normalizedArguments()));
-            } catch (RuntimeException | StackOverflowError stage5Failure) {
-                writeSseFallback(context, envelope, security, toolName, stage5Failure);
-                return;
-            }
+        // The prepared call's invocation context and normalized arguments are bound for a completion
+        // listener's view here, after Bean Validation (prepare() above already ran it) and strictly
+        // before the tool-interceptor stage. The tree is the deeply immutable one prepare() produced,
+        // so nothing is copied on behalf of a listener.
+        if (coordinator != null) {
+            coordinator.bindToolInput(toolContext, prepared.normalizedArguments());
         }
         anchoredOnContext(runToolInterceptors(0, toolContext, owningContext, context), owningContext)
                 .onComplete(interceptorResult -> {
@@ -2591,7 +2530,6 @@ final class McpRequestDispatcher {
                                 McpToolResult.error(TOOL_INTERCEPTOR_REJECTED_MESSAGE),
                                 null,
                                 McpErrorType.INTERCEPTOR,
-                                null,
                                 null);
                         return;
                     }
@@ -2689,8 +2627,7 @@ final class McpRequestDispatcher {
                                     toolResult,
                                     normalizedOutput,
                                     McpErrorType.HANDLER,
-                                    coordinator,
-                                    toolContext);
+                                    coordinator);
                         } catch (RuntimeException | StackOverflowError downstreamFailure) {
                             // Schema infrastructure, observation, and other callbacks after normalization are
                             // not serialization failures. Keep their existing internal classification.
@@ -2912,28 +2849,20 @@ final class McpRequestDispatcher {
      * classified {@link McpOutcome#SUCCESS}/{@link McpErrorType#NONE} regardless of which stage called
      * this method.
      *
-     * <p>{@code coordinator} and {@code toolContext} are non-{@code
-     * null} only for the one call site that reaches this method after an actual invocation completed
-     * (the caller in {@link #invokeAndRespond}'s {@code result.onComplete} handler); every earlier-stage
-     * rejection (malformed arguments, input-schema, input-processing, tool-interceptor) passes {@code
-     * null} for both, since no handler ever ran and there is no output value to observe. When both are
-     * given, the opt-in {@code onToolOutput} observation is published here — strictly after {@link
-     * #encodeCapped} has successfully produced the bounded terminal envelope below, and strictly after
-     * {@link #writeSse} reports that this write actually won the coordinator's first-observed-wins
-     * settlement race. An observer only ever receives a value once this write has genuinely committed
-     * to being the one the client's connection is still receiving, never one the cap, the output-schema
-     * check (already run by the caller before this method), or a settlement that beat this write to the
-     * coordinator would still suppress: a request whose client had already disconnected before the
-     * tool's result resolved never delivers the observation, since {@code beginWrite} for that write is
-     * guaranteed to lose and the write itself is suppressed. Gated on {@code coordinator.hasValueObservers()} before the observation is
-     * even constructed, for the same reason {@link #invokeAndRespond}'s {@code onToolInput} publish is:
-     * {@link McpToolOutputObservation}'s compact constructor deep-copies the entire normalized result
-     * tree.
+     * <p>{@code coordinator} is non-{@code null} only for the one call site that reaches this method
+     * after an actual invocation completed (the caller in {@link #invokeAndRespond}'s {@code
+     * result.onComplete} handler); every earlier-stage rejection (malformed arguments, input-schema,
+     * input-processing, tool-interceptor) passes {@code null}, since no handler ever ran and there is
+     * no output value to report. When given, the normalized result is armed here, strictly after
+     * {@link #encodeCapped} has successfully produced the bounded terminal envelope, and the terminal
+     * writer makes it visible to completion listeners only once this write has won the coordinator's
+     * first-observed-wins settlement race and carries the result itself. A listener only ever sees a
+     * value the client's connection is still receiving, never one the cap, the output-schema check
+     * (already run by the caller before this method), or a settlement that beat this write to the
+     * coordinator would suppress.
      *
-     * @param coordinator the request's completion coordinator, or {@code null} when this call site never
-     *     publishes an output observation
-     * @param toolContext the invocation's immutable context snapshot, or {@code null} exactly when
-     *     {@code coordinator} is {@code null}
+     * @param coordinator the request's completion coordinator, or {@code null} when this call site
+     *     never reports an output value
      */
     private void writeToolResult(
             RoutingContext context,
@@ -2943,8 +2872,7 @@ final class McpRequestDispatcher {
             McpToolResult<?> result,
             @Nullable Object normalizedStructuredContent,
             McpErrorType errorType,
-            @Nullable McpCompletionCoordinator coordinator,
-            @Nullable McpToolInvocationContext toolContext) {
+            @Nullable McpCompletionCoordinator coordinator) {
         byte[] payload;
         try {
             payload = encodeSseCapped(toolCallResponse(envelope, result, normalizedStructuredContent));
@@ -2953,13 +2881,14 @@ final class McpRequestDispatcher {
             return;
         }
         McpRequestTerminalEvent terminal = toolResultTerminal(context, security, toolName, result, errorType);
-        boolean written = writeSse(context, 200, payload, terminal);
-        // Publish only once this write has actually won beginWrite's settlement race — a
-        // prior disconnect/reset settlement means the client never received this value, so no observer
-        // may either.
-        if (written && coordinator != null && toolContext != null && coordinator.hasValueObservers()) {
-            coordinator.publishToolOutput(new McpToolOutputObservation(toolContext, normalizedStructuredContent));
+        // Armed before the write and made visible by the writer only once this write has won
+        // beginWrite's settlement race and carries the result itself (not a bounded error that
+        // replaced it): a prior disconnect or reset settlement means the client never received this
+        // value, so no listener may see it either.
+        if (coordinator != null) {
+            coordinator.armToolOutput(normalizedStructuredContent);
         }
+        writeSse(context, 200, payload, terminal);
     }
 
     /**
@@ -3521,15 +3450,22 @@ final class McpRequestDispatcher {
                     committed ? response.getStatusCode() : 504,
                     committed ? null : INTERNAL_ERROR);
             RequestCompletionRecorder.claimForOtherTransport(context);
+            byte[] deadlineBody =
+                    committed ? null : boundedErrorResponse(null, INTERNAL_ERROR, REQUEST_DEADLINE_MESSAGE);
+            if (deadlineBody != null) {
+                // Bound before settlement: settleReset publishes the completion, and a listener's view
+                // must report the 504 the client receives.
+                coordinator.bindResponse(deadlineBody, Map.of("content-type", List.of(JSON_CONTENT_TYPE)));
+            }
             // A bounded 504 or a stream reset is emitted either way, so the response counts as committed.
             coordinator.settleReset(terminal, true);
-            if (committed) {
+            if (deadlineBody == null) {
                 response.reset(STREAM_CANCEL_CODE);
                 return;
             }
             response.setStatusCode(504)
                     .putHeader("content-type", JSON_CONTENT_TYPE)
-                    .end(Buffer.buffer(boundedErrorResponse(null, INTERNAL_ERROR, REQUEST_DEADLINE_MESSAGE)));
+                    .end(Buffer.buffer(deadlineBody));
         } catch (RuntimeException failure) {
             // Never leave a request open because the expiry itself failed; the failure still reaches
             // the context's exception handler.
@@ -3922,18 +3858,15 @@ final class McpRequestDispatcher {
         if (!context.response().headWritten()) {
             context.response().setStatusCode(status);
         }
-        // Raw response-side evidence, published on the
-        // mcp.tool.call surface only, immediately before the bytes below reach the wire — the single
-        // shared terminal writer, so every settlement path that produces a response (success, a
-        // bounded error, or a rejection) is covered. Gated on hasRawEvidenceObservers() exactly like
-        // the admission-time publish above: a deployment with no raw-evidence-capable observer
-        // installed pays nothing for this seam.
-        if (coordinator != null
-                && coordinator.hasRawEvidenceObservers()
-                && classifiedMethodOf(context) == McpMethod.TOOLS_CALL) {
-            coordinator.publishResponseWritten(new McpResponseEvidence(
-                    effectiveBody != null ? effectiveBody : new byte[0],
-                    headerMapOf(context.response().headers())));
+        // The response, bound for a completion listener's view at the single shared terminal writer,
+        // so every path that produces a response (a result, a bounded error or a rejection) is covered.
+        // It is bound after settlement is won and the bytes are reserved, and before end(), so an
+        // inline end handler cannot build the view first. A tool result is made visible only when the
+        // bytes written are the result's own.
+        if (coordinator != null) {
+            coordinator.bindResponse(
+                    effectiveBody, headerListsOf(context.response().headers()));
+            coordinator.promoteToolOutput(effectiveBody == body);
         }
         Handler<AsyncResult<Void>> onEnd = result -> {
             if (coordinator != null) {

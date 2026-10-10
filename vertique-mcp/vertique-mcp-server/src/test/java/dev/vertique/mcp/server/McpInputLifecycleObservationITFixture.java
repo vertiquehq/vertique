@@ -10,8 +10,7 @@ import dev.vertique.mcp.lifecycle.McpRequestCompletedEvent;
 import dev.vertique.mcp.lifecycle.McpRequestLifecycleObserver;
 import dev.vertique.mcp.lifecycle.McpRequestObservation;
 import dev.vertique.mcp.lifecycle.McpRequestTerminalObservation;
-import dev.vertique.mcp.lifecycle.McpToolInputObservation;
-import dev.vertique.mcp.lifecycle.McpToolValueObservation;
+import dev.vertique.mcp.lifecycle.McpValueTrees;
 import dev.vertique.mcp.tool.McpAccessMode;
 import dev.vertique.mcp.tool.McpCancellationSignal;
 import dev.vertique.mcp.tool.McpPreparedToolCall;
@@ -49,9 +48,9 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * Framework wiring for {@code dev.vertique.mcp.lifecycle.McpInputLifecycleObservationIT} (T018
- * TP-001): fixture server construction, the fixture tool, and the three fixture observer shapes.
- * Nothing decisive lives here.
+ * Framework wiring for {@code dev.vertique.mcp.lifecycle.McpInputLifecycleObservationIT}: fixture
+ * server construction, the fixture tool, the two plain fixture observer shapes and the recording
+ * completion listener that reads the request view. Nothing decisive lives here.
  *
  * <p>Lives in {@code dev.vertique.mcp.server} — not the IT's own {@code dev.vertique.mcp.lifecycle}
  * package — because starting a real port-0 server requires this module's package-private composition
@@ -59,7 +58,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  * {@link McpToolRegistry}, {@link McpPolicyEnforcer}), exactly like every sibling IT ({@link
  * McpToolCallIT}, {@link McpInputPipelineIT}, {@link McpToolPaginationIT}) already does from this same
  * package. Only public types cross the package boundary back to the IT: an {@link HttpServer}, a
- * port, and the public {@code dev.vertique.mcp.lifecycle} observation types.
+ * port, the public {@code dev.vertique.mcp.lifecycle} types and {@link McpRecordingCompletedListener}.
  */
 public final class McpInputLifecycleObservationITFixture {
 
@@ -69,13 +68,14 @@ public final class McpInputLifecycleObservationITFixture {
 
     /**
      * Starts a real port-0 server, bound and connected only on the literal {@code 127.0.0.1}, exposing
-     * one public record-argument tool and the three contributed observers TP-001 requires.
+     * one public record-argument tool, the two plain contributed observers and the one contributed
+     * completion listener that reads the request view.
      */
     public static Started start(
             Vertx vertx,
             MetricsShapedObserver metrics,
             TracingShapedObserver tracing,
-            CapableObserver capable,
+            McpRecordingCompletedListener listener,
             FixtureToolInvoker tool)
             throws Exception {
         McpServerConfig config = McpServerConfig.builder()
@@ -101,8 +101,8 @@ public final class McpInputLifecycleObservationITFixture {
         McpRequestDispatcher dispatcher = new McpRequestDispatcher(
                 config,
                 securityRuntime,
-                Set.of(metrics, tracing, capable),
-                Set.of(),
+                Set.of(metrics, tracing),
+                Set.of(listener),
                 Set.of(),
                 Set.of(),
                 httpConfig,
@@ -199,11 +199,10 @@ public final class McpInputLifecycleObservationITFixture {
 
     /**
      * Stands in for a real {@code @McpTool}-generated invoker: {@code prepare()} recursively trims
-     * every string leaf of the raw argument tree — a faithful stand-in for the INP-001
-     * canonicalization stage a real generated invoker's {@code prepare()} already runs (see {@code
-     * McpInputPipelineIT}: "the materialized name is blank once INP-001 canonicalization trims it") —
-     * so the delivered {@code normalizedArguments()} genuinely differs from the raw wire values this
-     * fixture sends.
+     * every string leaf of the raw argument tree — a faithful stand-in for the canonicalization stage
+     * a real generated invoker's {@code prepare()} already runs (see {@code McpInputPipelineIT}: "the
+     * materialized name is blank once canonicalization trims it") — so the reported {@code
+     * normalizedArguments()} genuinely differs from the raw wire values this fixture sends.
      */
     public static final class FixtureToolInvoker implements McpToolInvoker {
         private final McpToolDescriptor descriptor;
@@ -213,7 +212,7 @@ public final class McpInputLifecycleObservationITFixture {
             this.descriptor = new McpToolDescriptor(
                     TOOL_NAME,
                     null,
-                    "T018 TP-001 fixture tool.",
+                    "Value observation fixture tool.",
                     new McpToolAnnotations(true, false, true, false),
                     "{\"type\":\"object\"}",
                     null,
@@ -231,7 +230,9 @@ public final class McpInputLifecycleObservationITFixture {
 
         @Override
         public McpPreparedToolCall prepare(Map<String, Object> arguments, McpCancellationSignal cancellation) {
-            Map<String, Object> normalized = deepTrim(arguments);
+            // A prepared call's normalized arguments are deeply immutable by contract, exactly as
+            // generated invokers build them; the request view reports this very tree.
+            Map<String, Object> normalized = McpValueTrees.deepUnmodifiableMap(deepTrim(arguments));
             return new McpPreparedToolCall() {
                 @Override
                 public Map<String, Object> normalizedArguments() {
@@ -323,63 +324,6 @@ public final class McpInputLifecycleObservationITFixture {
 
         public int completedCount() {
             return completedCount;
-        }
-    }
-
-    /**
-     * The capability-implementing observer. The sensitivity mutation removes {@code
-     * McpToolValueObservation} from this declaration alone.
-     */
-    public static final class CapableObserver implements McpRequestLifecycleObserver {
-        private final CapableSession session = new CapableSession();
-
-        @Override
-        public McpRequestObservation open(Instant startedAt) {
-            return session;
-        }
-
-        public CapableSession session() {
-            return session;
-        }
-    }
-
-    /** The capability-implementing session. The sensitivity mutation removes the capability here. */
-    public static final class CapableSession implements McpToolValueObservation {
-        private int terminalCount;
-        private int completedCount;
-        private int toolInputCount;
-        private McpToolInputObservation observed;
-
-        @Override
-        public void onTerminal(McpRequestTerminalObservation observation) {
-            terminalCount++;
-        }
-
-        @Override
-        public void onCompleted(McpRequestCompletedEvent event) {
-            completedCount++;
-        }
-
-        @Override
-        public void onToolInput(McpToolInputObservation observation) {
-            toolInputCount++;
-            observed = observation;
-        }
-
-        public int terminalCount() {
-            return terminalCount;
-        }
-
-        public int completedCount() {
-            return completedCount;
-        }
-
-        public int toolInputCount() {
-            return toolInputCount;
-        }
-
-        public McpToolInputObservation observed() {
-            return observed;
         }
     }
 }

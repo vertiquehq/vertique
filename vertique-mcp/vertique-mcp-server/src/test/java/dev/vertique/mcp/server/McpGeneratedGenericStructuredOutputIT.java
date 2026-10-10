@@ -161,8 +161,9 @@ class McpGeneratedGenericStructuredOutputIT {
                 .as("the canonical text must parse to the exact same value as structuredContent — the "
                         + "three representations (schema validation, observation, wire embed) cannot drift")
                 .isEqualTo(validResult.getJsonArray("structuredContent").getList());
+        fixture.listener().await(2);
         softly.assertThat(fixture.observedOutput().toString())
-                .as("the output observer receives the same profile-normalized name")
+                .as("the request view reports the same profile-normalized name")
                 .contains("display_name")
                 .doesNotContain("displayName");
         softly.assertThat(fixture.noteAccessCount())
@@ -188,8 +189,9 @@ class McpGeneratedGenericStructuredOutputIT {
                     .doesNotContain("NaN")
                     .doesNotContain("Infinity");
         }
+        fixture.listener().await(McpGeneratedGenericStructuredOutputITFixture.NON_FINITE_TOOL_NAMES.size());
         assertThat(fixture.outputObservationCount())
-                .as("no non-finite value may reach the opt-in output observer")
+                .as("no non-finite value may reach the request view's tool output")
                 .isZero();
     }
 

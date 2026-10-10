@@ -7,19 +7,18 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import dev.vertique.core.correlation.TraceReference;
+import dev.vertique.core.payload.PayloadSource;
+import dev.vertique.core.payload.PayloadSources;
+import dev.vertique.mcp.interceptor.McpToolInvocationContext;
 import dev.vertique.mcp.lifecycle.McpCompletionScope;
-import dev.vertique.mcp.lifecycle.McpRawEvidenceObservation;
-import dev.vertique.mcp.lifecycle.McpRequestAdmissionEvidence;
 import dev.vertique.mcp.lifecycle.McpRequestCompletedEvent;
 import dev.vertique.mcp.lifecycle.McpRequestCompletedListener;
 import dev.vertique.mcp.lifecycle.McpRequestLifecycleObserver;
 import dev.vertique.mcp.lifecycle.McpRequestObservation;
 import dev.vertique.mcp.lifecycle.McpRequestTerminalEvent;
 import dev.vertique.mcp.lifecycle.McpRequestTerminalObservation;
-import dev.vertique.mcp.lifecycle.McpResponseEvidence;
-import dev.vertique.mcp.lifecycle.McpToolInputObservation;
-import dev.vertique.mcp.lifecycle.McpToolOutputObservation;
-import dev.vertique.mcp.lifecycle.McpToolValueObservation;
+import dev.vertique.mcp.lifecycle.McpRequestView;
+import dev.vertique.mcp.lifecycle.McpToolOutput;
 import dev.vertique.mcp.lifecycle.McpTransportOutcome;
 import dev.vertique.mcp.tool.McpCancellationSignal;
 import dev.vertique.mcp.tool.McpProgressReporter;
@@ -34,6 +33,8 @@ import java.time.Instant;
 import java.time.InstantSource;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.function.Supplier;
 import lombok.extern.slf4j.Slf4j;
@@ -49,8 +50,6 @@ final class McpCompletionCoordinator {
     private static final int DEFAULT_RESPONSE_MAX_BYTES = 2_097_152;
     private final Context context;
     private final List<McpRequestObservation> observations;
-    private final boolean hasValueObservers;
-    private final boolean hasRawEvidenceObservers;
     private final Set<McpRequestCompletedListener> listeners;
     private final InstantSource clock;
     private final McpRequestCancellationSignal cancellationSignal;
@@ -75,6 +74,41 @@ final class McpCompletionCoordinator {
     // barrier beyond the context's own serialization.
     private boolean settled;
     private boolean completionEmitted;
+
+    // The request view's facts. Written only on the request-owning context, read when the completion
+    // is published, then cleared.
+    private Map<String, List<String>> requestHeaders = Map.of();
+
+    @Nullable
+    private byte[] requestBody;
+
+    @Nullable
+    private String requestContentType;
+
+    @Nullable
+    private String jsonRpcRequestId;
+
+    private Map<String, List<String>> responseHeaders = Map.of();
+
+    @Nullable
+    private byte[] responseBody;
+
+    @Nullable
+    private McpToolInvocationContext toolContext;
+
+    @Nullable
+    private Map<String, Object> toolInput;
+
+    private boolean toolOutputArmed;
+
+    @Nullable
+    private Object pendingToolOutput;
+
+    private boolean toolOutputBound;
+
+    @Nullable
+    private Object boundToolOutput;
+
     private McpRequestTerminalEvent writeTerminal;
 
     // True only while the terminal response end() call is on the stack, so it is read and written
@@ -150,10 +184,6 @@ final class McpCompletionCoordinator {
         }
         this.context = context;
         this.observations = openObservers(observers, startedAt);
-        this.hasValueObservers =
-                this.observations.stream().anyMatch(session -> session instanceof McpToolValueObservation);
-        this.hasRawEvidenceObservers =
-                this.observations.stream().anyMatch(session -> session instanceof McpRawEvidenceObservation);
         this.listeners = Set.copyOf(listeners);
         this.clock = clock;
         this.responseContext = responseContext;
@@ -185,71 +215,6 @@ final class McpCompletionCoordinator {
      */
     boolean belongsTo(HttpServerRequest request) {
         return responseContext == null || responseContext.request() == request;
-    }
-
-    /**
-     * Reports whether any retained session for this request implements the opt-in {@link
-     * McpToolValueObservation} capability (contract §4.4).
-     *
-     * <p>Computed once at construction from the opened session set, never per-call: callers use this
-     * to skip building a {@link McpToolInputObservation} or {@link McpToolOutputObservation} — and
-     * the deep, unmodifiable copy their compact constructors perform — for a request no capable
-     * session will ever see, so an attacker-sized argument or result tree is never deep-copied when
-     * nothing consumes it.
-     *
-     * @return {@code true} when at least one retained session implements {@link
-     *     McpToolValueObservation}
-     */
-    boolean hasValueObservers() {
-        return hasValueObservers;
-    }
-
-    /**
-     * Reports whether any retained session for this request implements the opt-in {@link
-     * McpRawEvidenceObservation} capability.
-     *
-     * <p>Computed once at construction from the opened session set, exactly like {@link
-     * #hasValueObservers()}: callers use this to skip building a {@link McpRequestAdmissionEvidence}
-     * or {@link McpResponseEvidence} — and the raw body/header copy each carries — for a request no
-     * capable session will ever see, so a deployment with no audit adapter installed pays nothing for
-     * this seam.
-     *
-     * @return {@code true} when at least one retained session implements {@link
-     *     McpRawEvidenceObservation}
-     */
-    boolean hasRawEvidenceObservers() {
-        return hasRawEvidenceObservers;
-    }
-
-    /**
-     * Delivers {@code evidence} to every retained session that implements the opt-in {@link
-     * McpRawEvidenceObservation} capability, isolating each session's failure exactly like {@link
-     * #publishToolInput}. Least privilege is structural: the {@code instanceof} guard below is
-     * the sole gate, so an ordinary session has no code path through which this method could reach it.
-     *
-     * @param evidence this request's raw admission-time evidence; must not be {@code null}
-     */
-    void publishRequestAdmitted(McpRequestAdmissionEvidence evidence) {
-        observations.forEach(session -> {
-            if (session instanceof McpRawEvidenceObservation capable) {
-                invoke(session, () -> capable.onRequestAdmitted(evidence));
-            }
-        });
-    }
-
-    /**
-     * Delivers {@code evidence} to every retained session that implements the opt-in {@link
-     * McpRawEvidenceObservation} capability, isolating each session's failure exactly like {@link
-     * #publishRequestAdmitted}.
-     *
-     * @param evidence this request's raw response-side evidence; must not be {@code null}
-     */
-    void publishResponseWritten(McpResponseEvidence evidence) {
-        observations.forEach(session -> {
-            if (session instanceof McpRawEvidenceObservation capable) {
-                invoke(session, () -> capable.onResponseWritten(evidence));
-            }
-        });
     }
 
     /**
@@ -381,53 +346,145 @@ final class McpCompletionCoordinator {
         this.linkedTrace = linkedTrace;
     }
 
+    // --- Request view state ---
+    //
+    // The framework binds each fact of the request as it handles the request, before any interceptor
+    // or observer can alter it, and builds one read-only view per completion listener when the request
+    // completes. All binders run on the request-owning context, like the latches above, and are
+    // no-ops once the completion has been emitted.
+
     /**
-     * Delivers {@code observation} to every retained session that implements the opt-in {@link
-     * McpToolValueObservation} capability, isolating each session's failure exactly like {@link
-     * #publishTerminal} (contract §4.4).
+     * Reports whether any completion listener is registered, so the dispatcher takes the request
+     * snapshot only when a listener can read it.
      *
-     * <p>Least privilege is structural: an ordinary {@link McpRequestObservation} session that does
-     * not implement {@link McpToolValueObservation} is never even tested here — the {@code
-     * instanceof} guard below is the sole gate, so such a session has no code path through which this
-     * method could reach it. The coordinator declares no field for {@code observation}: the parameter
-     * exists only on this call's stack and every session's synchronous callback frame, and is
-     * unreachable through this instance once every {@code onToolInput} call below has returned.
-     *
-     * @param observation the bounded, normalized input observation for this request's tool call;
-     *     must not be {@code null}
+     * @return {@code true} when at least one listener is registered
      */
-    void publishToolInput(McpToolInputObservation observation) {
-        observations.forEach(session -> {
-            if (session instanceof McpToolValueObservation capable) {
-                invoke(session, () -> capable.onToolInput(observation));
-            }
-        });
+    boolean hasListeners() {
+        return !listeners.isEmpty();
     }
 
     /**
-     * Delivers {@code observation} to every retained session that implements the opt-in {@link
-     * McpToolValueObservation} capability, isolating each session's failure exactly like {@link
-     * #publishToolInput} (contract §4.4).
+     * Binds the request's headers and body as received.
      *
-     * <p>Called only after the dispatcher's output stage has already normalized the result exactly
-     * once and validated it against the tool's advertised output schema — this method itself performs
-     * neither and trusts {@code observation} to already carry only a bounded, schema-valid normalized
-     * value. Least privilege is structural, exactly like {@link #publishToolInput}: the {@code
-     * instanceof} guard below is the sole gate, so a plain {@link McpRequestObservation} session has no
-     * code path through which this method could ever reach it. The coordinator declares no field for
-     * {@code observation}: the parameter exists only on this call's stack and every session's
-     * synchronous callback frame, and is unreachable through this instance once every {@code
-     * onToolOutput} call below has returned.
-     *
-     * @param observation the bounded, normalized, schema-valid output observation for this request's
-     *     tool call; must not be {@code null}
+     * @param headers the request headers: lower-cased names to values in wire order
+     * @param body the request body bytes; the array is kept by reference and never written
+     * @param contentType the request {@code Content-Type}, or {@code null} when absent
      */
-    void publishToolOutput(McpToolOutputObservation observation) {
-        observations.forEach(session -> {
-            if (session instanceof McpToolValueObservation capable) {
-                invoke(session, () -> capable.onToolOutput(observation));
-            }
-        });
+    void bindRequest(Map<String, List<String>> headers, byte[] body, @Nullable String contentType) {
+        if (completionEmitted) {
+            return;
+        }
+        this.requestHeaders = headers;
+        this.requestBody = body;
+        this.requestContentType = contentType;
+    }
+
+    /**
+     * Returns the request body bytes {@link #bindRequest} bound, so the dispatcher decodes the same
+     * array instead of reading the body again.
+     *
+     * @return the bound body bytes, or {@code null} when none was bound
+     */
+    @Nullable
+    byte[] boundRequestBody() {
+        return requestBody;
+    }
+
+    /**
+     * Binds the JSON-RPC request id in its wire textual form.
+     *
+     * @param jsonRpcRequestId the id, or {@code null} when the request carried none
+     */
+    void bindJsonRpcId(@Nullable String jsonRpcRequestId) {
+        if (completionEmitted) {
+            return;
+        }
+        this.jsonRpcRequestId = jsonRpcRequestId;
+    }
+
+    /**
+     * Binds a prepared tool call: its invocation context and its normalized arguments.
+     *
+     * @param toolContext the pre-dispatch request snapshot and resolved descriptor
+     * @param normalizedArguments the deeply immutable post-processing argument tree
+     */
+    void bindToolInput(McpToolInvocationContext toolContext, Map<String, Object> normalizedArguments) {
+        if (completionEmitted) {
+            return;
+        }
+        this.toolContext = toolContext;
+        this.toolInput = normalizedArguments;
+    }
+
+    /**
+     * Arms the normalized result of a tool call. It becomes visible to listeners only when {@link
+     * #promoteToolOutput} runs for the write that carries it.
+     *
+     * @param normalizedOutput the normalized structured result, or {@code null} when the tool
+     *     produced none
+     */
+    void armToolOutput(@Nullable Object normalizedOutput) {
+        if (completionEmitted) {
+            return;
+        }
+        this.pendingToolOutput = normalizedOutput;
+        this.toolOutputArmed = true;
+    }
+
+    /**
+     * Makes the armed result visible once the terminal write that carries it has won settlement and
+     * reserved its bytes, immediately before {@code end()}. A result that a bounded error replaced on
+     * the wire is dropped instead.
+     *
+     * @param carriedByWrite {@code true} when the bytes being written are the result's own
+     */
+    void promoteToolOutput(boolean carriedByWrite) {
+        if (toolOutputArmed && carriedByWrite && !completionEmitted) {
+            this.toolOutputBound = true;
+            this.boundToolOutput = pendingToolOutput;
+        }
+        this.toolOutputArmed = false;
+        this.pendingToolOutput = null;
+    }
+
+    /**
+     * Binds the response about to be written.
+     *
+     * @param body the response bytes the terminal writer sends, or {@code null} for an empty body; the
+     *     array is kept by reference and never written
+     * @param headers the response headers as they stand before the write
+     */
+    void bindResponse(@Nullable byte[] body, Map<String, List<String>> headers) {
+        if (completionEmitted) {
+            return;
+        }
+        this.responseBody = body;
+        this.responseHeaders = headers;
+    }
+
+    private McpRequestView viewForListener() {
+        return new BoundRequestView(
+                jsonRpcRequestId,
+                requestHeaders,
+                requestBody,
+                requestContentType,
+                responseHeaders,
+                responseBody,
+                toolContext,
+                toolInput,
+                toolOutputBound,
+                boundToolOutput);
+    }
+
+    private void clearRequestView() {
+        requestHeaders = Map.of();
+        requestBody = null;
+        responseHeaders = Map.of();
+        responseBody = null;
+        toolContext = null;
+        toolInput = null;
+        boundToolOutput = null;
+        pendingToolOutput = null;
     }
 
     // --- Two-phase write path ---
@@ -678,8 +735,11 @@ final class McpCompletionCoordinator {
         try {
             openCompletionScopes(openedScopes);
             observations.forEach(item -> invoke(item, () -> item.onCompleted(event)));
-            listeners.forEach(listener -> invoke(listener, () -> listener.onCompleted(event)));
+            // Each listener gets its own view over the same bytes, so one listener cannot change what
+            // another reads.
+            listeners.forEach(listener -> invoke(listener, () -> listener.onCompleted(event, viewForListener())));
         } finally {
+            clearRequestView();
             closeCompletionScopes(openedScopes);
         }
     }
@@ -820,6 +880,107 @@ final class McpCompletionCoordinator {
             callback.run();
         } catch (RuntimeException | StackOverflowError failure) {
             log.warn("MCP lifecycle callback failed on {}", owner.getClass().getName());
+        }
+    }
+
+    /**
+     * One listener's read-only view of the request. It holds references to the bound arrays and trees
+     * and exposes no write path to any of them.
+     */
+    private static final class BoundRequestView implements McpRequestView {
+        private final @Nullable String jsonRpcRequestId;
+        private final Map<String, List<String>> requestHeaders;
+        private final @Nullable byte[] requestBody;
+        private final @Nullable String requestContentType;
+        private final Map<String, List<String>> responseHeaders;
+        private final @Nullable byte[] responseBody;
+        private final @Nullable McpToolInvocationContext toolContext;
+        private final @Nullable Map<String, Object> toolInput;
+        private final boolean toolOutputBound;
+        private final @Nullable Object toolOutput;
+
+        private BoundRequestView(
+                @Nullable String jsonRpcRequestId,
+                Map<String, List<String>> requestHeaders,
+                @Nullable byte[] requestBody,
+                @Nullable String requestContentType,
+                Map<String, List<String>> responseHeaders,
+                @Nullable byte[] responseBody,
+                @Nullable McpToolInvocationContext toolContext,
+                @Nullable Map<String, Object> toolInput,
+                boolean toolOutputBound,
+                @Nullable Object toolOutput) {
+            this.jsonRpcRequestId = jsonRpcRequestId;
+            this.requestHeaders = requestHeaders;
+            this.requestBody = requestBody;
+            this.requestContentType = requestContentType;
+            this.responseHeaders = responseHeaders;
+            this.responseBody = responseBody;
+            this.toolContext = toolContext;
+            this.toolInput = toolInput;
+            this.toolOutputBound = toolOutputBound;
+            this.toolOutput = toolOutput;
+        }
+
+        @Override
+        public Optional<String> jsonRpcRequestId() {
+            return Optional.ofNullable(jsonRpcRequestId);
+        }
+
+        @Override
+        public Map<String, List<String>> requestHeaders() {
+            return requestHeaders;
+        }
+
+        @Override
+        public PayloadSource requestBody() {
+            return requestBody == null
+                    ? PayloadSources.absent()
+                    : PayloadSources.buffered(requestBody, requestContentType);
+        }
+
+        @Override
+        public Map<String, List<String>> responseHeaders() {
+            return responseHeaders;
+        }
+
+        @Override
+        public PayloadSource responseBody() {
+            return responseBody == null
+                    ? PayloadSources.absent()
+                    : PayloadSources.buffered(responseBody, contentTypeOf(responseHeaders));
+        }
+
+        @Override
+        public Optional<McpToolInvocationContext> toolContext() {
+            return Optional.ofNullable(toolContext);
+        }
+
+        @Override
+        @SuppressWarnings("unchecked")
+        public Optional<Map<String, Object>> toolInput() {
+            // The prepared call's tree is deeply immutable by contract. The view still wraps it, so a
+            // hand-written invoker that returns a mutable tree cannot be written through a listener.
+            return Optional.ofNullable(toolInput).map(tree -> (Map<String, Object>) McpReadOnlyViews.of(tree));
+        }
+
+        @Override
+        public Optional<McpToolOutput> toolOutput() {
+            if (!toolOutputBound) {
+                return Optional.empty();
+            }
+            Object view = McpReadOnlyViews.of(toolOutput);
+            return Optional.of(() -> Optional.ofNullable(view));
+        }
+
+        @Override
+        public String toString() {
+            return "McpRequestView";
+        }
+
+        private static @Nullable String contentTypeOf(Map<String, List<String>> headers) {
+            List<String> values = headers.get("content-type");
+            return values == null || values.isEmpty() ? null : values.get(values.size() - 1);
         }
     }
 
