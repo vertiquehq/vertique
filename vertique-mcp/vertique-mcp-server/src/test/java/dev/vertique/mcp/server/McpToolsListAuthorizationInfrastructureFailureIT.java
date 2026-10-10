@@ -123,6 +123,43 @@ public class McpToolsListAuthorizationInfrastructureFailureIT {
                 .isEqualTo(1);
     }
 
+    @Test
+    @DisplayName("aborts the whole list on a returned principal-authority resolution failure")
+    void shouldAbortTheWholeListOnAReturnedAuthorityResolutionFailure() throws Exception {
+        fixture = Fixture.start(
+                vertx,
+                SequenceDecisionPoint.returningDeny(
+                        dev.vertique.security.authz.AuthzReasonCodes.AUTHORITY_RESOLUTION_FAILED));
+        rawClient = vertx.createHttpClient();
+        client = WebClient.wrap(rawClient);
+
+        HttpResponse<Buffer> response = await(client.post(fixture.port, "127.0.0.1", REQUEST_PATH)
+                .putHeader("content-type", "application/json")
+                .putHeader("MCP-Protocol-Version", PROTOCOL_VERSION)
+                .putHeader("Mcp-Method", "tools/list")
+                .putHeader("Mcp-Name", "tools/list")
+                .sendBuffer(toolsListBody()));
+
+        assertThat(response.statusCode()).isEqualTo(500);
+        JsonObject body = new JsonObject(response.bodyAsString());
+        assertThat(body.getJsonObject("error").getInteger("code")).isEqualTo(-32603);
+        assertThat(body.containsKey("result"))
+                .as("a failed list must not expose a partial result")
+                .isFalse();
+        assertThat(response.getHeader("cache-control"))
+                .as("a failed list must not advertise a cacheable page")
+                .isNull();
+        assertThat(fixture.decisionPoint.callCount())
+                .as("the third candidate must not be authorized")
+                .isEqualTo(2);
+
+        McpRequestCompletedEvent completed = fixture.observer.awaitCompleted();
+        assertThat(completed.terminal().errorType()).isEqualTo(McpErrorType.AUTHORIZATION);
+        assertThat(fixture.observer.terminalCount())
+                .as("one request has exactly one terminal event")
+                .isEqualTo(1);
+    }
+
     private static Buffer toolsListBody() {
         return new JsonObject()
                 .put("jsonrpc", "2.0")
@@ -149,14 +186,14 @@ public class McpToolsListAuthorizationInfrastructureFailureIT {
         private final SequenceDecisionPoint decisionPoint;
         private final RecordingObserver observer;
 
-        private Fixture(Vertx vertx) throws Exception {
+        private Fixture(Vertx vertx, SequenceDecisionPoint decisionPoint) throws Exception {
             McpServerConfig config = McpServerConfig.builder()
                     .enabled(true)
                     .serverName("vertique-test")
                     .serverVersion("1.0")
                     .authenticationScheme(SCHEME_NAME)
                     .build();
-            decisionPoint = new SequenceDecisionPoint();
+            this.decisionPoint = decisionPoint;
             observer = new RecordingObserver();
             RecordingSecurityRuntime runtime = new RecordingSecurityRuntime();
             McpToolRegistry registry = McpToolRegistry.build(
@@ -198,7 +235,11 @@ public class McpToolsListAuthorizationInfrastructureFailureIT {
         }
 
         static Fixture start(Vertx vertx) throws Exception {
-            return new Fixture(vertx);
+            return new Fixture(vertx, SequenceDecisionPoint.failingFuture());
+        }
+
+        static Fixture start(Vertx vertx, SequenceDecisionPoint decisionPoint) throws Exception {
+            return new Fixture(vertx, decisionPoint);
         }
     }
 
@@ -235,11 +276,27 @@ public class McpToolsListAuthorizationInfrastructureFailureIT {
 
     private static final class SequenceDecisionPoint implements AuthorizationDecisionPoint {
         private final AtomicInteger calls = new AtomicInteger();
+        private final java.util.function.Supplier<Future<AuthorizationDecision>> secondCall;
+
+        private SequenceDecisionPoint(java.util.function.Supplier<Future<AuthorizationDecision>> secondCall) {
+            this.secondCall = secondCall;
+        }
+
+        /** The second candidate's decision fails: the engine could not answer. */
+        static SequenceDecisionPoint failingFuture() {
+            return new SequenceDecisionPoint(
+                    () -> Future.failedFuture("simulated authorization infrastructure failure"));
+        }
+
+        /** The second candidate's decision is returned as a failed principal-authority resolution. */
+        static SequenceDecisionPoint returningDeny(String reasonCode) {
+            return new SequenceDecisionPoint(() -> Future.succeededFuture(AuthorizationDecision.deny(reasonCode)));
+        }
 
         @Override
         public Future<AuthorizationDecision> decide(AuthorizationRequest request) {
             return calls.incrementAndGet() == 2
-                    ? Future.failedFuture("simulated authorization infrastructure failure")
+                    ? secondCall.get()
                     : Future.succeededFuture(AuthorizationDecision.permit("PERMITTED"));
         }
 

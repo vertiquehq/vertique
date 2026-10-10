@@ -1897,7 +1897,9 @@ final class McpRequestDispatcher {
      * an ordinary access denial.
      */
     private static boolean isAuthorizationInfrastructureFailure(AuthorizationDecision decision) {
-        return !decision.permitted() && AuthzReasonCodes.INTERNAL_AUTHZ_ERROR.equals(decision.reasonCode());
+        return !decision.permitted()
+                && (AuthzReasonCodes.INTERNAL_AUTHZ_ERROR.equals(decision.reasonCode())
+                        || AuthzReasonCodes.AUTHORITY_RESOLUTION_FAILED.equals(decision.reasonCode()));
     }
 
     /** One bounded page's outcome: the visible tools, next-page anchor, and settlement state. */
