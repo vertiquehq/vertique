@@ -1373,8 +1373,20 @@ class RestRequestCompletionEmitterTest {
                                 () -> Expected.ONE_HTTP_EVENT.assertOn(
                                         published.ofPath(PLAIN_PATH),
                                         PLAIN_PATH + ", after the throwing HTTP listener"),
+                                // the throwing listener's failure detail is the only DEBUG line: no skip line
                                 () -> assertEquals(
-                                        List.of(), debugByPath.get(PLAIN_PATH), PLAIN_PATH + ": no DEBUG line"),
+                                        1,
+                                        debugByPath.get(PLAIN_PATH).size(),
+                                        PLAIN_PATH + ": one DEBUG line, the throwing listener's failure detail: "
+                                                + debugByPath.get(PLAIN_PATH)),
+                                () -> assertTrue(
+                                        debugByPath.get(PLAIN_PATH).stream()
+                                                .allMatch(line -> line.contains(
+                                                                "callback HttpRequestCompletedListener.onCompleted"
+                                                                        + " failure detail")
+                                                        && !line.contains(PLAIN_PATH)),
+                                        PLAIN_PATH + ": the DEBUG line is the listener failure detail, without the"
+                                                + " path: " + debugByPath.get(PLAIN_PATH)),
                                 // /other: OTHER -> nothing, and one DEBUG line without the path
                                 () -> Expected.NO_EVENT.assertOn(published.ofPath(OTHER_PATH), OTHER_PATH),
                                 () -> assertSkipLine(debugByPath.get(OTHER_PATH)),
@@ -1486,6 +1498,230 @@ class RestRequestCompletionEmitterTest {
 
         /** Test-local {@link Error} the HTTP listener throws. */
         private static final class ListenerError extends Error {}
+    }
+
+    /**
+     * An {@link AssertionError} or a {@link LinkageError} thrown by a completion listener of either kind is
+     * isolated the way its exceptions are: the listeners after it still receive the event and nothing escapes
+     * {@code emit}. Every proof drives {@code emit} from the route handler, on the calling thread, so an escaping
+     * {@link Error} would surface there. The listener sets are {@link LinkedHashSet}s with the throwing listener
+     * first, so the capturing listener only receives the event when the dispatch loop survived.
+     */
+    @Nested
+    @DisplayName("Listener AssertionError and LinkageError isolation")
+    class ListenerErrorIsolation {
+
+        /** The emitter's logger, as Logback sees it. */
+        private Logger emitterLogger;
+
+        /** Records every event the emitter's logger accepts. */
+        private ListAppender<ILoggingEvent> appender;
+
+        /** Attaches {@link #appender} to the emitter's logger. */
+        @BeforeEach
+        void captureEmitterLog() {
+            emitterLogger = (Logger) LoggerFactory.getLogger(RestRequestCompletionEmitter.class);
+            appender = new ListAppender<>();
+            appender.start();
+            emitterLogger.addAppender(appender);
+        }
+
+        /** Detaches {@link #appender}. */
+        @AfterEach
+        void releaseEmitterLog() {
+            emitterLogger.detachAppender(appender);
+            appender.stop();
+        }
+
+        @Test
+        @DisplayName("A StackOverflowError from a REST listener does not stop later REST listeners or escape emit")
+        void restListenerStackOverflowErrorIsIsolated(VertxTestContext ctx) {
+            assertRestListenerIsolated(new StackOverflowError("rest-listener-stack"), ctx);
+        }
+
+        @Test
+        @DisplayName("A StackOverflowError from an HTTP listener does not stop later HTTP listeners or escape emit")
+        void httpListenerStackOverflowErrorIsIsolated(VertxTestContext ctx) {
+            assertHttpListenerIsolated(new StackOverflowError("http-listener-stack"), ctx);
+        }
+
+        @Test
+        @DisplayName("An AssertionError from a REST listener does not stop later REST listeners or escape emit")
+        void restListenerAssertionErrorIsIsolated(VertxTestContext ctx) {
+            assertRestListenerIsolated(new AssertionError("rest-listener-assertion"), ctx);
+        }
+
+        @Test
+        @DisplayName("A NoSuchMethodError from a REST listener does not stop later REST listeners or escape emit")
+        void restListenerLinkageErrorIsIsolated(VertxTestContext ctx) {
+            assertRestListenerIsolated(new NoSuchMethodError("rest-listener-linkage"), ctx);
+        }
+
+        @Test
+        @DisplayName("An AssertionError from an HTTP listener does not stop later HTTP listeners or escape emit")
+        void httpListenerAssertionErrorIsIsolated(VertxTestContext ctx) {
+            assertHttpListenerIsolated(new AssertionError("http-listener-assertion"), ctx);
+        }
+
+        @Test
+        @DisplayName("A NoSuchMethodError from an HTTP listener does not stop later HTTP listeners or escape emit")
+        void httpListenerLinkageErrorIsIsolated(VertxTestContext ctx) {
+            assertHttpListenerIsolated(new NoSuchMethodError("http-listener-linkage"), ctx);
+        }
+
+        @Test
+        @DisplayName("A LinkageError is logged at ERROR once per listener and callback, an AssertionError at WARN "
+                + "every time")
+        void linkageErrorIsReportedOncePerIntervalAndAssertionErrorEveryTime(VertxTestContext ctx) {
+            AtomicInteger delivered = new AtomicInteger();
+            HttpRequestCompletedListener unusable = event -> {
+                throw new NoSuchMethodError("http-listener-linkage");
+            };
+            HttpRequestCompletedListener asserting = event -> {
+                throw new AssertionError("http-listener-assertion");
+            };
+            HttpRequestCompletedListener capturing = event -> delivered.incrementAndGet();
+            RestRequestCompletionEmitter em = new RestRequestCompletionEmitter(
+                    Optional.empty(),
+                    new DefaultContextHolder(),
+                    Set.of(),
+                    new LinkedHashSet<>(List.of(unusable, asserting, capturing)),
+                    Set.of());
+            RouterWithBarrier rb = unclaimedRouterWithBarrier(
+                    vertx,
+                    em,
+                    rc -> ctx.verify(() -> assertDoesNotThrow(
+                            () -> em.emit(rc, RequestCompletionRecorder.boundState(rc), Future.succeededFuture()))));
+
+            startServer(rb.router())
+                    .compose(port -> client.get(port, "127.0.0.1", "/test")
+                            .send()
+                            .compose(first ->
+                                    client.get(port, "127.0.0.1", "/test").send()))
+                    .onComplete(ctx.succeeding(second -> {
+                        ctx.verify(() -> {
+                            assertEquals(2, delivered.get(), "the later listener receives both events");
+                            List<ILoggingEvent> errors = eventsAt(Level.ERROR);
+                            assertEquals(
+                                    1,
+                                    errors.size(),
+                                    "the unusable listener is reported once within the report interval, not once per"
+                                            + " request");
+                            String report = errors.get(0).getFormattedMessage();
+                            assertTrue(
+                                    report.contains("is unusable and its notifications are being lost"),
+                                    "the report says the notifications are lost: " + report);
+                            assertTrue(
+                                    report.contains(unusable.getClass().getName()),
+                                    "the report names the listener class: " + report);
+                            assertEquals(
+                                    2, eventsAt(Level.WARN).size(), "an AssertionError is logged for every request");
+                        });
+                        ctx.completeNow();
+                    }));
+        }
+
+        /**
+         * Completes one request an operation route claimed, with a REST listener throwing {@code thrown} ahead
+         * of a capturing one, and asserts that nothing escaped {@code emit} and the capturing listener received
+         * the event.
+         *
+         * @param thrown the {@link Error} the first listener throws
+         * @param ctx    the test context
+         */
+        private void assertRestListenerIsolated(Error thrown, VertxTestContext ctx) {
+            AtomicInteger calls = new AtomicInteger();
+            List<RestRequestCompletedEvent> delivered = new CopyOnWriteArrayList<>();
+            RestRequestCompletedListener throwing = event -> {
+                calls.incrementAndGet();
+                throw thrown;
+            };
+            RestRequestCompletedListener capturing = delivered::add;
+            RestRequestCompletionEmitter em = new RestRequestCompletionEmitter(
+                    Optional.empty(),
+                    new DefaultContextHolder(),
+                    new LinkedHashSet<>(List.of(throwing, capturing)),
+                    Set.of(),
+                    Set.of());
+            RouterWithBarrier rb = routerWithBarrier(
+                    vertx,
+                    em,
+                    rc -> ctx.verify(() -> assertDoesNotThrow(
+                            () -> em.emit(rc, RequestCompletionRecorder.boundState(rc), Future.succeededFuture()),
+                            "a REST listener's " + thrown.getClass().getSimpleName() + " must not escape emit")));
+
+            completeAndAssert(rb, calls, delivered, ctx);
+        }
+
+        /**
+         * Completes one request no transport claimed, with an HTTP listener throwing {@code thrown} ahead of a
+         * capturing one, and asserts that nothing escaped {@code emit} and the capturing listener received the
+         * event.
+         *
+         * @param thrown the {@link Error} the first listener throws
+         * @param ctx    the test context
+         */
+        private void assertHttpListenerIsolated(Error thrown, VertxTestContext ctx) {
+            AtomicInteger calls = new AtomicInteger();
+            List<HttpRequestCompletedEvent> delivered = new CopyOnWriteArrayList<>();
+            HttpRequestCompletedListener throwing = event -> {
+                calls.incrementAndGet();
+                throw thrown;
+            };
+            HttpRequestCompletedListener capturing = delivered::add;
+            RestRequestCompletionEmitter em = new RestRequestCompletionEmitter(
+                    Optional.empty(),
+                    new DefaultContextHolder(),
+                    Set.of(),
+                    new LinkedHashSet<>(List.of(throwing, capturing)),
+                    Set.of());
+            RouterWithBarrier rb = unclaimedRouterWithBarrier(
+                    vertx,
+                    em,
+                    rc -> ctx.verify(() -> assertDoesNotThrow(
+                            () -> em.emit(rc, RequestCompletionRecorder.boundState(rc), Future.succeededFuture()),
+                            "an HTTP listener's " + thrown.getClass().getSimpleName() + " must not escape emit")));
+
+            completeAndAssert(rb, calls, delivered, ctx);
+        }
+
+        /**
+         * Sends one request through {@code rb}'s router and asserts the response, that the throwing listener
+         * was reached, and that the listener after it received exactly one event.
+         *
+         * @param rb        the router and its lifecycle barrier
+         * @param calls     the number of times the throwing listener was called
+         * @param delivered the events the capturing listener received
+         * @param ctx       the test context
+         */
+        private void completeAndAssert(
+                RouterWithBarrier rb, AtomicInteger calls, List<?> delivered, VertxTestContext ctx) {
+            startServer(rb.router())
+                    .compose(port -> client.get(port, "127.0.0.1", "/test").send())
+                    .compose(resp -> {
+                        ctx.verify(() -> assertEquals(200, resp.statusCode()));
+                        return awaitBarrier(vertx, rb.barrier());
+                    })
+                    .onComplete(ctx.succeeding(v -> {
+                        ctx.verify(() -> {
+                            assertEquals(1, calls.get(), "the throwing listener must have been reached");
+                            assertEquals(1, delivered.size(), "the listener after it must still receive the event");
+                        });
+                        ctx.completeNow();
+                    }));
+        }
+
+        /**
+         * Returns the events the emitter logged at {@code level}.
+         *
+         * @param level the level to keep
+         * @return the matching events, in logging order
+         */
+        private List<ILoggingEvent> eventsAt(Level level) {
+            return appender.list.stream()
+                    .filter(event -> event.getLevel() == level)
+                    .toList();
+        }
     }
 
     /**
@@ -1904,8 +2140,8 @@ class RestRequestCompletionEmitterTest {
         }
 
         /**
-         * Asserts the row's single WARN starts with the failed listener type's name, carries the thrower's message,
-         * and does not carry the request path.
+         * Asserts the row's single WARN names the failed listener type's callback, does not carry the thrower's
+         * message, which could hold request data, and does not carry the request path.
          *
          * @param isolationCase the row
          * @param warnings      the emitter's WARN messages
@@ -1916,13 +2152,13 @@ class RestRequestCompletionEmitterTest {
                 return; // the count assertion reports it
             }
             String warning = warnings.get(0);
-            String expectedPrefix = isolationCase.path().equals(CLAIMED)
-                    ? "RestRequestCompletedListener failed: "
-                    : "HttpRequestCompletedListener failed: ";
+            String expectedCallback = isolationCase.path().equals(CLAIMED)
+                    ? "callback RestRequestCompletedListener.onCompleted threw "
+                    : "callback HttpRequestCompletedListener.onCompleted threw ";
             assertAll(
                     "the WARN: " + warning,
-                    () -> assertTrue(warning.startsWith(expectedPrefix), "it starts with " + expectedPrefix),
-                    () -> assertTrue(warning.contains(BOOM), "it carries the thrower's message " + BOOM),
+                    () -> assertTrue(warning.contains(expectedCallback), "it names " + expectedCallback),
+                    () -> assertFalse(warning.contains(BOOM), "it must not carry the thrower's message " + BOOM),
                     () -> assertFalse(warning.contains(isolationCase.path()), "it must not carry the request path"));
         }
 
@@ -2627,6 +2863,102 @@ class RestRequestCompletionEmitterTest {
                             // Both close() were invoked regardless of the first one throwing
                             assertEquals(1, closedBadCount.get(), "throwing scope's close must have been called");
                             assertEquals(1, closedGoodCount.get(), "good scope's close must also have been called");
+                        });
+                        ctx.completeNow();
+                    }));
+        }
+
+        @Test
+        @DisplayName("scope whose open() throws AssertionError: listeners still notified, opened scopes closed")
+        void assertionErrorFromOpenDoesNotStopListenersOrLeakScopes(VertxTestContext ctx) {
+            assertScopeErrorIsContained(new AssertionError("scope-open-assertion"), true, ctx);
+        }
+
+        @Test
+        @DisplayName("scope whose open() throws LinkageError: listeners still notified, opened scopes closed")
+        void linkageErrorFromOpenDoesNotStopListenersOrLeakScopes(VertxTestContext ctx) {
+            assertScopeErrorIsContained(new NoClassDefFoundError("com/example/Missing"), true, ctx);
+        }
+
+        @Test
+        @DisplayName("scope whose open() throws StackOverflowError: listeners still notified, opened scopes closed")
+        void stackOverflowErrorFromOpenDoesNotStopListenersOrLeakScopes(VertxTestContext ctx) {
+            assertScopeErrorIsContained(new StackOverflowError("scope-open-stack"), true, ctx);
+        }
+
+        @Test
+        @DisplayName("scope whose close() throws StackOverflowError: listeners notified, the other scope still closed")
+        void stackOverflowErrorFromCloseDoesNotLeakOtherScopes(VertxTestContext ctx) {
+            assertScopeErrorIsContained(new StackOverflowError("scope-close-stack"), false, ctx);
+        }
+
+        @Test
+        @DisplayName("scope whose close() throws AssertionError: listeners notified, the other scope still closed")
+        void assertionErrorFromCloseDoesNotLeakOtherScopes(VertxTestContext ctx) {
+            assertScopeErrorIsContained(new AssertionError("scope-close-assertion"), false, ctx);
+        }
+
+        @Test
+        @DisplayName("scope whose close() throws LinkageError: listeners notified, the other scope still closed")
+        void linkageErrorFromCloseDoesNotLeakOtherScopes(VertxTestContext ctx) {
+            assertScopeErrorIsContained(new NoClassDefFoundError("com/example/Missing"), false, ctx);
+        }
+
+        /**
+         * Completes one request with a good scope opened first and a failing scope opened second, and
+         * asserts that nothing escaped {@code emit}, the listener received the event and the good scope
+         * was opened and closed once. The failing scope's {@code close} runs before the good scope's,
+         * because scopes close in reverse open order.
+         *
+         * @param thrown      the {@link Error} the failing scope throws
+         * @param failsOnOpen {@code true} to throw from {@code open}, {@code false} from {@code close}
+         * @param ctx         the test context
+         */
+        private void assertScopeErrorIsContained(Error thrown, boolean failsOnOpen, VertxTestContext ctx) {
+            AtomicInteger openGoodCount = new AtomicInteger();
+            AtomicInteger closeGoodCount = new AtomicInteger();
+            AtomicInteger failingCalls = new AtomicInteger();
+            RequestCompletionScope goodScope = rc -> {
+                openGoodCount.incrementAndGet();
+                return closeGoodCount::incrementAndGet;
+            };
+            RequestCompletionScope failingScope = rc -> {
+                if (failsOnOpen) {
+                    failingCalls.incrementAndGet();
+                    throw thrown;
+                }
+                return () -> {
+                    failingCalls.incrementAndGet();
+                    throw thrown;
+                };
+            };
+            Set<RequestCompletionScope> scopes = new java.util.LinkedHashSet<>();
+            scopes.add(goodScope);
+            scopes.add(failingScope);
+            List<RestRequestCompletedEvent> captured = new CopyOnWriteArrayList<>();
+            RestRequestCompletionEmitter em = emitterWithScopes(scopes, Set.of(captured::add));
+            String what = thrown.getClass().getSimpleName() + " from a scope's " + (failsOnOpen ? "open" : "close");
+            RouterWithBarrier rb = routerWithBarrier(
+                    vertx,
+                    em,
+                    rc -> ctx.verify(() -> assertDoesNotThrow(
+                            () -> em.emit(rc, RequestCompletionRecorder.boundState(rc), Future.succeededFuture()),
+                            "an " + what + " must not escape emit")));
+
+            startServer(rb.router())
+                    .compose(port -> client.get(port, "127.0.0.1", "/test").send())
+                    .compose(resp -> {
+                        ctx.verify(() -> assertEquals(200, resp.statusCode()));
+                        return awaitBarrier(vertx, rb.barrier());
+                    })
+                    .onComplete(ctx.succeeding(v -> {
+                        ctx.verify(() -> {
+                            assertEquals(1, failingCalls.get(), "the failing scope must have been reached");
+                            assertEquals(
+                                    1, captured.size(), "the listener must still receive the event after an " + what);
+                            assertEquals(1, openGoodCount.get(), "the good scope must have been opened once");
+                            assertEquals(
+                                    1, closeGoodCount.get(), "the good scope must still be closed after an " + what);
                         });
                         ctx.completeNow();
                     }));

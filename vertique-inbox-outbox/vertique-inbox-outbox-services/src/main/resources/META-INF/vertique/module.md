@@ -47,6 +47,10 @@ Invoking a method on the returned proxy:
 4. Returns `publish(...).mapEmpty()` — a `Future<Void>`. The contract method must itself declare
    `Future<Void>`; the proxy cannot return the outbox entry id or the eventual service result.
 
+A `null` payload argument is not rejected by the proxy. It builds the entry with a `null` payload;
+the outbox `payload` column is `NOT NULL`, so the insert fails, the returned future fails with it,
+nothing is stored and the target service is never called.
+
 Validation rules (all checked at `create`):
 - Every non-`Object` method must carry `@ServiceOperation` (this is what supplies the stable target id)
 - `@OneWay` operations are rejected — the relay needs request/reply confirmation
@@ -85,6 +89,12 @@ At relay time:
 7. On a failed reply from the service: returns `OutboxPublishResult.retryable(message, cause)`.
 8. Rejects `@OneWay` service targets — any operation resolving to a `@OneWay` method returns
    `OutboxPublishResult.permanent(...)`.
+9. A stored payload that cannot be decoded to the target's payload type, or a durable propagation
+   context that cannot be decoded, returns `OutboxPublishResult.retryable(message, cause)`; nothing
+   escapes `publish`. The message names the target and the payload type and never the payload
+   content; the decode failure is the cause. It is retried because during a rolling deploy an older
+   node can claim an entry that only a newer node can decode — a later attempt lets the newer node
+   deliver it — while the entry's maximum attempts still dead-letter one that no node can decode.
 
 `SERVICE` delivery guarantee: at-least-once handoff to the service. The service must be idempotent
 or use `InboxService` for dedup if needed.

@@ -3,15 +3,19 @@
 
 package dev.vertique.inboxoutbox.services;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentCaptor.forClass;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import dev.vertique.context.DurableContextMetadataRegistry;
@@ -469,6 +473,78 @@ class ServiceOutboxDestinationHandlerTest {
             assertEquals(carrierA.toString(), reproducedA);
             assertEquals(carrierB.toString(), reproducedB);
             assertNotEquals(reproducedA, reproducedB, "carriers reproduced for different rows must not match");
+        }
+    }
+
+    @Nested
+    @DisplayName("stored values this node cannot decode")
+    class UndecodableStoredValues {
+
+        @Test
+        @DisplayName("a payload that cannot be decoded to the target's payload type is a retryable failure")
+        void undecodablePayloadReturnsRetryableFailure() {
+            ServiceMethodMeta meta = mock(ServiceMethodMeta.class);
+            when(meta.oneWay()).thenReturn(false);
+            when(meta.payloadType()).thenAnswer(invocation -> UUID.class);
+            ResolvedServiceTarget target =
+                    new ResolvedServiceTarget("test.target", null, "test", "target", "op", meta, "test/target/op");
+            when(resolver.resolve("test.target")).thenReturn(target);
+            OutboxEnvelope envelope = new OutboxEnvelope(
+                    42L,
+                    "Order",
+                    "order-123",
+                    "order.placed",
+                    "test.target",
+                    new JsonObject().put("_v", "not-a-uuid"),
+                    Map.of(),
+                    OutboxMetadata.empty(),
+                    null,
+                    0,
+                    Instant.now());
+
+            Future<OutboxPublishResult> published = assertDoesNotThrow(() -> handler.publish(envelope));
+
+            assertTrue(published.succeeded(), "publish must complete with a result, not fail");
+            OutboxPublishResult.RetryableFailure failure =
+                    assertInstanceOf(OutboxPublishResult.RetryableFailure.class, published.result());
+            assertNotNull(failure.cause(), "the decode failure must be attached as the cause");
+            assertTrue(failure.message().contains("test.target"), "message must name the target: " + failure.message());
+            assertTrue(
+                    failure.message().contains(UUID.class.getName()),
+                    "message must name the payload type: " + failure.message());
+            assertFalse(
+                    failure.message().contains("not-a-uuid"),
+                    "message must not carry payload content: " + failure.message());
+            verifyNoInteractions(sender);
+        }
+
+        @Test
+        @DisplayName("a dispatch context that cannot be decoded is a retryable failure")
+        void undecodableDispatchContextReturnsRetryableFailure() {
+            IllegalStateException decodeFailure = new IllegalStateException("context cannot be decoded");
+            dev.vertique.context.DurableContextPropagator throwingPropagator =
+                    mock(dev.vertique.context.DurableContextPropagator.class);
+            when(throwingPropagator.decodeToDispatchContext(any(), any())).thenThrow(decodeFailure);
+            dev.vertique.context.DefaultContextHolder holder = new dev.vertique.context.DefaultContextHolder();
+            ServiceOutboxDestinationHandler throwingHandler = new ServiceOutboxDestinationHandler(
+                    resolver,
+                    sender,
+                    throwingPropagator,
+                    new dev.vertique.context.DispatchEnvelopeBuilder(
+                            new dev.vertique.context.ServiceDispatchContextCapturer(
+                                    new dev.vertique.context.ServiceDispatchContextRegistry(Set.of(), Set.of()),
+                                    holder)));
+            ResolvedServiceTarget target = makeTarget(false);
+            when(resolver.resolve("test.target")).thenReturn(target);
+
+            Future<OutboxPublishResult> published = assertDoesNotThrow(() -> throwingHandler.publish(makeEnvelope()));
+
+            assertTrue(published.succeeded(), "publish must complete with a result, not fail");
+            OutboxPublishResult.RetryableFailure failure =
+                    assertInstanceOf(OutboxPublishResult.RetryableFailure.class, published.result());
+            assertSame(decodeFailure, failure.cause());
+            assertTrue(failure.message().contains("test.target"), "message must name the target: " + failure.message());
+            verifyNoInteractions(sender);
         }
     }
 

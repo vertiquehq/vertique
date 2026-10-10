@@ -425,7 +425,8 @@ Creates typed producer proxies and exposes raw sends.
 | `create(Class<T> producerInterface)` | Builds the typed proxy for a `@KafkaProducer` interface |
 | `send(String topic, String key, byte[] value, KafkaRecordHeaders headers)` | Raw send with pre-serialized bytes; the ambient durable context is captured and appended as context headers |
 | `send(String topic, String key, byte[] value, KafkaRecordHeaders headers, DurableMetadata context)` | The same, with an explicit durable context instead of the ambient one |
-| `sendForOutbox(String topic, String key, byte[] value, KafkaRecordHeaders headers, DurableMetadata context)` | Raw send with an explicit durable context, tagged with `KafkaSendOrigin.OUTBOX` for capture hooks |
+| `sendForOutbox(String topic, String key, byte[] value, KafkaRecordHeaders headers, DurableMetadata context, String entryId)` | Raw send for one outbox entry, with an explicit durable context, tagged with `KafkaSendOrigin.OUTBOX` for capture hooks. The entry id is handed to the hooks as `KafkaProducerSend.originRef()`; it is not put on the record. `entryId` must not be `null` |
+| `sendForOutbox(String topic, String key, byte[] value, KafkaRecordHeaders headers, DurableMetadata context)` | The same without an entry id: capture hooks see origin `OUTBOX` and a `null` `originRef` |
 | `sendForDlq(String topic, String key, byte[] value, KafkaRecordHeaders headers)` | The framework's dead-letter send, tagged with `KafkaSendOrigin.DLQ`. It forwards the given headers verbatim, including reserved `vertique-*` context headers, and adds no ambient context. The headers must contain `x-dlq-source-topic`, which the error handling always writes; without it the send fails with `IllegalArgumentException`. Not for application sends — use `send` |
 | `close()` | Closes the underlying producer |
 
@@ -882,11 +883,14 @@ See `dev.vertique:vertique-kafka-avro` for a complete reference implementation.
 — phase, then ascending priority, then `orderKey()` (the FQCN by default). Lower priority runs
 first.
 
-Sync observers are fire-and-forget. An `Exception`, `LinkageError` or `AssertionError` thrown by one
-is logged and swallowed; later interceptors still run and the record's outcome is unaffected. An
-`Exception` or `AssertionError` is logged at WARN each time. A `LinkageError` means the callback
-cannot run at all, so it is logged at ERROR once per interceptor class and callback, saying that the
-callback is unusable and its notifications are being lost; later occurrences are not logged.
+Sync observers are fire-and-forget. An `Exception`, `LinkageError`, `AssertionError` or
+`StackOverflowError` thrown by one is logged and swallowed; later interceptors still run and the
+record's outcome is unaffected. An `Exception`, `AssertionError` or `StackOverflowError` is logged
+at WARN each time, naming the interceptor class, the callback and the failure's class only; the
+failure itself, with its message, is logged at DEBUG. A `LinkageError` means the callback cannot run
+at all, so it is logged at ERROR at a limited rate per interceptor class and callback — the first
+time, then at most once every five minutes with the number of failures in between — saying that the
+callback is unusable and its notifications are being lost.
 
 | Callback | When |
 |---|---|
@@ -1056,30 +1060,54 @@ public void onRecordCompleted(KafkaConsumerCompletedEvent event, KafkaConsumerRe
 ### `KafkaProducerCaptureHook` (multibinding)
 
 Fires exactly once per send, through the shared wire funnel in `KafkaProducerFactory`, after
-`producer.send(record)` settles. Also `extends OrderedExtension` and observer-only.
+`producer.send(record)` settles. Also `extends OrderedExtension` and observer-only. An `Exception`,
+`LinkageError`, `AssertionError` or `StackOverflowError` thrown by `onSend` is logged and swallowed;
+later hooks still run and the send's result is unaffected. An `Exception`, `AssertionError` or
+`StackOverflowError` is logged at WARN each time, by class name, with the failure itself at DEBUG,
+and a `LinkageError` at ERROR at a limited rate per hook class — the first time, then at most once
+every five minutes — saying that the hook is unusable and its notifications are being lost.
 
-The framework calls `onSend(KafkaProducerSend send)`: one record carrying every column below plus
-`operation`, a `KafkaProducerOperation(producerType, producerName, method)` that is non-`null` only
-for `DIRECT_PRODUCER`. Its default delegates to the positional seven-argument `onSend` in the table,
-so a hook overrides whichever form it needs; new send details are added to the record, never as
-further positional parameters. Read type-level annotations from `operation.producerType()` — the
-`@KafkaProducer` interface the application injected — not from `method.getDeclaringClass()`, which
-is the super-interface when the send method is inherited. The protected
-`KafkaProducerFactory.sendWire`/`fireHooks` funnel carries the same `KafkaProducerOperation` in place
-of a bare `Method`; a subclass that still overrides an older signature fails to compile rather than
-silently no longer being called.
+The framework calls `onSend(KafkaProducerSend send)`. Override this form: new send details are added
+to the record as components, never as further positional parameters. Read type-level annotations
+from `operation.producerType()` — the `@KafkaProducer` interface the application injected — not from
+`method.getDeclaringClass()`, which is the super-interface when the send method is inherited.
 
-| Parameter | Notes |
+`KafkaProducerSend` components:
+
+| Component | Notes |
 |---|---|
 | `origin` | `KafkaSendOrigin` — `DIRECT_PRODUCER`, `OUTBOX`, `DLQ`, or `INTERNAL` |
 | `topic` | Target topic |
 | `key` | Record key, or `null` |
 | `value` | No-copy `PayloadSource` over the serialized wire bytes |
 | `headers` | The `KafkaRecordHeaders` of the record as sent, in wire order: the application headers, then the framework context headers. Repeated keys and binary values are kept; `headers.asMap()` gives a lossy text map |
-| `producerMethod` | The `@KafkaProducer` interface method; non-`null` only for `DIRECT_PRODUCER` |
+| `operation` | A `KafkaProducerOperation(producerType, producerName, method)`; non-`null` only for `DIRECT_PRODUCER`. `operation().method()` is how a hook reaches method-level annotations on the direct-producer path |
 | `result` | The settled `AsyncResult<RecordMetadata>` |
+| `originRef` | The outbox entry id, as a string, for an `OUTBOX` send made through the `sendForOutbox` form that takes one; `null` for every other send. A hook uses it to join the wire bytes to the outbox entry they belong to |
 
-`producerMethod` (or `operation().method()` in the event form) is how a hook reaches method-level annotations on the direct-producer path.
+`originRef` is not authenticated. Any code that holds the `KafkaProducerFactory` can call
+`sendForOutbox` with origin `OUTBOX` and an arbitrary entry id, so the reference alone does not
+prove that the relay sent the record. A consumer of the hook that joins on it must also match a
+relay notification (`OutboxPublishObserver`) for the same entry id and destination.
+
+`originRef` is the last component. The seven-argument `KafkaProducerSend` constructor without it
+remains and gives a `null` `originRef`.
+
+**Deprecated: the positional `onSend`.** The seven-argument form
+`onSend(origin, topic, key, value, headers, producerMethod, result)` is `@Deprecated`. It cannot
+carry `originRef` or any component added later; `onSend(KafkaProducerSend)` replaces it. It keeps
+working: the default `onSend(KafkaProducerSend)` still delegates to it, passing
+`operation().method()` as `producerMethod`, so a hook that overrides only the positional form is
+still called for every send. Never make the positional form delegate back to the event form, which
+would recurse.
+
+The protected `KafkaProducerFactory.sendWire`/`fireHooks` funnel carries the `KafkaProducerOperation`
+and, in the overloads with a trailing `originRef` parameter, the origin reference. A send without an
+origin reference goes through the `sendWire` form without that parameter, which delegates to the one
+with it; a send with a reference calls the form with the parameter directly. `fireHooks` follows
+the same rule. A subclass that intercepts every send overrides both, or only the form with
+`originRef`. A subclass that overrides only the older `sendWire`/`fireHooks` forms, the ones without
+`originRef`, does not see sends that carry an origin reference.
 
 `KafkaProducerFactory.create(Class)` also calls `validateProducer(Class<?> producerInterface)` on every
 hook, once, before it builds the proxy. Unlike `onSend`, it may throw: the exception propagates out of

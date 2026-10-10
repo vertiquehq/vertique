@@ -152,7 +152,9 @@ class DefaultOutboxService implements OutboxService {
      * ({@link DurableMetadataHeaderCodec#RESERVED_PREFIX}).
      *
      * <p>The returned exception names the offending key and never the header value, which may be
-     * sensitive.
+     * sensitive. The key is shown through {@link OutboxHeaderKeys#forDisplay(String)}: control
+     * characters replaced and cut to a maximum length, so a caller-supplied key can neither forge a
+     * log line nor flood one.
      *
      * @param headers the entry's application headers; {@code null} means no headers
      * @return the exception to fail {@code publish} with, or {@code null} when every header can be
@@ -168,10 +170,11 @@ class DefaultOutboxService implements OutboxService {
                 return new IllegalArgumentException("Outbox entry header key must not be null");
             }
             if (header.getValue() == null) {
-                return new IllegalArgumentException("Outbox entry header '" + key + "' must not have a null value");
+                return new IllegalArgumentException(
+                        "Outbox entry header '" + OutboxHeaderKeys.forDisplay(key) + "' must not have a null value");
             }
             if (DurableMetadataHeaderCodec.isReservedHeader(key)) {
-                return new IllegalArgumentException("Outbox entry header '" + key
+                return new IllegalArgumentException("Outbox entry header '" + OutboxHeaderKeys.forDisplay(key)
                         + "' uses the reserved framework prefix '" + DurableMetadataHeaderCodec.RESERVED_PREFIX + "'");
             }
         }

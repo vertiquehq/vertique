@@ -3,6 +3,7 @@
 
 package dev.vertique.kafka;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -11,6 +12,10 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import dev.vertique.config.parser.DefaultConfigMapper;
 import dev.vertique.config.parser.DefaultConfigParser;
 import dev.vertique.context.DurableContextPropagator;
@@ -45,6 +50,7 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
 
 /**
  * Unit tests for {@link KafkaProducerCaptureHook} and the origin-threading contract in
@@ -180,6 +186,31 @@ class KafkaProducerCaptureHookTest {
         }
     }
 
+    /** Hook that always throws the {@link Error} it was given; sorts ahead of {@link SecondaryRecordingHook}. */
+    static final class ErrorThrowingHook implements KafkaProducerCaptureHook {
+
+        private final Error thrown;
+
+        int callCount;
+
+        ErrorThrowingHook(Error thrown) {
+            this.thrown = thrown;
+        }
+
+        @Override
+        public void onSend(
+                KafkaSendOrigin origin,
+                String topic,
+                String key,
+                PayloadSource value,
+                KafkaRecordHeaders headers,
+                Method producerMethod,
+                AsyncResult<RecordMetadata> result) {
+            callCount++;
+            throw thrown;
+        }
+    }
+
     // --- Vert.x lifecycle ---
 
     static Vertx vertx;
@@ -198,13 +229,17 @@ class KafkaProducerCaptureHookTest {
 
     private static OriginCapturingFactory capturingFactory(KafkaProducerCaptureHook... hooks) {
         return new OriginCapturingFactory(
-                vertx,
-                KafkaConfig.fromConfig(
-                        new JsonObject().put("kafka", new JsonObject().put("bootstrap.servers", "localhost:9092")),
-                        new DefaultConfigParser(DefaultConfigMapper.lenient())),
-                KafkaTestSupport.noOpPropagator(),
-                new KafkaSerdeRegistry(Set.of(new TestJsonSerdeProvider())),
-                Set.of(hooks));
+                vertx, kafkaConfig(), KafkaTestSupport.noOpPropagator(), serdeRegistry(), Set.of(hooks));
+    }
+
+    private static KafkaConfig kafkaConfig() {
+        return KafkaConfig.fromConfig(
+                new JsonObject().put("kafka", new JsonObject().put("bootstrap.servers", "localhost:9092")),
+                new DefaultConfigParser(DefaultConfigMapper.lenient()));
+    }
+
+    private static KafkaSerdeRegistry serdeRegistry() {
+        return new KafkaSerdeRegistry(Set.of(new TestJsonSerdeProvider()));
     }
 
     // --- KafkaProducerCaptureHook contract ---
@@ -459,6 +494,97 @@ class KafkaProducerCaptureHookTest {
             assertEquals(1, secondary.seenOrigins.size(), "secondary hook must run even after throwing hook");
             assertEquals(KafkaSendOrigin.DLQ, secondary.seenOrigins.get(0));
         }
+
+        @Test
+        @DisplayName("a hook throwing an AssertionError changes neither the send result nor the later hooks")
+        void assertionErrorHookIsIsolated() {
+            assertErrorHookIsolated(new AssertionError("hook assertion"));
+        }
+
+        @Test
+        @DisplayName("a hook throwing a LinkageError changes neither the send result nor the later hooks")
+        void linkageErrorHookIsIsolated() {
+            assertErrorHookIsolated(new NoSuchMethodError("hook linkage"));
+        }
+
+        @Test
+        @DisplayName("a hook throwing a StackOverflowError changes neither the send result nor the later hooks")
+        void stackOverflowErrorHookIsIsolated() {
+            assertErrorHookIsolated(new StackOverflowError("hook recursed too deep"));
+        }
+
+        @Test
+        @DisplayName("a LinkageError is logged at ERROR once per hook within the report interval, an AssertionError at"
+                + " WARN for every send")
+        void linkageErrorIsReportedOncePerIntervalAndAssertionErrorEveryTime() {
+            Logger factoryLogger = (Logger) LoggerFactory.getLogger(KafkaProducerFactory.class);
+            ListAppender<ILoggingEvent> appender = new ListAppender<>();
+            appender.setContext(factoryLogger.getLoggerContext());
+            appender.start();
+            factoryLogger.addAppender(appender);
+            try {
+                ErrorThrowingHook unusable = new ErrorThrowingHook(new NoSuchMethodError("hook linkage"));
+                KafkaProducerCaptureHook asserting = new KafkaProducerCaptureHook() {
+                    @Override
+                    public void onSend(KafkaProducerSend send) {
+                        throw new AssertionError("hook assertion");
+                    }
+                };
+                SecondaryRecordingHook secondary = new SecondaryRecordingHook();
+                OriginCapturingFactory factory = capturingFactory(unusable, asserting, secondary);
+
+                factory.sendForDlq("dlq", "k", new byte[] {1}, DLQ_HEADERS);
+                factory.sendForDlq("dlq", "k", new byte[] {1}, DLQ_HEADERS);
+
+                assertEquals(2, unusable.callCount, "the unusable hook is still called for every send");
+                assertEquals(2, secondary.seenOrigins.size(), "the later hook must see both sends");
+                List<ILoggingEvent> errors = appender.list.stream()
+                        .filter(e -> e.getLevel() == Level.ERROR)
+                        .toList();
+                assertEquals(
+                        1,
+                        errors.size(),
+                        "the unusable hook must be reported once within the report interval, not per send");
+                String report = errors.get(0).getFormattedMessage();
+                assertTrue(report.contains("is unusable and its notifications are being lost"), report);
+                assertTrue(report.contains(ErrorThrowingHook.class.getName()), report);
+                assertEquals(
+                        2,
+                        appender.list.stream()
+                                .filter(e -> e.getLevel() == Level.WARN)
+                                .count(),
+                        "an AssertionError must be logged for every send");
+            } finally {
+                factoryLogger.detachAppender(appender);
+                appender.stop();
+            }
+        }
+
+        /**
+         * Sends once with no hook and once with a hook throwing {@code thrown} ahead of a recording hook, and
+         * asserts that the throwing hook was reached, that the send's future has the result it has without the
+         * hook, and that the recording hook still ran.
+         *
+         * @param thrown the {@link Error} the first hook throws
+         */
+        private void assertErrorHookIsolated(Error thrown) {
+            Future<RecordMetadata> baseline = capturingFactory().sendForDlq("dlq", "k", new byte[] {1}, DLQ_HEADERS);
+            ErrorThrowingHook throwing = new ErrorThrowingHook(thrown);
+            SecondaryRecordingHook secondary = new SecondaryRecordingHook();
+            OriginCapturingFactory factory = capturingFactory(throwing, secondary);
+
+            Future<RecordMetadata> result = assertDoesNotThrow(
+                    () -> factory.sendForDlq("dlq", "k", new byte[] {1}, DLQ_HEADERS),
+                    "the hook's " + thrown.getClass().getSimpleName() + " must not escape the send");
+
+            assertEquals(1, throwing.callCount, "the throwing hook must have been reached");
+            assertEquals(baseline.succeeded(), result.succeeded(), "the send result must be the one without the hook");
+            assertEquals(baseline.result(), result.result(), "the send result must be the one without the hook");
+            assertEquals(
+                    List.of(KafkaSendOrigin.DLQ),
+                    secondary.seenOrigins,
+                    "the hook after the throwing one must still run");
+        }
     }
 
     // --- Producer operation (issue #638) ---
@@ -515,6 +641,194 @@ class KafkaProducerCaptureHookTest {
         }
     }
 
+    // --- Origin reference ---
+
+    @Nested
+    @DisplayName("origin reference on the send")
+    class OriginReference {
+
+        private static final dev.vertique.core.context.DurableMetadata NO_CONTEXT =
+                dev.vertique.core.context.DurableMetadata.empty();
+
+        @Test
+        @DisplayName("sendForOutbox with an entry id: the event form sees OUTBOX and the entry id as originRef")
+        void outboxSendWithEntryIdCarriesOriginRef() {
+            OperationRecordingHook hook = new OperationRecordingHook();
+            OriginCapturingFactory factory = capturingFactory(hook);
+
+            Future<RecordMetadata> sent = factory.sendForOutbox(
+                    "outbox.topic", "k", new byte[] {1, 2}, KafkaRecordHeaders.empty(), NO_CONTEXT, "4711");
+
+            assertTrue(sent.succeeded());
+            assertEquals(1, hook.sends.size(), "the hook is called once");
+            KafkaProducerSend send = hook.sends.get(0);
+            assertEquals(KafkaSendOrigin.OUTBOX, send.origin());
+            assertEquals("4711", send.originRef());
+            assertEquals("outbox.topic", send.topic());
+            assertEquals("k", send.key());
+            assertNull(send.operation(), "an outbox send has no producer operation");
+            assertEquals(List.of("4711"), factory.capturedOriginRefs, "the entry id reaches the wire funnel");
+        }
+
+        @Test
+        @DisplayName("sendForOutbox with an entry id: a hook overriding only the positional form still fires")
+        void positionalFormStillFiresForOutboxSendWithEntryId() {
+            RecordingHook hook = new RecordingHook();
+
+            capturingFactory(hook)
+                    .sendForOutbox("outbox.topic", "k", new byte[] {1}, KafkaRecordHeaders.empty(), NO_CONTEXT, "4711");
+
+            assertEquals(1, hook.captures.size());
+            assertEquals(KafkaSendOrigin.OUTBOX, hook.captures.get(0).origin());
+            assertEquals("outbox.topic", hook.captures.get(0).topic());
+            assertNull(hook.captures.get(0).producerMethod());
+        }
+
+        @Test
+        @DisplayName("sendForOutbox with an entry id rejects a reserved-prefix header like the form without one")
+        void outboxSendWithEntryIdRejectsReservedHeader() {
+            OperationRecordingHook hook = new OperationRecordingHook();
+            KafkaRecordHeaders reserved = KafkaRecordHeaders.of(Map.of("vertique-correlation", "x"));
+
+            Future<RecordMetadata> sent = capturingFactory(hook)
+                    .sendForOutbox("outbox.topic", "k", new byte[] {1}, reserved, NO_CONTEXT, "4711");
+
+            assertTrue(sent.failed(), "a reserved-prefix header fails the send");
+            assertTrue(sent.cause() instanceof IllegalArgumentException);
+            assertTrue(hook.sends.isEmpty(), "nothing was sent, so no hook is called");
+        }
+
+        @Test
+        @DisplayName("sendForOutbox without an entry id carries a null originRef")
+        void outboxSendWithoutEntryIdCarriesNoOriginRef() {
+            OperationRecordingHook hook = new OperationRecordingHook();
+
+            capturingFactory(hook)
+                    .sendForOutbox("outbox.topic", "k", new byte[] {1}, KafkaRecordHeaders.empty(), NO_CONTEXT);
+
+            assertEquals(1, hook.sends.size());
+            assertEquals(KafkaSendOrigin.OUTBOX, hook.sends.get(0).origin());
+            assertNull(hook.sends.get(0).originRef());
+        }
+
+        @Test
+        @DisplayName("internal, dead-letter and proxy sends carry a null originRef")
+        void otherOriginsCarryNoOriginRef() {
+            OperationRecordingHook hook = new OperationRecordingHook();
+            OriginCapturingFactory factory = capturingFactory(hook);
+
+            factory.send("t", "k", new byte[] {1}, KafkaRecordHeaders.empty());
+            factory.send("t", "k", new byte[] {1}, KafkaRecordHeaders.empty(), NO_CONTEXT);
+            factory.sendForDlq("dlq", "k", new byte[] {1}, DLQ_HEADERS);
+            factory.create(TestMsgProducer.class).publish("hello");
+
+            assertEquals(
+                    List.of(
+                            KafkaSendOrigin.INTERNAL,
+                            KafkaSendOrigin.INTERNAL,
+                            KafkaSendOrigin.DLQ,
+                            KafkaSendOrigin.DIRECT_PRODUCER),
+                    hook.sends.stream().map(KafkaProducerSend::origin).toList());
+            for (KafkaProducerSend send : hook.sends) {
+                assertNull(send.originRef(), "originRef must be null for origin " + send.origin());
+            }
+            assertTrue(factory.capturedOriginRefs.isEmpty(), "no send without a reference takes the reference path");
+        }
+
+        @Test
+        @DisplayName("the seven-argument KafkaProducerSend constructor gives a null originRef")
+        void sevenArgumentConstructorGivesNullOriginRef() {
+            KafkaProducerSend send = new KafkaProducerSend(
+                    KafkaSendOrigin.OUTBOX,
+                    "t",
+                    "k",
+                    dev.vertique.core.payload.PayloadSources.buffered(new byte[] {1}, null),
+                    KafkaRecordHeaders.empty(),
+                    null,
+                    Future.succeededFuture(null));
+
+            assertNull(send.originRef());
+        }
+    }
+
+    // --- The real wire funnel ---
+
+    @Nested
+    @DisplayName("the real wire funnel")
+    class RealWireFunnel {
+
+        private static final dev.vertique.core.context.DurableMetadata NO_CONTEXT =
+                dev.vertique.core.context.DurableMetadata.empty();
+
+        @Test
+        @DisplayName("a subclass overriding only the seven-argument fireHooks still sees a direct send")
+        void subclassOverridingOnlyTheOlderFireHooksSeesADirectSend() throws Exception {
+            List<String> intercepted = new CopyOnWriteArrayList<>();
+            OperationRecordingHook hook = new OperationRecordingHook();
+            KafkaProducerFactory factory =
+                    new KafkaProducerFactory(
+                            vertx, kafkaConfig(), KafkaTestSupport.noOpPropagator(), serdeRegistry(), Set.of(hook)) {
+                        @Override
+                        protected void fireHooks(
+                                KafkaSendOrigin origin,
+                                String topic,
+                                String key,
+                                byte[] value,
+                                KafkaRecordHeaders wire,
+                                KafkaProducerOperation operation,
+                                AsyncResult<RecordMetadata> ar) {
+                            intercepted.add(origin + ":" + topic);
+                            super.fireHooks(origin, topic, key, value, wire, operation, ar);
+                        }
+                    };
+            useMockProducer(factory);
+
+            Future<RecordMetadata> sent = factory.create(TestMsgProducer.class).publish("hello");
+
+            assertTrue(sent.succeeded(), "the send goes through the real wire funnel");
+            assertEquals(
+                    List.of("DIRECT_PRODUCER:hook.test.topic"),
+                    intercepted,
+                    "the overridden seven-argument fireHooks sees the send");
+            assertEquals(1, hook.sends.size(), "the hook is still called once");
+            assertNull(hook.sends.get(0).originRef());
+        }
+
+        @Test
+        @DisplayName("sendForOutbox with an entry id delivers originRef to an event-form hook through the real funnel")
+        void outboxSendDeliversOriginRefThroughTheRealFunnel() throws Exception {
+            OperationRecordingHook hook = new OperationRecordingHook();
+            KafkaProducerFactory factory = new KafkaProducerFactory(
+                    vertx, kafkaConfig(), KafkaTestSupport.noOpPropagator(), serdeRegistry(), Set.of(hook));
+            useMockProducer(factory);
+
+            Future<RecordMetadata> sent = factory.sendForOutbox(
+                    "outbox.topic", "k", new byte[] {1, 2}, KafkaRecordHeaders.empty(), NO_CONTEXT, "4711");
+
+            assertTrue(sent.succeeded(), "the send goes through the real wire funnel");
+            assertEquals(1, hook.sends.size(), "the hook is called once");
+            assertEquals(KafkaSendOrigin.OUTBOX, hook.sends.get(0).origin());
+            assertEquals("4711", hook.sends.get(0).originRef());
+            assertEquals("outbox.topic", hook.sends.get(0).topic());
+        }
+
+        /**
+         * Puts a mocked Vert.x producer in the factory's shared-producer slot, so the factory's own
+         * {@code sendWire} runs without a broker: every send succeeds at once.
+         */
+        @SuppressWarnings("unchecked")
+        private static void useMockProducer(KafkaProducerFactory factory) throws Exception {
+            io.vertx.kafka.client.producer.KafkaProducer<String, byte[]> producer =
+                    org.mockito.Mockito.mock(io.vertx.kafka.client.producer.KafkaProducer.class);
+            org.mockito.Mockito.when(producer.send(org.mockito.ArgumentMatchers.any()))
+                    .thenReturn(Future.succeededFuture(null));
+            org.mockito.Mockito.when(producer.close()).thenReturn(Future.succeededFuture());
+            java.lang.reflect.Field shared = KafkaProducerFactory.class.getDeclaredField("shared");
+            shared.setAccessible(true);
+            ((java.util.concurrent.atomic.AtomicReference<Object>) shared.get(factory)).set(producer);
+        }
+    }
+
     // --- Origin-capturing test double ---
 
     /**
@@ -527,6 +841,7 @@ class KafkaProducerCaptureHookTest {
 
         final List<KafkaSendOrigin> capturedOrigins = new CopyOnWriteArrayList<>();
         final List<Method> capturedMethods = new CopyOnWriteArrayList<>();
+        final List<String> capturedOriginRefs = new CopyOnWriteArrayList<>();
 
         OriginCapturingFactory(
                 Vertx vertx,
@@ -549,6 +864,22 @@ class KafkaProducerCaptureHookTest {
             capturedMethods.add(operation != null ? operation.method() : null);
             // Fire hooks synchronously with a succeeded result so hook tests can assert without async
             fireHooks(origin, topic, key, value, wire, operation, Future.succeededFuture(null));
+            return Future.succeededFuture(null);
+        }
+
+        @Override
+        protected Future<RecordMetadata> sendWire(
+                String topic,
+                String key,
+                byte[] value,
+                KafkaRecordHeaders wire,
+                KafkaSendOrigin origin,
+                KafkaProducerOperation operation,
+                String originRef) {
+            capturedOrigins.add(origin);
+            capturedMethods.add(operation != null ? operation.method() : null);
+            capturedOriginRefs.add(originRef);
+            fireHooks(origin, topic, key, value, wire, operation, originRef, Future.succeededFuture(null));
             return Future.succeededFuture(null);
         }
     }

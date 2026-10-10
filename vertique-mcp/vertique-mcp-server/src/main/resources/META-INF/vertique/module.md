@@ -278,7 +278,11 @@ per observer and never change the protocol or business outcome — including a `
 an observer's `open`, from an observer's `onTerminal`/`onCompleted` callback, or from a completion
 listener's `onCompleted`, which is isolated exactly like a `RuntimeException`: a deeply recursive
 application callback cannot abort the coordinator's construction or strand the completion behind a
-half-published terminal.
+half-published terminal. An `AssertionError` or a `LinkageError` from an observer's `open`, from any
+session callback, or from a completion listener is isolated the same way: an `AssertionError` is
+logged at WARN each time, by class name, and a `LinkageError` at ERROR at a limited rate per observer
+class and callback — the first time, then at most once every five minutes with the number of failures
+in between — saying that the callback is unusable and its notifications are being lost.
 
 **A disconnect or reset also runs the ordinary request-scoped cleanup.** Settlement is
 driven from the routing context's own end handler rather than from the response close/exception

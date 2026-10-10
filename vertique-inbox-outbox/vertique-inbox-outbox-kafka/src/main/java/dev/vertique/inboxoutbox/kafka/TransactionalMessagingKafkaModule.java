@@ -3,15 +3,10 @@
 
 package dev.vertique.inboxoutbox.kafka;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import dagger.Module;
 import dagger.Provides;
 import dagger.multibindings.IntoSet;
-import dagger.multibindings.Multibinds;
 import dev.vertique.inboxoutbox.OutboxDestinationHandler;
-import dev.vertique.kafka.producer.KafkaProducerFactory;
-import jakarta.inject.Singleton;
-import java.util.Set;
 
 /**
  * Dagger module that wires the Kafka adapter for transactional messaging.
@@ -20,12 +15,11 @@ import java.util.Set;
  * {@link OutboxDestinationHandler} multibinding so the outbox relay can deliver entries with
  * {@link dev.vertique.inboxoutbox.DestinationType#KAFKA} to Kafka topics.
  *
- * <p>Extension points via multibinding:
- * <ul>
- *   <li>{@code Set<KafkaOutboxCaptureHook>} — observe every outbox publish after serialization
- *       and result classification; observer-only, never affects the publish result. The
- *       {@code audit-kafka} adapter contributes one; applications may add more.</li>
- * </ul>
+ * <p>This module declares no extension point of its own. A publish attempt is observed at the
+ * relay through {@link dev.vertique.inboxoutbox.OutboxPublishObserver}, and the wire bytes of a send
+ * through {@link dev.vertique.kafka.producer.KafkaProducerCaptureHook}, which sees an outbox send
+ * with origin {@link dev.vertique.kafka.producer.KafkaSendOrigin#OUTBOX} and the entry id as the
+ * origin reference.
  *
  * <p>Include this module alongside {@code TransactionalMessagingPostgresqlModule} in your
  * Dagger component to activate Kafka delivery:
@@ -41,39 +35,12 @@ import java.util.Set;
 @Module
 public abstract class TransactionalMessagingKafkaModule {
 
-    // --- Multibindings ---
-
-    /**
-     * Declares the empty-by-default multibinding for outbox publish capture hooks.
-     * The {@code audit-kafka} adapter contributes one via {@code @IntoSet}; applications may
-     * add more. Observer-only — hooks never affect the publish result or delivery behavior.
-     *
-     * @return an empty set (elements contributed via {@code @IntoSet})
-     */
-    @Multibinds
-    abstract Set<KafkaOutboxCaptureHook> kafkaOutboxCaptureHooks();
-
     // --- Providers ---
 
     /**
-     * Provides the singleton {@link KafkaOutboxDestinationHandler}, injecting the full set of
-     * registered {@link KafkaOutboxCaptureHook} instances.
-     *
-     * @param producerFactory the shared Kafka producer factory
-     * @param objectMapper    the Jackson object mapper
-     * @param captureHooks    the set of outbox capture hooks; observer-only, sorted at construction
-     * @return the Kafka outbox destination handler
-     */
-    @Provides
-    @Singleton
-    static KafkaOutboxDestinationHandler kafkaOutboxDestinationHandler(
-            KafkaProducerFactory producerFactory, ObjectMapper objectMapper, Set<KafkaOutboxCaptureHook> captureHooks) {
-        return new KafkaOutboxDestinationHandler(producerFactory, objectMapper, captureHooks);
-    }
-
-    /**
      * Contributes the {@link KafkaOutboxDestinationHandler} into the
-     * {@link OutboxDestinationHandler} multibinding.
+     * {@link OutboxDestinationHandler} multibinding. The handler is a singleton built through its
+     * {@code @Inject} constructor.
      *
      * @param handler the Kafka outbox destination handler
      * @return the handler registered into the set

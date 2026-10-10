@@ -35,7 +35,8 @@ import lombok.extern.slf4j.Slf4j;
  * into {@link DelayedJob#metadata()} so context captured at publish time (FR-CTX-175) survives
  * the relay hop and is decoded by {@code DelayedJobPoller.dispatch} on the consume side
  * (FR-CTX-177). The envelope {@code headers} are application/transport-only and are not
- * forwarded to the job.
+ * forwarded to the job: no application header reaches it, neither in the job's payload nor in its
+ * metadata.
  *
  * <p>Error classification:
  * <ul>

@@ -21,9 +21,9 @@ import lombok.extern.slf4j.Slf4j;
  *
  * <p>All timestamp-with-timezone columns are read as {@link OffsetDateTime} and converted to
  * {@link Instant}. Nullable timestamps return {@code null}. The JSONB {@code headers} column is
- * converted from a {@link JsonObject} to an immutable {@code Map<String, String>}; a {@code null}
- * or empty headers value maps to {@link Map#of()}, and an entry whose value is JSON {@code null}
- * is dropped with a WARN. The JSONB {@code metadata} column is
+ * converted from a {@link JsonObject} to a {@code Map<String, String>} of which the
+ * {@link OutboxRecord} takes its unmodifiable copy; a {@code null} or empty headers value maps to
+ * an empty map, and an entry whose value is JSON {@code null} is dropped with a WARN. The JSONB {@code metadata} column is
  * deserialized via {@link OutboxMetadata#fromJson(JsonObject)}; a {@code null} column value
  * maps to {@link OutboxMetadata#empty()}.
  *
@@ -94,16 +94,19 @@ final class OutboxRecordMapper {
     }
 
     /**
-     * Converts a nullable JSONB headers object to an immutable {@code Map<String, String>}.
+     * Converts a nullable JSONB headers object to a {@code Map<String, String>}.
      *
      * <p>All non-null entry values are coerced to strings via {@link String#valueOf(Object)}. An
      * entry whose stored value is JSON {@code null} has no value to deliver: it is left out of the
      * map — it does not become the text {@code "null"} — and one WARN names the entry id and the
-     * header key. Returns {@link Map#of()} when {@code json} is {@code null} or empty.
+     * header key, shown through {@link OutboxHeaderKeys#forDisplay(String)}. Returns {@link Map#of()} when {@code json} is {@code null} or empty.
+     *
+     * <p>The returned map is handed straight to the {@link OutboxRecord} constructor, which takes the
+     * one unmodifiable copy; this method does not copy it a second time.
      *
      * @param entryId the outbox entry id of the row, used only in the WARN
      * @param json    the JSONB headers value from the database, or {@code null}
-     * @return an immutable map of header name to header value
+     * @return a map of header name to header value, owned by the caller
      */
     private static Map<String, String> toHeadersMap(Long entryId, JsonObject json) {
         if (json == null || json.isEmpty()) {
@@ -115,12 +118,12 @@ final class OutboxRecordMapper {
                 log.warn(
                         "Outbox entry {} has a stored null value for header '{}'; the header is dropped",
                         entryId,
-                        entry.getKey());
+                        OutboxHeaderKeys.forDisplay(entry.getKey()));
             } else {
                 map.put(entry.getKey(), String.valueOf(entry.getValue()));
             }
         });
-        return Map.copyOf(map);
+        return map;
     }
 
     /**

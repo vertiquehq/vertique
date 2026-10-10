@@ -6,10 +6,13 @@ package dev.vertique.inboxoutbox;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.vertx.core.json.JsonObject;
 import java.time.Instant;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -162,6 +165,64 @@ class OutboxEntryTest {
         void defaultHeadersIsNotNull() {
             OutboxEntry entry = minimalEntry().build();
             assertNotNull(entry.headers());
+        }
+    }
+
+    @Nested
+    @DisplayName("header copy")
+    class HeaderCopy {
+
+        @Test
+        @DisplayName("mutating the source map after build does not change the entry")
+        void sourceMapMutationDoesNotReachEntry() {
+            Map<String, String> source = new LinkedHashMap<>();
+            source.put("x-tenant", "acme");
+
+            OutboxEntry entry = minimalEntry().headers(source).build();
+            source.put("x-late", "added");
+            source.remove("x-tenant");
+
+            assertEquals(Map.of("x-tenant", "acme"), entry.headers());
+        }
+
+        @Test
+        @DisplayName("the accessor's map rejects mutation")
+        void headersMapIsUnmodifiable() {
+            Map<String, String> source = new LinkedHashMap<>();
+            source.put("x-tenant", "acme");
+            OutboxEntry entry = minimalEntry().headers(source).build();
+
+            assertThrows(
+                    UnsupportedOperationException.class, () -> entry.headers().put("x-new", "value"));
+            assertThrows(
+                    UnsupportedOperationException.class, () -> entry.headers().remove("x-tenant"));
+        }
+
+        @Test
+        @DisplayName("the copy keeps the iteration order of the given map")
+        void copyKeepsIterationOrder() {
+            Map<String, String> source = new LinkedHashMap<>();
+            source.put("x-third", "3");
+            source.put("x-first", "1");
+            source.put("x-second", "2");
+
+            OutboxEntry entry = minimalEntry().headers(source).build();
+
+            assertEquals(
+                    List.of("x-third", "x-first", "x-second"),
+                    List.copyOf(entry.headers().keySet()));
+        }
+
+        @Test
+        @DisplayName("a null key or value is carried, so publish can reject it by name")
+        void copyCarriesNullKeysAndValues() {
+            Map<String, String> source = new LinkedHashMap<>();
+            source.put("x-null-value", null);
+            source.put(null, "value");
+
+            OutboxEntry entry = minimalEntry().headers(source).build();
+
+            assertEquals(source, entry.headers());
         }
     }
 

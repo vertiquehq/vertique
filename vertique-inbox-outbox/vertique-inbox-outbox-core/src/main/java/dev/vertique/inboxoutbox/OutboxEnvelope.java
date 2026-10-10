@@ -27,7 +27,10 @@ import java.util.Map;
  * @param destination   specific destination address within the destination type
  * @param payload       raw payload read from JSONB storage; use {@link PayloadCodec} to decode
  * @param headers       application/transport headers only (no framework keys); durable propagation
- *                      context and delivery control live in {@link #metadata()}
+ *                      context and delivery control live in {@link #metadata()}. Text only, unique
+ *                      keys, no ordering guarantee once stored. The envelope holds an unmodifiable
+ *                      copy taken at construction; {@code null} means none and reads back as an
+ *                      empty map
  * @param metadata      structured metadata document holding the durable propagation context
  *                      ({@code context}) and delivery control ({@code delivery}); never {@code null}
  * @param scheduledAt   optional intended delivery time specified by the producer
@@ -45,4 +48,15 @@ public record OutboxEnvelope(
         OutboxMetadata metadata,
         Instant scheduledAt,
         int attempt,
-        Instant createdAt) {}
+        Instant createdAt) {
+
+    /**
+     * Takes an unmodifiable copy of {@code headers}, so a later change to the given map does not
+     * reach the envelope and the map {@link #headers()} returns rejects mutation.
+     *
+     * @param headers the application headers; may be {@code null} (treated as empty)
+     */
+    public OutboxEnvelope {
+        headers = OutboxEntry.unmodifiableCopy(headers);
+    }
+}
