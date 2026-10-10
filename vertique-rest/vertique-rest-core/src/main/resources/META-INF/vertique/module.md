@@ -187,7 +187,10 @@ effect on the event. `RestRequestCompletionEmitter` holds the state in its own e
 emits exactly once whether or not `RequestContextLifecycle` is mounted. A sibling framework module
 records a post-handoff wire failure through `RequestCompletionRecorder.recordWireFailure` (first
 writer wins); the emitter still consults a failed response end-handler result when no marker was
-recorded, including the documented late-`end()` carve-out.
+recorded, including the documented late-`end()` carve-out. The JAX-RS route registrar reads the
+recorded operation back through `RequestCompletionRecorder.recordedOperation`, so a route's
+error-body decision follows the route that matched, not the order in which overlapping routes were
+registered.
 
 Two deliberate properties:
 
