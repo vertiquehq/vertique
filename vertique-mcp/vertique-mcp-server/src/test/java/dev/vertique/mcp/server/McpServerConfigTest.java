@@ -17,6 +17,7 @@ import dev.vertique.rest.core.security.RouteAuthHandler;
 import io.vertx.core.Handler;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.RoutingContext;
+import java.util.HashSet;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
@@ -29,6 +30,7 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 /**
  * Verifies the stable, operator-visible bounds of {@link McpServerConfig}.
@@ -242,7 +244,7 @@ class McpServerConfigTest {
         }
     }
 
-    /** Pins the allowed-origin set, which must contain only non-blank exact origins. */
+    /** Pins the allowed-origin set, which must contain only exact serialized origins. */
     @Nested
     @DisplayName("allowed origins")
     class AllowedOrigins {
@@ -257,6 +259,77 @@ class McpServerConfigTest {
                             .allowedOrigins(Set.of("https://example.test", "https://other.test"))
                             .build()))
                     .doesNotThrowAnyException();
+        }
+
+        @ParameterizedTest(name = "accepts {0}")
+        @ValueSource(
+                strings = {
+                    "https://app.example.com",
+                    "http://localhost:8080",
+                    "http://127.0.0.1:3000",
+                    "https://localhost:8443",
+                    "http://[::1]:8080",
+                    "https://my_app-1.example.co.uk:65535",
+                    "http://example.com:443",
+                    "https://example.com:80",
+                    "app://localhost"
+                })
+        @DisplayName("accepts an exact serialized origin")
+        void shouldAcceptSerializedOrigin(String origin) {
+            assertThatCode(() -> validator.validate(
+                            enabled().toBuilder().allowedOrigins(Set.of(origin)).build()))
+                    .doesNotThrowAnyException();
+        }
+
+        @ParameterizedTest(name = "rejects [{0}]")
+        @ValueSource(
+                strings = {
+                    "https://app.example.com/",
+                    "https://app.example.com/path",
+                    "https://app.example.com?x=1",
+                    "https://app.example.com#frag",
+                    "https://user@app.example.com",
+                    "https://user:pw@app.example.com",
+                    "*",
+                    "https://*.example.com",
+                    "app.example.com",
+                    "//app.example.com",
+                    "https://",
+                    "https://:8080",
+                    "https://app.example.com:",
+                    "https://app.example.com:0",
+                    "https://app.example.com:65536",
+                    "https://app.example.com:08080",
+                    "https://app.example.com:8a",
+                    "https://app.example.com:443",
+                    "http://app.example.com:80",
+                    "https://App.Example.com",
+                    "HTTPS://app.example.com",
+                    "https://app.example.com ",
+                    "https://app example.com",
+                    "null"
+                })
+        @DisplayName("rejects an entry that is not an allowlistable serialized origin, naming the entry")
+        void shouldRejectNonSerializedOrigin(String origin) {
+            assertThatThrownBy(() -> validator.validate(enabled().toBuilder()
+                            .allowedOrigins(Set.of("https://good.example.com", origin))
+                            .build()))
+                    .isInstanceOf(ConfigurationException.class)
+                    .hasMessageContaining("mcp.allowedOrigins")
+                    .hasMessageContaining("'" + origin + "'")
+                    .hasMessageContaining("scheme://host[:port]");
+        }
+
+        @Test
+        @DisplayName("rejects a null origin entry")
+        void shouldRejectNullOrigin() {
+            Set<String> origins = new HashSet<>();
+            origins.add(null);
+
+            assertThatThrownBy(() -> validator.validate(
+                            enabled().toBuilder().allowedOrigins(origins).build()))
+                    .isInstanceOf(ConfigurationException.class)
+                    .hasMessageContaining("mcp.allowedOrigins");
         }
 
         @Test

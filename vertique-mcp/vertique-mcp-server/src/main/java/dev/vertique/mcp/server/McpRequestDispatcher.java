@@ -56,6 +56,8 @@ import dev.vertique.resilience.exception.ResilienceUnavailableException;
 import dev.vertique.rest.core.config.HttpConfig;
 import dev.vertique.rest.core.events.RequestCompletionRecorder;
 import dev.vertique.rest.core.middleware.RequestContextLifecycle;
+import dev.vertique.rest.core.request.AcceptNegotiator;
+import dev.vertique.rest.core.request.MediaType;
 import dev.vertique.rest.core.security.SecurityRuntime;
 import dev.vertique.security.SecurityContext;
 import dev.vertique.security.SecurityContextSnapshot;
@@ -147,8 +149,8 @@ final class McpRequestDispatcher {
     private static final String SERVER_INFO_META_KEY = "io.modelcontextprotocol/serverInfo";
     private static final String JSON_CONTENT_TYPE = "application/json";
     private static final String EVENT_STREAM_CONTENT_TYPE = "text/event-stream";
-    private static final String APPLICATION_WILDCARD_RANGE = "application/*";
-    private static final String WILDCARD_RANGE = "*/*";
+    private static final MediaType JSON_MEDIA_TYPE = MediaType.parse(JSON_CONTENT_TYPE);
+    private static final MediaType EVENT_STREAM_MEDIA_TYPE = MediaType.parse(EVENT_STREAM_CONTENT_TYPE);
     private static final byte[] SSE_PREFIX = "event: message\ndata: ".getBytes(StandardCharsets.UTF_8);
     private static final byte[] SSE_SUFFIX = "\n\n".getBytes(StandardCharsets.UTF_8);
     private static final int SSE_FRAME_OVERHEAD = SSE_PREFIX.length + SSE_SUFFIX.length;
@@ -958,12 +960,13 @@ final class McpRequestDispatcher {
 
     /**
      * Enforces the present-only {@code Accept} admission check: an absent header is admitted, and a
-     * present one is admitted only when at least one comma-separated media range matches
-     * {@code application/json}, {@code text/event-stream}, {@code application/*}, or {@code *&#47;*}
-     * (case-insensitive) <em>and</em> is not explicitly rejected with {@code q=0}. Per RFC 7231 a
-     * media-range with a quality value of zero is not acceptable, so such a range does not admit its
-     * media type; if every matching range carries {@code q=0} and no other range admits, the request
-     * is HTTP 406. This implements only the {@code q=0} exclusion, not full q-value preference ranking.
+     * present one is admitted only when it makes {@code application/json} or {@code text/event-stream}
+     * acceptable. Each type is judged by {@link AcceptNegotiator#effectiveQuality(List, MediaType)}
+     * over the quote-aware shared header parser: the most specific compatible entry decides, so
+     * {@code application/json}, {@code application/*}, {@code text/*} and {@code *&#47;*} can admit,
+     * while {@code q=0} and a malformed entry (an unterminated quoted string, an invalid {@code q})
+     * never do. If neither type is acceptable, including a blank header, the request is HTTP 406. This
+     * implements only the {@code q=0} exclusion, not full q-value preference ranking.
      *
      * @param context the request whose {@code Accept} header is inspected
      * @return {@code true} when the request may proceed, {@code false} when it is HTTP 406
@@ -973,54 +976,9 @@ final class McpRequestDispatcher {
         if (accept == null) {
             return true;
         }
-        for (String range : accept.split(",")) {
-            String mediaRange = mediaTypeOf(range);
-            if ((mediaRange.equalsIgnoreCase(JSON_CONTENT_TYPE)
-                            || mediaRange.equalsIgnoreCase(EVENT_STREAM_CONTENT_TYPE)
-                            || mediaRange.equalsIgnoreCase(APPLICATION_WILDCARD_RANGE)
-                            || mediaRange.equals(WILDCARD_RANGE))
-                    && !hasZeroQuality(range)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    /**
-     * Reports whether an {@code Accept} range explicitly rejects its media type with a zero quality
-     * value ({@code q=0}, {@code q=0.0}, {@code q=0.000}, …). The {@code q} parameter name is
-     * matched case-insensitively and surrounding whitespace is tolerated. A range with no {@code q}
-     * parameter, or a {@code q} greater than zero, is not zero-quality; a {@code q} token that cannot
-     * be parsed as a number is left permissive (treated as non-zero) rather than over-engineered into
-     * full q-value handling.
-     *
-     * @param range one comma-separated {@code Accept} range, possibly carrying parameters
-     * @return {@code true} when the range carries a numerically-zero {@code q} parameter
-     */
-    private static boolean hasZeroQuality(String range) {
-        int semicolon = range.indexOf(';');
-        if (semicolon < 0) {
-            return false;
-        }
-        for (String parameter : range.substring(semicolon + 1).split(";")) {
-            int equals = parameter.indexOf('=');
-            if (equals < 0) {
-                continue;
-            }
-            String name = parameter.substring(0, equals).trim();
-            if (!"q".equalsIgnoreCase(name)) {
-                continue;
-            }
-            String value = parameter.substring(equals + 1).trim();
-            try {
-                return Double.parseDouble(value) == 0.0;
-            } catch (NumberFormatException unparseable) {
-                // An unparseable q token is left permissive rather than over-engineering full RFC
-                // q-value handling; only a cleanly numerically-zero q rejects the media type.
-                return false;
-            }
-        }
-        return false;
+        List<MediaType> ranges = AcceptNegotiator.parseAcceptHeader(accept);
+        return AcceptNegotiator.effectiveQuality(ranges, JSON_MEDIA_TYPE) > 0.0
+                || AcceptNegotiator.effectiveQuality(ranges, EVENT_STREAM_MEDIA_TYPE) > 0.0;
     }
 
     /**

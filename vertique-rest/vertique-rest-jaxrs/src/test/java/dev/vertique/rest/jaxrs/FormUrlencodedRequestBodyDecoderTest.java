@@ -54,6 +54,18 @@ class FormUrlencodedRequestBodyDecoderTest {
         assertFalse(decoder.canDecode(TestDto.class, null));
     }
 
+    @Test
+    @DisplayName("Should accept an upper-case form content type under a Turkish default locale")
+    void shouldAcceptUpperCaseFormUrlencodedUnderTurkishLocale() {
+        java.util.Locale previous = java.util.Locale.getDefault();
+        java.util.Locale.setDefault(java.util.Locale.forLanguageTag("tr"));
+        try {
+            assertTrue(decoder.canDecode(TestDto.class, "APPLICATION/X-WWW-FORM-URLENCODED"));
+        } finally {
+            java.util.Locale.setDefault(previous);
+        }
+    }
+
     // --- decode ---
 
     @Test

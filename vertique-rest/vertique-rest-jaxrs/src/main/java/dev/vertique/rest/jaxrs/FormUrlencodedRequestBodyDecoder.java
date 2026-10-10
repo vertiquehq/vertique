@@ -8,6 +8,7 @@ import dev.vertique.rest.core.request.RequestValue;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.RoutingContext;
+import java.util.Locale;
 
 /**
  * {@link RequestBodyDecoder} that handles {@code application/x-www-form-urlencoded} request bodies,
@@ -38,7 +39,8 @@ class FormUrlencodedRequestBodyDecoder implements RequestBodyDecoder {
      */
     @Override
     public boolean canDecode(Class<?> targetType, String contentType) {
-        if (contentType == null || !contentType.toLowerCase().startsWith("application/x-www-form-urlencoded")) {
+        if (contentType == null
+                || !contentType.toLowerCase(Locale.ROOT).startsWith("application/x-www-form-urlencoded")) {
             return false;
         }
         return targetType != String.class

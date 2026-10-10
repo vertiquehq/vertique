@@ -508,19 +508,94 @@ arbitrary object serialized by the SSE encoder, not a pre-rendered string.
 `BufferOverflowPolicy.FAIL` fails the `send(...)` future when the buffer is full;
 `DROP_OLDEST` evicts the oldest buffered event instead.
 
-### `MediaType` and `AcceptNegotiator`
+### `HeaderElement`, `MediaType` and `AcceptNegotiator`
+
+`HeaderElement` is the shared, typed parser for comma-separated header values of the shape
+`value *( ; parameter )` with an optional `q` weight — `Accept`, `Accept-Language` and
+`Accept-Encoding` all share it. `HeaderElement.parseList(String)` returns an immutable
+`List<HeaderElement>` in header order; `HeaderElement.parse(String)` reads one element, treating a
+comma as an ordinary character, and returns `null` for blank or malformed input. Each element
+carries `value` (the token before the first `;`, trimmed), `parameters` (lowercase names, header
+order, immutable, `q` excluded, last duplicate wins) and `quality` (`double` in [0, 1], default
+`1.0`). Neither method throws.
+
+Parsing follows RFC 9110 and applies the **`Accept`-style** rules below. `Content-Type` is read by
+`MediaType.parse`, which is more lenient about `q` only — see the `MediaType` paragraph below.
+
+- Elements split on `,` and parameters on `;` only **outside** double-quoted strings. Inside a
+  quoted string a backslash escapes the next character, and a quoted parameter value is returned
+  unquoted and unescaped (`profile="a,b"` yields `a,b`). Outside quotes a backslash is literal.
+- A **malformed element is skipped**, never read leniently, so it cannot make anything
+  acceptable: an unterminated quoted string (which also swallows the rest of the header), characters
+  after a closing quote, a quote inside a parameter name, an empty value, or an invalid `q`.
+- `q` must be a valid qvalue: `0`, `1`, `0.xxx` or `1.000` (at most three decimals). A quoted `q`,
+  an unparsable `q`, a negative value, a value above `1` and a repeated `q` are malformed; none is
+  clamped or defaulted to `1.0`.
+- A parameter without `=` or with an empty name is ignored. Empty elements (`a,,b`, a trailing
+  comma) and empty parameters are skipped.
+- At most the first `HeaderElement.MAX_ELEMENTS` (50) non-empty elements are considered, counting
+  malformed ones; later elements are **not parsed** and **parsing stops** once they have been found,
+  so a megabyte of commas costs one pass and no per-comma allocation. `HeaderElement.parseList` does
+  not report that more elements followed; `AcceptNegotiator.negotiate` counts a non-empty element past
+  the cap as a malformed entry (see below), so a long run of ignorable entries cannot push a malformed
+  one out of sight.
+- An element with more than `HeaderElement.MAX_PARAMETERS` (32) non-empty parameters is
+  **malformed**, not truncated: extra parameters are never silently ignored. Scanning stops as soon as
+  the cap is exceeded.
+
+Two static helpers expose the same tokenizer for header grammars that are not
+`value *( ; parameter )` — `Cache-Control` directives, or the parameters after the `<uri>` of a
+`Link` value — so every parser here splits and unquotes identically:
+
+- `HeaderElement.splitOutsideQuotes(String text, char delimiter)` splits on `delimiter` only outside
+  double-quoted strings, honoring backslash escapes inside them. Segments are untrimmed and empty
+  segments are kept. It returns `null` when a quoted string is unterminated — **callers must check for
+  `null`** and treat it as malformed, never as "no segments"; `delimiter` must not be `"` or `\`.
+- `HeaderElement.unquote(String value)` returns a value that does not start with `"` unchanged, and
+  otherwise the content of one complete quoted string with its escapes resolved. It returns `null`
+  when the closing quote is missing (including a trailing backslash or a final escaped quote) or
+  characters follow it; callers must check for `null`.
 
 `MediaType` is an immutable RFC 9110 media type — type, subtype, parameters (excluding `q`), and
-quality factor, all lowercased. `MediaType.parse(String)` (aliased as `valueOf`) returns `null` for
-`null`, blank, or malformed input rather than throwing. `isCompatible(MediaType)` is wildcard-aware
+quality factor, with type and subtype lowercased using `Locale.ROOT`, so the result does not depend on
+the JVM's default locale (`IMAGE/PNG` is `image/png` under a Turkish default locale too).
+`MediaType.parse(String)` (aliased as `valueOf`) reads one
+element **the way a `Content-Type` is read**, and returns `null` for `null`, blank, or structurally
+malformed input (an unterminated quote, characters after a closing quote, an empty value, an empty
+type or subtype, a control character in the type, the subtype or a parameter name, more than 32
+parameters) rather than throwing. The public constructor throws `IllegalArgumentException` for a
+control character (below `U+0020`, or `U+007F`) in the type, the subtype or a parameter name. Unlike the `Accept` path, `q` is an ordinary parameter here: a
+numeric `q` is clamped to [0, 1], and an unparsable, quoted or `NaN` `q` is ignored (the factor
+stays `1.0`); an unusable `q` never makes the media type `null`. A caller that guards a trust
+boundary with `MediaType.parse` must treat `null` for a non-blank input as a rejection, not as
+"nothing declared". Quoted-string parameter values appear unquoted in `parameters()`, and
+`toString()` re-quotes values that are not tokens and writes each control character other than a
+horizontal tab in them as `_`, so a value never carries a line break into a header and two values
+that differ by a control character stay different (`evil.php` with U+0001 before the final `p` is
+written `evil.ph_p`, never `evil.php`); a value that held a control character therefore parses back with `_` in its place. `isCompatible(MediaType)` is wildcard-aware
 and ignores parameters; `specificity()` returns 0 for `*/*`, 1 for `type/*`, 2 for `type/subtype`, and
 3 when parameters are present. Equality ignores the quality factor.
 
 `AcceptNegotiator.negotiate(String acceptHeader, List<String> serverTypes)` returns the best matching
 server type as `"type/subtype"`, or `null` when nothing matches — the signal a caller turns into a
-406. A `null`/blank Accept header yields the first server type; an empty `serverTypes` yields `null`.
-`parseAcceptHeader(String)` returns the header sorted by q-value then specificity, both descending,
-capped at 50 entries.
+406. A `null`/blank Accept header, or one whose entries merely lack a `/` (`garbage`), yields the first
+server type; an empty `serverTypes` yields `null`. An `Accept` header with an entry dropped as
+**malformed** (an unterminated quote, an invalid, quoted, out-of-range or repeated `q`, too many
+parameters, or a `/` with an empty type or subtype such as `text/` or `/json`) and no usable entry is
+not "anything goes": the result is `null`. So is a header with a non-empty entry **past the 50-element
+cap** and no usable entry among the first 50: the entries beyond the cap are never read, and their
+existence counts as malformed, so 50 slashless tokens followed by `text/html;q=abc` is `null`, not the
+first server type. Tokens that merely lack a `/` are still skipped without counting as malformed.
+`parseAcceptHeader(String)` returns the well-formed entries sorted by q-value then specificity, both
+descending, under the 50-element cap, and does not report what lay past it. A server type passed to `negotiate` is read with `MediaType.parse`, so its `q`
+handling is the lenient `Content-Type` one.
+
+`AcceptNegotiator.effectiveQuality(String acceptHeader, String mediaType)` (and the overload over
+parsed `List<MediaType>` entries and a `MediaType`) answers whether one exact type is acceptable:
+it returns the quality of the most specific compatible entry, and `0.0` — not acceptable — when no
+entry is compatible. Unlike `negotiate`, it does not fail open: a `null`, blank or entirely
+malformed `Accept` header and an unparsable `mediaType` all yield `0.0`. Use it to gate a single
+representation, and `negotiate` to choose among several.
 
 ### `MdcKeys`
 

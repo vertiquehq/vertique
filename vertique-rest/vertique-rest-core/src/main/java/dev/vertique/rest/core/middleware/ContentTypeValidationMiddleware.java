@@ -7,6 +7,7 @@ import dev.vertique.rest.core.ProblemDetail;
 import io.vertx.core.http.HttpMethod;
 import io.vertx.ext.web.RoutingContext;
 import jakarta.ws.rs.core.Response;
+import java.util.Locale;
 
 /**
  * API-scoped middleware that validates the {@code Content-Type} header on requests with bodies.
@@ -88,7 +89,7 @@ public class ContentTypeValidationMiddleware implements Middleware {
      * @return {@code true} if the content type is in the accepted set
      */
     private boolean isAcceptedContentType(String contentType) {
-        String lower = contentType.toLowerCase().trim();
+        String lower = contentType.toLowerCase(Locale.ROOT).trim();
         // Accept all application/* subtypes (json, xml, octet-stream, form-urlencoded, etc.)
         if (lower.startsWith("application/")) {
             return true;

@@ -355,6 +355,33 @@ class WebValidationGateFilePartTest {
         assertFalse(serialized.contains("987654321"));
     }
 
+    @Test
+    @DisplayName("A descriptor refuses an allowed type that is not a plain type/subtype token pair")
+    void descriptorRefusesUnparsableAllowedType() {
+        for (String allowed : List.of("image/png;x=\"", "png", "image/png;q=" + "1;".repeat(40), "image/")) {
+            org.junit.jupiter.api.Assertions.assertThrows(
+                    IllegalArgumentException.class,
+                    () -> new FilePartDescriptor("avatar", List.of(allowed), -1),
+                    allowed);
+        }
+    }
+
+    @Test
+    @DisplayName("An allowed type that does not parse fails gate construction and names the declared type")
+    void unparsableAllowedTypeFailsGateConstruction() {
+        FilePartDescriptor declared = mock(FilePartDescriptor.class);
+        when(declared.partName()).thenReturn("avatar");
+        when(declared.allowedTypes()).thenReturn(List.of("image/png", "image/png;x=\""));
+        when(declared.constrained()).thenReturn(true);
+
+        dev.vertique.rest.core.RestConfigurationException failure = org.junit.jupiter.api.Assertions.assertThrows(
+                dev.vertique.rest.core.RestConfigurationException.class,
+                () -> strategy.gateFor(descriptor(List.of(), List.of(declared)), OperationSchemas.empty()));
+
+        assertTrue(failure.getMessage().contains("image/png;x=\""), failure.getMessage());
+        assertTrue(failure.getMessage().contains("avatar"), failure.getMessage());
+    }
+
     private static Handler<RoutingContext> fileGate(WebValidationStrategy strategy, FilePartDescriptor filePart) {
         return gate(strategy, List.of(), List.of(filePart), OperationSchemas.empty());
     }

@@ -217,4 +217,50 @@ class SimpleLinkBuilderTest {
         Link parsed = Link.valueOf(serialized);
         assertEquals("A \"B\"", parsed.getTitle());
     }
+    // --- Shared quote-aware tokenizing ---
+
+    @Test
+    @DisplayName("link(String) preserves commas inside quoted parameter values")
+    void shouldPreserveCommasInQuotedValues() {
+        Link link = new SimpleLinkBuilder()
+                .link("</x>; title=\"A,B\"; rel=\"next\"")
+                .build();
+        assertEquals("A,B", link.getTitle());
+        assertEquals("next", link.getRel());
+    }
+
+    @Test
+    @DisplayName("link(String) rejects an unterminated quoted parameter value")
+    void shouldRejectUnterminatedQuotedValue() {
+        assertThrows(
+                IllegalArgumentException.class, () -> new SimpleLinkBuilder().link("</x>; title=\"A;B; rel=\"next\""));
+    }
+
+    @Test
+    @DisplayName("link(String) rejects a lone quote instead of failing with an index error")
+    void shouldRejectLoneQuote() {
+        assertThrows(IllegalArgumentException.class, () -> new SimpleLinkBuilder().link("</x>; title=\""));
+    }
+
+    @Test
+    @DisplayName("link(String) rejects a trailing backslash inside a quoted value")
+    void shouldRejectTrailingBackslashInQuotedValue() {
+        assertThrows(IllegalArgumentException.class, () -> new SimpleLinkBuilder().link("</x>; title=\"A\\"));
+    }
+
+    @Test
+    @DisplayName("link(String) rejects characters after the closing quote")
+    void shouldRejectCharactersAfterClosingQuote() {
+        assertThrows(IllegalArgumentException.class, () -> new SimpleLinkBuilder().link("</x>; title=\"A\"B"));
+    }
+
+    @Test
+    @DisplayName("a rejected link(String) leaves the builder unchanged")
+    void shouldKeepBuilderStateWhenLinkStringIsRejected() {
+        Link.Builder builder = new SimpleLinkBuilder().link("</a>; rel=\"first\"");
+        assertThrows(IllegalArgumentException.class, () -> builder.link("</b>; rel=\"next"));
+        Link link = builder.build();
+        assertEquals(URI.create("/a"), link.getUri());
+        assertEquals("first", link.getRel());
+    }
 }
