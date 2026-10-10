@@ -66,6 +66,12 @@ The operation-route identity handler records the operation's route template and 
 the request's completion event; as a Vert.x `PlatformHandler` it runs ahead of authentication, and
 it never fails a request.
 
+The `@Consumes` 415 gate checks body-carrying requests (POST, PUT, PATCH with a non-empty body)
+against the operation's declared media types. Wildcards are legal on the declaration only: a
+declared `application/*` accepts any `application/...` request type. A request `Content-Type` is a
+media type, not a range, so a missing, unparseable or wildcard one (`*/*`, `application/*`, or the
+malformed `*/json`) satisfies no declaration and is answered with 415.
+
 The candidate methods are the ones the resource class and its superclasses declare, plus every
 interface `default` method the class inherits without overriding. An annotated default method is a
 route of each class that implements its interface, exactly as an override would be, which matches

@@ -150,6 +150,24 @@ public class ConsumesEnforcementIT {
         }
     }
 
+    /** Resource declaring a wildcard subtype, which stays legal on the declared side. */
+    @Path("/wild")
+    public static class ApplicationWildcardResource {
+
+        /**
+         * Accepts any {@code application/*} body and echoes {@code ok}.
+         *
+         * @return the literal string {@code ok}
+         */
+        @POST
+        @Consumes("application/*")
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "wildcardEcho")
+        public String echo() {
+            return "ok";
+        }
+    }
+
     // --- Test 1: Mismatched Content-Type against @Consumes operation returns 415 ---
 
     @Test
@@ -272,6 +290,44 @@ public class ConsumesEnforcementIT {
         });
     }
 
+    // --- Wildcard request Content-Type never satisfies a declared @Consumes ---
+
+    @Test
+    @DisplayName("WildcardRequestContentTypeIsRejected — a full-wildcard Content-Type does not satisfy @Consumes → 415")
+    void fullWildcardRequestContentTypeIsRejected(Vertx vertx, VertxTestContext ctx) {
+        assertPostStatus(vertx, ctx, new JsonOnlyResource(), "/echo", "*/*", 415);
+    }
+
+    @Test
+    @DisplayName("WildcardSubtypeRequestContentTypeIsRejected — 'application/*' as Content-Type → 415")
+    void wildcardSubtypeRequestContentTypeIsRejected(Vertx vertx, VertxTestContext ctx) {
+        assertPostStatus(vertx, ctx, new JsonOnlyResource(), "/echo", "application/*", 415);
+    }
+
+    @Test
+    @DisplayName("WildcardTypeConcreteSubtypeRequestContentTypeIsRejected — '*/json' as Content-Type → 415")
+    void wildcardTypeConcreteSubtypeRequestContentTypeIsRejected(Vertx vertx, VertxTestContext ctx) {
+        assertPostStatus(vertx, ctx, new JsonOnlyResource(), "/echo", "*/json", 415);
+    }
+
+    @Test
+    @DisplayName("DeclaredWildcardAcceptsConcreteContentType — @Consumes('application/*'), request JSON → 200")
+    void declaredWildcardAcceptsConcreteContentType(Vertx vertx, VertxTestContext ctx) {
+        assertPostStatus(vertx, ctx, new ApplicationWildcardResource(), "/wild", "application/json", 200);
+    }
+
+    @Test
+    @DisplayName("DeclaredWildcardRejectsOtherType — @Consumes('application/*'), request 'text/plain' → 415")
+    void declaredWildcardRejectsOtherType(Vertx vertx, VertxTestContext ctx) {
+        assertPostStatus(vertx, ctx, new ApplicationWildcardResource(), "/wild", "text/plain", 415);
+    }
+
+    @Test
+    @DisplayName("DeclaredWildcardRejectsWildcardRequest — @Consumes('application/*'), request 'application/*' → 415")
+    void declaredWildcardRejectsWildcardRequest(Vertx vertx, VertxTestContext ctx) {
+        assertPostStatus(vertx, ctx, new ApplicationWildcardResource(), "/wild", "application/*", 415);
+    }
+
     // --- Test 6 & 7: a 415 the framework authored keeps its own detail ---
 
     @Test
@@ -336,6 +392,28 @@ public class ConsumesEnforcementIT {
     }
 
     // --- Helper ---
+
+    /**
+     * Deploys {@code resource}, posts a small body with {@code contentType}, and asserts the status.
+     *
+     * @param vertx          the Vert.x instance
+     * @param ctx            the test context
+     * @param resource       the JAX-RS resource to mount
+     * @param path           the request path
+     * @param contentType    the {@code Content-Type} header value to send
+     * @param expectedStatus the expected response status
+     */
+    private void assertPostStatus(
+            Vertx vertx, VertxTestContext ctx, Object resource, String path, String contentType, int expectedStatus) {
+        deploy(vertx, ctx, Set.of(resource), (port, c) -> c.post(port, "127.0.0.1", path)
+                .putHeader("Content-Type", contentType)
+                .sendBuffer(Buffer.buffer("{}"))
+                .onComplete(ctx.succeeding(resp -> {
+                    ctx.verify(() -> assertEquals(
+                            expectedStatus, resp.statusCode(), "Content-Type '" + contentType + "' on " + path));
+                    ctx.completeNow();
+                })));
+    }
 
     /**
      * Deploys the given resources under the default {@code none} validation strategy, starts an

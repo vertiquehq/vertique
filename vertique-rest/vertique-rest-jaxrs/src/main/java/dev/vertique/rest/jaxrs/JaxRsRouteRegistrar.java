@@ -1302,13 +1302,15 @@ public class JaxRsRouteRegistrar {
      * authentication handlers (Vert.x's {@code USER}-after-{@code AUTHENTICATION} ordering rule), so
      * authentication runs first at request time.
      *
-     * <p>Matching uses wildcard-aware {@link MediaType#isCompatible}: {@code *}{@code /*} accepts
-     * anything, {@code application/*} accepts any application subtype, and a concrete type (e.g.
-     * {@code application/json}) performs an exact subtype match (case-insensitive, parameters
-     * ignored).
+     * <p>Matching uses wildcard-aware {@link MediaType#isCompatible}: a declared {@code *}{@code /*}
+     * accepts anything, a declared {@code application/*} accepts any application subtype, and a
+     * concrete type (e.g. {@code application/json}) performs an exact subtype match
+     * (case-insensitive, parameters ignored). Wildcards are legal only on the declared side: a
+     * request {@code Content-Type} is a media type, not a range, so a wildcard one such as
+     * {@code *}{@code /*} or {@code application/*} satisfies no declaration.
      *
-     * <p>A missing or unparseable {@code Content-Type} header is treated as absent — the request
-     * does not match any declared consume and is rejected with 415. An absent body (as signalled
+     * <p>A missing, unparseable or wildcard {@code Content-Type} header is treated as absent — the
+     * request does not match any declared consume and is rejected with 415. An absent body (as signalled
      * by {@code Content-Length: 0} and no {@code Transfer-Encoding}) is never checked, consistent
      * with the broad {@code ContentTypeValidationMiddleware} safety net.
      *
@@ -1345,10 +1347,11 @@ public class JaxRsRouteRegistrar {
                 return;
             }
 
-            // A missing or unparseable Content-Type is treated as absent (no match → 415).
+            // A missing, unparseable or wildcard Content-Type is treated as absent (no match → 415):
+            // a wildcard is a range, legal on the declared side only, and would satisfy every route.
             String rawContentType = ctx.request().getHeader("Content-Type");
             MediaType requestType = MediaType.parse(rawContentType);
-            if (requestType != null) {
+            if (requestType != null && !requestType.isWildcardType() && !requestType.isWildcardSubtype()) {
                 for (MediaType declared : declaredTypes) {
                     if (declared.isCompatible(requestType)) {
                         ctx.next();
