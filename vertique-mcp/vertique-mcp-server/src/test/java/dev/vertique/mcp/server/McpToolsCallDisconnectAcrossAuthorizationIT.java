@@ -11,11 +11,11 @@ import dev.vertique.correlation.CorrelationContextFactory;
 import dev.vertique.mcp.interceptor.McpToolInterceptor;
 import dev.vertique.mcp.interceptor.McpToolInvocationContext;
 import dev.vertique.mcp.lifecycle.McpRequestCompletedEvent;
+import dev.vertique.mcp.lifecycle.McpRequestCompletedListener;
 import dev.vertique.mcp.lifecycle.McpRequestLifecycleObserver;
 import dev.vertique.mcp.lifecycle.McpRequestObservation;
 import dev.vertique.mcp.lifecycle.McpRequestTerminalObservation;
-import dev.vertique.mcp.lifecycle.McpToolInputObservation;
-import dev.vertique.mcp.lifecycle.McpToolValueObservation;
+import dev.vertique.mcp.lifecycle.McpRequestView;
 import dev.vertique.mcp.tool.McpAccessMode;
 import dev.vertique.mcp.tool.McpCancellationSignal;
 import dev.vertique.mcp.tool.McpPreparedToolCall;
@@ -82,12 +82,13 @@ import org.junit.jupiter.api.Timeout;
  * decision with a permit — exactly like a slow remote PDP answering after the caller already left.
  *
  * <p>Before this repair, {@code invokeAndRespond} composes SSE selection, the full stage-1..4 input
- * pipeline (schema validation, {@code prepare()}), the opt-in {@code onToolInput} value observation
- * ({@code publishToolInput}), and the ordered tool-interceptor chain — all of it — strictly before
- * its own first {@code cancellation.isCancelled()} check, so every one of those side effects runs for
- * a request the settlement path already published terminal and completion for. This proof asserts
- * zero of them ever happen, and — the seam-order pin (R48 test proof item 2) — that {@code
- * onCompleted} remains the last callback the lifecycle observer ever receives, exactly as {@code
+ * pipeline (schema validation, {@code prepare()}), the binding of the prepared call's arguments for
+ * the request view, and the ordered tool-interceptor chain — all of it — strictly before its own
+ * first {@code cancellation.isCancelled()} check, so every one of those side effects runs for a
+ * request the settlement path already published terminal and completion for. This proof asserts
+ * zero of them ever happen — the request view reports no prepared call — and, the seam-order pin,
+ * that the completion listener's callback remains the last callback the request ever receives,
+ * after the lifecycle observer's {@code onCompleted}, exactly as {@code
  * McpToolsListDisconnectIT}/{@code McpDisconnectBeforeInvocationIT} already pin for their own seams.
  */
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
@@ -136,9 +137,9 @@ class McpToolsCallDisconnectAcrossAuthorizationIT {
 
     @Test
     @DisplayName("R48 C1: a tools/call whose authorization decision settles after the client already "
-            + "disconnected must produce zero downstream work, and onCompleted must stay the final "
-            + "callback (RED today at multiple seams)")
-    void shouldProduceNoDownstreamWorkAndKeepOnCompletedLastWhenAuthorizationSettlesAfterDisconnect() throws Exception {
+            + "disconnected must produce zero downstream work, and the completion listener must stay "
+            + "the final callback")
+    void shouldProduceNoDownstreamWorkAndKeepTheListenerLastWhenAuthorizationSettlesAfterDisconnect() throws Exception {
         fixture = Fixture.start(vertx);
         rawClient = vertx.createHttpClient();
         client = WebClient.wrap(rawClient);
@@ -178,10 +179,17 @@ class McpToolsCallDisconnectAcrossAuthorizationIT {
                         + "carrier) must never run once the client disconnected before authorization "
                         + "settled")
                 .isFalse();
-        assertThat(fixture.observer().toolInputCount())
-                .as("DECISIVE: onToolInput must never be observed for a request that already settled "
+        assertThat(fixture.listener().completions())
+                .as("the late permit must not produce a second view")
+                .hasSize(1);
+        assertThat(fixture.listener().completions().get(0).toolInput())
+                .as("DECISIVE: no prepared call may be reported for a request that already settled "
                         + "before authorization resolved")
-                .isZero();
+                .isEmpty();
+        assertThat(fixture.listener().completions().get(0).toolContext())
+                .as("DECISIVE: no invocation context may be reported for a request that already "
+                        + "settled before authorization resolved")
+                .isEmpty();
         assertThat(fixture.toolInterceptor().invokedWithin(CONFIRMATION_WINDOW))
                 .as("DECISIVE: the tool-interceptor chain must never run for an already-settled request")
                 .isFalse();
@@ -189,10 +197,10 @@ class McpToolsCallDisconnectAcrossAuthorizationIT {
                 .as("DECISIVE: the tool body must never execute for an already-settled request")
                 .isFalse();
 
-        // R48 test proof item 2 — the seam-order pin, a distinct decisive assertion so a mutation that
-        // removes only the guard at this seam (or only the invokeAndRespond entry guard) can be
-        // targeted precisely: no callback of any kind may arrive after onCompleted.
-        fixture.observer().assertOnCompletedIsTheFinalCallback();
+        // The seam-order pin, a distinct decisive assertion so a mutation that removes only the guard
+        // at this seam (or only the invokeAndRespond entry guard) can be targeted precisely: no
+        // callback of any kind may arrive after the completion listener.
+        fixture.observer().assertTheListenerIsTheFinalCallback();
         fixture.observer().assertExactlyOneTerminalThenOneCompletion(); // no further settlement was ever produced
     }
 
@@ -335,18 +343,17 @@ class McpToolsCallDisconnectAcrossAuthorizationIT {
 
     /**
      * Records the request-owning context, the settlement order, the completed event's transport
-     * facts, and — because this session also implements {@link McpToolValueObservation} — any {@code
-     * onToolInput} delivery in the very same order list, so the seam-order pin can assert {@code
-     * onCompleted} is genuinely the last callback of any kind, not merely the last of the two plain
-     * {@link McpRequestObservation} callbacks.
+     * facts, and — because the completion listener notes its callback in the very same order list
+     * through {@link #noteListener()} — the position of the listener callback, so the seam-order pin
+     * can assert the listener is genuinely the last callback of any kind, not merely the last of the
+     * two plain {@link McpRequestObservation} callbacks.
      */
-    private static final class RecordingObserver implements McpRequestLifecycleObserver, McpToolValueObservation {
+    private static final class RecordingObserver implements McpRequestLifecycleObserver, McpRequestObservation {
         private volatile Context expectedContext;
-        private final CountDownLatch settlement = new CountDownLatch(2);
+        private final CountDownLatch settlement = new CountDownLatch(3);
         private final List<String> order = new CopyOnWriteArrayList<>();
         private final AtomicInteger terminalCount = new AtomicInteger();
         private final AtomicInteger completedCount = new AtomicInteger();
-        private final AtomicInteger toolInputCount = new AtomicInteger();
         private volatile McpRequestCompletedEvent completed;
 
         @Override
@@ -370,10 +377,10 @@ class McpToolsCallDisconnectAcrossAuthorizationIT {
             settlement.countDown();
         }
 
-        @Override
-        public void onToolInput(McpToolInputObservation observation) {
-            toolInputCount.incrementAndGet();
-            order.add("toolInput");
+        /** Called by the completion listener, so its position in the callback order is recorded. */
+        private void noteListener() {
+            order.add("listener");
+            settlement.countDown();
         }
 
         private Context expectedContext() {
@@ -388,25 +395,43 @@ class McpToolsCallDisconnectAcrossAuthorizationIT {
             return completed;
         }
 
-        private int toolInputCount() {
-            return toolInputCount.get();
-        }
-
         private void assertExactlyOneTerminalThenOneCompletion() {
             assertThat(terminalCount.get()).isOne();
             assertThat(completedCount.get()).isOne();
         }
 
-        /** The seam-order pin (R48 test proof item 2): {@code onCompleted} is the final callback. */
-        private void assertOnCompletedIsTheFinalCallback() {
+        /** The seam-order pin: the completion listener's callback is the final callback. */
+        private void assertTheListenerIsTheFinalCallback() {
             assertThat(order)
                     .as(
-                            "DECISIVE: no lifecycle callback of any kind (terminal, completion, or a tool "
-                                    + "value observation) may arrive after onCompleted — full recorded order: %s",
+                            "DECISIVE: no lifecycle callback of any kind may arrive after the completion "
+                                    + "listener, and the listener follows the observer's completion — full "
+                                    + "recorded order: %s",
                             order)
-                    .isNotEmpty()
-                    .last()
-                    .isEqualTo("completed");
+                    .containsExactly("terminal", "completed", "listener");
+        }
+    }
+
+    /** Notes its callback in the observer's order list, then records the request view it was handed. */
+    private static final class RecordingListener implements McpRequestCompletedListener {
+        private final RecordingObserver observer;
+        private final McpRecordingCompletedListener recording = new McpRecordingCompletedListener();
+
+        RecordingListener(RecordingObserver observer) {
+            this.observer = observer;
+        }
+
+        @Override
+        public void onCompleted(McpRequestCompletedEvent event) {}
+
+        @Override
+        public void onCompleted(McpRequestCompletedEvent event, McpRequestView request) {
+            recording.onCompleted(event, request);
+            observer.noteListener();
+        }
+
+        McpRecordingCompletedListener recording() {
+            return recording;
         }
     }
 
@@ -486,6 +511,7 @@ class McpToolsCallDisconnectAcrossAuthorizationIT {
         private final RecordingToolInterceptor toolInterceptor = new RecordingToolInterceptor();
         private final RecordingToolInvoker tool = new RecordingToolInvoker();
         private final RecordingObserver observer = new RecordingObserver();
+        private final RecordingListener listener = new RecordingListener(observer);
 
         private Fixture(Vertx vertx) throws Exception {
             McpServerConfig config = McpServerConfig.builder()
@@ -513,7 +539,7 @@ class McpToolsCallDisconnectAcrossAuthorizationIT {
                             config,
                             securityRuntime,
                             Set.of(observer),
-                            Set.of(),
+                            Set.of(listener),
                             Set.of(),
                             Set.of(toolInterceptor),
                             httpConfig,
@@ -558,6 +584,10 @@ class McpToolsCallDisconnectAcrossAuthorizationIT {
 
         RecordingObserver observer() {
             return observer;
+        }
+
+        McpRecordingCompletedListener listener() {
+            return listener.recording();
         }
 
         private static IdentityResolutionMiddleware identityResolution(SecurityRuntime securityRuntime) {

@@ -19,10 +19,8 @@ import dev.vertique.mcp.lifecycle.McpRequestLifecycleObserver;
 import dev.vertique.mcp.lifecycle.McpRequestObservation;
 import dev.vertique.mcp.lifecycle.McpRequestTerminalEvent;
 import dev.vertique.mcp.lifecycle.McpRequestTerminalObservation;
-import dev.vertique.mcp.lifecycle.McpToolInputObservation;
-import dev.vertique.mcp.lifecycle.McpToolOutputObservation;
-import dev.vertique.mcp.lifecycle.McpToolValueObservation;
 import dev.vertique.mcp.lifecycle.McpTransportOutcome;
+import dev.vertique.mcp.server.McpRecordingCompletedListener.Completion;
 import dev.vertique.mcp.tool.McpAccessMode;
 import dev.vertique.mcp.tool.McpCancellationSignal;
 import dev.vertique.mcp.tool.McpPreparedToolCall;
@@ -205,13 +203,29 @@ class McpRequestDeadlineIT {
                 .as("the tool observes cancellation")
                 .isTrue();
 
+        // The request view reports the 504 the client received, the prepared call, and no tool output.
+        Completion view = awaitNonDiscoverView();
+        assertThat(view.responseBody())
+                .as("DECISIVE: the view's response is the bounded 504 the client received")
+                .isEqualTo(reply.body())
+                .contains("-32603");
+        assertThat(view.toolInput())
+                .as("the held call was prepared before the deadline expired")
+                .isPresent();
+        assertThat(view.toolOutput())
+                .as("DECISIVE: the deadline answered the request, so no tool output is reported")
+                .isEmpty();
+
         fixture.held().release();
         drain(session.context());
         assertThat(session.terminals())
                 .as("a late tool result publishes nothing")
                 .hasSize(1);
         assertThat(session.completions()).hasSize(1);
-        assertThat(session.outputs()).isZero();
+        assertThat(nonDiscoverViews())
+                .as("a late tool result produces no second view and reports no output")
+                .hasSize(1)
+                .allSatisfy(late -> assertThat(late.toolOutput()).isEmpty());
         assertThat(uncaught).isEmpty();
     }
 
@@ -239,6 +253,14 @@ class McpRequestDeadlineIT {
         assertThat(interceptor.calls()).isOne();
         assertThat(session.terminals().get(0).errorType()).isEqualTo(McpErrorType.TIMEOUT);
 
+        Completion view = awaitNonDiscoverView();
+        assertThat(view.responseBody())
+                .as("DECISIVE: the view's response is the bounded 504 the client received")
+                .isEqualTo(reply.body());
+        assertThat(view.toolInput())
+                .as("the deadline expired in the request interceptor, before any call was prepared")
+                .isEmpty();
+
         interceptor.release();
         drain(session.context());
 
@@ -248,6 +270,9 @@ class McpRequestDeadlineIT {
         assertThat(fixture.plain().prepares()).isZero();
         assertThat(session.terminals()).hasSize(1);
         assertThat(session.completions()).hasSize(1);
+        assertThat(nonDiscoverViews())
+                .as("the late release produces no second view")
+                .hasSize(1);
         assertThat(uncaught).isEmpty();
     }
 
@@ -296,6 +321,17 @@ class McpRequestDeadlineIT {
                 .as("a tool that polls the cancellation signal stops")
                 .isTrue();
         assertThat(fixture.streamed().ticks()).isLessThan(Tool.PROGRESS_TICKS);
+
+        Completion view = awaitNonDiscoverView();
+        assertThat(view.toolInput())
+                .as("the streamed call was prepared before the deadline expired")
+                .isPresent();
+        assertThat(view.toolOutput())
+                .as("DECISIVE: the deadline cut the committed stream, so no tool output is reported")
+                .isEmpty();
+        assertThat(view.hasResponseBody())
+                .as("the stream was reset rather than ended, so no terminal body is reported")
+                .isFalse();
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -355,6 +391,14 @@ class McpRequestDeadlineIT {
         assertThat(session.terminals().get(0).security())
                 .as("the deadline expired before identity establishment")
                 .isNull();
+        Completion view = awaitNonDiscoverView();
+        assertThat(view.responseBody())
+                .as("DECISIVE: the view's response is the bounded 504 the client received")
+                .isEqualTo(reply.body());
+        assertThat(view.hasRequestBody())
+                .as("the request was bound when MCP began it, before identity establishment")
+                .isTrue();
+        assertThat(view.jsonRpcRequestId()).as("the envelope was never decoded").isEmpty();
 
         resolver.release();
         drain(session.context());
@@ -385,6 +429,12 @@ class McpRequestDeadlineIT {
         assertThat(session.completions()).hasSize(1);
         assertThat(session.completions().get(0).transportOutcome()).isEqualTo(McpTransportOutcome.WRITTEN);
         assertThat(fixture.plain().signal().isCancelled()).isFalse();
+        Completion view = awaitNonDiscoverView();
+        assertThat(view.toolOutput())
+                .as("a result written before the deadline is reported as the tool output")
+                .isPresent();
+        assertThat(view.responseBody()).isEqualTo(reply.body());
+        assertThat(nonDiscoverViews()).hasSize(1);
     }
 
     @Test
@@ -404,6 +454,21 @@ class McpRequestDeadlineIT {
     // ---------------------------------------------------------------------------------------------
     // Harness
     // ---------------------------------------------------------------------------------------------
+
+    /** Awaits the view of the one non-discover request, which the listener receives right after the observer. */
+    private Completion awaitNonDiscoverView() throws Exception {
+        return fixture.listener().await(McpRequestDeadlineIT::isNonDiscover, 1).get(0);
+    }
+
+    private List<Completion> nonDiscoverViews() {
+        return fixture.listener().completions().stream()
+                .filter(McpRequestDeadlineIT::isNonDiscover)
+                .toList();
+    }
+
+    private static boolean isNonDiscover(Completion completion) {
+        return completion.event().terminal().method() != McpMethod.SERVER_DISCOVER;
+    }
 
     private void start(HttpVersion version, long deadlineMs, Set<McpRequestInterceptor> requestInterceptors)
             throws Exception {
@@ -661,6 +726,7 @@ class McpRequestDeadlineIT {
         private final Tool plain;
         private final Tool streamed;
         private final Recorder recorder = new Recorder();
+        private final McpRecordingCompletedListener listener = new McpRecordingCompletedListener();
         private final Set<HttpConnection> connections = ConcurrentHashMap.newKeySet();
 
         private Fixture(
@@ -702,7 +768,7 @@ class McpRequestDeadlineIT {
                             config,
                             securityRuntime,
                             Set.of(recorder),
-                            Set.of(),
+                            Set.of(listener),
                             requestInterceptors,
                             Set.of(),
                             httpConfig,
@@ -751,6 +817,10 @@ class McpRequestDeadlineIT {
 
         Recorder recorder() {
             return recorder;
+        }
+
+        McpRecordingCompletedListener listener() {
+            return listener;
         }
 
         Set<HttpConnection> connections() {
@@ -900,12 +970,11 @@ class McpRequestDeadlineIT {
         }
     }
 
-    private static final class Session implements McpCompletionScope, McpToolValueObservation {
+    private static final class Session implements McpCompletionScope {
         private final Context context;
         private final Recorder recorder;
         private final List<McpRequestTerminalEvent> terminals = new CopyOnWriteArrayList<>();
         private final List<McpRequestCompletedEvent> completions = new CopyOnWriteArrayList<>();
-        private final AtomicInteger outputs = new AtomicInteger();
 
         Session(Context context, Recorder recorder) {
             this.context = context;
@@ -926,24 +995,12 @@ class McpRequestDeadlineIT {
         }
 
         @Override
-        public void onToolInput(McpToolInputObservation observation) {}
-
-        @Override
-        public void onToolOutput(McpToolOutputObservation observation) {
-            outputs.incrementAndGet();
-        }
-
-        @Override
         public AutoCloseable openCompletionScope() {
             return () -> {};
         }
 
         Context context() {
             return context;
-        }
-
-        int outputs() {
-            return outputs.get();
         }
 
         List<McpRequestTerminalEvent> terminals() {

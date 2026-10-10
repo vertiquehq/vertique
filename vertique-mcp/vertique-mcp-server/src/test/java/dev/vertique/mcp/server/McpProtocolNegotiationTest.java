@@ -574,6 +574,8 @@ class McpProtocolNegotiationTest {
         when(requestBody.buffer()).thenReturn(Buffer.buffer(body.toBuffer().getBytes()));
         when(request.headers()).thenReturn(headers);
         when(response.putHeader(anyString(), anyString())).thenReturn(response);
+        // The terminal writer reads the response headers to bind the request view's response.
+        when(response.headers()).thenReturn(MultiMap.caseInsensitiveMultiMap());
         when(response.setStatusCode(anyInt())).thenReturn(response);
         when(response.end(any(Buffer.class))).thenReturn(Future.succeededFuture());
         when(response.end()).thenReturn(Future.succeededFuture());
@@ -661,6 +663,8 @@ class McpProtocolNegotiationTest {
         when(requestBody.buffer()).thenReturn(Buffer.buffer(body.toBuffer().getBytes()));
         when(request.headers()).thenReturn(headers);
         when(response.putHeader(anyString(), anyString())).thenReturn(response);
+        // The terminal writer reads the response headers to bind the request view's response.
+        when(response.headers()).thenReturn(MultiMap.caseInsensitiveMultiMap());
         when(response.setStatusCode(anyInt())).thenReturn(response);
         when(response.end(any(Buffer.class))).thenReturn(Future.succeededFuture());
 

@@ -15,12 +15,14 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.vertique.mcp.lifecycle.McpErrorType;
 import dev.vertique.mcp.lifecycle.McpMethod;
 import dev.vertique.mcp.lifecycle.McpRequestCompletedEvent;
+import dev.vertique.mcp.lifecycle.McpRequestCompletedListener;
 import dev.vertique.mcp.lifecycle.McpRequestTerminalEvent;
 import dev.vertique.mcp.lifecycle.McpTransportOutcome;
 import dev.vertique.mcp.tool.McpProgressReporter;
 import dev.vertique.security.origin.RequestOrigin;
 import io.vertx.core.Context;
 import io.vertx.core.Future;
+import io.vertx.core.MultiMap;
 import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
@@ -168,6 +170,8 @@ class McpProgressReporterTest {
             when(routing.response()).thenReturn(response);
             when(response.write(any(Buffer.class))).thenReturn(Future.succeededFuture());
             when(response.end(any(Buffer.class))).thenReturn(Future.succeededFuture());
+            // The terminal writer reads the response headers to bind the request view's response.
+            when(response.headers()).thenReturn(MultiMap.caseInsensitiveMultiMap());
 
             byte[] fallback =
                     "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":null,\"error\":{\"code\":-32603,\"message\":\"Internal error\"}}\n\n"
@@ -228,7 +232,12 @@ class McpProgressReporterTest {
             McpCompletionCoordinator coordinator = new McpCompletionCoordinator(
                     context,
                     Set.of(),
-                    Set.of(completed::set),
+                    Set.<McpRequestCompletedListener>of(new McpRequestCompletedListener() {
+                        @Override
+                        public void onCompleted(McpRequestCompletedEvent event) {
+                            completed.set(event);
+                        }
+                    }),
                     Instant.now(),
                     InstantSource.system(),
                     routing,

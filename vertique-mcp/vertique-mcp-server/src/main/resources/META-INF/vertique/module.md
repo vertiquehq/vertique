@@ -22,10 +22,10 @@ cancellation and write-phase settlement described in
 fail-closed pre-dispatch request-interceptor stage described in
 [Request interceptor stage](#request-interceptor-stage), the ordered, fail-closed
 post-validation tool-interceptor stage described in
-[Tool interceptor stage](#tool-interceptor-stage), the opt-in, capability-gated `onToolInput`/
-`onToolOutput` value-observation callbacks described in
-[Value observation stage](#value-observation-stage), and the single-pass bounded output
-normalization, output-schema validation, and observation placement described in
+[Tool interceptor stage](#tool-interceptor-stage), the read-only request view a completion
+listener receives, bound as described in
+[Completion view binding](#completion-view-binding), and the single-pass bounded output
+normalization, output-schema validation, and write placement described in
 [Bounded output pipeline](#bounded-output-pipeline).
 
 Configuration is disabled by default. When enabled, `serverName` and `serverVersion` are required,
@@ -275,21 +275,14 @@ transport cancellation (`McpErrorType.TRANSPORT`) rather than a distinct timeout
 `McpErrorType.TIMEOUT` marks either a handler `@Timeout` (a `FAILED` terminal) or the optional
 [request deadline](#request-deadline) (a `CANCELLED` terminal). Observer `open`, callback, null-session, and retention failures are isolated
 per observer and never change the protocol or business outcome — including a `StackOverflowError` from
-an observer's `open` or from any `onToolInput`/`onToolOutput`/`onTerminal`/`onCompleted` callback,
-which is isolated exactly like a `RuntimeException`: a deeply recursive application
-callback can no longer abort the coordinator's construction or strand the completion behind a
-half-published terminal. **This changed one observable outcome:** a `StackOverflowError` from a
-capable session's `onToolInput` used to escape the coordinator and degrade the whole `tools/call` to
-a bounded `500`, while a `RuntimeException` from the same callback was isolated and the call
-succeeded. Both are now isolated and the call succeeds, which is what "never change the protocol or
-business outcome" always said. An `AssertionError` or a `LinkageError` from an observer's `open`,
-from any session callback, or from a completion listener is isolated the same way: an
-`AssertionError` is logged at WARN each time, by class name, and a `LinkageError` at ERROR at a
-limited rate per observer class and callback — the first time, then at most once every five minutes
-with the number of failures in between — saying that the callback is unusable and its notifications
-are being lost. A failure
-the *framework* hits while building an observation — as
-opposed to one an observer throws — still degrades to the bounded internal-error response.
+an observer's `open`, from an observer's `onTerminal`/`onCompleted` callback, or from a completion
+listener's `onCompleted`, which is isolated exactly like a `RuntimeException`: a deeply recursive
+application callback cannot abort the coordinator's construction or strand the completion behind a
+half-published terminal. An `AssertionError` or a `LinkageError` from an observer's `open`, from any
+session callback, or from a completion listener is isolated the same way: an `AssertionError` is
+logged at WARN each time, by class name, and a `LinkageError` at ERROR at a limited rate per observer
+class and callback — the first time, then at most once every five minutes with the number of failures
+in between — saying that the callback is unusable and its notifications are being lost.
 
 **A disconnect or reset also runs the ordinary request-scoped cleanup.** Settlement is
 driven from the routing context's own end handler rather than from the response close/exception
@@ -694,44 +687,65 @@ handler ran and returned an error," and "the call was rejected before the handle
 from the terminal event's `errorType`/`outcome`, never from the response body, which cannot make that
 distinction.
 
-## Value observation stage
+## Completion view binding
 
-Once the generated invoker's `prepare(...)` has returned — meaning stages 1–4 of the [Request-time
-input pipeline](#request-time-input-pipeline), including Bean Validation, already succeeded —
-`McpRequestDispatcher` delivers an `McpToolInputObservation` through
-`McpCompletionCoordinator#publishToolInput`, strictly before the [Tool
-interceptor stage](#tool-interceptor-stage) runs. Delivery is capability-gated: the coordinator
-delivers `onToolInput` only to a retained session that is an instance of `McpToolValueObservation`,
-never to a plain `McpRequestObservation` session — an ordinary metrics or tracing session never
-receives an argument or result reference through any callback. The coordinator declares no field for
-the observation; the reference exists only on the publish call's stack and each capable session's
-synchronous callback frame, and is unreachable through the coordinator once every `onToolInput` call
-has returned.
+A completion listener's `onCompleted(McpRequestCompletedEvent, McpRequestView)` receives a read-only
+`McpRequestView` of the request; `vertique-mcp-core`'s "Completion view" is the application-facing
+contract. The server always calls this two-argument form, once per request after transport
+completion, and its default delegates to the one-argument form. `McpRequestDispatcher` binds each
+fact of the request into the request's `McpCompletionCoordinator` as it handles the request, before
+any interceptor or observer can alter it, and the coordinator builds one view per listener when it
+publishes the completion, inside the completion-scope bracket described above. Every binder runs on
+the request-owning Vert.x context and is a no-op once the completion has been emitted.
 
-The gate is checked *before* the observation is even constructed, not merely before delivery:
-`McpCompletionCoordinator#hasValueObservers()` is computed once at construction from the opened
-session set, and `McpRequestDispatcher` calls it before building an `McpToolInputObservation` or
-`McpToolOutputObservation` at all. Both compact constructors deep-copy their entire value tree
-unconditionally, so a request with no capable session in this composition never pays that copy for an
-attacker-sized argument or result tree.
+Each fact is bound at a fixed point:
 
-The delivered `normalizedArguments` is exactly `McpPreparedToolCall#normalizedArguments()`, deep-copied
-into an unmodifiable view at every nesting level by `McpToolInputObservation`'s compact constructor.
-This is the whole of the framework's enforceable claim: nothing prevents a session from retaining the
-reference it is handed past its own callback — an immutable record cannot revoke itself — so
-callback-scoped use remains a documented obligation on implementors.
+- **Request headers and body** are bound in `begin`, only when at least one completion listener is
+  registered (`McpCompletionCoordinator#hasListeners`); a composition with no listener takes no
+  snapshot. The dispatcher then decodes the envelope from that same bound array instead of reading
+  the body again. Because the binding precedes authentication and envelope decoding, a decode error
+  or an authentication rejection that reaches a coordinator carries them.
+- **The JSON-RPC id** is bound in `dispatch` once the envelope decodes and its method is classified,
+  before the official `params` schema runs, so a params-schema or negotiation rejection carries it. A
+  request whose envelope does not decode, or that carries no `id` or a JSON `null` one, has none.
+- **`toolContext` and `toolInput`** are bound once the generated invoker's `prepare(...)` has
+  returned — stages 1–4 of the [Request-time input pipeline](#request-time-input-pipeline), including
+  Bean Validation, already succeeded — strictly before the [Tool interceptor
+  stage](#tool-interceptor-stage) runs. `toolInput` is exactly
+  `McpPreparedToolCall#normalizedArguments()`. Nothing is copied: the view wraps each nested
+  `Map`/`List` on demand in a read-only view, so even a hand-written invoker that returns a mutable
+  tree cannot be written through a listener. A call a tool interceptor rejects therefore still
+  carries both, while a call rejected at stages 1–4 has neither.
+- **The response** is bound at the single shared terminal writer, after the write has won settlement
+  and reserved its bytes and immediately before `end()`. Every path that produces a response — a
+  result, a bounded error, a rejection — is covered, and an end handler that runs inline cannot build
+  the view first. The bounded `504` of an expired [request deadline](#request-deadline) is bound
+  before the settlement that publishes the completion, so the view reports the response the client
+  receives. The bytes bound are the bytes written: when the response budget replaces an over-budget
+  body with the bounded terminal fallback, the view reports the fallback.
+- **`toolOutput`** is armed by a handler's completed result only after the normalized value has been
+  validated against the output schema and the bounded terminal envelope has been encoded, and it
+  becomes visible only when the terminal writer has won settlement and the bytes written are the
+  result's own. It is present for a success and for a handler-authored tool error alike, with an
+  empty `structuredContent()` for a text-only result.
 
-`onToolOutput` is delivered the same way, through `McpCompletionCoordinator#publishToolOutput`,
-strictly after the [Bounded output pipeline](#bounded-output-pipeline) has normalized and validated
-the result, successfully encoded the bounded terminal envelope, **and** the write has won logical
-settlement — never merely after validation. On the written path the callback therefore follows the
-terminal event, and a result superseded by a disconnect or reset settlement produces no output
-callback: an observer only ever receives a value that also reached the wire.
-It fires for every completed result — success or tool error alike — carrying the normalized structured
-value (`@Nullable`, absent for a text-only result); a schema-invalid value, or a value the byte or
-token cap rejects, never reaches this callback. Delivery is capability-gated identically to
-`onToolInput`, and the coordinator retains no reference to the output observation or its value once
-every `onToolOutput` call has returned.
+A request the view never reached has empty parts. A rejection before a prepared call has an empty
+`toolContext` and `toolInput`; a rejection at the input stages or by a tool interceptor has no
+`toolOutput`, because no handler ran. A disconnect or reset before the write, a write that cannot
+reserve its bytes, and the reset of an already committed stream bind no response, so `responseBody`
+is absent. `toolOutput` is also absent when the output-schema check, the byte or token cap, a bounded
+fallback, or a settlement that beat the write suppressed the result. Present means the result was the
+response body, not that the client received it: `McpRequestCompletedEvent#transportOutcome()`
+carries that, and a write can still fail after the value was bound.
+
+The coordinator drops every bound reference once the completion has been dispatched to all
+listeners. A listener that keeps a body beyond its callback copies it, because the framework does not.
+
+The raw request and response carry whatever the caller and the tool put there, `Authorization` and
+`Cookie` headers included, and the server does not redact them. The view is not an access-control
+boundary: every contributed listener receives it, so contribute a listener that reads the view only
+from code trusted with that data. A listener failure, including a `StackOverflowError`, is isolated
+and never changes the request outcome or the views the remaining listeners receive.
 
 ## Bounded output pipeline
 
@@ -739,8 +753,8 @@ Every completed `tools/call` result is normalized exactly once, bounded by
 `mcp.outputMaxBytes` as bytes are produced and by `mcp.outputMaxTokens` while those bytes are reparsed,
 validated against the tool's advertised output schema, encoded into the bounded terminal envelope,
 handed to the single terminal writer ([Cancellation and
-write-phase settlement](#cancellation-and-write-phase-settlement)), and offered to the opt-in
-`onToolOutput` observation only once that writer has won settlement — in that fixed order,
+write-phase settlement](#cancellation-and-write-phase-settlement)), and reported as the completion
+view's `toolOutput()` only once that writer has won settlement — in that fixed order,
 introducing no second streaming, writing, completion, or settlement path.
 
 Every successfully transported `tools/call` result carries the final-protocol discriminator
@@ -749,8 +763,8 @@ failure remains a JSON-RPC error and carries no tool-result discriminator.
 
 `McpRequestDispatcher` converts a handler's structured result (`McpToolResult#structuredContent()`)
 to its bounded, JSON-compatible canonical shape (`Map`/`List`/scalar) exactly once per call; that one
-normalized value is reused for output-schema validation, the `onToolOutput` observation, and the wire
-embed — nothing re-serializes the original application object a second time. A tool that declares no
+normalized value is reused for output-schema validation, the completion view's `toolOutput()`, and
+the wire embed — nothing re-serializes the original application object a second time. A tool that declares no
 output schema, or a text-only/structured-content-free result, is trivially valid: there is nothing to
 normalize or validate.
 
@@ -784,33 +798,33 @@ the full envelope.
 raw-value serialization as bytes are produced and also becomes the decoder's document-length limit.
 `mcp.outputMaxTokens` independently becomes that decoder's parser-token limit; it is not derived from
 the byte cap, and no additional fixed node limit is layered beside it. Token exhaustion emits a
-bounded JSON-RPC `-32603` response, no partial success and no `onToolOutput` observation, while the
-terminal event is classified exactly as `McpErrorType.SERIALIZATION`.
+bounded JSON-RPC `-32603` response, no partial success and no `toolOutput` in the completion view,
+while the terminal event is classified exactly as `McpErrorType.SERIALIZATION`.
 
 Finite JSON numbers retain their canonical representation through the reparse: scale-sensitive
 `BigDecimal` values and large finite decimals reach the wire unchanged. Java `Float`/`Double` NaN and
 infinity values are rejected during the sole serialization pass rather than being converted into
 quoted strings.
 
-The output-value observation (`onToolOutput`) is published only after the terminal envelope has been
-successfully encoded **and** the write has won logical settlement — never before. A capable session
-can therefore never observe a structured value the wire cap, the output-schema check, or a competing
-disconnect settlement would still suppress: both halves of the cap, the schema check, and the
-settlement race always resolve before `publishToolOutput` is ever reached.
-`McpOutputPipelineIT#shouldBoundNormalizationAndNotifyOnlyAfterBothChecks` proves this two ways — an
-application value whose own size exceeds the cap aborts during normalization, well before the value's
-full extent is visited, and a value that only exceeds the cap once fully enveloped is never published
-either, isolating the observation-ordering guarantee from normalization boundedness.
+The completion view's `toolOutput()` is armed only after the terminal envelope has been successfully
+encoded and becomes visible only once the write has won logical settlement — never before. A
+listener can therefore never read a structured value the wire cap, the output-schema check, or a
+competing disconnect settlement would still suppress: both halves of the cap, the schema check, and
+the settlement race always resolve before the value is made visible.
+`McpOutputPipelineIT#shouldBoundNormalizationAndReportNoOutputForARejectedResult` proves this two ways
+— an application value whose own size exceeds the cap aborts during normalization, well before the
+value's full extent is visited, and a value that only exceeds the cap once fully enveloped is never
+reported either, isolating the visibility guarantee from normalization boundedness.
 
 A structured result that fails its own declared output schema never reaches the wire and never
-reaches a session: it is rejected before the `onToolOutput` observation fires and before any response
+appears as a `toolOutput()`: it is rejected before the output is armed and before any response
 byte is produced, settling as a bounded internal error (`McpErrorType.OUTPUT_VALIDATION`, JSON-RPC
 `-32603`) through the same non-leaking degrade-to-id-less shape used elsewhere for a serialization or
 handler failure — carrying no schema keyword, property, or value detail. Serialization and reparse
 failures — byte or token exhaustion, a cyclic or non-finite value, or normalization recursion — use
 the bounded internal wire response and terminal type `McpErrorType.SERIALIZATION`. Output-schema
-failure remains `McpErrorType.OUTPUT_VALIDATION`; observer and other downstream callback failures
-remain `McpErrorType.INTERNAL`. Every path settles rather than stranding the request with no response,
+failure remains `McpErrorType.OUTPUT_VALIDATION`; a failure of any other downstream step after
+normalization remains `McpErrorType.INTERNAL`. Every path settles rather than stranding the request with no response,
 terminal, or completion.
 
 The response write itself is bounded exactly like discovery and `tools/list` ([Bounded response
@@ -1069,10 +1083,11 @@ parameterized calls described in
 [Request-time input pipeline](#request-time-input-pipeline). What is deliberately still absent arrives
 with its owning slice:
 
-- **Opt-in value-observation input and output callbacks.** `onToolInput` and
-  `onToolOutput` are each delivered, only to a capability-implementing session, through the [Value
-  observation stage](#value-observation-stage). Both live interceptor stages exist: the pre-dispatch
-  request-interceptor stage described in [Request interceptor stage](#request-interceptor-stage), and
+- **Completion view of a request.** A completion listener's two-argument `onCompleted` receives a
+  read-only `McpRequestView` of the request's bytes and normalized tool values, bound as described
+  in [Completion view binding](#completion-view-binding). Both live interceptor stages exist: the
+  pre-dispatch request-interceptor stage described in [Request interceptor
+  stage](#request-interceptor-stage), and
   the post-validation tool-interceptor stage described in
   [Tool interceptor stage](#tool-interceptor-stage).
 - **Complete bounded tool output.** A structured `McpToolResult` is
@@ -1212,9 +1227,9 @@ an immutable empty map; a present object is converted to its map representation 
 against the tool's application schema in stage 1 of the
 [Request-time input pipeline](#request-time-input-pipeline) below. For a zero-argument tool, absence
 or `{}` satisfies the trivial empty-object schema. See
-[Value observation stage](#value-observation-stage) for the
-opt-in `onToolInput`/`onToolOutput` capability this version delivers, and [Bounded output
-pipeline](#bounded-output-pipeline) for the output-side normalization, validation, and observation
+[Completion view binding](#completion-view-binding) for the request view a completion listener
+receives, and [Bounded output
+pipeline](#bounded-output-pipeline) for the output-side normalization, validation, and write
 order; cancellation and write-phase settlement are described in
 [Cancellation and write-phase settlement](#cancellation-and-write-phase-settlement), and the
 post-validation tool-interceptor stage is described in
@@ -1256,9 +1271,9 @@ failure is signalled by the generated invoker throwing the public
 `prepare()` is generated into an arbitrary application package that cannot reach a package-private
 type in this module), which the dispatcher maps to the identical bounded outcome — so a
 caller cannot tell which of the four stages rejected a call from the response shape. Only after all
-four stages succeed does the dispatcher deliver the [Value observation stage](#value-observation-stage)
-`onToolInput` callback and then run the [Tool interceptor stage](#tool-interceptor-stage); only once
-every tool interceptor permits does it call `invoke()`.
+four stages succeed does the dispatcher bind the call's `toolContext` and `toolInput` for the
+[completion view](#completion-view-binding) and then run the [Tool interceptor
+stage](#tool-interceptor-stage); only once every tool interceptor permits does it call `invoke()`.
 
 ## Authorization
 
@@ -1524,7 +1539,7 @@ does not create an MCP resilience engine, policy namespace, breaker, bulkhead, o
 automatic retry behavior.
 
 The resilience boundary starts at the handler invocation, after authorization,
-capability checks, input validation/materialization, value observation, and tool
+capability checks, input validation/materialization, and tool
 interceptors. A retry repeats only the handler method. `McpTool.idempotentHint`
 is informational and does not make retry safe or enable retry. The application
 author must explicitly declare retry and own replay safety for side-effecting

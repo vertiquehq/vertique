@@ -144,8 +144,8 @@ application, materialization, or Bean Validation; its message is always a fixed,
 literal, since it is returned to the caller verbatim. `McpValueTrees.deepUnmodifiableMap(map)` builds
 the deeply immutable, null-preserving `normalizedArguments` map every generated `PreparedCall`
 returns — unlike `Map.copyOf`, an explicit `null` value never throws, and every nested `Map`/`List`
-is unmodifiable too, not just the root. Application code neither calls nor throws any of these three
-types itself.
+is unmodifiable too, not just the root. `McpRequestView#toolInput()` reports that tree. Application
+code neither calls nor throws any of these three types itself.
 
 ## Lifecycle facts
 
@@ -177,11 +177,11 @@ observe-only, synchronous, non-blocking, and failure-isolated by the server runt
 
 Applications that only need a post-transport callback can contribute an
 `McpRequestCompletedListener`. Listener order is unspecified and listener failures cannot alter a
-request outcome. Choose the listener when a stateless, allocation-free completion hook suffices —
-it receives the same completion event (terminal facts included) with no per-request session
-object; choose the observer SPI whenever per-request state, the pre-write terminal callback, or
-opt-in value observation is needed. The listener mirrors REST's request-completed listener
-deliberately.
+request outcome. Choose the listener when a stateless completion hook suffices — it receives the
+same completion event (terminal facts included) with no per-request session object, and, through
+the two-argument `onCompleted`, a read-only view of the request's bytes and normalized tool values
+(see Completion view below); choose the observer SPI whenever per-request state or the pre-write
+terminal callback is needed. The listener mirrors REST's request-completed listener deliberately.
 
 `McpRequestTerminalObservation.linkedTrace` is the optional normalized W3C trace reference associated
 with a terminal observation — `dev.vertique.core.correlation.TraceReference`, the framework's single
@@ -229,48 +229,58 @@ pre-dispatch `McpRequestContext` and the resolved `McpToolDescriptor`. It expose
 raw wire argument tree, the post-processing normalized argument tree, or any invocation result, so a
 tool interceptor can reject a call but never observe or mutate the arguments it is guarding.
 
-## Opt-in value observation
+## Completion view
 
-`McpToolValueObservation` is a neutral capability a session returned from `McpRequestLifecycleObserver
-#open` may additionally implement to receive `onToolInput`/`onToolOutput` — the bounded, normalized
-tool argument and result values a plain `McpRequestObservation` session never receives. Least
-privilege is structural: the server delivers a value callback only to a session that is an instance
-of this interface, so an ordinary metrics or tracing session implementing only `McpRequestObservation`
-has no method on its own type capable of receiving an argument or result reference.
+`McpRequestCompletedListener` has two `onCompleted` forms. `onCompleted(McpRequestCompletedEvent)` is
+the abstract one and receives the payload-free completion facts. `onCompleted(McpRequestCompletedEvent,
+McpRequestView)` is a default method that delegates to the one-argument form. The server always calls
+the two-argument form, once per request after transport completion, so a listener that needs only the
+event implements the one-argument form and a lambda keeps working. A listener that needs the request's
+bytes or values overrides the two-argument form and implements the one-argument form as an empty
+method; never make the one-argument form delegate back, which would recurse.
 
-`McpToolInputObservation` carries the pre-dispatch `McpToolInvocationContext` and the bounded
-`normalizedArguments` tree exactly as `McpPreparedToolCall#normalizedArguments()` produced it — after
-schema validation, INP-001 canonicalization and sanitization, materialization, and Bean Validation.
-`McpToolOutputObservation` carries the same context and a bounded, schema-valid `normalizedOutput`
-value; its dispatch belongs to the output pipeline. Both records deep-copy their value into an
-unmodifiable view at every level of its nested `Map`/`List` structure in their compact constructor,
-regardless of whether the value handed in was already immutable, and expose no accessor for raw body
-bytes, headers, credentials, or exception text.
+`McpRequestView` is a framework-owned, read-only view of one request:
 
-Values are callback-scoped: the framework retains no reference to a delivered observation or its
-value tree once the callback that received it returns. An implementor that keeps a reference beyond
-its own callback does so under its own documented obligation — an immutable record cannot revoke
-itself; only an installed audit adapter may copy a policy-permitted value into its own private
-evidence handle.
+| Accessor | Reports |
+|---|---|
+| `jsonRpcRequestId()` | The JSON-RPC `id` in its wire textual form; empty when the request carried none or it could not be decoded |
+| `requestHeaders()`, `responseHeaders()` | Lower-cased names mapped to their values in wire order; immutable |
+| `requestBody()`, `responseBody()` | A `PayloadSource` over the bytes received and the bytes the single terminal writer sent |
+| `toolContext()` | The `McpToolInvocationContext` of a `tools/call` that reached a prepared invocation |
+| `toolInput()` | The normalized arguments the tool was invoked with, as `McpPreparedToolCall#normalizedArguments()` produced them; not the wire value |
+| `toolOutput()` | An `Optional<McpToolOutput>` whose `structuredContent()` is the normalized, schema-valid structured result |
 
-## Opt-in raw evidence observation
+The view is read-only and per listener. Each listener receives its own view over the same bytes,
+`PayloadSource` exposes no write path, and every map and tree is unmodifiable, so no listener can
+change the response or what another listener reads. The framework copies no body on behalf of a
+listener: a listener that keeps a body beyond its callback copies it.
 
-`McpRawEvidenceObservation` is a neutral capability a session returned from `McpRequestLifecycleObserver
-#open` may additionally implement to receive `onRequestAdmitted`/`onResponseWritten` — the raw request
-body bytes, response bytes, headers, and the two per-request identifying facts (the client-supplied
-JSON-RPC id and the caller's principal id), below the payload-free `McpRequestObservation`/
-`McpToolValueObservation` contract. Least privilege is structural, exactly like
-`McpToolValueObservation`: the server delivers a raw-evidence callback only to a session that is an
-instance of this interface.
+The server binds each part as it handles the request, before any interceptor or observer can alter it:
 
-This is the boundary-evidence hook the audit adapter implements — a private, audit-owned seam, not a
-general-purpose extension point. It exists so an audit adapter can reach the raw envelope it needs
-without widening the public `McpRequestObservation`/`McpToolValueObservation` contract every other
-neutral observer (Micrometer, OpenTelemetry) also implements. `onRequestAdmitted` fires once per
-`tools/call` request, before tool-name resolution or authorization, so it fires even for a request
-rejected before the input pipeline runs; `onResponseWritten` fires once, immediately before the
-single shared terminal writer sends the response to the wire, for every terminal write on that
-surface.
+- **Request headers and body** are bound when the request is admitted, and only when at least one
+  completion listener is registered. A decode error or an authentication rejection that reaches a
+  completion coordinator therefore carries them.
+- **The JSON-RPC id** is bound once the envelope decodes.
+- **`toolContext` and `toolInput`** are bound from the prepared call before the tool-interceptor stage.
+- **The response** is bound immediately before the terminal write, including the bounded `504` of an
+  expired request deadline.
+- **`toolOutput`** is present only when the result's own terminal write won settlement. Present does not
+  mean the client received it; `McpRequestCompletedEvent#transportOutcome()` carries that.
+
+A part the request never reached is empty: a rejection before a prepared call has an empty
+`toolContext` and `toolInput`, and a disconnect before the write has an absent `responseBody`.
+
+The raw request and response carry whatever the caller and the tool put there, `Authorization` and
+`Cookie` headers included. The view is not an access-control boundary: every contributed listener
+receives it, so contribute a listener that overrides the two-argument form only from code trusted with
+that data. `toString()` of the view prints no header, body, or value.
+
+**Migration.** Removal is a break with no deprecation cycle. A type that implements
+`McpToolValueObservation` or `McpRawEvidenceObservation`, or that reads `McpToolInputObservation`,
+`McpToolOutputObservation`, `McpRequestAdmissionEvidence`, or `McpResponseEvidence`, no longer compiles.
+Move to a `McpRequestCompletedListener` that overrides the two-argument `onCompleted`, implements the
+one-argument form as an empty method, and reads `request.toolInput()`, `request.toolOutput()`,
+`request.requestBody()`, and `request.responseBody()`.
 
 ## Opt-in completion scope
 
@@ -298,7 +308,8 @@ already threads through the per-request `McpRequestObservation` sessions this mo
 | `McpRequestInterceptor`, `McpToolInterceptor`, `McpRequestContext`, `McpToolInvocationContext` | Fail-closed pre-dispatch and post-validation interceptor SPIs |
 | `McpRequestLifecycleObserver`, `McpRequestObservation`, `McpRequestCompletedListener` | Neutral observation SPIs |
 | `McpRequestTerminalEvent`, `McpRequestCompletedEvent`, outcome / method / error enums | Immutable lifecycle facts |
-| `McpToolValueObservation`, `McpCompletionScope` | Opt-in session capabilities on observer sessions |
+| `McpRequestView`, `McpToolOutput` | Read-only completion view of a request's bytes and normalized tool values |
+| `McpCompletionScope` | Opt-in session capability on observer sessions |
 
 Tool methods may declare Jakarta security annotations (`@PermitAll`, `@DenyAll`, `@RolesAllowed`,
 `@RequiresAction`, `@RequiresPolicy`). An unannotated tool is public. Typed policies use the
@@ -313,7 +324,6 @@ arbitrary application packages) and sibling framework modules can reach them:
 |---|---|
 | `McpToolInvoker`, `McpPreparedToolCall`, `McpStructuredOutputWriter` | Generated-runtime invocation contracts |
 | `McpBeanValidation`, `McpInputRejectionException`, `McpValueTrees` | Generated `prepare` support |
-| `McpRawEvidenceObservation`, `McpRequestAdmissionEvidence`, `McpResponseEvidence` | Audit-owned raw-evidence capability |
 
 ---
 

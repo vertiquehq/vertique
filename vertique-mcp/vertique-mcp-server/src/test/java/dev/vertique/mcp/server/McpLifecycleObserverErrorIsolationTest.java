@@ -19,21 +19,15 @@ import ch.qos.logback.core.read.ListAppender;
 import dev.vertique.core.context.ContextHolder;
 import dev.vertique.core.context.ContextValue;
 import dev.vertique.correlation.CorrelationContextFactory;
-import dev.vertique.mcp.interceptor.McpToolInvocationContext;
 import dev.vertique.mcp.lifecycle.McpErrorType;
 import dev.vertique.mcp.lifecycle.McpMethod;
-import dev.vertique.mcp.lifecycle.McpRawEvidenceObservation;
-import dev.vertique.mcp.lifecycle.McpRequestAdmissionEvidence;
 import dev.vertique.mcp.lifecycle.McpRequestCompletedEvent;
 import dev.vertique.mcp.lifecycle.McpRequestCompletedListener;
 import dev.vertique.mcp.lifecycle.McpRequestLifecycleObserver;
 import dev.vertique.mcp.lifecycle.McpRequestObservation;
 import dev.vertique.mcp.lifecycle.McpRequestTerminalEvent;
 import dev.vertique.mcp.lifecycle.McpRequestTerminalObservation;
-import dev.vertique.mcp.lifecycle.McpResponseEvidence;
-import dev.vertique.mcp.lifecycle.McpToolInputObservation;
-import dev.vertique.mcp.lifecycle.McpToolOutputObservation;
-import dev.vertique.mcp.lifecycle.McpToolValueObservation;
+import dev.vertique.mcp.lifecycle.McpRequestView;
 import dev.vertique.mcp.lifecycle.McpTransportOutcome;
 import dev.vertique.rest.core.config.HttpConfig;
 import dev.vertique.rest.core.middleware.RequestContextLifecycle;
@@ -87,17 +81,13 @@ import org.slf4j.LoggerFactory;
 class McpLifecycleObserverErrorIsolationTest {
 
     private static final String OPEN = "open";
-    private static final String REQUEST_ADMITTED = "onRequestAdmitted";
-    private static final String TOOL_INPUT = "onToolInput";
-    private static final String TOOL_OUTPUT = "onToolOutput";
     private static final String TERMINAL = "onTerminal";
-    private static final String RESPONSE_WRITTEN = "onResponseWritten";
     private static final String COMPLETED = "onCompleted";
     private static final String LISTENER_COMPLETED = "listener.onCompleted";
+    private static final String LISTENER_VIEW_COMPLETED = "listener.onCompleted(view)";
 
     /** Every session callback, in the order {@link #driveOneRequest} makes the coordinator publish them. */
-    private static final List<String> SESSION_CALLBACKS =
-            List.of(REQUEST_ADMITTED, TOOL_INPUT, TOOL_OUTPUT, TERMINAL, RESPONSE_WRITTEN, COMPLETED);
+    private static final List<String> SESSION_CALLBACKS = List.of(TERMINAL, COMPLETED);
 
     private static final Instant STARTED_AT = Instant.parse("2026-08-21T00:00:00Z");
     private static final Instant TERMINAL_AT = STARTED_AT.plusMillis(10);
@@ -117,15 +107,7 @@ class McpLifecycleObserverErrorIsolationTest {
     }
 
     private static Stream<Arguments> rows() {
-        return Stream.of(
-                        OPEN,
-                        REQUEST_ADMITTED,
-                        TOOL_INPUT,
-                        TOOL_OUTPUT,
-                        TERMINAL,
-                        RESPONSE_WRITTEN,
-                        COMPLETED,
-                        LISTENER_COMPLETED)
+        return Stream.of(OPEN, TERMINAL, COMPLETED, LISTENER_COMPLETED, LISTENER_VIEW_COMPLETED)
                 .flatMap(callback -> Stream.of(
                         Arguments.of(callback, AssertionError.class), Arguments.of(callback, NoSuchMethodError.class)));
     }
@@ -160,9 +142,21 @@ class McpLifecycleObserverErrorIsolationTest {
             reached.add(LISTENER_COMPLETED);
             throw thrown;
         };
+        McpRequestCompletedListener throwingViewListener = new McpRequestCompletedListener() {
+            @Override
+            public void onCompleted(McpRequestCompletedEvent event) {}
+
+            @Override
+            public void onCompleted(McpRequestCompletedEvent event, McpRequestView request) {
+                reached.add(LISTENER_VIEW_COMPLETED);
+                throw thrown;
+            }
+        };
         Set<McpRequestCompletedListener> listeners = LISTENER_COMPLETED.equals(callback)
                 ? Set.of(throwingListener, healthyListener)
-                : Set.of(healthyListener);
+                : LISTENER_VIEW_COMPLETED.equals(callback)
+                        ? Set.of(throwingViewListener, healthyListener)
+                        : Set.of(healthyListener);
 
         Throwable escaped = driveOneRequest(context, observers, listeners);
 
@@ -249,18 +243,12 @@ class McpLifecycleObserverErrorIsolationTest {
     private static Throwable driveOneRequest(
             Context context, Set<McpRequestLifecycleObserver> observers, Set<McpRequestCompletedListener> listeners)
             throws Exception {
-        McpToolInvocationContext toolContext = McpValueObservationLeastPrivilegeTestFixture.toolContext();
         CompletableFuture<Throwable> escaped = new CompletableFuture<>();
         context.runOnContext(ignored -> {
             try {
                 McpCompletionCoordinator coordinator =
                         new McpCompletionCoordinator(context, observers, listeners, STARTED_AT);
-                coordinator.publishRequestAdmitted(
-                        new McpRequestAdmissionEvidence(new byte[0], Map.of(), null, null, null));
-                coordinator.publishToolInput(new McpToolInputObservation(toolContext, Map.of("city", "Helsinki")));
-                coordinator.publishToolOutput(new McpToolOutputObservation(toolContext, Map.of("ok", true)));
                 coordinator.beginWrite(successTerminal());
-                coordinator.publishResponseWritten(new McpResponseEvidence(new byte[0], Map.of()));
                 coordinator.finishWrite(McpTransportOutcome.WRITTEN, true, COMPLETED_AT);
                 escaped.complete(null);
             } catch (Throwable thrown) {
@@ -398,35 +386,14 @@ class McpLifecycleObserverErrorIsolationTest {
 
     // --- Sessions and observers ---
 
-    /** A session with every capability that throws {@code thrown} from the one callback named {@code failAt}. */
-    private record ThrowingSession(String failAt, Error thrown, List<String> reached)
-            implements McpToolValueObservation, McpRawEvidenceObservation {
+    /** A session that throws {@code thrown} from the one callback named {@code failAt}. */
+    private record ThrowingSession(String failAt, Error thrown, List<String> reached) implements McpRequestObservation {
 
         private void hit(String callback) {
             if (callback.equals(failAt)) {
                 reached.add(callback);
                 throw thrown;
             }
-        }
-
-        @Override
-        public void onRequestAdmitted(McpRequestAdmissionEvidence evidence) {
-            hit(REQUEST_ADMITTED);
-        }
-
-        @Override
-        public void onResponseWritten(McpResponseEvidence evidence) {
-            hit(RESPONSE_WRITTEN);
-        }
-
-        @Override
-        public void onToolInput(McpToolInputObservation observation) {
-            hit(TOOL_INPUT);
-        }
-
-        @Override
-        public void onToolOutput(McpToolOutputObservation observation) {
-            hit(TOOL_OUTPUT);
         }
 
         @Override
@@ -440,28 +407,8 @@ class McpLifecycleObserverErrorIsolationTest {
         }
     }
 
-    /** A session with every capability that records the name of each callback it receives. */
-    private record RecordingSession(List<String> log) implements McpToolValueObservation, McpRawEvidenceObservation {
-
-        @Override
-        public void onRequestAdmitted(McpRequestAdmissionEvidence evidence) {
-            log.add(REQUEST_ADMITTED);
-        }
-
-        @Override
-        public void onResponseWritten(McpResponseEvidence evidence) {
-            log.add(RESPONSE_WRITTEN);
-        }
-
-        @Override
-        public void onToolInput(McpToolInputObservation observation) {
-            log.add(TOOL_INPUT);
-        }
-
-        @Override
-        public void onToolOutput(McpToolOutputObservation observation) {
-            log.add(TOOL_OUTPUT);
-        }
+    /** A session that records the name of each callback it receives. */
+    private record RecordingSession(List<String> log) implements McpRequestObservation {
 
         @Override
         public void onTerminal(McpRequestTerminalObservation observation) {

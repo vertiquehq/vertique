@@ -12,17 +12,14 @@ import dev.vertique.mcp.interceptor.McpRequestInterceptor;
 import dev.vertique.mcp.interceptor.McpToolInterceptor;
 import dev.vertique.mcp.lifecycle.McpCompletionScope;
 import dev.vertique.mcp.lifecycle.McpErrorType;
-import dev.vertique.mcp.lifecycle.McpRawEvidenceObservation;
-import dev.vertique.mcp.lifecycle.McpRequestAdmissionEvidence;
 import dev.vertique.mcp.lifecycle.McpRequestCompletedEvent;
 import dev.vertique.mcp.lifecycle.McpRequestCompletedListener;
 import dev.vertique.mcp.lifecycle.McpRequestLifecycleObserver;
 import dev.vertique.mcp.lifecycle.McpRequestObservation;
 import dev.vertique.mcp.lifecycle.McpRequestTerminalEvent;
 import dev.vertique.mcp.lifecycle.McpRequestTerminalObservation;
-import dev.vertique.mcp.lifecycle.McpToolInputObservation;
-import dev.vertique.mcp.lifecycle.McpToolOutputObservation;
-import dev.vertique.mcp.lifecycle.McpToolValueObservation;
+import dev.vertique.mcp.lifecycle.McpRequestView;
+import dev.vertique.mcp.server.McpRecordingCompletedListener.Completion;
 import dev.vertique.mcp.tool.McpAccessMode;
 import dev.vertique.mcp.tool.McpCancellationSignal;
 import dev.vertique.mcp.tool.McpInputRejectionException;
@@ -71,6 +68,7 @@ import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
@@ -102,8 +100,9 @@ import org.junit.jupiter.params.provider.MethodSource;
  *       covered only by the full-sequence test below.
  *   <li><strong>Full sequence.</strong> One successful call records every stage a probe can observe
  *       and asserts the exact order, including the completion side: the terminal observation before
- *       the tool-output observation, and every completion scope opened before and closed after the
- *       completion callbacks.
+ *       every completion callback, and every completion scope opened before and closed after the
+ *       completion callbacks. The facts the server bound along the way are asserted on the request
+ *       view the completion listener read.
  * </ul>
  *
  * <p>Authorization has no probe of its own: its position is pinned through the responses that
@@ -139,15 +138,12 @@ class McpPipelineOrderIT {
     // Probe event names, in the order a successful call produces them.
     private static final String OPEN = "lifecycle.open";
     private static final String IDENTITY = "identity.resolve";
-    private static final String ADMITTED = "evidence.admitted";
     private static final String REQUEST_INTERCEPTOR = "interceptor.request";
     private static final String ADMISSION = "admission.consume";
     private static final String PREPARE = "tool.prepare";
-    private static final String TOOL_INPUT = "observation.toolInput";
     private static final String TOOL_INTERCEPTOR = "interceptor.tool";
     private static final String INVOKE = "tool.invoke";
     private static final String TERMINAL = "observation.terminal";
-    private static final String TOOL_OUTPUT = "observation.toolOutput";
     private static final String SCOPE_OPEN = "completion.scopeOpen";
     private static final String COMPLETED = "completion.observation";
     private static final String LISTENER_COMPLETED = "completion.listener";
@@ -155,9 +151,9 @@ class McpPipelineOrderIT {
 
     private static final Set<String> COMPLETION_EVENTS = Set.of(SCOPE_OPEN, COMPLETED, LISTENER_COMPLETED, SCOPE_CLOSE);
     private static final List<String> REJECTED_AFTER_INTERCEPTOR =
-            List.of(OPEN, IDENTITY, ADMITTED, REQUEST_INTERCEPTOR, TERMINAL);
-    private static final List<String> THROUGH_INVOKE = List.of(
-            OPEN, IDENTITY, ADMITTED, REQUEST_INTERCEPTOR, PREPARE, TOOL_INPUT, TOOL_INTERCEPTOR, INVOKE, TERMINAL);
+            List.of(OPEN, IDENTITY, REQUEST_INTERCEPTOR, TERMINAL);
+    private static final List<String> THROUGH_INVOKE =
+            List.of(OPEN, IDENTITY, REQUEST_INTERCEPTOR, PREPARE, TOOL_INTERCEPTOR, INVOKE, TERMINAL);
 
     private final Vertx vertx = Vertx.vertx();
 
@@ -234,6 +230,8 @@ class McpPipelineOrderIT {
                         call(OPEN_TOOL, "{}", new JsonObject()).body("{not json"),
                         Setup.FAIL_IDENTITY,
                         Expect.status(500, List.of(OPEN, IDENTITY, TERMINAL))),
+                // The envelope check itself rejects the unknown method, so the view reports no request id
+                // even though the id is echoed on the wire.
                 new Row(
                         "an unknown method is judged before the negotiation failure its missing _meta would cause",
                         call(OPEN_TOOL, "{}", new JsonObject())
@@ -256,29 +254,37 @@ class McpPipelineOrderIT {
                                         .encode())
                                 .header("Mcp-Method", "tools/list"),
                         Setup.NONE,
-                        Expect.rpc(400, -32602, List.of(OPEN, IDENTITY, ADMITTED, TERMINAL))),
+                        Expect.rpc(400, -32602, List.of(OPEN, IDENTITY, TERMINAL))
+                                .withRequestId()),
                 new Row(
                         "negotiation is judged before the request interceptors",
                         call(OPEN_TOOL, "{}", new JsonObject()).header("Mcp-Method", "tools/list"),
                         Setup.REJECT_REQUESTS,
-                        Expect.rpc(400, -32020, List.of(OPEN, IDENTITY, ADMITTED, TERMINAL))),
+                        Expect.rpc(400, -32020, List.of(OPEN, IDENTITY, TERMINAL))
+                                .withRequestId()),
                 // --- request interceptors, then tool resolution and authorization ---
                 new Row(
                         "request interceptors are judged before tool resolution",
                         call(UNKNOWN_TOOL, "{}", new JsonObject()),
                         Setup.REJECT_REQUESTS,
-                        Expect.rpc(403, -32001, REJECTED_AFTER_INTERCEPTOR).tool("UNKNOWN")),
+                        Expect.rpc(403, -32001, REJECTED_AFTER_INTERCEPTOR)
+                                .tool("UNKNOWN")
+                                .withRequestId()),
                 new Row(
                         "authorization is judged before the required client capability",
                         call(DENIED_TOOL, "{}", new JsonObject()),
                         Setup.NONE,
-                        Expect.rpc(400, -32602, REJECTED_AFTER_INTERCEPTOR).tool(DENIED_TOOL)),
+                        Expect.rpc(400, -32602, REJECTED_AFTER_INTERCEPTOR)
+                                .tool(DENIED_TOOL)
+                                .withRequestId()),
                 // --- capability, admission, then the input pipeline ---
                 new Row(
                         "required client capability is judged before admission",
                         call(LIMITED_TOOL, "{}", new JsonObject()),
                         Setup.DRAIN_QUOTA,
-                        Expect.rpc(400, -32021, REJECTED_AFTER_INTERCEPTOR).tool(LIMITED_TOOL)),
+                        Expect.rpc(400, -32021, REJECTED_AFTER_INTERCEPTOR)
+                                .tool(LIMITED_TOOL)
+                                .withRequestId()),
                 new Row(
                         "admission is judged before input schema validation and response transport selection",
                         call(LIMITED_TOOL, "{\"n\":\"x\"}", capability()),
@@ -286,52 +292,61 @@ class McpPipelineOrderIT {
                         Expect.rpc(
                                         429,
                                         McpRequestDispatcher.RATE_LIMITED,
-                                        List.of(OPEN, IDENTITY, ADMITTED, REQUEST_INTERCEPTOR, ADMISSION, TERMINAL))
+                                        List.of(OPEN, IDENTITY, REQUEST_INTERCEPTOR, ADMISSION, TERMINAL))
                                 .tool(LIMITED_TOOL)
+                                .withRequestId()
                                 .json()),
                 new Row(
                         "input schema validation is judged before input processing",
                         call(OPEN_TOOL, "{\"n\":\"x\",\"rejectInput\":true}", new JsonObject()),
                         Setup.NONE,
-                        Expect.toolError(SCHEMA_REJECTION, REJECTED_AFTER_INTERCEPTOR, McpErrorType.INPUT_VALIDATION)),
+                        Expect.toolError(SCHEMA_REJECTION, REJECTED_AFTER_INTERCEPTOR, McpErrorType.INPUT_VALIDATION)
+                                .withRequestId()),
                 new Row(
                         "input processing is judged before the tool interceptors",
                         call(OPEN_TOOL, "{\"rejectInput\":true}", new JsonObject()),
                         Setup.REJECT_TOOLS,
                         Expect.toolError(
-                                PREPARE_REJECTION,
-                                List.of(OPEN, IDENTITY, ADMITTED, REQUEST_INTERCEPTOR, PREPARE, TERMINAL),
-                                McpErrorType.INPUT_PROCESSING)),
+                                        PREPARE_REJECTION,
+                                        List.of(OPEN, IDENTITY, REQUEST_INTERCEPTOR, PREPARE, TERMINAL),
+                                        McpErrorType.INPUT_PROCESSING)
+                                .withRequestId()),
                 new Row(
                         "tool interceptors are judged before invocation",
                         call(OPEN_TOOL, "{\"n\":1}", new JsonObject()),
                         Setup.REJECT_TOOLS,
+                        // The prepared call's arguments are bound before the tool-interceptor stage, so
+                        // the view reports them even though an interceptor rejected the call.
                         Expect.toolError(
-                                TOOL_INTERCEPTOR_REJECTION,
-                                List.of(
-                                        OPEN,
-                                        IDENTITY,
-                                        ADMITTED,
-                                        REQUEST_INTERCEPTOR,
-                                        PREPARE,
-                                        TOOL_INPUT,
-                                        TOOL_INTERCEPTOR,
-                                        TERMINAL),
-                                McpErrorType.INTERCEPTOR)),
+                                        TOOL_INTERCEPTOR_REJECTION,
+                                        List.of(
+                                                OPEN,
+                                                IDENTITY,
+                                                REQUEST_INTERCEPTOR,
+                                                PREPARE,
+                                                TOOL_INTERCEPTOR,
+                                                TERMINAL),
+                                        McpErrorType.INTERCEPTOR)
+                                .withRequestId()
+                                .withToolInput()),
                 // --- output: bounded normalization, then output schema, then the write ---
                 new Row(
                         "output normalization is judged before output schema validation",
                         call(OVER_CAP_TOOL, "{}", new JsonObject()),
                         Setup.NONE,
-                        Expect.internalError(THROUGH_INVOKE, McpErrorType.SERIALIZATION)),
+                        Expect.internalError(THROUGH_INVOKE, McpErrorType.SERIALIZATION)
+                                .withRequestId()
+                                .withToolInput()),
                 // Negative pin: the output-schema failure settles through its own writer, which never
-                // reaches the tool-output publication, so the absence of that observation is the expected
-                // result of the stage order rather than of a missing probe.
+                // arms the tool output, so the view reporting none is the expected result of the stage
+                // order rather than of a missing probe.
                 new Row(
-                        "an output-schema-invalid result settles without reaching the output observation",
+                        "an output-schema-invalid result settles without the view reporting a tool output",
                         call(BAD_SHAPE_TOOL, "{}", new JsonObject()),
                         Setup.NONE,
-                        Expect.internalError(THROUGH_INVOKE, McpErrorType.OUTPUT_VALIDATION)));
+                        Expect.internalError(THROUGH_INVOKE, McpErrorType.OUTPUT_VALIDATION)
+                                .withRequestId()
+                                .withToolInput()));
     }
 
     @ParameterizedTest(name = "{0}")
@@ -369,6 +384,41 @@ class McpPipelineOrderIT {
         if (expect.terminalTool() != null) {
             assertThat(fixture.probe().lastTerminal().toolName()).isEqualTo(expect.terminalTool());
         }
+        assertViewMatches(row, expect, response);
+    }
+
+    /**
+     * Asserts what the request view reported to the completion listener, which the server binds as it
+     * handles the request: a request that never opened a lifecycle observation reaches no listener.
+     */
+    private void assertViewMatches(Row row, Expect expect, HttpResponse<Buffer> response) {
+        List<Completion> views = fixture.probe().views();
+        if (!expect.stages().contains(OPEN)) {
+            assertThat(views)
+                    .as("a request rejected before MCP begins reaches no completion listener")
+                    .isEmpty();
+            return;
+        }
+        assertThat(views).as("one view per request").hasSize(1);
+        Completion view = views.get(0);
+        assertThat(view.jsonRpcRequestId())
+                .as("the JSON-RPC id is bound once the envelope decodes, and not before")
+                .isEqualTo(expect.requestIdBound() ? Optional.of("1") : Optional.empty());
+        assertThat(view.requestBody())
+                .as("the request body is bound as received, before any stage can reject it")
+                .isEqualTo(row.wire().body());
+        assertThat(view.toolInput().isPresent())
+                .as("the tool input is bound once a call was prepared, before the interceptor stage")
+                .isEqualTo(expect.toolInputBound());
+        assertThat(view.toolContext().isPresent())
+                .as("the invocation context is bound together with the tool input")
+                .isEqualTo(expect.toolInputBound());
+        assertThat(view.toolOutput())
+                .as("a rejection or bounded error is never reported as the tool output")
+                .isEmpty();
+        assertThat(view.responseBody())
+                .as("the view's response is the bytes the client received")
+                .isEqualTo(Objects.toString(response.bodyAsString(), ""));
     }
 
     @Test
@@ -410,32 +460,41 @@ class McpPipelineOrderIT {
         assertThat(response.bodyAsString()).startsWith(SSE_PREFIX).contains("done");
         assertThat(response.getHeader("Content-Type")).startsWith("text/event-stream");
         assertThat(response.getHeader("X-Accel-Buffering")).isEqualTo("no");
-        fixture.probe().awaitEvent(TOOL_OUTPUT);
         List<String> events = fixture.probe().events();
         assertThat(fixture.probe().stages())
-                .as("DECISIVE: every request-side stage once, in order, with the terminal observation "
-                        + "before the tool-output observation")
+                .as("DECISIVE: every request-side stage once, in order, ending with the terminal observation")
                 .containsExactly(
-                        OPEN,
-                        IDENTITY,
-                        ADMITTED,
-                        REQUEST_INTERCEPTOR,
-                        ADMISSION,
-                        PREPARE,
-                        TOOL_INPUT,
-                        TOOL_INTERCEPTOR,
-                        INVOKE,
-                        TERMINAL,
-                        TOOL_OUTPUT);
-        // Whether the transport completion lands before or after the tool-output observation depends
-        // on whether the response write resolves synchronously, so only the completion bracket itself
-        // is pinned: scopes open, then both completion callbacks, then scopes close, contiguously and
-        // after the terminal observation.
+                        OPEN, IDENTITY, REQUEST_INTERCEPTOR, ADMISSION, PREPARE, TOOL_INTERCEPTOR, INVOKE, TERMINAL);
+        // The completion bracket is pinned: scopes open, then both completion callbacks, then scopes
+        // close, contiguously and after the terminal observation. The completion listener, which reads
+        // the request view, is the last callback inside the bracket.
         int scopeOpen = events.indexOf(SCOPE_OPEN);
         assertThat(scopeOpen).isGreaterThan(events.indexOf(TERMINAL));
         assertThat(events.subList(scopeOpen, scopeOpen + 4))
                 .as("completion scopes open before and close after both completion callbacks")
                 .containsExactly(SCOPE_OPEN, COMPLETED, LISTENER_COMPLETED, SCOPE_CLOSE);
+
+        // DECISIVE: the view the listener read reports every fact the server bound for this call.
+        List<Completion> views = fixture.probe().views();
+        assertThat(views).as("one view per request").hasSize(1);
+        Completion view = views.get(0);
+        assertThat(view.jsonRpcRequestId()).contains("1");
+        assertThat(view.requestBody()).contains(LIMITED_TOOL);
+        assertThat(view.toolContext())
+                .as("DECISIVE: the prepared call's invocation context is reported")
+                .isPresent();
+        assertThat(view.toolInput())
+                .as("DECISIVE: the prepared call's normalized arguments are reported")
+                .isPresent();
+        assertThat(view.toolOutput())
+                .as("DECISIVE: the result's own write won settlement, so the tool output is reported")
+                .isPresent();
+        assertThat(view.responseBody())
+                .as("the view's response is the bytes the client received")
+                .isEqualTo(response.bodyAsString())
+                .contains("done");
+        assertThat(view.responseHeader("content-type"))
+                .hasValueSatisfying(value -> assertThat(value).startsWith("text/event-stream"));
     }
 
     // --- wire helpers ---
@@ -566,7 +625,6 @@ class McpPipelineOrderIT {
                 HttpResponse<Buffer> drain = test.send(call(LIMITED_TOOL, "{\"n\":1}", capability()));
                 assertThat(drain.statusCode()).isEqualTo(200);
                 test.fixture.probe().awaitCompletionWhenOpened();
-                test.fixture.probe().awaitEvent(TOOL_OUTPUT);
                 test.fixture.probe().clear();
             }
         };
@@ -574,6 +632,10 @@ class McpPipelineOrderIT {
         abstract void apply(McpPipelineOrderIT test) throws Exception;
     }
 
+    /**
+     * What a row expects on the wire, at each stage and in the request view. The view facts default to
+     * "not bound"; a row names the ones the server reached before it rejected the request.
+     */
     private record Expect(
             int status,
             Integer rpcCode,
@@ -581,31 +643,63 @@ class McpPipelineOrderIT {
             List<String> stages,
             McpErrorType errorType,
             String terminalTool,
-            Transport transport) {
+            Transport transport,
+            boolean requestIdBound,
+            boolean toolInputBound) {
 
         static Expect status(int status, List<String> stages) {
-            return new Expect(status, null, null, stages, null, null, Transport.UNCHECKED);
+            return new Expect(status, null, null, stages, null, null, Transport.UNCHECKED, false, false);
         }
 
         static Expect rpc(int status, int rpcCode, List<String> stages) {
-            return new Expect(status, rpcCode, null, stages, null, null, Transport.UNCHECKED);
+            return new Expect(status, rpcCode, null, stages, null, null, Transport.UNCHECKED, false, false);
         }
 
         static Expect toolError(String bodyContains, List<String> stages, McpErrorType errorType) {
-            return new Expect(200, null, bodyContains, stages, errorType, null, Transport.UNCHECKED);
+            return new Expect(200, null, bodyContains, stages, errorType, null, Transport.UNCHECKED, false, false);
         }
 
         static Expect internalError(List<String> stages, McpErrorType errorType) {
-            return new Expect(500, -32603, null, stages, errorType, null, Transport.UNCHECKED);
+            return new Expect(500, -32603, null, stages, errorType, null, Transport.UNCHECKED, false, false);
         }
 
         Expect tool(String toolName) {
-            return new Expect(status, rpcCode, bodyContains, stages, errorType, toolName, transport);
+            return new Expect(
+                    status,
+                    rpcCode,
+                    bodyContains,
+                    stages,
+                    errorType,
+                    toolName,
+                    transport,
+                    requestIdBound,
+                    toolInputBound);
         }
 
         /** The response is plain JSON: response transport selection was never reached. */
         Expect json() {
-            return new Expect(status, rpcCode, bodyContains, stages, errorType, terminalTool, Transport.JSON);
+            return new Expect(
+                    status,
+                    rpcCode,
+                    bodyContains,
+                    stages,
+                    errorType,
+                    terminalTool,
+                    Transport.JSON,
+                    requestIdBound,
+                    toolInputBound);
+        }
+
+        /** The envelope decoded, so the view reports the JSON-RPC request id. */
+        Expect withRequestId() {
+            return new Expect(
+                    status, rpcCode, bodyContains, stages, errorType, terminalTool, transport, true, toolInputBound);
+        }
+
+        /** A call was prepared, so the view reports its arguments and invocation context. */
+        Expect withToolInput() {
+            return new Expect(
+                    status, rpcCode, bodyContains, stages, errorType, terminalTool, transport, requestIdBound, true);
         }
     }
 
@@ -627,6 +721,7 @@ class McpPipelineOrderIT {
     private static final class Probe {
         private final List<String> events = new CopyOnWriteArrayList<>();
         private final List<McpRequestTerminalEvent> terminals = new CopyOnWriteArrayList<>();
+        private final List<Completion> views = new CopyOnWriteArrayList<>();
         private volatile CompletableFuture<Void> scopeClosed = new CompletableFuture<>();
 
         void record(String event) {
@@ -646,6 +741,7 @@ class McpPipelineOrderIT {
         void clear() {
             events.clear();
             terminals.clear();
+            views.clear();
             scopeClosed = new CompletableFuture<>();
         }
 
@@ -660,15 +756,9 @@ class McpPipelineOrderIT {
                     .toList();
         }
 
-        /** Waits for a stage that is recorded after the response may already have been completed. */
-        void awaitEvent(String event) throws Exception {
-            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(ASYNC_TIMEOUT_SECONDS);
-            while (!events.contains(event)) {
-                assertThat(System.nanoTime())
-                        .as("timed out waiting for " + event)
-                        .isLessThan(deadline);
-                Thread.sleep(5);
-            }
+        /** Every view the completion listener received, in arrival order. */
+        List<Completion> views() {
+            return List.copyOf(views);
         }
 
         McpRequestTerminalEvent lastTerminal() {
@@ -691,27 +781,11 @@ class McpPipelineOrderIT {
         }
     }
 
-    private static final class Session
-            implements McpRawEvidenceObservation, McpToolValueObservation, McpCompletionScope {
+    private static final class Session implements McpCompletionScope {
         private final Probe probe;
 
         Session(Probe probe) {
             this.probe = probe;
-        }
-
-        @Override
-        public void onRequestAdmitted(McpRequestAdmissionEvidence evidence) {
-            probe.record(ADMITTED);
-        }
-
-        @Override
-        public void onToolInput(McpToolInputObservation observation) {
-            probe.record(TOOL_INPUT);
-        }
-
-        @Override
-        public void onToolOutput(McpToolOutputObservation observation) {
-            probe.record(TOOL_OUTPUT);
         }
 
         @Override
@@ -729,6 +803,26 @@ class McpPipelineOrderIT {
         public AutoCloseable openCompletionScope() {
             probe.record(SCOPE_OPEN);
             return () -> probe.record(SCOPE_CLOSE);
+        }
+    }
+
+    /** Notes its place in the completion bracket, then records the request view it was handed. */
+    private static final class ProbeListener implements McpRequestCompletedListener {
+        private final Probe probe;
+        private final McpRecordingCompletedListener recording = new McpRecordingCompletedListener();
+
+        ProbeListener(Probe probe) {
+            this.probe = probe;
+        }
+
+        @Override
+        public void onCompleted(McpRequestCompletedEvent event) {}
+
+        @Override
+        public void onCompleted(McpRequestCompletedEvent event, McpRequestView request) {
+            probe.record(LISTENER_COMPLETED);
+            recording.onCompleted(event, request);
+            probe.views.add(recording.completions().getLast());
         }
     }
 
@@ -935,7 +1029,7 @@ class McpPipelineOrderIT {
                         ? Future.failedFuture(new RuntimeException("rejected by fixture"))
                         : Future.succeededFuture();
             };
-            McpRequestCompletedListener listener = event -> probe.record(LISTENER_COMPLETED);
+            McpRequestCompletedListener listener = new ProbeListener(probe);
             RateLimitPolicy policy = new RateLimitPolicy(
                     POLICY_NAME,
                     true,

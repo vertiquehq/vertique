@@ -7,12 +7,11 @@ import dev.vertique.core.context.ContextHolder;
 import dev.vertique.core.context.ContextValue;
 import dev.vertique.correlation.CorrelationContextFactory;
 import dev.vertique.mcp.lifecycle.McpRequestCompletedEvent;
+import dev.vertique.mcp.lifecycle.McpRequestCompletedListener;
 import dev.vertique.mcp.lifecycle.McpRequestLifecycleObserver;
 import dev.vertique.mcp.lifecycle.McpRequestObservation;
 import dev.vertique.mcp.lifecycle.McpRequestTerminalObservation;
-import dev.vertique.mcp.lifecycle.McpToolInputObservation;
-import dev.vertique.mcp.lifecycle.McpToolOutputObservation;
-import dev.vertique.mcp.lifecycle.McpToolValueObservation;
+import dev.vertique.mcp.lifecycle.McpRequestView;
 import dev.vertique.mcp.tool.McpAccessMode;
 import dev.vertique.mcp.tool.McpCancellationSignal;
 import dev.vertique.mcp.tool.McpPreparedToolCall;
@@ -49,9 +48,9 @@ import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Framework wiring for {@code dev.vertique.mcp.lifecycle.McpLifecycleObservationIT} (T020 TP-002):
- * fixture server construction, the two fixture tools, and the ordered-event-recording observer
- * shapes. Nothing decisive lives here.
+ * Framework wiring for {@code dev.vertique.mcp.lifecycle.McpLifecycleObservationIT}: fixture server
+ * construction, the two fixture tools, and the ordered-event-recording observer and listener shapes.
+ * Nothing decisive lives here.
  *
  * <p>Lives in {@code dev.vertique.mcp.server} for exactly the reason {@link
  * McpInputLifecycleObservationITFixture}'s Javadoc records: starting a real port-0 server requires
@@ -63,12 +62,14 @@ public final class McpLifecycleObservationITFixture {
 
     /**
      * Starts a real port-0 server, bound and connected only on the literal {@code 127.0.0.1}, exposing
-     * the two fixture tools this task's proof requires plus the two ordered-event observer sessions.
+     * the two fixture tools the proof requires plus an ordered-event observer, a plain observer and an
+     * ordered-event completion listener that reads the request view.
      */
     public static Started start(
             Vertx vertx,
-            CapableObserver capable,
+            OrderedObserver ordered,
             PlainObserver plain,
+            OrderedListener listener,
             SuccessToolInvoker successTool,
             ErrorToolInvoker errorTool)
             throws Exception {
@@ -95,8 +96,8 @@ public final class McpLifecycleObservationITFixture {
         McpRequestDispatcher dispatcher = new McpRequestDispatcher(
                 config,
                 securityRuntime,
-                Set.of(capable, plain),
-                Set.of(),
+                Set.of(ordered, plain),
+                Set.of(listener),
                 Set.of(),
                 Set.of(),
                 httpConfig,
@@ -195,11 +196,6 @@ public final class McpLifecycleObservationITFixture {
      * The successful-call tool: declares a real output schema ({@code {"status": string}}, required)
      * and returns a structured value that satisfies it.
      *
-     * <p><strong>Sensitivity seam:</strong> the returned map's key is deliberately a single literal
-     * below ({@code STATUS_KEY} / {@code STATUS_VALUE}); this task's TP-002 sensitivity proof changes
-     * only this tool's returned value to omit the required {@code status} property (so it fails its own
-     * declared schema), reruns the proof, and restores it — see the owning task's completion evidence
-     * for the exact before/after counts.
      */
     public static final class SuccessToolInvoker implements McpToolInvoker {
         public static final String TOOL_NAME = "lifecycle.observation.success";
@@ -210,7 +206,7 @@ public final class McpLifecycleObservationITFixture {
             this.descriptor = new McpToolDescriptor(
                     TOOL_NAME,
                     null,
-                    "T020 TP-002 successful-call fixture tool.",
+                    "Successful-call fixture tool.",
                     new McpToolAnnotations(true, false, true, false),
                     "{\"type\":\"object\"}",
                     "{\"type\":\"object\",\"properties\":{\"status\":{\"type\":\"string\"}},\"required\":[\"status\"]}",
@@ -248,7 +244,7 @@ public final class McpLifecycleObservationITFixture {
             this.descriptor = new McpToolDescriptor(
                     TOOL_NAME,
                     null,
-                    "T020 TP-002 tool-error-call fixture tool.",
+                    "Tool-error-call fixture tool.",
                     new McpToolAnnotations(true, false, true, false),
                     "{\"type\":\"object\"}",
                     null,
@@ -279,59 +275,64 @@ public final class McpLifecycleObservationITFixture {
     // --- Fixture observer shapes ---
 
     /**
-     * Records the exact, single ordered callback sequence for one request: a fresh session is created
-     * on every {@link #open} call (the frozen contract's per-request observation scoping), so the
-     * server's three requests produce three independently ordered sessions here, in call order.
+     * Records the exact ordered callback sequence of every request into one shared journal: a fresh
+     * session is created on every {@link #open} call (the frozen contract's per-request observation
+     * scoping), so each request contributes its own {@code open}, {@code onTerminal} and {@code
+     * onCompleted} entries, in call order, interleaved with the {@link OrderedListener}'s entry for
+     * the same request.
      */
-    public static final class CapableObserver implements McpRequestLifecycleObserver {
-        private final List<RecordingCapableSession> sessions = Collections.synchronizedList(new ArrayList<>());
+    public static final class OrderedObserver implements McpRequestLifecycleObserver {
+        private final List<String> journal;
+
+        public OrderedObserver(List<String> journal) {
+            this.journal = journal;
+        }
 
         @Override
         public McpRequestObservation open(Instant startedAt) {
-            RecordingCapableSession session = new RecordingCapableSession();
-            sessions.add(session);
-            return session;
-        }
+            journal.add("open");
+            return new McpRequestObservation() {
+                @Override
+                public void onTerminal(McpRequestTerminalObservation observation) {
+                    journal.add("onTerminal");
+                }
 
-        public List<RecordingCapableSession> sessions() {
-            return List.copyOf(sessions);
-        }
-    }
-
-    /** One capability-implementing session's exact ordered callback sequence. */
-    public static final class RecordingCapableSession implements McpToolValueObservation {
-        private final List<String> events = new ArrayList<>();
-
-        RecordingCapableSession() {
-            events.add("open");
-        }
-
-        @Override
-        public void onToolInput(McpToolInputObservation observation) {
-            events.add("onToolInput");
-        }
-
-        @Override
-        public void onToolOutput(McpToolOutputObservation observation) {
-            events.add("onToolOutput");
-        }
-
-        @Override
-        public void onTerminal(McpRequestTerminalObservation observation) {
-            events.add("onTerminal");
-        }
-
-        @Override
-        public void onCompleted(McpRequestCompletedEvent event) {
-            events.add("onCompleted");
-        }
-
-        public List<String> events() {
-            return List.copyOf(events);
+                @Override
+                public void onCompleted(McpRequestCompletedEvent event) {
+                    journal.add("onCompleted");
+                }
+            };
         }
     }
 
-    /** The plain, capability-free counterpart of {@link CapableObserver}. */
+    /**
+     * A completion listener that notes its callback in the same journal as {@link OrderedObserver},
+     * then records the request view through a {@link McpRecordingCompletedListener}.
+     */
+    public static final class OrderedListener implements McpRequestCompletedListener {
+        private final List<String> journal;
+        private final McpRecordingCompletedListener recording = new McpRecordingCompletedListener();
+
+        public OrderedListener(List<String> journal) {
+            this.journal = journal;
+        }
+
+        @Override
+        public void onCompleted(McpRequestCompletedEvent event) {}
+
+        @Override
+        public void onCompleted(McpRequestCompletedEvent event, McpRequestView request) {
+            journal.add("listener");
+            recording.onCompleted(event, request);
+        }
+
+        /** Returns the recording listener holding each request's view, in arrival order. */
+        public McpRecordingCompletedListener recording() {
+            return recording;
+        }
+    }
+
+    /** The plain counterpart of {@link OrderedObserver}, recording one session per request. */
     public static final class PlainObserver implements McpRequestLifecycleObserver {
         private final List<RecordingPlainSession> sessions = Collections.synchronizedList(new ArrayList<>());
 
@@ -347,7 +348,7 @@ public final class McpLifecycleObservationITFixture {
         }
     }
 
-    /** One plain session's exact ordered callback sequence — only {@code open}/terminal/completed are reachable. */
+    /** One plain session's exact ordered callback sequence: {@code open}, terminal, completed. */
     public static final class RecordingPlainSession implements McpRequestObservation {
         private final List<String> events = new ArrayList<>();
 

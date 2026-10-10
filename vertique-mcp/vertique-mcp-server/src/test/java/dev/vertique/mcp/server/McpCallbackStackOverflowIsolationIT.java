@@ -15,10 +15,14 @@ import dev.vertique.mcp.interceptor.McpToolInterceptor;
 import dev.vertique.mcp.interceptor.McpToolInvocationContext;
 import dev.vertique.mcp.lifecycle.McpErrorType;
 import dev.vertique.mcp.lifecycle.McpOutcome;
+import dev.vertique.mcp.lifecycle.McpRequestCompletedEvent;
+import dev.vertique.mcp.lifecycle.McpRequestCompletedListener;
 import dev.vertique.mcp.lifecycle.McpRequestLifecycleObserver;
 import dev.vertique.mcp.lifecycle.McpRequestObservation;
 import dev.vertique.mcp.lifecycle.McpRequestTerminalEvent;
 import dev.vertique.mcp.lifecycle.McpRequestTerminalObservation;
+import dev.vertique.mcp.lifecycle.McpRequestView;
+import dev.vertique.mcp.server.McpRecordingCompletedListener.Completion;
 import dev.vertique.mcp.tool.McpAccessMode;
 import dev.vertique.mcp.tool.McpCancellationSignal;
 import dev.vertique.mcp.tool.McpPreparedToolCall;
@@ -53,6 +57,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.AfterEach;
@@ -62,19 +67,21 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
 /**
- * R13 item 1 proof: the dispatcher's {@code RuntimeException}-only isolation on {@code
+ * Proof that the dispatcher isolates a native-recursion {@code StackOverflowError} from every
+ * application-supplied callback site: a {@code RuntimeException}-only isolation on {@code
  * runRequestInterceptors}, {@code runToolInterceptors}, {@code invoker.prepare()}, and {@code
- * prepared.invoke()} let a native-recursion {@code StackOverflowError} from any of those four
- * application-supplied callback sites escape past this class's own bounded, terminal-event-emitting
- * settlement path — before {@code beginWrite} was ever called for that request. Confirmed by mutation
- * (reverting the request-interceptor site) rather than assumed: the escape does not necessarily hang
- * the connection — a synchronous escape from {@code dispatch()} itself reaches Vert.x's own
- * router-level failure handling first — but it always bypasses this class's bounded, capped,
- * audited response and {@link McpRequestTerminalEvent} entirely, producing a generic, unbounded
- * failure with no terminal observed. Each already carried the narrow {@code RuntimeException |
- * StackOverflowError} isolation policy elsewhere in this same dispatcher (the stage-5/stage-7
- * callback sites {@link McpToolInputObservationFallbackIT} and {@link McpCyclicOutputFallbackIT}
- * already prove); this class proves the same policy now also holds at these four sites.
+ * prepared.invoke()} would let the error escape past this class's own bounded,
+ * terminal-event-emitting settlement path — before {@code beginWrite} was ever called for that
+ * request. The escape does not necessarily hang the connection — a synchronous escape from {@code
+ * dispatch()} itself reaches Vert.x's own router-level failure handling first — but it always
+ * bypasses this class's bounded, capped, audited response and {@link McpRequestTerminalEvent}
+ * entirely, producing a generic, unbounded failure with no terminal observed. Each carries the
+ * narrow {@code RuntimeException | StackOverflowError} isolation policy, as the output-normalization
+ * callback site {@link McpCyclicOutputFallbackIT} also proves.
+ *
+ * <p>The fifth row covers the completion listener, which receives the request view: a listener whose
+ * callback recurses natively must not change the protocol outcome, must not strand the listeners
+ * queued behind it, and must not stop the lifecycle observers' own completion.
  *
  * <p>Every row drives a real port-0 server so the completion coordinator is genuinely constructed
  * and a real terminal-event observer genuinely fires — a mock-driven {@code dispatch()} call
@@ -88,6 +95,7 @@ class McpCallbackStackOverflowIsolationIT {
     private static final String TOOL_INTERCEPTOR_ROW = "shouldDegradeAStackOverflowFromBeforeInvocation";
     private static final String PREPARE_ROW = "shouldDegradeAStackOverflowFromPrepare";
     private static final String INVOKE_ROW = "shouldDegradeAStackOverflowFromInvoke";
+    private static final String LISTENER_ROW = "shouldIsolateAStackOverflowFromACompletionListener";
 
     private static final String LOOPBACK = "127.0.0.1";
     private static final String REQUEST_PATH = "/mcp/";
@@ -106,7 +114,7 @@ class McpCallbackStackOverflowIsolationIT {
     private WebClient client;
 
     private static Stream<String> rows() {
-        return Stream.of(REQUEST_INTERCEPTOR_ROW, TOOL_INTERCEPTOR_ROW, PREPARE_ROW, INVOKE_ROW);
+        return Stream.of(REQUEST_INTERCEPTOR_ROW, TOOL_INTERCEPTOR_ROW, PREPARE_ROW, INVOKE_ROW, LISTENER_ROW);
     }
 
     @AfterEach
@@ -133,6 +141,7 @@ class McpCallbackStackOverflowIsolationIT {
             case TOOL_INTERCEPTOR_ROW -> shouldDegradeAStackOverflowFromBeforeInvocation();
             case PREPARE_ROW -> shouldDegradeAStackOverflowFromPrepare();
             case INVOKE_ROW -> shouldDegradeAStackOverflowFromInvoke();
+            case LISTENER_ROW -> shouldIsolateAStackOverflowFromACompletionListener();
             default -> fail("unknown row: " + row);
         }
     }
@@ -244,6 +253,59 @@ class McpCallbackStackOverflowIsolationIT {
         assertThat(terminal.errorType()).isEqualTo(McpErrorType.INTERNAL);
     }
 
+    // --- Row 5: a completion listener's onCompleted(event, view) callback ---
+
+    private void shouldIsolateAStackOverflowFromACompletionListener() throws Exception {
+        StackOverflowListener twoArgument = new StackOverflowListener();
+        StackOverflowOneArgumentListener oneArgument = new StackOverflowOneArgumentListener();
+        McpRecordingCompletedListener sibling = new McpRecordingCompletedListener();
+        fixture = Fixture.start(
+                vertx,
+                Set.of(),
+                Set.of(),
+                new NoopToolInvoker(descriptor()),
+                Set.of(twoArgument, oneArgument, sibling));
+        server = fixture.server();
+        rawClient = vertx.createHttpClient();
+        client = WebClient.wrap(rawClient);
+
+        HttpResponse<Buffer> response = await(callTool(1));
+
+        // DECISIVE: the settled outcome is the tool's own successful result. A misbehaving listener
+        // must not change the protocol outcome, and the response was already written before any
+        // listener runs.
+        assertThat(response.statusCode())
+                .as("DECISIVE: a listener callback failure must not change the protocol outcome")
+                .isEqualTo(200);
+        String rawBody = response.bodyAsString();
+        assertThat(rawBody).startsWith(SSE_PREFIX);
+        JsonObject decoded =
+                new JsonObject(rawBody.substring(SSE_PREFIX.length()).stripTrailing());
+        assertThat(decoded.containsKey("error")).isFalse();
+        assertThat(decoded.getJsonObject("result").getBoolean("isError")).isFalse();
+
+        // DECISIVE: both recursing listeners were genuinely invoked (the proof is not vacuous), and the
+        // listener queued with them still received its view — listener ordering is undefined, so this
+        // holds whichever of them ran first.
+        assertThat(twoArgument.awaitInvoked())
+                .as("the two-argument listener must have been invoked")
+                .isTrue();
+        assertThat(oneArgument.awaitInvoked())
+                .as("the one-argument listener must have been invoked through the default delegation")
+                .isTrue();
+        List<Completion> views = sibling.await(1);
+        assertThat(views)
+                .as("DECISIVE: a StackOverflowError from one listener must not strand the others")
+                .hasSize(1);
+        assertThat(views.get(0).toolOutput())
+                .as("the sibling listener's view is intact")
+                .isPresent();
+        assertThat(fixture.completions())
+                .as("the lifecycle observer's own completion is unaffected by a recursing listener")
+                .hasSize(1);
+        assertThat(fixture.terminals().getLast().outcome()).isEqualTo(McpOutcome.SUCCESS);
+    }
+
     // --- Wire helpers ---
 
     private static McpToolDescriptor descriptor() {
@@ -293,6 +355,42 @@ class McpCallbackStackOverflowIsolationIT {
         @Override
         public Future<Void> beforeInvocation(McpToolInvocationContext context) {
             throw new StackOverflowError(SOE_MESSAGE);
+        }
+    }
+
+    /** A completion listener whose two-argument callback deliberately throws a StackOverflowError. */
+    private static final class StackOverflowListener implements McpRequestCompletedListener {
+        private final CountDownLatch invoked = new CountDownLatch(1);
+
+        @Override
+        public void onCompleted(McpRequestCompletedEvent event) {}
+
+        @Override
+        public void onCompleted(McpRequestCompletedEvent event, McpRequestView request) {
+            invoked.countDown();
+            throw new StackOverflowError(SOE_MESSAGE);
+        }
+
+        boolean awaitInvoked() throws InterruptedException {
+            return invoked.await(10, TimeUnit.SECONDS);
+        }
+    }
+
+    /**
+     * A completion listener that overrides only the one-argument callback, which the server reaches
+     * through the two-argument form's default delegation, and deliberately throws a StackOverflowError.
+     */
+    private static final class StackOverflowOneArgumentListener implements McpRequestCompletedListener {
+        private final CountDownLatch invoked = new CountDownLatch(1);
+
+        @Override
+        public void onCompleted(McpRequestCompletedEvent event) {
+            invoked.countDown();
+            throw new StackOverflowError(SOE_MESSAGE);
+        }
+
+        boolean awaitInvoked() throws InterruptedException {
+            return invoked.await(10, TimeUnit.SECONDS);
         }
     }
 
@@ -422,12 +520,14 @@ class McpCallbackStackOverflowIsolationIT {
         private final HttpServer server;
         private final int port;
         private final List<McpRequestTerminalEvent> terminals = new CopyOnWriteArrayList<>();
+        private final List<McpRequestCompletedEvent> completions = new CopyOnWriteArrayList<>();
 
         private Fixture(
                 Vertx vertx,
                 Set<McpRequestInterceptor> requestInterceptors,
                 Set<McpToolInterceptor> toolInterceptors,
-                McpToolInvoker invoker)
+                McpToolInvoker invoker,
+                Set<McpRequestCompletedListener> listeners)
                 throws Exception {
             McpServerConfig config = McpServerConfig.builder()
                     .enabled(true)
@@ -455,7 +555,7 @@ class McpCallbackStackOverflowIsolationIT {
                             config,
                             securityRuntime,
                             Set.of(recordingObserver()),
-                            Set.of(),
+                            listeners,
                             requestInterceptors,
                             toolInterceptors,
                             httpConfig,
@@ -480,7 +580,17 @@ class McpCallbackStackOverflowIsolationIT {
                 Set<McpToolInterceptor> toolInterceptors,
                 McpToolInvoker invoker)
                 throws Exception {
-            return new Fixture(vertx, requestInterceptors, toolInterceptors, invoker);
+            return new Fixture(vertx, requestInterceptors, toolInterceptors, invoker, Set.of());
+        }
+
+        static Fixture start(
+                Vertx vertx,
+                Set<McpRequestInterceptor> requestInterceptors,
+                Set<McpToolInterceptor> toolInterceptors,
+                McpToolInvoker invoker,
+                Set<McpRequestCompletedListener> listeners)
+                throws Exception {
+            return new Fixture(vertx, requestInterceptors, toolInterceptors, invoker, listeners);
         }
 
         HttpServer server() {
@@ -495,11 +605,20 @@ class McpCallbackStackOverflowIsolationIT {
             return terminals;
         }
 
+        List<McpRequestCompletedEvent> completions() {
+            return completions;
+        }
+
         private McpRequestLifecycleObserver recordingObserver() {
             return startedAt -> new McpRequestObservation() {
                 @Override
                 public void onTerminal(McpRequestTerminalObservation observation) {
                     terminals.add(observation.event());
+                }
+
+                @Override
+                public void onCompleted(McpRequestCompletedEvent event) {
+                    completions.add(event);
                 }
             };
         }
