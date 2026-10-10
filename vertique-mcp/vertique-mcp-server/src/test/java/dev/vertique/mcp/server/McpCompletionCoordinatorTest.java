@@ -4,6 +4,7 @@
 package dev.vertique.mcp.server;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.fail;
 
 import dev.vertique.mcp.lifecycle.McpCompletionScope;
@@ -18,6 +19,8 @@ import dev.vertique.mcp.lifecycle.McpRequestTerminalObservation;
 import dev.vertique.mcp.lifecycle.McpTransportOutcome;
 import dev.vertique.security.origin.RequestOrigin;
 import io.vertx.core.Context;
+import io.vertx.core.Future;
+import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
 import java.time.Instant;
 import java.time.InstantSource;
@@ -34,6 +37,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.MethodSource;
 
 /**
@@ -226,6 +230,111 @@ class McpCompletionCoordinatorTest {
                 .isTrue();
         assertThat(observer.awaitCallbacks()).isTrue();
         observer.assertExactlyOneTerminalThenOneCompletion();
+    }
+
+    /**
+     * A failure the transport signals from inside the terminal {@code end()} call is settled a turn
+     * later, so the {@code end()} future decides the outcome. Each row runs the write the way the
+     * dispatcher does: {@code beginWrite}, then {@code end()} through {@code endResponse} with the
+     * close signalled re-entrantly, then the completion from the {@code end()} future.
+     */
+    private enum EndFuture {
+        SUCCEEDS(McpTransportOutcome.WRITTEN, false),
+        FAILS(McpTransportOutcome.WRITE_FAILED, true),
+        NEVER_RESOLVES(McpTransportOutcome.RESET, true);
+
+        private final McpTransportOutcome expectedOutcome;
+        private final boolean cancels;
+
+        EndFuture(McpTransportOutcome expectedOutcome, boolean cancels) {
+            this.expectedOutcome = expectedOutcome;
+            this.cancels = cancels;
+        }
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @EnumSource(EndFuture.class)
+    @DisplayName("a close signalled from inside end() leaves the outcome to the end() future and "
+            + "recovers a write that never resolves")
+    void shouldLeaveACloseSignalledInsideEndToTheEndFuture(EndFuture endFuture) throws Exception {
+        Context context = vertx.getOrCreateContext();
+        RecordingObserver observer = new RecordingObserver();
+        McpCompletionCoordinator coordinator = coordinator(context, new ManualClock(COMPLETED_AT), observer);
+        CompletableFuture<Void> returned = new CompletableFuture<>();
+
+        context.runOnContext(ignored -> {
+            try {
+                assertThat(coordinator.beginWrite(successTerminal())).isTrue();
+                Promise<Void> end = Promise.promise();
+                Future<Void> result = coordinator.endResponse(() -> {
+                    coordinator.settleAfterEndCall(
+                            () -> coordinator.settleReset(cancelledTerminal(McpErrorType.TRANSPORT), true));
+                    switch (endFuture) {
+                        case SUCCEEDS -> end.complete();
+                        case FAILS -> end.fail("write failed");
+                        case NEVER_RESOLVES -> {}
+                    }
+                    return end.future();
+                });
+                result.onComplete(outcome -> coordinator.finishWrite(
+                        outcome.succeeded() ? McpTransportOutcome.WRITTEN : McpTransportOutcome.WRITE_FAILED,
+                        true,
+                        COMPLETED_AT));
+                returned.complete(null);
+            } catch (Throwable failure) {
+                returned.completeExceptionally(failure);
+            }
+        });
+        returned.get(SETTLEMENT_WAIT_SECONDS, TimeUnit.SECONDS);
+        assertThat(observer.awaitCallbacks()).isTrue();
+        flushContext(context);
+
+        observer.assertExactlyOneTerminalThenOneCompletion();
+        assertThat(observer.lastCompleted().transportOutcome()).isEqualTo(endFuture.expectedOutcome);
+        assertThat(coordinator.cancellation().isCancelled()).isEqualTo(endFuture.cancels);
+    }
+
+    @Test
+    @DisplayName("settleAfterEndCall settles immediately when no end() call is on the stack, and the "
+            + "marker is restored after nested and throwing end() calls")
+    void shouldSettleImmediatelyOutsideTheEndCallAndRestoreTheMarker() throws Exception {
+        Context context = vertx.getOrCreateContext();
+        RecordingObserver observer = new RecordingObserver();
+        McpCompletionCoordinator coordinator = coordinator(context, new ManualClock(COMPLETED_AT), observer);
+        CompletableFuture<Void> done = new CompletableFuture<>();
+
+        context.runOnContext(ignored -> {
+            try {
+                boolean[] ranInline = new boolean[1];
+                coordinator.settleAfterEndCall(() -> ranInline[0] = true);
+                assertThat(ranInline[0])
+                        .as("no end() call on the stack: run now")
+                        .isTrue();
+
+                boolean[] ranAfterEnds = new boolean[1];
+                boolean[] ranAfterNestedEnd = new boolean[1];
+                coordinator.endResponse(() -> {
+                    coordinator.endResponse(() -> Future.succeededFuture());
+                    coordinator.settleAfterEndCall(() -> ranAfterNestedEnd[0] = true);
+                    assertThat(ranAfterNestedEnd[0])
+                            .as("the outer end() call is still on the stack after a nested one returned")
+                            .isFalse();
+                    return Future.succeededFuture();
+                });
+                assertThatThrownBy(() -> coordinator.endResponse(() -> {
+                            throw new IllegalStateException("end failed");
+                        }))
+                        .isInstanceOf(IllegalStateException.class);
+                coordinator.settleAfterEndCall(() -> ranAfterEnds[0] = true);
+                assertThat(ranAfterEnds[0])
+                        .as("the marker is cleared once end() returned or threw")
+                        .isTrue();
+                done.complete(null);
+            } catch (Throwable failure) {
+                done.completeExceptionally(failure);
+            }
+        });
+        done.get(SETTLEMENT_WAIT_SECONDS, TimeUnit.SECONDS);
     }
 
     /**

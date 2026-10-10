@@ -332,9 +332,13 @@ this is not bounded by a request timer, since MCP arms none of its own — so a 
 signal that arrives while a write is still pending drives that same write's completion directly with
 the signal's own transport outcome (`DISCONNECTED` or `RESET`) instead of being dropped, guarded
 exactly-once by the same completion latch; a write that does genuinely resolve afterward is then a
-suppressed no-op. A write whose own transport future fails settles directly as `WRITE_FAILED`,
-recording the response's real commit state (`headWritten()` at settlement time) rather than a value
-inferred from the write's success flag. No MCP-owned whole-request deadline is introduced by any of
+suppressed no-op. A close the transport signals from inside the write's own `end()` call — which
+Vert.x does over HTTP/2 for a response written outside the connection's read loop, such as from a
+timer task — is not treated as a peer signal: the `end()` result decides the outcome, so a response
+delivered in full is `WRITTEN` and never fires cancellation on HTTP/1.1 and HTTP/2 alike, and a write
+that is still pending one event-loop turn later is recovered like any stalled write. A write whose own
+transport future fails settles directly as `WRITE_FAILED`, recording the response's real commit state
+(`headWritten()` at settlement time) rather than a value inferred from the write's success flag. No MCP-owned whole-request deadline is introduced by any of
 this: transport liveness stays exclusively with the shared `HttpConfig` idle/read/write timeouts,
 guaranteed armed for every mount that actually starts by the startup gate described above.
 
