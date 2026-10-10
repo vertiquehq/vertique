@@ -68,6 +68,7 @@ import dev.vertique.services.ServiceHandler;
 import dev.vertique.services.ServiceOperation;
 import dev.vertique.services.ServiceRequestSender;
 import dev.vertique.services.ServiceSupervisor;
+import dev.vertique.services.config.ServiceAuthorizationConfig;
 import dev.vertique.services.config.ServicesConfig;
 import dev.vertique.services.dispatch.ServiceMethodInvoker;
 import dev.vertique.services.dispatch.ServiceMethodMeta;
@@ -763,7 +764,9 @@ public class TypedPolicyServiceWebSocketIT {
                     Optional.of(actions),
                     new SecurityEventEmitter(Set.of(recordingObserver(serviceEvents))),
                     new DefaultContextHolder(),
-                    Set.copyOf(metas));
+                    Set.copyOf(metas),
+                    ServiceAuthorizationConfig.defaults(),
+                    TestResilience.shared());
             for (ServiceMethodMeta meta : metas) {
                 ServiceMethodInvoker invoker =
                         new ServiceMethodInvoker(meta, new ServiceExceptionMapper(), List.of(gate), null);

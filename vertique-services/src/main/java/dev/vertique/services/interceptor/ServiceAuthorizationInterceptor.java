@@ -7,6 +7,12 @@ import dev.vertique.core.context.ContextHolder;
 import dev.vertique.core.correlation.CorrelationContext;
 import dev.vertique.core.exception.ForbiddenException;
 import dev.vertique.core.extension.ExtensionPhase;
+import dev.vertique.resilience.Resilience;
+import dev.vertique.resilience.ResiliencePipeline;
+import dev.vertique.resilience.ResolvedResiliencePolicy;
+import dev.vertique.resilience.TimeoutConfig;
+import dev.vertique.resilience.adapter.AdapterOperationIdentity;
+import dev.vertique.resilience.exception.ResilienceException;
 import dev.vertique.security.PrincipalType;
 import dev.vertique.security.SecurityContext;
 import dev.vertique.security.authz.AccessPolicy;
@@ -27,6 +33,7 @@ import dev.vertique.security.origin.RequestOrigin;
 import dev.vertique.security.runtime.authz.ClaimAuthorizationPolicy;
 import dev.vertique.security.runtime.events.SecurityEventEmitter;
 import dev.vertique.services.ServiceRegistrationViolation;
+import dev.vertique.services.config.ServiceAuthorizationConfig;
 import dev.vertique.services.dispatch.ServiceMethodMeta;
 import dev.vertique.services.exception.ServiceRegistrationException;
 import io.vertx.core.Future;
@@ -140,7 +147,15 @@ public final class ServiceAuthorizationInterceptor implements ServiceInterceptor
     /** Resource type recorded on the {@link ResourceRef} for a service-dispatch authorization. */
     private static final String RESOURCE_TYPE = "service";
 
+    /** Resilience identity of the authorizer-call fence. */
+    private static final AdapterOperationIdentity AUTHORIZER_GATE =
+            new AdapterOperationIdentity("services.authz", List.of("gate", "action"));
+
     private final Authorizer authorizer;
+
+    /** Bounds an authorizer future that has not settled; a settled one is not timed. */
+    private final ResiliencePipeline authorizerFence;
+
     private final SecurityEventEmitter emitter;
     private final ContextHolder contextHolder;
 
@@ -170,6 +185,9 @@ public final class ServiceAuthorizationInterceptor implements ServiceInterceptor
      *                         {@link SecurityContext} and {@link CorrelationContext}; must not be {@code null}
      * @param serviceMethodMetas all registered service operation metadata, scanned for
      *                         {@link RequiresAction} and {@link RequiresPolicy}; must not be {@code null}
+     * @param authorizationConfig the deadline on each authorizer call; must not be {@code null}
+     * @param resilience       the application's resilience runtime, which enforces that deadline; must
+     *                         not be {@code null}
      * @throws ServiceRegistrationException if any registered operation declares an unparseable or
      *                         unregistered action, or declares {@link RequiresAction} while the
      *                         authorization engine ({@link Authorizer} / {@link ActionRegistry}) is absent,
@@ -181,8 +199,21 @@ public final class ServiceAuthorizationInterceptor implements ServiceInterceptor
             Optional<ActionRegistry> actionRegistry,
             SecurityEventEmitter emitter,
             ContextHolder contextHolder,
-            Set<ServiceMethodMeta> serviceMethodMetas) {
+            Set<ServiceMethodMeta> serviceMethodMetas,
+            ServiceAuthorizationConfig authorizationConfig,
+            Resilience resilience) {
         Objects.requireNonNull(authorizer, "authorizer");
+        Objects.requireNonNull(authorizationConfig, "authorizationConfig");
+        Objects.requireNonNull(resilience, "resilience");
+        this.authorizerFence = resilience
+                .adapterSupport()
+                .pipeline(
+                        AUTHORIZER_GATE,
+                        new ResolvedResiliencePolicy(
+                                Optional.of(TimeoutConfig.ofMillis(authorizationConfig.gateDeadlineMs())),
+                                Optional.empty(),
+                                Optional.empty(),
+                                Optional.empty()));
         Objects.requireNonNull(actionRegistry, "actionRegistry");
         this.emitter = Objects.requireNonNull(emitter, "emitter");
         this.contextHolder = Objects.requireNonNull(contextHolder, "contextHolder");
@@ -351,15 +382,33 @@ public final class ServiceAuthorizationInterceptor implements ServiceInterceptor
                     actionRef.value());
             return Future.succeededFuture(AuthorizationDecision.deny(AuthzReasonCodes.INTERNAL_AUTHZ_ERROR));
         }
-        return decisionFuture
+        // An authorizer whose future never settles would hang the dispatch: hand a pending one to the
+        // resilience fence, which fails it at the deadline (or once the runtime has closed). A settled
+        // future is left alone. A failure of the fence then takes the same fail-closed path below.
+        Future<AuthorizationDecision> bounded;
+        try {
+            bounded = decisionFuture.isComplete() ? decisionFuture : authorizerFence.execute(() -> decisionFuture);
+        } catch (RuntimeException e) {
+            log.warn("[{}] Authorizer fence failed for action {}; failing closed", ctx.address(), actionRef.value(), e);
+            return Future.succeededFuture(AuthorizationDecision.deny(AuthzReasonCodes.INTERNAL_AUTHZ_ERROR));
+        }
+        return bounded
                 // The Authorizer contract forbids a failed future for a normal deny; map a
                 // contract-violating failure to a fail-closed INTERNAL_AUTHZ_ERROR deny.
                 .otherwise(t -> {
-                    log.warn(
-                            "[{}] Authorizer returned a failed future for action {}; failing closed",
-                            ctx.address(),
-                            actionRef.value(),
-                            t);
+                    if (t instanceof ResilienceException) {
+                        // The deadline elapsed or the runtime closed; the exception carries no more.
+                        log.warn(
+                                "[{}] Authorizer did not answer for action {}; failing closed",
+                                ctx.address(),
+                                actionRef.value());
+                    } else {
+                        log.warn(
+                                "[{}] Authorizer returned a failed future for action {}; failing closed",
+                                ctx.address(),
+                                actionRef.value(),
+                                t);
+                    }
                     return AuthorizationDecision.deny(AuthzReasonCodes.INTERNAL_AUTHZ_ERROR);
                 })
                 .map(decision -> {

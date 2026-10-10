@@ -72,6 +72,7 @@ import dev.vertique.services.ServiceContractRegistry;
 import dev.vertique.services.ServiceExceptionMapper;
 import dev.vertique.services.ServiceRequestSender;
 import dev.vertique.services.ServiceSupervisor;
+import dev.vertique.services.config.ServiceAuthorizationConfig;
 import dev.vertique.services.config.ServicesConfig;
 import dev.vertique.services.dispatch.ServiceMethodInvoker;
 import dev.vertique.services.dispatch.ServiceMethodMeta;
@@ -599,7 +600,9 @@ final class McpTypedPolicyServiceITFixture {
                     Optional.of(actions),
                     new SecurityEventEmitter(Set.of(recordingObserver(events))),
                     holder,
-                    Set.copyOf(metas));
+                    Set.copyOf(metas),
+                    ServiceAuthorizationConfig.defaults(),
+                    TestResilience.shared());
             for (ServiceMethodMeta meta : metas) {
                 ServiceMethodInvoker invoker =
                         new ServiceMethodInvoker(meta, new ServiceExceptionMapper(), List.of(gate), null);

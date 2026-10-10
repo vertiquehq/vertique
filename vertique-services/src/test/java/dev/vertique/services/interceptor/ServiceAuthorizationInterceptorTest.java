@@ -48,6 +48,7 @@ import dev.vertique.security.events.AuthorizationDecisionEvent;
 import dev.vertique.security.origin.RequestOrigin;
 import dev.vertique.security.runtime.events.SecurityEventEmitter;
 import dev.vertique.services.ServiceRegistrationViolation;
+import dev.vertique.services.config.ServiceAuthorizationConfig;
 import dev.vertique.services.dispatch.NonRecoverableDispatchFailure;
 import dev.vertique.services.dispatch.ServiceMethodDescriptor;
 import dev.vertique.services.dispatch.ServiceMethodMeta;
@@ -183,7 +184,51 @@ class ServiceAuthorizationInterceptorTest {
             ContextHolder contextHolder,
             Set<ServiceMethodMeta> metas) {
         return new ServiceAuthorizationInterceptor(
-                Optional.ofNullable(authorizer), Optional.ofNullable(registry), emitter, contextHolder, metas);
+                Optional.ofNullable(authorizer),
+                Optional.ofNullable(registry),
+                emitter,
+                contextHolder,
+                metas,
+                ServiceAuthorizationConfig.defaults(),
+                TestResilience.shared());
+    }
+
+    private static ServiceAuthorizationInterceptor interceptorWithDeadline(
+            Authorizer authorizer,
+            ActionRegistry registry,
+            SecurityEventEmitter emitter,
+            ContextHolder contextHolder,
+            long deadlineMs,
+            dev.vertique.resilience.Resilience resilience) {
+        return new ServiceAuthorizationInterceptor(
+                Optional.of(authorizer),
+                Optional.of(registry),
+                emitter,
+                contextHolder,
+                Set.of(),
+                new ServiceAuthorizationConfig(deadlineMs),
+                resilience);
+    }
+
+    private static final long BOUND_MS = 3_000L;
+
+    /** Records every event a resilience runtime publishes. */
+    private static final class ObservedEvents implements dev.vertique.resilience.spi.ResilienceObserver {
+        private final java.util.List<dev.vertique.resilience.spi.event.ResilienceEvent> events =
+                new java.util.concurrent.CopyOnWriteArrayList<>();
+
+        @Override
+        public void onEvent(dev.vertique.resilience.spi.event.ResilienceEvent event) {
+            events.add(event);
+        }
+
+        long timeouts() {
+            return events.stream()
+                    .filter(dev.vertique.resilience.spi.event.ExecutionCompleted.class::isInstance)
+                    .map(dev.vertique.resilience.spi.event.ExecutionCompleted.class::cast)
+                    .filter(e -> e.outcome() == dev.vertique.resilience.spi.event.ResilienceOutcomeCategory.TIMEOUT)
+                    .count();
+        }
     }
 
     private static ActionRegistry registryAllowing(ActionRef... actions) {
@@ -343,6 +388,129 @@ class ServiceAuthorizationInterceptorTest {
                     AuthzReasonCodes.AUTHENTICATION_REQUIRED,
                     captor.getValue().decision().reasonCode(),
                     "missing identity emits AUTHENTICATION_REQUIRED");
+        }
+
+        @Test
+        @DisplayName("fail-closed: an Authorizer that never answers denies at the deadline with one "
+                + "INTERNAL_AUTHZ_ERROR event, and is reported to resilience observers as a timeout")
+        void failClosed_authorizerNeverAnswers_deniesAtTheDeadline() throws Exception {
+            io.vertx.core.Vertx vertx = io.vertx.core.Vertx.vertx();
+            try {
+                ObservedEvents observed = new ObservedEvents();
+                Authorizer authorizer = mock(Authorizer.class);
+                io.vertx.core.Promise<AuthorizationDecision> hung = io.vertx.core.Promise.promise();
+                when(authorizer.authorize(any(AuthorizationRequest.class))).thenReturn(hung.future());
+                SecurityEventEmitter emitter = mock(SecurityEventEmitter.class);
+                when(emitter.emit(any(AuthorizationDecisionEvent.class))).thenReturn(Future.succeededFuture());
+                ContextHolder holder = mock(ContextHolder.class);
+                when(holder.current(SecurityContext.class)).thenReturn(Optional.of(mock(SecurityContext.class)));
+                ServiceAuthorizationInterceptor pep = interceptorWithDeadline(
+                        authorizer,
+                        registryAllowing(ACTION),
+                        emitter,
+                        holder,
+                        100L,
+                        dev.vertique.resilience.Resilience.create(vertx, Set.of(observed)));
+
+                Future<ServiceDispatchContext> result =
+                        pep.beforeDispatch(dispatchContext(List.of(requiresActionOn("methodActionHolder")), List.of()));
+
+                // DECISIVE: without the fence this get(...) times out instead of seeing the failure.
+                assertThrows(java.util.concurrent.ExecutionException.class, () -> result.toCompletionStage()
+                        .toCompletableFuture()
+                        .get(BOUND_MS, java.util.concurrent.TimeUnit.MILLISECONDS));
+                ArgumentCaptor<AuthorizationDecisionEvent> captor =
+                        ArgumentCaptor.forClass(AuthorizationDecisionEvent.class);
+                verify(emitter, times(1)).emit(captor.capture());
+                assertEquals(
+                        AuthzReasonCodes.INTERNAL_AUTHZ_ERROR,
+                        captor.getValue().decision().reasonCode());
+                assertEquals(1, observed.timeouts());
+            } finally {
+                vertx.close()
+                        .toCompletionStage()
+                        .toCompletableFuture()
+                        .get(BOUND_MS, java.util.concurrent.TimeUnit.MILLISECONDS);
+            }
+        }
+
+        @Test
+        @DisplayName("a pending Authorizer that permits before the deadline still continues dispatch")
+        void pendingAuthorizerThatPermitsInTimeContinues() throws Exception {
+            io.vertx.core.Vertx vertx = io.vertx.core.Vertx.vertx();
+            try {
+                Authorizer authorizer = mock(Authorizer.class);
+                io.vertx.core.Promise<AuthorizationDecision> pending = io.vertx.core.Promise.promise();
+                when(authorizer.authorize(any(AuthorizationRequest.class))).thenReturn(pending.future());
+                SecurityEventEmitter emitter = mock(SecurityEventEmitter.class);
+                when(emitter.emit(any(AuthorizationDecisionEvent.class))).thenReturn(Future.succeededFuture());
+                ContextHolder holder = mock(ContextHolder.class);
+                when(holder.current(SecurityContext.class)).thenReturn(Optional.of(mock(SecurityContext.class)));
+                ServiceAuthorizationInterceptor pep = interceptorWithDeadline(
+                        authorizer,
+                        registryAllowing(ACTION),
+                        emitter,
+                        holder,
+                        BOUND_MS * 10,
+                        dev.vertique.resilience.Resilience.create(vertx));
+
+                Future<ServiceDispatchContext> result =
+                        pep.beforeDispatch(dispatchContext(List.of(requiresActionOn("methodActionHolder")), List.of()));
+                assertFalse(result.isComplete(), "the authorizer is pending");
+                pending.complete(AuthorizationDecision.permit(AuthzReasonCodes.PERMITTED));
+
+                result.toCompletionStage()
+                        .toCompletableFuture()
+                        .get(BOUND_MS, java.util.concurrent.TimeUnit.MILLISECONDS);
+                ArgumentCaptor<AuthorizationDecisionEvent> captor =
+                        ArgumentCaptor.forClass(AuthorizationDecisionEvent.class);
+                verify(emitter, times(1)).emit(captor.capture());
+                assertTrue(captor.getValue().decision().permitted());
+            } finally {
+                vertx.close()
+                        .toCompletionStage()
+                        .toCompletableFuture()
+                        .get(BOUND_MS, java.util.concurrent.TimeUnit.MILLISECONDS);
+            }
+        }
+
+        @Test
+        @DisplayName("an Authorizer pending when the runtime closes is denied once; a late permit changes nothing")
+        void authorizerPendingWhenTheRuntimeClosesIsDeniedOnce() throws Exception {
+            io.vertx.core.Vertx vertx = io.vertx.core.Vertx.vertx();
+            try {
+                dev.vertique.resilience.Resilience resilience = dev.vertique.resilience.Resilience.create(vertx);
+                Authorizer authorizer = mock(Authorizer.class);
+                io.vertx.core.Promise<AuthorizationDecision> pending = io.vertx.core.Promise.promise();
+                when(authorizer.authorize(any(AuthorizationRequest.class))).thenReturn(pending.future());
+                SecurityEventEmitter emitter = mock(SecurityEventEmitter.class);
+                when(emitter.emit(any(AuthorizationDecisionEvent.class))).thenReturn(Future.succeededFuture());
+                ContextHolder holder = mock(ContextHolder.class);
+                when(holder.current(SecurityContext.class)).thenReturn(Optional.of(mock(SecurityContext.class)));
+                ServiceAuthorizationInterceptor pep = interceptorWithDeadline(
+                        authorizer, registryAllowing(ACTION), emitter, holder, BOUND_MS * 10, resilience);
+
+                Future<ServiceDispatchContext> result =
+                        pep.beforeDispatch(dispatchContext(List.of(requiresActionOn("methodActionHolder")), List.of()));
+                assertFalse(result.isComplete(), "the authorizer is pending when the runtime closes");
+                resilience
+                        .close()
+                        .toCompletionStage()
+                        .toCompletableFuture()
+                        .get(BOUND_MS, java.util.concurrent.TimeUnit.MILLISECONDS);
+
+                assertThrows(java.util.concurrent.ExecutionException.class, () -> result.toCompletionStage()
+                        .toCompletableFuture()
+                        .get(BOUND_MS, java.util.concurrent.TimeUnit.MILLISECONDS));
+                pending.complete(AuthorizationDecision.permit(AuthzReasonCodes.PERMITTED));
+                Thread.sleep(200L);
+                verify(emitter, times(1)).emit(any(AuthorizationDecisionEvent.class));
+            } finally {
+                vertx.close()
+                        .toCompletionStage()
+                        .toCompletableFuture()
+                        .get(BOUND_MS, java.util.concurrent.TimeUnit.MILLISECONDS);
+            }
         }
 
         @Test
@@ -598,7 +766,13 @@ class ServiceAuthorizationInterceptorTest {
             assertThrows(
                     ServiceRegistrationException.class,
                     () -> new ServiceAuthorizationInterceptor(
-                            Optional.empty(), Optional.empty(), emitter, holder, metas));
+                            Optional.empty(),
+                            Optional.empty(),
+                            emitter,
+                            holder,
+                            metas,
+                            ServiceAuthorizationConfig.defaults(),
+                            TestResilience.shared()));
         }
 
         @Test
@@ -611,7 +785,14 @@ class ServiceAuthorizationInterceptorTest {
             Set<ServiceMethodMeta> metas = Set.of(metaWith(List.of(), List.of()));
 
             // Must not throw.
-            new ServiceAuthorizationInterceptor(Optional.empty(), Optional.empty(), emitter, holder, metas);
+            new ServiceAuthorizationInterceptor(
+                    Optional.empty(),
+                    Optional.empty(),
+                    emitter,
+                    holder,
+                    metas,
+                    ServiceAuthorizationConfig.defaults(),
+                    TestResilience.shared());
         }
 
         @Test

@@ -51,6 +51,7 @@ import dev.vertique.security.runtime.events.SecurityEventEmitter;
 import dev.vertique.services.ServiceContract;
 import dev.vertique.services.ServiceExceptionMapper;
 import dev.vertique.services.ServiceOperation;
+import dev.vertique.services.config.ServiceAuthorizationConfig;
 import dev.vertique.services.dispatch.ServiceMethodDescriptor;
 import dev.vertique.services.dispatch.ServiceMethodInvoker;
 import dev.vertique.services.dispatch.ServiceMethodMeta;
@@ -929,7 +930,9 @@ public final class TypedPolicyServiceFixtures {
                     Optional.ofNullable(engine.registry()),
                     emitter,
                     new DefaultContextHolder(),
-                    Set.of(meta));
+                    Set.of(meta),
+                    ServiceAuthorizationConfig.defaults(),
+                    TestResilience.shared());
             RecoverEverything permissive = new RecoverEverything();
             ServiceMethodInvoker invoker = new ServiceMethodInvoker(
                     meta, new ServiceExceptionMapper(), List.of(interceptor, permissive), null);
