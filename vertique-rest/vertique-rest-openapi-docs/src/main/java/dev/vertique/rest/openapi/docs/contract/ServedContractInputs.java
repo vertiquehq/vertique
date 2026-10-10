@@ -21,8 +21,8 @@ import java.util.Set;
  * <p>An Operation Object is checked against the hidden inputs of the routed operation its {@code
  * operationId} names. Every Parameter Object of the operation and of the Path Items that hold or
  * reference it, local references followed, is refused when its {@code in} and {@code name} match a
- * hidden input at that location: {@code path} and {@code query} names exactly, {@code header} and
- * {@code cookie} names ignoring ASCII case, as the runtime binds them. A referenced parameter is
+ * hidden input at that location: {@code path}, {@code query}, and {@code cookie} names exactly,
+ * {@code header} names ignoring ASCII case, as the runtime binds them. A referenced parameter is
  * named at its own location.
  *
  * <p>For each {@code application/x-www-form-urlencoded} or {@code multipart/form-data} media type
@@ -222,7 +222,7 @@ final class ServedContractInputs {
             if (hidden.location() != location) {
                 continue;
             }
-            boolean caseInsensitive = location == ParamLocation.HEADER || location == ParamLocation.COOKIE;
+            boolean caseInsensitive = location == ParamLocation.HEADER;
             if (caseInsensitive
                     ? asciiEqualsIgnoreCase(hidden.name(), name)
                     : hidden.name().equals(name)) {

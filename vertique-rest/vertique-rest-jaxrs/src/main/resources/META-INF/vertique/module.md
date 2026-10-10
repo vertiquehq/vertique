@@ -889,8 +889,11 @@ does not — a path segment is always single-valued.
   `@DefaultValue` strings are converted but not policy-processed.
 - **Ordering** is whatever the transport reported for repeated values — neither Vert.x nor Jakarta REST
   guarantees one, and the framework makes none.
-- **Case sensitivity follows the transport.** `@HeaderParam`/`@CookieParam` names match
-  case-insensitively; `@PathParam`/`@QueryParam` match case-sensitively.
+- **Case sensitivity follows the transport.** `@HeaderParam` names match case-insensitively (header
+  names are case-insensitive, and HTTP/2 transmits them in lower case); `@PathParam`, `@QueryParam`,
+  and `@CookieParam` names match case-sensitively. Cookie names are case-sensitive per RFC 6265, so a
+  request cookie `Session` does not satisfy `@CookieParam("session")`, and two cookies that differ only
+  in case bind as two independent values.
 - **`SortedSet<T>`/`NavigableSet<T>` require an element type comparable to itself.** They materialize as
   a `TreeSet`, which orders by natural ordering, and a parameter declaration cannot supply a
   `Comparator`. This is the application's responsibility and is **not** checked at startup — a

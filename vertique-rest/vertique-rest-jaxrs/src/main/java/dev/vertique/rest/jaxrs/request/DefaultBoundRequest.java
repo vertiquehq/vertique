@@ -46,10 +46,11 @@ import java.util.Set;
  *       does not parse strings, and this facade does not either.
  *   <li><b>Undeclared keys</b> (no matching descriptor) bind as their raw first-value
  *       {@link String}.
- *   <li><b>Headers and cookies are case-insensitive</b>: their maps are keyed by lower-cased name,
- *       so {@code get("content-type")} finds a {@code Content-Type} header, and the declared-parameter
- *       match that decides multiplicity is equally case-insensitive for those two locations (see
- *       {@link #findDescriptor}). Path and query names stay case-sensitive.
+ *   <li><b>Headers are case-insensitive</b>: the map is keyed by lower-cased name, so
+ *       {@code get("content-type")} finds a {@code Content-Type} header, and the declared-parameter
+ *       match that decides multiplicity is equally case-insensitive for that location (see
+ *       {@link #findDescriptor}). Path, query, and cookie names stay case-sensitive: cookie names are
+ *       case-sensitive per RFC 6265, so a cookie is keyed by its exact wire name.
  *   <li><b>The body is bound in its actual wire shape, content-type-aware</b>: a JSON content type
  *       yields a {@link JsonObject}/{@link JsonArray}/scalar; a {@code text/*} content type yields a
  *       {@link String}; otherwise the raw {@code Buffer} (see {@link #bindBody}).
@@ -163,8 +164,9 @@ public final class DefaultBoundRequest implements BoundRequest {
     }
 
     /**
-     * Binds request cookies, keyed case-insensitively by cookie name, applying the same type-driven
-     * multiplicity rule as query parameters and headers via {@link #wrapValues}.
+     * Binds request cookies, keyed by their exact cookie name (cookie names are case-sensitive per
+     * RFC 6265), applying the same type-driven multiplicity rule as query parameters and headers via
+     * {@link #wrapValues}.
      *
      * <p>A cookie is <em>single-valued</em> per name, so its value is presented to
      * {@link #wrapValues} as a one-element list:
@@ -193,7 +195,7 @@ public final class DefaultBoundRequest implements BoundRequest {
         if (cookieSet != null) {
             for (Cookie cookie : cookieSet) {
                 ParamDescriptor descriptor = findDescriptor(params, cookie.getName(), ParamLocation.COOKIE);
-                String key = cookie.getName().toLowerCase(Locale.ROOT);
+                String key = cookie.getName();
                 String value = cookie.getValue();
                 result.put(key, value == null ? RequestValue.of(null) : wrapValues(List.of(value), descriptor));
             }
@@ -522,17 +524,19 @@ public final class DefaultBoundRequest implements BoundRequest {
      * ({@code ParameterExtractor.lookup}) so the two halves of the same name resolution cannot disagree:
      *
      * <ul>
-     *   <li><b>{@link ParamLocation#HEADER} and {@link ParamLocation#COOKIE}</b> match
-     *       <em>case-insensitively</em>. Both maps are keyed by lower-cased name and extraction
-     *       lower-cases the declared name before its lookup, so the descriptor half must be equally
-     *       tolerant. It is load-bearing rather than cosmetic: RFC 9113 §8.2.1 requires HTTP/2 to
-     *       transmit header field names in lower case, so with ALPN enabled the wire name of a
-     *       {@code @HeaderParam("X-Tags")} declaration is {@code x-tags} for <em>every</em> HTTP/2
-     *       client. A case-sensitive match there would leave a collection-declared parameter
-     *       scalar-wrapped — dropping every value past the first — while passing HTTP/1.1 tests.</li>
-     *   <li><b>{@link ParamLocation#PATH} and {@link ParamLocation#QUERY}</b> match
-     *       <em>case-sensitively</em>: their maps are keyed verbatim and extraction looks the declared
-     *       name up unchanged, so both halves already agree.</li>
+     *   <li><b>{@link ParamLocation#HEADER}</b> matches <em>case-insensitively</em>. The map is keyed by
+     *       lower-cased name and extraction lower-cases the declared name before its lookup, so the
+     *       descriptor half must be equally tolerant. It is load-bearing rather than cosmetic: RFC 9113
+     *       §8.2.1 requires HTTP/2 to transmit header field names in lower case, so with ALPN enabled
+     *       the wire name of a {@code @HeaderParam("X-Tags")} declaration is {@code x-tags} for
+     *       <em>every</em> HTTP/2 client. A case-sensitive match there would leave a
+     *       collection-declared parameter scalar-wrapped — dropping every value past the first — while
+     *       passing HTTP/1.1 tests.</li>
+     *   <li><b>{@link ParamLocation#PATH}, {@link ParamLocation#QUERY}, and
+     *       {@link ParamLocation#COOKIE}</b> match <em>case-sensitively</em>: their maps are keyed
+     *       verbatim and extraction looks the declared name up unchanged, so both halves already
+     *       agree. Cookie names are case-sensitive per RFC 6265, and a transport-level cookie name has
+     *       no lower-casing rule comparable to HTTP/2's for headers.</li>
      * </ul>
      *
      * <p>{@link String#equalsIgnoreCase(String)} keeps the case-insensitive branch allocation-free — no
@@ -544,7 +548,7 @@ public final class DefaultBoundRequest implements BoundRequest {
      * @return the matching descriptor, or {@code null}
      */
     private static ParamDescriptor findDescriptor(List<ParamDescriptor> params, String name, ParamLocation location) {
-        boolean caseInsensitive = location == ParamLocation.HEADER || location == ParamLocation.COOKIE;
+        boolean caseInsensitive = location == ParamLocation.HEADER;
         for (ParamDescriptor descriptor : params) {
             if (descriptor.location() != location) {
                 continue;

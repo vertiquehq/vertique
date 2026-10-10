@@ -21,6 +21,7 @@ import io.vertx.ext.web.client.WebClientOptions;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
 import jakarta.ws.rs.BeanParam;
+import jakarta.ws.rs.CookieParam;
 import jakarta.ws.rs.DefaultValue;
 import jakarta.ws.rs.FormParam;
 import jakarta.ws.rs.GET;
@@ -489,9 +490,8 @@ public class RouteStartupValidationTest {
 
     /**
      * Resource declaring the same <em>header</em> name twice with incompatible multiplicities, the two
-     * declarations differing only in case. Header (and cookie) descriptor matching is
-     * case-<em>insensitive</em> on both halves of binding, so these two collide exactly as an identical
-     * pair would.
+     * declarations differing only in case. Header descriptor matching is case-<em>insensitive</em> on
+     * both halves of binding, so these two collide exactly as an identical pair would.
      */
     @Path("/duplicate-header-multiplicity")
     public static class DuplicateHeaderCasingMultiplicityResource {
@@ -532,6 +532,30 @@ public class RouteStartupValidationTest {
         @Produces(MediaType.TEXT_PLAIN)
         @Operation(operationId = "queryCasingDistinct")
         public String get(@QueryParam("id") String lower, @QueryParam("Id") List<String> upper) {
+            return "unreachable";
+        }
+    }
+
+    /**
+     * Resource declaring two <em>cookie</em> parameters whose names differ only in case. Cookie names
+     * are case-<em>sensitive</em> (RFC 6265) on both halves of binding, so {@code id} and {@code Id}
+     * are two independent names that never collide — this declaration is legal and must keep building.
+     */
+    @Path("/cookie-casing-distinct")
+    public static class CookieCasingDistinctResource {
+
+        /**
+         * Declares {@code @CookieParam("id")} as a scalar and {@code @CookieParam("Id")} as a
+         * {@code List}.
+         *
+         * @param lower the lower-case scalar parameter
+         * @param upper the capitalized collection-shaped parameter
+         * @return never reached in this test (only the router build is exercised)
+         */
+        @GET
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "cookieCasingDistinct")
+        public String get(@CookieParam("id") String lower, @CookieParam("Id") List<String> upper) {
             return "unreachable";
         }
     }
@@ -799,6 +823,19 @@ public class RouteStartupValidationTest {
         assertDoesNotThrow(
                 () -> mount.createRouter(vertx),
                 "query descriptor matching is case-SENSITIVE, so 'id' and 'Id' are independent names — "
+                        + "rejecting them would break startup for a legal declaration");
+        ctx.completeNow();
+    }
+
+    @Test
+    @DisplayName("Cookie params differing only in case do not collide and pass validation")
+    void cookieParamNamesDifferingOnlyInCasePassValidation(Vertx vertx, VertxTestContext ctx) {
+        JaxRsRouterMount.Factory factory = TestFactories.builder().build();
+        JaxRsRouterMount mount = factory.create("/*", "openapi.json", Set.of(new CookieCasingDistinctResource()));
+
+        assertDoesNotThrow(
+                () -> mount.createRouter(vertx),
+                "cookie names are case-SENSITIVE (RFC 6265), so 'id' and 'Id' are independent names — "
                         + "rejecting them would break startup for a legal declaration");
         ctx.completeNow();
     }

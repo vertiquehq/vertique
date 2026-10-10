@@ -84,7 +84,8 @@ public interface BoundRequest {
     Map<String, RequestValue> headers();
 
     /**
-     * Returns the bound request cookies, keyed case-insensitively by cookie name.
+     * Returns the bound request cookies, keyed by their exact cookie name; cookie names are
+     * case-sensitive.
      *
      * @return the non-null, possibly empty map of cookie values
      */

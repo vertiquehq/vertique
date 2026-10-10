@@ -781,7 +781,7 @@ the positions listed here; the positions under [Not checked](#not-checked) are n
 
 - **Parameters.** Every Parameter Object of the operation and of the Path Items that hold or
   reference it, local references followed, is refused when its `in` (ASCII case ignored) and `name`
-  match a hidden input: `path` and `query` names exactly, `header` and `cookie` names ignoring ASCII
+  match a hidden input: `path`, `query`, and `cookie` names exactly, `header` names ignoring ASCII
   case, as the runtime binds them.
 - **Form properties.** A property named like a hidden form input, in any schema of the form schema's
   reference chain.

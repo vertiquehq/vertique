@@ -1509,7 +1509,8 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
 
         /**
          * Reads <em>all</em> raw values for a declared multi-valued parameter from the routing context,
-         * honoring case-insensitive header/cookie lookup. Path parameters are single-valued.
+         * honoring case-insensitive header lookup and exact-name cookie lookup. Path parameters are
+         * single-valued.
          *
          * @param ctx      the routing context
          * @param location the parameter location
@@ -1534,7 +1535,7 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
 
         /**
          * Reads the raw (un-coerced) first value for a declared parameter directly from the routing
-         * context, honoring case-insensitive header/cookie lookup.
+         * context, honoring case-insensitive header lookup and exact-name cookie lookup.
          *
          * @param ctx      the routing context
          * @param location the parameter location
@@ -1565,7 +1566,8 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
         }
 
         /**
-         * Returns the value of the named cookie (case-insensitive), or {@code null} when absent.
+         * Returns the value of the cookie with exactly the given name, or {@code null} when absent.
+         * Cookie names are case-sensitive (RFC 6265), the same rule the binder applies.
          *
          * @param ctx  the routing context
          * @param name the cookie name
@@ -1577,7 +1579,7 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
                 return null;
             }
             for (Cookie cookie : cookies) {
-                if (cookie.getName().equalsIgnoreCase(name)) {
+                if (cookie.getName().equals(name)) {
                     return cookie.getValue();
                 }
             }

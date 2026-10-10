@@ -974,8 +974,8 @@ class CollectionParamStateMachineTest {
          *
          * <p>This assertion — on the <em>binder's</em> output, before extraction — is what makes the
          * cookie rows below able to fail. A cookie is single-valued, so reverting {@code bindCookies} to
-         * a scalar wrap, or reverting {@code findDescriptor}'s {@code COOKIE} match to
-         * case-sensitive (which leaves no descriptor, hence a scalar wrap), both leave a bare
+         * a scalar wrap, or breaking {@code findDescriptor}'s {@code COOKIE} lookup (which leaves no
+         * descriptor, hence a scalar wrap), both leave a bare
          * {@link String} here — and the singleton fallback in
          * {@code ParameterExtractor.extractScalarValue} then turns that bare {@code String} into the very
          * same one-element collection the extracted-value assertions expect. Asserting only the extracted
@@ -983,18 +983,18 @@ class CollectionParamStateMachineTest {
          * by the fallback".
          *
          * @param req  the bound request produced by the real {@link DefaultBoundRequest}
-         * @param name the cookie name as bound, i.e. lower-cased
+         * @param name the cookie name as bound, which is its wire name verbatim
          * @return the bound {@link JsonArray}
          */
         private JsonArray assertBoundAsJsonArray(BoundRequest req, String name) {
             RequestValue bound = req.cookies().get(name);
-            assertNotNull(bound, "the cookie must be bound under its lower-cased name '" + name + "'");
+            assertNotNull(bound, "the cookie must be bound under its wire name '" + name + "'");
             return assertInstanceOf(
                     JsonArray.class,
                     bound.get(),
                     "bindCookies must wrap a collection-declared cookie's value in a JsonArray so it reaches "
                             + "coerceCollection as a collection; a bare String means the binder used the scalar "
-                            + "branch (or the COOKIE descriptor match regressed to case-sensitive) and only the "
+                            + "branch (or the COOKIE descriptor lookup missed the declared name) and only the "
                             + "extractScalarValue singleton fallback is masking it");
         }
 
@@ -1052,26 +1052,57 @@ class CollectionParamStateMachineTest {
         }
 
         @Test
-        @DisplayName("COOKIE: a declared name whose casing differs from the wire name still binds")
-        void realBinder_presentCookieCollection_caseMismatchedName_binds() throws Exception {
+        @DisplayName("COOKIE: a declared name whose casing differs from the wire name stays unmatched")
+        void realBinder_presentCookieCollection_caseMismatchedName_staysAbsent() throws Exception {
             Method method = CollectionResource.class.getMethod("list", List.class);
             ResourceMethodMeta meta =
                     metaFor(method, List.of(paramMeta("Session-Tags", COOKIE, List.class, String.class, null)));
 
+            // RFC 6265 cookie names are case-sensitive, so 'session-tags' is a different cookie from the
+            // declared 'Session-Tags' and must not satisfy it.
             BoundRequest req = realBoundRequest(meta, null, null, Set.of(cookie("session-tags", "a")));
-
-            assertEquals(
-                    new JsonArray().add("a"),
-                    assertBoundAsJsonArray(req, "session-tags"),
-                    "cookie names are bound case-insensitively, so findDescriptor must match them the same way");
-
             Object[] args = extractorFor(meta).extractArguments(null, req);
 
-            List<?> list = assertInstanceOf(
-                    List.class,
+            List<?> list = assertInstanceOf(List.class, args[0], "absence must yield the empty collection, not null");
+            assertTrue(
+                    list.isEmpty(),
+                    "cookie names are case-SENSITIVE on both halves of the lookup, so a differently cased wire "
+                            + "cookie must not bind to the declared name");
+        }
+
+        @Test
+        @DisplayName("COOKIE: a differently cased wire name falls back to @DefaultValue")
+        void realBinder_cookieCollection_caseMismatchedName_appliesDefault() throws Exception {
+            Method method = CollectionResource.class.getMethod("list", List.class);
+            ResourceMethodMeta meta =
+                    metaFor(method, List.of(paramMeta("session-tags", COOKIE, List.class, String.class, "dflt")));
+
+            BoundRequest req = realBoundRequest(meta, null, null, Set.of(cookie("Session-Tags", "a")));
+            Object[] args = extractorFor(meta).extractArguments(null, req);
+
+            assertEquals(
+                    List.of("dflt"),
                     args[0],
-                    "cookie names are bound case-insensitively, so findDescriptor must match them the same way");
-            assertEquals(List.of("a"), list, "a cookie is single-valued, so the collection has exactly one entry");
+                    "the wire cookie is a different name, so the declared parameter is absent and its default "
+                            + "applies");
+        }
+
+        @Test
+        @DisplayName("COOKIE: two cookies differing only in case bind independently, with no last-one-wins")
+        void realBinder_cookiesDifferingOnlyInCase_bindIndependently() throws Exception {
+            Method method = CollectionResource.class.getMethod("scalar", String.class);
+            ResourceMethodMeta meta = metaFor(method, List.of(paramMeta("session", COOKIE, String.class, null, null)));
+
+            BoundRequest req =
+                    realBoundRequest(meta, null, null, Set.of(cookie("session", "a"), cookie("Session", "b")));
+            Object[] args = extractorFor(meta).extractArguments(null, req);
+
+            assertEquals("a", args[0], "the declared 'session' receives only the cookie named exactly 'session'");
+            assertEquals("a", req.cookies().get("session").get(), "the 'session' cookie is bound under its own name");
+            assertEquals(
+                    "b",
+                    req.cookies().get("Session").get(),
+                    "the 'Session' cookie is a separate entry and must not be collapsed into 'session'");
         }
 
         @Test
