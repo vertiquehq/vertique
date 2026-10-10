@@ -480,9 +480,23 @@ public final class AccessPolicyResolver {
             if (generic.length != wanted.length) {
                 return false;
             }
+            // A method type parameter corresponds by position, and only when both methods declare
+            // the same number of them: a method with its own type parameter overrides nothing.
+            TypeVariable<Method>[] own = canonical.getTypeParameters();
+            TypeVariable<Method>[] other = candidate.getTypeParameters();
+            if (own.length != other.length) {
+                return false;
+            }
+            Map<TypeVariable<?>, Type> effective = bindings;
+            if (other.length > 0) {
+                effective = new LinkedHashMap<>(bindings);
+                for (int i = 0; i < other.length; i++) {
+                    effective.put(other[i], own[i]);
+                }
+            }
             for (int i = 0; i < generic.length; i++) {
-                Class<?> resolved = resolveErasure(generic[i], bindings, new IdentityHashMap<>());
-                Class<?> expected = resolveErasure(wanted[i], bindings, new IdentityHashMap<>());
+                Class<?> resolved = resolveErasure(generic[i], effective, new IdentityHashMap<>());
+                Class<?> expected = resolveErasure(wanted[i], effective, new IdentityHashMap<>());
                 if (resolved != expected) {
                     return false;
                 }
@@ -547,6 +561,11 @@ public final class AccessPolicyResolver {
         Type[] arguments = parameterized.getActualTypeArguments();
         for (int i = 0; i < parameters.length && i < arguments.length; i++) {
             bindings.putIfAbsent(parameters[i], arguments[i]);
+        }
+        // The argument of an owner type ({@code Outer<String>.Inner}) binds the inner class's
+        // variables from the enclosing class.
+        if (parameterized.getOwnerType() instanceof ParameterizedType owner) {
+            bind(owner, bindings);
         }
     }
 }

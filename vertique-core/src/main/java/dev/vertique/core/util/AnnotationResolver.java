@@ -106,26 +106,10 @@ public final class AnnotationResolver {
     public static List<Annotation> resolveMethodAnnotations(Method method, Class<?> viewType) {
         Set<Annotation> annotations = new LinkedHashSet<>(List.of(method.getAnnotations()));
 
-        // Walk superclass chain from the declaring class (the method is already that class's view)
-        Class<?> current = method.getDeclaringClass().getSuperclass();
-        while (current != null && current != Object.class) {
-            try {
-                Method m = current.getMethod(method.getName(), method.getParameterTypes());
-                Collections.addAll(annotations, m.getAnnotations());
-            } catch (NoSuchMethodException ignored) {
-                // Method not declared on this superclass — continue traversal
-            }
-            current = current.getSuperclass();
-        }
-
-        // Walk interface hierarchy of the view type (may be more specific than the declaring class)
-        for (Class<?> iface : TypeResolver.getAllInterfaces(viewType)) {
-            try {
-                Method m = iface.getMethod(method.getName(), method.getParameterTypes());
-                Collections.addAll(annotations, m.getAnnotations());
-            } catch (NoSuchMethodException ignored) {
-                // Method not declared on this interface — continue traversal
-            }
+        // Declarations the method overrides: superclasses of its declaring class bottom-up, then the
+        // interfaces of the view type (which may be more specific than the declaring class).
+        for (Method declaration : inheritedDeclarations(method, viewType)) {
+            Collections.addAll(annotations, declaration.getAnnotations());
         }
 
         return List.copyOf(annotations);
@@ -169,9 +153,9 @@ public final class AnnotationResolver {
 
     /**
      * Resolves all annotations present on a single method parameter by walking the same erased
-     * signature on the method's superclass chain and the BFS-ordered interface hierarchy of the
-     * method's declaring class. This is the parameter-level analog of
-     * {@link #resolveMethodAnnotations(Method)}.
+     * signature (see {@link #inheritedDeclarations}) on the method's superclass chain and the
+     * BFS-ordered interface hierarchy of the method's declaring class. This is the parameter-level
+     * analog of {@link #resolveMethodAnnotations(Method)}.
      *
      * <p>Equivalent to {@link #resolveParameterAnnotations(Method, int, Class)
      * resolveParameterAnnotations(method, parameterIndex, method.getDeclaringClass())}.
@@ -232,26 +216,9 @@ public final class AnnotationResolver {
         }
         Set<Annotation> annotations = new LinkedHashSet<>(List.of(method.getParameterAnnotations()[parameterIndex]));
 
-        // Walk superclass chain from the declaring class
-        Class<?> current = method.getDeclaringClass().getSuperclass();
-        while (current != null && current != Object.class) {
-            try {
-                Method m = current.getMethod(method.getName(), method.getParameterTypes());
-                Collections.addAll(annotations, m.getParameterAnnotations()[parameterIndex]);
-            } catch (NoSuchMethodException ignored) {
-                // Method not declared on this superclass — continue traversal
-            }
-            current = current.getSuperclass();
-        }
-
-        // Walk interface hierarchy of the view type (BFS, matching TypeResolver.getAllInterfaces)
-        for (Class<?> iface : TypeResolver.getAllInterfaces(viewType)) {
-            try {
-                Method m = iface.getMethod(method.getName(), method.getParameterTypes());
-                Collections.addAll(annotations, m.getParameterAnnotations()[parameterIndex]);
-            } catch (NoSuchMethodException ignored) {
-                // Method not declared on this interface — continue traversal
-            }
+        // The same declarations, in the same order, as resolveMethodAnnotations
+        for (Method declaration : inheritedDeclarations(method, viewType)) {
+            Collections.addAll(annotations, declaration.getParameterAnnotations()[parameterIndex]);
         }
 
         return annotations.toArray(new Annotation[0]);

@@ -237,7 +237,7 @@ For a same-declaration conflict (both annotations on the same element) the two s
 
 ### `ReflectiveInvocationPolicies`
 
-The reflective adapter — resolves `EffectiveInputPolicies` from real annotated `Method`/`Class` pairs through `dev.vertique.core.util.AnnotationResolver` (never `Method.getAnnotation`), so overrides, interface defaults, superclass declarations and composed annotations all resolve the same way they do everywhere else `AnnotationResolver` is used:
+The reflective adapter — resolves `EffectiveInputPolicies` from real annotated `Method`/`Class` pairs through `dev.vertique.core.util.AnnotationResolver` (never `Method.getAnnotation`), so overrides, interface defaults, superclass declarations and composed annotations all resolve the same way they do everywhere else `AnnotationResolver` is used. An override of a generic declaration inherits its policies once the type variable is bound in the owner's hierarchy (`delete(String)` of a class implementing `Crud<String>` reaches `Crud<ID>.delete(ID)`), as the compile-time adapter does, and the declaration site reported in a conflict is that declaration:
 
 ```java
 static EffectiveInputPolicies resolveRoute(Method method, Class<?> owner);

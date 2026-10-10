@@ -78,6 +78,7 @@ public final class JaxRsMethodDiscovery {
             current = JaxRsHierarchy.superClass(ctx, current);
         }
 
+        dropOverriddenSuperclassMethods(ctx, resource, seen);
         List<ExecutableElement> classMethods = List.copyOf(seen.values());
         List<TypeElement> interfaces = JaxRsHierarchy.allInterfaces(ctx, resource);
         DeclaredType resourceType = (DeclaredType) resource.asType();
@@ -92,6 +93,30 @@ public final class JaxRsMethodDiscovery {
             }
         }
         return List.copyOf(seen.values());
+    }
+
+    /**
+     * Removes the superclass-chain entries that a method of a more derived class overrides. A
+     * generic override such as {@code get(String)} of {@code Base<T>.get(T)} has another erased key
+     * than the method it overrides, so both were collected; the override inherits the superclass
+     * method's declarations (see {@link JaxRsHierarchy#inheritedDeclarations}) and is the route, so
+     * keeping the superclass method as well would register the operation twice.
+     *
+     * @param ctx      the shared codegen context
+     * @param resource the concrete resource type element
+     * @param seen     the class-chain methods by erased key, modified in place
+     */
+    private static void dropOverriddenSuperclassMethods(
+            CodegenContext ctx, TypeElement resource, Map<String, ExecutableElement> seen) {
+        List<ExecutableElement> overridden = new ArrayList<>();
+        for (ExecutableElement method : seen.values()) {
+            for (ExecutableElement declaration : JaxRsHierarchy.inheritedDeclarations(ctx, method, resource, true)) {
+                if (declaration.getEnclosingElement().getKind() != ElementKind.INTERFACE) {
+                    overridden.add(declaration);
+                }
+            }
+        }
+        seen.values().removeAll(overridden);
     }
 
     /**

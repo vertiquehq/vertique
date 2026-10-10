@@ -91,7 +91,11 @@ public final class ContextParamValidator {
 
             // Check if any overridden interface method's same-position parameter carries @Context
             boolean hasContextOnInterface = anyInterfaceParamMatches(
-                    concreteMethod, i, interfaces, p -> AnnotationMirrors.isPresent(p, JaxRsAnnotations.CONTEXT));
+                    concreteMethod,
+                    resourceClass,
+                    i,
+                    interfaces,
+                    p -> AnnotationMirrors.isPresent(p, JaxRsAnnotations.CONTEXT));
 
             boolean effectiveContext = hasContextOnConcrete || hasContextOnInterface;
 
@@ -115,7 +119,8 @@ public final class ContextParamValidator {
             // explicit @Context or via an injectable type (e.g. @PathParam on a ContextValue type).
             // The binding annotation may sit on the concrete param or on a matching interface param.
             boolean conflict = hasBindingAnnotation(pc.concreteParameter())
-                    || anyInterfaceParamMatches(concreteMethod, i, interfaces, this::hasBindingAnnotation);
+                    || anyInterfaceParamMatches(
+                            concreteMethod, resourceClass, i, interfaces, this::hasBindingAnnotation);
             if (conflict) {
                 ctx.diagnostics()
                         .error(
@@ -168,6 +173,7 @@ public final class ContextParamValidator {
      * </ul>
      *
      * @param concreteMethod the concrete method whose matching interface method to inspect
+     * @param resourceClass  the class the method is a member of
      * @param paramIndex     the zero-based parameter index
      * @param interfaces     the BFS-ordered list of interfaces to walk
      * @param test           predicate applied to each candidate interface parameter element
@@ -175,20 +181,20 @@ public final class ContextParamValidator {
      */
     private boolean anyInterfaceParamMatches(
             ExecutableElement concreteMethod,
+            TypeElement resourceClass,
             int paramIndex,
             List<TypeElement> interfaces,
             Predicate<VariableElement> test) {
         for (TypeElement iface : interfaces) {
-            ExecutableElement ifaceMethod = JaxRsHierarchy.findMatchingMethod(ctx, concreteMethod, iface);
-            if (ifaceMethod == null) {
-                continue;
-            }
-            var ifaceParams = ifaceMethod.getParameters();
-            if (paramIndex >= ifaceParams.size()) {
-                continue;
-            }
-            if (test.test(ifaceParams.get(paramIndex))) {
-                return true;
+            for (ExecutableElement ifaceMethod :
+                    JaxRsHierarchy.findMatchingMethods(ctx, concreteMethod, iface, resourceClass, true)) {
+                var ifaceParams = ifaceMethod.getParameters();
+                if (paramIndex >= ifaceParams.size()) {
+                    continue;
+                }
+                if (test.test(ifaceParams.get(paramIndex))) {
+                    return true;
+                }
             }
         }
         return false;

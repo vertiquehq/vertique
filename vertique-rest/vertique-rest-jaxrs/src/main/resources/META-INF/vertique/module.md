@@ -80,12 +80,18 @@ declaring superclass — so a `Base.delete` that implements `Crud.delete` for `R
 implements Crud` is routed with `Crud`'s `@DELETE` / `@Path` / `@PathParam` even when `Base`
 implements nothing. The route takes the resource class's class-level annotations
 (`@Path`, security, media types) together with the default method's merged method annotations.
-Inherited annotations are matched by erased signature, and type variables are not resolved against
-the implementing class: a generic interface method (`Crud<ID>`) overridden with a concrete parameter
-type inherits none of its annotations, and a non-overridden generic default (or generic superclass
-method) binds a type-variable parameter as its erasure, so a path, query, header, cookie, or form
-parameter typed `ID` fails startup with `UNRESOLVABLE_PARAM_CONVERTER`. Declare routed methods with
-concrete parameter types. A default route's `operationId` is the same in every class that inherits
+A method inherits the annotations of every declaration it overrides — superclass methods, then the
+methods of the interfaces — and a type variable bound in the resource class's hierarchy is resolved
+for that match: `delete(String)` of `UserResource implements Crud<String>` inherits `@DELETE`,
+`@Path`, `@RolesAllowed` and the `@PathParam` binding of `Crud<ID>.delete(ID)`, whether or not it
+declares a verb of its own, and so does an override of a generic superclass method. A superclass
+method that such an override inherits from is not routed a second time. The match covers public
+members, as before; a method that declares its own type parameter overrides nothing. What is not
+resolved is the *type* of a method no class overrides: a non-overridden generic default (or generic
+superclass method) binds a type-variable parameter as its erasure, so a path, query, header, cookie,
+or form parameter typed `ID` fails startup with `UNRESOLVABLE_PARAM_CONVERTER`, and a body or return
+type bound by a variable is `Object`. Override such a method with concrete parameter types. A
+default route's `operationId` is the same in every class that inherits
 it, and operationIds are unique per mount, so only one resource per mount can inherit a given
 default route; give the others their own route by overriding it with a distinct
 `@Operation(operationId = "…")`. Once any `@RestApplication` is registered (active or not) or an

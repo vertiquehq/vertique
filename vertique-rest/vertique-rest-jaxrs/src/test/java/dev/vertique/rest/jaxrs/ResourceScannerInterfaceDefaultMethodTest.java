@@ -120,8 +120,8 @@ class ResourceScannerInterfaceDefaultMethodTest {
     static class DocumentResource implements SoftCrud {}
 
     /**
-     * Generic contract. Inherited annotations are matched by erased signature, so a concrete
-     * override inherits nothing from here; the case only pins that no default route appears.
+     * Generic contract. A concrete override inherits its annotations once the type variable is
+     * bound through the resource class.
      *
      * @param <I> the identifier type
      */
@@ -160,6 +160,65 @@ class ResourceScannerInterfaceDefaultMethodTest {
     /** Implements the interface that carries the bridge default. */
     @Path("/invoices")
     static class InvoiceResource implements StringCrud {}
+
+    /** Generic contract whose default carries security. */
+    interface SecuredCrud<I> {
+
+        /**
+         * Purges by id.
+         *
+         * @param id the identifier
+         * @return a description of the purge
+         */
+        @DELETE
+        @Path("/{id}")
+        @RolesAllowed("admin")
+        default String purge(@PathParam("id") I id) {
+            return "generic " + id;
+        }
+    }
+
+    /**
+     * Overrides the secured generic default and declares its own verb, so it is a route on its
+     * own; the security exists only on the interface.
+     */
+    @Path("/secured")
+    static class SecuredOverrideResource implements SecuredCrud<String> {
+        @Override
+        @DELETE
+        public String purge(String id) {
+            return "secured " + id;
+        }
+    }
+
+    /**
+     * Generic superclass with an annotated method.
+     *
+     * @param <T> the identifier type
+     */
+    static class GenericBase<T> {
+
+        /**
+         * Reads by id.
+         *
+         * @param id the identifier
+         * @return a description of the read
+         */
+        @GET
+        @Path("/{id}")
+        public String get(@PathParam("id") T id) {
+            return "base " + id;
+        }
+    }
+
+    /** Overrides the generic superclass method with a concrete type and no annotations. */
+    @Path("/derived")
+    static class GenericDerivedResource extends GenericBase<String> {
+        @Override
+        public String get(String id) {
+            return "derived " + id;
+        }
+    }
 
     /** Default routes with and without method-level security. */
     interface VaultApi {
@@ -316,16 +375,49 @@ class ResourceScannerInterfaceDefaultMethodTest {
         }
 
         @Test
-        @DisplayName("a generic default overridden by a class adds no default route")
-        void genericDefaultOverriddenByClass_addsNoDefaultRoute() {
+        @DisplayName("a generic default overridden by a class is one route backed by the class method")
+        void genericDefaultOverriddenByClass_isOneRouteBackedByTheClass() throws Exception {
             List<ResourceMethodMeta> metas = scan(new OrderResource());
 
             assertTrue(
                     metas.stream().noneMatch(m -> m.method().getDeclaringClass() == GenericCrud.class),
                     "the class override (via its bridge) must shadow the default: " + metas);
-            // Inherited annotations are matched by erased signature, so remove(String) inherits
-            // nothing from remove(I) and is not a route either (documented limitation).
-            assertEquals(0, metas.size(), metas.toString());
+            // remove(String) overrides remove(I) with I bound to String, so it inherits the verb,
+            // the path and the parameter binding and is the one route.
+            ResourceMethodMeta remove = only(metas, "DELETE");
+            assertEquals(OrderResource.class, remove.method().getDeclaringClass());
+            assertEquals("/orders/{id}", remove.path());
+            assertEquals("id", remove.params().get(0).name());
+            assertEquals(
+                    ResourceMethodMeta.ParamSource.PATH, remove.params().get(0).source());
+            assertEquals(String.class, remove.params().get(0).type());
+            assertEquals("order 7", invoke(remove, "7"));
+        }
+
+        @Test
+        @DisplayName("an override that declares its own verb still inherits the interface's security")
+        void overrideWithOwnVerb_inheritsInterfaceSecurity() throws Exception {
+            ResourceMethodMeta purge = only(scan(new SecuredOverrideResource()), "DELETE");
+
+            assertEquals(SecuredOverrideResource.class, purge.method().getDeclaringClass());
+            SecurityPolicy.Constrained policy =
+                    assertInstanceOf(SecurityPolicy.Constrained.class, purge.securityPolicy());
+            assertEquals(List.of("admin"), policy.requiredRoles());
+            assertEquals("/secured/{id}", purge.path());
+            assertEquals("secured 7", invoke(purge, "7"));
+        }
+
+        @Test
+        @DisplayName("a generic superclass method overridden with a concrete type is routed once")
+        void genericSuperclassOverride_isRoutedOnce() throws Exception {
+            List<ResourceMethodMeta> metas = scan(new GenericDerivedResource());
+
+            ResourceMethodMeta get = only(metas, "GET");
+            assertEquals(1, metas.size(), metas.toString());
+            assertEquals(GenericDerivedResource.class, get.method().getDeclaringClass());
+            assertEquals("/derived/{id}", get.path());
+            assertEquals(String.class, get.params().get(0).type());
+            assertEquals("derived 7", invoke(get, "7"));
         }
 
         @Test
@@ -340,6 +432,11 @@ class ResourceScannerInterfaceDefaultMethodTest {
             assertTrue(
                     metas.stream().noneMatch(m -> m.method().getDeclaringClass() == GenericCrud.class),
                     "the overridden generic default must not be routed: " + metas);
+            // The sub-interface default overrides remove(I) with I bound to String: it inherits the
+            // verb and path and is the single route.
+            ResourceMethodMeta remove = only(metas, "DELETE");
+            assertEquals(StringCrud.class, remove.method().getDeclaringClass());
+            assertEquals("/invoices/{id}", remove.path());
         }
     }
 

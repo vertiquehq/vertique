@@ -200,23 +200,10 @@ public final class ReflectiveInvocationPolicies {
     private static List<Method> methodSites(Method method, Class<?> annotationView) {
         List<Method> sites = new ArrayList<>();
         sites.add(method);
-        Class<?> current = method.getDeclaringClass().getSuperclass();
-        while (current != null && current != Object.class) {
-            addMatchingMethod(sites, current, method);
-            current = current.getSuperclass();
-        }
-        for (Class<?> iface : TypeResolver.getAllInterfaces(annotationView)) {
-            addMatchingMethod(sites, iface, method);
-        }
+        // The declarations the value walk merges, from the same primitive, so a site name always
+        // names a declaration whose annotations contributed.
+        sites.addAll(AnnotationResolver.inheritedDeclarations(method, annotationView));
         return sites;
-    }
-
-    private static void addMatchingMethod(List<Method> sites, Class<?> candidate, Method method) {
-        try {
-            sites.add(candidate.getMethod(method.getName(), method.getParameterTypes()));
-        } catch (NoSuchMethodException ignored) {
-            // Method not declared on this level — continue the walk.
-        }
     }
 
     private static List<Class<?>> typeSites(Class<?> owner) {
