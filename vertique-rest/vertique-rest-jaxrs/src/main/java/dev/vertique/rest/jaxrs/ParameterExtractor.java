@@ -952,8 +952,9 @@ final class ParameterExtractor {
 
     /**
      * Looks up the {@link RequestValue} for the given parameter in a bound-request parameter map.
-     * Header and cookie maps are keyed case-insensitively (lower-cased) by {@link BoundRequest}, so
-     * the declared parameter name is normalized before the lookup for those sources.
+     * The header map is keyed case-insensitively (lower-cased) by {@link BoundRequest}, so the declared
+     * parameter name is normalized before the lookup for that source. Cookie names are case-sensitive
+     * (RFC 6265) and keyed verbatim, like path and query names.
      *
      * @param paramMap  the bound parameter map (path / query / header / cookie)
      * @param paramMeta the parameter metadata supplying the name and source
@@ -962,7 +963,7 @@ final class ParameterExtractor {
     private static RequestValue lookup(Map<String, RequestValue> paramMap, ResourceMethodMeta.ParamMeta paramMeta) {
         String key =
                 switch (paramMeta.source()) {
-                    case HEADER, COOKIE -> paramMeta.name().toLowerCase(java.util.Locale.ROOT);
+                    case HEADER -> paramMeta.name().toLowerCase(java.util.Locale.ROOT);
                     default -> paramMeta.name();
                 };
         return paramMap.get(key);
