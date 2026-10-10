@@ -18,10 +18,11 @@
  * rule is reported as `unclassified`, which fails verification — that is the
  * mechanism preventing a new module from silently bypassing publication.
  *
- * An attached test JAR (`-tests.jar`, `-test-sources.jar`, `-test-javadoc.jar`)
- * holds a module's own test fixtures for sibling modules inside this reactor and
- * is not a published surface: a staged repository containing one fails unless
- * the module is named, with a reason, in `payloadPolicy.attachedTestArtifactExceptions`.
+ * An attached test artifact (`-tests.jar`, `-test-sources.jar`,
+ * `-test-javadoc.jar`) holds a module's own test fixtures for sibling modules
+ * inside this reactor and is not a published surface. The deploy plan never
+ * selects one, and `--verify-staged` fails on a staged repository containing
+ * one. Fixtures users should have belong in a dedicated `*-test` module.
  *
  * Usage:
  *   node release/verify-publication.mjs [--root <dir>] [--policy <file>] [--json]
@@ -192,21 +193,6 @@ export function loadPolicy(policyPath) {
   }
   if (policy.schemaVersion !== 1) {
     throw new Error(`${policyPath}: unsupported schemaVersion ${policy.schemaVersion}`);
-  }
-  // An exception that does not say why it exists cannot be reviewed later, so
-  // it is refused here rather than silently honoured.
-  const exceptions = policy.payloadPolicy?.attachedTestArtifactExceptions ?? [];
-  if (!Array.isArray(exceptions)) {
-    throw new Error(`${policyPath}: payloadPolicy.attachedTestArtifactExceptions must be an array`);
-  }
-  for (const entry of exceptions) {
-    const valid = (v) => typeof v === 'string' && v.trim() !== '';
-    if (!entry || !valid(entry.artifactId) || !valid(entry.reason)) {
-      throw new Error(
-        `${policyPath}: each payloadPolicy.attachedTestArtifactExceptions entry needs a non-empty ` +
-          `"artifactId" and a documented "reason"`
-      );
-    }
   }
   return policy;
 }
@@ -434,13 +420,14 @@ export function buildDeployPlan(repoRoot, policy, { version, localRepository }) 
 
 /**
  * Classifier of an attached test artifact (`tests`, `test-sources` or
- * `test-javadoc`), or undefined for any other file. Matched on the file-name
- * tail, and before the generic sources/javadoc/jar rules: a `-test-sources.jar`
- * would otherwise be read as a main `sources` payload.
+ * `test-javadoc`, as a JAR or POM), or undefined for any other file. Matched
+ * case-insensitively on the file-name tail, and before the generic
+ * sources/javadoc/jar rules: a `-test-sources.jar` would otherwise be read as a
+ * main `sources` payload.
  */
 function attachedTestClassifier(fileName) {
-  const match = /-(tests|test-sources|test-javadoc)\.jar$/.exec(fileName);
-  return match ? match[1] : undefined;
+  const match = /-(tests|test-sources|test-javadoc)\.(?:jar|pom)$/i.exec(fileName);
+  return match ? match[1].toLowerCase() : undefined;
 }
 
 /** Recursively lists files beneath `dir`. */
@@ -498,22 +485,17 @@ export function verifyStagedRepository(stagedDir, { repoRoot, policy, version, m
       continue;
     }
 
-    // An attached test JAR is not a published surface. Checked before the
+    // An attached test artifact is not a published surface. Checked before the
     // version and generic classification so it is always reported by name and
     // can never count towards a module's required sources or jar payload.
     const testClassifier = attachedTestClassifier(fileName);
     if (testClassifier) {
-      const exception = (policy.payloadPolicy?.attachedTestArtifactExceptions ?? []).find(
-        (e) => e.artifactId === artifactId
+      errors.push(
+        `${key}: attached test artifact staged: ${fileName} (classifier "${testClassifier}"). ` +
+          `Test JARs are not a published surface and are never deployed; do not attach one to ` +
+          `the publication set. Fixtures users should have belong in a dedicated *-test module.`
       );
-      if (!exception) {
-        errors.push(
-          `${key}: attached test artifact staged: ${fileName} (classifier "${testClassifier}"). ` +
-            `Test JARs are not a published surface; stop attaching it for publication, or record an ` +
-            `exception with a reason in payloadPolicy.attachedTestArtifactExceptions.`
-        );
-        continue;
-      }
+      continue;
     }
 
     if (ver !== version) {
@@ -521,17 +503,15 @@ export function verifyStagedRepository(stagedDir, { repoRoot, policy, version, m
       continue;
     }
 
-    const kind = testClassifier
-      ? `test:${testClassifier}`
-      : fileName.endsWith('.pom')
-        ? 'pom'
-        : fileName.endsWith('-sources.jar')
-          ? 'sources'
-          : fileName.endsWith('-javadoc.jar')
-            ? 'javadoc'
-            : fileName.endsWith('.jar')
-              ? 'jar'
-              : 'unexpected';
+    const kind = fileName.endsWith('.pom')
+      ? 'pom'
+      : fileName.endsWith('-sources.jar')
+        ? 'sources'
+        : fileName.endsWith('-javadoc.jar')
+          ? 'javadoc'
+          : fileName.endsWith('.jar')
+            ? 'jar'
+            : 'unexpected';
     if (kind === 'unexpected') {
       errors.push(`${key}: unexpected classifier or file type staged: ${fileName}`);
       continue;

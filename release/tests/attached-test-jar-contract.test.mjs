@@ -8,7 +8,7 @@
  * modules inside this reactor. Those JARs sit next to the main JAR in the
  * installed repository, so the staged-repository check must refuse them by name
  * rather than let a `-tests.jar` pass as a second main JAR or a `-test-sources.jar`
- * pass as the module's sources payload.
+ * pass as the module's sources payload. The rule has no exceptions.
  *
  * Runs against a tiny synthetic reactor and a synthetic staged repository; it
  * needs no Maven and no network.
@@ -19,9 +19,8 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 
-import { buildDeployPlan, loadPolicy, verifyStagedRepository } from '../verify-publication.mjs';
+import { buildDeployPlan, verifyStagedRepository } from '../verify-publication.mjs';
 
 const GROUP_ID = 'dev.vertique.fixture';
 const VERSION = '1.0.0';
@@ -40,8 +39,8 @@ const pom = (artifactId, packaging, modules = []) => `<?xml version="1.0" encodi
 </project>
 `;
 
-/** Policy publishing the parent POM and one jar module; `exceptions` allow-lists test artifacts. */
-const policyWith = (exceptions) => ({
+/** Policy publishing the parent POM and one jar module. */
+const policy = () => ({
   schemaVersion: 1,
   product: 'fixture',
   groupIdPrefix: GROUP_ID,
@@ -50,11 +49,7 @@ const policyWith = (exceptions) => ({
   skip: [],
   expectedPublishableGavCount: 2,
   expectedPublishableGavs: [`${GROUP_ID}:${ROOT_ID}`, `${GROUP_ID}:${UNIT_ID}`],
-  payloadPolicy: {
-    pom: ['pom'],
-    jar: ['pom', 'jar', 'sources'],
-    ...(exceptions ? { attachedTestArtifactExceptions: exceptions } : {}),
-  },
+  payloadPolicy: { pom: ['pom'], jar: ['pom', 'jar', 'sources'] },
 });
 
 /** Writes a reactor and a staged repository holding the main payload plus `extraFiles`. */
@@ -82,19 +77,19 @@ function fixture(t, extraFiles = []) {
   return { root, reactor, staged };
 }
 
-const verify = ({ reactor, staged }, policy) =>
-  verifyStagedRepository(staged, { repoRoot: reactor, policy, version: VERSION, mode: 'final' });
+const verify = ({ reactor, staged }) =>
+  verifyStagedRepository(staged, { repoRoot: reactor, policy: policy(), version: VERSION, mode: 'final' });
 
 describe('AttachedTestJarPublicationTest', () => {
   it('acceptsAModuleWhoseStagedPayloadIsOnlyItsMainArtifacts', (t) => {
-    const result = verify(fixture(t), policyWith());
+    const result = verify(fixture(t));
     assert.deepEqual(result.errors, []);
     assert.equal(result.ok, true);
   });
 
   it('rejectsAnAttachedTestsJarAndNamesTheArtifact', (t) => {
     const f = fixture(t, [[UNIT_ID, `${UNIT_ID}-${VERSION}-tests.jar`]]);
-    const result = verify(f, policyWith());
+    const result = verify(f);
     assert.equal(result.ok, false);
     const message = result.errors.find((e) => e.includes('attached test artifact'));
     assert.ok(message, `expected an attached-test-artifact error, got: ${result.errors.join(' | ')}`);
@@ -104,7 +99,7 @@ describe('AttachedTestJarPublicationTest', () => {
 
   it('rejectsAnAttachedTestSourcesJarAndNamesTheArtifact', (t) => {
     const f = fixture(t, [[UNIT_ID, `${UNIT_ID}-${VERSION}-test-sources.jar`]]);
-    const result = verify(f, policyWith());
+    const result = verify(f);
     assert.equal(result.ok, false);
     assert.ok(
       result.errors.some((e) => e.includes('attached test artifact') && e.includes('-test-sources.jar')),
@@ -113,14 +108,13 @@ describe('AttachedTestJarPublicationTest', () => {
   });
 
   it('doesNotLetATestSourcesJarSatisfyTheRequiredSourcesPayload', (t) => {
-    // The main sources JAR is absent; only the test sources JAR is staged. With
-    // the module allow-listed the test JAR is tolerated, yet the module must
-    // still be reported as missing its own sources.
+    // The main sources JAR is absent; only the test sources JAR is staged. The
+    // module must be reported as missing its own sources, not satisfied by it.
     const f = fixture(t);
     const sources = path.join(f.staged, ...GROUP_ID.split('.'), UNIT_ID, VERSION, `${UNIT_ID}-${VERSION}-sources.jar`);
     rmSync(sources);
     writeFileSync(sources.replace('-sources.jar', '-test-sources.jar'), 'x');
-    const result = verify(f, policyWith([{ artifactId: UNIT_ID, reason: 'fixture exception' }]));
+    const result = verify(f);
     assert.equal(result.ok, false);
     assert.ok(
       result.errors.some((e) => e.includes(`${GROUP_ID}:${UNIT_ID}`) && e.includes('missing required sources payload')),
@@ -128,27 +122,42 @@ describe('AttachedTestJarPublicationTest', () => {
     );
   });
 
-  it('rejectsEveryTestClassifierForAnUnlistedModule', (t) => {
+  it('rejectsEveryTestClassifierAsJarOrPom', (t) => {
     for (const classifier of ['tests', 'test-sources', 'test-javadoc']) {
-      const f = fixture(t, [[UNIT_ID, `${UNIT_ID}-${VERSION}-${classifier}.jar`]]);
-      const result = verify(f, policyWith());
-      assert.ok(
-        result.errors.some((e) => e.includes('attached test artifact') && e.includes(`classifier "${classifier}"`)),
-        `${classifier}: ${result.errors.join(' | ')}`
-      );
+      for (const extension of ['jar', 'pom']) {
+        const f = fixture(t, [[UNIT_ID, `${UNIT_ID}-${VERSION}-${classifier}.${extension}`]]);
+        const result = verify(f);
+        assert.ok(
+          result.errors.some((e) => e.includes('attached test artifact') && e.includes(`classifier "${classifier}"`)),
+          `${classifier}.${extension}: ${result.errors.join(' | ')}`
+        );
+      }
     }
   });
 
-  it('acceptsAnAttachedTestJarForAModuleAllowListedWithAReason', (t) => {
-    const f = fixture(t, [[UNIT_ID, `${UNIT_ID}-${VERSION}-tests.jar`]]);
-    const result = verify(f, policyWith([{ artifactId: UNIT_ID, reason: 'ships fixtures consumed outside the reactor' }]));
-    assert.deepEqual(result.errors, []);
-    assert.equal(result.ok, true);
+  it('rejectsATestClassifierRegardlessOfCase', (t) => {
+    const f = fixture(t, [[UNIT_ID, `${UNIT_ID}-${VERSION}-TESTS.JAR`]]);
+    const result = verify(f);
+    assert.equal(result.ok, false);
+    assert.ok(result.errors.some((e) => e.includes('attached test artifact')), result.errors.join(' | '));
   });
 
-  it('keepsRejectingAnAttachedTestJarForAModuleThatIsNotAllowListed', (t) => {
+  it('rejectsAnAttachedTestJarWithNoWayToExemptTheModule', (t) => {
+    // There is no exception list: a policy that tries to declare one gains nothing.
     const f = fixture(t, [[UNIT_ID, `${UNIT_ID}-${VERSION}-tests.jar`]]);
-    const result = verify(f, policyWith([{ artifactId: 'some-other-module', reason: 'unrelated' }]));
+    const exempting = {
+      ...policy(),
+      payloadPolicy: {
+        ...policy().payloadPolicy,
+        attachedTestArtifactExceptions: [{ artifactId: UNIT_ID, reason: 'ignored' }],
+      },
+    };
+    const result = verifyStagedRepository(f.staged, {
+      repoRoot: f.reactor,
+      policy: exempting,
+      version: VERSION,
+      mode: 'final',
+    });
     assert.equal(result.ok, false);
   });
 
@@ -157,36 +166,10 @@ describe('AttachedTestJarPublicationTest', () => {
     // install leaves it. The plan names its files by payload kind, so a test JAR
     // can never become a deployed unit file.
     const f = fixture(t, [[UNIT_ID, `${UNIT_ID}-${VERSION}-tests.jar`]]);
-    const plan = buildDeployPlan(f.reactor, policyWith(), { version: VERSION, localRepository: f.staged });
+    const plan = buildDeployPlan(f.reactor, policy(), { version: VERSION, localRepository: f.staged });
     assert.deepEqual(plan.errors, []);
     const files = plan.units.flatMap((u) => Object.values(u.files));
     assert.ok(files.length > 0);
     assert.deepEqual(files.filter((file) => /-(tests|test-sources|test-javadoc)\.jar$/.test(file)), []);
-  });
-});
-
-describe('AttachedTestArtifactExceptionPolicyTest', () => {
-  const writePolicy = (t, exceptions) => {
-    const dir = mkdtempSync(path.join(tmpdir(), 'vertique-test-jar-policy-'));
-    t.after(() => rmSync(dir, { recursive: true, force: true }));
-    const file = path.join(dir, 'policy.json');
-    writeFileSync(file, JSON.stringify(policyWith(exceptions)));
-    return file;
-  };
-
-  it('requiresADocumentedReasonForEveryException', (t) => {
-    for (const entry of [{ artifactId: UNIT_ID }, { artifactId: UNIT_ID, reason: '  ' }, { reason: 'why' }]) {
-      assert.throws(() => loadPolicy(writePolicy(t, [entry])), /documented "reason"/);
-    }
-  });
-
-  it('acceptsAnExceptionThatNamesTheModuleAndTheReason', (t) => {
-    const policy = loadPolicy(writePolicy(t, [{ artifactId: UNIT_ID, reason: 'documented' }]));
-    assert.equal(policy.payloadPolicy.attachedTestArtifactExceptions.length, 1);
-  });
-
-  it('shipsTheRealPolicyWithoutAnyException', () => {
-    const real = loadPolicy(path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'publication-policy.json'));
-    assert.deepEqual(real.payloadPolicy.attachedTestArtifactExceptions ?? [], []);
   });
 });
