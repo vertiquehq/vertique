@@ -10,6 +10,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import com.fasterxml.jackson.databind.MapperFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.PropertyNamingStrategies;
@@ -42,6 +46,7 @@ import java.util.Map;
 import java.util.Set;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
 
 /**
  * Unit tests for the TWO-PHASE materialization site in {@link ParameterExtractor#deserializeBody}
@@ -236,7 +241,70 @@ class ParameterExtractorTwoPhaseProfileTest {
     @Test
     @DisplayName("Form-urlencoded: the profile mapper binds the body its projection selected policies for")
     void formUrlencodedBody_usesProfileMapperForBothProjectionAndBinding() throws Exception {
+        assertFormBodyBound("application/x-www-form-urlencoded");
+    }
+
+    @Test
+    @DisplayName("Form-urlencoded: an upper-case Content-Type is recognized under a Turkish default locale")
+    void formUrlencodedBody_upperCaseContentTypeUnderTurkishLocale() throws Exception {
+        Locale previous = Locale.getDefault();
+        Locale.setDefault(Locale.forLanguageTag("tr"));
+        try {
+            assertFormBodyBound("APPLICATION/X-WWW-FORM-URLENCODED");
+        } finally {
+            Locale.setDefault(previous);
+        }
+    }
+
+    @Test
+    @DisplayName("A multipart Content-Type on a body parameter is recognized under a Turkish default locale")
+    void multipartBody_upperCaseContentTypeWarnsUnderTurkishLocale() throws Exception {
+        Logger logger = (Logger) LoggerFactory.getLogger(ParameterExtractor.class);
+        Level previousLevel = logger.getLevel();
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+        logger.setLevel(Level.WARN);
+        Locale previous = Locale.getDefault();
+        Locale.setDefault(Locale.forLanguageTag("tr"));
+        try {
+            RoutingContext ctx = formContext("MULTIPART/FORM-DATA; boundary=x", snakeCaseMapper());
+            try {
+                formExtractor(snakeCaseMapper())
+                        .deserializeBody(
+                                RequestValue.of("x"), FormPayload.class, null, ctx, EffectiveInputPolicies.NONE);
+            } catch (RuntimeException expectedOnTheUnsupportedBody) {
+                // only the warning is under test; the body itself is not a decodable multipart
+            }
+            assertTrue(
+                    appender.list.stream()
+                            .anyMatch(event -> event.getFormattedMessage().contains("Unexpected multipart body")),
+                    "an upper-case multipart Content-Type must still be recognized");
+        } finally {
+            Locale.setDefault(previous);
+            logger.detachAppender(appender);
+            appender.stop();
+            logger.setLevel(previousLevel);
+        }
+    }
+
+    private static void assertFormBodyBound(String contentType) throws Exception {
         ObjectMapper profileMapper = snakeCaseMapper();
+        ParameterExtractor extractor = formExtractor(profileMapper);
+        RoutingContext ctx = formContext(contentType, profileMapper);
+
+        Object result = extractor.deserializeBody(
+                RequestValue.of("user_name=ada"), FormPayload.class, null, ctx, EffectiveInputPolicies.NONE);
+
+        FormPayload bound = assertInstanceOf(FormPayload.class, result, "the form body must materialize");
+        assertEquals(
+                "ADA",
+                bound.userName,
+                "the projection and the binder must both come from the route's profile mapper, so the "
+                        + "policy the projection selected lands on the property the binder populates");
+    }
+
+    private static ParameterExtractor formExtractor(ObjectMapper profileMapper) throws Exception {
         InputObjectProcessor engine = InputObjectProcessor.createDefault(
                 type -> {
                     throw new AssertionError("no canonicalizer is declared by this fixture: " + type);
@@ -262,30 +330,23 @@ class ParameterExtractorTwoPhaseProfileTest {
                 List.of(),
                 List.of(),
                 List.of());
-        ParameterExtractor extractor = new ParameterExtractor(
+        return new ParameterExtractor(
                 meta,
                 List.of(new JsonRequestBodyDecoder()),
                 new RestContextResolution(Set.of()),
                 engine,
                 ConversionContexts.defaultResolver(),
                 JacksonFieldNameResolver.forMapper(profileMapper));
+    }
 
+    private static RoutingContext formContext(String contentType, ObjectMapper profileMapper) {
         RoutingContext ctx = mock(RoutingContext.class);
         HttpServerRequest request = mock(HttpServerRequest.class);
         when(ctx.request()).thenReturn(request);
-        when(request.getHeader("Content-Type")).thenReturn("application/x-www-form-urlencoded");
+        when(request.getHeader("Content-Type")).thenReturn(contentType);
         when(request.formAttributes())
                 .thenReturn(MultiMap.caseInsensitiveMultiMap().add("user_name", "ada"));
         when(ctx.<ObjectMapper>get(BoundRequest.KEY_RESOLVED_BODY_MAPPER)).thenReturn(profileMapper);
-
-        Object result = extractor.deserializeBody(
-                RequestValue.of("user_name=ada"), FormPayload.class, null, ctx, EffectiveInputPolicies.NONE);
-
-        FormPayload bound = assertInstanceOf(FormPayload.class, result, "the form body must materialize");
-        assertEquals(
-                "ADA",
-                bound.userName,
-                "the projection and the binder must both come from the route's profile mapper, so the "
-                        + "policy the projection selected lands on the property the binder populates");
+        return ctx;
     }
 }
