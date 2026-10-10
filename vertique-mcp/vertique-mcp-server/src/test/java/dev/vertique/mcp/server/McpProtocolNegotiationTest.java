@@ -471,7 +471,9 @@ class McpProtocolNegotiationTest {
         Outcome outcome = drive(body, headers);
 
         assertRejectedBeforeDispatch(
-                outcome, "a well-formed protocolVersion the header and body agree on but the server does not support");
+                outcome,
+                "a well-formed protocolVersion the header and body agree on but the server does not support",
+                -32022);
     }
 
     // --- R07 item 1 (decisive): the control-character row settles bounded, not with a crash, and ---
@@ -607,10 +609,16 @@ class McpProtocolNegotiationTest {
     // --- Shared assertion ---
 
     private static void assertRejectedBeforeDispatch(Outcome outcome, String caseLabel) {
+        assertRejectedBeforeDispatch(outcome, caseLabel, -32020);
+    }
+
+    private static void assertRejectedBeforeDispatch(Outcome outcome, String caseLabel, int expectedCode) {
         assertThat(outcome.status())
                 .as(caseLabel + " must be rejected HTTP 400")
                 .isEqualTo(400);
-        assertThat(outcome.errorCode()).as(caseLabel + " must carry -32020").isEqualTo(-32020);
+        assertThat(outcome.errorCode())
+                .as(caseLabel + " must carry " + expectedCode)
+                .isEqualTo(expectedCode);
         assertThat(outcome.interceptorInvocations())
                 .as("DECISIVE (" + caseLabel + "): the request-interceptor stage must never run — a proof that "
                         + "only checked the response status would pass identically whether negotiation ran "

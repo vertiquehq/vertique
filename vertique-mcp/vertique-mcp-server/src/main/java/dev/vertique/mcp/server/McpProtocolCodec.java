@@ -33,9 +33,9 @@ import lombok.extern.slf4j.Slf4j;
  * (unknown method, classified against the bounded supported-method set), and {@code -32603}
  * (internal error). Official per-method {@code params} violations are {@code -32602} (invalid
  * params). Error messages are the standard JSON-RPC strings. The only {@code data} members are the
- * bounded {@link NegotiationReason} every {@code -32020} negotiation rejection carries and the
- * supported/requested versions of an unsupported-version rejection; no other error this codec
- * produces has {@code data}.
+ * bounded {@link NegotiationReason} every negotiation rejection carries and, for an
+ * unsupported-version rejection ({@code -32022}), the supported and requested versions; no other
+ * error this codec produces has {@code data}.
  *
  * <p>Envelope validation trusts only the framework-owned {@link McpEnvelopeJsonCodec}; the supported
  * request methods are the bounded set {@code server/discover}, {@code tools/list}, and
@@ -65,6 +65,14 @@ final class McpProtocolCodec {
      * per-method schema violations.
      */
     private static final int NEGOTIATION_MISMATCH = -32020;
+
+    /**
+     * The code of the schema's {@code UnsupportedProtocolVersionError}, which this class's {@link
+     * #validateNegotiation} settles an unsupported protocol version as instead of {@link
+     * #NEGOTIATION_MISMATCH}. The response is HTTP 400 and carries the required {@code supported}
+     * and {@code requested} members in {@code error.data}.
+     */
+    static final int UNSUPPORTED_PROTOCOL_VERSION = -32022;
 
     private static final String MSG_PARSE_ERROR = "Parse error";
     private static final String MSG_INVALID_REQUEST = "Invalid Request";
@@ -276,12 +284,14 @@ final class McpProtocolCodec {
      * official-schema check above does not catch this either; it is Phase 1's own policy, not a schema
      * violation.
      *
-     * <p><strong>Rejection reason.</strong> Every rejection is code {@code -32020} and carries a
-     * {@link NegotiationReason} as {@code error.data.reason}. The message is {@value
-     * #MSG_NEGOTIATION_MISMATCH} except for an unsupported version, which uses {@value
-     * #MSG_UNSUPPORTED_PROTOCOL_VERSION}. The checks run in the order above and the first failing
-     * check decides the reason. Each reason is a fixed constant: it never echoes a header, field
-     * name, or value from the request. Through the HTTP dispatcher an absent or non-object {@code
+     * <p><strong>Rejection reason.</strong> Every rejection carries a {@link NegotiationReason} as
+     * {@code error.data.reason}. The code is {@code -32020} and the message is {@value
+     * #MSG_NEGOTIATION_MISMATCH} except for an unsupported version, which is code {@code -32022}
+     * with the message {@value #MSG_UNSUPPORTED_PROTOCOL_VERSION}; it is reported only when the
+     * {@code MCP-Protocol-Version} header is present, sent once and equal to the unsupported body
+     * value, otherwise the header fault ({@code -32020}) is the rejection. The checks run in the
+     * order above and the first failing check decides the reason. Each reason is a fixed constant:
+     * it never echoes a header, field name, or value from the request. Through the HTTP dispatcher an absent or non-object {@code
      * _meta}, a missing or non-string {@code protocolVersion}, and a missing or non-object {@code
      * clientCapabilities} never reach this method, because {@link #validateOfficialParams} rejects
      * them as {@code -32602} first; those branches are defensive and keep their reason for a caller
@@ -308,6 +318,13 @@ final class McpProtocolCodec {
             return NegotiationResult.failed(negotiationError(NegotiationReason.META_SHAPE));
         }
         if (!SUPPORTED_PROTOCOL_VERSIONS.contains(protocolVersionNode.asText())) {
+            // A header that is absent or disagrees with the body is a header fault whatever version the
+            // body names; only a header and body that agree on an unsupported version is reported as one.
+            NegotiationReason versionHeaderRejection =
+                    headerRejection(headers, HEADER_PROTOCOL_VERSION, protocolVersionNode.asText());
+            if (versionHeaderRejection != null) {
+                return NegotiationResult.failed(negotiationError(versionHeaderRejection));
+            }
             return NegotiationResult.failed(unsupportedProtocolVersionError(protocolVersionNode.asText()));
         }
         JsonNode clientCapabilities = meta.get(META_CLIENT_CAPABILITIES);
@@ -458,7 +475,7 @@ final class McpProtocolCodec {
         data.put("requested", requested);
         data.put(DATA_REASON, NegotiationReason.UNSUPPORTED_VERSION.name());
         logRejection(NegotiationReason.UNSUPPORTED_VERSION);
-        return new CodecError(NEGOTIATION_MISMATCH, MSG_UNSUPPORTED_PROTOCOL_VERSION, data);
+        return new CodecError(UNSUPPORTED_PROTOCOL_VERSION, MSG_UNSUPPORTED_PROTOCOL_VERSION, data);
     }
 
     private static CodecError invalidParamsError() {
@@ -491,8 +508,8 @@ final class McpProtocolCodec {
     }
 
     /**
-     * The closed vocabulary of {@code error.data.reason} values a {@code -32020} negotiation
-     * rejection reports. The constant's {@link #name()} is the wire value, so renaming or adding a
+     * The closed vocabulary of {@code error.data.reason} values a negotiation rejection ({@code
+     * -32020}, or {@code -32022} for an unsupported version) reports. The constant's {@link #name()} is the wire value, so renaming or adding a
      * constant is a client-visible change. Each constant is fixed text: a reason is never derived from
      * the request.
      */

@@ -3663,6 +3663,7 @@ final class McpRequestDispatcher {
             case PARSE_ERROR, INVALID_REQUEST -> 400;
             case McpPolicyEnforcer.UNKNOWN_OR_UNAUTHORIZED_CODE -> 400;
             case NEGOTIATION_MISMATCH -> 400;
+            case McpProtocolCodec.UNSUPPORTED_PROTOCOL_VERSION -> 400;
             case MISSING_REQUIRED_CLIENT_CAPABILITY -> 400;
             case INTERCEPTOR_REJECTED -> 403;
             default -> 500;
