@@ -1259,6 +1259,94 @@ class SecurityPolicyEnforcerTest {
         }
 
         @Test
+        @DisplayName("a role/scope decision that comes back as INTERNAL_AUTHZ_ERROR or "
+                + "AUTHORITY_RESOLUTION_FAILED is 503 unavailable, not a 403 denial")
+        void returnedEngineFailureDecisionIsUnavailable() {
+            for (String reason :
+                    List.of(AuthzReasonCodes.INTERNAL_AUTHZ_ERROR, AuthzReasonCodes.AUTHORITY_RESOLUTION_FAILED)) {
+                events.clear();
+                RoutingContext rc = constrainedRoute();
+                constrainedHandler(enforcer(
+                                request -> Future.succeededFuture(AuthorizationDecision.deny(reason)),
+                                Optional.empty()))
+                        .handle(rc);
+
+                verify(rc, timeout(DENY_WITHIN_MS)).fail(eq(503), any(UnavailableException.class));
+                verify(rc, never()).fail(403);
+                verify(rc, never()).next();
+                assertEquals(1, events.size(), reason);
+                assertEquals(
+                        reason,
+                        events.get(0).decision().reasonCode(),
+                        "the audit event keeps the engine's own reason code");
+            }
+        }
+
+        @Test
+        @DisplayName("a role/scope decision that is an ordinary denial stays a 403 with its own reason code")
+        void returnedOrdinaryDenialStaysForbidden() {
+            RoutingContext rc = constrainedRoute();
+            constrainedHandler(enforcer(
+                            request ->
+                                    Future.succeededFuture(AuthorizationDecision.deny(AuthzReasonCodes.ROLE_MISSING)),
+                            Optional.empty()))
+                    .handle(rc);
+
+            verify(rc, timeout(DENY_WITHIN_MS)).fail(403);
+            verify(rc, never()).fail(eq(503), any(UnavailableException.class));
+            assertEquals(1, events.size());
+            assertEquals(AuthzReasonCodes.ROLE_MISSING, events.get(0).decision().reasonCode());
+        }
+
+        @Test
+        @DisplayName("on the composed handler a returned engine failure is 503 at the role/scope gate and at the "
+                + "action gate")
+        void returnedEngineFailureDecisionIsUnavailableOnTheComposedHandler() {
+            // role/scope gate returns the failure: the action gate is never reached
+            RoutingContext first = constrainedRoute();
+            enforcer(
+                            request -> Future.succeededFuture(
+                                    AuthorizationDecision.deny(AuthzReasonCodes.AUTHORITY_RESOLUTION_FAILED)),
+                            Optional.of(authorizerReturningPermit()))
+                    .createHandler(
+                            new SecurityPolicy.Constrained(List.of("admin"), List.of(), false),
+                            Optional.of(ActionRef.parse("orders.order.read")))
+                    .handle(first);
+            verify(first, timeout(DENY_WITHIN_MS)).fail(eq(503), any(UnavailableException.class));
+            verify(first, never()).fail(403);
+            assertEquals(
+                    Boolean.FALSE, events.get(0).decision().safeAttributes().get("actionEvaluated"));
+
+            // role/scope permits, the action authorizer returns the failure
+            events.clear();
+            AuthorizationDecisionPoint permit =
+                    request -> Future.succeededFuture(AuthorizationDecision.permit(AuthzReasonCodes.PERMITTED));
+            Authorizer engineFailure = new Authorizer() {
+                @Override
+                public Future<AuthorizationDecision> authorize(AuthorizationRequest request) {
+                    return Future.succeededFuture(AuthorizationDecision.deny(AuthzReasonCodes.INTERNAL_AUTHZ_ERROR));
+                }
+
+                @Override
+                public Future<AuthorizationDecision> authorize(
+                        SecurityContext ctx, ActionRef action, ResourceRef resource) {
+                    throw new UnsupportedOperationException("the handler uses the request overload only");
+                }
+            };
+            RoutingContext second = constrainedRoute();
+            enforcer(permit, Optional.of(engineFailure))
+                    .createHandler(
+                            new SecurityPolicy.Constrained(List.of("admin"), List.of(), false),
+                            Optional.of(ActionRef.parse("orders.order.read")))
+                    .handle(second);
+            verify(second, timeout(DENY_WITHIN_MS)).fail(eq(503), any(UnavailableException.class));
+            verify(second, never()).fail(403);
+            verify(second, never()).next();
+            assertEquals(1, events.size());
+            assertEquals(Boolean.TRUE, events.get(0).decision().safeAttributes().get("actionEvaluated"));
+        }
+
+        @Test
         @DisplayName("a failed (not timed-out) action authorizer future is 503 unavailable with the action "
                 + "gate recorded as evaluated")
         void failedActionAuthorizerFutureIsUnavailable() {

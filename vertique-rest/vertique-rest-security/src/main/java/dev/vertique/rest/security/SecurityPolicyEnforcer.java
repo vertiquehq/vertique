@@ -912,6 +912,10 @@ public class SecurityPolicyEnforcer {
                 emitDecision(authzRequest, decision, correlation);
                 if (decision.permitted()) {
                     ctx.next();
+                } else if (couldNotDecide(decision)) {
+                    // The engine itself reported that it could not decide (an internal error, or a
+                    // principal-authority resolution failure): unavailable, not denied.
+                    failUnavailable(ctx);
                 } else {
                     log.debug(
                             "Authorization denied: reasonCode={}, path={}, method={}",
@@ -1038,6 +1042,10 @@ public class SecurityPolicyEnforcer {
                     // First failing predicate is the role/scope gate → action gate not evaluated.
                     AuthorizationDecision decision = combinedDecision(roleScope, null);
                     emitDecision(authzRequest, decision, correlation);
+                    if (couldNotDecide(roleScope)) {
+                        failUnavailable(ctx);
+                        return;
+                    }
                     log.debug(
                             "Authorization denied at role/scope gate: reasonCode={}, path={}, method={}",
                             roleScope.reasonCode(),
@@ -1100,7 +1108,7 @@ public class SecurityPolicyEnforcer {
                     emitDecision(authzRequest, decision, correlation);
                     if (decision.permitted()) {
                         ctx.next();
-                    } else if (actionAr.failed()) {
+                    } else if (actionAr.failed() || (actionResult != null && couldNotDecide(actionResult))) {
                         // The action gate could not answer (it failed, timed out, or the runtime
                         // closed): unavailable, not denied. The event above is the same deny shape.
                         failUnavailable(ctx);
@@ -1172,6 +1180,21 @@ public class SecurityPolicyEnforcer {
                 combinedDecision(AuthorizationDecision.deny(AuthzReasonCodes.INTERNAL_AUTHZ_ERROR), null);
         emitDecision(authzRequest, decision, correlation);
         failUnavailable(ctx);
+    }
+
+    /**
+     * Returns whether a gate's own, successfully returned decision reports that it could not decide —
+     * the engine's internal-error marker, or a failed principal-authority resolution — as opposed to an
+     * ordinary denial. Such a decision is unavailable (503), like a gate future that failed; the
+     * event still carries the decision's own reason code.
+     *
+     * @param decision a decision returned by a gate; must not be {@code null}
+     * @return {@code true} when the decision is a deny that marks an evaluation failure
+     */
+    private static boolean couldNotDecide(AuthorizationDecision decision) {
+        return !decision.permitted()
+                && (AuthzReasonCodes.INTERNAL_AUTHZ_ERROR.equals(decision.reasonCode())
+                        || AuthzReasonCodes.AUTHORITY_RESOLUTION_FAILED.equals(decision.reasonCode()));
     }
 
     /**
