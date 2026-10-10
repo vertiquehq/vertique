@@ -4,6 +4,7 @@
 package dev.vertique.security.runtime.authz;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -186,6 +187,32 @@ class TimeoutPrincipalAuthorityResolverTest {
                     assertInstanceOf(ResilienceClosedException.class, t);
                     testCtx.completeNow();
                 })));
+    }
+
+    @Test
+    @DisplayName("a resolution already pending when the runtime closes fails once; a late delegate result "
+            + "changes nothing")
+    void resolutionPendingWhenTheRuntimeClosesFailsOnce(Vertx vertx, VertxTestContext testCtx) throws Exception {
+        Resilience resilience = Resilience.create(vertx);
+        Promise<AuthorizationClaims> held = Promise.promise();
+        PrincipalAuthorityResolver pendingResolver = key -> held.future();
+        TimeoutPrincipalAuthorityResolver resolver =
+                new TimeoutPrincipalAuthorityResolver(pendingResolver, resilience, 60_000L);
+
+        Future<AuthorizationClaims> result = resolver.resolve(KEY);
+        assertFalse(result.isComplete(), "the delegate is pending when the runtime closes");
+        resilience.close().toCompletionStage().toCompletableFuture().get(5, TimeUnit.SECONDS);
+
+        result.onComplete(testCtx.failing(t -> testCtx.verify(() -> {
+            assertInstanceOf(ResilienceClosedException.class, t);
+            held.complete(CLAIMS);
+            vertx.setTimer(
+                    200L,
+                    id -> testCtx.verify(() -> {
+                        assertTrue(result.failed(), "a late result from the abandoned delegate must not revive it");
+                        testCtx.completeNow();
+                    }));
+        })));
     }
 
     @Test
