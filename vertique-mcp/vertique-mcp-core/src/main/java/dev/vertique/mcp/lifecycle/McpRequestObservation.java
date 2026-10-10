@@ -15,7 +15,9 @@ public interface McpRequestObservation {
      * Receives the one logical terminal observation for this request.
      *
      * <p>Exceptions thrown by this callback are caught, logged, and swallowed; they do not affect
-     * the enclosing operation.
+     * the enclosing operation. A {@link LinkageError} and an {@link AssertionError} are
+     * contained the same way, and so is a {@link StackOverflowError}; a {@link LinkageError} is
+     * reported at error level at a limited rate.
      *
      * @param observation the logical terminal facts for this request
      */
@@ -25,7 +27,9 @@ public interface McpRequestObservation {
      * Receives the one transport completion event for this request.
      *
      * <p>Exceptions thrown by this callback are caught, logged, and swallowed; they do not affect
-     * the enclosing operation.
+     * the enclosing operation. A {@link LinkageError} and an {@link AssertionError} are
+     * contained the same way, and so is a {@link StackOverflowError}; a {@link LinkageError} is
+     * reported at error level at a limited rate.
      *
      * @param event the transport completion facts for this request
      */

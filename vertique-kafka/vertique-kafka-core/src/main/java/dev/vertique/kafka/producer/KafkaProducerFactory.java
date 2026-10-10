@@ -7,6 +7,7 @@ import dev.vertique.context.DurableContextPropagator;
 import dev.vertique.core.context.DispatchBoundary;
 import dev.vertique.core.context.DurableMetadata;
 import dev.vertique.core.context.DurableMetadataHeaderCodec;
+import dev.vertique.core.extension.ObserverFailureReporter;
 import dev.vertique.core.extension.OrderedExtension;
 import dev.vertique.core.json.JsonProfile;
 import dev.vertique.core.payload.PayloadSources;
@@ -36,6 +37,7 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 import lombok.extern.slf4j.Slf4j;
@@ -65,10 +67,14 @@ import lombok.extern.slf4j.Slf4j;
  * verbatim and captures no context.
  *
  * <p>Every send converges at
- * {@link #sendWire(String, String, byte[], KafkaRecordHeaders, KafkaSendOrigin, KafkaProducerOperation)},
+ * {@link #sendWire(String, String, byte[], KafkaRecordHeaders, KafkaSendOrigin, KafkaProducerOperation, String)},
  * which fires all registered {@link KafkaProducerCaptureHook} instances (observer-only) after the
  * underlying send settles. Hooks are sorted by {@link OrderedExtension#comparator()} and isolated
- * via try/catch so a throwing hook never affects the send result.
+ * via try/catch: an {@link Exception}, {@link LinkageError} or {@link AssertionError} thrown by one
+ * hook is logged and swallowed, so it affects neither the send result nor the hooks after it. An
+ * {@link Exception} or {@link AssertionError} is logged at warn level each time. A
+ * {@link LinkageError} means the hook cannot run at all and would repeat for every send, so it is
+ * logged at error level once per hook class for the life of the factory.
  */
 @Slf4j
 public class KafkaProducerFactory {
@@ -85,6 +91,10 @@ public class KafkaProducerFactory {
     private final List<KafkaProducerCaptureHook> captureHooks;
 
     // --- Runtime state ---
+
+    /** Reports the swallowed failures of capture hooks; safe on any thread, as a send settles on any. */
+    private final ObserverFailureReporter hookFailureReporter =
+            new ObserverFailureReporter(log, "Kafka producer capture hook");
 
     private final AtomicReference<io.vertx.kafka.client.producer.KafkaProducer<String, byte[]>> shared =
             new AtomicReference<>();
@@ -310,7 +320,7 @@ public class KafkaProducerFactory {
      */
     public Future<RecordMetadata> send(
             String topic, String key, byte[] value, KafkaRecordHeaders headers, DurableMetadata context) {
-        return sendWithContext(topic, key, value, headers, context, KafkaSendOrigin.INTERNAL, null);
+        return sendWithContext(topic, key, value, headers, context, KafkaSendOrigin.INTERNAL, null, null);
     }
 
     /**
@@ -369,8 +379,10 @@ public class KafkaProducerFactory {
      * {@link DurableMetadata} context. Fires capture hooks with origin
      * {@link KafkaSendOrigin#OUTBOX} and a {@code null} producer method.
      *
-     * <p>Use this overload from the outbox destination handler so the record's persisted durable
-     * context (not the relay poller's ambient context) crosses the wire boundary.
+     * <p>This form carries no origin reference: capture hooks see a {@code null}
+     * {@link KafkaProducerSend#originRef()}. A caller that knows the outbox entry id uses
+     * {@link #sendForOutbox(String, String, byte[], KafkaRecordHeaders, DurableMetadata, String)},
+     * so a hook can tell which entry the bytes belong to.
      *
      * <p>The record carries the application headers in the order given, followed by one text header
      * per namespace of the supplied {@code context}.
@@ -388,7 +400,50 @@ public class KafkaProducerFactory {
      */
     public Future<RecordMetadata> sendForOutbox(
             String topic, String key, byte[] value, KafkaRecordHeaders headers, DurableMetadata context) {
-        return sendWithContext(topic, key, value, headers, context, KafkaSendOrigin.OUTBOX, null);
+        return sendWithContext(topic, key, value, headers, context, KafkaSendOrigin.OUTBOX, null, null);
+    }
+
+    /**
+     * Sends a raw byte array message from the outbox relay for one outbox entry, using an explicitly
+     * supplied {@link DurableMetadata} context. Fires capture hooks with origin
+     * {@link KafkaSendOrigin#OUTBOX}, a {@code null} producer method, and the entry id as
+     * {@link KafkaProducerSend#originRef()}.
+     *
+     * <p>Use this overload from the outbox destination handler so the record's persisted durable
+     * context (not the relay poller's ambient context) crosses the wire boundary, and so a capture
+     * hook can join the wire bytes to the outbox entry they belong to. The entry id is not put on
+     * the record; it is handed to the hooks only.
+     *
+     * <p>The record carries the application headers in the order given, followed by one text header
+     * per namespace of the supplied {@code context}.
+     *
+     * <p>The origin reference is not authenticated: any code that holds this factory can call this
+     * method and so send with origin {@link KafkaSendOrigin#OUTBOX} and an arbitrary reference. A
+     * hook consumer that joins on {@link KafkaProducerSend#originRef()} must therefore also match a
+     * relay notification for the same entry id and destination before it trusts the join.
+     *
+     * @param topic   the target Kafka topic
+     * @param key     the record key, or {@code null}
+     * @param value   the raw message bytes
+     * @param headers the application headers, or {@code null} for none; must not use the
+     *                {@link DurableMetadataHeaderCodec#RESERVED_PREFIX} prefix and must not contain
+     *                a header with a {@code null} value
+     * @param context the durable context stored in the outbox entry; must not be {@code null}
+     * @param entryId the id of the outbox entry being sent, as a string; must not be {@code null}
+     * @return a future of the record metadata; fails with {@link IllegalArgumentException}, naming
+     *     the key, if an application header uses the reserved framework prefix or has a
+     *     {@code null} value
+     * @throws NullPointerException if {@code entryId} is {@code null}
+     */
+    public Future<RecordMetadata> sendForOutbox(
+            String topic,
+            @Nullable String key,
+            byte[] value,
+            KafkaRecordHeaders headers,
+            DurableMetadata context,
+            String entryId) {
+        Objects.requireNonNull(entryId, "entryId");
+        return sendWithContext(topic, key, value, headers, context, KafkaSendOrigin.OUTBOX, null, entryId);
     }
 
     // --- Lifecycle ---
@@ -782,7 +837,7 @@ public class KafkaProducerFactory {
             KafkaSendOrigin origin,
             @Nullable KafkaProducerOperation operation) {
         DurableMetadata ctx = propagator.capture(DispatchBoundary.KAFKA);
-        return sendWithContext(topic, key, value, headers, ctx, origin, operation);
+        return sendWithContext(topic, key, value, headers, ctx, origin, operation, null);
     }
 
     /**
@@ -798,6 +853,8 @@ public class KafkaProducerFactory {
      * @param context        the explicit durable context to project; must not be {@code null}
      * @param origin         the send origin to thread through to the wire funnel
      * @param operation      the proxy's producer operation, or {@code null} for non-proxy origins
+     * @param originRef      the caller's reference to what the send carries (the outbox entry id),
+     *                       or {@code null}
      * @return a future of the record metadata; FAILS with {@link IllegalArgumentException} if any
      *         application header uses the reserved framework prefix or has a {@code null} value
      *         (never throws synchronously for either)
@@ -809,14 +866,19 @@ public class KafkaProducerFactory {
             @Nullable KafkaRecordHeaders headers,
             DurableMetadata context,
             KafkaSendOrigin origin,
-            @Nullable KafkaProducerOperation operation) {
+            @Nullable KafkaProducerOperation operation,
+            @Nullable String originRef) {
         final KafkaRecordHeaders wire;
         try {
             wire = egressHeaders(headers, context);
         } catch (IllegalArgumentException e) {
             return Future.failedFuture(e);
         }
-        return sendWire(topic, key, value, wire, origin, operation);
+        // A send without an origin reference keeps going through the six-argument form, so a
+        // subclass that overrides only that form still sees it.
+        return originRef == null
+                ? sendWire(topic, key, value, wire, origin, operation)
+                : sendWire(topic, key, value, wire, origin, operation, originRef);
     }
 
     /**
@@ -873,12 +935,11 @@ public class KafkaProducerFactory {
     }
 
     /**
-     * Creates the {@link KafkaProducerRecord}, adds every header in order, sends it via the shared
-     * producer, and then fires all registered {@link KafkaProducerCaptureHook} instances after the
-     * send settles.
-     *
-     * <p>Hook invocation is observer-only: hooks are called after the result is determined and
-     * each hook is isolated in a {@code try/catch} so a throwing hook never changes the result.
+     * Sends a record that has no origin reference. Every such send is made through this method,
+     * which delegates to
+     * {@link #sendWire(String, String, byte[], KafkaRecordHeaders, KafkaSendOrigin, KafkaProducerOperation, String)}
+     * with a {@code null} reference. A send that has an origin reference calls that form directly
+     * and does not come through here.
      *
      * @param topic          the target topic
      * @param key            the message key, or {@code null}
@@ -899,18 +960,67 @@ public class KafkaProducerFactory {
             KafkaRecordHeaders wire,
             KafkaSendOrigin origin,
             @Nullable KafkaProducerOperation operation) {
+        return sendWire(topic, key, value, wire, origin, operation, null);
+    }
+
+    /**
+     * Creates the {@link KafkaProducerRecord}, adds every header in order, sends it via the shared
+     * producer, and then fires all registered {@link KafkaProducerCaptureHook} instances after the
+     * send settles.
+     *
+     * <p>Hook invocation is observer-only: hooks are called after the result is determined and
+     * each hook is isolated in a {@code try/catch}, so a hook that throws an {@link Exception},
+     * {@link LinkageError}, {@link AssertionError} or {@link StackOverflowError} never changes the
+     * result.
+     *
+     * <p>A send without an origin reference fires the hooks through the seven-argument
+     * {@code fireHooks}, so a subclass that overrides only that form still sees it; a send with an
+     * origin reference fires them through the form that takes the reference.
+     *
+     * @param topic          the target topic
+     * @param key            the message key, or {@code null}
+     * @param value          the serialized message bytes
+     * @param wire           the wire headers in order (application headers, then context headers);
+     *                       must not be {@code null} and must not contain a header with a
+     *                       {@code null} value
+     * @param origin         the send origin, threaded from the public entry point
+     * @param operation      the producer operation for {@link KafkaSendOrigin#DIRECT_PRODUCER}, or
+     *                       {@code null} for all other origins
+     * @param originRef      the caller's reference to what the send carries (the outbox entry id),
+     *                       handed to the hooks and not put on the record; {@code null} when the
+     *                       send has none
+     * @return a future of the record metadata; the future reflects the actual Kafka send result —
+     *         hook exceptions do not change its outcome
+     */
+    protected Future<RecordMetadata> sendWire(
+            String topic,
+            String key,
+            byte[] value,
+            KafkaRecordHeaders wire,
+            KafkaSendOrigin origin,
+            @Nullable KafkaProducerOperation operation,
+            @Nullable String originRef) {
         return getOrCreateProducer().compose(producer -> {
             KafkaProducerRecord<String, byte[]> record = KafkaProducerRecord.create(topic, key, value);
             for (KafkaRecordHeader header : wire) {
                 record.addHeader(header.key(), header.value());
             }
-            return producer.send(record).onComplete(ar -> fireHooks(origin, topic, key, value, wire, operation, ar));
+            return producer.send(record).onComplete(ar -> {
+                if (originRef == null) {
+                    fireHooks(origin, topic, key, value, wire, operation, ar);
+                } else {
+                    fireHooks(origin, topic, key, value, wire, operation, originRef, ar);
+                }
+            });
         });
     }
 
     /**
-     * Fires all registered {@link KafkaProducerCaptureHook} instances in sorted order, isolating
-     * each hook in a {@code try/catch} so exceptions never propagate to callers.
+     * Fires all registered {@link KafkaProducerCaptureHook} instances for a send that has no origin
+     * reference. Every such send comes through this method; a send that has an origin reference
+     * calls the other form directly and does not come through here. Delegates to
+     * {@link #fireHooks(KafkaSendOrigin, String, String, byte[], KafkaRecordHeaders, KafkaProducerOperation, String, io.vertx.core.AsyncResult)}
+     * with a {@code null} reference.
      *
      * @param origin         the send origin
      * @param topic          the target topic
@@ -928,20 +1038,47 @@ public class KafkaProducerFactory {
             KafkaRecordHeaders wire,
             @Nullable KafkaProducerOperation operation,
             io.vertx.core.AsyncResult<RecordMetadata> ar) {
+        fireHooks(origin, topic, key, value, wire, operation, null, ar);
+    }
+
+    /**
+     * Fires all registered {@link KafkaProducerCaptureHook} instances in sorted order, isolating
+     * each hook in a {@code try/catch}. An {@link Exception}, {@link LinkageError},
+     * {@link AssertionError} or {@link StackOverflowError} from one hook never propagates to callers
+     * and does not stop the remaining hooks; it is reported through the
+     * {@link ObserverFailureReporter}: a {@link LinkageError} at error level at a limited rate per
+     * hook class, the others at warn level each time, by class name. Any other {@link Error}
+     * propagates.
+     *
+     * @param origin         the send origin
+     * @param topic          the target topic
+     * @param key            the record key, or {@code null}
+     * @param value          the serialized wire bytes
+     * @param wire           the wire headers in order (application headers, then context headers)
+     * @param operation      the producer operation, or {@code null}
+     * @param originRef      the caller's reference to what the send carries (the outbox entry id),
+     *                       or {@code null}
+     * @param ar             the settled send result
+     */
+    protected void fireHooks(
+            KafkaSendOrigin origin,
+            String topic,
+            @Nullable String key,
+            byte[] value,
+            KafkaRecordHeaders wire,
+            @Nullable KafkaProducerOperation operation,
+            @Nullable String originRef,
+            io.vertx.core.AsyncResult<RecordMetadata> ar) {
         if (captureHooks.isEmpty()) {
             return;
         }
-        KafkaProducerSend send =
-                new KafkaProducerSend(origin, topic, key, PayloadSources.buffered(value, null), wire, operation, ar);
+        KafkaProducerSend send = new KafkaProducerSend(
+                origin, topic, key, PayloadSources.buffered(value, null), wire, operation, ar, originRef);
         for (KafkaProducerCaptureHook hook : captureHooks) {
             try {
                 hook.onSend(send);
-            } catch (Exception ex) {
-                log.warn(
-                        "[KafkaProducerFactory] Capture hook {} threw an exception — swallowing: {}",
-                        hook.getClass().getSimpleName(),
-                        ex.getMessage(),
-                        ex);
+            } catch (Exception | LinkageError | AssertionError | StackOverflowError ex) {
+                hookFailureReporter.report(hook.getClass(), "onSend", ex);
             }
         }
     }

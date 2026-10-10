@@ -42,11 +42,11 @@ At relay time:
    - **Key:** `aggregateId` when present; `null` otherwise.
    - **Value:** the serialized payload bytes from step 2.
    - **Headers:** application headers from `OutboxEntry.headers` (application-only), converted with `KafkaRecordHeaders.of(Map)` — one UTF-8 text header per map entry, in the map's iteration order; a `null` or empty map gives no application headers — followed by the durable propagation context projected to reserved `vertique-<namespace>` headers (e.g. `vertique-correlation`, `vertique-localization`) via `DurableMetadataHeaderCodec`. Relay control (message id, `eventType`, aggregate ids) is **not** emitted as headers — it is carried internally in `OutboxMetadata.delivery.outbox`.
-4. Sends the record through the application's shared Kafka producer (`KafkaProducerFactory`). Awaits producer acknowledgment.
+4. Sends the record through the application's shared Kafka producer with `KafkaProducerFactory.sendForOutbox(topic, key, value, headers, context, entryId)`, passing the outbox entry id as the send's origin reference. Awaits producer acknowledgment.
 5. On success: returns `OutboxPublishResult.success()`.
 6. On transport/timeout/broker failure: returns `OutboxPublishResult.retryable(message, cause)`.
 7. On a reserved-prefix header collision (see below): returns `OutboxPublishResult.permanent(message, cause)`.
-8. When the stored header map has a `null` key or a `null` value: nothing is sent, the handler returns `OutboxPublishResult.permanent(message, cause)`, and capture hooks are called with no value and empty headers.
+8. When the stored header map has a `null` key or a `null` value: nothing is serialized or sent, and the handler returns `OutboxPublishResult.permanent(message, cause)`.
 
 `KafkaProducerFactory` owns **one** shared Kafka producer per application, created lazily on first
 send and reused for every topic and every send path (typed producers, DLQ, outbox relay). There is
@@ -72,60 +72,56 @@ since the stored row cannot change.
 
 ---
 
-## Extension Points
+## Observing Kafka Outbox Publishes
 
-### `KafkaOutboxCaptureHook`
+This module has no extension point of its own. A Kafka outbox publish is observed at two places,
+each with its own facts:
 
-Observer-only SPI hook fired by `KafkaOutboxDestinationHandler` exactly once per outbox publish attempt — after the payload has been serialized and after the `OutboxPublishResult` has been classified. Implementations receive:
+| What | Where | Facts |
+|---|---|---|
+| The publish attempt | `OutboxPublishObserver` (`dev.vertique:vertique-inbox-outbox-core`), notified by the relay once per attempt after it has recorded the entry's next state | The classified outcome, what the relay did with the entry (published, retry scheduled, dead-lettered, deferred), whether that was recorded, attempt numbers and timing, plus the relay-built `OutboxEnvelope`. Filter on `event.destinationType()` equal to `DestinationType.KAFKA` |
+| The wire bytes | `KafkaProducerCaptureHook` (`dev.vertique:vertique-kafka-core`), called once per send after it settles | A `KafkaProducerSend` with origin `KafkaSendOrigin.OUTBOX`, the serialized value, the headers as sent (application headers followed by the `vertique-<namespace>` context headers), the send result, and `originRef` — the outbox entry id as a string |
 
-| Parameter | Notes |
-|---|---|
-| `topic` | Kafka topic from the outbox entry |
-| `key` | record key derived from `aggregateId`, or `null` |
-| `value` | no-copy `PayloadSource` over the serialized wire bytes; `null` when serialization failed before bytes were produced |
-| `headers` | a `dev.vertique.kafka.KafkaRecordHeaders`: the headers of the Kafka record that was (or would have been) published, in wire order — the outbox entry's headers converted with `KafkaRecordHeaders.of(Map)`, followed by the `vertique-<namespace>` context headers. When an entry header uses the reserved `vertique-` prefix (the publish is rejected), only the converted entry headers are given. `headers.asMap()` gives a text map |
-| `result` | classified `OutboxPublishResult` (`Success`, `RetryableFailure`, or `PermanentFailure`) |
-| `entryId` | string form of the outbox entry's surrogate key |
+`KafkaProducerSend.originRef()` equals `OutboxPublishCompletedEvent.entryId()` for the same entry, so
+an adapter that needs both the attempt facts and the wire bytes joins the two callbacks on it. The
+producer hook runs first: the send settles before the handler returns its result to the relay.
 
-The hook method is:
+Keep these limits in mind when joining:
 
-```java
-default void onOutboxPublish(
-        String topic,
-        @Nullable String key,
-        @Nullable PayloadSource value,
-        KafkaRecordHeaders headers,
-        OutboxPublishResult result,
-        String entryId) {}
-```
+- **No producer callback when nothing is sent.** A payload that cannot be serialized, a stored header
+  map with a `null` key or value, an application header with the reserved `vertique-` prefix, and a
+  producer that cannot be created all end before a record is sent. The relay observer is still
+  notified of the attempt; there are no wire bytes for it.
+- **The entry id repeats.** One entry is sent once per attempt, so several sends carry the same
+  `originRef`. The attempt number also repeats across deferrals and reclaims of a stale claim; see
+  `OutboxPublishObserver` in `dev.vertique:vertique-inbox-outbox-core`.
 
-Internally, the outbox relay uses `KafkaProducerFactory.sendForOutbox(...)`, which tags the send with `KafkaSendOrigin.OUTBOX` so the `KafkaProducerCaptureHook` in `vertique-kafka-core` also fires for the same send (see `dev.vertique:vertique-kafka-core`). The `KafkaOutboxCaptureHook` fires at the outbox-handler level (with the outbox envelope context) while the producer hook fires at the wire level.
+### Migration
 
-Throwing implementations are caught, warn-logged, and discarded; the publish result is unaffected and the hooks after it still run. This covers an `AssertionError` or a `LinkageError` thrown by a hook as well as exceptions. Hooks implement `OrderedExtension` (phase → priority → orderKey). Register via `@IntoSet Set<KafkaOutboxCaptureHook>` on `TransactionalMessagingKafkaModule`.
+The Kafka-specific outbox capture hook and its multibinding on `TransactionalMessagingKafkaModule`
+were removed, together with the handler constructor that took the hooks. Observe publish attempts
+through `OutboxPublishObserver` and the wire bytes through the producer capture hook with origin
+`OUTBOX`:
+
+- the classified result is `event.outcome()`, with `event.disposition()` for what the relay did and
+  `event.errorType()` in place of the failure's cause and message;
+- the topic and key are `event.destination()` and `envelope.aggregateId()`, or `send.topic()` and
+  `send.key()`;
+- the serialized value and the headers as sent are `send.value()` and `send.headers()`, joined to the
+  attempt on `send.originRef()`;
+- the entry id is `event.entryId()` and `send.originRef()`.
 
 ---
 
 ## Module Dagger Bindings
 
-The module ships three bindings. The handler is built by an explicit `@Provides` method rather than
-from its `@Inject` constructor, because that is what injects the capture-hook set:
+The module ships one binding. `KafkaOutboxDestinationHandler` is a `@Singleton` built through its
+`@Inject` constructor `(KafkaProducerFactory, ObjectMapper)`, and the module contributes it to the
+relay's handler set:
 
 ```java
 @Module
 public abstract class TransactionalMessagingKafkaModule {
-
-    // Declares the hook set so it exists (empty) even when nobody contributes.
-    @Multibinds
-    abstract Set<KafkaOutboxCaptureHook> kafkaOutboxCaptureHooks();
-
-    // Builds the handler WITH the registered hooks.
-    @Provides @Singleton
-    static KafkaOutboxDestinationHandler kafkaOutboxDestinationHandler(
-            KafkaProducerFactory producerFactory,
-            ObjectMapper objectMapper,
-            Set<KafkaOutboxCaptureHook> captureHooks) {
-        return new KafkaOutboxDestinationHandler(producerFactory, objectMapper, captureHooks);
-    }
 
     @Provides @IntoSet
     static OutboxDestinationHandler kafkaHandler(KafkaOutboxDestinationHandler handler) {
@@ -133,14 +129,6 @@ public abstract class TransactionalMessagingKafkaModule {
     }
 }
 ```
-
-> **Do not replace the `@Provides` method with constructor injection.**
-> `KafkaOutboxDestinationHandler`'s `@Inject` constructor takes only
-> `(KafkaProducerFactory, ObjectMapper)` and binds an empty hook set. If Dagger resolves the handler
-> through that constructor — which is what happens if the `@Provides` method above is dropped — the
-> handler is built with **zero** capture hooks and every contributed `KafkaOutboxCaptureHook`,
-> including the one from `audit-kafka`, is silently ignored. The hook-injecting constructor is the
-> three-argument one used by the `@Provides` method.
 
 Include alongside `TransactionalMessagingPostgresqlModule` and `KafkaModule`:
 

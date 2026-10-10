@@ -715,11 +715,13 @@ class KafkaConsumerInterceptorChainTest {
                     new RuntimeException("boom"),
                     new java.io.IOException("checked boom"),
                     new AssertionError("assertion boom"),
+                    new StackOverflowError("stack boom"),
                     new NoClassDefFoundError("linkage boom"));
         }
 
         @Test
-        @DisplayName("onRecord / onSuccess / onError: exceptions, AssertionError and LinkageError are all swallowed")
+        @DisplayName("onRecord / onSuccess / onError: exceptions, AssertionError, StackOverflowError and LinkageError"
+                + " are all swallowed")
         void existingObserversSwallowErrors() {
             for (Throwable thrown : isolatedThrowables()) {
                 List<String> callLog = new ArrayList<>();
@@ -749,7 +751,8 @@ class KafkaConsumerInterceptorChainTest {
         }
 
         @Test
-        @DisplayName("onRecordCompleted: exceptions, AssertionError and LinkageError are all swallowed")
+        @DisplayName(
+                "onRecordCompleted: exceptions, AssertionError, StackOverflowError and LinkageError are all swallowed")
         void completionSwallowsErrors() {
             for (Throwable thrown : isolatedThrowables()) {
                 List<String> callLog = new ArrayList<>();
@@ -765,8 +768,9 @@ class KafkaConsumerInterceptorChainTest {
         }
 
         @Test
-        @DisplayName("a callback that keeps failing with a LinkageError never stops later interceptors, reported once")
-        void repeatedLinkageErrorIsIsolatedEveryTimeAndReportedOnce() {
+        @DisplayName("a callback that keeps failing with a LinkageError never stops later interceptors, and is"
+                + " reported once within the report interval")
+        void repeatedLinkageErrorIsIsolatedEveryTimeAndReportedOncePerInterval() {
             Logger chainLogger = (Logger) LoggerFactory.getLogger(KafkaConsumerInterceptorChain.class);
             ListAppender<ILoggingEvent> appender = new ListAppender<>();
             appender.setContext(chainLogger.getLoggerContext());
@@ -793,7 +797,10 @@ class KafkaConsumerInterceptorChainTest {
                 List<ILoggingEvent> errors = appender.list.stream()
                         .filter(e -> e.getLevel() == Level.ERROR)
                         .toList();
-                assertEquals(1, errors.size(), "the unusable callback must be reported once, not per record");
+                assertEquals(
+                        1,
+                        errors.size(),
+                        "the unusable callback must be reported once within the report interval, not per record");
                 assertTrue(errors.get(0).getFormattedMessage().contains("onRecordCompleted"));
                 assertTrue(errors.get(0).getFormattedMessage().contains("unusable"));
 
@@ -814,11 +821,10 @@ class KafkaConsumerInterceptorChainTest {
         @Test
         @DisplayName("an Error outside the isolation policy still propagates")
         void otherErrorsPropagate() {
-            KafkaConsumerInterceptorChain chain = new KafkaConsumerInterceptorChain(
-                    "c", List.of(throwingEverywhere(new StackOverflowError("fatal"))));
+            KafkaConsumerInterceptorChain chain =
+                    new KafkaConsumerInterceptorChain("c", List.of(throwingEverywhere(new InternalError("fatal"))));
 
-            org.junit.jupiter.api.Assertions.assertThrows(
-                    StackOverflowError.class, () -> chain.runOnRecordObservers(ctx()));
+            org.junit.jupiter.api.Assertions.assertThrows(InternalError.class, () -> chain.runOnRecordObservers(ctx()));
         }
     }
 

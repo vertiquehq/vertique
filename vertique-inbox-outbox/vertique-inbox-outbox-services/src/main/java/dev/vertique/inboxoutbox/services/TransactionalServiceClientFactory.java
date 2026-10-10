@@ -48,6 +48,11 @@ import java.util.Map;
  *       context propagation is not preserved across the outbox relay boundary.</li>
  * </ul>
  *
+ * <p>A {@code null} payload argument is not rejected by the proxy: the entry is built with a
+ * {@code null} payload and handed to {@link OutboxService#publish}. An outbox payload is required,
+ * so the insert fails, the future the proxy method returns fails with it, nothing is stored and the
+ * target service is never called.
+ *
  * <p>Example usage within a transactional service method:
  * <pre>{@code
  * Future<Void> placeOrder(Order order, SqlClient tx) {

@@ -100,11 +100,21 @@ Lombok `@Builder` value object describing a single outbound side-effect.
 | `destinationType` | Yes | `DestinationType` open value type identifying the adapter to use (e.g., `DestinationType.SERVICE`) |
 | `destination` | Yes | Stable service target id, durable delayed-job target id, or Kafka topic |
 | `payload` | Yes | Jackson-serializable payload; stored as JSONB |
-| `headers` | No | Additional outbound metadata; may carry adapter-specific snapshot data. A `null` map given to the builder reads back as an empty map. Keys and values must not be `null`, and keys must not start with the reserved `vertique-` prefix — `OutboxService.publish` fails for such an entry |
+| `headers` | No | Additional outbound metadata; may carry adapter-specific snapshot data. A `null` map given to the builder reads back as an empty map. Keys and values must not be `null`, and keys must not start with the reserved `vertique-` prefix — `OutboxService.publish` fails for such an entry. See [Header model](#header-model) |
 | `scheduledAt` | No | Time after which the relay may publish |
 | `availableAt` | No | Internal retry scheduling override; applications normally omit |
 
 For `SERVICE` destinations, `destination` must be a stable service target id (not a raw event bus address). For `DELAYED_JOB` destinations, `destination` must be a durable delayed-job target id. For `KAFKA` destinations, `destination` is the Kafka topic name. For custom adapter destinations, the meaning of `destination` is defined by the adapter's `OutboxDestinationHandler`.
+
+#### Header model
+
+Outbox headers are a `Map<String, String>` on `OutboxEntry`, `OutboxRecord` and `OutboxEnvelope`, with the same rules on all three:
+
+- **Text only.** A header value is a `String`; there are no binary values.
+- **Unique keys.** One value per key — a header cannot repeat.
+- **No ordering guarantee once stored.** The copy an entry takes keeps the iteration order of the map it was given, but storage does not preserve it, so a destination must not rely on header order.
+- **Copied immutably.** `OutboxEntry` takes an unmodifiable copy when the entry is built, and `OutboxRecord` and `OutboxEnvelope` take one when they are constructed. Changing the map you passed in afterwards does not change the entry, and the map returned by `headers()` throws `UnsupportedOperationException` on mutation. A `null` map reads back as an empty map.
+- **No reserved prefix, no `null`.** A key must not start with the reserved framework prefix `vertique-`, and neither a key nor a value may be `null`. The entry itself carries such a header, but `OutboxService.publish` rejects it before anything is inserted.
 
 ### `OutboxRecord`
 
@@ -119,7 +129,7 @@ Domain record representing a persisted outbox row. Carries all relay state field
 | `destination` | `String` | Stable target id or topic |
 | `destinationType` | `DestinationType` | Open value type; built-ins are `SERVICE`, `DELAYED_JOB`, `KAFKA`; adapter-declared types are also valid |
 | `payload` | `Object` | Deserialized payload (decoded from JSONB by `PayloadCodec`) |
-| `headers` | `Map<String, String>` | Application/transport headers only (no framework keys) |
+| `headers` | `Map<String, String>` | Application/transport headers only (no framework keys); an unmodifiable copy — see [Header model](#header-model) |
 | `scheduledAt` | `Instant` | Optional scheduled publish time |
 | `availableAt` | `Instant` | Earliest publish time after backoff |
 | `state` | `OutboxEntryState` | `PENDING`, `PROCESSING`, `PUBLISHED`, `DEAD_LETTER` |
@@ -151,7 +161,7 @@ Immutable record passed to `OutboxDestinationHandler.publish()` at relay time.
 | `entryId` | Outbox row id |
 | `aggregateType` / `aggregateId` / `eventType` | Row columns (used e.g. for the Kafka message key) |
 | `destination` / `payload` / `scheduledAt` / `attempt` / `createdAt` | Delivery fields from the row |
-| `headers` | Application/transport headers only (`OutboxEntry.headers`) — no framework keys |
+| `headers` | Application/transport headers only (`OutboxEntry.headers`) — no framework keys; an unmodifiable copy — see [Header model](#header-model) |
 | `metadata` | `OutboxMetadata`: durable propagation context (`context`) plus delivery control (`delivery.outbox`: `OutboxRelayControl`, relay control projected from the row columns; `delivery.delayedJob`: scheduling) |
 
 Framework relay control (`x-message-id`, `eventType`, `aggregate*`) is **not** merged into `headers`; it lives in `metadata.delivery.outbox`. Durable context lives in `metadata.context`, not headers.
@@ -378,6 +388,79 @@ public class ExternalOutboxDestinationHandler implements OutboxDestinationHandle
     }
 }
 ```
+
+### `OutboxPublishObserver`
+
+Observer-only SPI for every outbox publish attempt, of every destination type. The relay calls it
+exactly once per claimed entry per attempt, after it has asked the repository to record the entry's
+next state and that call has settled. Register via Dagger `@IntoSet` multibinding; the set is declared
+by `TransactionalMessagingModule` and is empty by default.
+
+```java
+public interface OutboxPublishObserver extends OrderedExtension {
+    default void onPublishCompleted(OutboxPublishCompletedEvent event, OutboxEnvelope envelope) {}
+}
+```
+
+```java
+@Provides @IntoSet
+static OutboxPublishObserver publishMetrics(PublishMetricsObserver observer) {
+    return observer;
+}
+```
+
+`OutboxPublishCompletedEvent` carries framework facts only — no payload, headers, failure message or
+cause. The payload, headers and metadata are on the `OutboxEnvelope` passed alongside it: the same
+envelope the relay built for the destination handler, also present when no handler is registered for
+the destination type.
+
+| Component | Description |
+|-----------|-------------|
+| `entryId` | The outbox entry id, as a string |
+| `destinationType` | The entry's `DestinationType` |
+| `destination` | The entry's destination, equal to `envelope.destination()` |
+| `attempt` | Attempts made before this one, `0` for the first; equal to `envelope.attempt()` |
+| `maxAttempts` | The entry's attempt limit, as stored with the entry |
+| `outcome` | `OutboxPublishOutcome`: `SUCCESS`, `RETRYABLE_FAILURE`, `PERMANENT_FAILURE`, `UNRESOLVABLE` |
+| `disposition` | `OutboxEntryDisposition`: `PUBLISHED`, `RETRY_SCHEDULED`, `DEAD_LETTERED`, `DEFERRED` |
+| `dispositionRecorded` | `true` only when the repository confirmed the state change; `false` when the repository call failed, threw, or reported that this relay no longer owned the entry |
+| `nextAttemptAt` | Earliest time of the next attempt for `RETRY_SCHEDULED` and `DEFERRED`; `null` otherwise, and when the relay could not compute it. Approximate for `DEFERRED`: the relay computes it from its own clock, while the row is deferred from the database clock |
+| `errorType` | Class name of the failure's cause; `null` when the attempt did not fail or the failure has no cause |
+| `elapsed` | Time from the call to `publish` until its result; zero when no handler is registered for the destination type |
+| `completedAt` | Time the relay notified the observers |
+
+`outcome` is how the attempt ended; `disposition` is what the relay did with the entry. They differ
+when a retryable failure uses up the last attempt: `RETRYABLE_FAILURE` with `DEAD_LETTERED`. A handler
+that throws, returns a failed future, returns `null` instead of a future, or completes its future with
+`null` is reported as `RETRYABLE_FAILURE`. An entry whose destination type has no registered handler
+is reported as `UNRESOLVABLE` with `DEFERRED`.
+
+#### Invariants & Gotchas
+
+- **Observer-only.** Exceptions thrown by the callback are caught, logged, and swallowed; they do not
+  affect the enclosing operation. An `AssertionError`, a `StackOverflowError` or a `LinkageError` is
+  swallowed the same way. An observer changes neither the entry's state transition nor the relay's
+  in-flight count or poll loop, and the observers after it still run. A swallowed failure is logged at
+  WARN by class name, with the failure itself at DEBUG; a `LinkageError` is logged at ERROR at a
+  limited rate per observer class — the first time, then at most once every five minutes.
+- **The envelope is shared.** The destination handler and every observer receive the same
+  `OutboxEnvelope` instance. Its payload object is not copied: do not modify it. It carries the
+  payload, the headers and the durable context (which can include an identity snapshot), and its
+  `toString()` prints all three: do not log the envelope or put it into an exception. Do not block
+  in the callback, and do not keep the envelope after the callback returns — copy what you need.
+- **Order.** `OrderedExtension`: phase, then ascending `priority()`, then `orderKey()`.
+- **`attempt` is not a unique key.** A deferral and a reclaim of a stale claim leave the stored
+  attempt count unchanged, so the same `entryId` and `attempt` can be notified more than once. Use
+  `completedAt` to tell notifications for one entry apart.
+- **The framework constructs the event.** Components may be added in later releases; read the
+  accessors and do not construct the record or deconstruct it with a record pattern.
+- **No notification** for an attempt whose handler future never settles, whose repository call never
+  completes, or that is in flight when the relay stops and never completes. Nor for a claimed entry
+  whose envelope the relay could not build: no attempt was made, and the entry stays claimed until
+  stale-lease recovery.
+- **Threading.** The callback runs on the relay's context — the event-loop context of the relay
+  instance that made the attempt — whichever thread completes the repository call. Do not block in
+  it. Several relay instances, each on its own context, may call one observer concurrently.
 
 ---
 

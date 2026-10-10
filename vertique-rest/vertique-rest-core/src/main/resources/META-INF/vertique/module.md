@@ -1290,11 +1290,18 @@ components by position, so it is outside the compatibility promise.
 A `RequestCompletionScope` wraps the dispatch of either event type — scopes open in iteration order
 and close in reverse, which is how tracing modules re-establish a span around emission. Listeners
 are unordered: the framework promises no invocation order, and no implementation may depend on
-another's side effects. A listener that throws an `Exception` is logged at WARN and does not stop
-the remaining listeners; an `Error` propagates.
+another's side effects. A listener that throws an `Exception`, `AssertionError`,
+`StackOverflowError` or `LinkageError` is logged and does not stop the remaining listeners or change
+the response: an `Exception`, `AssertionError` or `StackOverflowError` is logged at WARN each time,
+naming the listener class, the callback and the failure's class only, and a `LinkageError` at ERROR
+at a limited rate per listener class and callback — the first time, then at most once every five
+minutes with the number of failures in between — saying that the listener is unusable and its
+notifications are being lost. Any other `Error` propagates. A scope's `open` and `close` are
+contained and reported the same way: when one throws, the listeners are still notified and the other
+scopes are still opened and closed.
 
 The logged failure is what keeps the fan-out diagnosable. The exception, including its message and
-any cause, is logged, so none of them may carry credentials, tokens, personal data, or raw request
+any cause, is logged at DEBUG, so none of them may carry credentials, tokens, personal data, or raw request
 values. An implementation must therefore keep them out of the exceptions it throws. The obligation
 is audit-safe by contract rather than by enforcement, exactly as
 `AuthorizationDecision.safeAttributes()` is — the framework does not inspect or scrub what an

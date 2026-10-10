@@ -282,7 +282,13 @@ half-published terminal. **This changed one observable outcome:** a `StackOverfl
 capable session's `onToolInput` used to escape the coordinator and degrade the whole `tools/call` to
 a bounded `500`, while a `RuntimeException` from the same callback was isolated and the call
 succeeded. Both are now isolated and the call succeeds, which is what "never change the protocol or
-business outcome" always said. A failure the *framework* hits while building an observation — as
+business outcome" always said. An `AssertionError` or a `LinkageError` from an observer's `open`,
+from any session callback, or from a completion listener is isolated the same way: an
+`AssertionError` is logged at WARN each time, by class name, and a `LinkageError` at ERROR at a
+limited rate per observer class and callback — the first time, then at most once every five minutes
+with the number of failures in between — saying that the callback is unusable and its notifications
+are being lost. A failure
+the *framework* hits while building an observation — as
 opposed to one an observer throws — still degrades to the bounded internal-error response.
 
 **A disconnect or reset also runs the ordinary request-scoped cleanup.** Settlement is

@@ -46,9 +46,10 @@ import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 
 /**
- * Tests that a misbehaving destination handler or a throwing result-recording step cannot stop the
- * deployed {@link OutboxRelay}: the failing entry is handled as a failed attempt, the rest of the
- * claimed batch is still delivered, the in-flight slot is released and the poll loop keeps running.
+ * Tests that a misbehaving destination handler, a throwing result-recording step, a record whose
+ * envelope cannot be built or a misbehaving claim cannot stop the deployed {@link OutboxRelay}: the
+ * failing entry is handled as a failed attempt, the rest of the claimed batch is still delivered,
+ * the in-flight slot is released and the poll loop keeps running.
  *
  * <p>The relay is deployed as a real verticle against a mocked {@link OutboxRepository}. The first
  * claim returns two entries, every later claim returns none. A released in-flight slot and a live
@@ -164,6 +165,84 @@ class OutboxRelayErrorIsolationTest {
         verify(outboxRepository, never()).markRetry(anyLong(), anyString(), anyInt(), any(), any(), any());
     }
 
+    @Test
+    @DisplayName("handler throws StackOverflowError: failed attempt, rest of batch delivered, polling continues")
+    void handlerThrowingStackOverflowErrorIsAFailedAttempt() throws Exception {
+        deployRelayWith(envelope -> {
+            if (envelope.entryId() == 1L) {
+                throw new StackOverflowError("handler recursed too deep");
+            }
+            return Future.succeededFuture(OutboxPublishResult.success());
+        });
+
+        verify(outboxRepository, timeout(WAIT_MS))
+                .markRetry(
+                        eq(1L),
+                        eq(NODE),
+                        eq(1),
+                        any(Instant.class),
+                        anyString(),
+                        eq(StackOverflowError.class.getName()));
+        verify(outboxRepository, timeout(WAIT_MS)).markPublished(2L, NODE);
+        verify(outboxRepository, timeout(WAIT_MS).atLeast(2)).claimBatch(eq(BATCH_SIZE), eq(NODE), any());
+    }
+
+    @Test
+    @DisplayName("claimBatch throws synchronously: the next poll is still scheduled")
+    void claimBatchThrowingSynchronouslyDoesNotStopPolling() throws Exception {
+        when(outboxRepository.claimBatch(anyInt(), anyString(), any()))
+                .thenThrow(new IllegalStateException("pool closed"))
+                .thenReturn(Future.succeededFuture(List.of(record(1L))), Future.succeededFuture(List.of()));
+        deployRelayWith(envelope -> Future.succeededFuture(OutboxPublishResult.success()));
+
+        // The claim after the throwing one is made, and its entry is delivered.
+        verify(outboxRepository, timeout(WAIT_MS)).markPublished(1L, NODE);
+        verify(outboxRepository, timeout(WAIT_MS).atLeast(3)).claimBatch(eq(BATCH_SIZE), eq(NODE), any());
+    }
+
+    @Test
+    @DisplayName("claimBatch completes with a null list: handled as an empty batch, the next poll is still scheduled")
+    void claimBatchCompletingWithNullDoesNotStopPolling() throws Exception {
+        when(outboxRepository.claimBatch(anyInt(), anyString(), any()))
+                .thenReturn(
+                        Future.succeededFuture(null),
+                        Future.succeededFuture(List.of(record(1L))),
+                        Future.succeededFuture(List.of()));
+        deployRelayWith(envelope -> Future.succeededFuture(OutboxPublishResult.success()));
+
+        verify(outboxRepository, timeout(WAIT_MS)).markPublished(1L, NODE);
+        verify(outboxRepository, timeout(WAIT_MS).atLeast(3)).claimBatch(eq(BATCH_SIZE), eq(NODE), any());
+    }
+
+    @Test
+    @DisplayName(
+            "claimBatch returns null instead of a future: handled as a failed poll, the next poll is still scheduled")
+    void claimBatchReturningNullFutureDoesNotStopPolling() throws Exception {
+        when(outboxRepository.claimBatch(anyInt(), anyString(), any()))
+                .thenReturn(null, Future.succeededFuture(List.of(record(1L))), Future.succeededFuture(List.of()));
+        deployRelayWith(envelope -> Future.succeededFuture(OutboxPublishResult.success()));
+
+        verify(outboxRepository, timeout(WAIT_MS)).markPublished(1L, NODE);
+        verify(outboxRepository, timeout(WAIT_MS).atLeast(3)).claimBatch(eq(BATCH_SIZE), eq(NODE), any());
+    }
+
+    @Test
+    @DisplayName(
+            "envelope cannot be built: slot released, rest of batch delivered, polling continues, nothing recorded")
+    void throwWhileBuildingTheEnvelopeDoesNotStopTheBatch() throws Exception {
+        // A record without metadata makes the relay's envelope construction throw.
+        when(outboxRepository.claimBatch(anyInt(), anyString(), any()))
+                .thenReturn(
+                        Future.succeededFuture(List.of(recordWithoutMetadata(1L), record(2L))),
+                        Future.succeededFuture(List.of()));
+        deployRelayWith(envelope -> Future.succeededFuture(OutboxPublishResult.success()));
+
+        verify(outboxRepository, timeout(WAIT_MS)).markPublished(2L, NODE);
+        verify(outboxRepository, timeout(WAIT_MS).atLeast(2)).claimBatch(eq(BATCH_SIZE), eq(NODE), any());
+        verify(outboxRepository, never()).markPublished(1L, NODE);
+        verify(outboxRepository, never()).markRetry(anyLong(), anyString(), anyInt(), any(), any(), any());
+    }
+
     // --- Helpers ---
 
     private void deployRelayWith(Function<OutboxEnvelope, Future<OutboxPublishResult>> publish) throws Exception {
@@ -199,6 +278,14 @@ class OutboxRelayErrorIsolationTest {
     }
 
     private static OutboxRecord record(long id) {
+        return record(id, OutboxMetadata.empty());
+    }
+
+    private static OutboxRecord recordWithoutMetadata(long id) {
+        return record(id, null);
+    }
+
+    private static OutboxRecord record(long id, OutboxMetadata metadata) {
         return new OutboxRecord(
                 id,
                 UUID.randomUUID(),
@@ -209,7 +296,7 @@ class OutboxRelayErrorIsolationTest {
                 DestinationType.SERVICE,
                 new JsonObject().put("orderId", id),
                 Map.of(),
-                OutboxMetadata.empty(),
+                metadata,
                 null,
                 Instant.now(),
                 OutboxEntryState.PROCESSING,

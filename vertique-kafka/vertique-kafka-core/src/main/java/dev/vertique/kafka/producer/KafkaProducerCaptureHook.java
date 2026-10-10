@@ -24,7 +24,10 @@ import java.lang.reflect.Method;
  * <p>Implementations <strong>MUST NOT</strong> perform any action that affects the send result,
  * record content, or the future returned to the caller. The hook fires <em>after</em> the result
  * has been irrevocably determined. Any exception thrown by an implementation is swallowed — it
- * does not change the send result or break processing of subsequent hooks.
+ * does not change the send result or break processing of subsequent hooks. A {@link LinkageError},
+ * {@link AssertionError} or {@link StackOverflowError} is swallowed the same way. A swallowed
+ * failure is logged by class name, with the failure itself at debug level only; a
+ * {@link LinkageError} is logged at error level at a limited rate per hook class.
  *
  * <h2>Origin and method</h2>
  *
@@ -35,7 +38,9 @@ import java.lang.reflect.Method;
  *       {@code producerMethod}) is <em>non-null</em> for this origin only, so downstream adapters
  *       can inspect the producer interface's type-level and the method's method-level
  *       annotations.</li>
- *   <li>{@link KafkaSendOrigin#OUTBOX} — forwarded by the transactional outbox relay.</li>
+ *   <li>{@link KafkaSendOrigin#OUTBOX} — forwarded by the transactional outbox relay.
+ *       {@link KafkaProducerSend#originRef()} carries the outbox entry id for this origin, so a hook
+ *       can join the wire bytes to the entry they belong to.</li>
  *   <li>{@link KafkaSendOrigin#DLQ} — a dead-letter publish from error handling.</li>
  *   <li>{@link KafkaSendOrigin#INTERNAL} — an internal framework send not covered above.</li>
  * </ul>
@@ -64,8 +69,14 @@ public interface KafkaProducerCaptureHook extends OrderedExtension {
      * that form receives sends there instead.
      *
      * <p>Exceptions thrown by this callback are caught, logged, and swallowed; they do not affect
-     * the enclosing operation.
+     * the enclosing operation. A {@link LinkageError} and an {@link AssertionError} are
+     * contained the same way, and so is a {@link StackOverflowError}; a {@link LinkageError} is
+     * reported at error level at a limited rate.
      *
+     * @deprecated this positional form cannot carry the origin reference
+     *     ({@link KafkaProducerSend#originRef()}) or any send detail added later. Override
+     *     {@link #onSend(KafkaProducerSend)} instead; it replaces this method. This form keeps
+     *     working: the default {@link #onSend(KafkaProducerSend)} still delegates to it.
      * @param origin         the origin of this send; never {@code null}
      * @param topic          the target topic; never {@code null}
      * @param key            the record key, or {@code null} if none was provided
@@ -81,6 +92,7 @@ public interface KafkaProducerCaptureHook extends OrderedExtension {
      *                       {@link AsyncResult#succeeded()} or {@link AsyncResult#failed()} state
      *                       reflects whether Kafka acknowledged the record; never {@code null}
      */
+    @Deprecated
     default void onSend(
             KafkaSendOrigin origin,
             String topic,
@@ -98,13 +110,17 @@ public interface KafkaProducerCaptureHook extends OrderedExtension {
      * interface the sending proxy was created for, its name, and the method — read type-level
      * annotations from {@link KafkaProducerOperation#producerType()}, not from the method's
      * declaring class, which is a super-interface for an inherited send method.
+     * {@link KafkaProducerSend#originRef()} carries the outbox entry id of an outbox send; the
+     * positional form does not receive it.
      *
      * <p>The default delegates to the positional {@link #onSend(KafkaSendOrigin, String, String,
      * PayloadSource, KafkaRecordHeaders, Method, AsyncResult)}, so a hook overrides whichever form it needs — but
      * never make the positional form delegate back to this one, which would recurse.
      *
      * <p>Exceptions thrown by this callback are caught, logged, and swallowed; they do not affect the
-     * enclosing operation.
+     * enclosing operation. A {@link LinkageError} and an {@link AssertionError} are
+     * contained the same way, and so is a {@link StackOverflowError}; a {@link LinkageError} is
+     * reported at error level at a limited rate.
      *
      * @param send the settled send; never {@code null}
      */

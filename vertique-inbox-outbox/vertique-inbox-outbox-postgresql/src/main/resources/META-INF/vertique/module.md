@@ -109,14 +109,17 @@ When `LISTEN_NOTIFY` is configured but the notification channel is unavailable o
 
 **Relay cycle (per batch item):**
 1. `claimBatch()` — short transaction selects and marks `PROCESSING` rows.
-2. For each claimed row, build `OutboxEnvelope` — application `headers` (app-only), durable context in `metadata.context`, and relay control projected into `metadata.delivery.outbox` from the row columns (no framework keys merged into `headers`).
+2. For each claimed row, build `OutboxEnvelope` before the handler lookup, so a row whose destination type has no handler has an envelope too — application `headers` (app-only), durable context in `metadata.context`, and relay control projected into `metadata.delivery.outbox` from the row columns (no framework keys merged into `headers`).
 3. Call `OutboxDestinationHandler.publish(envelope)` — outside the claim transaction.
 4. On success: `markPublished()`.
 5. On retryable failure: `markRetry()` with incremented attempt and backoff-computed `availableAt`.
 6. On permanent failure or exhausted attempts: `markDeadLetter()`.
 7. On `unresolvable`: `markUnresolvable()` with short delay; attempt count unchanged.
 8. A failed future from `publish()` is treated as retryable.
-9. A handler that throws synchronously from `publish()` — an exception, an `AssertionError` or a `LinkageError` — or returns `null` instead of a future is treated as retryable too: it costs that one entry an attempt, the rest of the claimed batch is still delivered, and polling continues.
+9. A handler that throws synchronously from `publish()` — an exception, an `AssertionError` or a `LinkageError` — returns `null` instead of a future, or completes its future with `null` is treated as retryable too: it costs that one entry an attempt, the rest of the claimed batch is still delivered, and polling continues.
+10. When the `mark*` call of steps 4–7 has settled — succeeded, failed, or thrown — every registered `OutboxPublishObserver` (see `dev.vertique:vertique-inbox-outbox-core`) is notified once with the attempt's facts and the envelope from step 2. The callback runs on the relay's context: when the `mark*` call settles on another context or thread, the relay hops back to its own context before it notifies. `dispositionRecorded` is `true` only when the `mark*` call returned `true`.
+
+The relay releases the entry's in-flight slot and schedules the next poll as soon as the `mark*` call has been made; only the observer notification waits for it to settle. A `mark*` call or a backoff computation that throws is handled as a failed `mark*` call: the slot is released, polling continues, and observers are notified with `dispositionRecorded` `false`. If building the envelope throws, the slot is released, the row stays claimed until stale-lease recovery, and — with no envelope and no attempt — observers are not notified. Every poll cycle schedules the next one whatever happens in it: a `claimBatch` that throws, returns `null` or completes with a `null` list (handled as an empty batch) leaves the loop running. A handler that throws a `StackOverflowError` from `publish` is a failed attempt like any other handler throw; any other `VirtualMachineError` propagates after the slot has been released and the next poll scheduled.
 
 **`ClaimScopeException` (package-private, extends `InboxOutboxConfigurationException`):** When a `ClaimScope.Destinations` supplier misbehaves during `buildClaimEligibility`, the WHOLE claim cycle is aborted with a `ClaimScopeException`. The returned future is failed with zero rows claimed. Failure conditions:
 
@@ -136,8 +139,9 @@ The exception message names only the destination TYPE and reason category — ne
 
 **Per-publish metadata model:**
 - Application `headers` are stored and relayed as-is — application/transport headers only; no framework keys are merged in.
-- `OutboxService.publish` rejects headers that cannot be delivered before it inserts anything: a `null` key, a `null` value, or a key with the reserved `vertique-` prefix fails the returned future with an `IllegalArgumentException` that names the key (never the value), so the caller's transaction can still roll back. A `null` header map means no headers.
-- When a stored header value is JSON `null` (a row written without `OutboxService.publish`), the relay drops that header, logs one WARN with the entry id and the header key, and delivers the rest.
+- Headers are stored in the `headers` column as one JSON object with a text value per key (`NULL` when the entry has no headers). A JSON object has unique keys and JSONB does not keep key order, so headers come back from storage in no guaranteed order.
+- `OutboxService.publish` rejects headers that cannot be delivered before it inserts anything: a `null` key, a `null` value, or a key with the reserved `vertique-` prefix fails the returned future with an `IllegalArgumentException` that names the key (never the value; control characters in the key are replaced by `_` and the key is cut to 128 characters, here and in the relay's WARN for a dropped header), so the caller's transaction can still roll back. A `null` header map means no headers.
+- When a stored header value is JSON `null` (a row written without `OutboxService.publish`), that header is dropped on read — it does not become the text `"null"` — so the relay logs one WARN with the entry id and the header key, and delivers the rest.
 - Durable propagation context bound at publish is captured into `metadata.context` and, at the Kafka boundary, projected to reserved `vertique-<namespace>` headers (e.g. `vertique-correlation`).
 - Relay control (message id, `eventType`, `aggregateType`, `aggregateId`) is exposed at relay time via `metadata.delivery.outbox` (projected from the row columns) — it is **not** merged into `headers` and is internal to the relay. `aggregateId` is still used as the Kafka message key.
 
@@ -206,7 +210,7 @@ is frozen from this Stable release.** Every later schema change ships as `V2+`, 
 | `destination` | `VARCHAR(255) NOT NULL` | Stable target id or topic |
 | `destination_type` | `VARCHAR(32) NOT NULL` | Open value type — any id matching `[A-Za-z0-9_-]{1,32}` (built-ins: `SERVICE`, `DELAYED_JOB`, `KAFKA`) |
 | `payload` | `JSONB NOT NULL` | Event payload |
-| `headers` | `JSONB` | Application and transport headers only; no framework keys are merged in |
+| `headers` | `JSONB` | Application and transport headers only, as one JSON object of text values; no framework keys are merged in |
 | `metadata` | `JSONB NOT NULL DEFAULT '{}'` | Structured document `{"context": …, "delivery": …}` — durable propagation context and relay control |
 | `scheduled_at` | `TIMESTAMPTZ` | Optional scheduled publish time |
 | `available_at` | `TIMESTAMPTZ NOT NULL DEFAULT NOW()` | Earliest publish time |
@@ -248,7 +252,7 @@ Index: `idx_inbox_processed_at` (for cleanup queries).
 | `PgInboxOutboxRepository` | Singleton | PostgreSQL repository |
 | `OutboxRelayConfig` | Singleton | Relay configuration deserialized from `inboxOutbox.relay` |
 | `InboxOutboxCleanupConfig` | Singleton | Cleanup configuration deserialized from `inboxOutbox.cleanup` |
-| `Set<VerticleDeployment>` | `@ElementsIntoSet` | `OutboxRelay` verticle; SERVICES phase, priority 100 |
+| `Set<VerticleDeployment>` | `@ElementsIntoSet` | `OutboxRelay` verticle; SERVICES phase, priority 100. Every relay instance is given the contributed `Set<OutboxPublishObserver>`, sorted once per instance by `OrderedExtension` order |
 | `@Services Set<Object>` | `@IntoSet` | `OutboxMaintenanceCron` — provides cluster-singleton `@CronJob` entry points for stale-lease recovery and table cleanup |
 
 `RelayCapabilities` are derived at startup by `OutboxRelay.deriveCapabilities(handlerMap)` from the registered `Set<OutboxDestinationHandler>`. No `@ServiceTargetIds`- or `@DelayedJobTargetIds`-qualified `Set<String>` bindings are provided by this module — each adapter handler owns its own claim scope.

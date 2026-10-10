@@ -15,7 +15,9 @@ import java.util.Set;
  * <p>Dagger module for the transactional messaging (inbox/outbox) core infrastructure.
  *
  * <p>Declares the {@link OutboxDestinationHandler} multibinding so that destination-specific
- * sub-modules can contribute handlers via {@code @Provides @IntoSet} methods.
+ * sub-modules can contribute handlers via {@code @Provides @IntoSet} methods, and the
+ * {@link OutboxPublishObserver} multibinding so that applications and adapter modules can observe
+ * publish attempts the same way.
  *
  * <p>Installed transitively: {@code TransactionalMessagingPostgresqlModule} includes this module, so an
  * application lists that store adapter module in its component rather than this one.
@@ -26,4 +28,11 @@ public abstract class TransactionalMessagingModule {
     /** Declares the empty set binding for {@link OutboxDestinationHandler} contributions. */
     @Multibinds
     abstract Set<OutboxDestinationHandler> outboxDestinationHandlers();
+
+    /**
+     * Declares the empty-by-default set binding for {@link OutboxPublishObserver} contributions, so
+     * the relay can be built when nothing observes publish attempts.
+     */
+    @Multibinds
+    abstract Set<OutboxPublishObserver> outboxPublishObservers();
 }

@@ -138,4 +138,6 @@ Two things deliberately live outside this snapshot:
   it from `envelope.scheduledAt()` and uses it as the job's `runAt`.
 - **`headers`** are application/transport-only. The adapter neither reads scheduling data from them
   nor forwards them to the enqueued job; durable context reaches the job through
-  `metadata.context` instead.
+  `metadata.context` instead. No application header of the outbox entry reaches the job — a
+  `DelayedJob` has no header field, and the headers are copied into neither its payload nor its
+  metadata.

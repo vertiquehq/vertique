@@ -195,6 +195,44 @@ class DefaultOutboxServiceTest {
         }
 
         @Test
+        @DisplayName("control characters in a rejected header key are replaced in the message")
+        void controlCharactersInARejectedKeyAreReplaced() {
+            when(repository.insert(any(), any(), any(), any())).thenReturn(Future.succeededFuture(1L));
+            java.util.Map<String, String> headers = new java.util.HashMap<>();
+            headers.put("x-tenant\r\nforged log line\there", null);
+
+            Future<Long> result = service.publish(tx, entryWithHeaders(headers));
+
+            assertTrue(result.failed(), "publish must fail for a null header value");
+            String message = result.cause().getMessage();
+            assertTrue(message.contains("x-tenant__forged log line_here"), "control characters become '_': " + message);
+            assertFalse(message.chars().anyMatch(Character::isISOControl), "no control character is left: " + message);
+            verify(repository, never()).insert(any(), any(), any(), any());
+        }
+
+        @Test
+        @DisplayName("an overlong rejected header key is cut to the maximum length in the message")
+        void overlongRejectedKeyIsCut() {
+            when(repository.insert(any(), any(), any(), any())).thenReturn(Future.succeededFuture(1L));
+            String longKey = "vertique-" + "k".repeat(500);
+            java.util.Map<String, String> headers = new java.util.HashMap<>();
+            headers.put(longKey, "value");
+
+            Future<Long> result = service.publish(tx, entryWithHeaders(headers));
+
+            assertTrue(result.failed(), "publish must fail for a reserved-prefix header key");
+            String message = result.cause().getMessage();
+            assertFalse(message.contains(longKey), "the whole key must not be in the message");
+            assertTrue(
+                    message.contains(longKey.substring(0, OutboxHeaderKeys.MAX_SHOWN_LENGTH)),
+                    "the start of the key is kept: " + message);
+            assertFalse(
+                    message.contains(longKey.substring(0, OutboxHeaderKeys.MAX_SHOWN_LENGTH + 1)),
+                    "the key is cut at the maximum length: " + message);
+            verify(repository, never()).insert(any(), any(), any(), any());
+        }
+
+        @Test
         @DisplayName("a null header key fails the future and inserts nothing")
         void nullHeaderKeyFailsBeforeInsert() {
             when(repository.insert(any(), any(), any(), any())).thenReturn(Future.succeededFuture(1L));

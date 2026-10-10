@@ -23,10 +23,13 @@ import io.vertx.core.Future;
  *       completion.</li>
  * </ul>
  *
- * <p>An {@link Exception}, {@link LinkageError} or {@link AssertionError} thrown by a sync observer
- * is caught, logged and swallowed. It stops neither the remaining interceptors nor the record. A
- * {@link LinkageError} means the callback cannot run at all, so it is logged at error level once per
- * interceptor class and callback, not on every record.
+ * <p>An {@link Exception}, {@link LinkageError}, {@link AssertionError} or
+ * {@link StackOverflowError} thrown by a sync observer is caught, logged and swallowed. It stops
+ * neither the remaining interceptors nor the record. The log line names the interceptor class, the
+ * callback and the failure's class; the failure itself, with its message, is logged at debug level
+ * only. A {@link LinkageError} means the callback cannot run at all, so it is logged at error level
+ * at a limited rate per interceptor class and callback, not on every record, and never silenced for
+ * good.
  *
  * <h3>Which observer for which need</h3>
  * <ul>
@@ -74,9 +77,9 @@ public interface KafkaConsumerInterceptor extends OrderedExtension {
      * async handlers run. Suitable for structured logging or metrics.
      *
      * <p>Exceptions thrown by this callback are caught, logged, and swallowed; they do not affect the
-     * enclosing operation. A {@link LinkageError} or {@link AssertionError} is caught and swallowed the
-     * same way; a {@link LinkageError} is logged once per interceptor class and callback rather than
-     * on every record. Use {@link #beforeDispatch} to modify the context or filter the record.
+     * enclosing operation. A {@link LinkageError}, {@link AssertionError} or {@link StackOverflowError}
+     * is caught and swallowed the same way; a {@link LinkageError} is logged at error level at a
+     * limited rate per interceptor class and callback rather than on every record. Use {@link #beforeDispatch} to modify the context or filter the record.
      *
      * @param ctx the dispatch context (read-only; use {@link #beforeDispatch} to modify)
      */
@@ -87,9 +90,9 @@ public interface KafkaConsumerInterceptor extends OrderedExtension {
      * structured logging.
      *
      * <p>Exceptions thrown by this callback are caught, logged, and swallowed; they do not affect the
-     * enclosing operation. A {@link LinkageError} or {@link AssertionError} is caught and swallowed the
-     * same way; a {@link LinkageError} is logged once per interceptor class and callback rather than
-     * on every record.
+     * enclosing operation. A {@link LinkageError}, {@link AssertionError} or {@link StackOverflowError}
+     * is caught and swallowed the same way; a {@link LinkageError} is logged at error level at a
+     * limited rate per interceptor class and callback rather than on every record.
      *
      * @param ctx the dispatch context
      */
@@ -100,9 +103,9 @@ public interface KafkaConsumerInterceptor extends OrderedExtension {
      * alerting. Cannot affect the error handling outcome — use {@link #recoverError} for that.
      *
      * <p>Exceptions thrown by this callback are caught, logged, and swallowed; they do not affect the
-     * enclosing operation. A {@link LinkageError} or {@link AssertionError} is caught and swallowed the
-     * same way; a {@link LinkageError} is logged once per interceptor class and callback rather than
-     * on every record.
+     * enclosing operation. A {@link LinkageError}, {@link AssertionError} or {@link StackOverflowError}
+     * is caught and swallowed the same way; a {@link LinkageError} is logged at error level at a
+     * limited rate per interceptor class and callback rather than on every record.
      *
      * @param ctx the dispatch context
      * @param error the dispatch failure
@@ -143,9 +146,9 @@ public interface KafkaConsumerInterceptor extends OrderedExtension {
      * deserializer or handler is visible through it.
      *
      * <p>Exceptions thrown by this callback are caught, logged, and swallowed; they do not affect the
-     * enclosing operation. A {@link LinkageError} or {@link AssertionError} is caught and swallowed the
-     * same way; a {@link LinkageError} is logged once per interceptor class and callback rather than
-     * on every record. The record, later interceptors and later records are unaffected.
+     * enclosing operation. A {@link LinkageError}, {@link AssertionError} or {@link StackOverflowError}
+     * is caught and swallowed the same way; a {@link LinkageError} is logged at error level at a
+     * limited rate per interceptor class and callback rather than on every record. The record, later interceptors and later records are unaffected.
      *
      * @param event  the completion facts: the record's identity and final outcome; carries no
      *               payload, so it can be logged as is
