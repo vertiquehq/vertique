@@ -32,7 +32,10 @@ import lombok.extern.slf4j.Slf4j;
  * as a duplicate key or trailing token), {@code -32600} (invalid envelope/request), {@code -32601}
  * (unknown method, classified against the bounded supported-method set), and {@code -32603}
  * (internal error). Official per-method {@code params} violations are {@code -32602} (invalid
- * params). Error messages are the standard JSON-RPC strings and no {@code data} member is emitted.
+ * params). Error messages are the standard JSON-RPC strings. The only {@code data} members are the
+ * bounded {@link NegotiationReason} every {@code -32020} negotiation rejection carries and the
+ * supported/requested versions of an unsupported-version rejection; no other error this codec
+ * produces has {@code data}.
  *
  * <p>Envelope validation trusts only the framework-owned {@link McpEnvelopeJsonCodec}; the supported
  * request methods are the bounded set {@code server/discover}, {@code tools/list}, and
@@ -78,6 +81,9 @@ final class McpProtocolCodec {
     private static final String MSG_NEGOTIATION_MISMATCH = "Header/body mismatch";
 
     private static final String MSG_UNSUPPORTED_PROTOCOL_VERSION = "Unsupported protocol version";
+
+    /** The {@code error.data} member carrying a {@link NegotiationReason} constant. */
+    private static final String DATA_REASON = "reason";
 
     // --- Protocol negotiation (contract §4.7) ---
 
@@ -270,6 +276,17 @@ final class McpProtocolCodec {
      * official-schema check above does not catch this either; it is Phase 1's own policy, not a schema
      * violation.
      *
+     * <p><strong>Rejection reason.</strong> Every rejection is code {@code -32020} and carries a
+     * {@link NegotiationReason} as {@code error.data.reason}. The message is {@value
+     * #MSG_NEGOTIATION_MISMATCH} except for an unsupported version, which uses {@value
+     * #MSG_UNSUPPORTED_PROTOCOL_VERSION}. The checks run in the order above and the first failing
+     * check decides the reason. Each reason is a fixed constant: it never echoes a header, field
+     * name, or value from the request. Through the HTTP dispatcher an absent or non-object {@code
+     * _meta}, a missing or non-string {@code protocolVersion}, and a missing or non-object {@code
+     * clientCapabilities} never reach this method, because {@link #validateOfficialParams} rejects
+     * them as {@code -32602} first; those branches are defensive and keep their reason for a caller
+     * that negotiates without that step.
+     *
      * @param envelope a successfully decoded envelope, as {@link Decoded#envelope()} carries it
      * @param headers the request's HTTP headers
      * @return the negotiated protocol version when every check passes, or a bounded classified error
@@ -280,7 +297,7 @@ final class McpProtocolCodec {
         JsonNode params = envelope.get("params");
         JsonNode meta = params.get(META_FIELD);
         if (meta == null || !meta.isObject()) {
-            return NegotiationResult.failed(negotiationError());
+            return NegotiationResult.failed(negotiationError(NegotiationReason.META_SHAPE));
         }
         JsonNode protocolVersionNode = meta.get(META_PROTOCOL_VERSION);
         if (protocolVersionNode == null
@@ -288,32 +305,33 @@ final class McpProtocolCodec {
                 || protocolVersionNode.asText().isBlank()
                 || protocolVersionNode.asText().length() > MAX_PROTOCOL_VERSION_CHARS
                 || protocolVersionNode.asText().chars().anyMatch(Character::isISOControl)) {
-            return NegotiationResult.failed(negotiationError());
+            return NegotiationResult.failed(negotiationError(NegotiationReason.META_SHAPE));
         }
         if (!SUPPORTED_PROTOCOL_VERSIONS.contains(protocolVersionNode.asText())) {
             return NegotiationResult.failed(unsupportedProtocolVersionError(protocolVersionNode.asText()));
         }
         JsonNode clientCapabilities = meta.get(META_CLIENT_CAPABILITIES);
         if (clientCapabilities == null || !clientCapabilities.isObject()) {
-            return NegotiationResult.failed(negotiationError());
+            return NegotiationResult.failed(negotiationError(NegotiationReason.META_SHAPE));
         }
         if ("tools/call".equals(method)) {
             for (String reserved : RESERVED_TOOLS_CALL_PARAM_FIELDS) {
                 if (params.has(reserved)) {
-                    return NegotiationResult.failed(negotiationError());
+                    return NegotiationResult.failed(negotiationError(NegotiationReason.RESERVED_FIELD));
                 }
             }
         }
         String protocolVersion = protocolVersionNode.asText();
-        if (!headerMatches(headers, HEADER_PROTOCOL_VERSION, protocolVersion)) {
-            return NegotiationResult.failed(negotiationError());
+        NegotiationReason headerRejection = headerRejection(headers, HEADER_PROTOCOL_VERSION, protocolVersion);
+        if (headerRejection == null) {
+            headerRejection = headerRejection(headers, HEADER_METHOD, method);
         }
-        if (!headerMatches(headers, HEADER_METHOD, method)) {
-            return NegotiationResult.failed(negotiationError());
+        if (headerRejection == null && "tools/call".equals(method)) {
+            headerRejection =
+                    headerRejection(headers, HEADER_NAME, params.get("name").asText());
         }
-        if ("tools/call".equals(method)
-                && !headerMatches(headers, HEADER_NAME, params.get("name").asText())) {
-            return NegotiationResult.failed(negotiationError());
+        if (headerRejection != null) {
+            return NegotiationResult.failed(negotiationError(headerRejection));
         }
         return NegotiationResult.ok(protocolVersion);
     }
@@ -399,27 +417,47 @@ final class McpProtocolCodec {
     }
 
     /**
-     * Reports whether {@code headers} carries {@code headerName} exactly once with a value equal
-     * (case-sensitively) to {@code expected}. The header name lookup is case-insensitive per {@link
-     * MultiMap#get(String)}'s own contract; an absent header never matches. A header sent with more
-     * than one value never matches either, even when every occurrence is identical to {@code
-     * expected}: duplicates are rejected to prevent intermediary/backend header-desync, where a
-     * proxy or gateway forwards a different one of the duplicated values than the one this codec
-     * observed.
+     * Classifies how {@code headers} fails to carry {@code headerName} exactly once with a value equal
+     * (case-sensitively) to {@code expected}, or returns {@code null} when it does. The header name
+     * lookup is case-insensitive per {@link MultiMap#get(String)}'s own contract. An absent header is
+     * {@link NegotiationReason#MISSING_HEADER}; a differing value, or a header sent with more than one
+     * value, is {@link NegotiationReason#HEADER_MISMATCH}. Duplicates are rejected even when every
+     * occurrence is identical to {@code expected}: that prevents intermediary/backend header-desync,
+     * where a proxy or gateway forwards a different one of the duplicated values than the one this
+     * codec observed.
      */
-    private static boolean headerMatches(MultiMap headers, String headerName, String expected) {
+    @Nullable
+    private static NegotiationReason headerRejection(MultiMap headers, String headerName, String expected) {
         List<String> values = headers.getAll(headerName);
-        return values.size() == 1 && values.get(0).equals(expected);
+        if (values.isEmpty()) {
+            return NegotiationReason.MISSING_HEADER;
+        }
+        return values.size() == 1 && values.get(0).equals(expected) ? null : NegotiationReason.HEADER_MISMATCH;
     }
 
-    private static CodecError negotiationError() {
-        return new CodecError(NEGOTIATION_MISMATCH, MSG_NEGOTIATION_MISMATCH, null);
+    /**
+     * Builds the {@code -32020} rejection for {@code reason} and records the one bounded DEBUG line
+     * every rejection leaves. The line names only the constant reason — never a header, field name,
+     * or value — and DEBUG, not WARN, because every rejection here is client-triggerable at will by an
+     * anonymous caller.
+     */
+    private static CodecError negotiationError(NegotiationReason reason) {
+        logRejection(reason);
+        ObjectNode data = ENCODER.createObjectNode();
+        data.put(DATA_REASON, reason.name());
+        return new CodecError(NEGOTIATION_MISMATCH, MSG_NEGOTIATION_MISMATCH, data);
+    }
+
+    private static void logRejection(NegotiationReason reason) {
+        log.debug("Rejected MCP negotiation: reason={}", reason);
     }
 
     private static CodecError unsupportedProtocolVersionError(String requested) {
         ObjectNode data = ENCODER.createObjectNode();
         data.putArray("supported").add(McpCursorCodec.PROTOCOL_VERSION);
         data.put("requested", requested);
+        data.put(DATA_REASON, NegotiationReason.UNSUPPORTED_VERSION.name());
+        logRejection(NegotiationReason.UNSUPPORTED_VERSION);
         return new CodecError(NEGOTIATION_MISMATCH, MSG_UNSUPPORTED_PROTOCOL_VERSION, data);
     }
 
@@ -450,6 +488,43 @@ final class McpProtocolCodec {
         static ParamsValidationResult failed(CodecError error) {
             return new ParamsValidationResult(error);
         }
+    }
+
+    /**
+     * The closed vocabulary of {@code error.data.reason} values a {@code -32020} negotiation
+     * rejection reports. The constant's {@link #name()} is the wire value, so renaming or adding a
+     * constant is a client-visible change. Each constant is fixed text: a reason is never derived from
+     * the request.
+     */
+    enum NegotiationReason {
+
+        /**
+         * A required routing header ({@code MCP-Protocol-Version}, {@code Mcp-Method}, or {@code
+         * Mcp-Name} on {@code tools/call}) is absent.
+         */
+        MISSING_HEADER,
+
+        /**
+         * A required routing header is present but does not equal its body mirror, or is sent more
+         * than once.
+         */
+        HEADER_MISMATCH,
+
+        /**
+         * The {@code io.modelcontextprotocol/protocolVersion} string is blank, over the length
+         * bound, or contains a control character. The same reason also covers an absent or
+         * non-object {@code params._meta}, a missing or non-string {@code protocolVersion}, and a
+         * missing or non-object {@code io.modelcontextprotocol/clientCapabilities}, which the HTTP
+         * dispatcher never reports as {@code -32020} because the official params schema rejects them
+         * first as {@code -32602}.
+         */
+        META_SHAPE,
+
+        /** A {@code tools/call} carries {@code inputResponses} or {@code requestState}. */
+        RESERVED_FIELD,
+
+        /** The request names a well-formed protocol version this server does not support. */
+        UNSUPPORTED_VERSION
     }
 
     /**
