@@ -12,6 +12,7 @@ import dev.vertique.core.config.JsonConfigPaths;
 import dev.vertique.core.context.ContextHolder;
 import dev.vertique.core.context.ContextValue;
 import dev.vertique.core.context.DispatchBoundary;
+import dev.vertique.resilience.Resilience;
 import dev.vertique.rest.core.security.SecurityPolicy;
 import dev.vertique.rest.core.security.SecurityRuntime;
 import dev.vertique.security.AuthenticationState;
@@ -35,6 +36,7 @@ import dev.vertique.security.events.SecurityEventObserver;
 import dev.vertique.security.runtime.events.SecurityEventEmitter;
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
+import io.vertx.core.Vertx;
 import io.vertx.core.json.JsonObject;
 import java.util.ArrayList;
 import java.util.List;
@@ -135,7 +137,8 @@ class SecurityPolicyEnforcerGateDeadlineTest {
                 NO_OP_CONTEXT_HOLDER,
                 NO_OP_SECURITY_RUNTIME,
                 Optional.ofNullable(authorizer),
-                Optional.of(new AuthorizationGateConfig(CONFIGURED_GATE_DEADLINE_MS)));
+                Optional.of(new AuthorizationGateConfig(CONFIGURED_GATE_DEADLINE_MS)),
+                TestResilience.shared());
         SecurityPolicy.Constrained policy = new SecurityPolicy.Constrained(List.of("ops"), List.of(), false);
 
         long startNanos = System.nanoTime();
@@ -265,7 +268,8 @@ class SecurityPolicyEnforcerGateDeadlineTest {
                 NO_OP_CONTEXT_HOLDER,
                 NO_OP_SECURITY_RUNTIME,
                 Optional.ofNullable(authorizer),
-                Optional.of(configDriven));
+                Optional.of(configDriven),
+                TestResilience.shared());
         SecurityPolicy.Constrained policy = new SecurityPolicy.Constrained(List.of("ops"), List.of(), false);
 
         long startNanos = System.nanoTime();
@@ -284,6 +288,201 @@ class SecurityPolicyEnforcerGateDeadlineTest {
                         + "behavior through the parser and opt-in module, not merely the record's own "
                         + "constructor")
                 .isLessThan(1_000L);
+    }
+
+    /**
+     * The fence is the resilience runtime, not a bare future timer: a hung role/scope gate is reported
+     * to the runtime's observers as a timed-out execution. DECISIVE: a {@code Future#timeout} fence
+     * reports nothing, so this test fails (no timeout event) if the runtime is not what bounds the gate.
+     */
+    @Test
+    @DisplayName("shouldReportAHungRoleScopeGateToTheResilienceObserver")
+    void shouldReportAHungRoleScopeGateToTheResilienceObserver() throws Exception {
+        withObservedRuntime((resilience, observed) -> {
+            List<AuthorizationDecisionEvent> events = new ArrayList<>();
+            NeverCompletingDecisionPoint dp = new NeverCompletingDecisionPoint();
+            SecurityPolicyEnforcer enforcer = enforcerWith(dp, RecordingAuthorizer.throwing(), events, resilience);
+
+            AuthorizationDecision decision = awaitDecision(enforcer, Optional.empty());
+
+            assertThat(decision.reasonCode()).isEqualTo(AuthzReasonCodes.INTERNAL_AUTHZ_ERROR);
+            assertThat(events).hasSize(1);
+            assertThat(observed.timeouts(AWAIT_BOUND_MS)).isEqualTo(1);
+        });
+    }
+
+    /** The action gate is bounded by the same runtime: a hung {@link Authorizer} is a timed-out execution. */
+    @Test
+    @DisplayName("shouldReportAHungActionGateToTheResilienceObserver")
+    void shouldReportAHungActionGateToTheResilienceObserver() throws Exception {
+        withObservedRuntime((resilience, observed) -> {
+            List<AuthorizationDecisionEvent> events = new ArrayList<>();
+            SecurityPolicyEnforcer enforcer = enforcerWith(
+                    RecordingDecisionPoint.roleChecking(), new NeverCompletingAuthorizer(), events, resilience);
+
+            AuthorizationDecision decision = awaitDecision(enforcer, Optional.of(SAMPLE_ACTION));
+
+            assertThat(decision.reasonCode()).isEqualTo(AuthzReasonCodes.INTERNAL_AUTHZ_ERROR);
+            assertThat(events).hasSize(1);
+            assertThat(observed.timeouts(AWAIT_BOUND_MS)).isEqualTo(1);
+        });
+    }
+
+    /**
+     * A gate that has already settled when it is handed to the fence is not fenced at all: the
+     * synchronous fast path of an in-memory decision point must cost the runtime nothing.
+     */
+    @Test
+    @DisplayName("shouldNotFenceAGateThatHasAlreadySettled")
+    void shouldNotFenceAGateThatHasAlreadySettled() throws Exception {
+        withObservedRuntime((resilience, observed) -> {
+            List<AuthorizationDecisionEvent> events = new ArrayList<>();
+            SecurityPolicyEnforcer enforcer = enforcerWith(
+                    RecordingDecisionPoint.roleChecking(), RecordingAuthorizer.throwing(), events, resilience);
+
+            AuthorizationDecision decision = awaitDecision(enforcer, Optional.empty());
+
+            assertThat(decision.permitted()).isTrue();
+            assertThat(events).hasSize(1);
+            assertThat(observed.all())
+                    .as("a gate that already settled must not reach the resilience runtime")
+                    .isEmpty();
+        });
+    }
+
+    /**
+     * Once the runtime has closed (application shutdown) a gate that is still pending is denied at
+     * once rather than left to hang, with exactly one event.
+     */
+    @Test
+    @DisplayName("shouldFailClosedOnceWhenTheResilienceRuntimeIsClosed")
+    void shouldFailClosedOnceWhenTheResilienceRuntimeIsClosed() throws Exception {
+        withObservedRuntime((resilience, observed) -> {
+            List<AuthorizationDecisionEvent> events = new ArrayList<>();
+            // A deadline far beyond the await bound: only the closed runtime can produce the deny in time.
+            SecurityPolicyEnforcer enforcer = new SecurityPolicyEnforcer(
+                    Optional.of(new NeverCompletingDecisionPoint()),
+                    Optional.empty(),
+                    Set.of(),
+                    capturingEmitter(events),
+                    NO_OP_CONTEXT_HOLDER,
+                    NO_OP_SECURITY_RUNTIME,
+                    Optional.of(RecordingAuthorizer.throwing()),
+                    Optional.of(new AuthorizationGateConfig(AWAIT_BOUND_MS * 10)),
+                    resilience);
+            resilience.close().toCompletionStage().toCompletableFuture().get(AWAIT_BOUND_MS, TimeUnit.MILLISECONDS);
+
+            AuthorizationDecision decision = awaitDecision(enforcer, Optional.empty());
+
+            assertThat(decision.permitted()).isFalse();
+            assertThat(decision.reasonCode()).isEqualTo(AuthzReasonCodes.INTERNAL_AUTHZ_ERROR);
+            assertThat(events).hasSize(1);
+        });
+    }
+
+    /**
+     * A gate that is still pending when handed to the fence and permits before the deadline must still
+     * permit — the fence may only ever turn a missing answer into a deny, never a real answer. It is
+     * reported to the runtime as a successful execution.
+     */
+    @Test
+    @DisplayName("shouldPermitAPendingGateThatAnswersBeforeTheDeadline")
+    void shouldPermitAPendingGateThatAnswersBeforeTheDeadline() throws Exception {
+        withObservedRuntime((resilience, observed) -> {
+            List<AuthorizationDecisionEvent> events = new ArrayList<>();
+            Promise<AuthorizationDecision> pending = Promise.promise();
+            AuthorizationDecisionPoint dp = request -> pending.future();
+            SecurityPolicyEnforcer enforcer = new SecurityPolicyEnforcer(
+                    Optional.of(dp),
+                    Optional.empty(),
+                    Set.of(),
+                    capturingEmitter(events),
+                    NO_OP_CONTEXT_HOLDER,
+                    NO_OP_SECURITY_RUNTIME,
+                    Optional.of(RecordingAuthorizer.throwing()),
+                    Optional.of(new AuthorizationGateConfig(AWAIT_BOUND_MS * 10)),
+                    resilience);
+            SecurityPolicy.Constrained policy = new SecurityPolicy.Constrained(List.of("ops"), List.of(), false);
+
+            Future<AuthorizationDecision> result =
+                    enforcer.decide(aliceContext(Set.of("ops")), policy, Optional.empty(), TOOL_RESOURCE, MCP_ORIGIN);
+            assertThat(result.isComplete()).as("the gate is pending").isFalse();
+            pending.complete(AuthorizationDecision.permit(AuthzReasonCodes.PERMITTED));
+            AuthorizationDecision decision =
+                    result.toCompletionStage().toCompletableFuture().get(AWAIT_BOUND_MS, TimeUnit.MILLISECONDS);
+
+            assertThat(decision.permitted()).isTrue();
+            assertThat(events).hasSize(1);
+            assertThat(observed.all()).as("a pending gate reaches the runtime").isNotEmpty();
+            assertThat(observed.timeouts(0)).isZero();
+        });
+    }
+
+    /**
+     * The shutdown path that matters: the runtime closes while a gate is already pending. The pending
+     * gate is denied once, and a permit that arrives afterwards from the abandoned gate changes nothing.
+     */
+    @Test
+    @DisplayName("shouldFailClosedOnceWhenTheRuntimeClosesWhileAGateIsPending")
+    void shouldFailClosedOnceWhenTheRuntimeClosesWhileAGateIsPending() throws Exception {
+        withObservedRuntime((resilience, observed) -> {
+            List<AuthorizationDecisionEvent> events = new ArrayList<>();
+            Promise<AuthorizationDecision> pending = Promise.promise();
+            AuthorizationDecisionPoint dp = request -> pending.future();
+            SecurityPolicyEnforcer enforcer = new SecurityPolicyEnforcer(
+                    Optional.of(dp),
+                    Optional.empty(),
+                    Set.of(),
+                    capturingEmitter(events),
+                    NO_OP_CONTEXT_HOLDER,
+                    NO_OP_SECURITY_RUNTIME,
+                    Optional.of(RecordingAuthorizer.throwing()),
+                    Optional.of(new AuthorizationGateConfig(AWAIT_BOUND_MS * 10)),
+                    resilience);
+            SecurityPolicy.Constrained policy = new SecurityPolicy.Constrained(List.of("ops"), List.of(), false);
+
+            Future<AuthorizationDecision> result =
+                    enforcer.decide(aliceContext(Set.of("ops")), policy, Optional.empty(), TOOL_RESOURCE, MCP_ORIGIN);
+            assertThat(result.isComplete())
+                    .as("the gate is pending when the runtime closes")
+                    .isFalse();
+            resilience.close().toCompletionStage().toCompletableFuture().get(AWAIT_BOUND_MS, TimeUnit.MILLISECONDS);
+            AuthorizationDecision decision =
+                    result.toCompletionStage().toCompletableFuture().get(AWAIT_BOUND_MS, TimeUnit.MILLISECONDS);
+            pending.complete(AuthorizationDecision.permit(AuthzReasonCodes.PERMITTED));
+            Thread.sleep(200L);
+
+            assertThat(decision.permitted()).isFalse();
+            assertThat(decision.reasonCode()).isEqualTo(AuthzReasonCodes.INTERNAL_AUTHZ_ERROR);
+            assertThat(events)
+                    .as("a late permit from the abandoned gate emits nothing")
+                    .hasSize(1);
+        });
+    }
+
+    private static AuthorizationDecision awaitDecision(SecurityPolicyEnforcer enforcer, Optional<ActionRef> action)
+            throws Exception {
+        SecurityPolicy.Constrained policy = new SecurityPolicy.Constrained(List.of("ops"), List.of(), false);
+        return enforcer.decide(aliceContext(Set.of("ops")), policy, action, TOOL_RESOURCE, MCP_ORIGIN)
+                .toCompletionStage()
+                .toCompletableFuture()
+                .get(AWAIT_BOUND_MS, TimeUnit.MILLISECONDS);
+    }
+
+    /** Runs {@code body} against a fresh runtime whose events are recorded, then closes its Vert.x. */
+    private static void withObservedRuntime(ObservedBody body) throws Exception {
+        Vertx vertx = Vertx.vertx();
+        try {
+            ObservedResilienceEvents observed = new ObservedResilienceEvents();
+            body.run(Resilience.create(vertx, Set.of(observed)), observed);
+        } finally {
+            vertx.close().toCompletionStage().toCompletableFuture().get(AWAIT_BOUND_MS, TimeUnit.MILLISECONDS);
+        }
+    }
+
+    @FunctionalInterface
+    private interface ObservedBody {
+        void run(Resilience resilience, ObservedResilienceEvents observed) throws Exception;
     }
 
     // --- Shared fixture construction ---
@@ -343,6 +542,14 @@ class SecurityPolicyEnforcerGateDeadlineTest {
     /** Builds an enforcer bound at {@link #TEST_GATE_DEADLINE_MS} via the package-private test seam. */
     private static SecurityPolicyEnforcer enforcerWith(
             AuthorizationDecisionPoint dp, Authorizer authorizer, List<AuthorizationDecisionEvent> events) {
+        return enforcerWith(dp, authorizer, events, TestResilience.shared());
+    }
+
+    private static SecurityPolicyEnforcer enforcerWith(
+            AuthorizationDecisionPoint dp,
+            Authorizer authorizer,
+            List<AuthorizationDecisionEvent> events,
+            Resilience resilience) {
         return new SecurityPolicyEnforcer(
                 Optional.of(dp),
                 Optional.empty(),
@@ -351,7 +558,8 @@ class SecurityPolicyEnforcerGateDeadlineTest {
                 NO_OP_CONTEXT_HOLDER,
                 NO_OP_SECURITY_RUNTIME,
                 Optional.ofNullable(authorizer),
-                Optional.of(new AuthorizationGateConfig(TEST_GATE_DEADLINE_MS)));
+                Optional.of(new AuthorizationGateConfig(TEST_GATE_DEADLINE_MS)),
+                resilience);
     }
 
     // --- Test doubles ---

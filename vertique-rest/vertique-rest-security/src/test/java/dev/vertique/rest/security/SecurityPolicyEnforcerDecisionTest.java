@@ -419,7 +419,8 @@ class SecurityPolicyEnforcerDecisionTest {
                 capturingEmitter(events),
                 NO_OP_CONTEXT_HOLDER,
                 NO_OP_SECURITY_RUNTIME,
-                Optional.ofNullable(authorizer));
+                Optional.ofNullable(authorizer),
+                TestResilience.shared());
     }
 
     // --- Recording test doubles ---

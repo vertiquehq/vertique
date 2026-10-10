@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import dev.vertique.core.context.ContextHolder;
 import dev.vertique.core.context.ContextValue;
+import dev.vertique.resilience.Resilience;
 import dev.vertique.rest.core.middleware.RequestContextLifecycle;
 import dev.vertique.rest.core.router.OperationRegistrationContext;
 import dev.vertique.rest.core.routing.RestOperationDescriptor;
@@ -163,7 +164,8 @@ public class ActionOnlyRouteAuthIT {
                 emitter,
                 contextHolder,
                 securityRuntime,
-                Optional.of(new EditorActionAuthorizer()));
+                Optional.of(new EditorActionAuthorizer()),
+                Resilience.create(vertx));
         AuthorizationContributor authorizationContributor = new AuthorizationContributor(policyEnforcer);
 
         ActionGateAuthenticationContributor authContributor =

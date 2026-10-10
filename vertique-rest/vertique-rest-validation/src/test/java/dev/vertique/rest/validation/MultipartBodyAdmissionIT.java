@@ -279,13 +279,50 @@ public class MultipartBodyAdmissionIT {
         assertEquals(0, remaining, "rejected multipart must not leave spooled upload files");
     }
 
+    /**
+     * Counts the regular files currently under the spool directory.
+     *
+     * <p>The count runs while the server is cleaning the same directory up, which is exactly what the
+     * callers poll for. {@code Files.walk} lists a directory and then reads each entry's attributes, so
+     * an entry deleted between the two surfaces as an {@link java.io.UncheckedIOException} wrapping
+     * {@link java.nio.file.NoSuchFileException} — a failure of the observation, not of the code under
+     * test. An entry or directory that has vanished is simply not counted.
+     */
     private long countSpooledFiles() throws java.io.IOException {
-        if (!java.nio.file.Files.isDirectory(uploadsDirectory)) {
+        java.util.concurrent.atomic.AtomicLong files = new java.util.concurrent.atomic.AtomicLong();
+        try {
+            java.nio.file.Files.walkFileTree(uploadsDirectory, new java.nio.file.SimpleFileVisitor<>() {
+                @Override
+                public java.nio.file.FileVisitResult visitFile(
+                        java.nio.file.Path file, java.nio.file.attribute.BasicFileAttributes attributes) {
+                    if (attributes.isRegularFile()) {
+                        files.incrementAndGet();
+                    }
+                    return java.nio.file.FileVisitResult.CONTINUE;
+                }
+
+                @Override
+                public java.nio.file.FileVisitResult visitFileFailed(
+                        java.nio.file.Path file, java.io.IOException failure) throws java.io.IOException {
+                    if (failure instanceof java.nio.file.NoSuchFileException) {
+                        return java.nio.file.FileVisitResult.CONTINUE;
+                    }
+                    throw failure;
+                }
+
+                @Override
+                public java.nio.file.FileVisitResult postVisitDirectory(
+                        java.nio.file.Path directory, java.io.IOException failure) throws java.io.IOException {
+                    if (failure == null || failure instanceof java.nio.file.NoSuchFileException) {
+                        return java.nio.file.FileVisitResult.CONTINUE;
+                    }
+                    throw failure;
+                }
+            });
+        } catch (java.nio.file.NoSuchFileException directoryNotCreatedYetOrAlreadyGone) {
             return 0;
         }
-        try (var files = java.nio.file.Files.walk(uploadsDirectory)) {
-            return files.filter(java.nio.file.Files::isRegularFile).count();
-        }
+        return files.get();
     }
 
     private void startServer(String testName) {

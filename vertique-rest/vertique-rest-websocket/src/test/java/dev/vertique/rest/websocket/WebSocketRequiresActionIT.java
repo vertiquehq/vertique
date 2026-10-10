@@ -15,6 +15,7 @@ import dev.vertique.core.context.DispatchBoundary;
 import dev.vertique.core.correlation.CorrelationContext;
 import dev.vertique.core.correlation.CorrelationIdentifier;
 import dev.vertique.correlation.CorrelationContextFactory;
+import dev.vertique.resilience.Resilience;
 import dev.vertique.rest.core.middleware.RequestContextLifecycle;
 import dev.vertique.rest.core.security.RouteAuthHandler;
 import dev.vertique.rest.security.DefaultSecurityClaimMapper;
@@ -171,7 +172,8 @@ public class WebSocketRequiresActionIT {
                 emitter,
                 contextHolder,
                 securityRuntime,
-                Optional.of(new CountingEditorActionAuthorizer()));
+                Optional.of(new CountingEditorActionAuthorizer()),
+                Resilience.create(vertx));
 
         ActionRegistry actionRegistry = new StubActionRegistry(Set.of(CONTENT_READ));
 

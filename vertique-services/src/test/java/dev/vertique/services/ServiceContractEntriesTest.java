@@ -23,6 +23,7 @@ import dev.vertique.security.authz.RequiresPolicy;
 import dev.vertique.security.events.AuthorizationDecisionEvent;
 import dev.vertique.security.runtime.events.SecurityEventEmitter;
 import dev.vertique.services.ServiceContractRegistry.ContractEntry;
+import dev.vertique.services.config.ServiceAuthorizationConfig;
 import dev.vertique.services.dispatch.NonRecoverableDispatchFailure;
 import dev.vertique.services.dispatch.ServiceMethodMeta;
 import dev.vertique.services.dispatch.ServiceMethodMeta.ParamMeta;
@@ -1193,7 +1194,13 @@ class ServiceContractEntriesTest {
             when(emitter.emit(any(AuthorizationDecisionEvent.class))).thenReturn(Future.succeededFuture());
             when(holder.current(SecurityContext.class)).thenReturn(Optional.of(caller));
             ServiceAuthorizationInterceptor gate = new ServiceAuthorizationInterceptor(
-                    Optional.empty(), Optional.empty(), emitter, holder, Set.of(meta));
+                    Optional.empty(),
+                    Optional.empty(),
+                    emitter,
+                    holder,
+                    Set.of(meta),
+                    ServiceAuthorizationConfig.defaults(),
+                    TestResilience.shared());
             return gate.beforeDispatch(new ServiceDispatchContext(
                     meta.address(),
                     meta.stableTargetId(),

@@ -161,6 +161,10 @@ modules listed under Core Concepts.
 The ledger above is exact: the module declares no other direct dependency, and in particular no
 services, database, JWT, launcher, test, or code-generation artifact.
 
+`vertique-rest-security` installs the application's `Resilience` runtime through `AuthModule`, so a
+REST consumer's classpath also carries `vertique-resilience`, `vertique-aop` and Vert.x's
+circuit-breaker library transitively, and the component the starter assembles binds a `Vertx` for it.
+
 ---
 
 ## Verification

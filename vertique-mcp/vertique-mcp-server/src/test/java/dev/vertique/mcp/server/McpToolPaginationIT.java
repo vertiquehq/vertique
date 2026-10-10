@@ -778,7 +778,8 @@ class McpToolPaginationIT {
                     new SecurityEventEmitter(Set.of()),
                     NO_OP_CONTEXT_HOLDER,
                     new RecordingSecurityRuntime(),
-                    Optional.empty());
+                    Optional.empty(),
+                    TestResilience.shared());
         }
 
         @Override

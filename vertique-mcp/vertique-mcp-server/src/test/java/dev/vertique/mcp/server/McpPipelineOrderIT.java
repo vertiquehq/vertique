@@ -917,7 +917,8 @@ class McpPipelineOrderIT {
                     new SecurityEventEmitter(Set.of()),
                     NO_OP_CONTEXT_HOLDER,
                     securityRuntime,
-                    Optional.empty()));
+                    Optional.empty(),
+                    TestResilience.shared()));
             HttpConfig httpConfig = HttpConfig.builder()
                     .idleTimeoutSeconds(60)
                     .maxBodySize(BODY_LIMIT_BYTES)

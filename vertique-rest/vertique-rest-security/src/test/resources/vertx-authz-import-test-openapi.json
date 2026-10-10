@@ -2,7 +2,7 @@
   "openapi": "3.0.1",
   "info": {
     "title": "Vert.x Authorization Import Test API",
-    "description": "Minimal OpenAPI fixture used by VertxAuthorizationImportIT. Three identical constrained GET operations, each wired with a different IdentityResolutionMiddleware assembly (importer present / absent / failing).",
+    "description": "Minimal OpenAPI fixture used by VertxAuthorizationImportIT. Four identical constrained GET operations, each wired with a different IdentityResolutionMiddleware assembly (importer present / absent / failing / hung).",
     "version": "0.0.1"
   },
   "paths": {
@@ -32,6 +32,17 @@
       "get": {
         "summary": "Constrained route whose middleware carries a failing authorization importer",
         "operationId": "failingImporter",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/hung-importer": {
+      "get": {
+        "summary": "Constrained route whose middleware carries an importer whose provider never completes",
+        "operationId": "hungImporter",
         "responses": {
           "200": {
             "description": "OK"

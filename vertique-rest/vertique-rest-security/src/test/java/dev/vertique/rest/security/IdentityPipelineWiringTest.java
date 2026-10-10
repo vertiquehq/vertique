@@ -5,8 +5,10 @@ package dev.vertique.rest.security;
 
 import static org.junit.jupiter.api.Assertions.assertSame;
 
+import dagger.BindsInstance;
 import dagger.Component;
 import dev.vertique.context.ContextRuntimeModule;
+import io.vertx.core.Vertx;
 import jakarta.inject.Singleton;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -63,21 +65,49 @@ class IdentityPipelineWiringTest {
          * @return the enforcer instance bound by {@code AuthModule}
          */
         SecurityPolicyEnforcer securityPolicyEnforcer();
+
+        /** Supplies the {@link Vertx} the resilience runtime that {@link AuthModule} installs needs. */
+        @Component.Builder
+        interface Builder {
+
+            /**
+             * Binds the Vert.x instance the graph uses.
+             *
+             * @param vertx the Vert.x instance bound into the graph
+             * @return this builder
+             */
+            @BindsInstance
+            Builder vertx(Vertx vertx);
+
+            /**
+             * Builds the component.
+             *
+             * @return the component
+             */
+            WiringComponent build();
+        }
     }
 
     @Test
     @DisplayName("AuthModule binds the REST middleware and enforcer from the IdentityPipelineFactory")
     void authModuleProvidesMiddlewareAndEnforcerFromTheFactory() {
-        WiringComponent component = DaggerIdentityPipelineWiringTest_WiringComponent.create();
-        IdentityPipelineFactory factory = component.factory();
+        Vertx vertx = Vertx.vertx();
+        try {
+            WiringComponent component = DaggerIdentityPipelineWiringTest_WiringComponent.builder()
+                    .vertx(vertx)
+                    .build();
+            IdentityPipelineFactory factory = component.factory();
 
-        assertSame(
-                factory.restIdentityResolution(),
-                component.identityResolutionMiddleware(),
-                "AuthModule's IdentityResolutionMiddleware binding must be the factory's REST instance");
-        assertSame(
-                factory.policyEnforcer(),
-                component.securityPolicyEnforcer(),
-                "AuthModule's SecurityPolicyEnforcer binding must be the factory's memoized enforcer");
+            assertSame(
+                    factory.restIdentityResolution(),
+                    component.identityResolutionMiddleware(),
+                    "AuthModule's IdentityResolutionMiddleware binding must be the factory's REST instance");
+            assertSame(
+                    factory.policyEnforcer(),
+                    component.securityPolicyEnforcer(),
+                    "AuthModule's SecurityPolicyEnforcer binding must be the factory's memoized enforcer");
+        } finally {
+            vertx.close().toCompletionStage().toCompletableFuture().join();
+        }
     }
 }
