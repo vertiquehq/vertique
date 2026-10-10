@@ -45,6 +45,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 /**
  * Unit tests for {@link SecurityPolicyEnforcer}.
@@ -1119,8 +1120,13 @@ class SecurityPolicyEnforcerTest {
                     resilience);
         }
 
+        private final io.vertx.core.http.HttpServerResponse response =
+                mock(io.vertx.core.http.HttpServerResponse.class);
+
         private RoutingContext constrainedRoute() {
-            return stubRoutingContext(stubSecCtx(AuthorizationClaims.empty()));
+            RoutingContext rc = stubRoutingContext(stubSecCtx(AuthorizationClaims.empty()));
+            when(rc.response()).thenReturn(response);
+            return rc;
         }
 
         private io.vertx.core.Handler<RoutingContext> constrainedHandler(SecurityPolicyEnforcer enforcer) {
@@ -1236,10 +1242,56 @@ class SecurityPolicyEnforcerTest {
                             Optional.empty()))
                     .handle(rc);
 
+            ArgumentCaptor<UnavailableException> failure = ArgumentCaptor.forClass(UnavailableException.class);
+            verify(rc, timeout(DENY_WITHIN_MS)).fail(eq(503), failure.capture());
+            verify(rc, never()).fail(403);
+            verify(rc, never()).next();
+            assertEquals(
+                    "Authorization is temporarily unavailable",
+                    failure.getValue().getMessage(),
+                    "only the generic detail may reach the failure pipeline");
+            assertNull(failure.getValue().getCause(), "the policy client's exception must not travel with it");
+            verify(response).putHeader("Retry-After", "1");
+            assertEquals(1, events.size());
+            assertEquals(
+                    AuthzReasonCodes.INTERNAL_AUTHZ_ERROR,
+                    events.get(0).decision().reasonCode());
+        }
+
+        @Test
+        @DisplayName("a failed (not timed-out) action authorizer future is 503 unavailable with the action "
+                + "gate recorded as evaluated")
+        void failedActionAuthorizerFutureIsUnavailable() {
+            AuthorizationDecisionPoint permit =
+                    request -> Future.succeededFuture(AuthorizationDecision.permit(AuthzReasonCodes.PERMITTED));
+            Authorizer failing = new Authorizer() {
+                @Override
+                public Future<AuthorizationDecision> authorize(AuthorizationRequest request) {
+                    return Future.failedFuture(new IllegalStateException("authorizer store unreachable"));
+                }
+
+                @Override
+                public Future<AuthorizationDecision> authorize(
+                        SecurityContext ctx, ActionRef action, ResourceRef resource) {
+                    throw new UnsupportedOperationException("the handler uses the request overload only");
+                }
+            };
+            RoutingContext rc = constrainedRoute();
+
+            enforcer(permit, Optional.of(failing))
+                    .createHandler(
+                            new SecurityPolicy.Constrained(List.of("admin"), List.of(), false),
+                            Optional.of(ActionRef.parse("orders.order.read")))
+                    .handle(rc);
+
             verify(rc, timeout(DENY_WITHIN_MS)).fail(eq(503), any(UnavailableException.class));
             verify(rc, never()).fail(403);
             verify(rc, never()).next();
             assertEquals(1, events.size());
+            assertEquals(
+                    Boolean.TRUE,
+                    events.get(0).decision().safeAttributes().get("actionEvaluated"),
+                    "the failed action gate keeps its existing audit shape: it was evaluated");
             assertEquals(
                     AuthzReasonCodes.INTERNAL_AUTHZ_ERROR,
                     events.get(0).decision().reasonCode());

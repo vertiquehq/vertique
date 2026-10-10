@@ -36,6 +36,7 @@ import io.vertx.core.Future;
 import io.vertx.core.Handler;
 import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
+import io.vertx.core.http.HttpServerResponse;
 import io.vertx.ext.auth.authorization.AuthorizationProvider;
 import io.vertx.ext.web.RoutingContext;
 import jakarta.inject.Inject;
@@ -146,6 +147,13 @@ public class SecurityPolicyEnforcer {
     private final ResiliencePipeline actionFence;
 
     /**
+     * The {@code Retry-After} value, in whole seconds, sent with an "authorization unavailable" 503:
+     * the gate deadline rounded up, so a client or load balancer backs off for about as long as one
+     * hung attempt would have held its connection.
+     */
+    private final String retryAfterSeconds;
+
+    /**
      * Creates a new enforcer with the framework-default {@link AuthorizationGateConfig}.
      * Equivalent to the injected
      * constructor with {@link Optional#empty()} for {@code authorizationGateConfig}.
@@ -253,6 +261,7 @@ public class SecurityPolicyEnforcer {
                 .gateDeadlineMs();
         this.roleScopeFence = gateFence(resilience, ROLE_SCOPE_GATE, gateDeadlineMs);
         this.actionFence = gateFence(resilience, ACTION_GATE, gateDeadlineMs);
+        this.retryAfterSeconds = Long.toString(Math.max(1L, (gateDeadlineMs + 999L) / 1000L));
 
         if (authorizationDecisionPoint.isPresent()) {
             this.decisionPoint = authorizationDecisionPoint.get();
@@ -796,8 +805,9 @@ public class SecurityPolicyEnforcer {
      *       then {@code ctx.fail(401)}</li>
      *   <li>permit → emit the decision, then {@code ctx.next()}</li>
      *   <li>deny → emit the decision, then {@code ctx.fail(403)}</li>
-     *   <li>decision-point failure (failed future) → emit deny
-     *       ({@link AuthzReasonCodes#INTERNAL_AUTHZ_ERROR}), then {@code ctx.fail(cause)}</li>
+     *   <li>decision-point failure (failed future, deadline, closed runtime) → emit deny
+     *       ({@link AuthzReasonCodes#INTERNAL_AUTHZ_ERROR}), then fail as unavailable: {@code 503} with
+     *       the generic detail and a {@code Retry-After}; the cause is logged, never propagated</li>
      *   <li>decision-point contract violation (synchronous throw, {@code null} future, or {@code null}
      *       decision) → emit deny ({@link AuthzReasonCodes#INTERNAL_AUTHZ_ERROR}), then
      *       {@code ctx.fail(403)} (fail-closed; mirrors {@code ServiceAuthorizationInterceptor})</li>
@@ -1093,7 +1103,7 @@ public class SecurityPolicyEnforcer {
                     } else if (actionAr.failed()) {
                         // The action gate could not answer (it failed, timed out, or the runtime
                         // closed): unavailable, not denied. The event above is the same deny shape.
-                        ctx.fail(503, authorizationUnavailable());
+                        failUnavailable(ctx);
                     } else {
                         log.debug(
                                 "Authorization denied at action gate: reasonCode={}, path={}, method={}",
@@ -1145,7 +1155,7 @@ public class SecurityPolicyEnforcer {
     private void unavailableDeny(
             RoutingContext ctx, AuthorizationRequest authzRequest, CorrelationContext correlation) {
         emitDecision(authzRequest, AuthorizationDecision.deny(AuthzReasonCodes.INTERNAL_AUTHZ_ERROR), correlation);
-        ctx.fail(503, authorizationUnavailable());
+        failUnavailable(ctx);
     }
 
     /**
@@ -1161,6 +1171,22 @@ public class SecurityPolicyEnforcer {
         AuthorizationDecision decision =
                 combinedDecision(AuthorizationDecision.deny(AuthzReasonCodes.INTERNAL_AUTHZ_ERROR), null);
         emitDecision(authzRequest, decision, correlation);
+        failUnavailable(ctx);
+    }
+
+    /**
+     * Fails the request as "authorization unavailable": 503, the generic detail, and a {@code
+     * Retry-After} of about one gate deadline so a client or load balancer backs off rather than
+     * retrying straight into the same hung gate. The status is set explicitly as well as the failure,
+     * so a router without the framework's exception mapper still answers 503, not 500.
+     *
+     * @param ctx the routing context to fail; must not be {@code null}
+     */
+    private void failUnavailable(RoutingContext ctx) {
+        HttpServerResponse response = ctx.response();
+        if (response != null && !response.headWritten()) {
+            response.putHeader("Retry-After", retryAfterSeconds);
+        }
         ctx.fail(503, authorizationUnavailable());
     }
 

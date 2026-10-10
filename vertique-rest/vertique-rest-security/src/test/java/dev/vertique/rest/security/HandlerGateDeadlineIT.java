@@ -259,6 +259,7 @@ class HandlerGateDeadlineIT {
             var response = fixture.response();
 
             assertEquals(503, response.statusCode());
+            assertEquals("1", response.getHeader("Retry-After"), "an unavailable answer tells callers to back off");
             assertFalse(
                     String.valueOf(response.bodyAsString()).contains(secret),
                     "a policy client's failure message must not be rendered to the caller");

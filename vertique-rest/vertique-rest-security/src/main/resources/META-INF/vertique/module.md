@@ -900,7 +900,7 @@ There is no warn-only mode. Every validation failure stops startup.
 | 403 | `DENY_ALL` | `@DenyAll` |
 | 403 | the decision's own code | The decision point denied |
 | 403 | `INTERNAL_AUTHZ_ERROR` | The decision point or `Authorizer` threw synchronously, returned a `null` future, or resolved to a `null` decision — a contract violation, fail-closed |
-| 503 | `INTERNAL_AUTHZ_ERROR` | The decision point or `Authorizer` could not answer: it returned a failed future (with any exception), exceeded the configured [gate deadline](#authorization-gate-deadline-authorizationgateconfig), or the `Resilience` runtime had closed — fail-closed. The problem detail is the generic `Authorization is temporarily unavailable`; the cause is logged, never returned |
+| 503 | `INTERNAL_AUTHZ_ERROR` | The decision point or `Authorizer` could not answer: it returned a failed future (with any exception), exceeded the configured [gate deadline](#authorization-gate-deadline-authorizationgateconfig), or the `Resilience` runtime had closed — fail-closed. The problem detail is the generic `Authorization is temporarily unavailable`, with a `Retry-After` of the gate deadline rounded up to whole seconds; the cause is logged, never returned |
 | 503 | — | A provider failed during the opt-in [Vert.x authorization import](#vertx-authorization-import-opt-in) — fail-closed: the `SecurityContext` is never bound and no partially imported claim is observable. The problem detail is the generic `Authorization is temporarily unavailable`; the failing provider id is logged, never returned |
 | — | `PERMITTED` | Both gates passed |
 
@@ -908,7 +908,13 @@ A decision future that fails, as opposed to one that denies, means the gate coul
 request fails closed as unavailable — 503, `INTERNAL_AUTHZ_ERROR` and one event — and is distinct
 from a 403 denial. The cause is logged server-side and is not handed to the error pipeline, so a
 policy client's own exception, whatever its type or message, never decides the response status or
-appears in the response body. Every path that reaches authorization emits exactly one
+appears in the response body. The 503 carries `Retry-After` (the gate deadline in whole seconds,
+at least one). Load balancers and meshes that retry on another upstream or eject a host after
+consecutive 5xx will act on it, and a WebSocket client that reconnects on 5xx re-enters authorization
+each time; a failing or hung policy point therefore becomes visible to them as an outage, which is the
+point of not answering 403, and rate limiting belongs ahead of authorization to bound how often the
+policy point is asked. A deterministic fault on one request (a policy client rejecting a crafted
+value) is also a 503 for that request. Every path that reaches authorization emits exactly one
 `AuthorizationDecisionEvent`; the credential-failure 401 and the import-failure 503 short-circuit
 the request before authorization runs, so no decision event is emitted for them.
 
