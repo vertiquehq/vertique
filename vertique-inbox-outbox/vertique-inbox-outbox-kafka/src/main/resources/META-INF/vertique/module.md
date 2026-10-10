@@ -96,6 +96,21 @@ Keep these limits in mind when joining:
   `originRef`. The attempt number also repeats across deferrals and reclaims of a stale claim; see
   `OutboxPublishObserver` in `dev.vertique:vertique-inbox-outbox-core`.
 
+### Migration
+
+The Kafka-specific outbox capture hook and its multibinding on `TransactionalMessagingKafkaModule`
+were removed, together with the handler constructor that took the hooks. Observe publish attempts
+through `OutboxPublishObserver` and the wire bytes through the producer capture hook with origin
+`OUTBOX`:
+
+- the classified result is `event.outcome()`, with `event.disposition()` for what the relay did and
+  `event.errorType()` in place of the failure's cause and message;
+- the topic and key are `event.destination()` and `envelope.aggregateId()`, or `send.topic()` and
+  `send.key()`;
+- the serialized value and the headers as sent are `send.value()` and `send.headers()`, joined to the
+  attempt on `send.originRef()`;
+- the entry id is `event.entryId()` and `send.originRef()`.
+
 ---
 
 ## Module Dagger Bindings

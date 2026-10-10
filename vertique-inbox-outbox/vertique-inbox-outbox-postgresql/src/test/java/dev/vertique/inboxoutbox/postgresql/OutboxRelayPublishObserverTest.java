@@ -35,6 +35,7 @@ import dev.vertique.inboxoutbox.OutboxRecord;
 import dev.vertique.inboxoutbox.OutboxRelayConfig;
 import dev.vertique.inboxoutbox.OutboxRepository;
 import dev.vertique.inboxoutbox.RelayStrategy;
+import io.vertx.core.Context;
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
@@ -46,6 +47,7 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
 import java.util.function.Function;
 import java.util.function.Supplier;
@@ -394,6 +396,62 @@ class OutboxRelayPublishObserverTest {
         }
     }
 
+    // --- Relay context and a throwing state change ---
+
+    @Nested
+    @DisplayName("relay context and a throwing state change")
+    class RelayContextAndThrowingStateChange {
+
+        @Test
+        @DisplayName("repository future completed from a plain thread: the observer still runs on the relay's context")
+        void observerRunsOnTheRelayContext() throws Exception {
+            RecordingObserver observer = new RecordingObserver();
+            AtomicReference<Context> relayContext = new AtomicReference<>();
+            Promise<Boolean> markPublished = Promise.promise();
+            when(outboxRepository.markPublished(ENTRY_ID, NODE)).thenReturn(markPublished.future());
+            claim(record(DestinationType.SERVICE, 0, 3));
+            deploy(
+                    envelope -> {
+                        // publish is called on the relay verticle's own context
+                        relayContext.set(Vertx.currentContext());
+                        return Future.succeededFuture(OutboxPublishResult.success());
+                    },
+                    observer);
+            verify(outboxRepository, timeout(WAIT_MS)).markPublished(ENTRY_ID, NODE);
+
+            Thread plain = new Thread(() -> markPublished.complete(true), "plain-repository-thread");
+            plain.start();
+            plain.join(WAIT_MS);
+
+            Notification n = awaitTheOnlyNotification(observer);
+            assertNotNull(relayContext.get(), "the handler ran on a Vert.x context");
+            assertSame(relayContext.get(), observer.contexts.get(0), "the observer runs on the relay's context");
+            assertAttemptFacts(n, OutboxPublishOutcome.SUCCESS, OutboxEntryDisposition.PUBLISHED, 0, 3);
+            assertTrue(n.event().dispositionRecorded());
+        }
+
+        @Test
+        @DisplayName("markRetry throws synchronously: one notification, RETRYABLE_FAILURE, not recorded")
+        void synchronousThrowWhileSchedulingARetry() throws Exception {
+            RecordingObserver observer = new RecordingObserver();
+            when(outboxRepository.markRetry(anyLong(), anyString(), anyInt(), any(), any(), any()))
+                    .thenThrow(new IllegalStateException("pool closed"));
+            claim(record(DestinationType.SERVICE, 0, 3));
+            deploy(
+                    envelope -> Future.succeededFuture(
+                            OutboxPublishResult.retryable("upstream timeout", new IllegalStateException("timeout"))),
+                    observer);
+
+            Notification n = awaitTheOnlyNotification(observer);
+
+            assertAttemptFacts(n, OutboxPublishOutcome.RETRYABLE_FAILURE, OutboxEntryDisposition.RETRY_SCHEDULED, 0, 3);
+            assertFalse(n.event().dispositionRecorded(), "the state change was attempted and threw");
+            assertEquals(markRetryAvailableAt(), n.event().nextAttemptAt(), "the computed time is still reported");
+            assertEquals(IllegalStateException.class.getName(), n.event().errorType());
+            verify(outboxRepository, never()).markDeadLetter(anyLong(), anyString(), any(), any());
+        }
+    }
+
     // --- Observer isolation and order ---
 
     @Nested
@@ -613,6 +671,10 @@ class OutboxRelayPublishObserverTest {
     private static final class RecordingObserver implements OutboxPublishObserver {
 
         final List<Notification> notifications = new CopyOnWriteArrayList<>();
+
+        /** The Vert.x context each call ran on; {@code null} for a call made off any context. */
+        final List<Context> contexts = new CopyOnWriteArrayList<>();
+
         private final int priority;
         private final String orderKey;
         private final List<String> sharedCalls;
@@ -644,6 +706,7 @@ class OutboxRelayPublishObserverTest {
         @Override
         public void onPublishCompleted(OutboxPublishCompletedEvent event, OutboxEnvelope envelope) {
             sharedCalls.add(priority + ":" + orderKey);
+            contexts.add(Vertx.currentContext());
             notifications.add(new Notification(event, envelope));
         }
     }

@@ -23,8 +23,10 @@ import dev.vertique.inboxoutbox.OutboxRepository;
 import dev.vertique.inboxoutbox.RelayCapabilities;
 import dev.vertique.inboxoutbox.RelayStrategy;
 import io.vertx.core.AbstractVerticle;
+import io.vertx.core.Context;
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
+import io.vertx.core.Vertx;
 import io.vertx.pgclient.PgConnectOptions;
 import io.vertx.pgclient.PgConnection;
 import jakarta.annotation.Nullable;
@@ -66,7 +68,9 @@ import lombok.extern.slf4j.Slf4j;
  * {@link OutboxPublishObserver} is notified once, in {@link OrderedExtension#comparator()} order,
  * with the facts of the attempt and the envelope the relay built. The in-flight slot is released and
  * the next poll is scheduled without waiting for the repository call; only the notification waits
- * for it. An observer that throws changes neither the state transition nor the relay loop.
+ * for it. Observers are always called on this verticle's own context: when the repository call
+ * settles on another context or thread, the relay hops back before it notifies. An observer that
+ * throws changes neither the state transition nor the relay loop.
  *
  * <p><b>Stale lease recovery and cleanup</b> are no longer owned by this verticle — they run as
  * cluster-singleton cron jobs in
@@ -108,9 +112,12 @@ public class OutboxRelay extends AbstractVerticle {
     // --- Runtime state ---
 
     /**
-     * Observer classes already reported as unusable. Concurrent because the repository call that
-     * precedes a notification may complete on any thread.
+     * This verticle's own context, captured at start; observers are notified on it. {@code null}
+     * until the verticle is started.
      */
+    private volatile Context relayContext;
+
+    /** Observer classes already reported as unusable. */
     private final Set<Class<?>> reportedUnusable = ConcurrentHashMap.newKeySet();
 
     /** Current adaptive poll delay in milliseconds. */
@@ -194,6 +201,7 @@ public class OutboxRelay extends AbstractVerticle {
     @Override
     public void start(Promise<Void> startPromise) {
         running = true;
+        relayContext = context;
         currentPollDelay = config.pollingIntervalMs();
 
         schedulePoll();
@@ -477,15 +485,28 @@ public class OutboxRelay extends AbstractVerticle {
                         ar.cause());
             }
             if (transition != null) {
-                notifyObservers(
-                        record,
-                        envelope,
-                        transition,
-                        ar.succeeded() && Boolean.TRUE.equals(ar.result()),
-                        nextAttemptAt,
-                        elapsed);
+                boolean dispositionRecorded = ar.succeeded() && Boolean.TRUE.equals(ar.result());
+                runOnRelayContext(() ->
+                        notifyObservers(record, envelope, transition, dispositionRecorded, nextAttemptAt, elapsed));
             }
         });
+    }
+
+    /**
+     * Runs an action on this verticle's own context: directly when the caller is already on it,
+     * otherwise through {@link Context#runOnContext}. A repository future may complete on another
+     * context or on a thread that has none; observers are promised the relay's context either way.
+     * Before the verticle is started there is no context to hop to and the action runs directly.
+     *
+     * @param action the action to run
+     */
+    private void runOnRelayContext(Runnable action) {
+        Context relay = relayContext;
+        if (relay == null || relay == Vertx.currentContext()) {
+            action.run();
+        } else {
+            relay.runOnContext(ignored -> action.run());
+        }
     }
 
     /**
@@ -621,7 +642,7 @@ public class OutboxRelay extends AbstractVerticle {
 
     /**
      * Notifies every registered {@link OutboxPublishObserver} of one completed attempt, in sorted
-     * order. An {@link Exception}, {@link LinkageError} or {@link AssertionError} from one observer
+     * order. Called on the relay's context. An {@link Exception}, {@link LinkageError} or {@link AssertionError} from one observer
      * does not stop the remaining observers and never reaches the caller. An {@link Exception} or
      * {@link AssertionError} is logged at warn level each time. A {@link LinkageError} means the
      * observer cannot run at all and would repeat for every attempt, so it is logged at error level

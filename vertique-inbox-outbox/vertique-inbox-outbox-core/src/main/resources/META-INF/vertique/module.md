@@ -439,9 +439,9 @@ is reported as `UNRESOLVABLE` with `DEFERRED`.
   accessors and do not construct the record or deconstruct it with a record pattern.
 - **No notification** for an attempt whose handler future never settles, whose repository call never
   completes, or that is in flight when the relay stops and never completes.
-- **Threading.** The callback runs where the repository call completes — the relay's event-loop
-  context with the PostgreSQL store adapter. Do not block in it. Several relay instances may call one
-  observer concurrently.
+- **Threading.** The callback runs on the relay's context — the event-loop context of the relay
+  instance that made the attempt — whichever thread completes the repository call. Do not block in
+  it. Several relay instances, each on its own context, may call one observer concurrently.
 
 ---
 

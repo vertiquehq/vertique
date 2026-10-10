@@ -28,9 +28,9 @@ import dev.vertique.core.extension.OrderedExtension;
  *
  * <h2>Threading</h2>
  *
- * <p>The callback runs where the repository call for the attempt completes; with the framework's
- * repository that is the relay's event-loop context. Do not block in it. Several relay instances
- * may call the same observer concurrently.
+ * <p>The callback runs on the relay's context — the event-loop context of the relay verticle
+ * instance that made the attempt — whichever thread completes the repository call. Do not block in
+ * it. Several relay instances, each on its own context, may call the same observer concurrently.
  *
  * <h2>Ordering</h2>
  *
@@ -43,8 +43,8 @@ import dev.vertique.core.extension.OrderedExtension;
 public interface OutboxPublishObserver extends OrderedExtension {
 
     /**
-     * Called once per publish attempt, after the repository call that records the attempt has
-     * settled.
+     * Called once per publish attempt, on the relay's context, after the repository call that
+     * records the attempt has settled.
      *
      * <p>Exceptions thrown by this callback are caught, logged, and swallowed; they do not affect
      * the enclosing operation.
