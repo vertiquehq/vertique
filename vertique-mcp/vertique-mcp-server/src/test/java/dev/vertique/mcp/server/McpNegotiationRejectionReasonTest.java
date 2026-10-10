@@ -274,7 +274,11 @@ class McpNegotiationRejectionReasonTest {
                         headerRows(),
                         Stream.concat(
                                 headerOrderRows(),
-                                Stream.concat(precedenceRows(), unsupportedVersionWithHeaderFaultRows()))));
+                                Stream.concat(
+                                        precedenceRows(),
+                                        Stream.concat(
+                                                unsupportedVersionWithHeaderFaultRows(),
+                                                unsupportedVersionPrecedenceRows())))));
     }
 
     private static Stream<Row> metaRows() {
@@ -454,6 +458,48 @@ class McpNegotiationRejectionReasonTest {
                         MISSING_HEADER));
     }
 
+    /**
+     * What an unsupported body version outranks and what outranks it. Only the {@code
+     * MCP-Protocol-Version} header is compared when the version is unsupported, so an agreeing
+     * version header is an unsupported-version rejection whatever {@code Mcp-Method} or {@code
+     * Mcp-Name} say, while a version-header fault is reported ahead of a reserved field, which a
+     * supported body reports as {@code RESERVED_FIELD}.
+     */
+    private static Stream<Row> unsupportedVersionPrecedenceRows() {
+        String unsupported = "v999.0.0";
+        JsonObject unsupportedMeta = meta().put(META_VERSION, unsupported);
+        return Stream.of(
+                Row.unsupported(
+                        "unsupported version with an agreeing version header outranks a missing Mcp-Method",
+                        discover(unsupportedMeta),
+                        headers("server/discover", null)
+                                .set("MCP-Protocol-Version", unsupported)
+                                .remove("Mcp-Method"),
+                        unsupported),
+                Row.unsupported(
+                        "unsupported version with an agreeing version header outranks a mismatched Mcp-Method",
+                        discover(unsupportedMeta),
+                        headers("server/discover", null)
+                                .set("MCP-Protocol-Version", unsupported)
+                                .set("Mcp-Method", "tools/list"),
+                        unsupported),
+                Row.unsupported(
+                        "unsupported version with an agreeing version header outranks a missing Mcp-Name",
+                        callBody(callParams().put("_meta", unsupportedMeta)),
+                        headers("tools/call", null).set("MCP-Protocol-Version", unsupported),
+                        unsupported),
+                Row.codec(
+                        "unsupported version with a mismatched version header outranks a reserved field",
+                        callBody(callParams().put("_meta", unsupportedMeta).put("requestState", "opaque")),
+                        headers("tools/call", TOOL),
+                        HEADER_MISMATCH),
+                Row.codec(
+                        "a supported version with a mismatched version header reports the reserved field",
+                        callBody(callParams().put("requestState", "opaque")),
+                        headers("tools/call", TOOL).set("MCP-Protocol-Version", "1999-01-01"),
+                        RESERVED_FIELD));
+    }
+
     private static Stream<Row> hostileRows() {
         return Stream.concat(
                 hostileWireRows(),
@@ -493,7 +539,9 @@ class McpNegotiationRejectionReasonTest {
     /** The causes a client can trigger through the dispatcher: the official params schema passes. */
     private static Stream<Row> wireRows() {
         return Stream.concat(
-                Stream.concat(headerOrderRows(), unsupportedVersionWithHeaderFaultRows()),
+                Stream.concat(
+                        headerOrderRows(),
+                        Stream.concat(unsupportedVersionWithHeaderFaultRows(), unsupportedVersionPrecedenceRows())),
                 Stream.of(
                         Row.codec(
                                 "blank protocolVersion",

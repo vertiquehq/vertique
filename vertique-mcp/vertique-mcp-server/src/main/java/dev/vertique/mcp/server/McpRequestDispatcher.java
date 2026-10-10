@@ -154,11 +154,11 @@ final class McpRequestDispatcher {
     private static final int SSE_FRAME_OVERHEAD = SSE_PREFIX.length + SSE_SUFFIX.length;
     private static final int MAX_PROGRESS_TOKEN_BYTES = 4_096;
 
-    private static final int PARSE_ERROR = -32700;
-    private static final int INVALID_REQUEST = -32600;
-    private static final int METHOD_NOT_FOUND = -32601;
-    private static final int INTERNAL_ERROR = -32603;
-    private static final int MISSING_REQUIRED_CLIENT_CAPABILITY = -32021;
+    static final int PARSE_ERROR = -32700;
+    static final int INVALID_REQUEST = -32600;
+    static final int METHOD_NOT_FOUND = -32601;
+    static final int INTERNAL_ERROR = -32603;
+    static final int MISSING_REQUIRED_CLIENT_CAPABILITY = -32021;
     /** Server-defined rate-limit code; distinct from every code the protocol schema defines. */
     static final int RATE_LIMITED = -32010;
     /** Upper bound for a {@code Retry-After} value; keeps an extreme application-supplied duration from overflowing. */
@@ -192,9 +192,11 @@ final class McpRequestDispatcher {
      * a protocol-negotiation failure as (contract §4.7 — "Header/body mismatch is HTTP
      * 400 with -32020"). Mirrors {@link McpProtocolCodec}'s own private constant of the same value —
      * this class already redeclares every other codec-classified code above for the same reason: {@link
-     * #httpStatusFor} needs it locally.
+     * #httpStatusFor} needs it locally. An unsupported protocol version is the one negotiation failure
+     * that is not this code: it is {@link McpProtocolCodec#UNSUPPORTED_PROTOCOL_VERSION} ({@code
+     * -32022}).
      */
-    private static final int NEGOTIATION_MISMATCH = -32020;
+    static final int NEGOTIATION_MISMATCH = -32020;
 
     /**
      * The bounded JSON-RPC server-error-range code a pre-dispatch {@link McpRequestInterceptor}
@@ -202,7 +204,7 @@ final class McpRequestDispatcher {
      * strictly for this stage, distinct from the protocol (-3270x/-3260x) and tool-authorization
      * (-32602) codes above.
      */
-    private static final int INTERCEPTOR_REJECTED = -32001;
+    static final int INTERCEPTOR_REJECTED = -32001;
 
     /**
      * The standard, non-leaking message paired with {@link #INTERCEPTOR_REJECTED}: no interceptor
@@ -1054,9 +1056,9 @@ final class McpRequestDispatcher {
      * <p>After envelope decoding, the complete official per-method {@code params} schema validates
      * before negotiation or application policy. A violation is a JSON-RPC {@code -32602} response over
      * HTTP 400. Only then does header/body and Phase-1 negotiation run; those failures are {@code
-     * -32020}. A negotiated request enters the ordered, fail-closed pre-dispatch request-interceptor
-     * stage (contract §4.7 stage 5) before method dispatch, tool lookup, authorization, or
-     * application input processing.
+     * -32020}, except an unsupported version, which is {@code -32022}. A negotiated request enters
+     * the ordered, fail-closed pre-dispatch request-interceptor stage (contract §4.7 stage 5) before
+     * method dispatch, tool lookup, authorization, or application input processing.
      */
     void dispatch(RoutingContext context) {
         SecurityContextSnapshot security = establishedSecurity();
@@ -1526,7 +1528,8 @@ final class McpRequestDispatcher {
      * Writes the bounded, non-leaking JSON-RPC error response for a failed official-params or
      * negotiation check. Official {@code params} validation produces {@code -32602 Invalid params};
      * header/body disagreement and Phase-1 negotiation policy produce {@code -32020 Header/body
-     * mismatch}. Both occur before negotiation completes, so the terminal event carries no {@code
+     * mismatch}, except an unsupported version, which is {@code -32022 Unsupported protocol version}.
+     * Both occur before negotiation completes, so the terminal event carries no {@code
      * protocolVersion}. This is unlike {@link #writeInterceptorRejection}, which runs only after
      * negotiation has succeeded and therefore does carry the negotiated version. Correlation and
      * security are already established and remain recorded.

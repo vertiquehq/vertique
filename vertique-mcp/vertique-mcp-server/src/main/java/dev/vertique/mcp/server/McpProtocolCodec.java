@@ -52,11 +52,11 @@ final class McpProtocolCodec {
     /** The bounded set of final-2026 request methods this server envelope-validates. */
     private static final Set<String> SUPPORTED_METHODS = Set.of("server/discover", "tools/list", "tools/call");
 
-    private static final int PARSE_ERROR = -32700;
-    private static final int INVALID_REQUEST = -32600;
-    private static final int METHOD_NOT_FOUND = -32601;
-    private static final int INVALID_PARAMS = -32602;
-    private static final int INTERNAL_ERROR = -32603;
+    static final int PARSE_ERROR = -32700;
+    static final int INVALID_REQUEST = -32600;
+    static final int METHOD_NOT_FOUND = -32601;
+    static final int INVALID_PARAMS = -32602;
+    static final int INTERNAL_ERROR = -32603;
 
     /**
      * The implementation-defined JSON-RPC server-error-range code (contract §4.7 — "Header/body
@@ -64,7 +64,7 @@ final class McpProtocolCodec {
      * reserved for HTTP header/body disagreement and Phase-1 negotiation policy, never official
      * per-method schema violations.
      */
-    private static final int NEGOTIATION_MISMATCH = -32020;
+    static final int NEGOTIATION_MISMATCH = -32020;
 
     /**
      * The code of the schema's {@code UnsupportedProtocolVersionError}, which this class's {@link
@@ -291,11 +291,11 @@ final class McpProtocolCodec {
      * {@code MCP-Protocol-Version} header is present, sent once and equal to the unsupported body
      * value, otherwise the header fault ({@code -32020}) is the rejection. The checks run in the
      * order above and the first failing check decides the reason. Each reason is a fixed constant:
-     * it never echoes a header, field name, or value from the request. Through the HTTP dispatcher an absent or non-object {@code
-     * _meta}, a missing or non-string {@code protocolVersion}, and a missing or non-object {@code
-     * clientCapabilities} never reach this method, because {@link #validateOfficialParams} rejects
-     * them as {@code -32602} first; those branches are defensive and keep their reason for a caller
-     * that negotiates without that step.
+     * it never echoes a header, field name, or value from the request. Through the HTTP dispatcher
+     * an absent or non-object {@code _meta}, a missing or non-string {@code protocolVersion}, and a
+     * missing or non-object {@code clientCapabilities} never reach this method, because {@link
+     * #validateOfficialParams} rejects them as {@code -32602} first; those branches are defensive
+     * and keep their reason for a caller that negotiates without that step.
      *
      * @param envelope a successfully decoded envelope, as {@link Decoded#envelope()} carries it
      * @param headers the request's HTTP headers
@@ -318,8 +318,10 @@ final class McpProtocolCodec {
             return NegotiationResult.failed(negotiationError(NegotiationReason.META_SHAPE));
         }
         if (!SUPPORTED_PROTOCOL_VERSIONS.contains(protocolVersionNode.asText())) {
-            // A header that is absent or disagrees with the body is a header fault whatever version the
-            // body names; only a header and body that agree on an unsupported version is reported as one.
+            // An MCP-Protocol-Version header that is absent or disagrees with the body is a header fault
+            // whatever version the body names; only a header and body that agree on an unsupported version
+            // are reported as one. No other header is checked here: Mcp-Method and Mcp-Name are compared
+            // only after the checks below.
             NegotiationReason versionHeaderRejection =
                     headerRejection(headers, HEADER_PROTOCOL_VERSION, protocolVersionNode.asText());
             if (versionHeaderRejection != null) {
@@ -509,9 +511,9 @@ final class McpProtocolCodec {
 
     /**
      * The closed vocabulary of {@code error.data.reason} values a negotiation rejection ({@code
-     * -32020}, or {@code -32022} for an unsupported version) reports. The constant's {@link #name()} is the wire value, so renaming or adding a
-     * constant is a client-visible change. Each constant is fixed text: a reason is never derived from
-     * the request.
+     * -32020}, or {@code -32022} for an unsupported version) reports. The constant's {@link #name()}
+     * is the wire value, so renaming or adding a constant is a client-visible change. Each constant
+     * is fixed text: a reason is never derived from the request.
      */
     enum NegotiationReason {
 

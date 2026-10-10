@@ -465,7 +465,12 @@ validation the checks run in this order: `protocolVersion` bounds, supported ver
 fields, then the headers (`MCP-Protocol-Version`, `Mcp-Method`, `Mcp-Name`). The one exception is
 that an unsupported version is reported as `UNSUPPORTED_VERSION` only when the `MCP-Protocol-Version`
 header is present, sent once and equal to the unsupported body value; when that header is absent or
-disagrees, the request is a `MISSING_HEADER` or `HEADER_MISMATCH` rejection (`-32020`) instead.
+disagrees, the request is a `MISSING_HEADER` or `HEADER_MISMATCH` rejection (`-32020`) instead. Only
+the `MCP-Protocol-Version` header is compared at that point, so an unsupported body whose version
+header agrees is `UNSUPPORTED_VERSION` (`-32022`) even if `Mcp-Method` or `Mcp-Name` is absent or
+wrong, and an unsupported body whose version header is absent or different is a header fault even
+when a reserved field is also present (a supported body with that reserved field reports
+`RESERVED_FIELD`).
 
 For every cause except `UNSUPPORTED_VERSION` the whole `data` object is `{"reason": "<value>"}`. An
 `UNSUPPORTED_VERSION` rejection carries `data.supported` (array of supported versions) and
@@ -481,7 +486,7 @@ messages, `data` members, HTTP statuses and headers are as described in the sect
 | Condition | Previous code | Current code | What to do |
 | --- | --- | --- | --- |
 | An unsupported protocol version | `-32020` | `-32022`, the protocol's *Unsupported protocol version* error (HTTP `400`, `data.supported` and `data.requested`) | Treat `-32022` as "choose one of `error.data.supported` and retry", or switch on `error.data.reason` (`UNSUPPORTED_VERSION`). |
-| A rate-limit rejection: quota exceeded, admission unavailable, or a failed admission decision | `-32022` | `-32010`, a server-defined code | Switch on HTTP `429`/`503` and `Retry-After`, or on `-32010`; stop treating `-32022` as a rate-limit signal. |
+| A rate-limit rejection: quota exceeded, admission unavailable, or a failed admission decision, whether raised by the admission stage or by the handler (a `TooManyRequestsException` or `RateLimitUnavailableException`, including from `@RateLimited`) | `-32022` | `-32010`, a server-defined code | Switch on HTTP `429`/`503` and `Retry-After`, or on `-32010`; stop treating `-32022` as a rate-limit signal. |
 
 Every other negotiation rejection (`MISSING_HEADER`, `HEADER_MISMATCH`, `META_SHAPE`,
 `RESERVED_FIELD`) keeps `-32020`, so a client that matched `-32020` alone to detect an unsupported
@@ -494,7 +499,13 @@ Rate-limit responses previously used `-32022`, which the protocol reserves for a
 protocol version, so the two conditions could not be told apart by code. `-32010` is not defined by
 the protocol and is not used by this server for anything else. The rate-limit HTTP status (`429`, or
 `503` when admission is unavailable), the `Retry-After` and `Cache-Control` headers, the messages and
-the terminal facts are unchanged, so a client that already branches on the HTTP status is unaffected.
+the terminal outcome and error type are unchanged, so a client that already branches on the HTTP
+status is unaffected.
+
+The terminal event's `protocolErrorCode`, and anything derived from it such as audit metadata or
+observer attributes, carries the new values: `-32022` for an unsupported version and `-32010` for a
+rate-limit rejection. Dashboards, alerts or audit filters that match the previous values must be
+updated.
 
 ## Body trace-context extraction
 
@@ -1449,6 +1460,8 @@ The bounded handler-failure mapping is:
 
 | Cause | Writable HTTP result | JSON-RPC | Terminal classification |
 | --- | --- | --- | --- |
+| `TooManyRequestsException`, including one raised by `@RateLimited` | `429`, `Retry-After` when the exception carries one, `Cache-Control: no-store` | `-32010`, `Rate limit exceeded` | `REJECTED` / `RATE_LIMIT` |
+| `RateLimitUnavailableException`, including one raised by `@RateLimited` | `503`, `Cache-Control: no-store` | `-32010`, `Rate limiting unavailable` | `REJECTED` / `RATE_LIMIT` |
 | `ResilienceTimeoutException` | `504`, `Cache-Control: no-store` | `-32603`, `Request timed out` | `FAILED` / `TIMEOUT` |
 | `ResilienceUnavailableException` | `503`, `Cache-Control: no-store` | `-32603`, `Service unavailable` | `FAILED` / `INTERNAL` |
 | `ResiliencePolicyException` or any other cause | existing `500` fallback | existing `-32603`, `Internal error` | existing `FAILED` / `INTERNAL` |
