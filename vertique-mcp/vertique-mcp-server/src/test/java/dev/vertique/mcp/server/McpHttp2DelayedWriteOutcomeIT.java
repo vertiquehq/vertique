@@ -275,22 +275,37 @@ class McpHttp2DelayedWriteOutcomeIT {
     }
 
     private CompletableFuture<Reply> callTool(String toolName, boolean withProgressToken) {
+        return exchange(options(toolName), toolCallBody(toolName, withProgressToken));
+    }
+
+    /**
+     * Sends {@code body} and reads the whole response. The response and its body are observed before
+     * the request is ended, so no body buffer can arrive unobserved; a failed body read keeps the
+     * status the head carried.
+     */
+    private CompletableFuture<Reply> exchange(RequestOptions options, Buffer body) {
         CompletableFuture<Reply> done = new CompletableFuture<>();
-        client.request(options(toolName))
-                .compose(request -> request.send(toolCallBody(toolName, withProgressToken)))
-                .onComplete(sent -> {
-                    if (sent.failed()) {
-                        done.complete(new Reply(-1, null, sent.cause()));
-                        return;
-                    }
-                    HttpClientResponse response = sent.result();
-                    int status = response.statusCode();
-                    response.body()
-                            .onComplete(read -> done.complete(
-                                    read.succeeded()
-                                            ? new Reply(status, read.result().toString(), null)
-                                            : new Reply(status, null, read.cause())));
-                });
+        client.request(options).onComplete(created -> {
+            if (created.failed()) {
+                done.complete(new Reply(-1, null, created.cause()));
+                return;
+            }
+            HttpClientRequest request = created.result();
+            request.response().onComplete(responded -> {
+                if (responded.failed()) {
+                    done.complete(new Reply(-1, null, responded.cause()));
+                    return;
+                }
+                HttpClientResponse response = responded.result();
+                int status = response.statusCode();
+                response.body()
+                        .onComplete(read -> done.complete(
+                                read.succeeded()
+                                        ? new Reply(status, read.result().toString(), null)
+                                        : new Reply(status, null, read.cause())));
+            });
+            request.end(body);
+        });
         return done;
     }
 
@@ -298,7 +313,8 @@ class McpHttp2DelayedWriteOutcomeIT {
     private HttpClientRequest openToolCall(String toolName) throws Exception {
         HttpClientRequest request = await(client.request(options(toolName)));
         // The response is intentionally never read: the test aborts the request or connection.
-        request.send(toolCallBody(toolName, false)).onComplete(ignored -> {});
+        request.response().onComplete(ignored -> {});
+        request.end(toolCallBody(toolName, false));
         return request;
     }
 
