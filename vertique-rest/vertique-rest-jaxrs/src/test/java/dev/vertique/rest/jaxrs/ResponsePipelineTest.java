@@ -245,6 +245,17 @@ class ResponsePipelineTest {
     }
 
     @Test
+    @DisplayName("Should return 406 when a quoted comma precedes q=0 on the only produced media type")
+    void shouldReturn406WhenQuotedCommaPrecedesQZero() {
+        when(ctx.get(ResourceMethodInvoker.CTX_KEY_PRODUCES)).thenReturn(List.of("application/json"));
+        when(ctx.request().getHeader("Accept")).thenReturn("application/json;profile=\"a,b\";q=0");
+
+        pipeline.handle(ctx, Map.of("key", "value"));
+
+        verify(serializer).serialize(eq(ctx), argThat(r -> r.getStatus() == 406));
+    }
+
+    @Test
     @DisplayName("Should negotiate Accept header and return 200 with matching content type")
     void shouldNegotiateAcceptHeaderSuccessfully() {
         when(ctx.get(ResourceMethodInvoker.CTX_KEY_PRODUCES))

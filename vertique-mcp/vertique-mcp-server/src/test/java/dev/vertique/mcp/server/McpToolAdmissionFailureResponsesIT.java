@@ -207,7 +207,7 @@ class McpToolAdmissionFailureResponsesIT {
         assertThat(response.statusCode()).isEqualTo(503);
         assertThat(response.getHeader("Cache-Control")).isEqualTo("no-store");
         JsonObject error = new JsonObject(response.bodyAsString()).getJsonObject("error");
-        assertThat(error.getInteger("code")).isEqualTo(-32022);
+        assertThat(error.getInteger("code")).isEqualTo(-32010);
         assertThat(error.getString("message")).isEqualTo("Rate limiting unavailable");
         assertThat(response.bodyAsString()).doesNotContain(FAILURE_MESSAGE, POLICY_NAME);
     }

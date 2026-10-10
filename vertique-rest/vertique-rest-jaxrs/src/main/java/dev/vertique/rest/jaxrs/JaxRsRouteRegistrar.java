@@ -734,42 +734,12 @@ public class JaxRsRouteRegistrar {
             // failure handler with no KEY_RESOLVED_BODY_MAPPER stashed, so the boundary+global default
             // would be applied to the error body instead of the matched route's own decision.
             //
-            // A PER-ROUTE failure handler is the only mechanism that reliably identifies the matched
-            // route inside a failure: a router-level catch-all failure handler observes its own
-            // catch-all route, not the matched route, as ctx.currentRoute(), whereas Vert.x
-            // dispatches a route's failure to that SAME route's per-route failure handler (verified by
-            // FailureHandlerRouteIdentityCharacterizationIT). This handler runs first, applies the
-            // route's build-time decision, marks the decision as taken, and ctx.next()s to the existing
-            // router-level handleFailure, which then serializes the error body (chaining verified by
-            // FailureHandlerChainProbeIT). The decision is exactly resolvedBodyMapper resolved at (a-2):
-            // a non-null profile mapper => stash it (the encoder writes via the profile); a null
-            // process-codec decision => stash nothing (the encoder falls back to Json.encode, which runs
-            // that same mapper). Either way the
-            // KEY_ERROR_BODY_MAPPER_DECIDED marker tells handleFailure a matched route already decided,
-            // so it must NOT overlay the boundary+global default — preserving a process-codec choice.
-            final ObjectMapper errorBodyDecision = resolvedBodyMapper;
-            route.failureHandler(ctx -> {
-                // FIRST-DECISION-WINS idempotency guard. When two operation routes pattern-match the
-                // same request path (a static route plus an overlapping {param} route, e.g.
-                // /users/me + /users/{id}), Vert.x dispatches the failure through EVERY matching
-                // route's failure handler (the ctx.next() chaining proven by
-                // FailureHandlerChainProbeIT). Routes are registered MOST-SPECIFIC-FIRST, so the first
-                // handler to run belongs to the matched route; once it sets the marker, subsequent
-                // overlapping routes' handlers must pass through untouched. Without this short-circuit a
-                // less-specific PROFILED route's handler would observe KEY_RESOLVED_BODY_MAPPER == null
-                // (left by a more-specific PROCESS-CODEC route, which stashes nothing) and stash ITS
-                // profile mapper, serializing the error body via the wrong route's profile and breaking
-                // the process-codec route's invariant.
-                if (Boolean.TRUE.equals(ctx.get(BoundRequest.KEY_ERROR_BODY_MAPPER_DECIDED))) {
-                    ctx.next();
-                    return;
-                }
-                if (errorBodyDecision != null && ctx.get(BoundRequest.KEY_RESOLVED_BODY_MAPPER) == null) {
-                    ctx.put(BoundRequest.KEY_RESOLVED_BODY_MAPPER, errorBodyDecision);
-                }
-                ctx.put(BoundRequest.KEY_ERROR_BODY_MAPPER_DECIDED, Boolean.TRUE);
-                ctx.next();
-            });
+            // A PER-ROUTE failure handler is the only mechanism that reliably reaches the matched
+            // route's decision: a router-level catch-all failure handler observes the catch-all route,
+            // which is non-null but carries no operation metadata, as ctx.currentRoute(). The decision
+            // is exactly resolvedBodyMapper resolved at (a-2); see errorBodyDecisionHandler for how the
+            // matched route is told apart from the other routes whose failure handlers also run.
+            route.failureHandler(errorBodyDecisionHandler(descriptor, resolvedBodyMapper));
         }
 
         // Auth-absent check: security annotations (or a scoped @SecurityRequirement) without auth
@@ -1083,6 +1053,52 @@ public class JaxRsRouteRegistrar {
                 || type == EntityPart.class
                 || componentType == FileUpload.class
                 || componentType == EntityPart.class;
+    }
+
+    /**
+     * Builds the per-route failure handler that applies one operation's error-body decision.
+     *
+     * <p>After {@code ctx.fail(...)} Vert.x restarts iteration from the first route and runs the
+     * failure handler of <em>every</em> route whose path and method match, in route order, not only
+     * the route that failed. The handler therefore acts only when its own {@code operation} is the
+     * one {@link RequestCompletionRecorder} recorded for the request; any other route's handler passes
+     * through untouched. This holds whatever the registration order of overlapping routes, such as a
+     * route added by another mount or a customizer ahead of the failing one.
+     *
+     * <p>When no operation was recorded (the completion state is not mounted, or the request was
+     * rerouted), the handler falls back to the first-decision-wins marker: the first handler to run
+     * decides and later ones pass through. That is correct only while the matched route's handler runs
+     * first, which holds for routes registered most-specific-first.
+     *
+     * <p>The decision is {@code mapper}: a non-null profile mapper is stashed so the encoder writes
+     * through the profile; a {@code null} process-codec decision stashes nothing, so the encoder falls
+     * back to {@code Json.encode}, which runs that same mapper. Either way the decided marker tells
+     * {@code JaxRsRouterMount}'s router-level failure handler that a matched route already decided, so
+     * it must not overlay the boundary+global default.
+     *
+     * @param operation the operation the handler is installed for; compared by identity with the
+     *                  recorded one
+     * @param mapper    the route's resolved profile mapper, or {@code null} for the process codec's
+     * @return the failure handler
+     */
+    static Handler<RoutingContext> errorBodyDecisionHandler(
+            RestOperationDescriptor operation, @Nullable ObjectMapper mapper) {
+        return ctx -> {
+            RestOperationDescriptor matched = RequestCompletionRecorder.recordedOperation(ctx);
+            if (matched != null && matched != operation) {
+                ctx.next();
+                return;
+            }
+            if (Boolean.TRUE.equals(ctx.get(BoundRequest.KEY_ERROR_BODY_MAPPER_DECIDED))) {
+                ctx.next();
+                return;
+            }
+            if (mapper != null && ctx.get(BoundRequest.KEY_RESOLVED_BODY_MAPPER) == null) {
+                ctx.put(BoundRequest.KEY_RESOLVED_BODY_MAPPER, mapper);
+            }
+            ctx.put(BoundRequest.KEY_ERROR_BODY_MAPPER_DECIDED, Boolean.TRUE);
+            ctx.next();
+        };
     }
 
     /**

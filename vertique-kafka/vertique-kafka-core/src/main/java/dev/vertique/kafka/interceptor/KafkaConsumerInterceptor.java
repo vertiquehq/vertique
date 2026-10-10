@@ -17,6 +17,26 @@ import io.vertx.core.Future;
  *   <li>{@link #onRecord} — called after deserialization, before dispatch</li>
  *   <li>{@link #onSuccess} — called after successful dispatch</li>
  *   <li>{@link #onError} — called on any dispatch failure</li>
+ *   <li>{@link #onRecordCompleted} — called exactly once for every record the consumer received,
+ *       when its disposition is final. An asynchronous interceptor or handler future that never
+ *       completes, or a throw from inside an asynchronous continuation, leaves the record without a
+ *       completion.</li>
+ * </ul>
+ *
+ * <p>An {@link Exception}, {@link LinkageError} or {@link AssertionError} thrown by a sync observer
+ * is caught, logged and swallowed. It stops neither the remaining interceptors nor the record. A
+ * {@link LinkageError} means the callback cannot run at all, so it is logged at error level once per
+ * interceptor class and callback, not on every record.
+ *
+ * <h3>Which observer for which need</h3>
+ * <ul>
+ *   <li>{@link #onRecord} sees the <em>deserialized value</em> of records that reached dispatch. It
+ *       never sees a record that was filtered before deserialization, matched no route or failed
+ *       to deserialize, and it runs before the outcome is known.</li>
+ *   <li>{@link #onRecordCompleted} sees <em>every</em> record, its final
+ *       {@link KafkaTerminalOutcome} and its raw form (key, headers and value bytes as received).
+ *       Use it for audit evidence, per-outcome metrics and anything that must account for each
+ *       record exactly once.</li>
  * </ul>
  *
  * <h3>Async handlers (can affect outcome)</h3>
@@ -37,6 +57,7 @@ import io.vertx.core.Future;
  * <ul>
  *   <li>Content-based filtering — {@code beforeDispatch} with {@code ctx.withFiltered(true)}</li>
  *   <li>Structured logging / metrics — {@code onRecord} + {@code onSuccess} + {@code onError}</li>
+ *   <li>Outcome metrics / evidence capture for every record — {@code onRecordCompleted}</li>
  *   <li>Distributed tracing — {@code beforeDispatch} (add trace attributes) + {@code afterDispatch}</li>
  *   <li>Ignore specific errors — {@code recoverError} (return succeeded for handled errors)</li>
  *   <li>Non-blocking retry topics — {@code recoverError} (publish to retry topic, return succeeded)</li>
@@ -53,19 +74,22 @@ public interface KafkaConsumerInterceptor extends OrderedExtension {
      * async handlers run. Suitable for structured logging or metrics.
      *
      * <p>Exceptions thrown by this callback are caught, logged, and swallowed; they do not affect the
-     * enclosing operation. Use {@link #beforeDispatch} to modify the
-     * context or filter the record.
+     * enclosing operation. A {@link LinkageError} or {@link AssertionError} is caught and swallowed the
+     * same way; a {@link LinkageError} is logged once per interceptor class and callback rather than
+     * on every record. Use {@link #beforeDispatch} to modify the context or filter the record.
      *
      * @param ctx the dispatch context (read-only; use {@link #beforeDispatch} to modify)
      */
     default void onRecord(KafkaDispatchContext<?> ctx) {}
 
     /**
-     * Synchronous observer called after successful dispatch. Suitable for success metrics,
-     * evidence capture, or structured logging.
+     * Synchronous observer called after successful dispatch. Suitable for success metrics or
+     * structured logging.
      *
      * <p>Exceptions thrown by this callback are caught, logged, and swallowed; they do not affect the
-     * enclosing operation.
+     * enclosing operation. A {@link LinkageError} or {@link AssertionError} is caught and swallowed the
+     * same way; a {@link LinkageError} is logged once per interceptor class and callback rather than
+     * on every record.
      *
      * @param ctx the dispatch context
      */
@@ -76,12 +100,59 @@ public interface KafkaConsumerInterceptor extends OrderedExtension {
      * alerting. Cannot affect the error handling outcome — use {@link #recoverError} for that.
      *
      * <p>Exceptions thrown by this callback are caught, logged, and swallowed; they do not affect the
-     * enclosing operation.
+     * enclosing operation. A {@link LinkageError} or {@link AssertionError} is caught and swallowed the
+     * same way; a {@link LinkageError} is logged once per interceptor class and callback rather than
+     * on every record.
      *
      * @param ctx the dispatch context
      * @param error the dispatch failure
      */
     default void onError(KafkaDispatchContext<?> ctx, Throwable error) {}
+
+    /**
+     * Synchronous observer called exactly once per record when its disposition is final, after all
+     * asynchronous work (dead-letter publish, seek, recovery, {@link #afterDispatch}) has settled.
+     *
+     * <p>It is called for every record the consumer received, on every path: filtered before
+     * deserialization, rejected by a filter that throws, matching no route, failing to deserialize,
+     * filtered or failed by {@link #beforeDispatch}, dispatched successfully, recovered by
+     * {@link #recoverError}, or handed to the error strategy. A record that is redelivered for a
+     * retry completes once per delivery, with a higher
+     * {@link KafkaConsumerRecordIdentity#retryCount()} each time. An asynchronous interceptor or
+     * handler future that never completes, or a throw from inside an asynchronous continuation,
+     * leaves the record without a completion.
+     *
+     * <p><strong>Observer only.</strong> The decision is already made when this runs. An
+     * implementation cannot change filtering, dispatch, commit, retry or dead-lettering, and must
+     * not try to by acting on the consumer.
+     *
+     * <p><strong>Threading.</strong> This callback may run on any thread, and concurrently for
+     * different records: it runs on whichever thread settles the record's last future, which can be
+     * the consumer's context, a handler's or interceptor's thread, or a producer's context on a
+     * dead-letter path. Implementations must be thread-safe.
+     *
+     * <p><strong>The record.</strong> {@code record} is built by the consumer before any filter,
+     * deserializer or interceptor runs, so its identity, key and headers are the record's own
+     * whatever a {@link #beforeDispatch} implementation returned. {@code event.identity()} and
+     * {@code record.identity()} are the same instance. {@link KafkaConsumerRecordView#headers()}
+     * holds every header in wire order, with repeated keys and binary values intact, and is the
+     * collection that filters, deserializers, the dispatch context and handlers are given; its
+     * {@link dev.vertique.kafka.KafkaRecordHeaders#asMap() asMap()} is a lossy text map.
+     * {@link KafkaConsumerRecordView#value()} is
+     * the array the broker delivered, uncopied; it is not a snapshot, and an in-place edit by a
+     * deserializer or handler is visible through it.
+     *
+     * <p>Exceptions thrown by this callback are caught, logged, and swallowed; they do not affect the
+     * enclosing operation. A {@link LinkageError} or {@link AssertionError} is caught and swallowed the
+     * same way; a {@link LinkageError} is logged once per interceptor class and callback rather than
+     * on every record. The record, later interceptors and later records are unaffected.
+     *
+     * @param event  the completion facts: the record's identity and final outcome; carries no
+     *               payload, so it can be logged as is
+     * @param record the framework-owned view of the record as received: identity, key, headers
+     *               and raw value
+     */
+    default void onRecordCompleted(KafkaConsumerCompletedEvent event, KafkaConsumerRecordView record) {}
 
     // --- Async handlers ---
 

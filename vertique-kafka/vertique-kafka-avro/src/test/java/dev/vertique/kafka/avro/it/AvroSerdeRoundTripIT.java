@@ -11,6 +11,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import dev.vertique.config.parser.DefaultConfigMapper;
 import dev.vertique.config.parser.DefaultConfigParser;
 import dev.vertique.kafka.DeserializationException;
+import dev.vertique.kafka.KafkaRecordHeaders;
 import dev.vertique.kafka.avro.ApicurioAvroSerdeProvider;
 import dev.vertique.kafka.config.KafkaConfig;
 import dev.vertique.kafka.serialization.KafkaDeserializer;
@@ -21,7 +22,6 @@ import io.vertx.core.json.JsonObject;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
-import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
@@ -103,7 +103,7 @@ public class AvroSerdeRoundTripIT {
                 .build();
 
         KafkaSerializer<OrderCreated> serializer = serdeRegistry.serializer("avro", OrderCreated.class, endpointConfig);
-        byte[] wire = serializer.serialize(event, topic, Map.of());
+        byte[] wire = serializer.serialize(event, topic, KafkaRecordHeaders.empty());
 
         // Confluent-wire framing: magic byte 0x00 + 4-byte schema id in the payload.
         assertTrue(wire.length >= 5, "Avro wire bytes must carry a 5-byte header");
@@ -115,7 +115,7 @@ public class AvroSerdeRoundTripIT {
 
         KafkaDeserializer<OrderCreated> deserializer =
                 serdeRegistry.deserializer("avro", OrderCreated.class, endpointConfig);
-        OrderCreated decoded = deserializer.deserialize(consumed, topic, Map.of());
+        OrderCreated decoded = deserializer.deserialize(consumed, topic, KafkaRecordHeaders.empty());
         assertEquals(event, decoded, "Avro round-trip must preserve the record");
     }
 
@@ -135,13 +135,13 @@ public class AvroSerdeRoundTripIT {
         String format = serdeRegistry.resolveFormat(OrderShipped.class, new JsonObject(), null);
         byte[] wire = serdeRegistry
                 .serializer(format, OrderShipped.class, endpointConfig)
-                .serialize(event, topic, Map.of());
+                .serialize(event, topic, KafkaRecordHeaders.empty());
         produce(topic, "B-2", wire);
 
         byte[] consumed = consumeOne(topic, "it-avro-autodetect");
         OrderShipped decoded = serdeRegistry
                 .deserializer(format, OrderShipped.class, endpointConfig)
-                .deserialize(consumed, topic, Map.of());
+                .deserialize(consumed, topic, KafkaRecordHeaders.empty());
         assertEquals(event, decoded);
     }
 
@@ -158,13 +158,14 @@ public class AvroSerdeRoundTripIT {
                 .build();
         byte[] wire = serdeRegistry
                 .serializer("avro", OrderShipped.class, endpointConfig)
-                .serialize(shipped, topic, Map.of());
+                .serialize(shipped, topic, KafkaRecordHeaders.empty());
         produce(topic, "C-3", wire);
         byte[] consumed = consumeOne(topic, "it-avro-router");
 
         // Type-agnostic: no Class<V> supplied — the wire schema id resolves the concrete record.
-        Object record =
-                serdeRegistry.routingDeserializer("avro", endpointConfig).deserialize(consumed, topic, Map.of());
+        Object record = serdeRegistry
+                .routingDeserializer("avro", endpointConfig)
+                .deserialize(consumed, topic, KafkaRecordHeaders.empty());
         assertNotNull(record);
         assertEquals("shipped", serdeRegistry.matchValue("avro", record, "eventType"));
         assertEquals("C-3", serdeRegistry.matchValue("avro", record, "orderId"));
@@ -184,7 +185,7 @@ public class AvroSerdeRoundTripIT {
                 .build();
         byte[] wire = serdeRegistry
                 .serializer("avro", OrderCreated.class, endpointConfig)
-                .serialize(event, sourceTopic, Map.of());
+                .serialize(event, sourceTopic, KafkaRecordHeaders.empty());
 
         // The error handler republishes the original raw bytes unchanged to the DLQ topic.
         produce(dlqTopic, "D-4", wire);
@@ -193,7 +194,7 @@ public class AvroSerdeRoundTripIT {
 
         OrderCreated decoded = serdeRegistry
                 .deserializer("avro", OrderCreated.class, endpointConfig)
-                .deserialize(fromDlq, dlqTopic, Map.of());
+                .deserialize(fromDlq, dlqTopic, KafkaRecordHeaders.empty());
         assertEquals(event, decoded);
     }
 
@@ -210,7 +211,7 @@ public class AvroSerdeRoundTripIT {
                 .build();
         byte[] wire = serdeRegistry
                 .serializer("avro", OrderCreated.class, endpointConfig)
-                .serialize(event, topic, Map.of());
+                .serialize(event, topic, KafkaRecordHeaders.empty());
 
         // The framework carries durable/correlation context in record headers (Avro changes only the
         // value bytes — ADR-0074). Produce with a reserved-style header and assert it survives.
@@ -229,7 +230,7 @@ public class AvroSerdeRoundTripIT {
 
         OrderCreated decoded = serdeRegistry
                 .deserializer("avro", OrderCreated.class, endpointConfig)
-                .deserialize(record.value(), topic, Map.of());
+                .deserialize(record.value(), topic, KafkaRecordHeaders.empty());
         assertEquals(event, decoded, "value still decodes after carrying context headers");
     }
 
@@ -246,7 +247,7 @@ public class AvroSerdeRoundTripIT {
                 .build();
         byte[] wire = serdeRegistry
                 .serializer("avro", OrderCreated.class, endpointConfig)
-                .serialize(event, topic, Map.of());
+                .serialize(event, topic, KafkaRecordHeaders.empty());
 
         JsonObject badConfig = new JsonObject()
                 .put("schemaRegistry", schemaRegistry("http://localhost:9/apis/registry/v3"))
@@ -254,7 +255,9 @@ public class AvroSerdeRoundTripIT {
         KafkaDeserializer<OrderCreated> badDeserializer =
                 serdeRegistry.deserializer("avro", OrderCreated.class, badConfig);
 
-        assertThrows(DeserializationException.class, () -> badDeserializer.deserialize(wire, topic, Map.of()));
+        assertThrows(
+                DeserializationException.class,
+                () -> badDeserializer.deserialize(wire, topic, KafkaRecordHeaders.empty()));
     }
 
     // --- Raw Kafka helpers ---

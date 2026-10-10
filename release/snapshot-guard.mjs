@@ -20,7 +20,7 @@
  *   node release/snapshot-guard.mjs --github-output >> "$GITHUB_OUTPUT"
  */
 
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -127,7 +127,25 @@ export function declaredVersion() {
 // CLI
 // ---------------------------------------------------------------------------
 
-if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url))) {
+/**
+ * True when this module is the process entry point.
+ *
+ * `import.meta.url` is already symlink-resolved while `process.argv[1]` is the
+ * path as invoked, so comparing them unresolved makes the CLI silently not run
+ * when the script is reached through a symlinked path (a macOS temp directory,
+ * or a linked checkout). Both sides are resolved to their real paths first.
+ */
+function isEntryPoint() {
+  if (!process.argv[1]) return false;
+  const self = fileURLToPath(import.meta.url);
+  try {
+    return realpathSync(process.argv[1]) === realpathSync(self);
+  } catch {
+    return path.resolve(process.argv[1]) === path.resolve(self);
+  }
+}
+
+if (isEntryPoint()) {
   const readEvent = () => {
     const eventPath = process.env.GITHUB_EVENT_PATH;
     if (!eventPath || !existsSync(eventPath)) return {};

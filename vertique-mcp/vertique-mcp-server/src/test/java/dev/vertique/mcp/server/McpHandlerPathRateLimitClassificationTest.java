@@ -88,7 +88,7 @@ class McpHandlerPathRateLimitClassificationTest {
 
     private static final String PROTOCOL_VERSION = "2026-07-28";
     private static final String KNOWN_TOOL = "handler-path-classification-fixture";
-    private static final int RATE_LIMIT_CODE = -32022;
+    private static final int RATE_LIMIT_CODE = -32010;
     private static final int INTERNAL_ERROR_CODE = -32603;
 
     private Vertx vertx;

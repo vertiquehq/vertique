@@ -190,7 +190,7 @@ Utility in `dev.vertique.core.context` (shipped in `dev.vertique:vertique-core`)
 | `mergeForEgress(Map<String,String> appHeaders, DurableMetadata context)` | Validates that no application header uses the `vertique-` prefix, then overlays the projected context headers |
 | `isReservedHeader(String)` | `true` when the name starts with `vertique-` |
 
-`mergeForEgress` is the single enforcement point for the reserved prefix, so application headers and framework context headers can never collide. Build outbound headers through it rather than merging maps by hand.
+Application headers and framework context headers can never collide, because every carrier keeps the reserved prefix for the framework in one of two ways. A carrier whose headers are a text map builds its outbound headers through `mergeForEgress` rather than merging maps by hand. A carrier that must keep header order and repeated keys cannot go through a map: it rejects an application header for which `isReservedHeader` is `true`, then appends the `toHeaders` result itself. Kafka egress does the latter.
 
 ### InboundExecutionContextScope
 

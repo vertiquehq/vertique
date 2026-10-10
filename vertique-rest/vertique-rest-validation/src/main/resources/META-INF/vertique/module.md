@@ -31,8 +31,11 @@ under `http.uploadsDirectory`. Ingress body size is bounded by `http.maxBodySize
 and by `http.maxMultipartBodySizeBytes` for `multipart/form-data` (effective limit is the tighter of
 the two; 413 fail-closed, including Content-Length early reject before spool when present). Part
 count is bounded separately at ingress by `http.maxFormFields`. Declared
-media types are matched directionally; the configured subtype may be a wildcard, while a missing,
-malformed, or wildcard client declaration fails closed. Text form fields are not file uploads and
+media types are matched directionally, with type and subtype compared without regard to case or the
+JVM's default locale; the configured subtype may be a wildcard, while a missing, malformed, or
+wildcard client declaration fails closed. A declared allowed type that cannot be read as a media type
+fails router construction with a `RestConfigurationException` naming it and the file part, rather
+than surfacing on a request. Text form fields are not file uploads and
 are exempt from aggregate file constraints; their ordinary form schema validation still applies.
 
 **Deep file verification** is optional. `FileContentVerifier` implementations are Dagger
@@ -637,7 +640,13 @@ A verifier that does not apply returns an already-completed
 check by adding `MagicBytesVerifierModule.class` to their component. Its bounded catalog recognizes
 common image, document, archive/compression, audio/video container, WebAssembly, and web-font
 signatures within the first 12 bytes. It is a spoofing heuristic, not malware or structural format
-validation; unmapped declared types are accepted without I/O.
+validation; unmapped declared types are accepted without I/O. A declared type that is absent or
+blank has nothing to verify and is accepted; one that is present but cannot be parsed as a media
+type (an unterminated quote, no `/`) is rejected without I/O with type `fileContentTypeMalformed`
+and detail `declared content type is not a valid media type`, so an unreadable declaration is never a
+way to skip the signature check. A `q` or other parameter on a mapped type does not affect the
+check: `image/png; q=abc` is verified as `image/png`. The catalog lookup lowercases the declared
+type with `Locale.ROOT`, so `IMAGE/PNG` is verified as `image/png` under any default locale.
 
 ---
 

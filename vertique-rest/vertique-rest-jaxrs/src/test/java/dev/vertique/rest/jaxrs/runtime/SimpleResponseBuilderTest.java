@@ -470,6 +470,24 @@ class SimpleResponseBuilderTest {
     }
 
     @Test
+    @DisplayName("getLinks keeps commas and semicolons inside quoted parameter values")
+    void shouldKeepQuotedPunctuationInCombinedLinkHeader() {
+        Response r = Response.ok()
+                .header("Link", "</a>; title=\"x, y; z\"; rel=\"next\", </b>; rel=\"prev\"")
+                .build();
+        assertEquals(2, r.getLinks().size());
+        assertEquals("x, y; z", r.getLink("next").getTitle());
+        assertEquals(URI.create("/b"), r.getLink("prev").getUri());
+    }
+
+    @Test
+    @DisplayName("getLinks skips a link value with an unterminated quoted string")
+    void shouldSkipLinkValueWithUnterminatedQuote() {
+        Response r = Response.ok().header("Link", "</a>; title=\"").build();
+        assertTrue(r.getLinks().isEmpty());
+    }
+
+    @Test
     @DisplayName("variants(Variant...) throws UnsupportedOperationException")
     void shouldThrowOnVariantsVarargs() {
         assertThrows(UnsupportedOperationException.class, () -> Response.ok().variants(new Variant[0]));

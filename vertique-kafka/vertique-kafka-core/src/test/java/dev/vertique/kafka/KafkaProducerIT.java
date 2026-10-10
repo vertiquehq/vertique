@@ -61,7 +61,7 @@ public class KafkaProducerIT {
      * <ol>
      *   <li>Single-parameter (value only)</li>
      *   <li>Key + value (two parameters, first is {@link String})</li>
-     *   <li>Value + headers (two parameters, second is {@link Map})</li>
+     *   <li>Value + headers (two parameters, second is {@link KafkaRecordHeaders})</li>
      * </ol>
      */
     @KafkaProducer
@@ -94,7 +94,7 @@ public class KafkaProducerIT {
          * @return a future of the record metadata
          */
         @Topic("it.orders.headers")
-        Future<RecordMetadata> publishOrderWithHeaders(OrderEvent event, Map<String, String> headers);
+        Future<RecordMetadata> publishOrderWithHeaders(OrderEvent event, KafkaRecordHeaders headers);
     }
 
     // --- Lifecycle ---
@@ -190,7 +190,8 @@ public class KafkaProducerIT {
         OrderProducer producer = factory.create(OrderProducer.class);
         OrderEvent event = new OrderEvent("ORD-003", "DELIVERED");
 
-        RecordMetadata meta = producer.publishOrderWithHeaders(event, Map.of("x-source", "it-test", "x-version", "1"))
+        RecordMetadata meta = producer.publishOrderWithHeaders(
+                        event, KafkaRecordHeaders.of(Map.of("x-source", "it-test", "x-version", "1")))
                 .toCompletionStage()
                 .toCompletableFuture()
                 .get();

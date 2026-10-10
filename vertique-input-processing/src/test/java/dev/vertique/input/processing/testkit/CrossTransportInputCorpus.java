@@ -8,21 +8,21 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * The published cross-transport input-processing fixture corpus (R03, finding #425).
+ * The cross-transport input-processing fixture corpus shared by the REST and MCP parity tests.
  *
- * <p>T015's TP-002 cited a "published INP-001 cross-transport fixture set" that did not exist; every
- * transport's parity claim rested on a fixture set it authored itself. This class is the corpus that
- * closes that gap: one raw input tree, shaped for {@link CrossTransportFixtureLevel1}, and its expected
- * processed result, computed by actually invoking {@link CrossTransportUppercaseSanitizer#transform}
- * rather than restated as an independent literal.
+ * <p>Without a shared corpus, every transport's parity claim rests on a fixture set it authored
+ * itself. This class closes that gap: one raw input tree, shaped for {@link
+ * CrossTransportFixtureLevel1}, and its expected processed result, computed by actually invoking
+ * {@link CrossTransportUppercaseSanitizer#transform} rather than restated as an independent literal.
  *
- * <p>Published from {@code vertique-input-processing} as a test-jar (see that module's {@code pom.xml})
+ * <p>Attached from {@code vertique-input-processing} as a test-jar (see that module's {@code pom.xml})
  * and consumed at test scope by {@code vertique-rest-jaxrs} and {@code vertique-mcp-server}, mirroring
- * the existing {@code vertique-config-core} / {@code vertique-config-aws-ssm} test-jar precedent. Both
- * consumers depend on this exact published {@code dev.vertique:vertique-input-processing:test-jar}
- * coordinate and reference this exact class — there is no second, independently authored copy of this
- * corpus anywhere in the repository. A corpus authored twice would prove nothing about cross-transport
- * parity; this one is authored once and read by both.
+ * the {@code vertique-config-core} test-jar precedent. It is an internal test fixture shared in-reactor
+ * between sibling modules, not a published artifact. Both consumers depend on this exact {@code
+ * dev.vertique:vertique-input-processing:test-jar} reactor coordinate and reference this exact class —
+ * there is no second, independently authored copy of this corpus anywhere in the repository. A corpus
+ * authored twice would prove nothing about cross-transport parity; this one is authored once and read
+ * by both.
  */
 public final class CrossTransportInputCorpus {
 

@@ -728,7 +728,7 @@ class KafkaConsumerRegistrarTest {
                 Class<V> type, JsonObject endpointConfig) {
             return new dev.vertique.kafka.serialization.KafkaDeserializer<>() {
                 @Override
-                public V deserialize(byte[] data, String topic, java.util.Map<String, String> headers) {
+                public V deserialize(byte[] data, String topic, KafkaRecordHeaders headers) {
                     return (V) new AvroPayload(new String(data, java.nio.charset.StandardCharsets.UTF_8));
                 }
 
@@ -821,7 +821,7 @@ class KafkaConsumerRegistrarTest {
                 Class<V> type, JsonObject endpointConfig) {
             return new dev.vertique.kafka.serialization.KafkaDeserializer<>() {
                 @Override
-                public V deserialize(byte[] data, String topic, java.util.Map<String, String> headers) {
+                public V deserialize(byte[] data, String topic, KafkaRecordHeaders headers) {
                     return (V) new AvroPayload(new String(data, java.nio.charset.StandardCharsets.UTF_8));
                 }
 

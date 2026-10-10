@@ -4,6 +4,7 @@
 package dev.vertique.kafka.interceptor;
 
 import dev.vertique.core.payload.PayloadSource;
+import dev.vertique.kafka.KafkaRecordHeaders;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
@@ -32,7 +33,8 @@ import java.util.Map;
  * @param rawEvidence a neutral, no-eager-copy view of the original wire bytes;
  *     {@link dev.vertique.core.payload.PayloadKind#BUFFERED} for records that carry a value,
  *     {@link dev.vertique.core.payload.PayloadKind#ABSENT} for tombstone records (null value)
- * @param headers the Kafka headers
+ * @param headers the Kafka headers as received, in wire order, with repeated keys, {@code null}
+ *     values and binary values; immutable; never {@code null}
  * @param timestamp the message timestamp (epoch milliseconds)
  * @param retryCount the number of times this record has been retried (0-based; 0 means first
  *     attempt). Populated from the Kafka-native retry tracking map when
@@ -49,15 +51,17 @@ public record KafkaDispatchContext<V>(
         String key,
         V value,
         PayloadSource rawEvidence,
-        Map<String, String> headers,
+        KafkaRecordHeaders headers,
         long timestamp,
         int retryCount,
         boolean filtered,
         Map<String, Object> attributes) {
 
     /**
-     * Defensive copies of headers and attributes in compact constructor. {@link PayloadSource} is a
-     * lazy view that holds no mutable state of its own — no defensive copy is needed.
+     * Wraps the attributes as an unmodifiable map and replaces {@code null} headers with
+     * {@link KafkaRecordHeaders#empty()}. The headers are immutable, so they are held as given.
+     * {@link PayloadSource} is a lazy view that holds no mutable state of its own — no defensive
+     * copy is needed.
      *
      * @param consumerName the Kafka consumer binding name
      * @param topic the source topic
@@ -66,14 +70,14 @@ public record KafkaDispatchContext<V>(
      * @param key the message key, or {@code null}
      * @param value the deserialized value
      * @param rawEvidence a neutral, no-eager-copy view of the original wire bytes; ABSENT for tombstones
-     * @param headers the Kafka headers
+     * @param headers the Kafka headers, or {@code null} for none
      * @param timestamp the message timestamp (epoch milliseconds)
      * @param retryCount the number of times this record has been retried (0-based)
      * @param filtered if {@code true}, the record will be skipped (not dispatched)
      * @param attributes mutable attribute map for interceptor communication
      */
     public KafkaDispatchContext {
-        headers = headers != null ? Collections.unmodifiableMap(headers) : Collections.emptyMap();
+        headers = headers != null ? headers : KafkaRecordHeaders.empty();
         attributes = attributes != null ? Collections.unmodifiableMap(attributes) : Collections.emptyMap();
     }
 

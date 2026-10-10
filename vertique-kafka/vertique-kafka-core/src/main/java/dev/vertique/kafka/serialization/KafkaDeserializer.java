@@ -4,13 +4,18 @@
 package dev.vertique.kafka.serialization;
 
 import dev.vertique.kafka.DeserializationException;
-import java.util.Map;
+import dev.vertique.kafka.KafkaRecordHeaders;
 
 /**
  * SPI for deserializing Kafka record values from raw bytes.
  *
  * <p>The signature includes topic and headers to support schema-registry-based
  * deserializers (e.g., Avro) that need topic context.
+ *
+ * <p>The headers are the record's headers as they are on the wire: every header in order, with
+ * repeated keys, {@code null} values and binary values. The collection is immutable and is the one
+ * the filter, the interceptors and the handler receive for the same record, so a deserializer can
+ * read headers but cannot add, remove or change one.
  *
  * <p>Implementations must be safe for concurrent use: the framework reuses one instance across
  * records and across consumer deployment instances (see {@link KafkaSerdeProvider}).
@@ -25,11 +30,13 @@ public interface KafkaDeserializer<V> {
      *
      * @param data the raw message bytes
      * @param topic the Kafka topic (needed by Avro/Schema Registry deserializers)
-     * @param headers the record headers (for content-type-based deserialization)
+     * @param headers the record headers as received, in wire order (for example for
+     *     content-type-based deserialization); immutable; never {@code null};
+     *     {@link KafkaRecordHeaders#empty()} for a record without headers
      * @return the deserialized value
      * @throws DeserializationException if deserialization fails
      */
-    V deserialize(byte[] data, String topic, Map<String, String> headers) throws DeserializationException;
+    V deserialize(byte[] data, String topic, KafkaRecordHeaders headers) throws DeserializationException;
 
     /**
      * Whether this deserializer may block the calling thread (e.g. a Schema Registry HTTP call on a

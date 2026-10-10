@@ -142,6 +142,25 @@ public final class RequestCompletionRecorder {
     }
 
     /**
+     * Returns the operation that the request's last matched operation route recorded, or {@code null}
+     * when none did: no holder bound to the request, no operation route matched yet, another transport
+     * claimed the request, or a reroute cleared the claim.
+     *
+     * <p>A route's failure handler compares it with its own descriptor, by identity, to learn whether
+     * its route is the one whose handlers were running. Vert.x runs the failure handlers of every route
+     * whose path and method match, in route order, so the handler's own position says nothing about
+     * which route matched. Non-blocking; never throws.
+     *
+     * @param ctx the routing context of the request
+     * @return the recorded operation descriptor, or {@code null}
+     */
+    @Nullable
+    public static RestOperationDescriptor recordedOperation(RoutingContext ctx) {
+        RequestCompletionState state = boundState(ctx);
+        return state != null ? state.claim().operation() : null;
+    }
+
+    /**
      * Installs a completion-state holder on {@code ctx} when the emitter is not mounted. Reserved for
      * framework tests that isolate a response pipeline; production traffic gets its holder from
      * {@link RestRequestCompletionEmitter}.

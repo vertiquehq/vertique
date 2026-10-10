@@ -20,7 +20,18 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -138,7 +149,14 @@ function fixtureRepository(root, extraArtifactIds = [], archetypeArtifactIds = [
       path.join(extraDir, `${artifactId}-${VERSION}.pom`),
       unitPom(artifactId, isArchetype ? 'maven-archetype' : 'pom')
     );
-    if (isArchetype) writeFileSync(path.join(extraDir, `${artifactId}-${VERSION}.jar`), 'PK-fixture-archetype');
+    if (isArchetype) {
+      writeFileSync(path.join(extraDir, `${artifactId}-${VERSION}.jar`), 'PK-fixture-archetype');
+      // An install leaves attached test artifacts next to the main JAR. Staging
+      // must never pick them up.
+      for (const classifier of ['tests', 'test-sources']) {
+        writeFileSync(path.join(extraDir, `${artifactId}-${VERSION}-${classifier}.jar`), 'PK-fixture-test-jar');
+      }
+    }
   }
 
   return { repo, localRepository: path.join(root, 'm2') };
@@ -376,6 +394,71 @@ describe('PublishArtifactsTest', () => {
     // The unit's own POM, deployed as given, still declares the real packaging.
     const pom = names.find((name) => name.endsWith('.pom'));
     assert.match(readFileSync(path.join(stagedDir, pom), 'utf8'), /<packaging>maven-archetype<\/packaging>/);
+  });
+
+  // Attached test JARs are installed next to the main JAR but are not a published
+  // surface: staging must not deploy them, and verifying a staged repository that
+  // does contain one must fail.
+  it('neverStagesAttachedTestJarsAndRefusesAStagedRepositoryThatHoldsOne', (t) => {
+    // Resolved up front so the paths handed to node are the real ones even
+    // where the temp directory is a symlink (macOS /var -> /private/var).
+    const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'vertique-publish-artifacts-')));
+    t.after(() => rmSync(root, { recursive: true, force: true }));
+    const { repo, localRepository } = fixtureRepository(root, [], ['fixture-archetype']);
+    const installedDir = path.join(localRepository, ...GROUP_ID.split('.'), 'fixture-archetype', VERSION);
+    assert.ok(
+      existsSync(path.join(installedDir, `fixture-archetype-${VERSION}-tests.jar`)),
+      'precondition: the install holds a test JAR next to the main JAR'
+    );
+    const stage = path.join(root, 'staged');
+    mkdirSync(stage);
+
+    const run = spawnSync(
+      'bash',
+      [
+        path.join(repo, 'release', 'publish-artifacts.sh'),
+        '--local-repository', localRepository,
+        '--repository-id', 'fixture-stage',
+        '--target-url', `file://${stage}`,
+        '--mode', 'snapshot',
+        '--version', VERSION,
+        '--settings', 'settings.xml',
+      ],
+      { encoding: 'utf8', timeout: MAVEN_TIMEOUT_MS }
+    );
+    assert.equal(run.status, 0, `publish-artifacts failed:\n${run.stdout}\n${run.stderr}`);
+
+    const stagedDir = path.join(stage, ...GROUP_ID.split('.'), 'fixture-archetype', VERSION);
+    const names = readdirSync(stagedDir);
+    assert.ok(names.some((name) => /^fixture-archetype-.*\.jar$/.test(name)), `no .jar staged: ${JSON.stringify(names)}`);
+    assert.deepEqual(
+      names.filter((name) => /-(tests|test-sources|test-javadoc)\.jar/.test(name)),
+      [],
+      `a test JAR was staged: ${JSON.stringify(names)}`
+    );
+
+    const verifyStaged = () =>
+      spawnSync(
+        process.execPath,
+        [
+          path.join(repo, 'release', 'verify-publication.mjs'),
+          '--root', repo,
+          '--verify-staged', stage,
+          '--version', VERSION,
+          '--mode', 'snapshot',
+        ],
+        { encoding: 'utf8', timeout: MAVEN_TIMEOUT_MS }
+      );
+    const clean = verifyStaged();
+    assert.equal(clean.status, 0, `a clean staged repository failed verification:\n${clean.stdout}\n${clean.stderr}`);
+    // A silent exit 0 must never satisfy this half: the check has to have run.
+    assert.match(clean.stdout, /staged repository OK/);
+
+    // Now one reaches the staged repository: verification must name it and fail.
+    writeFileSync(path.join(stagedDir, `fixture-archetype-${VERSION}-tests.jar`), 'PK-fixture-test-jar');
+    const dirty = verifyStaged();
+    assert.notEqual(dirty.status, 0, `a staged test JAR passed verification:\n${dirty.stdout}`);
+    assert.match(dirty.stderr, /attached test artifact staged: fixture-archetype-.*-tests\.jar/);
   });
 
   it('refusesNonPositiveParallelism', (t) => {

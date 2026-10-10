@@ -156,16 +156,33 @@ request to any instance. Every request is admitted through the fixed pipeline be
   therefore rejects **every** present `Origin` rather than imposing no restriction — the MCP HTTP
   transport spec requires Origin validation specifically so a locally bound, unconfigured MCP server
   is not reachable from an arbitrary browser page or a DNS-rebound name. A request with no `Origin`
-  header (every non-browser client) is never origin-rejected.
+  header (every non-browser client) is never origin-rejected. The comparison is literal, so every
+  `mcp.allowedOrigins` entry must be an exact serialized origin as a browser sends it:
+  `scheme://host[:port]` in lowercase, with no path, trailing slash, query, fragment, userinfo, wildcard
+  or default port (`https://app.example.com`, `http://localhost:8080`). An entry of any other shape can
+  never match, so startup fails with a `ConfigurationException` naming the offending entry rather than
+  silently denying the intended caller; entries are never rewritten or normalized. The literal `null`
+  that browsers send for opaque origins (sandboxed frames, `data:` and `file:` pages) is never
+  allowlistable, because allowing it would admit every such page.
 - **Content-Type** — mandatory: every admitted request is a `POST` carrying the protocol's required
   JSON-RPC body, so an absent `Content-Type` is rejected with HTTP `415` exactly like a present one
   whose media type (parameters such as `; charset=utf-8` ignored) is not `application/json`. Admitting
   an absent `Content-Type` would reopen the CORS simple-request path (a cross-origin `Blob` with an
   empty type, or `navigator.sendBeacon`, both send none).
-- **Accept** — a request that carries an `Accept` admitting none of `application/json`,
-  `text/event-stream`, `application/*`, or `*/*` is rejected with HTTP `406`. A request with no
-  `Accept` header is never media-rejected. Discovery always answers `application/json`, so a client
-  that accepts `application/json`, `text/event-stream`, or both receives the JSON discovery result.
+- **Accept** — a request with no `Accept` header is never media-rejected. A present `Accept` is
+  parsed by the shared quote-aware header parser of `vertique-rest-core` and admitted only when it
+  makes `application/json` or `text/event-stream` acceptable, judged per type by the most specific
+  compatible entry, so `application/json`, `text/event-stream`, `application/*`, `text/*` and
+  `*/*` can admit. Otherwise (including a blank header) the request is rejected with HTTP `406`.
+  An entry with `q=0` does not make its type acceptable. A comma or semicolon inside a quoted
+  parameter value (`profile="a,b"`) is part of that value, not an entry or parameter separator. A
+  malformed entry is skipped and never admits anything: an unterminated quoted string, characters
+  after a closing quote, an empty value, or a `q` that is not a valid qvalue (`0`, `1`, `0.xxx` or
+  `1.000`, at most three decimals — a quoted, negative, over-precise or above-1 `q` is malformed and
+  is not clamped or read as `1`). Only the first 50 non-empty entries are considered, so a type
+  listed after them is not admitted. Admission applies only the acceptable-or-not decision, not
+  q-value preference ranking. Discovery always answers `application/json`, so a client that accepts
+  `application/json`, `text/event-stream`, or both receives the JSON discovery result.
 - **Body limit** — a body larger than `http.maxBodySize` is a bounded HTTP failure, not a protocol
   result.
 - **Session headers** — the stateless protocol has no session concept, so an unsupported session
@@ -331,8 +348,8 @@ structured result is bounded the same way — see [Bounded output pipeline](#bou
 for the full output-stage order this cap is one part of. For SSE tool calls, the coordinator accounts
 for every progress and terminal frame against the same request-scoped byte budget.
 
-Every JSON-RPC error response — a negotiation-mismatch `-32020`, an official-params or
-unknown-or-unauthorized `-32602`, an interceptor rejection, an ordinary envelope-decode failure
+Every JSON-RPC error response — a negotiation-mismatch `-32020`, an unsupported-version `-32022`,
+an official-params or unknown-or-unauthorized `-32602`, an interceptor rejection, an ordinary envelope-decode failure
 (`-32700`/`-32600`/`-32601`), and every internal-error fallback — serializes through this exact same
 capped mechanism, never a separate unrestricted encode measured only after the fact. The one
 unbounded element any of these shapes can carry is the echoed request `id` (bounded only by the
@@ -420,8 +437,11 @@ forwards a different one of the duplicated values than the one this codec observ
 `_meta` shape and supported protocol version must satisfy Phase-1 policy,
 and `tools/call.params` must carry neither reserved multi-round-trip field
 `inputResponses`/`requestState`. A missing applicable header, header/body disagreement, or Phase-1
-negotiation-policy violation is exclusively `-32020` *Header/body mismatch*, mapped to HTTP 400
-through the bounded, capped JSON writer. Negotiation still completes before the request-interceptor
+negotiation-policy violation is HTTP 400 through the bounded, capped JSON writer. Its code is
+`-32020` with the message *Header/body mismatch*, except an unsupported version, which is `-32022`
+with the message *Unsupported protocol version*; see
+[Negotiation rejection reasons](#negotiation-rejection-reasons) for the `error.data.reason` that
+identifies the cause. Negotiation still completes before the request-interceptor
 stage below and every later application stage — see
 [Request interceptor stage](#request-interceptor-stage).
 
@@ -433,6 +453,76 @@ reset — so an MCP request leaves no upload file behind after it ends.
 
 The module does not use an MCP Java SDK. It depends on `vertique-mcp-core` for the stable lifecycle
 boundary and owns the HTTP/router composition only.
+
+### Negotiation rejection reasons
+
+The HTTP 400 status is the same for every cause. The code is `-32020` and the `message` is
+`Header/body mismatch` for every cause except `UNSUPPORTED_VERSION`, which is code `-32022` with the
+message `Unsupported protocol version`, and the text is not always accurate for the cause (a
+rejected `requestState` is not a header mismatch). Every rejection therefore also carries a bounded
+`error.data.reason`. **Clients should switch on `reason`, not on `message`.** The values are a closed
+set of constants; a reason never repeats a header name, header value, field name or any other text
+from the request. The set may grow, so a client must treat a `reason` it does not recognize as a
+generic negotiation failure.
+
+| `error.data.reason` | Cause | What the client should do |
+| --- | --- | --- |
+| `MISSING_HEADER` | A required routing header is absent: `MCP-Protocol-Version`, `Mcp-Method`, or `Mcp-Name` on `tools/call`. | Send every required header. |
+| `HEADER_MISMATCH` | A required routing header is present but differs from its body value, or is sent more than once (even with identical values). | Send each header exactly once, equal to its body mirror. |
+| `META_SHAPE` | `params._meta.io.modelcontextprotocol/protocolVersion` is a blank string, longer than 64 characters, or contains control characters. | Send a non-blank protocol-version string of at most 64 characters with no control characters. |
+| `RESERVED_FIELD` | A `tools/call` carries `inputResponses` or `requestState`, which this server does not implement. | Do not send them. |
+| `UNSUPPORTED_VERSION` | The version is well-formed but not supported, and the `MCP-Protocol-Version` header carries the same value. | Choose a version from `error.data.supported` and retry. |
+
+A request whose `params._meta` is absent or not an object, or whose `protocolVersion` is missing or
+not a string, or whose `clientCapabilities` is missing or not an object, violates the official
+params schema and is rejected earlier as `-32602` *Invalid params*, never as `-32020`.
+
+Several faults can coexist, and the first failing check decides the reason. After official params
+validation the checks run in this order: `protocolVersion` bounds, supported version, reserved
+fields, then the headers (`MCP-Protocol-Version`, `Mcp-Method`, `Mcp-Name`). The one exception is
+that an unsupported version is reported as `UNSUPPORTED_VERSION` only when the `MCP-Protocol-Version`
+header is present, sent once and equal to the unsupported body value; when that header is absent or
+disagrees, the request is a `MISSING_HEADER` or `HEADER_MISMATCH` rejection (`-32020`) instead. Only
+the `MCP-Protocol-Version` header is compared at that point, so an unsupported body whose version
+header agrees is `UNSUPPORTED_VERSION` (`-32022`) even if `Mcp-Method` or `Mcp-Name` is absent or
+wrong, and an unsupported body whose version header is absent or different is a header fault even
+when a reserved field is also present (a supported body with that reserved field reports
+`RESERVED_FIELD`).
+
+For every cause except `UNSUPPORTED_VERSION` the whole `data` object is `{"reason": "<value>"}`. An
+`UNSUPPORTED_VERSION` rejection carries `data.supported` (array of supported versions) and
+`data.requested`, the members the protocol requires for that error, and adds `reason` alongside
+them. Each rejection is also logged once at DEBUG naming only the reason, never any
+request value.
+
+## Wire-code changes
+
+Two JSON-RPC codes changed. A client that switches on the numeric `error.code` must adopt them;
+messages, `data` members, HTTP statuses and headers are as described in the sections above.
+
+| Condition | Previous code | Current code | What to do |
+| --- | --- | --- | --- |
+| An unsupported protocol version | `-32020` | `-32022`, the protocol's *Unsupported protocol version* error (HTTP `400`, `data.supported` and `data.requested`) | Treat `-32022` as "choose one of `error.data.supported` and retry", or switch on `error.data.reason` (`UNSUPPORTED_VERSION`). |
+| A rate-limit rejection: quota exceeded, admission unavailable, or a failed admission decision, whether raised by the admission stage or by the handler (a `TooManyRequestsException` or `RateLimitUnavailableException`, including from `@RateLimited`) | `-32022` | `-32010`, a server-defined code | Switch on HTTP `429`/`503` and `Retry-After`, or on `-32010`; stop treating `-32022` as a rate-limit signal. |
+
+Every other negotiation rejection (`MISSING_HEADER`, `HEADER_MISMATCH`, `META_SHAPE`,
+`RESERVED_FIELD`) keeps `-32020`, so a client that matched `-32020` alone to detect an unsupported
+version must now also match `-32022`. A request whose body names an unsupported version but whose
+`MCP-Protocol-Version` header is absent or differs from it is a header fault (`-32020`,
+`MISSING_HEADER` or `HEADER_MISMATCH`), as the protocol's header-mismatch error requires; it was
+previously reported with the `UNSUPPORTED_VERSION` reason.
+
+Rate-limit responses previously used `-32022`, which the protocol reserves for an unsupported
+protocol version, so the two conditions could not be told apart by code. `-32010` is not defined by
+the protocol and is not used by this server for anything else. The rate-limit HTTP status (`429`, or
+`503` when admission is unavailable), the `Retry-After` and `Cache-Control` headers, the messages and
+the terminal outcome and error type are unchanged, so a client that already branches on the HTTP
+status is unaffected.
+
+The terminal event's `protocolErrorCode`, and anything derived from it such as audit metadata or
+observer attributes, carries the new values: `-32022` for an unsupported version and `-32010` for a
+rate-limit rejection. Dashboards, alerts or audit filters that match the previous values must be
+updated.
 
 ## Body trace-context extraction
 
@@ -487,7 +577,8 @@ and before any tool is resolved, authorized, or passed to the application input 
 failure never reaches this stage; it settles through
 [Bounded JSON-RPC envelope codec](#bounded-json-rpc-envelope-codec) exactly as before. An official
 params failure returns HTTP 400 JSON-RPC `-32602` *Invalid params* before this stage, while a
-header/body or Phase-1 negotiation failure returns HTTP 400 JSON-RPC `-32020` *Header/body mismatch*.
+header/body or Phase-1 negotiation failure returns HTTP 400 JSON-RPC `-32020` (*Header/body mismatch*),
+or `-32022` (*Unsupported protocol version*) for an unsupported version.
 Neither this interceptor stage nor anything after it observes either rejected request.
 
 Contribute `McpRequestInterceptor` through Dagger set multibinding (`McpServerModule`). The
@@ -1017,8 +1108,8 @@ invoker directly: no reflection, no scanning, the same `McpToolInvoker#prepare`/
 tool name, an unresolved name, and a denied decision all settle through the exact same code path
 `tools/list` uses for an invalid cursor: byte-identical `-32602`/`Invalid params` JSON, the same HTTP
 status, no tool ever invoked. This holds regardless of which of the three causes produced it — an
-unknown name and a `@DenyAll` tool are externally indistinguishable, matching the `tools/list`
-guarantee above.
+unknown name and a `@DenyAll` tool are protocol-equivalent (same JSON-RPC code, message and HTTP
+status), matching the `tools/list` guarantee above.
 
 The bytes are identical, but the *path* to them used to differ: an unknown name resolved from a plain
 registry-map lookup, while a denied name additionally traversed `McpPolicyEnforcer#decide`. An
@@ -1034,12 +1125,18 @@ whose latency an unknown name's synthetic `@DenyAll` evaluation never pays. A ca
 side channel may therefore distinguish a denied `RESTRICTED` tool name from an unknown name, even
 though the response bytes remain identical. Closing that residual gap would require deliberately
 padding the fast path's latency to match the slowest configured decision point — a designed
-latency-padding feature, not a documentation fix — and is tracked as an accepted residual risk
-(issue #420) rather than claimed as delivered here. The terminal event recorded for an unresolved
-name always carries the bounded `UNKNOWN` placeholder, never the caller-supplied string — an
-unresolved name touches no real
-`McpToolDescriptor`, so nothing would otherwise bound it before it reached every lifecycle observer
-and listener as internal telemetry except the wire's own very large string limit.
+latency-padding feature, not a documentation fix — and is an accepted residual risk rather than a
+delivered guarantee.
+
+**If tool names must stay confidential, do not rely on timing.** When timing equivalence matters for
+a deployment, publish opaque tool identifiers (names that carry no meaning an outsider could guess or
+enumerate) or use precomputed authorization (decide from already-resolved caller state, with no remote
+call on the denial path) rather than expecting the server to pad latency.
+
+The terminal event recorded for an unresolved name always carries the bounded `UNKNOWN` placeholder,
+never the caller-supplied string — an unresolved name touches no real `McpToolDescriptor`, so nothing
+would otherwise bound it before it reached every lifecycle observer and listener as internal
+telemetry except the wire's own very large string limit.
 
 **SSE selection precedes invocation, unconditionally.** Only once a call is both known and
 authorized does the dispatcher select request-scoped SSE (`Content-Type: text/event-stream`,
@@ -1136,12 +1233,12 @@ The mapping from a tool's declared access to its effective authorization result 
 | Tool declaration | Coarse gate | Fine gate | Effective result |
 |---|---|---|---|
 | Unannotated or `@PermitAll` | None | None | Public to anonymous and authenticated callers; no decision event |
-| `@DenyAll` | Static deny | None | Excluded from `tools/list`; a direct `tools/call` does not invoke it and returns the externally indistinguishable unknown-or-unauthorized `-32602` response |
+| `@DenyAll` | Static deny | None | Excluded from `tools/list`; a direct `tools/call` does not invoke it and returns the protocol-equivalent unknown-or-unauthorized `-32602` response |
 | `@RolesAllowed` | Direct role claim check | None | Permitted when the authenticated caller has an allowed role |
 | `@RequiresAction` | Authenticated caller required | Existing core `Authorizer` | Permitted when the role-to-policy-to-action decision permits |
 | `@RolesAllowed` plus `@RequiresAction` | Direct role claim check | Existing core `Authorizer` | Permitted only when both gates permit |
 
-Denial and absence are externally indistinguishable — an unknown tool name and a tool the caller may
+Denial and absence are protocol-equivalent — an unknown tool name and a tool the caller may
 not use both resolve to the same `-32602` response, with no detail identifying which — and a denied
 tool is never invoked. Every restrictive evaluation emits exactly one combined
 `AuthorizationDecisionEvent`.
@@ -1269,11 +1366,11 @@ produces the runtime `DISABLED` outcome. The runtime outcome mapping is:
 | `RateLimitOutcome` or condition | HTTP result | JSON-RPC | MCP terminal result |
 | --- | --- | --- | --- |
 | `PERMITTED` | continue to the handler | — | request proceeds |
-| `QUOTA_EXCEEDED` | `429`, `Retry-After` when supplied, `Cache-Control: no-store` | `-32022` | `REJECTED` / `RATE_LIMIT` |
+| `QUOTA_EXCEEDED` | `429`, `Retry-After` when supplied, `Cache-Control: no-store` | `-32010` | `REJECTED` / `RATE_LIMIT` |
 | `DISABLED` | continue to the handler | — | request proceeds |
 | `BACKEND_FAILURE_OPEN` | continue to the handler | — | request proceeds |
-| `BACKEND_FAILURE_CLOSED` | `503`, `Cache-Control: no-store` | `-32022` | `REJECTED` / `RATE_LIMIT` |
-| synchronous key-derivation throw, failed acquire future, or null decision | `503`, `Cache-Control: no-store` | `-32022` | `FAILED` / `RATE_LIMIT` |
+| `BACKEND_FAILURE_CLOSED` | `503`, `Cache-Control: no-store` | `-32010` | `REJECTED` / `RATE_LIMIT` |
+| synchronous key-derivation throw, failed acquire future, or null decision | `503`, `Cache-Control: no-store` | `-32010` | `FAILED` / `RATE_LIMIT` |
 
 Only `PERMITTED` consumes a token. Unknown and unauthorized tools are rejected
 before admission and never consume one. Fixed responses do not disclose policy
@@ -1388,6 +1485,8 @@ The bounded handler-failure mapping is:
 
 | Cause | Writable HTTP result | JSON-RPC | Terminal classification |
 | --- | --- | --- | --- |
+| `TooManyRequestsException`, including one raised by `@RateLimited` | `429`, `Retry-After` when the exception carries one, `Cache-Control: no-store` | `-32010`, `Rate limit exceeded` | `REJECTED` / `RATE_LIMIT` |
+| `RateLimitUnavailableException`, including one raised by `@RateLimited` | `503`, `Cache-Control: no-store` | `-32010`, `Rate limiting unavailable` | `REJECTED` / `RATE_LIMIT` |
 | `ResilienceTimeoutException` | `504`, `Cache-Control: no-store` | `-32603`, `Request timed out` | `FAILED` / `TIMEOUT` |
 | `ResilienceUnavailableException` | `503`, `Cache-Control: no-store` | `-32603`, `Service unavailable` | `FAILED` / `INTERNAL` |
 | `ResiliencePolicyException` or any other cause | existing `500` fallback | existing `-32603`, `Internal error` | existing `FAILED` / `INTERNAL` |
@@ -1464,7 +1563,7 @@ keys, not rejected.
 | `mcp.instructions` | absent | Optional server instructions |
 | `mcp.authenticationScheme` | absent | Optional `RouteAuthHandler` scheme name |
 | `mcp.jsonProfile` | absent | MCP boundary default profile id (validated even when disabled) |
-| `mcp.allowedOrigins` | empty | DNS-rebinding allowlist; empty denies mismatched Origin |
+| `mcp.allowedOrigins` | empty | DNS-rebinding allowlist of exact `scheme://host[:port]` origins; empty denies mismatched Origin; any other entry shape fails startup |
 | `mcp.outputMaxBytes` | `2097152` | Shared response/output byte cap |
 | `mcp.ingressMaxTokens` | `65536` | Ingress JSON-RPC parser-token budget (1024–262144) |
 | `mcp.outputMaxTokens` | `65536` | Structured-output reparse token budget (1024–262144) |

@@ -15,8 +15,8 @@ import dev.vertique.core.json.JsonProfileId;
 import dev.vertique.core.json.VertiqueJson;
 import dev.vertique.json.JacksonDefaults;
 import dev.vertique.kafka.DeserializationException;
+import dev.vertique.kafka.KafkaRecordHeaders;
 import java.nio.charset.StandardCharsets;
-import java.util.Map;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -86,7 +86,8 @@ class JacksonKafkaSerializerTest {
         nonNullMapper.setSerializationInclusion(JsonInclude.Include.NON_NULL);
         VertiqueJson.install(JsonProfileId.of("kafka-test"), nonNullMapper);
 
-        byte[] bytes = serializer.serialize(new NullableNoteEvent("order", null), "test-topic", Map.of());
+        byte[] bytes =
+                serializer.serialize(new NullableNoteEvent("order", null), "test-topic", KafkaRecordHeaders.empty());
         String json = new String(bytes, StandardCharsets.UTF_8);
 
         assertFalse(
@@ -126,7 +127,7 @@ class JacksonKafkaSerializerTest {
 
         byte[] payload = "{\"name\":\"shipment\",\"count\":7,\"unexpected\":\"x\"}".getBytes(StandardCharsets.UTF_8);
 
-        BoundEvent bound = deserializer.deserialize(payload, "test-topic", Map.of());
+        BoundEvent bound = deserializer.deserialize(payload, "test-topic", KafkaRecordHeaders.empty());
 
         assertEquals("shipment", bound.name());
         assertEquals(7, bound.count());
@@ -146,12 +147,12 @@ class JacksonKafkaSerializerTest {
             JacksonKafkaDeserializer<TestEvent> deserializer = new JacksonKafkaDeserializer<>(TestEvent.class, mapper);
 
             TestEvent original = new TestEvent("order", 42);
-            byte[] bytes = serializer.serialize(original, "test-topic", Map.of());
+            byte[] bytes = serializer.serialize(original, "test-topic", KafkaRecordHeaders.empty());
 
             assertNotNull(bytes);
             assertTrue(bytes.length > 0);
 
-            TestEvent roundTripped = deserializer.deserialize(bytes, "test-topic", Map.of());
+            TestEvent roundTripped = deserializer.deserialize(bytes, "test-topic", KafkaRecordHeaders.empty());
             org.junit.jupiter.api.Assertions.assertEquals(original.name(), roundTripped.name());
             org.junit.jupiter.api.Assertions.assertEquals(original.count(), roundTripped.count());
         }
@@ -162,7 +163,7 @@ class JacksonKafkaSerializerTest {
             ObjectMapper mapper = new ObjectMapper();
             JacksonKafkaSerializer<TestEvent> serializer = new JacksonKafkaSerializer<>(mapper);
 
-            byte[] bytes = serializer.serialize(new TestEvent("shipment", 7), "test-topic", Map.of());
+            byte[] bytes = serializer.serialize(new TestEvent("shipment", 7), "test-topic", KafkaRecordHeaders.empty());
             String json = new String(bytes);
 
             assertTrue(json.contains("\"name\""), "Serialized JSON must contain the 'name' field");
@@ -185,7 +186,7 @@ class JacksonKafkaSerializerTest {
             ObjectMapper customMapper = new ObjectMapper();
             JacksonKafkaSerializer<TestEvent> serializer = new JacksonKafkaSerializer<>(customMapper);
 
-            byte[] bytes = serializer.serialize(new TestEvent("test", 1), "test-topic", Map.of());
+            byte[] bytes = serializer.serialize(new TestEvent("test", 1), "test-topic", KafkaRecordHeaders.empty());
             assertNotNull(bytes);
             assertTrue(bytes.length > 0, "Custom mapper must produce non-empty output");
         }

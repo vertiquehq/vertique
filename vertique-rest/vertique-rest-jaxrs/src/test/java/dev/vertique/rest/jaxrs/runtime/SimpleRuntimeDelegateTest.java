@@ -152,6 +152,138 @@ class SimpleRuntimeDelegateTest {
         assertThrows(IllegalArgumentException.class, () -> CacheControl.valueOf(null));
     }
 
+    @Test
+    @DisplayName("CacheControl.valueOf keeps a semicolon inside a quoted extension value")
+    void shouldPreserveSemicolonsInQuotedExtensionValues() {
+        CacheControl cc = CacheControl.valueOf("custom-ext=\"A;B\", no-store");
+        assertEquals("A;B", cc.getCacheExtension().get("custom-ext"));
+        assertTrue(cc.isNoStore());
+    }
+
+    @Test
+    @DisplayName("CacheControl.valueOf keeps a comma after an escaped quote inside an extension value")
+    void shouldKeepCommaAfterEscapedQuoteInExtensionValue() {
+        CacheControl cc = CacheControl.valueOf("x=\"A\\\"B,C\", no-store");
+        assertEquals("A\"B,C", cc.getCacheExtension().get("x"));
+        assertTrue(cc.isNoStore());
+    }
+
+    @Test
+    @DisplayName("CacheControl.valueOf rejects an unterminated quoted string")
+    void shouldRejectUnterminatedQuotedExtensionValue() {
+        assertThrows(IllegalArgumentException.class, () -> CacheControl.valueOf("x=\"abc, no-store"));
+    }
+
+    @Test
+    @DisplayName("CacheControl.valueOf rejects a lone quote instead of failing with an index error")
+    void shouldRejectLoneQuoteInExtensionValue() {
+        assertThrows(IllegalArgumentException.class, () -> CacheControl.valueOf("x=\""));
+    }
+
+    @Test
+    @DisplayName("CacheControl.valueOf rejects a trailing backslash inside a quoted string")
+    void shouldRejectTrailingBackslashInQuotedExtensionValue() {
+        assertThrows(IllegalArgumentException.class, () -> CacheControl.valueOf("x=\"abc\\"));
+    }
+
+    @Test
+    @DisplayName("CacheControl.valueOf rejects characters after the closing quote")
+    void shouldRejectCharactersAfterClosingQuote() {
+        assertThrows(IllegalArgumentException.class, () -> CacheControl.valueOf("x=\"abc\"def"));
+    }
+
+    @Test
+    @DisplayName("CacheControl.valueOf rejects an unterminated field-name list")
+    void shouldRejectUnterminatedFieldNameList() {
+        assertThrows(
+                IllegalArgumentException.class, () -> CacheControl.valueOf("no-cache=\"Authorization, Set-Cookie"));
+    }
+
+    @Test
+    @DisplayName("CacheControl round-trip preserves quotes and backslashes in an extension value")
+    void shouldRoundTripExtensionValueWithQuoteAndBackslash() {
+        CacheControl original = new CacheControl();
+        original.getCacheExtension().put("x-custom", "A\"B\\C;D,E");
+        CacheControl parsed = CacheControl.valueOf(original.toString());
+        assertEquals("A\"B\\C;D,E", parsed.getCacheExtension().get("x-custom"));
+    }
+
+    // --- MediaType ---
+
+    @Test
+    @DisplayName("MediaType.valueOf keeps a semicolon inside a quoted parameter value")
+    void shouldPreserveSemicolonInQuotedMediaTypeParameter() {
+        MediaType mt = MediaType.valueOf("application/json;profile=\"a;b\";charset=utf-8");
+        assertEquals("a;b", mt.getParameters().get("profile"));
+        assertEquals("utf-8", mt.getParameters().get("charset"));
+    }
+
+    @Test
+    @DisplayName("MediaType.valueOf keeps a comma inside a quoted parameter value")
+    void shouldPreserveCommaInQuotedMediaTypeParameter() {
+        MediaType mt = MediaType.valueOf("application/json;profile=\"a,b\"");
+        assertEquals("a,b", mt.getParameters().get("profile"));
+    }
+
+    @Test
+    @DisplayName("MediaType.valueOf unescapes an escaped quote and keeps a semicolon after it")
+    void shouldUnescapeQuoteInMediaTypeParameter() {
+        MediaType mt = MediaType.valueOf("text/plain;title=\"say \\\"hi\\\"; ok\";charset=utf-8");
+        assertEquals("say \"hi\"; ok", mt.getParameters().get("title"));
+        assertEquals("utf-8", mt.getParameters().get("charset"));
+    }
+
+    @Test
+    @DisplayName("MediaType.valueOf returns a quoted charset without its quotes")
+    void shouldUnquoteMediaTypeCharset() {
+        MediaType mt = MediaType.valueOf("text/plain; charset=\"utf-8\"");
+        assertEquals("utf-8", mt.getParameters().get("charset"));
+    }
+
+    @Test
+    @DisplayName("MediaType.valueOf keeps the q parameter text as written")
+    void shouldKeepQParameterAsWritten() {
+        MediaType mt = MediaType.valueOf("text/html;q=0.50");
+        assertEquals("0.50", mt.getParameters().get("q"));
+    }
+
+    @Test
+    @DisplayName("MediaType.valueOf rejects an unterminated quoted parameter value")
+    void shouldRejectUnterminatedMediaTypeParameter() {
+        assertThrows(IllegalArgumentException.class, () -> MediaType.valueOf("application/json;profile=\"a;b"));
+    }
+
+    @Test
+    @DisplayName("MediaType.valueOf rejects a trailing backslash inside a quoted parameter value")
+    void shouldRejectTrailingBackslashInMediaTypeParameter() {
+        assertThrows(IllegalArgumentException.class, () -> MediaType.valueOf("application/json;profile=\"a\\"));
+    }
+
+    @Test
+    @DisplayName("MediaType.valueOf rejects characters after a closing quote")
+    void shouldRejectCharactersAfterClosingQuoteInMediaTypeParameter() {
+        assertThrows(IllegalArgumentException.class, () -> MediaType.valueOf("application/json;profile=\"a\"b"));
+    }
+
+    @Test
+    @DisplayName(
+            "MediaType.toString replaces CR, LF and other control characters in a parameter value with an underscore")
+    void shouldReplaceControlCharactersWhenWritingMediaType() {
+        MediaType mt = new MediaType(
+                "text", "plain", java.util.Map.of("note", "a\r\nb" + (char) 1 + "c" + (char) 127 + "d\te"));
+        assertEquals("text/plain;note=\"a__b_c_d\te\"", mt.toString());
+    }
+
+    @Test
+    @DisplayName("MediaType round-trip writes non-token parameter values as quoted strings")
+    void shouldRoundTripQuotedMediaTypeParameter() {
+        MediaType original = MediaType.valueOf("application/json;profile=\"a;b \\\"c\\\"\";charset=utf-8");
+        String serialized = original.toString();
+        assertTrue(serialized.contains("profile=\"a;b \\\"c\\\"\""), serialized);
+        assertTrue(serialized.contains("charset=utf-8"), serialized);
+        assertEquals(original, MediaType.valueOf(serialized));
+    }
+
     // --- EntityTag ---
 
     @Test

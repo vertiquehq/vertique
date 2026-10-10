@@ -15,6 +15,9 @@
  * (an RFC 9110 value object with parsing and compatibility checks) and
  * {@link dev.vertique.rest.core.request.AcceptNegotiator} (q-value–based content
  * negotiation that selects the best producer media type for a given {@code Accept} header,
- * returning {@code 406 Not Acceptable} when no match is found).
+ * returning {@code 406 Not Acceptable} when no match is found). Both are built on
+ * {@link dev.vertique.rest.core.request.HeaderElement}, a quote-aware parser for
+ * comma-separated header values of the shape {@code value *(; parameter)} with an optional
+ * {@code q} weight, such as {@code Accept}, {@code Accept-Language} and {@code Accept-Encoding}.
  */
 package dev.vertique.rest.core.request;
