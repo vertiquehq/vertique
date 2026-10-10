@@ -24,7 +24,8 @@ import java.lang.reflect.Method;
  * <p>Implementations <strong>MUST NOT</strong> perform any action that affects the send result,
  * record content, or the future returned to the caller. The hook fires <em>after</em> the result
  * has been irrevocably determined. Any exception thrown by an implementation is swallowed — it
- * does not change the send result or break processing of subsequent hooks.
+ * does not change the send result or break processing of subsequent hooks. A {@link LinkageError}
+ * or {@link AssertionError} is swallowed the same way.
  *
  * <h2>Origin and method</h2>
  *

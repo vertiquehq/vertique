@@ -37,6 +37,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicReference;
 import lombok.extern.slf4j.Slf4j;
 
@@ -68,7 +69,11 @@ import lombok.extern.slf4j.Slf4j;
  * {@link #sendWire(String, String, byte[], KafkaRecordHeaders, KafkaSendOrigin, KafkaProducerOperation)},
  * which fires all registered {@link KafkaProducerCaptureHook} instances (observer-only) after the
  * underlying send settles. Hooks are sorted by {@link OrderedExtension#comparator()} and isolated
- * via try/catch so a throwing hook never affects the send result.
+ * via try/catch: an {@link Exception}, {@link LinkageError} or {@link AssertionError} thrown by one
+ * hook is logged and swallowed, so it affects neither the send result nor the hooks after it. An
+ * {@link Exception} or {@link AssertionError} is logged at warn level each time. A
+ * {@link LinkageError} means the hook cannot run at all and would repeat for every send, so it is
+ * logged at error level once per hook class for the life of the factory.
  */
 @Slf4j
 public class KafkaProducerFactory {
@@ -85,6 +90,20 @@ public class KafkaProducerFactory {
     private final List<KafkaProducerCaptureHook> captureHooks;
 
     // --- Runtime state ---
+
+    /**
+     * Hook class and callback pairs already reported as unusable. Concurrent because a send settles
+     * on any thread.
+     */
+    private final Set<UnusableCallback> reportedUnusable = ConcurrentHashMap.newKeySet();
+
+    /**
+     * One hook callback that failed with a {@link LinkageError}.
+     *
+     * @param hookClass the hook's class
+     * @param callback the callback name
+     */
+    private record UnusableCallback(Class<?> hookClass, String callback) {}
 
     private final AtomicReference<io.vertx.kafka.client.producer.KafkaProducer<String, byte[]>> shared =
             new AtomicReference<>();
@@ -878,7 +897,8 @@ public class KafkaProducerFactory {
      * send settles.
      *
      * <p>Hook invocation is observer-only: hooks are called after the result is determined and
-     * each hook is isolated in a {@code try/catch} so a throwing hook never changes the result.
+     * each hook is isolated in a {@code try/catch}, so a hook that throws an {@link Exception},
+     * {@link LinkageError} or {@link AssertionError} never changes the result.
      *
      * @param topic          the target topic
      * @param key            the message key, or {@code null}
@@ -910,7 +930,11 @@ public class KafkaProducerFactory {
 
     /**
      * Fires all registered {@link KafkaProducerCaptureHook} instances in sorted order, isolating
-     * each hook in a {@code try/catch} so exceptions never propagate to callers.
+     * each hook in a {@code try/catch}. An {@link Exception}, {@link LinkageError} or
+     * {@link AssertionError} from one hook never propagates to callers and does not stop the
+     * remaining hooks. An {@link Exception} or {@link AssertionError} is logged at warn level each
+     * time. A {@link LinkageError} is logged at error level the first time it is seen for a hook
+     * class, and not logged again for it. Any other {@link Error} propagates.
      *
      * @param origin         the send origin
      * @param topic          the target topic
@@ -936,7 +960,16 @@ public class KafkaProducerFactory {
         for (KafkaProducerCaptureHook hook : captureHooks) {
             try {
                 hook.onSend(send);
-            } catch (Exception ex) {
+            } catch (LinkageError ex) {
+                if (reportedUnusable.add(new UnusableCallback(hook.getClass(), "onSend"))) {
+                    log.error(
+                            "[KafkaProducerFactory] Capture hook {} callback {} is unusable and its notifications"
+                                    + " are being lost; further failures of this callback are not logged",
+                            hook.getClass().getName(),
+                            "onSend",
+                            ex);
+                }
+            } catch (Exception | AssertionError ex) {
                 log.warn(
                         "[KafkaProducerFactory] Capture hook {} threw an exception — swallowing: {}",
                         hook.getClass().getSimpleName(),

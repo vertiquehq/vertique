@@ -95,6 +95,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Dispatches the bounded discovery endpoint over the hardened stateless HTTP contract (§4.7).
@@ -374,6 +375,15 @@ final class McpRequestDispatcher {
     private final McpServerConfig config;
     private final SecurityRuntime securityRuntime;
     private final Set<McpRequestLifecycleObserver> lifecycleObservers;
+
+    /**
+     * Lifecycle callbacks already reported as unusable, shared by every request's completion
+     * coordinator so that a callback failing with a {@link LinkageError} is reported once for the life
+     * of this dispatcher. Concurrent because requests run on different event loops.
+     */
+    private final Set<McpCompletionCoordinator.UnusableCallback> reportedUnusableCallbacks =
+            ConcurrentHashMap.newKeySet();
+
     private final Set<McpRequestCompletedListener> completedListeners;
     private final List<McpRequestInterceptor> orderedRequestInterceptors;
     private final List<McpToolInterceptor> orderedToolInterceptors;
@@ -673,7 +683,8 @@ final class McpRequestDispatcher {
                 java.time.InstantSource.system(),
                 context,
                 config.outputMaxBytes(),
-                () -> settlementTerminal(context, startedAt, McpErrorType.TRANSPORT));
+                () -> settlementTerminal(context, startedAt, McpErrorType.TRANSPORT),
+                reportedUnusableCallbacks);
         byte[] terminalFallback = sseFrame(boundedSseErrorResponse(null, INTERNAL_ERROR, INTERNAL_ERROR_MESSAGE));
         coordinator.bindTerminalResponseBytes(terminalFallback.length);
         context.put(COMPLETION_COORDINATOR_KEY, coordinator);

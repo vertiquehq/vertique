@@ -3,6 +3,7 @@
 
 package dev.vertique.kafka;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -11,6 +12,10 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import dev.vertique.config.parser.DefaultConfigMapper;
 import dev.vertique.config.parser.DefaultConfigParser;
 import dev.vertique.context.DurableContextPropagator;
@@ -45,6 +50,7 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
 
 /**
  * Unit tests for {@link KafkaProducerCaptureHook} and the origin-threading contract in
@@ -177,6 +183,31 @@ class KafkaProducerCaptureHookTest {
                 AsyncResult<RecordMetadata> result) {
             callCount++;
             throw new RuntimeException("hook exploded");
+        }
+    }
+
+    /** Hook that always throws the {@link Error} it was given; sorts ahead of {@link SecondaryRecordingHook}. */
+    static final class ErrorThrowingHook implements KafkaProducerCaptureHook {
+
+        private final Error thrown;
+
+        int callCount;
+
+        ErrorThrowingHook(Error thrown) {
+            this.thrown = thrown;
+        }
+
+        @Override
+        public void onSend(
+                KafkaSendOrigin origin,
+                String topic,
+                String key,
+                PayloadSource value,
+                KafkaRecordHeaders headers,
+                Method producerMethod,
+                AsyncResult<RecordMetadata> result) {
+            callCount++;
+            throw thrown;
         }
     }
 
@@ -458,6 +489,87 @@ class KafkaProducerCaptureHookTest {
             assertEquals(1, throwing.callCount, "throwing hook must be called");
             assertEquals(1, secondary.seenOrigins.size(), "secondary hook must run even after throwing hook");
             assertEquals(KafkaSendOrigin.DLQ, secondary.seenOrigins.get(0));
+        }
+
+        @Test
+        @DisplayName("a hook throwing an AssertionError changes neither the send result nor the later hooks")
+        void assertionErrorHookIsIsolated() {
+            assertErrorHookIsolated(new AssertionError("hook assertion"));
+        }
+
+        @Test
+        @DisplayName("a hook throwing a LinkageError changes neither the send result nor the later hooks")
+        void linkageErrorHookIsIsolated() {
+            assertErrorHookIsolated(new NoSuchMethodError("hook linkage"));
+        }
+
+        @Test
+        @DisplayName("a LinkageError is logged at ERROR once per hook, an AssertionError at WARN for every send")
+        void linkageErrorIsReportedOnceAndAssertionErrorEveryTime() {
+            Logger factoryLogger = (Logger) LoggerFactory.getLogger(KafkaProducerFactory.class);
+            ListAppender<ILoggingEvent> appender = new ListAppender<>();
+            appender.setContext(factoryLogger.getLoggerContext());
+            appender.start();
+            factoryLogger.addAppender(appender);
+            try {
+                ErrorThrowingHook unusable = new ErrorThrowingHook(new NoSuchMethodError("hook linkage"));
+                KafkaProducerCaptureHook asserting = new KafkaProducerCaptureHook() {
+                    @Override
+                    public void onSend(KafkaProducerSend send) {
+                        throw new AssertionError("hook assertion");
+                    }
+                };
+                SecondaryRecordingHook secondary = new SecondaryRecordingHook();
+                OriginCapturingFactory factory = capturingFactory(unusable, asserting, secondary);
+
+                factory.sendForDlq("dlq", "k", new byte[] {1}, DLQ_HEADERS);
+                factory.sendForDlq("dlq", "k", new byte[] {1}, DLQ_HEADERS);
+
+                assertEquals(2, unusable.callCount, "the unusable hook is still called for every send");
+                assertEquals(2, secondary.seenOrigins.size(), "the later hook must see both sends");
+                List<ILoggingEvent> errors = appender.list.stream()
+                        .filter(e -> e.getLevel() == Level.ERROR)
+                        .toList();
+                assertEquals(1, errors.size(), "the unusable hook must be reported once, not per send");
+                String report = errors.get(0).getFormattedMessage();
+                assertTrue(report.contains("is unusable and its notifications are being lost"), report);
+                assertTrue(report.contains(ErrorThrowingHook.class.getName()), report);
+                assertEquals(
+                        2,
+                        appender.list.stream()
+                                .filter(e -> e.getLevel() == Level.WARN)
+                                .count(),
+                        "an AssertionError must be logged for every send");
+            } finally {
+                factoryLogger.detachAppender(appender);
+                appender.stop();
+            }
+        }
+
+        /**
+         * Sends once with no hook and once with a hook throwing {@code thrown} ahead of a recording hook, and
+         * asserts that the throwing hook was reached, that the send's future has the result it has without the
+         * hook, and that the recording hook still ran.
+         *
+         * @param thrown the {@link Error} the first hook throws
+         */
+        private void assertErrorHookIsolated(Error thrown) {
+            Future<RecordMetadata> baseline = capturingFactory().sendForDlq("dlq", "k", new byte[] {1}, DLQ_HEADERS);
+            ErrorThrowingHook throwing = new ErrorThrowingHook(thrown);
+            SecondaryRecordingHook secondary = new SecondaryRecordingHook();
+            OriginCapturingFactory factory = capturingFactory(throwing, secondary);
+
+            Future<RecordMetadata> result = assertDoesNotThrow(
+                    () -> factory.sendForDlq("dlq", "k", new byte[] {1}, DLQ_HEADERS),
+                    "the hook's " + thrown.getClass().getSimpleName() + " must not escape the send");
+
+            assertEquals(1, throwing.callCount, "the throwing hook must have been reached");
+            assertEquals(baseline.succeeded(), result.succeeded(), "the send result must be the one without the hook");
+            assertEquals(baseline.result(), result.result(), "the send result must be the one without the hook");
+            assertEquals(
+                    List.of(KafkaSendOrigin.DLQ),
+                    secondary.seenOrigins,
+                    "the hook after the throwing one must still run");
         }
     }
 

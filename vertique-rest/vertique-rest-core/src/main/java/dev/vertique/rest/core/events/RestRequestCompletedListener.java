@@ -31,9 +31,11 @@ import io.vertx.ext.web.RoutingContext;
  * <p>Listeners are unordered: the emitter promises no invocation order, and no implementation may
  * depend on the side effects of another.
  *
- * <p>The emitter isolates each listener: an {@link Exception} thrown by one listener is caught,
- * logged at {@code WARN}, and does not prevent the remaining listeners from receiving the event or
- * affect the HTTP response. An {@link Error} is not caught and propagates.
+ * <p>The emitter isolates each listener: an {@link Exception}, {@link LinkageError} or
+ * {@link AssertionError} thrown by one listener is caught, logged, and does not prevent the
+ * remaining listeners from receiving the event or affect the HTTP response. An {@link Exception} or
+ * {@link AssertionError} is logged at {@code WARN} each time; a {@link LinkageError} is logged at
+ * {@code ERROR} once per listener class. Any other {@link Error} is not caught and propagates.
  *
  * <p><b>Failure details are logged:</b> the caught exception reaches the application log, which is
  * what keeps the fan-out diagnosable. The exception, including its message and any cause, is logged,

@@ -1056,7 +1056,11 @@ public void onRecordCompleted(KafkaConsumerCompletedEvent event, KafkaConsumerRe
 ### `KafkaProducerCaptureHook` (multibinding)
 
 Fires exactly once per send, through the shared wire funnel in `KafkaProducerFactory`, after
-`producer.send(record)` settles. Also `extends OrderedExtension` and observer-only.
+`producer.send(record)` settles. Also `extends OrderedExtension` and observer-only. An `Exception`,
+`LinkageError` or `AssertionError` thrown by `onSend` is logged and swallowed; later hooks still run
+and the send's result is unaffected. An `Exception` or `AssertionError` is logged at WARN each time,
+and a `LinkageError` at ERROR once per hook class, saying that the hook is unusable and its
+notifications are being lost.
 
 The framework calls `onSend(KafkaProducerSend send)`: one record carrying every column below plus
 `operation`, a `KafkaProducerOperation(producerType, producerName, method)` that is non-`null` only

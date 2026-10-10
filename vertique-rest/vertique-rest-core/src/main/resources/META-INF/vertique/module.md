@@ -1290,8 +1290,11 @@ components by position, so it is outside the compatibility promise.
 A `RequestCompletionScope` wraps the dispatch of either event type — scopes open in iteration order
 and close in reverse, which is how tracing modules re-establish a span around emission. Listeners
 are unordered: the framework promises no invocation order, and no implementation may depend on
-another's side effects. A listener that throws an `Exception` is logged at WARN and does not stop
-the remaining listeners; an `Error` propagates.
+another's side effects. A listener that throws an `Exception`, `AssertionError` or `LinkageError`
+is logged and does not stop the remaining listeners or change the response: an `Exception` or
+`AssertionError` is logged at WARN each time, and a `LinkageError` at ERROR once per listener class,
+saying that the listener is unusable and its notifications are being lost. Any other `Error`
+propagates.
 
 The logged failure is what keeps the fan-out diagnosable. The exception, including its message and
 any cause, is logged, so none of them may carry credentials, tokens, personal data, or raw request

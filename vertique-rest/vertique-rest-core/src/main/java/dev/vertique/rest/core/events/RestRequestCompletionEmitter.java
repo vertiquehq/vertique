@@ -26,6 +26,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import lombok.extern.slf4j.Slf4j;
 
 /**
@@ -107,9 +108,13 @@ import lombok.extern.slf4j.Slf4j;
  * listener reaches it through the overload's default, which delegates to it. Listeners are
  * unordered.
  *
- * <p>Listener isolation: each listener is invoked in its own {@code try/catch}. A throwing one is
- * logged at {@code WARN} and does not prevent the others from receiving the event or affect the
- * HTTP response. {@link Error}s are not caught and propagate.
+ * <p>Listener isolation: each listener is invoked in its own {@code try/catch}. An
+ * {@link Exception}, {@link LinkageError} or {@link AssertionError} thrown by one is logged and
+ * swallowed: it does not prevent the others from receiving the event or affect the HTTP response.
+ * An {@link Exception} or {@link AssertionError} is logged at {@code WARN} each time. A
+ * {@link LinkageError} means the listener cannot run at all and would repeat for every request, so
+ * it is logged at {@code ERROR} once per listener class and callback for the life of the emitter.
+ * Any other {@link Error} is not caught and propagates.
  *
  * <p>Safety: {@code safeFailureMessage} is intentionally left {@code null}. Raw exception messages
  * may contain SQL errors, upstream service details, or PII and must never be placed in the event
@@ -141,6 +146,20 @@ public final class RestRequestCompletionEmitter implements Middleware {
     private final Set<RestRequestCompletedListener> listeners;
     private final Set<HttpRequestCompletedListener> httpListeners;
     private final Set<RequestCompletionScope> completionScopes;
+
+    /**
+     * Listener class and callback pairs already reported as unusable. Concurrent because the
+     * emission runs on whichever thread ends the response.
+     */
+    private final Set<UnusableCallback> reportedUnusable = ConcurrentHashMap.newKeySet();
+
+    /**
+     * One listener callback that failed with a {@link LinkageError}.
+     *
+     * @param listenerClass the listener's class
+     * @param callback the callback name, qualified by the listener interface
+     */
+    private record UnusableCallback(Class<?> listenerClass, String callback) {}
 
     /**
      * Creates the emitter with all its dependencies: both listener sets and the completion scopes.
@@ -381,7 +400,9 @@ public final class RestRequestCompletionEmitter implements Middleware {
     /**
      * Dispatches the event of a request a JAX-RS operation route claimed: opens the completion
      * scopes, calls {@code onCompleted(event, ctx)} on every {@link RestRequestCompletedListener} in
-     * the set's own order, each isolated, and closes the scopes.
+     * the set's own order, each isolated, and closes the scopes. An {@link Exception},
+     * {@link LinkageError} or {@link AssertionError} from one listener does not stop the remaining
+     * listeners; any other {@link Error} propagates.
      *
      * @param ctx   the request's root routing context, passed to every listener
      * @param event the request's REST completion event
@@ -392,7 +413,9 @@ public final class RestRequestCompletionEmitter implements Middleware {
             for (RestRequestCompletedListener listener : listeners) {
                 try {
                     listener.onCompleted(event, ctx);
-                } catch (Exception e) {
+                } catch (LinkageError e) {
+                    reportUnusable(listener, "RestRequestCompletedListener.onCompleted", e);
+                } catch (Exception | AssertionError e) {
                     log.warn("RestRequestCompletedListener failed: {}", e.toString(), e);
                 }
             }
@@ -404,7 +427,9 @@ public final class RestRequestCompletionEmitter implements Middleware {
     /**
      * Dispatches the event of a request no transport claimed: opens the completion scopes, calls
      * {@code onCompleted(event, ctx)} on every {@link HttpRequestCompletedListener} in the set's own
-     * order, each isolated, and closes the scopes.
+     * order, each isolated, and closes the scopes. An {@link Exception}, {@link LinkageError} or
+     * {@link AssertionError} from one listener does not stop the remaining listeners; any other
+     * {@link Error} propagates.
      *
      * @param ctx   the request's root routing context, passed to every listener
      * @param event the request's HTTP completion event
@@ -415,12 +440,34 @@ public final class RestRequestCompletionEmitter implements Middleware {
             for (HttpRequestCompletedListener listener : httpListeners) {
                 try {
                     listener.onCompleted(event, ctx);
-                } catch (Exception e) {
+                } catch (LinkageError e) {
+                    reportUnusable(listener, "HttpRequestCompletedListener.onCompleted", e);
+                } catch (Exception | AssertionError e) {
                     log.warn("HttpRequestCompletedListener failed: {}", e.toString(), e);
                 }
             }
         } finally {
             closeScopesQuietly(opened);
+        }
+    }
+
+    /**
+     * Reports a listener callback that failed with a {@link LinkageError}: logged at {@code ERROR}
+     * the first time it is seen for a listener class and callback, and not logged again for that
+     * pair.
+     *
+     * @param listener the listener that failed
+     * @param callback the callback name, qualified by the listener interface
+     * @param failure  the linkage failure
+     */
+    private void reportUnusable(Object listener, String callback, LinkageError failure) {
+        if (reportedUnusable.add(new UnusableCallback(listener.getClass(), callback))) {
+            log.error(
+                    "Listener {} callback {} is unusable and its notifications are being lost;"
+                            + " further failures of this callback are not logged",
+                    listener.getClass().getName(),
+                    callback,
+                    failure);
         }
     }
 
