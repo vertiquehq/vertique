@@ -127,7 +127,7 @@ public class KafkaInterceptorIT {
 
         @Override
         public Future<KafkaDispatchContext<?>> beforeDispatch(KafkaDispatchContext<?> ctx) {
-            if ("skip-me".equals(ctx.headers().get("x-action"))) {
+            if ("skip-me".equals(ctx.headers().asMap().get("x-action"))) {
                 return Future.succeededFuture(ctx.withFiltered(true));
             }
             return Future.succeededFuture(ctx);
@@ -475,7 +475,11 @@ public class KafkaInterceptorIT {
         TestEvent skipped = new TestEvent("filter-skip-001", "should-be-skipped");
         byte[] skippedBytes = DatabindCodec.mapper().writeValueAsBytes(skipped);
         producerFactory
-                .send("it.interceptor.events", "filter-key-skip", skippedBytes, Map.of("x-action", "skip-me"))
+                .send(
+                        "it.interceptor.events",
+                        "filter-key-skip",
+                        skippedBytes,
+                        KafkaRecordHeaders.of(Map.of("x-action", "skip-me")))
                 .toCompletionStage()
                 .toCompletableFuture()
                 .get();

@@ -21,6 +21,7 @@ import dev.vertique.json.JsonConfig;
 import dev.vertique.json.JsonMapperProfiles;
 import dev.vertique.json.VertxJsonSupport;
 import dev.vertique.kafka.DeserializationException;
+import dev.vertique.kafka.KafkaRecordHeaders;
 import dev.vertique.kafka.serialization.KafkaDeserializer;
 import io.vertx.core.json.JsonObject;
 import io.vertx.core.json.jackson.DatabindCodec;
@@ -29,7 +30,6 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -135,7 +135,7 @@ class JsonSerdeProviderGlobalDefaultTest {
      */
     private static Counter deserialize(JsonSerdeProvider provider, JsonObject bag) {
         KafkaDeserializer<Counter> deser = provider.deserializer(Counter.class, bag);
-        return deser.deserialize(stringCountBytes(), "t", Map.of());
+        return deser.deserialize(stringCountBytes(), "t", KafkaRecordHeaders.empty());
     }
 
     // --- Tests ---

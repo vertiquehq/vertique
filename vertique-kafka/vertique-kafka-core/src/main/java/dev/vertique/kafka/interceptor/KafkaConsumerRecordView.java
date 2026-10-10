@@ -46,10 +46,10 @@ public interface KafkaConsumerRecordView {
      * byte.
      *
      * <p>The collection is an immutable snapshot taken when the consumer received the record. The
-     * pre-deserialization filter, deserializers and handlers receive a separate text map, so a
-     * change they make to that map is not visible here.
+     * pre-deserialization filter, deserializers, the dispatch context and handlers receive this
+     * same collection, and none of them can change it.
      *
-     * <p>{@link KafkaRecordHeaders#asMap()} gives that text map's content for code that needs a
+     * <p>{@link KafkaRecordHeaders#asMap()} gives a text map for code that needs a
      * {@code Map<String, String>}. It is lossy: repeated keys collapse to one value, headers with a
      * {@code null} value are left out, and binary values are decoded as text.
      *

@@ -20,7 +20,6 @@ import dev.vertique.services.ServiceTargetResolver;
 import io.vertx.core.AbstractVerticle;
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
-import io.vertx.core.buffer.Buffer;
 import io.vertx.kafka.client.consumer.KafkaConsumer;
 import io.vertx.kafka.client.consumer.KafkaConsumerRecord;
 import io.vertx.kafka.client.producer.KafkaHeader;
@@ -280,19 +279,21 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
     private void processRecord(KafkaConsumerRecord<String, byte[]> record) {
         incrementInFlight();
 
-        // One faithful extraction per record. The text map handed to the filter, router, deserializers,
-        // dispatch context and error handler is derived from it, and is mutable because filters and
-        // deserializers have always been given a mutable one.
-        KafkaRecordHeaders recordHeaders = extractHeaders(record);
-        Map<String, String> headers = recordHeaders.toMutableTextMap();
+        // One faithful extraction per record. This one immutable instance is what the record view,
+        // the filter, the router, the deserializers, the dispatch context, the record context, the
+        // handler's message and the error handler are given. The text projection is computed once
+        // here and reused for the framework's own text reads: the correlation id, header routing and
+        // durable context decoding.
+        KafkaRecordHeaders headers = extractHeaders(record);
+        Map<String, String> textHeaders = headers.asMap();
         byte[] rawBytes = record.value();
-        String correlationId = sanitizeForMdc(
-                headers.getOrDefault(HEADER_CORRELATION_ID, UUID.randomUUID().toString()));
+        String correlationId = sanitizeForMdc(textHeaders.getOrDefault(
+                HEADER_CORRELATION_ID, UUID.randomUUID().toString()));
         // The record view is fixed here, before the filter, route resolution, deserialization and any
         // interceptor, and is what completion observers receive on every path. A dispatch context
         // handed back by an interceptor never replaces it. Without interceptors nothing can observe
         // it, so none is built.
-        KafkaConsumerRecordView view = interceptors.isEmpty() ? null : buildRecordView(record, rawBytes, recordHeaders);
+        KafkaConsumerRecordView view = interceptors.isEmpty() ? null : buildRecordView(record, rawBytes, headers);
 
         // Pre-deserialization filter. Only the filter call is guarded: a filter that throws is handled
         // like a deserialization failure, so the record still completes and its slot is released.
@@ -325,7 +326,7 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
 
         // Deserialize and dispatch
         try {
-            dispatchRecord(record, rawBytes, headers, correlationId, view);
+            dispatchRecord(record, rawBytes, headers, textHeaders, correlationId, view);
         } catch (Exception e) {
             decrementInFlight();
             errorHandler
@@ -345,7 +346,8 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
      *
      * @param record the raw consumer record
      * @param rawBytes the raw value bytes
-     * @param headers extracted header map
+     * @param headers the record's headers as received
+     * @param textHeaders the text projection of {@code headers}, computed once per record
      * @param correlationId the correlation ID for tracing
      * @param view the record's framework-owned view, handed to completion observers; {@code null}
      *     when the consumer has no interceptors
@@ -353,14 +355,15 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
     private void dispatchRecord(
             KafkaConsumerRecord<String, byte[]> record,
             byte[] rawBytes,
-            Map<String, String> headers,
+            KafkaRecordHeaders headers,
+            Map<String, String> textHeaders,
             String correlationId,
             @Nullable KafkaConsumerRecordView view) {
 
         // For router kind, find the matching route before deserialization
         KafkaRecordDispatcher.RouteResult routeResult = null;
         if (entry.kind() == ConsumerEntry.Kind.ROUTER) {
-            routeResult = dispatcher.resolveRoute(headers, rawBytes, record.topic());
+            routeResult = dispatcher.resolveRoute(headers, textHeaders, rawBytes, record.topic());
             if (routeResult == null) {
                 log.debug(
                         "[{}] No matching route for record: topic={} offset={}",
@@ -462,7 +465,7 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
                                     entry.targetOneWay(),
                                     ctx.value(),
                                     recordContext,
-                                    headers,
+                                    textHeaders,
                                     correlationId);
                         case ROUTER -> {
                             ConsumerEntry.RouteEntry route = resolvedRouteResult.route();
@@ -472,10 +475,10 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
                                     route.targetOneWay(),
                                     ctx.value(),
                                     recordContext,
-                                    headers,
+                                    textHeaders,
                                     correlationId);
                         }
-                        case HANDLER -> dispatcher.dispatchToHandler(ctx.value(), record, headers);
+                        case HANDLER -> dispatcher.dispatchToHandler(ctx.value(), record, headers, textHeaders);
                     };
 
             dispatchFuture.onComplete(dispatchResult -> {
@@ -682,8 +685,8 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
 
     /**
      * Extracts all Kafka record headers as they are on the wire: every header in order, with repeated
-     * keys, {@code null} values and the exact value bytes. The text map the rest of the pipeline uses
-     * is the text projection of the result.
+     * keys, {@code null} values and the exact value bytes. The result is immutable and is the one
+     * header collection the whole pipeline is given for the record.
      *
      * <p>This runs before the guarded part of record processing, so it must not throw. A header with
      * a {@code null} key is skipped: Kafka cannot deliver one, so only a test double can produce it.
@@ -701,8 +704,8 @@ public class KafkaConsumerVerticle extends AbstractVerticle {
             if (header.key() == null) {
                 continue;
             }
-            Buffer value = header.value();
-            entries.add(new KafkaRecordHeader(header.key(), value == null ? null : value.getBytes()));
+            // The header copies the buffer: that is the only copy made of a header value on receipt.
+            entries.add(new KafkaRecordHeader(header.key(), header.value()));
         }
         return new KafkaRecordHeaders(entries);
     }

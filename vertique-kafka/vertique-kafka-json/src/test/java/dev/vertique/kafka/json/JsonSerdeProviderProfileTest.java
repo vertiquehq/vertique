@@ -21,11 +21,11 @@ import dev.vertique.json.JsonConfig;
 import dev.vertique.json.JsonMapperProfiles;
 import dev.vertique.json.VertxJsonSupport;
 import dev.vertique.kafka.DeserializationException;
+import dev.vertique.kafka.KafkaRecordHeaders;
 import dev.vertique.kafka.serialization.KafkaDeserializer;
 import dev.vertique.kafka.serialization.KafkaSerializer;
 import io.vertx.core.json.JsonObject;
 import java.nio.charset.StandardCharsets;
-import java.util.Map;
 import java.util.Set;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -115,10 +115,11 @@ class JsonSerdeProviderProfileTest {
             KafkaDeserializer<Counter> strict = provider.deserializer(Counter.class, serdeConfigWith("no-coercion"));
             assertThrows(
                     DeserializationException.class,
-                    () -> strict.deserialize(bytes("{\"count\":\"5\"}"), "t", Map.of()));
+                    () -> strict.deserialize(bytes("{\"count\":\"5\"}"), "t", KafkaRecordHeaders.empty()));
 
             KafkaDeserializer<Counter> lenient = provider.deserializer(Counter.class, serdeConfigWith(null));
-            assertEquals(new Counter(5), lenient.deserialize(bytes("{\"count\":\"5\"}"), "t", Map.of()));
+            assertEquals(
+                    new Counter(5), lenient.deserialize(bytes("{\"count\":\"5\"}"), "t", KafkaRecordHeaders.empty()));
         }
     }
 
@@ -134,11 +135,11 @@ class JsonSerdeProviderProfileTest {
             JsonSerdeProvider provider = providerWithIndentProfile();
 
             KafkaSerializer<Dto> indent = provider.serializer(Dto.class, serdeConfigWith("indent"));
-            String indentJson = text(indent.serialize(new Dto("x"), "t", Map.of()));
+            String indentJson = text(indent.serialize(new Dto("x"), "t", KafkaRecordHeaders.empty()));
             assertTrue(indentJson.contains("\n"), indentJson);
 
             KafkaSerializer<Dto> vertique = provider.serializer(Dto.class, serdeConfigWith(null));
-            String vertiqueJson = text(vertique.serialize(new Dto("x"), "t", Map.of()));
+            String vertiqueJson = text(vertique.serialize(new Dto("x"), "t", KafkaRecordHeaders.empty()));
             assertFalse(vertiqueJson.contains("\n"), vertiqueJson);
             assertEquals("{\"value\":\"x\"}", vertiqueJson);
         }
@@ -156,15 +157,15 @@ class JsonSerdeProviderProfileTest {
             JsonSerdeProvider provider = providerWithStrictProfile();
             JsonObject strictBag = serdeConfigWith("no-coercion");
 
-            Object strictTree =
-                    provider.routingDeserializer(strictBag).deserialize(bytes("{\"count\":\"5\"}"), "t", Map.of());
+            Object strictTree = provider.routingDeserializer(strictBag)
+                    .deserialize(bytes("{\"count\":\"5\"}"), "t", KafkaRecordHeaders.empty());
             assertNotNull(strictTree);
             assertThrows(
                     DeserializationException.class, () -> provider.convertRouted(strictTree, Counter.class, strictBag));
 
             JsonObject vertiqueBag = serdeConfigWith(null);
-            Object vertiqueTree =
-                    provider.routingDeserializer(vertiqueBag).deserialize(bytes("{\"count\":\"5\"}"), "t", Map.of());
+            Object vertiqueTree = provider.routingDeserializer(vertiqueBag)
+                    .deserialize(bytes("{\"count\":\"5\"}"), "t", KafkaRecordHeaders.empty());
             assertEquals(new Counter(5), provider.convertRouted(vertiqueTree, Counter.class, vertiqueBag));
         }
     }
@@ -188,7 +189,7 @@ class JsonSerdeProviderProfileTest {
             KafkaDeserializer<Counter> strict = provider.deserializer(Counter.class, bag);
             assertThrows(
                     DeserializationException.class,
-                    () -> strict.deserialize(bytes("{\"count\":\"5\"}"), "t", Map.of()),
+                    () -> strict.deserialize(bytes("{\"count\":\"5\"}"), "t", KafkaRecordHeaders.empty()),
                     "the jsonProfile bag key must select the named strict profile");
         }
 
@@ -206,7 +207,7 @@ class JsonSerdeProviderProfileTest {
             KafkaDeserializer<Counter> deser = provider.deserializer(Counter.class, staleBag);
             assertEquals(
                     new Counter(5),
-                    deser.deserialize(bytes("{\"count\":\"5\"}"), "t", Map.of()),
+                    deser.deserialize(bytes("{\"count\":\"5\"}"), "t", KafkaRecordHeaders.empty()),
                     "the retired valueJsonProfile bag key must be ignored → vertique default (coercion) used");
         }
     }
@@ -224,10 +225,12 @@ class JsonSerdeProviderProfileTest {
             JsonSerdeProvider provider = providerWithStrictProfile();
 
             KafkaDeserializer<Counter> absent = provider.deserializer(Counter.class, serdeConfigWith(null));
-            assertEquals(new Counter(5), absent.deserialize(bytes("{\"count\":\"5\"}"), "t", Map.of()));
+            assertEquals(
+                    new Counter(5), absent.deserialize(bytes("{\"count\":\"5\"}"), "t", KafkaRecordHeaders.empty()));
 
             KafkaDeserializer<Counter> system = provider.deserializer(Counter.class, serdeConfigWith("system"));
-            assertEquals(new Counter(5), system.deserialize(bytes("{\"count\":\"5\"}"), "t", Map.of()));
+            assertEquals(
+                    new Counter(5), system.deserialize(bytes("{\"count\":\"5\"}"), "t", KafkaRecordHeaders.empty()));
         }
     }
 
@@ -270,7 +273,7 @@ class JsonSerdeProviderProfileTest {
             KafkaDeserializer<Counter> strict = provider.deserializer(Counter.class, serdeConfigWith("no-coercion"));
             DeserializationException ex = assertThrows(
                     DeserializationException.class,
-                    () -> strict.deserialize(bytes("{\"count\":\"5\"}"), "t", Map.of()));
+                    () -> strict.deserialize(bytes("{\"count\":\"5\"}"), "t", KafkaRecordHeaders.empty()));
 
             // (a) message must reference the type name for operator context
             assertTrue(
@@ -302,8 +305,8 @@ class JsonSerdeProviderProfileTest {
             JsonObject strictBag = serdeConfigWith("no-coercion");
 
             // routingDeserializer succeeds (parses into a JsonNode tree) — only convertRouted rejects
-            Object tree =
-                    provider.routingDeserializer(strictBag).deserialize(bytes("{\"count\":\"5\"}"), "t", Map.of());
+            Object tree = provider.routingDeserializer(strictBag)
+                    .deserialize(bytes("{\"count\":\"5\"}"), "t", KafkaRecordHeaders.empty());
             assertNotNull(tree);
 
             DeserializationException ex = assertThrows(

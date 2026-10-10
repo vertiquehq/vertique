@@ -5,11 +5,11 @@ package dev.vertique.kafka.producer;
 
 import dev.vertique.core.extension.OrderedExtension;
 import dev.vertique.core.payload.PayloadSource;
+import dev.vertique.kafka.KafkaRecordHeaders;
 import io.vertx.core.AsyncResult;
 import io.vertx.kafka.client.producer.RecordMetadata;
 import jakarta.annotation.Nullable;
 import java.lang.reflect.Method;
-import java.util.Map;
 
 /**
  * SPI for observing every Kafka producer send after it completes.
@@ -71,8 +71,9 @@ public interface KafkaProducerCaptureHook extends OrderedExtension {
      * @param key            the record key, or {@code null} if none was provided
      * @param value          a no-copy {@link PayloadSource} over the serialized wire bytes; never
      *                       {@code null}
-     * @param headers        the fully-merged wire headers (application + context propagation
-     *                       headers); never {@code null}
+     * @param headers        the headers of the record as sent, in wire order: the application
+     *                       headers followed by the framework context headers, with repeated
+     *                       keys and binary values kept; never {@code null}
      * @param producerMethod the {@link KafkaProducer @KafkaProducer} interface method that
      *                       initiated the send, or {@code null} for all origins except
      *                       {@link KafkaSendOrigin#DIRECT_PRODUCER}
@@ -85,7 +86,7 @@ public interface KafkaProducerCaptureHook extends OrderedExtension {
             String topic,
             @Nullable String key,
             PayloadSource value,
-            Map<String, String> headers,
+            KafkaRecordHeaders headers,
             @Nullable Method producerMethod,
             AsyncResult<RecordMetadata> result) {}
 
@@ -99,7 +100,7 @@ public interface KafkaProducerCaptureHook extends OrderedExtension {
      * declaring class, which is a super-interface for an inherited send method.
      *
      * <p>The default delegates to the positional {@link #onSend(KafkaSendOrigin, String, String,
-     * PayloadSource, Map, Method, AsyncResult)}, so a hook overrides whichever form it needs — but
+     * PayloadSource, KafkaRecordHeaders, Method, AsyncResult)}, so a hook overrides whichever form it needs — but
      * never make the positional form delegate back to this one, which would recurse.
      *
      * <p>Exceptions thrown by this callback are caught, logged, and swallowed; they do not affect the

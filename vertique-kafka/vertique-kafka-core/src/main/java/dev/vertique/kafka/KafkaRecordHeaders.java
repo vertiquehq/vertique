@@ -3,6 +3,7 @@
 
 package dev.vertique.kafka;
 
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Iterator;
@@ -51,6 +52,35 @@ public record KafkaRecordHeaders(List<KafkaRecordHeader> entries) implements Ite
     }
 
     /**
+     * Creates headers from a text map: one header per entry, in the map's iteration order, each
+     * value encoded as UTF-8. Pass a {@link java.util.LinkedHashMap} or another ordered map when the
+     * order matters.
+     *
+     * <pre>{@code
+     * KafkaRecordHeaders headers = KafkaRecordHeaders.of(Map.of("event-type", "order.created"));
+     * }</pre>
+     *
+     * @param textHeaders the header keys and their text values; must not be {@code null} and must
+     *                    not contain a {@code null} key or a {@code null} value
+     * @return the headers; {@link #empty()} when the map is empty; never {@code null}
+     * @throws NullPointerException if {@code textHeaders}, one of its keys or one of its values is
+     *     {@code null}
+     */
+    public static KafkaRecordHeaders of(Map<String, String> textHeaders) {
+        Objects.requireNonNull(textHeaders, "textHeaders");
+        if (textHeaders.isEmpty()) {
+            return EMPTY;
+        }
+        List<KafkaRecordHeader> entries = new ArrayList<>(textHeaders.size());
+        for (Map.Entry<String, String> entry : textHeaders.entrySet()) {
+            String key = Objects.requireNonNull(entry.getKey(), "header key");
+            String value = Objects.requireNonNull(entry.getValue(), () -> "value of header '" + key + "'");
+            entries.add(KafkaRecordHeader.ofUtf8(key, value));
+        }
+        return new KafkaRecordHeaders(entries);
+    }
+
+    /**
      * Returns every header with the given key, in wire order.
      *
      * @param key the exact key to look for; must not be {@code null}
@@ -87,9 +117,10 @@ public record KafkaRecordHeaders(List<KafkaRecordHeader> entries) implements Ite
 
     /**
      * Returns the headers as a text map. This is a <strong>lossy text projection</strong>, kept for
-     * APIs that take a {@code Map<String, String>}. It has the content of the map the consumer gives
-     * to the pre-deserialization filter, deserializers and handlers; they are given their own
-     * mutable copy, so an edit a filter or deserializer makes to that copy is not reflected here.
+     * APIs that take a {@code Map<String, String>} and for code that reads one text value per key.
+     * It follows the rule the framework itself uses when it reads a header as text (the correlation
+     * id, a route header, a filter factory, a durable context header). A new map is built on every
+     * call, so keep the result when you read more than one key.
      *
      * <p>What is lost:
      *
@@ -113,16 +144,6 @@ public record KafkaRecordHeaders(List<KafkaRecordHeader> entries) implements Ite
         if (entries.isEmpty()) {
             return Map.of();
         }
-        return Collections.unmodifiableMap(toMutableTextMap());
-    }
-
-    /**
-     * Builds the text projection described on {@link #asMap()} as a new mutable map. The consumer
-     * hands this map to filters and deserializers, which have always been given a mutable one.
-     *
-     * @return a new {@link HashMap} that the caller owns; never {@code null}
-     */
-    Map<String, String> toMutableTextMap() {
         Map<String, String> map = new HashMap<>();
         for (KafkaRecordHeader entry : entries) {
             String text = entry.valueAsLenientUtf8();
@@ -130,7 +151,7 @@ public record KafkaRecordHeaders(List<KafkaRecordHeader> entries) implements Ite
                 map.put(entry.key(), text);
             }
         }
-        return map;
+        return Collections.unmodifiableMap(map);
     }
 
     /**

@@ -21,7 +21,6 @@ import io.vertx.junit5.VertxTestContext;
 import io.vertx.kafka.client.consumer.KafkaConsumerRecord;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -185,13 +184,14 @@ class KafkaTerminalOutcomeTest {
             KafkaConsumerRecord<String, byte[]> rec = fakeRecord("t", 0, 0L);
             CapturingConsumerControl control = new CapturingConsumerControl();
 
-            handler.handleError(rec, new byte[0], Map.of(), cause, control).onComplete(ctx.succeeding(outcome -> {
-                ctx.verify(() -> {
-                    assertEquals(KafkaTerminalOutcome.SKIP, outcome);
-                    assertTrue(control.commitCalled, "commitIfManual must be called on SKIP");
-                });
-                ctx.completeNow();
-            }));
+            handler.handleError(rec, new byte[0], KafkaRecordHeaders.empty(), cause, control)
+                    .onComplete(ctx.succeeding(outcome -> {
+                        ctx.verify(() -> {
+                            assertEquals(KafkaTerminalOutcome.SKIP, outcome);
+                            assertTrue(control.commitCalled, "commitIfManual must be called on SKIP");
+                        });
+                        ctx.completeNow();
+                    }));
         }
 
         @Test
@@ -210,13 +210,15 @@ class KafkaTerminalOutcomeTest {
             KafkaConsumerRecord<String, byte[]> rec = fakeRecord("t", 0, 0L);
             CapturingConsumerControl control = new CapturingConsumerControl();
 
-            handler.handleError(rec, new byte[0], Map.of(), cause, control).onComplete(ctx.succeeding(outcome -> {
-                ctx.verify(() -> {
-                    assertEquals(KafkaTerminalOutcome.DLQ_PUBLISHED, outcome);
-                    assertTrue(control.commitCalled, "commitIfManual must be called after successful DLQ publish");
-                });
-                ctx.completeNow();
-            }));
+            handler.handleError(rec, new byte[0], KafkaRecordHeaders.empty(), cause, control)
+                    .onComplete(ctx.succeeding(outcome -> {
+                        ctx.verify(() -> {
+                            assertEquals(KafkaTerminalOutcome.DLQ_PUBLISHED, outcome);
+                            assertTrue(
+                                    control.commitCalled, "commitIfManual must be called after successful DLQ publish");
+                        });
+                        ctx.completeNow();
+                    }));
         }
 
         @Test
@@ -235,13 +237,15 @@ class KafkaTerminalOutcomeTest {
             KafkaConsumerRecord<String, byte[]> rec = fakeRecord("t", 0, 0L);
             CapturingConsumerControl control = new CapturingConsumerControl();
 
-            handler.handleError(rec, new byte[0], Map.of(), cause, control).onComplete(ctx.succeeding(outcome -> {
-                ctx.verify(() -> {
-                    assertEquals(KafkaTerminalOutcome.DLQ_FAILED, outcome);
-                    assertFalse(control.commitCalled, "commitIfManual must NOT be called when DLQ publish fails");
-                });
-                ctx.completeNow();
-            }));
+            handler.handleError(rec, new byte[0], KafkaRecordHeaders.empty(), cause, control)
+                    .onComplete(ctx.succeeding(outcome -> {
+                        ctx.verify(() -> {
+                            assertEquals(KafkaTerminalOutcome.DLQ_FAILED, outcome);
+                            assertFalse(
+                                    control.commitCalled, "commitIfManual must NOT be called when DLQ publish fails");
+                        });
+                        ctx.completeNow();
+                    }));
         }
 
         @Test
@@ -255,15 +259,16 @@ class KafkaTerminalOutcomeTest {
             KafkaConsumerRecord<String, byte[]> rec = fakeRecord("t", 0, 42L);
             CapturingConsumerControl control = new CapturingConsumerControl();
 
-            handler.handleError(rec, new byte[0], Map.of(), cause, control).onComplete(ctx.succeeding(outcome -> {
-                ctx.verify(() -> {
-                    assertEquals(KafkaTerminalOutcome.RETRY_SCHEDULED, outcome);
-                    assertTrue(control.pauseCalled, "pause must be called for RETRY");
-                    assertFalse(control.seekCalls.isEmpty(), "seekToOffset must be called for RETRY");
-                    assertTrue(control.scheduleResumeCalled, "scheduleResume must be called for RETRY");
-                });
-                ctx.completeNow();
-            }));
+            handler.handleError(rec, new byte[0], KafkaRecordHeaders.empty(), cause, control)
+                    .onComplete(ctx.succeeding(outcome -> {
+                        ctx.verify(() -> {
+                            assertEquals(KafkaTerminalOutcome.RETRY_SCHEDULED, outcome);
+                            assertTrue(control.pauseCalled, "pause must be called for RETRY");
+                            assertFalse(control.seekCalls.isEmpty(), "seekToOffset must be called for RETRY");
+                            assertTrue(control.scheduleResumeCalled, "scheduleResume must be called for RETRY");
+                        });
+                        ctx.completeNow();
+                    }));
         }
     }
 }

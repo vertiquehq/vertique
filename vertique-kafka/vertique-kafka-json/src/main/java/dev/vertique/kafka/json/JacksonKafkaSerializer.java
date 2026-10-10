@@ -5,9 +5,9 @@ package dev.vertique.kafka.json;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.vertique.core.json.VertiqueJson;
+import dev.vertique.kafka.KafkaRecordHeaders;
 import dev.vertique.kafka.serialization.KafkaSerializer;
 import jakarta.annotation.Nullable;
-import java.util.Map;
 
 /**
  * Default Jackson JSON serializer for Kafka producer messages.
@@ -43,8 +43,17 @@ public class JacksonKafkaSerializer<V> implements KafkaSerializer<V> {
         this.mapper = mapper;
     }
 
+    /**
+     * Serializes the value as JSON. The topic and the headers are not used.
+     *
+     * @param value the value to serialize
+     * @param topic the target Kafka topic; ignored
+     * @param headers the application headers of the record being sent; ignored
+     * @return the JSON bytes
+     * @throws RuntimeException if the value cannot be serialized
+     */
     @Override
-    public byte[] serialize(V value, String topic, Map<String, String> headers) {
+    public byte[] serialize(V value, String topic, KafkaRecordHeaders headers) {
         ObjectMapper resolved = mapper != null ? mapper : VertiqueJson.mapper();
         try {
             return resolved.writeValueAsBytes(value);

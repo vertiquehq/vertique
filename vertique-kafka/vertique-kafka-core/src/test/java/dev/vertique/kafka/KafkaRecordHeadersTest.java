@@ -3,7 +3,6 @@
 
 package dev.vertique.kafka;
 
-import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
@@ -12,10 +11,13 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import io.vertx.core.buffer.Buffer;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.DisplayName;
@@ -86,7 +88,7 @@ class KafkaRecordHeadersTest {
                 text("nulled", "first"),
                 text("nulled", null),
                 text("empty", ""),
-                new KafkaRecordHeader("binary", NOT_UTF8)));
+                new KafkaRecordHeader("binary", Buffer.buffer(NOT_UTF8))));
 
         assertEquals(text("a", "2"), headers.lastHeader("a").orElseThrow());
         assertTrue(headers.lastHeader("absent").isEmpty());
@@ -95,8 +97,10 @@ class KafkaRecordHeadersTest {
         KafkaRecordHeader nulled = headers.lastHeader("nulled").orElseThrow();
         assertNull(nulled.value());
 
-        assertArrayEquals(new byte[0], headers.lastHeader("empty").orElseThrow().value());
-        assertArrayEquals(NOT_UTF8, headers.lastHeader("binary").orElseThrow().value());
+        assertEquals(Buffer.buffer(), headers.lastHeader("empty").orElseThrow().value());
+        assertEquals(
+                Buffer.buffer(NOT_UTF8),
+                headers.lastHeader("binary").orElseThrow().value());
     }
 
     @Test
@@ -124,16 +128,77 @@ class KafkaRecordHeadersTest {
     }
 
     @Test
-    @DisplayName("changing a source or returned value array does not change the collection")
-    void snapshotOfTheValueArrays() {
-        byte[] source = {1, 2, 3};
+    @DisplayName("changing a source or returned value buffer does not change the collection")
+    void snapshotOfTheValueBuffers() {
+        Buffer source = Buffer.buffer(new byte[] {1, 2, 3});
         KafkaRecordHeaders headers = new KafkaRecordHeaders(List.of(new KafkaRecordHeader("k", source)));
 
-        source[0] = 9;
-        headers.entries().get(0).value()[1] = 9;
-        headers.lastHeader("k").orElseThrow().value()[2] = 9;
+        source.setByte(0, (byte) 9);
+        headers.entries().get(0).value().setByte(1, (byte) 9);
+        headers.lastHeader("k").orElseThrow().value().setByte(2, (byte) 9);
 
-        assertArrayEquals(new byte[] {1, 2, 3}, headers.entries().get(0).value());
+        assertEquals(
+                Buffer.buffer(new byte[] {1, 2, 3}), headers.entries().get(0).value());
+    }
+
+    @Test
+    @DisplayName("of(Map) makes one header per entry, in the map's iteration order")
+    void ofMapKeepsIterationOrder() {
+        Map<String, String> text = new LinkedHashMap<>();
+        text.put("zulu", "1");
+        text.put("alpha", "2");
+        text.put("mike", "");
+
+        KafkaRecordHeaders headers = KafkaRecordHeaders.of(text);
+
+        assertEquals(List.of(text("zulu", "1"), text("alpha", "2"), text("mike", "")), headers.entries());
+        assertEquals(text, headers.asMap());
+    }
+
+    @Test
+    @DisplayName("of(Map) encodes each value as UTF-8")
+    void ofMapEncodesUtf8() {
+        KafkaRecordHeaders headers = KafkaRecordHeaders.of(Map.of("k", "ä€"));
+
+        assertEquals(
+                Buffer.buffer("ä€".getBytes(StandardCharsets.UTF_8)),
+                headers.lastHeader("k").orElseThrow().value());
+        assertEquals(
+                Buffer.buffer(new byte[] {(byte) 0xC3, (byte) 0xA4, (byte) 0xE2, (byte) 0x82, (byte) 0xAC}),
+                headers.entries().get(0).value());
+    }
+
+    @Test
+    @DisplayName("of(Map) is a snapshot: later changes to the map are not seen")
+    void ofMapIsASnapshot() {
+        Map<String, String> text = new LinkedHashMap<>();
+        text.put("a", "1");
+        KafkaRecordHeaders headers = KafkaRecordHeaders.of(text);
+
+        text.put("b", "2");
+        text.put("a", "changed");
+
+        assertEquals(List.of(text("a", "1")), headers.entries());
+    }
+
+    @Test
+    @DisplayName("of(Map) rejects a null map, a null key and a null value")
+    void ofMapRejectsNulls() {
+        Map<String, String> nullKey = new HashMap<>();
+        nullKey.put(null, "v");
+        Map<String, String> nullValue = new HashMap<>();
+        nullValue.put("k", null);
+
+        assertThrows(NullPointerException.class, () -> KafkaRecordHeaders.of(null));
+        assertThrows(NullPointerException.class, () -> KafkaRecordHeaders.of(nullKey));
+        assertThrows(NullPointerException.class, () -> KafkaRecordHeaders.of(nullValue));
+    }
+
+    @Test
+    @DisplayName("of(Map) returns the shared empty instance for an empty map")
+    void ofEmptyMap() {
+        assertSame(KafkaRecordHeaders.empty(), KafkaRecordHeaders.of(Map.of()));
+        assertSame(KafkaRecordHeaders.empty(), KafkaRecordHeaders.of(new HashMap<>()));
     }
 
     @Test
@@ -187,8 +252,8 @@ class KafkaRecordHeadersTest {
     @DisplayName("asMap decodes malformed UTF-8 leniently, one replacement character per bad byte")
     void asMapReplacesMalformedInput() {
         KafkaRecordHeaders headers = new KafkaRecordHeaders(List.of(
-                new KafkaRecordHeader("binary", NOT_UTF8),
-                new KafkaRecordHeader("mixed", new byte[] {'o', 'k', (byte) 0xFF}),
+                new KafkaRecordHeader("binary", Buffer.buffer(NOT_UTF8)),
+                new KafkaRecordHeader("mixed", Buffer.buffer(new byte[] {'o', 'k', (byte) 0xFF})),
                 text("text", "ä")));
 
         Map<String, String> expected = new HashMap<>();
@@ -217,8 +282,9 @@ class KafkaRecordHeadersTest {
     @Test
     @DisplayName("toString shows keys and value lengths, never a header value")
     void toStringHidesTheValues() {
-        String text = new KafkaRecordHeaders(
-                        List.of(text("authorization", "s3cret"), new KafkaRecordHeader("bin", new byte[] {77, 78})))
+        String text = new KafkaRecordHeaders(List.of(
+                        text("authorization", "s3cret"),
+                        new KafkaRecordHeader("bin", Buffer.buffer(new byte[] {77, 78}))))
                 .toString();
 
         assertEquals(

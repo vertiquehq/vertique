@@ -3,7 +3,7 @@
 
 package dev.vertique.kafka.serialization;
 
-import java.util.Map;
+import dev.vertique.kafka.KafkaRecordHeaders;
 
 /**
  * SPI for serializing values to raw bytes for Kafka producer messages.
@@ -20,12 +20,18 @@ public interface KafkaSerializer<V> {
      * Serializes a value to raw bytes with topic and header context. Schema-registry serializers
      * (e.g. Avro) need the topic for subject naming ({@code <topic>-value}); JSON ignores both.
      *
+     * <p>The headers are the application headers the caller gave for the record, in their order,
+     * with repeated keys and binary values kept. They are immutable: a serializer reads them and
+     * cannot add a header to the record. The framework context headers are added after
+     * serialization and are not among them.
+     *
      * @param value the value to serialize
      * @param topic the target Kafka topic
-     * @param headers the record headers being sent
+     * @param headers the application headers of the record being sent; never {@code null};
+     *     {@link KafkaRecordHeaders#empty()} when the caller gave none
      * @return the serialized bytes
      */
-    byte[] serialize(V value, String topic, Map<String, String> headers);
+    byte[] serialize(V value, String topic, KafkaRecordHeaders headers);
 
     /**
      * Whether this serializer may block the calling thread (e.g. a Schema Registry HTTP call on a

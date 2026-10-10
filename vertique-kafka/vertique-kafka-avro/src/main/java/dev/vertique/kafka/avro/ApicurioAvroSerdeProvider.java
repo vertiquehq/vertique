@@ -4,6 +4,7 @@
 package dev.vertique.kafka.avro;
 
 import dev.vertique.kafka.DeserializationException;
+import dev.vertique.kafka.KafkaRecordHeaders;
 import dev.vertique.kafka.config.KafkaConfig;
 import dev.vertique.kafka.serialization.KafkaDeserializer;
 import dev.vertique.kafka.serialization.KafkaSerdeProvider;
@@ -97,7 +98,7 @@ public final class ApicurioAvroSerdeProvider implements KafkaSerdeProvider {
         serializer.configure(serializerConfig(endpointConfig), false);
         return new KafkaSerializer<>() {
             @Override
-            public byte[] serialize(V value, String topic, Map<String, String> headers) {
+            public byte[] serialize(V value, String topic, KafkaRecordHeaders headers) {
                 return serializer.serialize(topic, value);
             }
 
@@ -116,7 +117,7 @@ public final class ApicurioAvroSerdeProvider implements KafkaSerdeProvider {
         deserializer.configure(deserializerConfig(endpointConfig), false);
         return new KafkaDeserializer<>() {
             @Override
-            public V deserialize(byte[] data, String topic, Map<String, String> headers) {
+            public V deserialize(byte[] data, String topic, KafkaRecordHeaders headers) {
                 V decoded = decode(deserializer, topic, data);
                 // Guard against a wire schema-id resolving to a different generated record than declared.
                 if (decoded != null && !type.isInstance(decoded)) {
@@ -142,7 +143,7 @@ public final class ApicurioAvroSerdeProvider implements KafkaSerdeProvider {
         deserializer.configure(deserializerConfig(endpointConfig), false);
         return new KafkaDeserializer<>() {
             @Override
-            public Object deserialize(byte[] data, String topic, Map<String, String> headers) {
+            public Object deserialize(byte[] data, String topic, KafkaRecordHeaders headers) {
                 return decode(deserializer, topic, data);
             }
 

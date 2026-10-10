@@ -135,9 +135,9 @@ public interface KafkaConsumerInterceptor extends OrderedExtension {
      * deserializer or interceptor runs, so its identity, key and headers are the record's own
      * whatever a {@link #beforeDispatch} implementation returned. {@code event.identity()} and
      * {@code record.identity()} are the same instance. {@link KafkaConsumerRecordView#headers()}
-     * holds every header in wire order, with repeated keys and binary values intact; its
-     * {@link dev.vertique.kafka.KafkaRecordHeaders#asMap() asMap()} is a lossy text map with the
-     * content of the map that filters, deserializers and handlers are given.
+     * holds every header in wire order, with repeated keys and binary values intact, and is the
+     * collection that filters, deserializers, the dispatch context and handlers are given; its
+     * {@link dev.vertique.kafka.KafkaRecordHeaders#asMap() asMap()} is a lossy text map.
      * {@link KafkaConsumerRecordView#value()} is
      * the array the broker delivered, uncopied; it is not a snapshot, and an in-place edit by a
      * deserializer or handler is visible through it.
