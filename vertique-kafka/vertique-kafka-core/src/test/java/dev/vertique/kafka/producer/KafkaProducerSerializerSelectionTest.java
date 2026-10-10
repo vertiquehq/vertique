@@ -10,6 +10,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.config.parser.DefaultConfigMapper;
 import dev.vertique.config.parser.DefaultConfigParser;
+import dev.vertique.kafka.KafkaRecordHeaders;
 import dev.vertique.kafka.config.KafkaConfig;
 import dev.vertique.kafka.serialization.KafkaDeserializer;
 import dev.vertique.kafka.serialization.KafkaSerdeProvider;
@@ -154,7 +155,7 @@ class KafkaProducerSerializerSelectionTest {
     }
 
     private static String bytes(KafkaSerializer<Object> serializer, Object value) {
-        return new String(serializer.serialize(value, "topic", Map.of()), StandardCharsets.UTF_8);
+        return new String(serializer.serialize(value, "topic", KafkaRecordHeaders.empty()), StandardCharsets.UTF_8);
     }
 
     // --- Auto-detect ---

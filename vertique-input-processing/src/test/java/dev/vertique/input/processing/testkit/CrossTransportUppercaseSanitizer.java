@@ -14,7 +14,7 @@ import java.util.Locale;
  *
  * <p>{@link #transform(String)} is the single source of truth for this sanitizer's behavior. {@link
  * #sanitize(String, InputValueContext)} delegates to it, and {@link CrossTransportInputCorpus} computes
- * its published expected output by calling the same static method — never by restating the transform
+ * its shared expected output by calling the same static method — never by restating the transform
  * as a second literal that could silently drift from what this class actually does.
  */
 public final class CrossTransportUppercaseSanitizer implements Sanitizer {

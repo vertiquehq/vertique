@@ -4,27 +4,51 @@
 package dev.vertique.kafka;
 
 import dev.vertique.core.async.Combinators;
+import dev.vertique.kafka.interceptor.KafkaConsumerCompletedEvent;
 import dev.vertique.kafka.interceptor.KafkaConsumerInterceptor;
+import dev.vertique.kafka.interceptor.KafkaConsumerRecordView;
 import dev.vertique.kafka.interceptor.KafkaDispatchContext;
 import io.vertx.core.Future;
 import java.util.List;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Consumer;
 import lombok.extern.slf4j.Slf4j;
 
 /**
  * Executes Kafka consumer interceptor pipelines: synchronous fire-and-forget observers and
  * asynchronous handler chains.
  *
- * <p>Observer methods ({@code onRecord}, {@code onSuccess}, {@code onError}) run all interceptors
- * in order, swallowing individual exceptions so that a failing interceptor does not disrupt
- * dispatch. Async chain methods ({@code runBeforeInterceptors}, {@code runAfterInterceptors},
- * {@code runRecoverError}) compose interceptor futures sequentially via
- * {@link dev.vertique.core.async.Combinators}.
+ * <p>Observer methods ({@code onRecord}, {@code onSuccess}, {@code onError},
+ * {@code onRecordCompleted}) run all interceptors in order under one isolation policy: an
+ * {@link Exception}, {@link LinkageError} or {@link AssertionError} thrown by one interceptor is
+ * logged and swallowed, so a failing observer can neither stop later interceptors nor change what
+ * happens to the record. An {@link Exception} or {@link AssertionError} is logged at warn level each
+ * time. A {@link LinkageError} means the callback cannot run at all and would repeat for every
+ * record, so it is logged at error level once per interceptor class and callback for the life of the
+ * chain. Async chain methods ({@code runBeforeInterceptors},
+ * {@code runAfterInterceptors}, {@code runRecoverError}) compose interceptor futures sequentially
+ * via {@link dev.vertique.core.async.Combinators}.
  */
 @Slf4j
 final class KafkaConsumerInterceptorChain {
 
     private final String consumerName;
     private final List<KafkaConsumerInterceptor> interceptors;
+
+    /**
+     * Interceptor class and callback pairs already reported as unusable. Concurrent because the
+     * completion callback runs on any thread.
+     */
+    private final Set<UnusableCallback> reportedUnusable = ConcurrentHashMap.newKeySet();
+
+    /**
+     * One interceptor callback that failed with a {@link LinkageError}.
+     *
+     * @param interceptorClass the interceptor's class
+     * @param callback the callback name
+     */
+    private record UnusableCallback(Class<?> interceptorClass, String callback) {}
 
     /**
      * Creates a new interceptor chain for the given consumer.
@@ -40,41 +64,73 @@ final class KafkaConsumerInterceptorChain {
     // --- Sync observers ---
 
     /**
-     * Fires {@code onRecord} on every interceptor. Exceptions are swallowed and logged.
+     * Fires {@code onRecord} on every interceptor. Failures are swallowed and logged.
      *
      * @param ctx the dispatch context before any before-dispatch processing
      */
     void runOnRecordObservers(KafkaDispatchContext<Object> ctx) {
-        Combinators.forEachSwallowSync(
-                interceptors,
-                i -> i.onRecord(ctx),
-                (i, e) -> log.warn("[{}] Interceptor onRecord threw exception", consumerName, e));
+        forEachObserver("onRecord", i -> i.onRecord(ctx));
     }
 
     /**
-     * Fires {@code onSuccess} on every interceptor after a successful dispatch. Exceptions are
+     * Fires {@code onSuccess} on every interceptor after a successful dispatch. Failures are
      * swallowed and logged.
      *
      * @param ctx the dispatch context after successful dispatch
      */
     void runOnSuccessObservers(KafkaDispatchContext<Object> ctx) {
-        Combinators.forEachSwallowSync(
-                interceptors,
-                i -> i.onSuccess(ctx),
-                (i, e) -> log.warn("[{}] Interceptor onSuccess threw exception", consumerName, e));
+        forEachObserver("onSuccess", i -> i.onSuccess(ctx));
     }
 
     /**
-     * Fires {@code onError} on every interceptor. Exceptions are swallowed and logged.
+     * Fires {@code onError} on every interceptor. Failures are swallowed and logged.
      *
      * @param ctx the dispatch context at the time of the error
      * @param error the dispatch error
      */
     void runOnErrorObservers(KafkaDispatchContext<Object> ctx, Throwable error) {
-        Combinators.forEachSwallowSync(
-                interceptors,
-                i -> i.onError(ctx, error),
-                (i, e) -> log.warn("[{}] Interceptor onError threw exception", consumerName, e));
+        forEachObserver("onError", i -> i.onError(ctx, error));
+    }
+
+    /**
+     * Fires {@code onRecordCompleted} on every interceptor once the record's disposition is final.
+     * Failures are swallowed and logged.
+     *
+     * @param event the completion facts
+     * @param record the framework-owned view of the record
+     */
+    void runOnRecordCompleted(KafkaConsumerCompletedEvent event, KafkaConsumerRecordView record) {
+        forEachObserver("onRecordCompleted", i -> i.onRecordCompleted(event, record));
+    }
+
+    /**
+     * Calls one synchronous observer callback on every interceptor in order. An {@link Exception},
+     * {@link LinkageError} or {@link AssertionError} from one interceptor does not stop the remaining
+     * interceptors. An {@link Exception} or {@link AssertionError} is logged at warn level each time.
+     * A {@link LinkageError} is logged at error level the first time it is seen for an interceptor
+     * class and callback, and not logged again for that pair. Any other {@link Error} propagates.
+     *
+     * @param callback the callback name, for the log message
+     * @param action the invocation of that callback on one interceptor
+     */
+    private void forEachObserver(String callback, Consumer<KafkaConsumerInterceptor> action) {
+        for (KafkaConsumerInterceptor interceptor : interceptors) {
+            try {
+                action.accept(interceptor);
+            } catch (LinkageError e) {
+                if (reportedUnusable.add(new UnusableCallback(interceptor.getClass(), callback))) {
+                    log.error(
+                            "[{}] Interceptor {} callback {} is unusable and its notifications are being lost;"
+                                    + " further failures of this callback are not logged",
+                            consumerName,
+                            interceptor.getClass().getName(),
+                            callback,
+                            e);
+                }
+            } catch (Exception | AssertionError e) {
+                log.warn("[{}] Interceptor {} threw exception", consumerName, callback, e);
+            }
+        }
     }
 
     // --- Async chains ---

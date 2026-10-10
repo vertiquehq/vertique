@@ -10,9 +10,9 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import dev.vertique.kafka.KafkaRecordHeaders;
 import io.vertx.core.json.JsonObject;
 import java.nio.charset.StandardCharsets;
-import java.util.Map;
 import java.util.Set;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -117,9 +117,9 @@ class KafkaSerdeRegistryTest {
             KafkaSerializer<Plain> ser = reg.serializer("json", Plain.class, new JsonObject());
             KafkaDeserializer<Plain> deser = reg.deserializer("json", Plain.class, new JsonObject());
 
-            byte[] bytes = ser.serialize(new Plain("hi"), "t", Map.of());
+            byte[] bytes = ser.serialize(new Plain("hi"), "t", KafkaRecordHeaders.empty());
             assertArrayEquals("{\"name\":\"hi\"}".getBytes(StandardCharsets.UTF_8), bytes);
-            assertEquals(new Plain("hi"), deser.deserialize(bytes, "t", Map.of()));
+            assertEquals(new Plain("hi"), deser.deserialize(bytes, "t", KafkaRecordHeaders.empty()));
             assertFalse(ser.mayBlock());
             assertFalse(deser.mayBlock());
             assertFalse(reg.mayBlock("json"));
@@ -141,7 +141,7 @@ class KafkaSerdeRegistryTest {
                     "{\"name\":\"x\"}",
                     new String(
                             reg.serializer("json", Plain.class, new JsonObject())
-                                    .serialize(new Plain("x"), "t", Map.of()),
+                                    .serialize(new Plain("x"), "t", KafkaRecordHeaders.empty()),
                             StandardCharsets.UTF_8));
         }
 
@@ -151,8 +151,8 @@ class KafkaSerdeRegistryTest {
             KafkaSerdeRegistry reg = jsonRegistry();
             // Build a routing value (JsonNode) via the routingDeserializer
             byte[] bytes = "{\"name\":\"hello\"}".getBytes(StandardCharsets.UTF_8);
-            Object routingValue =
-                    reg.routingDeserializer("json", new JsonObject()).deserialize(bytes, "t", Map.of());
+            Object routingValue = reg.routingDeserializer("json", new JsonObject())
+                    .deserialize(bytes, "t", KafkaRecordHeaders.empty());
             Plain result = reg.convertRouted("json", routingValue, Plain.class, new JsonObject());
             assertEquals(new Plain("hello"), result);
         }
@@ -342,7 +342,7 @@ class KafkaSerdeRegistryTest {
         @DisplayName("routingDeserializer and matchValue delegate to the provider")
         void delegatesToProvider() throws Exception {
             Object record = reg.routingDeserializer("avro", new JsonObject())
-                    .deserialize("ORDER".getBytes(StandardCharsets.UTF_8), "t", Map.of());
+                    .deserialize("ORDER".getBytes(StandardCharsets.UTF_8), "t", KafkaRecordHeaders.empty());
             assertEquals(new FakeRecord("ORDER"), record);
             assertEquals("ORDER", reg.matchValue("avro", record, "field"));
         }
@@ -358,8 +358,8 @@ class KafkaSerdeRegistryTest {
         void jsonRoutingSupported() throws Exception {
             KafkaSerdeRegistry jsonReg = jsonRegistry();
             byte[] bytes = "{\"type\":\"order\"}".getBytes(StandardCharsets.UTF_8);
-            Object routingValue =
-                    jsonReg.routingDeserializer("json", new JsonObject()).deserialize(bytes, "t", Map.of());
+            Object routingValue = jsonReg.routingDeserializer("json", new JsonObject())
+                    .deserialize(bytes, "t", KafkaRecordHeaders.empty());
             assertNotNull(routingValue, "json routing deserializer must return a non-null JsonNode");
             assertEquals("order", jsonReg.matchValue("json", routingValue, "type"));
         }
@@ -369,8 +369,8 @@ class KafkaSerdeRegistryTest {
         void convertRoutedDelegatesViaRegistry() throws Exception {
             KafkaSerdeRegistry jsonReg = jsonRegistry();
             byte[] bytes = "{\"name\":\"test\"}".getBytes(StandardCharsets.UTF_8);
-            Object routingValue =
-                    jsonReg.routingDeserializer("json", new JsonObject()).deserialize(bytes, "t", Map.of());
+            Object routingValue = jsonReg.routingDeserializer("json", new JsonObject())
+                    .deserialize(bytes, "t", KafkaRecordHeaders.empty());
             Plain result = jsonReg.convertRouted("json", routingValue, Plain.class, new JsonObject());
             assertEquals(new Plain("test"), result);
         }
@@ -398,7 +398,7 @@ class KafkaSerdeRegistryTest {
             public <V> KafkaSerializer<V> serializer(Class<V> type, JsonObject endpointConfig) {
                 return new KafkaSerializer<>() {
                     @Override
-                    public byte[] serialize(V value, String topic, Map<String, String> headers) {
+                    public byte[] serialize(V value, String topic, KafkaRecordHeaders headers) {
                         return new byte[0];
                     }
 
@@ -413,7 +413,7 @@ class KafkaSerdeRegistryTest {
             public <V> KafkaDeserializer<V> deserializer(Class<V> type, JsonObject endpointConfig) {
                 return new KafkaDeserializer<>() {
                     @Override
-                    public V deserialize(byte[] data, String topic, Map<String, String> headers) {
+                    public V deserialize(byte[] data, String topic, KafkaRecordHeaders headers) {
                         return null;
                     }
 

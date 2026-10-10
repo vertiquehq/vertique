@@ -176,7 +176,7 @@ class KafkaJsonRoutingTest {
             KafkaRecordDispatcher d = dispatcher(entry);
 
             byte[] payload = bytes("{\"type\":\"created\",\"id\":\"101\"}");
-            RouteResult result = d.resolveRoute(Map.of(), payload, "events");
+            RouteResult result = d.resolveRoute(KafkaRecordHeaders.empty(), Map.of(), payload, "events");
 
             assertNotNull(result);
             assertEquals("created", result.route().matchValue());
@@ -192,13 +192,14 @@ class KafkaJsonRoutingTest {
             KafkaRecordDispatcher d = dispatcher(entry);
 
             byte[] payload = bytes("{\"type\":\"shipped\",\"id\":\"42\"}");
-            RouteResult result = d.resolveRoute(Map.of(), payload, "events");
+            RouteResult result = d.resolveRoute(KafkaRecordHeaders.empty(), Map.of(), payload, "events");
 
             assertNotNull(result);
             assertEquals("shipped", result.route().matchValue());
 
             // deserializeRecord must use convertRouted (reusing the JsonNode) — no second wire-byte parse
-            Object deserialized = d.deserializeRecord(mockRecord("events"), payload, Map.of(), result);
+            Object deserialized =
+                    d.deserializeRecord(mockRecord("events"), payload, KafkaRecordHeaders.empty(), result);
             assertEquals(new OrderShipped("shipped", "42"), deserialized);
         }
 
@@ -212,7 +213,7 @@ class KafkaJsonRoutingTest {
 
             // "cancelled" does not match any property route
             byte[] payload = bytes("{\"type\":\"cancelled\",\"id\":\"7\"}");
-            RouteResult result = d.resolveRoute(Map.of(), payload, "events");
+            RouteResult result = d.resolveRoute(KafkaRecordHeaders.empty(), Map.of(), payload, "events");
 
             assertNotNull(result);
             assertTrue(result.route().defaultHandler(), "Unmatched type must fall to default route");
@@ -226,7 +227,7 @@ class KafkaJsonRoutingTest {
                     routerEntry("json-null-router", List.of(propertyRoute("created", OrderCreated.class)));
             KafkaRecordDispatcher d = dispatcher(entry);
 
-            RouteResult result = d.resolveRoute(Map.of(), null, "events");
+            RouteResult result = d.resolveRoute(KafkaRecordHeaders.empty(), Map.of(), null, "events");
             assertNull(result, "Null raw bytes must yield no route");
         }
     }
@@ -244,14 +245,19 @@ class KafkaJsonRoutingTest {
             KafkaRecordDispatcher d = dispatcher(entry);
 
             byte[] payload = bytes("{\"type\":\"created\",\"id\":\"5\"}");
-            RouteResult result = d.resolveRoute(Map.of("event-type", "created"), payload, "events");
+            RouteResult result = d.resolveRoute(
+                    KafkaRecordHeaders.of(Map.of("event-type", "created")),
+                    Map.of("event-type", "created"),
+                    payload,
+                    "events");
 
             assertNotNull(result);
             assertEquals("created", result.route().matchValue());
             assertNull(result.routingValue(), "Header match must not pre-deserialize (routingValue null)");
 
             // deserializeRecord uses the cached route deserializer for header matches
-            Object deserialized = d.deserializeRecord(mockRecord("events"), payload, Map.of(), result);
+            Object deserialized =
+                    d.deserializeRecord(mockRecord("events"), payload, KafkaRecordHeaders.empty(), result);
             assertEquals(new OrderCreated("created", "5"), deserialized);
         }
     }
@@ -268,7 +274,11 @@ class KafkaJsonRoutingTest {
                     List.of(headerRoute("event-type", "ping", Void.class), defaultRoute(Void.class)));
             KafkaRecordDispatcher d = dispatcher(entry);
 
-            RouteResult result = d.resolveRoute(Map.of("event-type", "ping"), bytes("ignored"), "events");
+            RouteResult result = d.resolveRoute(
+                    KafkaRecordHeaders.of(Map.of("event-type", "ping")),
+                    Map.of("event-type", "ping"),
+                    bytes("ignored"),
+                    "events");
             assertNotNull(result);
             assertEquals("ping", result.route().matchValue());
             assertNull(result.routingValue());
@@ -287,9 +297,9 @@ class KafkaJsonRoutingTest {
             KafkaRecordDispatcher d = dispatcher(entry);
 
             byte[] payload = bytes("{\"type\":\"created\"}");
-            RouteResult result = d.resolveRoute(Map.of(), payload, "events");
+            RouteResult result = d.resolveRoute(KafkaRecordHeaders.empty(), Map.of(), payload, "events");
             assertNotNull(result);
-            assertNull(d.deserializeRecord(mockRecord("events"), payload, Map.of(), result));
+            assertNull(d.deserializeRecord(mockRecord("events"), payload, KafkaRecordHeaders.empty(), result));
         }
     }
 
@@ -309,7 +319,7 @@ class KafkaJsonRoutingTest {
             KafkaRecordDispatcher d = dispatcher(entry);
 
             byte[] payload = bytes("{\"type\":\"created\",\"id\":\"1\"}");
-            RouteResult result = d.resolveRoute(Map.of(), payload, "events");
+            RouteResult result = d.resolveRoute(KafkaRecordHeaders.empty(), Map.of(), payload, "events");
             assertNotNull(result);
             assertNotNull(result.routingValue(), "Must have a routingValue for a property match");
 

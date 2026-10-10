@@ -13,11 +13,11 @@ import com.fasterxml.jackson.databind.JsonNode;
 import dev.vertique.json.DefaultJsonMapperProfileRegistry;
 import dev.vertique.json.JsonConfig;
 import dev.vertique.kafka.DeserializationException;
+import dev.vertique.kafka.KafkaRecordHeaders;
 import dev.vertique.kafka.serialization.KafkaDeserializer;
 import dev.vertique.kafka.serialization.KafkaSerializer;
 import io.vertx.core.json.JsonObject;
 import java.nio.charset.StandardCharsets;
-import java.util.Map;
 import java.util.Set;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -79,7 +79,7 @@ class JsonSerdeProviderTest {
         @DisplayName("serializes a Plain record to JSON bytes")
         void roundTrip() {
             KafkaSerializer<Plain> ser = provider.serializer(Plain.class, new JsonObject());
-            byte[] bytes = ser.serialize(new Plain("hello"), "t", Map.of());
+            byte[] bytes = ser.serialize(new Plain("hello"), "t", KafkaRecordHeaders.empty());
             assertEquals("{\"name\":\"hello\"}", new String(bytes, StandardCharsets.UTF_8));
         }
 
@@ -101,7 +101,7 @@ class JsonSerdeProviderTest {
         void roundTrip() throws Exception {
             byte[] bytes = "{\"name\":\"world\"}".getBytes(StandardCharsets.UTF_8);
             KafkaDeserializer<Plain> deser = provider.deserializer(Plain.class, new JsonObject());
-            assertEquals(new Plain("world"), deser.deserialize(bytes, "t", Map.of()));
+            assertEquals(new Plain("world"), deser.deserialize(bytes, "t", KafkaRecordHeaders.empty()));
         }
 
         @Test
@@ -115,7 +115,7 @@ class JsonSerdeProviderTest {
         void invalidJsonThrows() {
             byte[] bad = "not-json".getBytes(StandardCharsets.UTF_8);
             KafkaDeserializer<Plain> deser = provider.deserializer(Plain.class, new JsonObject());
-            assertThrows(DeserializationException.class, () -> deser.deserialize(bad, "t", Map.of()));
+            assertThrows(DeserializationException.class, () -> deser.deserialize(bad, "t", KafkaRecordHeaders.empty()));
         }
     }
 
@@ -130,7 +130,7 @@ class JsonSerdeProviderTest {
         void yieldsJsonNode() throws Exception {
             byte[] bytes = "{\"type\":\"order\",\"id\":\"42\"}".getBytes(StandardCharsets.UTF_8);
             KafkaDeserializer<Object> routing = provider.routingDeserializer(new JsonObject());
-            Object result = routing.deserialize(bytes, "t", Map.of());
+            Object result = routing.deserialize(bytes, "t", KafkaRecordHeaders.empty());
             assertNotNull(result);
             assertNotNull(result instanceof JsonNode, "result must be a JsonNode");
         }
@@ -139,7 +139,7 @@ class JsonSerdeProviderTest {
         @DisplayName("returns null when input data is null")
         void nullInputReturnsNull() throws Exception {
             KafkaDeserializer<Object> routing = provider.routingDeserializer(new JsonObject());
-            assertNull(routing.deserialize(null, "t", Map.of()));
+            assertNull(routing.deserialize(null, "t", KafkaRecordHeaders.empty()));
         }
 
         @Test
@@ -147,7 +147,8 @@ class JsonSerdeProviderTest {
         void invalidJsonThrows() {
             byte[] bad = "not-json!!".getBytes(StandardCharsets.UTF_8);
             KafkaDeserializer<Object> routing = provider.routingDeserializer(new JsonObject());
-            assertThrows(DeserializationException.class, () -> routing.deserialize(bad, "t", Map.of()));
+            assertThrows(
+                    DeserializationException.class, () -> routing.deserialize(bad, "t", KafkaRecordHeaders.empty()));
         }
     }
 
@@ -161,7 +162,8 @@ class JsonSerdeProviderTest {
         @DisplayName("reads the property value from a JsonNode routing value")
         void readsProperty() throws Exception {
             byte[] bytes = "{\"type\":\"created\",\"id\":\"7\"}".getBytes(StandardCharsets.UTF_8);
-            Object tree = provider.routingDeserializer(new JsonObject()).deserialize(bytes, "t", Map.of());
+            Object tree =
+                    provider.routingDeserializer(new JsonObject()).deserialize(bytes, "t", KafkaRecordHeaders.empty());
             assertEquals("created", provider.matchValue(tree, "type"));
             assertEquals("7", provider.matchValue(tree, "id"));
         }
@@ -170,7 +172,8 @@ class JsonSerdeProviderTest {
         @DisplayName("returns empty string (asText() default) for an absent field")
         void absentFieldReturnsEmptyString() throws Exception {
             byte[] bytes = "{\"type\":\"created\"}".getBytes(StandardCharsets.UTF_8);
-            Object tree = provider.routingDeserializer(new JsonObject()).deserialize(bytes, "t", Map.of());
+            Object tree =
+                    provider.routingDeserializer(new JsonObject()).deserialize(bytes, "t", KafkaRecordHeaders.empty());
             assertEquals("", provider.matchValue(tree, "missing"));
         }
 
@@ -193,7 +196,8 @@ class JsonSerdeProviderTest {
         @DisplayName("converts a JsonNode to the route target type without re-parsing bytes")
         void convertsTreeToType() throws Exception {
             byte[] bytes = "{\"type\":\"created\",\"id\":\"99\"}".getBytes(StandardCharsets.UTF_8);
-            Object tree = provider.routingDeserializer(new JsonObject()).deserialize(bytes, "t", Map.of());
+            Object tree =
+                    provider.routingDeserializer(new JsonObject()).deserialize(bytes, "t", KafkaRecordHeaders.empty());
             OrderEvent event = provider.convertRouted(tree, OrderEvent.class, new JsonObject());
             assertEquals(new OrderEvent("created", "99"), event);
         }
@@ -212,7 +216,8 @@ class JsonSerdeProviderTest {
         void incompatibleTreeThrows() throws Exception {
             // A JSON object that Jackson cannot map to String (e.g. missing constructor)
             byte[] bytes = "{\"nested\":{\"deep\":true}}".getBytes(StandardCharsets.UTF_8);
-            Object tree = provider.routingDeserializer(new JsonObject()).deserialize(bytes, "t", Map.of());
+            Object tree =
+                    provider.routingDeserializer(new JsonObject()).deserialize(bytes, "t", KafkaRecordHeaders.empty());
             // String is not Jackson-deserializable from a JSON object
             assertThrows(
                     DeserializationException.class, () -> provider.convertRouted(tree, int.class, new JsonObject()));

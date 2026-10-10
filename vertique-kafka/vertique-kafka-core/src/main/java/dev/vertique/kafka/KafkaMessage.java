@@ -3,12 +3,18 @@
 
 package dev.vertique.kafka;
 
-import java.util.Collections;
-import java.util.Map;
-import java.util.Optional;
-
 /**
  * Immutable Kafka message context passed to {@link KafkaRecordHandler} implementations.
+ *
+ * <p>The headers are the record's headers as they are on the wire: every header in order, with
+ * repeated keys, {@code null} values and binary values. Read one header with
+ * {@link KafkaRecordHeaders#lastHeader(String)}, or one text value per key from
+ * {@link KafkaRecordHeaders#asMap()}:
+ *
+ * <pre>{@code
+ * Optional<KafkaRecordHeader> signature = message.headers().lastHeader("signature");
+ * String eventType = message.headers().asMap().get("event-type");
+ * }</pre>
  *
  * @param value the deserialized message value
  * @param key the message key, or {@code null}
@@ -16,14 +22,15 @@ import java.util.Optional;
  * @param partition the source partition
  * @param offset the message offset
  * @param timestamp the message timestamp (epoch milliseconds)
- * @param headers the message headers
+ * @param headers the message headers as received, in wire order; immutable; never {@code null}
  * @param <V> the value type
  */
 public record KafkaMessage<V>(
-        V value, String key, String topic, int partition, long offset, long timestamp, Map<String, String> headers) {
+        V value, String key, String topic, int partition, long offset, long timestamp, KafkaRecordHeaders headers) {
 
     /**
-     * Defensive copy of headers in compact constructor.
+     * Replaces {@code null} headers with {@link KafkaRecordHeaders#empty()}. The headers are
+     * immutable, so they are held as given and not copied.
      *
      * @param value the deserialized message value
      * @param key the message key, or {@code null}
@@ -31,19 +38,9 @@ public record KafkaMessage<V>(
      * @param partition the source partition
      * @param offset the message offset
      * @param timestamp the message timestamp (epoch milliseconds)
-     * @param headers the message headers
+     * @param headers the message headers, or {@code null} for none
      */
     public KafkaMessage {
-        headers = headers != null ? Collections.unmodifiableMap(headers) : Collections.emptyMap();
-    }
-
-    /**
-     * Returns a single header value by name.
-     *
-     * @param name the header name
-     * @return the header value, or empty if not present
-     */
-    public Optional<String> header(String name) {
-        return Optional.ofNullable(headers.get(name));
+        headers = headers != null ? headers : KafkaRecordHeaders.empty();
     }
 }

@@ -6,6 +6,7 @@ package dev.vertique.rest.jaxrs;
 import dev.vertique.rest.core.request.RequestBodyDecoder;
 import dev.vertique.rest.core.request.RequestValue;
 import io.vertx.ext.web.RoutingContext;
+import java.util.Locale;
 
 /**
  * {@link RequestBodyDecoder} that handles plain-text request bodies.
@@ -33,7 +34,9 @@ class TextRequestBodyDecoder implements RequestBodyDecoder {
      */
     @Override
     public boolean canDecode(Class<?> targetType, String contentType) {
-        return contentType != null && contentType.toLowerCase().startsWith("text/") && targetType == String.class;
+        return contentType != null
+                && contentType.toLowerCase(Locale.ROOT).startsWith("text/")
+                && targetType == String.class;
     }
 
     /**

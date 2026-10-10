@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.rest.core.request.MediaType;
@@ -276,5 +277,163 @@ class MediaTypeTest {
         MediaType fromParse = MediaType.parse("application/json");
         MediaType fromValueOf = MediaType.valueOf("application/json");
         assertEquals(fromParse, fromValueOf);
+    }
+
+    // --- Quote-aware parsing ---
+
+    @Test
+    @DisplayName("quoted semicolon and comma stay inside the parameter value, which is returned unquoted")
+    void quotedParameterValueIsUnquoted() {
+        MediaType mt = MediaType.parse("application/json;profile=\"a;b,c\";q=0.5");
+        assertNotNull(mt);
+        assertEquals("a;b,c", mt.parameters().get("profile"));
+        assertEquals(0.5, mt.qualityFactor(), 0.0001);
+    }
+
+    @Test
+    @DisplayName("escaped characters inside a quoted parameter value are unescaped")
+    void quotedParameterValueIsUnescaped() {
+        MediaType mt = MediaType.parse("text/plain;title=\"say \\\"hi\\\"\"");
+        assertNotNull(mt);
+        assertEquals("say \"hi\"", mt.parameters().get("title"));
+    }
+
+    @Test
+    @DisplayName("an unterminated quoted string makes the media type invalid")
+    void unterminatedQuoteReturnsNull() {
+        assertNull(MediaType.parse("application/json;profile=\"a,b"));
+    }
+
+    @Test
+    @DisplayName(
+            "an invalid, quoted or out-of-range q is not malformed: it is clamped or ignored as for a Content-Type")
+    void parseKeepsLenientQualityHandling() {
+        assertQuality(1.0, "application/json;q=abc");
+        assertQuality(1.0, "application/json;q=\"0\"");
+        assertQuality(1.0, "application/json;q=\"\"");
+        assertQuality(1.0, "application/json;Q=x");
+        assertQuality(1.0, "application/json;q=2");
+        assertQuality(1.0, "application/json;q=1.5");
+        assertQuality(0.0, "application/json;q=-1");
+        assertQuality(0.5, "application/json;q=.5");
+        assertQuality(0.1234, "application/json;q=0.1234");
+        assertQuality(0.3, "application/json;q=0.3;q=abc");
+        assertQuality(0.7, "application/json;q=0.3;Q=0.7");
+        assertQuality(1.0, "application/json;q=NaN");
+    }
+
+    @Test
+    @DisplayName("a media type with an unusable q still splits and unquotes its other parameters")
+    void lenientQualityKeepsQuoteAwareParameters() {
+        MediaType mt = MediaType.parse("image/png; q=abc; profile=\"a;b\"; charset=utf-8");
+        assertNotNull(mt);
+        assertEquals(java.util.Map.of("profile", "a;b", "charset", "utf-8"), mt.parameters());
+        assertEquals(1.0, mt.qualityFactor(), 0.0);
+    }
+
+    @Test
+    @DisplayName("an unterminated quote, a quote followed by more characters and too many parameters are still invalid")
+    void structuralMalformationStillReturnsNull() {
+        assertNull(MediaType.parse("image/png; x=\""));
+        assertNull(MediaType.parse("image/png; x=\"a\"b"));
+        StringBuilder many = new StringBuilder("image/png");
+        for (int i = 0; i < 33; i++) {
+            many.append(";p").append(i).append("=1");
+        }
+        assertNull(MediaType.parse(many.toString()));
+    }
+
+    private static void assertQuality(double expected, String raw) {
+        MediaType mt = MediaType.parse(raw);
+        assertNotNull(mt, raw);
+        assertEquals(expected, mt.qualityFactor(), 0.0, raw);
+        assertTrue(mt.parameters().isEmpty(), raw);
+    }
+
+    @Test
+    @DisplayName("a comma outside quotes is not a separator for a single media type")
+    void commaIsNotSeparatorForSingleMediaType() {
+        MediaType mt = MediaType.parse("application/json, text/plain");
+        assertNotNull(mt);
+        assertEquals("application", mt.type());
+        assertEquals("json, text/plain", mt.subtype());
+    }
+
+    @Test
+    @DisplayName("toString quotes parameter values that are not tokens so the output parses back")
+    void toStringQuotesNonTokenValues() {
+        MediaType mt = MediaType.parse("application/json;profile=\"a,b\";charset=utf-8;note=\"\\\"x\\\"\"");
+        assertNotNull(mt);
+        String text = mt.toString();
+        assertEquals("application/json;profile=\"a,b\";charset=utf-8;note=\"\\\"x\\\"\"", text);
+        assertEquals(mt.parameters(), MediaType.parse(text).parameters());
+    }
+
+    @Test
+    @DisplayName("toString quotes an empty parameter value")
+    void toStringQuotesEmptyValue() {
+        assertEquals("a/b;x=\"\"", MediaType.parse("a/b;x=\"\"").toString());
+    }
+
+    @Test
+    @DisplayName("toString replaces CR, LF and other control characters in a quoted parameter value with an underscore")
+    void toStringReplacesControlCharacters() {
+        MediaType mt = new MediaType(
+                "text", "plain", java.util.Map.of("note", "a\r\nb" + (char) 1 + "c" + (char) 127 + "d\te"), 1.0);
+        assertEquals("text/plain;note=\"a__b_c_d\te\"", mt.toString());
+    }
+
+    @Test
+    @DisplayName("toString keeps a value with a control character distinct from the value without it")
+    void toStringKeepsDistinctValuesDistinct() {
+        MediaType withControl =
+                new MediaType("text", "plain", java.util.Map.of("filename", "evil.ph" + (char) 1 + "p"), 1.0);
+        MediaType without = new MediaType("text", "plain", java.util.Map.of("filename", "evil.php"), 1.0);
+
+        assertEquals("text/plain;filename=\"evil.ph_p\"", withControl.toString());
+        assertNotEquals(without.toString(), withControl.toString());
+        assertEquals(
+                "evil.ph_p",
+                MediaType.parse(withControl.toString()).parameters().get("filename"));
+    }
+
+    @Test
+    @DisplayName("type and subtype are lowercased without regard to the default locale")
+    void typeAndSubtypeLowercasedWithRootLocale() {
+        java.util.Locale previous = java.util.Locale.getDefault();
+        java.util.Locale.setDefault(java.util.Locale.forLanguageTag("tr"));
+        try {
+            MediaType parsed = MediaType.parse("IMAGE/TIFF; Charset=UTF-8");
+            assertNotNull(parsed);
+            assertEquals("image", parsed.type());
+            assertEquals("tiff", parsed.subtype());
+            assertEquals("image/tiff", parsed.withoutParameters());
+            assertEquals("image/tiff", new MediaType("IMAGE", "TIFF", java.util.Map.of(), 1.0).withoutParameters());
+            assertTrue(parsed.isCompatible(MediaType.parse("image/tiff")));
+        } finally {
+            java.util.Locale.setDefault(previous);
+        }
+    }
+
+    @Test
+    @DisplayName("the constructor rejects a control character in the type, subtype or a parameter name")
+    void constructorRejectsControlCharacters() {
+        java.util.Map<String, String> none = java.util.Map.of();
+        assertThrows(IllegalArgumentException.class, () -> new MediaType("te\r\nxt", "plain", none, 1.0));
+        assertThrows(IllegalArgumentException.class, () -> new MediaType("text", "pl\nain", none, 1.0));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> new MediaType("text", "plain", java.util.Map.of("a\r\nSet-Cookie: x", "v"), 1.0));
+        assertThrows(IllegalArgumentException.class, () -> new MediaType("text", "pl" + (char) 127 + "ain", none, 1.0));
+    }
+
+    @Test
+    @DisplayName(
+            "parse returns null instead of throwing for a control character in the type, subtype or a parameter name")
+    void parseReturnsNullForControlCharacters() {
+        assertNull(MediaType.parse("te" + (char) 1 + "xt/plain"));
+        assertNull(MediaType.parse("text/pl" + (char) 1 + "ain"));
+        assertNull(MediaType.parse("text/plain;ch" + (char) 1 + "arset=utf-8"));
+        assertNotNull(MediaType.parse("text/plain;charset=\"ut" + (char) 1 + "f\""));
     }
 }

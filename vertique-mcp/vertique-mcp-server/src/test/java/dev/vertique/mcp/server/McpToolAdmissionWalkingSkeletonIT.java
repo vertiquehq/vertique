@@ -138,7 +138,7 @@ class McpToolAdmissionWalkingSkeletonIT {
         assertThat(new JsonObject(quotaExceeded.bodyAsString())
                         .getJsonObject("error")
                         .getInteger("code"))
-                .isEqualTo(-32022);
+                .isEqualTo(-32010);
         assertThat(fixture.terminalEvents())
                 .extracting(McpRequestTerminalEvent::outcome, McpRequestTerminalEvent::errorType)
                 .containsExactly(

@@ -22,7 +22,6 @@ import io.vertx.core.json.JsonObject;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 import org.junit.jupiter.api.AfterEach;
@@ -103,7 +102,7 @@ class KafkaConsumerValidationCloseFailureTest {
         public <V> KafkaDeserializer<V> deserializer(Class<V> type, JsonObject endpointConfig) {
             return new KafkaDeserializer<>() {
                 @Override
-                public V deserialize(byte[] data, String topic, Map<String, String> headers) {
+                public V deserialize(byte[] data, String topic, KafkaRecordHeaders headers) {
                     return null;
                 }
 

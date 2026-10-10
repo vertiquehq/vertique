@@ -236,7 +236,6 @@ public class KafkaErrorHandlingIT {
                 deployments.add(vertx.deployVerticle(new KafkaConsumerVerticle(
                         entry,
                         List.of(),
-                        Set.of(),
                         producerFactory,
                         KafkaTestSupport.requestSender(vertx),
                         skipResolver,
@@ -252,7 +251,6 @@ public class KafkaErrorHandlingIT {
                 deployments.add(vertx.deployVerticle(new KafkaConsumerVerticle(
                         entry,
                         List.of(),
-                        Set.of(),
                         producerFactory,
                         KafkaTestSupport.requestSender(vertx),
                         dlqResolver,

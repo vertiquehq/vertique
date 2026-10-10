@@ -15,6 +15,7 @@ import dagger.multibindings.Multibinds;
 import dev.vertique.core.VertxConfig;
 import dev.vertique.core.config.ConfigParser;
 import dev.vertique.core.exception.ConfigurationException;
+import dev.vertique.kafka.KafkaRecordHeaders;
 import dev.vertique.kafka.config.KafkaConfig;
 import dev.vertique.kafka.config.KafkaMessageKeyHashConfig;
 import dev.vertique.kafka.serialization.KafkaDeserializer;
@@ -192,11 +193,11 @@ class KafkaJsonModuleTest {
         KafkaDeserializer<Payload> deser = registry.deserializer("json", Payload.class, new JsonObject());
 
         Payload original = new Payload("hello", 42);
-        byte[] bytes = ser.serialize(original, "topic", Map.of());
+        byte[] bytes = ser.serialize(original, "topic", KafkaRecordHeaders.empty());
 
         assertNotNull(bytes, "serialized bytes must not be null");
 
-        Payload deserialized = deser.deserialize(bytes, "topic", Map.of());
+        Payload deserialized = deser.deserialize(bytes, "topic", KafkaRecordHeaders.empty());
         assertEquals(original.name(), deserialized.name(), "name must round-trip");
         assertEquals(original.value(), deserialized.value(), "value must round-trip");
     }
@@ -218,8 +219,8 @@ class KafkaJsonModuleTest {
         KafkaSerdeRegistry registry = new KafkaSerdeRegistry(component.serdeProviders());
 
         Payload original = new Payload("world", 99);
-        byte[] bytes =
-                registry.serializer("json", Payload.class, new JsonObject()).serialize(original, "t", Map.of());
+        byte[] bytes = registry.serializer("json", Payload.class, new JsonObject())
+                .serialize(original, "t", KafkaRecordHeaders.empty());
 
         String json = new String(bytes, StandardCharsets.UTF_8);
         org.junit.jupiter.api.Assertions.assertTrue(
@@ -227,8 +228,8 @@ class KafkaJsonModuleTest {
         org.junit.jupiter.api.Assertions.assertTrue(
                 json.contains("\"world\""), "serialized JSON must contain the name value");
 
-        Payload recovered =
-                registry.deserializer("json", Payload.class, new JsonObject()).deserialize(bytes, "t", Map.of());
+        Payload recovered = registry.deserializer("json", Payload.class, new JsonObject())
+                .deserialize(bytes, "t", KafkaRecordHeaders.empty());
         assertEquals("world", recovered.name());
         assertEquals(99, recovered.value());
     }

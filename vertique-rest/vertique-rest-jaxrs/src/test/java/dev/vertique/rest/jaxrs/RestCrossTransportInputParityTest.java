@@ -35,20 +35,21 @@ import org.junit.jupiter.api.Test;
  * <p>Runs {@link CrossTransportInputCorpus#rawInput()} through the real REST input-processing
  * boundary — {@link ParameterExtractor#extractArguments}, the exact production method the reflective
  * dispatch path calls per request (FR-024), constructed the same way {@code ParameterExtractorTest}
- * does — for a body parameter typed as the <strong>published</strong> {@link
+ * does — for a body parameter typed as the <strong>shared</strong> {@link
  * CrossTransportFixtureLevel1} corpus record, not a locally re-declared lookalike. Asserts the
- * resulting materialized body equals the corpus's published {@code expectedProcessedInput()}.
+ * resulting materialized body equals the corpus's shared {@code expectedProcessedInput()}.
  *
  * <p>The MCP half of this same claim is {@code dev.vertique.mcp.server.McpCrossTransportInputParityTest}
  * in {@code vertique-mcp-server}. Neither test references the other directly — each asserts
- * independently against the one published {@link CrossTransportInputCorpus#expectedProcessedInput()}
- * ground truth. Both modules depend on the exact same {@code dev.vertique:vertique-input-processing:test-jar}
- * coordinate and reference the exact same corpus class, so the two assertions can only both pass if
+ * independently against the one shared {@link CrossTransportInputCorpus#expectedProcessedInput()}
+ * ground truth. Both modules depend on the exact same in-reactor
+ * {@code dev.vertique:vertique-input-processing:test-jar} coordinate (not a published artifact) and
+ * reference the exact same corpus class, so the two assertions can only both pass if
  * REST's and MCP's real input-processing boundaries produce the same result for the same fixtures.
  */
 class RestCrossTransportInputParityTest {
 
-    /** Resource fixture whose single BODY parameter is the published corpus's root record type. */
+    /** Resource fixture whose single BODY parameter is the shared corpus's root record type. */
     static final class ParityResource {
         @SuppressWarnings("unused")
         public CrossTransportFixtureLevel1 echo(CrossTransportFixtureLevel1 root) {
@@ -116,13 +117,13 @@ class RestCrossTransportInputParityTest {
         Object[] args = extractor.extractArguments(ctx, boundRequest);
 
         // Then (DECISIVE): the materialized body, re-normalized to a plain Map tree, equals the corpus's
-        // published expected result — not a value this test restates itself.
+        // shared expected result — not a value this test restates itself.
         assertEquals(1, args.length, "extractArguments must materialize exactly the one BODY parameter");
         CrossTransportFixtureLevel1 materialized = (CrossTransportFixtureLevel1) args[0];
         assertEquals(
                 CrossTransportInputCorpus.expectedProcessedInput(),
                 asMap(materialized),
-                "DECISIVE: the real REST extraction path's materialized body matches the published corpus");
+                "DECISIVE: the real REST extraction path's materialized body matches the shared corpus");
 
         // And: the sanitizer transform is non-identity, so this assertion could not pass by the pipeline
         // silently doing nothing.

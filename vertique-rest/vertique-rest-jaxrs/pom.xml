@@ -59,7 +59,7 @@ SPDX-License-Identifier: EUPL-1.2
             <artifactId>vertique-config-core</artifactId>
             <scope>test</scope>
         </dependency>
-        <!-- R03 (finding #425): the published cross-transport input-processing fixture corpus,
+        <!-- The cross-transport input-processing fixture corpus, in-reactor only (not published),
              consumed identically by vertique-mcp-server so both transports read the same artifact. -->
         <dependency>
             <groupId>dev.vertique</groupId>

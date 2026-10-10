@@ -139,8 +139,8 @@ class KafkaOutboxDestinationHandlerTest {
         @DisplayName("reserved-prefix header collision returns PermanentFailure (dead-letter, not retry)")
         void reservedHeaderCollisionReturnsPermanentFailure() throws Exception {
             when(objectMapper.writeValueAsBytes(any())).thenReturn(new byte[] {1});
-            // KafkaProducerFactory.send returns a FAILED FUTURE (not a synchronous throw) when
-            // mergeForEgress rejects an application header that uses the reserved framework prefix.
+            // KafkaProducerFactory.sendForOutbox returns a FAILED FUTURE (not a synchronous throw) when
+            // an application header uses the reserved framework prefix.
             // The handler must classify that as permanent so the un-fixable row is dead-lettered.
             when(producerFactory.sendForOutbox(any(), any(), any(), any(), any()))
                     .thenReturn(Future.failedFuture(new IllegalArgumentException(

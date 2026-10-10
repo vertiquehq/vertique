@@ -141,7 +141,7 @@ final class KafkaRecordDispatcher {
      *
      * @param record the Kafka consumer record (for topic and header context)
      * @param rawBytes the raw value bytes
-     * @param headers the extracted headers
+     * @param headers the record's headers as received; handed to the deserializer
      * @param routeResult the resolved route result including optional pre-routed value (may be
      *     {@code null} for non-ROUTER kinds)
      * @return the deserialized value
@@ -150,7 +150,7 @@ final class KafkaRecordDispatcher {
     Object deserializeRecord(
             KafkaConsumerRecord<String, byte[]> record,
             byte[] rawBytes,
-            Map<String, String> headers,
+            KafkaRecordHeaders headers,
             RouteResult routeResult)
             throws DeserializationException {
 
@@ -224,14 +224,18 @@ final class KafkaRecordDispatcher {
      * carried in the {@link RouteResult} so {@link #deserializeRecord} can convert it to the route's
      * target type without a second parse.
      *
-     * @param headers the extracted Kafka record headers
+     * @param headers the record's headers as received; handed to the routing deserializer
+     * @param textHeaders the text projection of {@code headers}, computed once per record; header
+     *     routes match against it, so a route header is read as the last value of its key that is
+     *     not {@code null}, decoded as lenient UTF-8
      * @param rawBytes the raw record value bytes (used for property-based matching)
      * @param topic the Kafka topic (needed by schema-registry routing deserialize)
      * @return the resolved route with optional routing value, or {@code null}
      * @throws DeserializationException if the raw bytes cannot be deserialized during
      *     property-based route matching
      */
-    RouteResult resolveRoute(Map<String, String> headers, byte[] rawBytes, String topic) {
+    RouteResult resolveRoute(
+            KafkaRecordHeaders headers, Map<String, String> textHeaders, byte[] rawBytes, String topic) {
         ConsumerEntry.RouteEntry defaultRoute = null;
         for (ConsumerEntry.RouteEntry route : entry.routes()) {
             if (route.defaultHandler()) {
@@ -239,7 +243,7 @@ final class KafkaRecordDispatcher {
                 continue;
             }
             if (!route.matchHeader().isBlank()) {
-                String headerValue = headers.get(route.matchHeader());
+                String headerValue = textHeaders.get(route.matchHeader());
                 if (route.matchValue().equals(headerValue)) {
                     return new RouteResult(route, null);
                 }
@@ -270,12 +274,12 @@ final class KafkaRecordDispatcher {
      *
      * @param rawBytes the raw record value bytes
      * @param topic the Kafka topic
-     * @param headers the record headers
+     * @param headers the record's headers as received
      * @return the matched route (carrying the routing value for payload reuse), or {@code null} if
      *     none matched
      * @throws DeserializationException if the record cannot be deserialized for routing
      */
-    private RouteResult resolvePropertyRoute(byte[] rawBytes, String topic, Map<String, String> headers) {
+    private RouteResult resolvePropertyRoute(byte[] rawBytes, String topic, KafkaRecordHeaders headers) {
         if (!hasPropertyRoute || routingDeserializer == null) {
             return null;
         }
@@ -341,7 +345,8 @@ final class KafkaRecordDispatcher {
      * @param oneWay         whether to use fire-and-forget semantics
      * @param value          the deserialized payload value
      * @param recordContext  the Kafka record context for dispatch context propagation
-     * @param headers        the Kafka headers used both for MDC correlation and durable context binding
+     * @param textHeaders    the text projection of the record's headers, computed once per record;
+     *                       the durable context is decoded from it
      * @param correlationId  the correlation ID
      * @return a future that succeeds or fails based on the dispatch outcome
      */
@@ -351,7 +356,7 @@ final class KafkaRecordDispatcher {
             boolean oneWay,
             Object value,
             KafkaRecordContext recordContext,
-            Map<String, String> headers,
+            Map<String, String> textHeaders,
             String correlationId) {
 
         if (targetAddress == null) {
@@ -371,7 +376,7 @@ final class KafkaRecordDispatcher {
         Future<Void> dispatchFuture;
         try {
             durableScope = inboundExecutionContextScope.installDurable(
-                    DurableMetadataHeaderCodec.fromHeaders(headers), DispatchBoundary.KAFKA);
+                    DurableMetadataHeaderCodec.fromHeaders(textHeaders), DispatchBoundary.KAFKA);
             // Scope the Kafka-specific MDC keys to this record's dispatch only. Vert.x Kafka
             // freshly duplicates the consumer's stream context per record (see
             // KafkaReadStreamImpl.run() in vertx-kafka-client 5.x — `ctx = stream.context.duplicate()`
@@ -448,12 +453,17 @@ final class KafkaRecordDispatcher {
      *
      * @param value the deserialized payload value
      * @param record the original consumer record (for metadata)
-     * @param headers the already-extracted header map
+     * @param headers the record's headers as received; the handler's message holds this instance
+     * @param textHeaders the text projection of {@code headers}, computed once per record; the
+     *     durable context is decoded from it
      * @return a future that completes when the handler has processed the record
      */
     @SuppressWarnings({"unchecked", "rawtypes"})
     Future<Void> dispatchToHandler(
-            Object value, KafkaConsumerRecord<String, byte[]> record, Map<String, String> headers) {
+            Object value,
+            KafkaConsumerRecord<String, byte[]> record,
+            KafkaRecordHeaders headers,
+            Map<String, String> textHeaders) {
         KafkaRecordHandler handler = entry.handler();
         if (handler == null) {
             return Future.failedFuture("No handler configured for HANDLER-kind consumer: " + entry.name());
@@ -474,7 +484,7 @@ final class KafkaRecordDispatcher {
         Future<Void> handlerFuture;
         try {
             scope = inboundExecutionContextScope.installDurable(
-                    DurableMetadataHeaderCodec.fromHeaders(headers), DispatchBoundary.KAFKA);
+                    DurableMetadataHeaderCodec.fromHeaders(textHeaders), DispatchBoundary.KAFKA);
             handlerFuture = handler.handle(message);
             if (handlerFuture == null) {
                 scope.close();

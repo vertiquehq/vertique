@@ -18,6 +18,7 @@ import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
 import java.util.Collection;
 import java.util.LinkedHashSet;
+import java.util.Locale;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
@@ -82,7 +83,7 @@ class JsonRequestBodyDecoder implements RequestBodyDecoder {
      */
     @Override
     public boolean canDecode(Class<?> targetType, String contentType) {
-        return contentType == null || contentType.toLowerCase().contains("json");
+        return contentType == null || contentType.toLowerCase(Locale.ROOT).contains("json");
     }
 
     /**

@@ -6,7 +6,6 @@ package dev.vertique.kafka;
 import dev.vertique.core.context.ContextValue;
 import dev.vertique.core.eventbus.DispatchContextValue;
 import dev.vertique.services.dispatch.DispatchContext;
-import java.util.Map;
 import java.util.Optional;
 
 /**
@@ -16,6 +15,11 @@ import java.util.Optional;
  * and stored in the dispatch-scoped {@link DispatchContext}. Handler methods can declare this
  * type as a parameter for auto-injection, or use {@link #current()} in direct implementations.
  *
+ * <p>The headers are the record's headers as they are on the wire: every header in order, with
+ * repeated keys, {@code null} values and binary values. Read one header with
+ * {@link KafkaRecordHeaders#lastHeader(String)}, or one text value per key from
+ * {@link KafkaRecordHeaders#asMap()}.
+ *
  * @param consumerName the Kafka consumer binding name
  * @param topic the source topic
  * @param partition the source partition
@@ -23,7 +27,7 @@ import java.util.Optional;
  * @param key the message key, or {@code null}
  * @param timestamp the message timestamp (epoch milliseconds)
  * @param correlationId the correlation ID (from header or auto-generated)
- * @param headers all Kafka headers
+ * @param headers all Kafka headers as received, in wire order; immutable; never {@code null}
  */
 @DispatchContextValue
 public record KafkaRecordContext(
@@ -34,11 +38,11 @@ public record KafkaRecordContext(
         String key,
         long timestamp,
         String correlationId,
-        Map<String, String> headers)
+        KafkaRecordHeaders headers)
         implements ContextValue {
 
     /**
-     * Defensive copy of headers in compact constructor.
+     * Replaces {@code null} headers with {@link KafkaRecordHeaders#empty()}.
      *
      * @param consumerName the Kafka consumer binding name
      * @param topic the source topic
@@ -47,24 +51,13 @@ public record KafkaRecordContext(
      * @param key the message key, or {@code null}
      * @param timestamp the message timestamp (epoch milliseconds)
      * @param correlationId the correlation ID (from header or auto-generated)
-     * @param headers all Kafka headers
+     * @param headers all Kafka headers, or {@code null} for none
      */
     public KafkaRecordContext {
-        // Defensive copy via Map.copyOf, not Collections.unmodifiableMap: the latter is a view
-        // that still tracks the caller's map, so a caller that retained a reference could mutate
-        // it and the mutation would surface on this record (and on any duplicate(true) sibling
-        // sharing this instance through the context-holder). Map.copyOf snapshots the entries.
-        headers = headers != null ? Map.copyOf(headers) : Map.of();
-    }
-
-    /**
-     * Returns a single header value by name.
-     *
-     * @param name the header name
-     * @return the header value, or empty if not present
-     */
-    public Optional<String> header(String name) {
-        return Optional.ofNullable(headers.get(name));
+        // The header collection is an immutable snapshot, so it is held as given: no caller that
+        // kept a reference can change it, and neither can a duplicate(true) sibling that shares
+        // this instance through the context holder.
+        headers = headers != null ? headers : KafkaRecordHeaders.empty();
     }
 
     /**
