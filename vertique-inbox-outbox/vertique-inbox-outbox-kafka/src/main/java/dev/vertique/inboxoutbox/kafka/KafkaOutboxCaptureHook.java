@@ -7,8 +7,8 @@ import dev.vertique.core.extension.OrderedExtension;
 import dev.vertique.core.payload.PayloadSource;
 import dev.vertique.core.payload.PayloadSources;
 import dev.vertique.inboxoutbox.OutboxPublishResult;
+import dev.vertique.kafka.KafkaRecordHeaders;
 import jakarta.annotation.Nullable;
-import java.util.Map;
 
 /**
  * SPI for observing every Kafka outbox publish after serialization and result classification.
@@ -69,10 +69,11 @@ public interface KafkaOutboxCaptureHook extends OrderedExtension {
      *                if the aggregate ID was not set
      * @param value   a no-copy {@link PayloadSource} over the serialized wire bytes; {@code null}
      *                when serialization failed before any bytes were produced
-     * @param headers the egress headers handed to hooks: application headers merged with the
-     *                projected durable context ({@code vertique-*} keys) via
-     *                {@link dev.vertique.core.context.DurableMetadataHeaderCodec#mergeForEgress},
-     *                matching the Kafka record that was (or would have been) published; never
+     * @param headers the headers of the Kafka record that was (or would have been) published, in
+     *                wire order: the outbox entry's text headers, each converted to a UTF-8 header,
+     *                followed by the projected durable context ({@code vertique-*} keys). When an
+     *                entry header itself uses the reserved {@code vertique-} prefix, the publish
+     *                is rejected and only the converted entry headers are given; never
      *                {@code null}
      * @param result  the classified publish outcome; never {@code null}
      * @param entryId the string form of
@@ -82,7 +83,7 @@ public interface KafkaOutboxCaptureHook extends OrderedExtension {
             String topic,
             @Nullable String key,
             @Nullable PayloadSource value,
-            Map<String, String> headers,
+            KafkaRecordHeaders headers,
             OutboxPublishResult result,
             String entryId) {}
 }

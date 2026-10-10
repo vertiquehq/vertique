@@ -154,9 +154,13 @@ public class JacksonKafkaSerializer<V> implements KafkaSerializer<V> {
     public JacksonKafkaSerializer(ObjectMapper mapper) { ... }
 
     @Override
-    public byte[] serialize(V value, String topic, Map<String, String> headers) { ... }
+    public byte[] serialize(V value, String topic, KafkaRecordHeaders headers) { ... }
 }
 ```
+
+`serialize` takes the record's application headers as a `dev.vertique.kafka.KafkaRecordHeaders`
+(never `null`; `KafkaRecordHeaders.empty()` when the record has none). The JSON serializer ignores
+both the topic and the headers.
 
 ---
 

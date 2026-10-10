@@ -11,6 +11,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import dev.vertique.config.parser.DefaultConfigMapper;
 import dev.vertique.config.parser.DefaultConfigParser;
 import dev.vertique.kafka.DeserializationException;
+import dev.vertique.kafka.KafkaRecordHeaders;
 import dev.vertique.kafka.avro.ApicurioAvroSerdeProvider;
 import dev.vertique.kafka.config.KafkaConfig;
 import dev.vertique.kafka.serialization.KafkaDeserializer;
@@ -103,7 +104,7 @@ public class AvroSerdeRoundTripIT {
                 .build();
 
         KafkaSerializer<OrderCreated> serializer = serdeRegistry.serializer("avro", OrderCreated.class, endpointConfig);
-        byte[] wire = serializer.serialize(event, topic, Map.of());
+        byte[] wire = serializer.serialize(event, topic, KafkaRecordHeaders.empty());
 
         // Confluent-wire framing: magic byte 0x00 + 4-byte schema id in the payload.
         assertTrue(wire.length >= 5, "Avro wire bytes must carry a 5-byte header");
@@ -135,7 +136,7 @@ public class AvroSerdeRoundTripIT {
         String format = serdeRegistry.resolveFormat(OrderShipped.class, new JsonObject(), null);
         byte[] wire = serdeRegistry
                 .serializer(format, OrderShipped.class, endpointConfig)
-                .serialize(event, topic, Map.of());
+                .serialize(event, topic, KafkaRecordHeaders.empty());
         produce(topic, "B-2", wire);
 
         byte[] consumed = consumeOne(topic, "it-avro-autodetect");
@@ -158,7 +159,7 @@ public class AvroSerdeRoundTripIT {
                 .build();
         byte[] wire = serdeRegistry
                 .serializer("avro", OrderShipped.class, endpointConfig)
-                .serialize(shipped, topic, Map.of());
+                .serialize(shipped, topic, KafkaRecordHeaders.empty());
         produce(topic, "C-3", wire);
         byte[] consumed = consumeOne(topic, "it-avro-router");
 
@@ -184,7 +185,7 @@ public class AvroSerdeRoundTripIT {
                 .build();
         byte[] wire = serdeRegistry
                 .serializer("avro", OrderCreated.class, endpointConfig)
-                .serialize(event, sourceTopic, Map.of());
+                .serialize(event, sourceTopic, KafkaRecordHeaders.empty());
 
         // The error handler republishes the original raw bytes unchanged to the DLQ topic.
         produce(dlqTopic, "D-4", wire);
@@ -210,7 +211,7 @@ public class AvroSerdeRoundTripIT {
                 .build();
         byte[] wire = serdeRegistry
                 .serializer("avro", OrderCreated.class, endpointConfig)
-                .serialize(event, topic, Map.of());
+                .serialize(event, topic, KafkaRecordHeaders.empty());
 
         // The framework carries durable/correlation context in record headers (Avro changes only the
         // value bytes — ADR-0074). Produce with a reserved-style header and assert it survives.
@@ -246,7 +247,7 @@ public class AvroSerdeRoundTripIT {
                 .build();
         byte[] wire = serdeRegistry
                 .serializer("avro", OrderCreated.class, endpointConfig)
-                .serialize(event, topic, Map.of());
+                .serialize(event, topic, KafkaRecordHeaders.empty());
 
         JsonObject badConfig = new JsonObject()
                 .put("schemaRegistry", schemaRegistry("http://localhost:9/apis/registry/v3"))

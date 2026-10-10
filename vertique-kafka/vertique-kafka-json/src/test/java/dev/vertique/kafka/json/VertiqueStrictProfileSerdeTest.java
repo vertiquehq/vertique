@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.json.DefaultJsonMapperProfileRegistry;
 import dev.vertique.json.JsonConfig;
+import dev.vertique.kafka.KafkaRecordHeaders;
 import dev.vertique.kafka.serialization.KafkaDeserializer;
 import dev.vertique.kafka.serialization.KafkaSerializer;
 import io.vertx.core.json.JsonObject;
@@ -47,7 +48,7 @@ class VertiqueStrictProfileSerdeTest {
         JsonObject bag = bagWithProfile("vertique-strict");
         KafkaSerializer<Money> serializer = provider.serializer(Money.class, bag);
 
-        byte[] bytes = serializer.serialize(new Money(new BigDecimal("1.50")), "t", Map.of());
+        byte[] bytes = serializer.serialize(new Money(new BigDecimal("1.50")), "t", KafkaRecordHeaders.empty());
         String json = new String(bytes, StandardCharsets.UTF_8);
 
         assertTrue(json.contains("\"1.50\""), "amount must be serialized as the JSON string \"1.50\": " + json);

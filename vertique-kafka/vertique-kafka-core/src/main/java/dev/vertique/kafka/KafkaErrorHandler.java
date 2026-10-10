@@ -283,7 +283,8 @@ final class KafkaErrorHandler {
                 record.offset(),
                 cause.getMessage());
 
-        // Build error headers as Map<String, String> for KafkaProducerFactory.send()
+        // The failed record is still held as a text map here; the dead-letter headers are added to a
+        // copy of it and the whole is handed to the producer as record headers.
         Map<String, String> dlqHeaders = new HashMap<>(headers);
         dlqHeaders.put(DLQ_HEADER_SOURCE_TOPIC, record.topic());
         dlqHeaders.put(DLQ_HEADER_SOURCE_PARTITION, String.valueOf(record.partition()));
@@ -295,7 +296,7 @@ final class KafkaErrorHandler {
         dlqHeaders.put(DLQ_HEADER_ERROR, errorDetail);
 
         return producerFactory
-                .sendForDlq(dlqTopic, record.key(), rawBytes, dlqHeaders)
+                .sendForDlq(dlqTopic, record.key(), rawBytes, KafkaRecordHeaders.of(dlqHeaders))
                 .mapEmpty();
     }
 }

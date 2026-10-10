@@ -12,6 +12,8 @@ import dev.vertique.core.json.JsonProfile;
 import dev.vertique.core.payload.PayloadSources;
 import dev.vertique.core.util.Strings;
 import dev.vertique.kafka.KafkaConfigHelper;
+import dev.vertique.kafka.KafkaRecordHeader;
+import dev.vertique.kafka.KafkaRecordHeaders;
 import dev.vertique.kafka.config.KafkaConfig;
 import dev.vertique.kafka.config.KafkaProducerConfig;
 import dev.vertique.kafka.config.KafkaProducerMethodConfig;
@@ -47,15 +49,21 @@ import lombok.extern.slf4j.Slf4j;
  * <p>The shared underlying Vert.x {@code io.vertx.kafka.client.producer.KafkaProducer} is
  * created lazily on first use and reused for all proxies and raw sends.
  *
- * <p>Before constructing each {@link KafkaProducerRecord}, currently bound context values are
- * captured via {@link DurableContextPropagator#mergeCaptured} and merged into the record
- * headers (FR-CTX-173).
+ * <p>Record headers are {@link KafkaRecordHeaders}: an ordered list that keeps repeated keys and
+ * binary values. Before constructing each {@link KafkaProducerRecord}, the currently bound context
+ * values are captured and projected to framework context headers. The record carries the
+ * application headers in the order they were given, followed by one text header per context
+ * namespace; the order among the context headers is unspecified. A send fails with an
+ * {@link IllegalArgumentException} when an application header uses the
+ * {@link DurableMetadataHeaderCodec#RESERVED_PREFIX} prefix, which is kept for the framework, or
+ * when a header has a {@code null} value, which a producer record cannot carry.
  *
- * <p>The dead-letter send is the exception: {@link #sendForDlq(String, String, byte[], Map)}
- * forwards the headers it is given verbatim and captures no context.
+ * <p>The dead-letter send is the exception:
+ * {@link #sendForDlq(String, String, byte[], KafkaRecordHeaders)} forwards the headers it is given
+ * verbatim and captures no context.
  *
  * <p>Every send converges at
- * {@link #sendWire(String, String, byte[], Map, KafkaSendOrigin, KafkaProducerOperation)},
+ * {@link #sendWire(String, String, byte[], KafkaRecordHeaders, KafkaSendOrigin, KafkaProducerOperation)},
  * which fires all registered {@link KafkaProducerCaptureHook} instances (observer-only) after the
  * underlying send settles. Hooks are sorted by {@link OrderedExtension#comparator()} and isolated
  * via try/catch so a throwing hook never affects the send result.
@@ -138,19 +146,31 @@ public class KafkaProducerFactory {
     /**
      * Creates a typed proxy for a {@link KafkaProducer @KafkaProducer} interface.
      *
-     * <p>Parameter resolution per method (position-based):
+     * <p>Each method has one of four parameter shapes:
      * <ol>
-     *   <li>One parameter — value only (key is {@code null})</li>
-     *   <li>Two parameters, first is {@code String} — key + value</li>
-     *   <li>Two parameters, second is {@code Map} — value + headers</li>
-     *   <li>Three parameters, first is {@code String}, third is {@code Map} — key + value + headers</li>
+     *   <li>{@code (V value)} — value only (key is {@code null})</li>
+     *   <li>{@code (String key, V value)} — key + value</li>
+     *   <li>{@code (V value, KafkaRecordHeaders headers)} — value + headers</li>
+     *   <li>{@code (String key, V value, KafkaRecordHeaders headers)} — key + value + headers</li>
      * </ol>
+     *
+     * <p>The shape is resolved from the parameter types: a last parameter of type
+     * {@link KafkaRecordHeaders} is the headers; of the one or two parameters that remain, the last
+     * is the value and a leading {@code String} is the key. So {@code (String, KafkaRecordHeaders)}
+     * is a {@code String} value with headers, and {@code (String, Map)} is a key with a {@code Map}
+     * value. A {@code null} headers argument at call time means no headers.
+     *
+     * <p>Every other shape is rejected here, when the proxy is created: a {@code Map} in the
+     * position of the headers (build the headers with {@link KafkaRecordHeaders#of(Map)} instead),
+     * a value of type {@link KafkaRecordHeaders}, no parameters, more than three, or two leading
+     * parameters whose first is not a {@code String}.
      *
      * @param <T> the producer interface type
      * @param producerInterface the interface class annotated with {@link KafkaProducer}
      * @return a proxy instance implementing {@code producerInterface}
-     * @throws IllegalArgumentException if the interface is not annotated with {@link KafkaProducer}
-     *     or a method is missing a {@link Topic} annotation
+     * @throws IllegalArgumentException if the interface is not annotated with {@link KafkaProducer},
+     *     a method is missing a {@link Topic} annotation, or a method has a parameter shape that is
+     *     not one of the four; the message names the method
      * @throws RuntimeException if a {@link KafkaProducerCaptureHook} rejects the interface in
      *     {@link KafkaProducerCaptureHook#validateProducer(Class)}
      */
@@ -169,6 +189,15 @@ public class KafkaProducerFactory {
         KafkaProducerConfig producerConfig = producerIndex.get(producerName);
 
         Map<String, String> methodTopics = resolveMethodTopics(producerInterface, producerConfig);
+        // Resolved before any serializer is built, so a method with an unsupported shape fails the
+        // proxy creation without leaving a serializer open.
+        Map<Method, MethodShape> shapesByMethod = new HashMap<>();
+        for (Method method : producerInterface.getMethods()) {
+            if (method.getDeclaringClass() != Object.class) {
+                shapesByMethod.put(method, resolveShape(method));
+            }
+        }
+        Map<Method, MethodShape> shapes = Map.copyOf(shapesByMethod);
         Map<String, KafkaSerializer<Object>> methodSerializers =
                 resolveMethodSerializers(producerInterface, producerName, producerConfig, kafkaConfig, serdeRegistry);
         builtSerializers.addAll(methodSerializers.values());
@@ -187,39 +216,25 @@ public class KafkaProducerFactory {
                         return handleObjectMethod(proxy, method, args, producerInterface);
                     }
                     String topic = methodTopics.get(method.getName());
-                    String key = null;
-                    Object value = null;
-                    Map<String, String> headers = null;
-
-                    Class<?>[] paramTypes = method.getParameterTypes();
-                    if (paramTypes.length == 1) {
-                        value = args[0];
-                    } else if (paramTypes.length >= 2 && paramTypes[0] == String.class) {
-                        key = (String) args[0];
-                        value = args[1];
-                        if (paramTypes.length == 3 && Map.class.isAssignableFrom(paramTypes[2])) {
-                            headers = (Map<String, String>) args[2];
-                        }
-                    } else if (paramTypes.length == 2 && Map.class.isAssignableFrom(paramTypes[1])) {
-                        value = args[0];
-                        headers = (Map<String, String>) args[1];
-                    }
+                    MethodShape shape = shapes.get(method);
+                    String key = shape.keyIndex() < 0 ? null : (String) args[shape.keyIndex()];
+                    Object value = args[shape.valueIndex()];
+                    KafkaRecordHeaders given =
+                            shape.headersIndex() < 0 ? null : (KafkaRecordHeaders) args[shape.headersIndex()];
+                    // The serializer and the send are given the same instance, never null.
+                    KafkaRecordHeaders headers = given == null ? KafkaRecordHeaders.empty() : given;
 
                     KafkaSerializer<Object> serializer = methodSerializers.get(method.getName());
-                    // Event-loop safety (NFR-AVRO-005): a mayBlock serializer (e.g. Avro on a registry
-                    // cache miss) is offloaded to the worker pool; non-blocking formats stay on-loop.
-                    // Either way a serialization failure becomes a failed Future, never a synchronous
-                    // throw out of the proxy (NFR-AVRO-003): executeBlocking captures the throw, and the
-                    // on-loop branch is wrapped below.
+                    // Event-loop safety: a mayBlock serializer (e.g. Avro on a registry cache miss) is
+                    // offloaded to the worker pool; non-blocking formats stay on-loop. Either way a
+                    // serialization failure becomes a failed Future, never a synchronous throw out of
+                    // the proxy: executeBlocking captures the throw, and the on-loop branch is wrapped
+                    // below.
                     if (serializer.mayBlock()) {
-                        final String fTopic = topic;
-                        final String fKey = key;
-                        final Object fValue = value;
-                        final Map<String, String> fHeaders = headers;
                         final KafkaProducerOperation fOperation = operations.get(method);
-                        return vertx.executeBlocking(() -> serializer.serialize(fValue, fTopic, fHeaders), false)
+                        return vertx.executeBlocking(() -> serializer.serialize(value, topic, headers), false)
                                 .compose(bytes -> sendRaw(
-                                        fTopic, fKey, bytes, fHeaders, KafkaSendOrigin.DIRECT_PRODUCER, fOperation));
+                                        topic, key, bytes, headers, KafkaSendOrigin.DIRECT_PRODUCER, fOperation));
                     }
                     try {
                         byte[] bytes = serializer.serialize(value, topic, headers);
@@ -235,9 +250,11 @@ public class KafkaProducerFactory {
 
     /**
      * Sends a raw byte array message to the specified topic, capturing ambient context from the
-     * current {@link ContextHolder} scope into Kafka headers via
-     * {@link DurableMetadataHeaderCodec#mergeForEgress}. For direct send callers that want ambient
-     * context propagated automatically.
+     * current {@link ContextHolder} scope into framework context headers. For direct send callers
+     * that want ambient context propagated automatically.
+     *
+     * <p>The record carries the application headers in the order given, with repeated keys and
+     * binary values kept, followed by one text header per context namespace.
      *
      * <p>This overload uses origin {@link KafkaSendOrigin#INTERNAL}. Prefer the origin-explicit
      * overloads for callers that know their send origin.
@@ -245,12 +262,15 @@ public class KafkaProducerFactory {
      * @param topic   the target topic
      * @param key     the message key, or {@code null}
      * @param value   the raw message bytes
-     * @param headers the application message headers, or {@code null}; must not use the
-     *                {@link DurableMetadataHeaderCodec#RESERVED_PREFIX} prefix
-     * @return a future of the record metadata
-     * @throws IllegalArgumentException if any application header uses the reserved framework prefix
+     * @param headers the application headers, or {@code null} for none; build them from a text map
+     *                with {@link KafkaRecordHeaders#of(Map)}; must not use the
+     *                {@link DurableMetadataHeaderCodec#RESERVED_PREFIX} prefix and must not contain
+     *                a header with a {@code null} value
+     * @return a future of the record metadata; fails with {@link IllegalArgumentException}, naming
+     *     the key, if an application header uses the reserved framework prefix or has a
+     *     {@code null} value
      */
-    public Future<RecordMetadata> send(String topic, String key, byte[] value, Map<String, String> headers) {
+    public Future<RecordMetadata> send(String topic, String key, byte[] value, KafkaRecordHeaders headers) {
         return sendRaw(topic, key, value, headers, KafkaSendOrigin.INTERNAL, null);
     }
 
@@ -262,24 +282,26 @@ public class KafkaProducerFactory {
      * than the original producer's.
      *
      * <p>This overload uses origin {@link KafkaSendOrigin#INTERNAL}. Prefer
-     * {@link #sendForOutbox(String, String, byte[], Map, DurableMetadata)} when the caller is the
-     * outbox relay.
+     * {@link #sendForOutbox(String, String, byte[], KafkaRecordHeaders, DurableMetadata)} when the
+     * caller is the outbox relay.
      *
-     * <p>The supplied {@code context} is projected to reserved headers via
-     * {@link DurableMetadataHeaderCodec#mergeForEgress}, enforcing that no application header uses
-     * the {@link DurableMetadataHeaderCodec#RESERVED_PREFIX}.
+     * <p>The record carries the application headers in the order given, with repeated keys and
+     * binary values kept, followed by one text header per namespace of the supplied
+     * {@code context}.
      *
      * @param topic    the target topic
      * @param key      the message key, or {@code null}
      * @param value    the raw message bytes
-     * @param headers  the application message headers, or {@code null}; must not use the reserved
-     *                 framework prefix
+     * @param headers  the application headers, or {@code null} for none; must not use the
+     *                 {@link DurableMetadataHeaderCodec#RESERVED_PREFIX} prefix and must not contain
+     *                 a header with a {@code null} value
      * @param context  the explicit durable context to project into headers; must not be {@code null}
-     * @return a future of the record metadata
-     * @throws IllegalArgumentException if any application header uses the reserved framework prefix
+     * @return a future of the record metadata; fails with {@link IllegalArgumentException}, naming
+     *     the key, if an application header uses the reserved framework prefix or has a
+     *     {@code null} value
      */
     public Future<RecordMetadata> send(
-            String topic, String key, byte[] value, Map<String, String> headers, DurableMetadata context) {
+            String topic, String key, byte[] value, KafkaRecordHeaders headers, DurableMetadata context) {
         return sendWithContext(topic, key, value, headers, context, KafkaSendOrigin.INTERNAL, null);
     }
 
@@ -287,8 +309,9 @@ public class KafkaProducerFactory {
      * Republishes a failed record to a dead-letter topic. This is the framework's dead-letter path,
      * called by the consumer error handling; it is not for application sends.
      *
-     * <p>The headers are forwarded verbatim, so the dead-letter record keeps the failed record's own
-     * context. Unlike every other send on this class:
+     * <p>The headers are forwarded verbatim, in their order and with repeated keys and binary values
+     * kept, so the dead-letter record keeps the failed record's own context. Unlike every other send
+     * on this class:
      *
      * <ul>
      *   <li>a header with the {@link DurableMetadataHeaderCodec#RESERVED_PREFIX} prefix is
@@ -300,18 +323,26 @@ public class KafkaProducerFactory {
      * </ul>
      *
      * <p>Fires capture hooks with origin {@link KafkaSendOrigin#DLQ} and a {@code null} producer
-     * operation. Application code must use {@link #send(String, String, byte[], Map)} or a
-     * {@link KafkaProducer @KafkaProducer} proxy, which keep the reserved prefix for the framework.
+     * operation. Application code must use {@link #send(String, String, byte[], KafkaRecordHeaders)}
+     * or a {@link KafkaProducer @KafkaProducer} proxy, which keep the reserved prefix for the
+     * framework.
      *
      * @param topic   the dead-letter topic
      * @param key     the record key, or {@code null}
      * @param value   the raw record bytes to republish
      * @param headers the headers of the dead-letter record, forwarded verbatim, or {@code null} for
-     *                none; must not contain a {@code null} key or value
-     * @return a future of the record metadata
+     *                none; must not contain a header with a {@code null} value
+     * @return a future of the record metadata; fails with {@link IllegalArgumentException}, naming
+     *     the key, if a header has a {@code null} value
      */
-    public Future<RecordMetadata> sendForDlq(String topic, String key, byte[] value, Map<String, String> headers) {
-        return sendWire(topic, key, value, headers == null ? Map.of() : Map.copyOf(headers), KafkaSendOrigin.DLQ, null);
+    public Future<RecordMetadata> sendForDlq(String topic, String key, byte[] value, KafkaRecordHeaders headers) {
+        KafkaRecordHeaders wire = headers == null ? KafkaRecordHeaders.empty() : headers;
+        try {
+            rejectNullValues(wire);
+        } catch (IllegalArgumentException e) {
+            return Future.failedFuture(e);
+        }
+        return sendWire(topic, key, value, wire, KafkaSendOrigin.DLQ, null);
     }
 
     /**
@@ -322,15 +353,22 @@ public class KafkaProducerFactory {
      * <p>Use this overload from the outbox destination handler so the record's persisted durable
      * context (not the relay poller's ambient context) crosses the wire boundary.
      *
+     * <p>The record carries the application headers in the order given, followed by one text header
+     * per namespace of the supplied {@code context}.
+     *
      * @param topic   the target Kafka topic
      * @param key     the record key, or {@code null}
      * @param value   the raw message bytes
-     * @param headers the application message headers, or {@code null}
+     * @param headers the application headers, or {@code null} for none; must not use the
+     *                {@link DurableMetadataHeaderCodec#RESERVED_PREFIX} prefix and must not contain
+     *                a header with a {@code null} value
      * @param context the durable context stored in the outbox entry; must not be {@code null}
-     * @return a future of the record metadata
+     * @return a future of the record metadata; fails with {@link IllegalArgumentException}, naming
+     *     the key, if an application header uses the reserved framework prefix or has a
+     *     {@code null} value
      */
     public Future<RecordMetadata> sendForOutbox(
-            String topic, String key, byte[] value, Map<String, String> headers, DurableMetadata context) {
+            String topic, String key, byte[] value, KafkaRecordHeaders headers, DurableMetadata context) {
         return sendWithContext(topic, key, value, headers, context, KafkaSendOrigin.OUTBOX, null);
     }
 
@@ -517,24 +555,92 @@ public class KafkaProducerFactory {
     }
 
     /**
-     * Resolves the declared value parameter type for a producer method, mirroring the position-based
-     * parameter resolution in {@link #create(Class)}.
+     * Resolves the declared value parameter type for a producer method, from the same shape
+     * resolution {@link #create(Class)} uses.
      *
      * @param method the producer method
      * @return the value parameter type
+     * @throws IllegalArgumentException if the method does not have one of the supported shapes
      */
     static Class<?> resolveValueType(Method method) {
+        return resolveShape(method).valueType();
+    }
+
+    /**
+     * The positions of the key, the value and the headers among the parameters of a producer method.
+     *
+     * @param keyIndex     the index of the {@code String} key parameter, or {@code -1} when the
+     *                     method has none
+     * @param valueIndex   the index of the value parameter
+     * @param headersIndex the index of the {@link KafkaRecordHeaders} parameter, or {@code -1} when
+     *                     the method has none
+     * @param valueType    the declared type of the value parameter
+     */
+    private record MethodShape(int keyIndex, int valueIndex, int headersIndex, Class<?> valueType) {}
+
+    /**
+     * Resolves the parameter shape of a producer method. This is the only place that decides which
+     * parameter is the key, the value and the headers; proxy creation and serializer selection both
+     * use it.
+     *
+     * <p>A last parameter of type {@link KafkaRecordHeaders} is the headers. Of the one or two
+     * parameters that remain, the last is the value and a leading {@code String} is the key.
+     *
+     * @param method the producer method
+     * @return the resolved shape
+     * @throws IllegalArgumentException naming the method, if it has a {@code Map} in the position of
+     *     the headers, a {@link KafkaRecordHeaders} value, or any other shape that is not one of the
+     *     four supported ones
+     */
+    private static MethodShape resolveShape(Method method) {
         Class<?>[] paramTypes = method.getParameterTypes();
-        if (paramTypes.length == 1) {
-            return paramTypes[0];
+        int count = paramTypes.length;
+        boolean hasHeaders = count > 0 && paramTypes[count - 1] == KafkaRecordHeaders.class;
+        // (String, Map) is a key and a Map value; a Map last in any other shape of two or three
+        // parameters stands where the headers go.
+        boolean keyAndMapValue = count == 2 && paramTypes[0] == String.class;
+        if (!hasHeaders
+                && count >= 2
+                && count <= 3
+                && Map.class.isAssignableFrom(paramTypes[count - 1])
+                && !keyAndMapValue) {
+            throw new IllegalArgumentException("Method " + describe(method) + " takes a Map as record headers; declare"
+                    + " the parameter as KafkaRecordHeaders and build the argument with KafkaRecordHeaders.of(Map)");
         }
-        if (paramTypes.length >= 2 && paramTypes[0] == String.class) {
-            return paramTypes[1];
+        int remaining = hasHeaders ? count - 1 : count;
+        boolean valueOnly = remaining == 1;
+        boolean keyAndValue = remaining == 2 && paramTypes[0] == String.class;
+        if (!valueOnly && !keyAndValue) {
+            throw new IllegalArgumentException("Method " + describe(method) + " has an unsupported parameter shape;"
+                    + " supported shapes are (V value), (String key, V value), (V value, KafkaRecordHeaders headers)"
+                    + " and (String key, V value, KafkaRecordHeaders headers)");
         }
-        if (paramTypes.length == 2 && Map.class.isAssignableFrom(paramTypes[1])) {
-            return paramTypes[0];
+        int valueIndex = remaining - 1;
+        Class<?> valueType = paramTypes[valueIndex];
+        if (valueType == KafkaRecordHeaders.class) {
+            throw new IllegalArgumentException("Method " + describe(method) + " has a value of type KafkaRecordHeaders;"
+                    + " KafkaRecordHeaders is accepted only as the last parameter, after the value");
         }
-        return paramTypes.length > 0 ? paramTypes[0] : Object.class;
+        return new MethodShape(keyAndValue ? 0 : -1, valueIndex, hasHeaders ? count - 1 : -1, valueType);
+    }
+
+    /**
+     * Describes a producer method for an error message: the declaring interface, the method name
+     * and the parameter types.
+     *
+     * @param method the producer method
+     * @return the description
+     */
+    private static String describe(Method method) {
+        StringBuilder description = new StringBuilder(method.getDeclaringClass().getName())
+                .append('#')
+                .append(method.getName())
+                .append('(');
+        Class<?>[] paramTypes = method.getParameterTypes();
+        for (int i = 0; i < paramTypes.length; i++) {
+            description.append(i == 0 ? "" : ", ").append(paramTypes[i].getSimpleName());
+        }
+        return description.append(')').toString();
     }
 
     /**
@@ -607,12 +713,8 @@ public class KafkaProducerFactory {
 
     /**
      * Sends a serialized record to Kafka, capturing ambient context via
-     * {@link DurableContextPropagator#capture(String)} and merging it with the caller-supplied
-     * headers via {@link DurableMetadataHeaderCodec#mergeForEgress} (FR-CTX-173).
-     *
-     * <p>This enforces that no application header uses the
-     * {@link DurableMetadataHeaderCodec#RESERVED_PREFIX} ({@code "vertique-"}) prefix, and then
-     * overlays the projected context headers on top.
+     * {@link DurableContextPropagator#capture(String)} and appending it to the caller-supplied
+     * headers as {@link #sendWithContext} does.
      *
      * @param topic          the target topic
      * @param key            the message key, or {@code null}
@@ -621,24 +723,19 @@ public class KafkaProducerFactory {
      * @param origin         the send origin to thread through to the wire funnel
      * @param operation      the proxy's producer operation, or {@code null} for non-proxy origins
      * @return a future of the record metadata; FAILS with {@link IllegalArgumentException} if any
-     *         application header uses the reserved framework prefix (the merge never throws
-     *         synchronously, so callers can classify the failure in {@code recover})
+     *         application header uses the reserved framework prefix or has a {@code null} value
+     *         (never throws synchronously for either, so callers can classify the failure in
+     *         {@code recover})
      */
     private Future<RecordMetadata> sendRaw(
             String topic,
             String key,
             byte[] value,
-            Map<String, String> headers,
+            @Nullable KafkaRecordHeaders headers,
             KafkaSendOrigin origin,
             @Nullable KafkaProducerOperation operation) {
         DurableMetadata ctx = propagator.capture(DispatchBoundary.KAFKA);
-        final Map<String, String> wire;
-        try {
-            wire = DurableMetadataHeaderCodec.mergeForEgress(headers, ctx);
-        } catch (IllegalArgumentException e) {
-            return Future.failedFuture(e);
-        }
-        return sendWire(topic, key, value, wire, origin, operation);
+        return sendWithContext(topic, key, value, headers, ctx, origin, operation);
     }
 
     /**
@@ -655,19 +752,20 @@ public class KafkaProducerFactory {
      * @param origin         the send origin to thread through to the wire funnel
      * @param operation      the proxy's producer operation, or {@code null} for non-proxy origins
      * @return a future of the record metadata; FAILS with {@link IllegalArgumentException} if any
-     *         application header uses the reserved framework prefix (never throws synchronously)
+     *         application header uses the reserved framework prefix or has a {@code null} value
+     *         (never throws synchronously for either)
      */
     private Future<RecordMetadata> sendWithContext(
             String topic,
             String key,
             byte[] value,
-            Map<String, String> headers,
+            @Nullable KafkaRecordHeaders headers,
             DurableMetadata context,
             KafkaSendOrigin origin,
             @Nullable KafkaProducerOperation operation) {
-        final Map<String, String> wire;
+        final KafkaRecordHeaders wire;
         try {
-            wire = DurableMetadataHeaderCodec.mergeForEgress(headers, context);
+            wire = egressHeaders(headers, context);
         } catch (IllegalArgumentException e) {
             return Future.failedFuture(e);
         }
@@ -675,7 +773,59 @@ public class KafkaProducerFactory {
     }
 
     /**
-     * Creates the {@link KafkaProducerRecord}, adds all merged headers, sends it via the shared
+     * Builds the headers of an outgoing record: the application headers in their order, followed by
+     * one UTF-8 text header per namespace of the durable context. The order among the context
+     * headers is unspecified.
+     *
+     * <p>This is where Kafka egress keeps the {@link DurableMetadataHeaderCodec#RESERVED_PREFIX}
+     * prefix for the framework: an application header that uses it is rejected, so the context
+     * headers can never share a key with an application header. The dead-letter send does not come
+     * through here.
+     *
+     * @param headers the application headers, or {@code null} for none
+     * @param context the durable context to project; must not be {@code null}
+     * @return the wire headers; the application headers instance itself when the context projects
+     *     to no header
+     * @throws IllegalArgumentException if an application header uses the reserved framework prefix
+     *     or has a {@code null} value
+     */
+    private static KafkaRecordHeaders egressHeaders(@Nullable KafkaRecordHeaders headers, DurableMetadata context) {
+        Map<String, String> contextHeaders = DurableMetadataHeaderCodec.toHeaders(context);
+        KafkaRecordHeaders application = headers == null ? KafkaRecordHeaders.empty() : headers;
+        for (KafkaRecordHeader header : application) {
+            if (DurableMetadataHeaderCodec.isReservedHeader(header.key())) {
+                throw new IllegalArgumentException("Application header uses reserved framework prefix '"
+                        + DurableMetadataHeaderCodec.RESERVED_PREFIX + "': " + header.key());
+            }
+        }
+        rejectNullValues(application);
+        if (contextHeaders.isEmpty()) {
+            return application;
+        }
+        List<KafkaRecordHeader> wire = new ArrayList<>(application.entries().size() + contextHeaders.size());
+        wire.addAll(application.entries());
+        contextHeaders.forEach((name, body) -> wire.add(KafkaRecordHeader.ofUtf8(name, body)));
+        return new KafkaRecordHeaders(wire);
+    }
+
+    /**
+     * Rejects a header without a value. Kafka allows one, but the producer record this factory
+     * sends cannot carry it.
+     *
+     * @param headers the headers about to be sent
+     * @throws IllegalArgumentException naming the key, if a header has a {@code null} value
+     */
+    private static void rejectNullValues(KafkaRecordHeaders headers) {
+        for (KafkaRecordHeader header : headers) {
+            if (header.value() == null) {
+                throw new IllegalArgumentException(
+                        "Record header has a null value and cannot be sent: " + header.key());
+            }
+        }
+    }
+
+    /**
+     * Creates the {@link KafkaProducerRecord}, adds every header in order, sends it via the shared
      * producer, and then fires all registered {@link KafkaProducerCaptureHook} instances after the
      * send settles.
      *
@@ -685,7 +835,9 @@ public class KafkaProducerFactory {
      * @param topic          the target topic
      * @param key            the message key, or {@code null}
      * @param value          the serialized message bytes
-     * @param wire           the fully merged wire headers (application + context); must not be {@code null}
+     * @param wire           the wire headers in order (application headers, then context headers);
+     *                       must not be {@code null} and must not contain a header with a
+     *                       {@code null} value
      * @param origin         the send origin, threaded from the public entry point
      * @param operation      the producer operation for {@link KafkaSendOrigin#DIRECT_PRODUCER}, or
      *                       {@code null} for all other origins
@@ -696,12 +848,14 @@ public class KafkaProducerFactory {
             String topic,
             String key,
             byte[] value,
-            Map<String, String> wire,
+            KafkaRecordHeaders wire,
             KafkaSendOrigin origin,
             @Nullable KafkaProducerOperation operation) {
         return getOrCreateProducer().compose(producer -> {
             KafkaProducerRecord<String, byte[]> record = KafkaProducerRecord.create(topic, key, value);
-            wire.forEach((k, v) -> record.addHeader(k, v));
+            for (KafkaRecordHeader header : wire) {
+                record.addHeader(header.key(), header.value());
+            }
             return producer.send(record).onComplete(ar -> fireHooks(origin, topic, key, value, wire, operation, ar));
         });
     }
@@ -714,7 +868,7 @@ public class KafkaProducerFactory {
      * @param topic          the target topic
      * @param key            the record key, or {@code null}
      * @param value          the serialized wire bytes
-     * @param wire           the fully merged wire headers
+     * @param wire           the wire headers in order (application headers, then context headers)
      * @param operation      the producer operation, or {@code null}
      * @param ar             the settled send result
      */
@@ -723,7 +877,7 @@ public class KafkaProducerFactory {
             String topic,
             @Nullable String key,
             byte[] value,
-            Map<String, String> wire,
+            KafkaRecordHeaders wire,
             @Nullable KafkaProducerOperation operation,
             io.vertx.core.AsyncResult<RecordMetadata> ar) {
         if (captureHooks.isEmpty()) {

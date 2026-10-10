@@ -21,6 +21,7 @@ import dev.vertique.json.JsonConfig;
 import dev.vertique.json.JsonMapperProfiles;
 import dev.vertique.json.VertxJsonSupport;
 import dev.vertique.kafka.DeserializationException;
+import dev.vertique.kafka.KafkaRecordHeaders;
 import dev.vertique.kafka.serialization.KafkaDeserializer;
 import dev.vertique.kafka.serialization.KafkaSerializer;
 import io.vertx.core.json.JsonObject;
@@ -134,11 +135,11 @@ class JsonSerdeProviderProfileTest {
             JsonSerdeProvider provider = providerWithIndentProfile();
 
             KafkaSerializer<Dto> indent = provider.serializer(Dto.class, serdeConfigWith("indent"));
-            String indentJson = text(indent.serialize(new Dto("x"), "t", Map.of()));
+            String indentJson = text(indent.serialize(new Dto("x"), "t", KafkaRecordHeaders.empty()));
             assertTrue(indentJson.contains("\n"), indentJson);
 
             KafkaSerializer<Dto> vertique = provider.serializer(Dto.class, serdeConfigWith(null));
-            String vertiqueJson = text(vertique.serialize(new Dto("x"), "t", Map.of()));
+            String vertiqueJson = text(vertique.serialize(new Dto("x"), "t", KafkaRecordHeaders.empty()));
             assertFalse(vertiqueJson.contains("\n"), vertiqueJson);
             assertEquals("{\"value\":\"x\"}", vertiqueJson);
         }

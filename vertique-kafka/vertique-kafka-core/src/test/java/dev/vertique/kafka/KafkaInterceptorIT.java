@@ -475,7 +475,11 @@ public class KafkaInterceptorIT {
         TestEvent skipped = new TestEvent("filter-skip-001", "should-be-skipped");
         byte[] skippedBytes = DatabindCodec.mapper().writeValueAsBytes(skipped);
         producerFactory
-                .send("it.interceptor.events", "filter-key-skip", skippedBytes, Map.of("x-action", "skip-me"))
+                .send(
+                        "it.interceptor.events",
+                        "filter-key-skip",
+                        skippedBytes,
+                        KafkaRecordHeaders.of(Map.of("x-action", "skip-me")))
                 .toCompletionStage()
                 .toCompletableFuture()
                 .get();

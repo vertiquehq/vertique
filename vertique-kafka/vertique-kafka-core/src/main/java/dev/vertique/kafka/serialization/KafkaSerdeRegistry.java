@@ -4,6 +4,7 @@
 package dev.vertique.kafka.serialization;
 
 import dev.vertique.kafka.DeserializationException;
+import dev.vertique.kafka.KafkaRecordHeaders;
 import io.vertx.core.json.JsonObject;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
@@ -239,7 +240,7 @@ public final class KafkaSerdeRegistry {
     private static <V> KafkaSerializer<V> wrap(KafkaSerdeProvider provider, KafkaSerializer<V> raw) {
         return new KafkaSerializer<V>() {
             @Override
-            public byte[] serialize(V value, String topic, Map<String, String> headers) {
+            public byte[] serialize(V value, String topic, KafkaRecordHeaders headers) {
                 return raw.serialize(value, topic, headers);
             }
 

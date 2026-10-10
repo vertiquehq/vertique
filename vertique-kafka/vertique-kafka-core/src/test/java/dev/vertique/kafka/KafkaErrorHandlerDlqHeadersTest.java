@@ -105,7 +105,7 @@ class KafkaErrorHandlerDlqHeadersTest {
                             assertTrue(control.commitCalled, "the offset is committed after the publish");
 
                             assertEquals(1, factory.wires.size(), "exactly one wire send");
-                            Map<String, String> wire = factory.wires.get(0);
+                            Map<String, String> wire = factory.wires.get(0).asMap();
                             assertEquals(RECORD_CORRELATION, wire.get("vertique-correlation"));
                             assertEquals("order.created", wire.get("event-type"));
                             assertEquals("src.topic", wire.get("x-dlq-source-topic"));
@@ -125,7 +125,7 @@ class KafkaErrorHandlerDlqHeadersTest {
                             assertEquals(KafkaSendOrigin.DLQ, hook.sends.get(0).origin());
                             assertEquals(
                                     RECORD_CORRELATION,
-                                    hook.sends.get(0).headers().get("vertique-correlation"));
+                                    hook.sends.get(0).headers().asMap().get("vertique-correlation"));
                             ctx.completeNow();
                         })));
             } catch (Throwable t) {
@@ -171,7 +171,7 @@ class KafkaErrorHandlerDlqHeadersTest {
      */
     static final class WireCapturingFactory extends KafkaProducerFactory {
 
-        final List<Map<String, String>> wires = new CopyOnWriteArrayList<>();
+        final List<KafkaRecordHeaders> wires = new CopyOnWriteArrayList<>();
         final List<KafkaSendOrigin> origins = new CopyOnWriteArrayList<>();
 
         WireCapturingFactory(Vertx vertx, DurableContextPropagator propagator, KafkaProducerCaptureHook hook) {
@@ -190,10 +190,10 @@ class KafkaErrorHandlerDlqHeadersTest {
                 String topic,
                 String key,
                 byte[] value,
-                Map<String, String> wire,
+                KafkaRecordHeaders wire,
                 KafkaSendOrigin origin,
                 KafkaProducerOperation operation) {
-            wires.add(Map.copyOf(wire));
+            wires.add(wire);
             origins.add(origin);
             fireHooks(origin, topic, key, value, wire, operation, Future.succeededFuture(null));
             return Future.succeededFuture(null);

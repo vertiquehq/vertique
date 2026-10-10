@@ -13,6 +13,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import dev.vertique.json.DefaultJsonMapperProfileRegistry;
 import dev.vertique.json.JsonConfig;
 import dev.vertique.kafka.DeserializationException;
+import dev.vertique.kafka.KafkaRecordHeaders;
 import dev.vertique.kafka.serialization.KafkaDeserializer;
 import dev.vertique.kafka.serialization.KafkaSerializer;
 import io.vertx.core.json.JsonObject;
@@ -79,7 +80,7 @@ class JsonSerdeProviderTest {
         @DisplayName("serializes a Plain record to JSON bytes")
         void roundTrip() {
             KafkaSerializer<Plain> ser = provider.serializer(Plain.class, new JsonObject());
-            byte[] bytes = ser.serialize(new Plain("hello"), "t", Map.of());
+            byte[] bytes = ser.serialize(new Plain("hello"), "t", KafkaRecordHeaders.empty());
             assertEquals("{\"name\":\"hello\"}", new String(bytes, StandardCharsets.UTF_8));
         }
 

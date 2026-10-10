@@ -317,7 +317,11 @@ public class KafkaConsumerIT {
 
         // Produce the accepted message (with x-event-type: accepted header)
         producerFactory
-                .send("it.filtered.events", "key-accepted", acceptedBytes, Map.of("x-event-type", "accepted"))
+                .send(
+                        "it.filtered.events",
+                        "key-accepted",
+                        acceptedBytes,
+                        KafkaRecordHeaders.of(Map.of("x-event-type", "accepted")))
                 .toCompletionStage()
                 .toCompletableFuture()
                 .get();

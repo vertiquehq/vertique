@@ -653,12 +653,20 @@ public class KafkaRetryAndRouterIT {
         byte[] typeBBytes = DatabindCodec.mapper().writeValueAsBytes(typeBEvent);
 
         producerFactory
-                .send("it.router.events", "route-key-a", typeABytes, Map.of("event-type", "type-a"))
+                .send(
+                        "it.router.events",
+                        "route-key-a",
+                        typeABytes,
+                        KafkaRecordHeaders.of(Map.of("event-type", "type-a")))
                 .toCompletionStage()
                 .toCompletableFuture()
                 .get();
         producerFactory
-                .send("it.router.events", "route-key-b", typeBBytes, Map.of("event-type", "type-b"))
+                .send(
+                        "it.router.events",
+                        "route-key-b",
+                        typeBBytes,
+                        KafkaRecordHeaders.of(Map.of("event-type", "type-b")))
                 .toCompletionStage()
                 .toCompletableFuture()
                 .get();
@@ -695,7 +703,11 @@ public class KafkaRetryAndRouterIT {
         TestEvent unknownEvent = new TestEvent("route-default-001", "unknown-type-event");
         byte[] unknownBytes = DatabindCodec.mapper().writeValueAsBytes(unknownEvent);
         producerFactory
-                .send("it.router.events", "route-key-unknown", unknownBytes, Map.of("event-type", "unknown-type"))
+                .send(
+                        "it.router.events",
+                        "route-key-unknown",
+                        unknownBytes,
+                        KafkaRecordHeaders.of(Map.of("event-type", "unknown-type")))
                 .toCompletionStage()
                 .toCompletableFuture()
                 .get();
@@ -723,7 +735,11 @@ public class KafkaRetryAndRouterIT {
         TestEvent unmatchedEvent = new TestEvent("no-route-001", "unmatched-event");
         byte[] unmatchedBytes = DatabindCodec.mapper().writeValueAsBytes(unmatchedEvent);
         producerFactory
-                .send("it.router.nodefault.events", "no-route-key", unmatchedBytes, Map.of("event-type", "type-y"))
+                .send(
+                        "it.router.nodefault.events",
+                        "no-route-key",
+                        unmatchedBytes,
+                        KafkaRecordHeaders.of(Map.of("event-type", "type-y")))
                 .toCompletionStage()
                 .toCompletableFuture()
                 .get();
@@ -732,7 +748,11 @@ public class KafkaRetryAndRouterIT {
         TestEvent typeXEvent = new TestEvent("no-route-typex-001", "type-x-after-skip");
         byte[] typeXBytes = DatabindCodec.mapper().writeValueAsBytes(typeXEvent);
         producerFactory
-                .send("it.router.nodefault.events", "typex-key", typeXBytes, Map.of("event-type", "type-x"))
+                .send(
+                        "it.router.nodefault.events",
+                        "typex-key",
+                        typeXBytes,
+                        KafkaRecordHeaders.of(Map.of("event-type", "type-x")))
                 .toCompletionStage()
                 .toCompletableFuture()
                 .get();

@@ -76,6 +76,7 @@ Handlers must therefore be idempotent under `MANUAL`.
 | `x-dlq-source-offset` | written on DLQ publish | Original offset |
 | `x-dlq-consumer` | written on DLQ publish | Name of the consumer that failed |
 | `x-dlq-error` | written on DLQ publish | Exception simple name, plus up to 200 characters of its message |
+| `vertique-<namespace>` | written on every send except the DLQ publish | One text header per durable-context namespace, value = the namespace body as JSON. Appended after the application headers. The `vertique-` prefix is reserved: an application header that uses it fails the send |
 
 A dead-lettered record keeps its original key, its original value bytes, and all of its original
 headers; the five `x-dlq-*` headers are added on top. An original header of the same name is
@@ -363,10 +364,15 @@ Creates typed producer proxies and exposes raw sends.
 | Method | Purpose |
 |---|---|
 | `create(Class<T> producerInterface)` | Builds the typed proxy for a `@KafkaProducer` interface |
-| `send(String topic, String key, byte[] value, Map<String, String> headers)` | Raw send with pre-serialized bytes |
-| `sendForOutbox(...)` | Raw send tagged with `KafkaSendOrigin.OUTBOX` for capture hooks |
-| `sendForDlq(...)` | The framework's dead-letter send, tagged with `KafkaSendOrigin.DLQ`. It forwards the given headers verbatim, including reserved `vertique-*` context headers, and adds no ambient context. Not for application sends |
+| `send(String topic, String key, byte[] value, KafkaRecordHeaders headers)` | Raw send with pre-serialized bytes; the ambient durable context is captured and appended as context headers |
+| `send(String topic, String key, byte[] value, KafkaRecordHeaders headers, DurableMetadata context)` | The same, with an explicit durable context instead of the ambient one |
+| `sendForOutbox(String topic, String key, byte[] value, KafkaRecordHeaders headers, DurableMetadata context)` | Raw send with an explicit durable context, tagged with `KafkaSendOrigin.OUTBOX` for capture hooks |
+| `sendForDlq(String topic, String key, byte[] value, KafkaRecordHeaders headers)` | The framework's dead-letter send, tagged with `KafkaSendOrigin.DLQ`. It forwards the given headers verbatim, including reserved `vertique-*` context headers, and adds no ambient context. Not for application sends |
 | `close()` | Closes the underlying producer |
+
+Every send takes its headers as a [`KafkaRecordHeaders`](#kafkarecordheaders-and-kafkarecordheader);
+`null` means no headers. See [Headers on a sent record](#headers-on-a-sent-record) for what reaches
+the wire and which headers fail a send.
 
 ### `KafkaConsumerDeploymentManager`
 
@@ -392,7 +398,11 @@ public interface OrderEvents {
     Future<RecordMetadata> orderCreatedWithKey(String key, OrderCreatedEvent event);
 
     @Topic("order.created")
-    Future<RecordMetadata> orderCreatedWithHeaders(OrderCreatedEvent event, Map<String, String> headers);
+    Future<RecordMetadata> orderCreatedWithHeaders(OrderCreatedEvent event, KafkaRecordHeaders headers);
+
+    @Topic("order.created")
+    Future<RecordMetadata> orderCreatedWithKeyAndHeaders(
+            String key, OrderCreatedEvent event, KafkaRecordHeaders headers);
 }
 ```
 
@@ -404,14 +414,67 @@ static OrderEvents orderEvents(KafkaProducerFactory factory) {
 ```
 
 `@KafkaProducer.name()` defaults to `""`, which resolves to the interface's simple name and is the
-key used for config overrides. Parameters are interpreted positionally:
+key used for config overrides. A method has one of four parameter shapes:
 
 | Parameters | Interpretation |
 |---|---|
 | `(V value)` | value only; key is `null` |
 | `(String key, V value)` | key and value |
-| `(V value, Map<String, String> headers)` | value and headers |
-| `(String key, V value, Map<String, String> headers)` | key, value, and headers |
+| `(V value, KafkaRecordHeaders headers)` | value and headers |
+| `(String key, V value, KafkaRecordHeaders headers)` | key, value, and headers |
+
+The shape is read from the parameter types. A last parameter of type `KafkaRecordHeaders` is the
+headers. Of the one or two parameters that remain, the last is the value and a leading `String` is
+the key. Two consequences:
+
+- `(String value, KafkaRecordHeaders headers)` is a `String` **value** with headers, not a key.
+- `(String key, Map<String, String> value)` is a key and a `Map` **value**.
+
+`factory.create(...)` throws `IllegalArgumentException`, naming the method, for any other shape:
+
+| Rejected | Why |
+|---|---|
+| `(V value, Map headers)`, `(String key, V value, Map headers)` | A `Map` is not accepted as headers. Declare `KafkaRecordHeaders` and build it with `KafkaRecordHeaders.of(Map)` |
+| A value of type `KafkaRecordHeaders` | `KafkaRecordHeaders` is only the last parameter, after the value |
+| No parameters, more than three, headers before the value, or two leading parameters whose first is not a `String` | Not one of the four shapes |
+
+### Headers on a sent record
+
+Pass headers as a `KafkaRecordHeaders`. Build one from a text map, or from a list when you need a
+repeated key or a binary value:
+
+```java
+// Text headers: one UTF-8 header per entry, in the map's iteration order.
+orderEvents.orderCreatedWithHeaders(event, KafkaRecordHeaders.of(Map.of("event-type", "order.created")));
+
+// Repeated keys and binary values, in the order given.
+KafkaRecordHeaders headers = new KafkaRecordHeaders(List.of(
+        KafkaRecordHeader.ofUtf8("x-forwarded-by", "gateway"),
+        KafkaRecordHeader.ofUtf8("x-forwarded-by", "orders"),
+        new KafkaRecordHeader("signature", Buffer.buffer(signatureBytes))));
+orderEvents.orderCreatedWithKeyAndHeaders(orderId, event, headers);
+
+// No headers: pass null or KafkaRecordHeaders.empty().
+orderEvents.orderCreatedWithHeaders(event, null);
+```
+
+The same rules hold for a proxy method and for `send`, the explicit-context `send` and
+`sendForOutbox` on `KafkaProducerFactory`:
+
+- **Order on the wire.** The record carries your headers first, in the order you gave them, with
+  repeated keys and binary values unchanged. The framework then appends one text header per
+  durable-context namespace (`vertique-<namespace>`). The order among those context headers is
+  unspecified.
+- **Reserved prefix.** A header whose key starts with `vertique-` fails the send: the returned
+  future fails with `IllegalArgumentException` naming the key, and nothing is sent.
+- **Null values.** A header with a `null` value fails the send the same way. Kafka allows such a
+  header, but the producer record cannot carry it. An empty value is fine.
+- **The serializer sees your headers.** `KafkaSerializer.serialize` is given the headers you passed
+  (never `null` — `KafkaRecordHeaders.empty()` when you passed none), before the context headers are
+  appended. They are immutable, so a serializer cannot add a header to the record.
+
+`sendForDlq` is the exception: it forwards the headers it is given verbatim, reserved-prefix headers
+included, and appends no context. A `null`-valued header fails it too.
 
 Topic, format, serde properties, and JSON mapper profile are overridable per method at
 `kafka.producers.{producerName}.methods.{methodName}.*`.
@@ -674,7 +737,7 @@ does, calling `treeToValue` on the already-parsed tree so there is no second par
 
 ```java
 public interface KafkaSerializer<V> {
-    byte[] serialize(V value, String topic, Map<String, String> headers);
+    byte[] serialize(V value, String topic, KafkaRecordHeaders headers);
     default boolean mayBlock() { return false; }
     default void close() {}
 }
@@ -687,7 +750,9 @@ public interface KafkaDeserializer<V> {
 ```
 
 Both carry `topic` and `headers` because schema-registry-backed formats need them for subject
-naming.
+naming. A serializer is given the application headers of the record being sent as an immutable
+`KafkaRecordHeaders` — never `null`, and without the framework context headers, which are appended
+after serialization. A deserializer is given the record's headers as a text map.
 
 ### Format precedence
 
@@ -942,7 +1007,7 @@ silently no longer being called.
 | `topic` | Target topic |
 | `key` | Record key, or `null` |
 | `value` | No-copy `PayloadSource` over the serialized wire bytes |
-| `headers` | Fully merged wire headers |
+| `headers` | The `KafkaRecordHeaders` of the record as sent, in wire order: the application headers, then the framework context headers. Repeated keys and binary values are kept; `headers.asMap()` gives a lossy text map |
 | `producerMethod` | The `@KafkaProducer` interface method; non-`null` only for `DIRECT_PRODUCER` |
 | `result` | The settled `AsyncResult<RecordMetadata>` |
 
@@ -999,6 +1064,7 @@ default accepts every producer interface.
 |---|---|
 | `DeserializationException` | The value could not be decoded. A `TechnicalException` subtype; it enters the configured error strategy like any other dispatch failure |
 | Event-bus timeout | Dispatch exceeded `eventBusTimeoutMs`; treated as a dispatch failure |
+| Failed send future with `IllegalArgumentException` | A header on a producer send uses the reserved `vertique-` prefix or has a `null` value. The message names the key; nothing was sent |
 
 ### Common mistakes
 
@@ -1019,6 +1085,9 @@ default accepts every producer interface.
 - **Expecting consumers to start themselves.** Nothing calls `deployAll()` for you.
 - **Installing `KafkaModule` alone.** With no format provider, any consumer needing a serde fails at
   startup.
+- **Declaring a `Map` header parameter on a `@KafkaProducer` method.** `factory.create(...)` rejects
+  it. Declare `KafkaRecordHeaders` and pass `KafkaRecordHeaders.of(map)`.
+- **Setting a `vertique-*` header yourself.** The prefix belongs to the framework; the send fails.
 
 ---
 

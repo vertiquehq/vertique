@@ -10,6 +10,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import dev.vertique.kafka.KafkaRecordHeaders;
 import io.vertx.core.json.JsonObject;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
@@ -117,7 +118,7 @@ class KafkaSerdeRegistryTest {
             KafkaSerializer<Plain> ser = reg.serializer("json", Plain.class, new JsonObject());
             KafkaDeserializer<Plain> deser = reg.deserializer("json", Plain.class, new JsonObject());
 
-            byte[] bytes = ser.serialize(new Plain("hi"), "t", Map.of());
+            byte[] bytes = ser.serialize(new Plain("hi"), "t", KafkaRecordHeaders.empty());
             assertArrayEquals("{\"name\":\"hi\"}".getBytes(StandardCharsets.UTF_8), bytes);
             assertEquals(new Plain("hi"), deser.deserialize(bytes, "t", Map.of()));
             assertFalse(ser.mayBlock());
@@ -141,7 +142,7 @@ class KafkaSerdeRegistryTest {
                     "{\"name\":\"x\"}",
                     new String(
                             reg.serializer("json", Plain.class, new JsonObject())
-                                    .serialize(new Plain("x"), "t", Map.of()),
+                                    .serialize(new Plain("x"), "t", KafkaRecordHeaders.empty()),
                             StandardCharsets.UTF_8));
         }
 
@@ -398,7 +399,7 @@ class KafkaSerdeRegistryTest {
             public <V> KafkaSerializer<V> serializer(Class<V> type, JsonObject endpointConfig) {
                 return new KafkaSerializer<>() {
                     @Override
-                    public byte[] serialize(V value, String topic, Map<String, String> headers) {
+                    public byte[] serialize(V value, String topic, KafkaRecordHeaders headers) {
                         return new byte[0];
                     }
 

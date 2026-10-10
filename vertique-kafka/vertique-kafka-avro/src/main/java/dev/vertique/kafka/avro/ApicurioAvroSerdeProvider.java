@@ -4,6 +4,7 @@
 package dev.vertique.kafka.avro;
 
 import dev.vertique.kafka.DeserializationException;
+import dev.vertique.kafka.KafkaRecordHeaders;
 import dev.vertique.kafka.config.KafkaConfig;
 import dev.vertique.kafka.serialization.KafkaDeserializer;
 import dev.vertique.kafka.serialization.KafkaSerdeProvider;
@@ -97,7 +98,7 @@ public final class ApicurioAvroSerdeProvider implements KafkaSerdeProvider {
         serializer.configure(serializerConfig(endpointConfig), false);
         return new KafkaSerializer<>() {
             @Override
-            public byte[] serialize(V value, String topic, Map<String, String> headers) {
+            public byte[] serialize(V value, String topic, KafkaRecordHeaders headers) {
                 return serializer.serialize(topic, value);
             }
 

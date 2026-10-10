@@ -41,7 +41,7 @@ At relay time:
 3. Builds a Kafka record:
    - **Key:** `aggregateId` when present; `null` otherwise.
    - **Value:** the serialized payload bytes from step 2.
-   - **Headers:** application headers from `OutboxEntry.headers` (application-only) plus the durable propagation context projected to reserved `vertique-<namespace>` headers (e.g. `vertique-correlation`, `vertique-localization`) via `DurableMetadataHeaderCodec`. Relay control (message id, `eventType`, aggregate ids) is **not** emitted as headers — it is carried internally in `OutboxMetadata.delivery.outbox`.
+   - **Headers:** application headers from `OutboxEntry.headers` (application-only), converted with `KafkaRecordHeaders.of(Map)` — one UTF-8 text header per map entry, in the map's iteration order; a `null` or empty map gives no application headers — followed by the durable propagation context projected to reserved `vertique-<namespace>` headers (e.g. `vertique-correlation`, `vertique-localization`) via `DurableMetadataHeaderCodec`. Relay control (message id, `eventType`, aggregate ids) is **not** emitted as headers — it is carried internally in `OutboxMetadata.delivery.outbox`.
 4. Sends the record through the application's shared Kafka producer (`KafkaProducerFactory`). Awaits producer acknowledgment.
 5. On success: returns `OutboxPublishResult.success()`.
 6. On transport/timeout/broker failure: returns `OutboxPublishResult.retryable(message, cause)`.
@@ -56,7 +56,7 @@ the send.
 
 | Header | Value |
 |--------|-------|
-| Application headers | `OutboxEntry.headers`, forwarded verbatim (application-only) |
+| Application headers | `OutboxEntry.headers` (application-only), each entry sent as one UTF-8 text header. They come first on the record; the `vertique-<namespace>` headers follow |
 | `vertique-<namespace>` | One reserved header per bound durable-context namespace (e.g. `vertique-correlation`, `vertique-localization`), value = the namespace body as JSON, projected by `DurableMetadataHeaderCodec` |
 
 Relay/delivery control (`x-message-id`, `eventType`, `aggregateType`, `aggregateId`) is no longer
@@ -82,9 +82,21 @@ Observer-only SPI hook fired by `KafkaOutboxDestinationHandler` exactly once per
 | `topic` | Kafka topic from the outbox entry |
 | `key` | record key derived from `aggregateId`, or `null` |
 | `value` | no-copy `PayloadSource` over the serialized wire bytes; `null` when serialization failed before bytes were produced |
-| `headers` | application headers from the outbox envelope |
+| `headers` | a `dev.vertique.kafka.KafkaRecordHeaders`: the headers of the Kafka record that was (or would have been) published, in wire order — the outbox entry's headers converted with `KafkaRecordHeaders.of(Map)`, followed by the `vertique-<namespace>` context headers. When an entry header uses the reserved `vertique-` prefix (the publish is rejected), only the converted entry headers are given. `headers.asMap()` gives a text map |
 | `result` | classified `OutboxPublishResult` (`Success`, `RetryableFailure`, or `PermanentFailure`) |
 | `entryId` | string form of the outbox entry's surrogate key |
+
+The hook method is:
+
+```java
+default void onOutboxPublish(
+        String topic,
+        @Nullable String key,
+        @Nullable PayloadSource value,
+        KafkaRecordHeaders headers,
+        OutboxPublishResult result,
+        String entryId) {}
+```
 
 Internally, the outbox relay uses `KafkaProducerFactory.sendForOutbox(...)`, which tags the send with `KafkaSendOrigin.OUTBOX` so the `KafkaProducerCaptureHook` in `vertique-kafka-core` also fires for the same send (see `dev.vertique:vertique-kafka-core`). The `KafkaOutboxCaptureHook` fires at the outbox-handler level (with the outbox envelope context) while the producer hook fires at the wire level.
 

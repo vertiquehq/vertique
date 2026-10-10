@@ -99,7 +99,11 @@ public final class ApicurioAvroSerdeProvider implements KafkaSerdeProvider {
     /** Always true — Schema Registry calls may block on a cache miss. */
     @Override public boolean mayBlock() { return true; }
 
-    /** Builds a per-endpoint AvroKafkaSerializer. */
+    /**
+     * Builds a per-endpoint AvroKafkaSerializer. The returned serializer implements
+     * {@code serialize(V value, String topic, KafkaRecordHeaders headers)}: it uses the topic for
+     * the registry subject and ignores the headers, since the schema id travels in the payload.
+     */
     @Override public <V> KafkaSerializer<V> serializer(Class<V> type, JsonObject endpointConfig) { ... }
 
     /** Builds a per-endpoint AvroKafkaDeserializer. */

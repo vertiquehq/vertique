@@ -37,7 +37,6 @@ import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 import org.junit.jupiter.api.AfterAll;
@@ -115,7 +114,7 @@ class KafkaProducerCaptureHookTest {
                 String topic,
                 String key,
                 PayloadSource value,
-                Map<String, String> headers,
+                KafkaRecordHeaders headers,
                 Method producerMethod,
                 AsyncResult<RecordMetadata> result) {}
 
@@ -127,7 +126,7 @@ class KafkaProducerCaptureHookTest {
                 String topic,
                 String key,
                 PayloadSource value,
-                Map<String, String> headers,
+                KafkaRecordHeaders headers,
                 Method producerMethod,
                 AsyncResult<RecordMetadata> result) {
             captures.add(new Capture(origin, topic, key, value, headers, producerMethod, result));
@@ -150,7 +149,7 @@ class KafkaProducerCaptureHookTest {
                 String topic,
                 String key,
                 PayloadSource value,
-                Map<String, String> headers,
+                KafkaRecordHeaders headers,
                 Method producerMethod,
                 AsyncResult<RecordMetadata> result) {
             seenOrigins.add(origin);
@@ -168,7 +167,7 @@ class KafkaProducerCaptureHookTest {
                 String topic,
                 String key,
                 PayloadSource value,
-                Map<String, String> headers,
+                KafkaRecordHeaders headers,
                 Method producerMethod,
                 AsyncResult<RecordMetadata> result) {
             callCount++;
@@ -214,7 +213,7 @@ class KafkaProducerCaptureHookTest {
         void defaultNoOp() {
             KafkaProducerCaptureHook hook = new KafkaProducerCaptureHook() {};
             // Should not throw regardless of null arguments
-            hook.onSend(KafkaSendOrigin.DIRECT_PRODUCER, "t", "k", null, Map.of(), null, null);
+            hook.onSend(KafkaSendOrigin.DIRECT_PRODUCER, "t", "k", null, KafkaRecordHeaders.empty(), null, null);
         }
 
         @Test
@@ -337,7 +336,7 @@ class KafkaProducerCaptureHookTest {
         @DisplayName("sendForDlq threads DLQ origin with null producerMethod")
         void dlqOriginAndNullMethod() {
             OriginCapturingFactory factory = capturingFactory();
-            factory.sendForDlq("dlq.topic", "k", new byte[] {1, 2}, Map.of());
+            factory.sendForDlq("dlq.topic", "k", new byte[] {1, 2}, KafkaRecordHeaders.empty());
 
             assertEquals(1, factory.capturedOrigins.size());
             assertEquals(KafkaSendOrigin.DLQ, factory.capturedOrigins.get(0));
@@ -349,7 +348,7 @@ class KafkaProducerCaptureHookTest {
         void outboxOriginAndNullMethod() {
             OriginCapturingFactory factory = capturingFactory();
             dev.vertique.core.context.DurableMetadata ctx = dev.vertique.core.context.DurableMetadata.empty();
-            factory.sendForOutbox("outbox.topic", "k2", new byte[] {3, 4}, Map.of(), ctx);
+            factory.sendForOutbox("outbox.topic", "k2", new byte[] {3, 4}, KafkaRecordHeaders.empty(), ctx);
 
             assertEquals(1, factory.capturedOrigins.size());
             assertEquals(KafkaSendOrigin.OUTBOX, factory.capturedOrigins.get(0));
@@ -374,7 +373,7 @@ class KafkaProducerCaptureHookTest {
         @DisplayName("DLQ origin is never DIRECT_PRODUCER")
         void dlqOriginIsNotDirectProducer() {
             OriginCapturingFactory factory = capturingFactory();
-            factory.sendForDlq("dlq", "k", new byte[] {1}, Map.of());
+            factory.sendForDlq("dlq", "k", new byte[] {1}, KafkaRecordHeaders.empty());
             assertFalse(
                     factory.capturedOrigins.contains(KafkaSendOrigin.DIRECT_PRODUCER),
                     "DLQ send must NOT be classified as DIRECT_PRODUCER");
@@ -385,7 +384,7 @@ class KafkaProducerCaptureHookTest {
         void outboxOriginIsNotDirectProducer() {
             OriginCapturingFactory factory = capturingFactory();
             dev.vertique.core.context.DurableMetadata ctx = dev.vertique.core.context.DurableMetadata.empty();
-            factory.sendForOutbox("outbox", "k2", new byte[] {1}, Map.of(), ctx);
+            factory.sendForOutbox("outbox", "k2", new byte[] {1}, KafkaRecordHeaders.empty(), ctx);
             assertFalse(
                     factory.capturedOrigins.contains(KafkaSendOrigin.DIRECT_PRODUCER),
                     "OUTBOX send must NOT be classified as DIRECT_PRODUCER");
@@ -414,7 +413,7 @@ class KafkaProducerCaptureHookTest {
         void hookReceivesPayloadSourceWithBytes() {
             RecordingHook hook = new RecordingHook();
             OriginCapturingFactory factory = capturingFactory(hook);
-            factory.sendForDlq("dlq", "k", new byte[] {7, 8, 9}, Map.of());
+            factory.sendForDlq("dlq", "k", new byte[] {7, 8, 9}, KafkaRecordHeaders.empty());
 
             assertEquals(1, hook.captures.size());
             PayloadSource ps = hook.captures.get(0).value();
@@ -438,7 +437,7 @@ class KafkaProducerCaptureHookTest {
 
             // OriginCapturingFactory.sendWire fires hooks then returns succeededFuture.
             // The throwing hook must not convert it to failed.
-            Future<RecordMetadata> result = factory.sendForDlq("dlq", "k", new byte[] {1}, Map.of());
+            Future<RecordMetadata> result = factory.sendForDlq("dlq", "k", new byte[] {1}, KafkaRecordHeaders.empty());
             assertTrue(result.succeeded(), "throwing hook must not fail the send Future");
             assertEquals(1, throwing.callCount, "throwing hook must have been called");
         }
@@ -450,7 +449,7 @@ class KafkaProducerCaptureHookTest {
             SecondaryRecordingHook secondary = new SecondaryRecordingHook();
             OriginCapturingFactory factory = capturingFactory(throwing, secondary);
 
-            factory.sendForDlq("dlq", "k", new byte[] {1}, Map.of());
+            factory.sendForDlq("dlq", "k", new byte[] {1}, KafkaRecordHeaders.empty());
             assertEquals(1, throwing.callCount, "throwing hook must be called");
             assertEquals(1, secondary.seenOrigins.size(), "secondary hook must run even after throwing hook");
             assertEquals(KafkaSendOrigin.DLQ, secondary.seenOrigins.get(0));
@@ -494,7 +493,7 @@ class KafkaProducerCaptureHookTest {
         @DisplayName("non-proxy sends carry no operation")
         void nonProxySendCarriesNoOperation() {
             OperationRecordingHook hook = new OperationRecordingHook();
-            capturingFactory(hook).sendForDlq("dlq", "k", new byte[] {1}, Map.of());
+            capturingFactory(hook).sendForDlq("dlq", "k", new byte[] {1}, KafkaRecordHeaders.empty());
 
             assertEquals(1, hook.sends.size());
             assertNull(hook.sends.get(0).operation());
@@ -538,7 +537,7 @@ class KafkaProducerCaptureHookTest {
                 String topic,
                 String key,
                 byte[] value,
-                Map<String, String> wire,
+                KafkaRecordHeaders wire,
                 KafkaSendOrigin origin,
                 KafkaProducerOperation operation) {
             capturedOrigins.add(origin);
