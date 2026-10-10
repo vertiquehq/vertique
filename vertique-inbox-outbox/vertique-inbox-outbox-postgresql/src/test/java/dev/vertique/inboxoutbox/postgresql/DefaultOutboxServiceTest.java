@@ -14,6 +14,7 @@ import static org.mockito.ArgumentCaptor.forClass;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -144,6 +145,104 @@ class DefaultOutboxServiceTest {
                 result.cause(),
                 "DataAccessException from repository must be wrapped in InboxOutboxPersistenceException");
         assertSame(dbFailure, result.cause().getCause(), "original DataAccessException must be chained as the cause");
+    }
+
+    @Nested
+    @DisplayName("undeliverable headers are rejected before insert")
+    class HeaderValidation {
+
+        private OutboxEntry entryWithHeaders(java.util.Map<String, String> headers) {
+            OutboxEntry candidate = mock(OutboxEntry.class);
+            when(candidate.headers()).thenReturn(headers);
+            return candidate;
+        }
+
+        @Test
+        @DisplayName("a header key with the reserved framework prefix fails the future and inserts nothing")
+        void reservedPrefixHeaderKeyFailsBeforeInsert() {
+            when(repository.insert(any(), any(), any(), any())).thenReturn(Future.succeededFuture(1L));
+            java.util.Map<String, String> headers = new java.util.LinkedHashMap<>();
+            headers.put("x-app", "ok");
+            headers.put("vertique-correlation", "secret-value");
+
+            Future<Long> result = service.publish(tx, entryWithHeaders(headers));
+
+            assertTrue(result.failed(), "publish must fail for a reserved-prefix header key");
+            assertInstanceOf(IllegalArgumentException.class, result.cause());
+            assertTrue(
+                    result.cause().getMessage().contains("vertique-correlation"),
+                    "message must name the offending key: " + result.cause().getMessage());
+            assertFalse(
+                    result.cause().getMessage().contains("secret-value"), "message must never carry the header value");
+            verify(repository, never()).insert(any(), any(), any(), any());
+        }
+
+        @Test
+        @DisplayName("a null header value fails the future naming the key and inserts nothing")
+        void nullHeaderValueFailsBeforeInsert() {
+            when(repository.insert(any(), any(), any(), any())).thenReturn(Future.succeededFuture(1L));
+            java.util.Map<String, String> headers = new java.util.HashMap<>();
+            headers.put("x-tenant", null);
+
+            Future<Long> result = service.publish(tx, entryWithHeaders(headers));
+
+            assertTrue(result.failed(), "publish must fail for a null header value");
+            assertInstanceOf(IllegalArgumentException.class, result.cause());
+            assertTrue(
+                    result.cause().getMessage().contains("x-tenant"),
+                    "message must name the offending key: " + result.cause().getMessage());
+            verify(repository, never()).insert(any(), any(), any(), any());
+        }
+
+        @Test
+        @DisplayName("a null header key fails the future and inserts nothing")
+        void nullHeaderKeyFailsBeforeInsert() {
+            when(repository.insert(any(), any(), any(), any())).thenReturn(Future.succeededFuture(1L));
+            java.util.Map<String, String> headers = new java.util.HashMap<>();
+            headers.put(null, "secret-value");
+
+            Future<Long> result = service.publish(tx, entryWithHeaders(headers));
+
+            assertTrue(result.failed(), "publish must fail for a null header key");
+            assertInstanceOf(IllegalArgumentException.class, result.cause());
+            assertFalse(
+                    result.cause().getMessage().contains("secret-value"), "message must never carry the header value");
+            verify(repository, never()).insert(any(), any(), any(), any());
+        }
+
+        @Test
+        @DisplayName("a null headers map is treated as no headers and the entry is inserted")
+        void nullHeadersMapIsTreatedAsNoHeaders() {
+            when(repository.insert(any(), any(), any(), any())).thenReturn(Future.succeededFuture(9L));
+            OutboxEntry nullHeaders = entryWithHeaders(null);
+
+            Future<Long> result = service.publish(tx, nullHeaders);
+
+            assertTrue(result.succeeded(), "a null headers map must not fail publish");
+            assertEquals(9L, result.result());
+            verify(repository).insert(eq(nullHeaders), any(OutboxMetadata.class), any(UUID.class), eq(tx));
+        }
+
+        @Test
+        @DisplayName("a real entry built with headers(null) reports an empty header map to the repository")
+        void entryBuiltWithNullHeadersReportsEmptyMap() {
+            when(repository.insert(any(), any(), any(), any())).thenReturn(Future.succeededFuture(9L));
+            OutboxEntry built = OutboxEntry.builder()
+                    .eventType("order.placed")
+                    .destinationType(dev.vertique.inboxoutbox.DestinationType.SERVICE)
+                    .destination("orders/handle")
+                    .payload("p")
+                    .headers(null)
+                    .build();
+
+            Future<Long> result = service.publish(tx, built);
+
+            assertTrue(result.succeeded(), "publish must succeed for an entry built with headers(null)");
+            ArgumentCaptor<OutboxEntry> inserted = forClass(OutboxEntry.class);
+            verify(repository).insert(inserted.capture(), any(OutboxMetadata.class), any(UUID.class), eq(tx));
+            assertNotNull(inserted.getValue().headers(), "the repository must never see a null headers map");
+            assertTrue(inserted.getValue().headers().isEmpty());
+        }
     }
 
     @Nested

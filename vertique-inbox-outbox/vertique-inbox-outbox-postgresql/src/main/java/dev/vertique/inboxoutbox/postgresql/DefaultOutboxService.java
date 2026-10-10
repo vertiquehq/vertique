@@ -6,6 +6,7 @@ package dev.vertique.inboxoutbox.postgresql;
 import dev.vertique.context.DurableContextPropagator;
 import dev.vertique.core.context.DurableCarrierDescriptor;
 import dev.vertique.core.context.DurableMetadata;
+import dev.vertique.core.context.DurableMetadataHeaderCodec;
 import dev.vertique.core.context.DurableTarget;
 import dev.vertique.inboxoutbox.DelayedJobControl;
 import dev.vertique.inboxoutbox.OutboxDeliveryMetadata;
@@ -17,6 +18,7 @@ import io.vertx.core.Future;
 import io.vertx.sqlclient.SqlClient;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -96,7 +98,11 @@ class DefaultOutboxService implements OutboxService {
      * <p>Captures the currently bound durable context via {@link DurableContextPropagator#mergeCaptured}
      * into an {@link OutboxMetadata} document and delegates to {@link OutboxRepository#insert} within
      * the caller's transaction. The entry's {@code headers} are stored as-is (application/transport
-     * headers only — no framework control keys). When the entry carries a {@link DelayedJobControl}
+     * headers only — no framework control keys). Headers that cannot be delivered are rejected first:
+     * a {@code null} key, a {@code null} value, or a key with the reserved framework prefix
+     * ({@link DurableMetadataHeaderCodec#RESERVED_PREFIX}) fails the returned future with an
+     * {@link IllegalArgumentException} that names the key (never the value), and nothing is inserted.
+     * A {@code null} header map means no headers. When the entry carries a {@link DelayedJobControl}
      * snapshot, it is persisted in {@code metadata.delivery.delayedJob}; all other entries receive
      * an empty delivery section (FR-CTX-175, FR-TM-039).
      *
@@ -119,6 +125,12 @@ class DefaultOutboxService implements OutboxService {
      */
     @Override
     public Future<Long> publish(SqlClient tx, OutboxEntry entry) {
+        // Reject headers no destination can deliver while the caller's transaction can still roll
+        // back; found at relay time they would dead-letter the entry after the business commit.
+        IllegalArgumentException undeliverable = undeliverableHeader(entry.headers());
+        if (undeliverable != null) {
+            return Future.failedFuture(undeliverable);
+        }
         // F3b row binding: allocate the carrier id up front so the durable snapshot this call
         // captures is signed for THIS row, then persist the same id into the first-class column.
         UUID carrierId = UUID.randomUUID();
@@ -132,5 +144,37 @@ class DefaultOutboxService implements OutboxService {
         return repository
                 .insert(entry, metadata, carrierId, tx)
                 .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "outbox publish")));
+    }
+
+    /**
+     * Finds the first header that cannot be delivered: a {@code null} key, a {@code null} value, or a
+     * key that starts with the prefix reserved for framework headers
+     * ({@link DurableMetadataHeaderCodec#RESERVED_PREFIX}).
+     *
+     * <p>The returned exception names the offending key and never the header value, which may be
+     * sensitive.
+     *
+     * @param headers the entry's application headers; {@code null} means no headers
+     * @return the exception to fail {@code publish} with, or {@code null} when every header can be
+     *     delivered
+     */
+    private static IllegalArgumentException undeliverableHeader(Map<String, String> headers) {
+        if (headers == null) {
+            return null;
+        }
+        for (Map.Entry<String, String> header : headers.entrySet()) {
+            String key = header.getKey();
+            if (key == null) {
+                return new IllegalArgumentException("Outbox entry header key must not be null");
+            }
+            if (header.getValue() == null) {
+                return new IllegalArgumentException("Outbox entry header '" + key + "' must not have a null value");
+            }
+            if (DurableMetadataHeaderCodec.isReservedHeader(key)) {
+                return new IllegalArgumentException("Outbox entry header '" + key
+                        + "' uses the reserved framework prefix '" + DurableMetadataHeaderCodec.RESERVED_PREFIX + "'");
+            }
+        }
+        return null;
     }
 }

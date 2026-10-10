@@ -96,10 +96,16 @@ public final class OutboxSideEffectRecorder implements WorkflowSideEffectRecorde
      * Any validation failure or unknown target id causes the returned {@link Future} to fail,
      * rolling back the caller's transaction.
      *
+     * <p>A {@code null} {@link WorkflowSideEffectIntent#headers() headers} map means no intent
+     * headers. A {@code null} header key or value fails the returned {@link Future} with an
+     * {@link IllegalArgumentException} that names the key (never the value); nothing is thrown
+     * synchronously and nothing is published.
+     *
      * @param intent the side-effect intent to record; must have {@code kind=SERVICE}
      * @param tx     the open database transaction to use for the outbox insert
      * @return a {@link Future} that completes with {@link RecorderResult#empty()} on success, or
-     *     fails with an {@link IllegalArgumentException} (unknown target) or
+     *     fails with an {@link IllegalArgumentException} (unknown target, {@code null} header key
+     *     or value) or
      *     {@link IllegalStateException} (invalid target shape)
      */
     @Override
@@ -135,6 +141,23 @@ public final class OutboxSideEffectRecorder implements WorkflowSideEffectRecorde
                     + payloadParams));
         }
 
+        // --- Header validation ---
+        Map<String, String> intentHeaders = intent.headers() == null ? Map.of() : intent.headers();
+        for (Map.Entry<String, String> header : intentHeaders.entrySet()) {
+            if (header.getKey() == null) {
+                return Future.failedFuture(new IllegalArgumentException("Workflow service-dispatch intent for target '"
+                        + intent.targetId()
+                        + "' has a null header key"));
+            }
+            if (header.getValue() == null) {
+                return Future.failedFuture(new IllegalArgumentException("Workflow service-dispatch intent for target '"
+                        + intent.targetId()
+                        + "' has a null value for header '"
+                        + header.getKey()
+                        + "'"));
+            }
+        }
+
         // --- Outbox entry construction ---
         OutboxEntry entry = OutboxEntry.builder()
                 .destinationType(DestinationType.SERVICE)
@@ -143,7 +166,7 @@ public final class OutboxSideEffectRecorder implements WorkflowSideEffectRecorde
                 .aggregateType("WorkflowInstance")
                 .aggregateId(intent.correlation().workflowId().value().toString())
                 .payload(intent.payload())
-                .headers(mergeHeaders(intent.headers(), intent.correlation()))
+                .headers(mergeHeaders(intentHeaders, intent.correlation()))
                 .build();
 
         return outboxService.publish(tx, entry).map(v -> RecorderResult.empty());
@@ -169,7 +192,8 @@ public final class OutboxSideEffectRecorder implements WorkflowSideEffectRecorde
      * {@code x-workflow-definition-id}) are added on top of the base map from the intent.
      * Correlation headers take precedence if the intent supplies a key with the same name.
      *
-     * @param base        headers from the intent (may be empty, must not be {@code null})
+     * @param base        headers from the intent (may be empty, must not be {@code null} and must not
+     *                    hold a {@code null} key or value — {@code record} checks both first)
      * @param correlation workflow correlation providing the header values
      * @return an unmodifiable copy of the merged header map
      */

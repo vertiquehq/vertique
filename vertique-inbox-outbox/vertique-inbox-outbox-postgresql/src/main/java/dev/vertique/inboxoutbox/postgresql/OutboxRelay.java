@@ -253,7 +253,10 @@ public class OutboxRelay extends AbstractVerticle {
      * <p>The handler is selected by {@link DestinationType}. If no handler is registered for the
      * entry's destination type, the entry is returned to {@code PENDING} via
      * {@link OutboxPublishResult.Unresolvable}. Exceptions from the handler are treated as
-     * retryable failures per {@code FR-TM-032}.
+     * retryable failures. So is an {@link AssertionError} or a {@link LinkageError} thrown
+     * synchronously by the handler, and a handler that returns {@code null} instead of a future:
+     * each is a failed attempt of that one entry, so the entry's in-flight slot is released and the
+     * caller goes on with the rest of the claimed batch.
      *
      * @param record the claimed outbox entry to deliver
      */
@@ -272,8 +275,12 @@ public class OutboxRelay extends AbstractVerticle {
 
         Future<OutboxPublishResult> publishResult;
         try {
-            publishResult = handler.publish(envelope);
-        } catch (Exception e) {
+            publishResult = Objects.requireNonNull(
+                    handler.publish(envelope), "OutboxDestinationHandler.publish() returned null instead of a future");
+        } catch (Exception | LinkageError | AssertionError e) {
+            // A broken handler must cost one attempt of this entry only. Letting the throwable out of
+            // here would leave the batch loop early: the slot would stay taken, the remaining claimed
+            // entries would wait for lease recovery, and the next poll would never be scheduled.
             log.warn(
                     "OutboxRelay: synchronous exception from handler for entryId={}: {}",
                     record.id(),

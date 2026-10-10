@@ -138,8 +138,9 @@ public class KafkaOutboxDestinationHandler implements OutboxDestinationHandler {
      * and tries again later.
      *
      * <p>After the result is determined, all registered {@link KafkaOutboxCaptureHook} instances
-     * are invoked as observer-only side effects. Hook exceptions are swallowed and do not change
-     * the returned result.
+     * are invoked as observer-only side effects. Hook exceptions — and an {@link AssertionError}
+     * or a {@link LinkageError} thrown by a hook — are swallowed and do not change the returned
+     * result.
      *
      * @param envelope the outbox entry to deliver
      * @return a {@link Future} that always completes with a non-null {@link OutboxPublishResult}
@@ -270,7 +271,8 @@ public class KafkaOutboxDestinationHandler implements OutboxDestinationHandler {
     /**
      * Fires all registered {@link KafkaOutboxCaptureHook} instances in sorted order, isolating
      * each hook in a {@code try/catch} so exceptions never propagate to callers and never change
-     * the publish result.
+     * the publish result. An {@link AssertionError} or a {@link LinkageError} thrown by a hook is
+     * isolated the same way, and the hooks after it still run.
      *
      * @param topic    the Kafka topic targeted by the outbox entry
      * @param key      the Kafka record key, or {@code null}
@@ -293,7 +295,7 @@ public class KafkaOutboxDestinationHandler implements OutboxDestinationHandler {
         for (KafkaOutboxCaptureHook hook : captureHooks) {
             try {
                 hook.onOutboxPublish(topic, key, value, headers, result, entryId);
-            } catch (Exception ex) {
+            } catch (Exception | LinkageError | AssertionError ex) {
                 log.warn(
                         "[KafkaOutboxDestinationHandler] Capture hook {} threw an exception — swallowing: {}",
                         hook.getClass().getSimpleName(),

@@ -111,4 +111,16 @@ public class OutboxEntry {
      * this entry may be re-claimed after a failed publish attempt. Not set by callers.
      */
     private final Instant availableAt;
+
+    /**
+     * Returns the key-value metadata to pass alongside the payload.
+     *
+     * <p>A {@code null} map given to the builder is reported as an empty map, so a reader never has
+     * to guard against {@code null}.
+     *
+     * @return the headers; an empty map when none were set; never {@code null}
+     */
+    public Map<String, String> headers() {
+        return headers == null ? Map.of() : headers;
+    }
 }

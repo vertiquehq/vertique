@@ -116,6 +116,7 @@ When `LISTEN_NOTIFY` is configured but the notification channel is unavailable o
 6. On permanent failure or exhausted attempts: `markDeadLetter()`.
 7. On `unresolvable`: `markUnresolvable()` with short delay; attempt count unchanged.
 8. A failed future from `publish()` is treated as retryable.
+9. A handler that throws synchronously from `publish()` — an exception, an `AssertionError` or a `LinkageError` — or returns `null` instead of a future is treated as retryable too: it costs that one entry an attempt, the rest of the claimed batch is still delivered, and polling continues.
 
 **`ClaimScopeException` (package-private, extends `InboxOutboxConfigurationException`):** When a `ClaimScope.Destinations` supplier misbehaves during `buildClaimEligibility`, the WHOLE claim cycle is aborted with a `ClaimScopeException`. The returned future is failed with zero rows claimed. Failure conditions:
 
@@ -135,6 +136,8 @@ The exception message names only the destination TYPE and reason category — ne
 
 **Per-publish metadata model:**
 - Application `headers` are stored and relayed as-is — application/transport headers only; no framework keys are merged in.
+- `OutboxService.publish` rejects headers that cannot be delivered before it inserts anything: a `null` key, a `null` value, or a key with the reserved `vertique-` prefix fails the returned future with an `IllegalArgumentException` that names the key (never the value), so the caller's transaction can still roll back. A `null` header map means no headers.
+- When a stored header value is JSON `null` (a row written without `OutboxService.publish`), the relay drops that header, logs one WARN with the entry id and the header key, and delivers the rest.
 - Durable propagation context bound at publish is captured into `metadata.context` and, at the Kafka boundary, projected to reserved `vertique-<namespace>` headers (e.g. `vertique-correlation`).
 - Relay control (message id, `eventType`, `aggregateType`, `aggregateId`) is exposed at relay time via `metadata.delivery.outbox` (projected from the row columns) — it is **not** merged into `headers` and is internal to the relay. `aggregateId` is still used as the Kafka message key.
 

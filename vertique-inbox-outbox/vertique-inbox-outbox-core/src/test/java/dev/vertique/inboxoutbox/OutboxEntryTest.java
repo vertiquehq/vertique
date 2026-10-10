@@ -150,6 +150,14 @@ class OutboxEntryTest {
         }
 
         @Test
+        @DisplayName("headers is an empty map when the builder is given null")
+        void headersNullIsNormalisedToEmptyMap() {
+            OutboxEntry entry = minimalEntry().headers(null).build();
+            assertNotNull(entry.headers());
+            assertTrue(entry.headers().isEmpty());
+        }
+
+        @Test
         @DisplayName("default headers map is not null")
         void defaultHeadersIsNotNull() {
             OutboxEntry entry = minimalEntry().build();
