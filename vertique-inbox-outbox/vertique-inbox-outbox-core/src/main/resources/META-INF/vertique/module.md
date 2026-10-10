@@ -424,7 +424,7 @@ the destination type.
 | `outcome` | `OutboxPublishOutcome`: `SUCCESS`, `RETRYABLE_FAILURE`, `PERMANENT_FAILURE`, `UNRESOLVABLE` |
 | `disposition` | `OutboxEntryDisposition`: `PUBLISHED`, `RETRY_SCHEDULED`, `DEAD_LETTERED`, `DEFERRED` |
 | `dispositionRecorded` | `true` only when the repository confirmed the state change; `false` when the repository call failed, threw, or reported that this relay no longer owned the entry |
-| `nextAttemptAt` | Earliest time of the next attempt for `RETRY_SCHEDULED` and `DEFERRED`; `null` otherwise, and when the relay could not compute it |
+| `nextAttemptAt` | Earliest time of the next attempt for `RETRY_SCHEDULED` and `DEFERRED`; `null` otherwise, and when the relay could not compute it. Approximate for `DEFERRED`: the relay computes it from its own clock, while the row is deferred from the database clock |
 | `errorType` | Class name of the failure's cause; `null` when the attempt did not fail or the failure has no cause |
 | `elapsed` | Time from the call to `publish` until its result; zero when no handler is registered for the destination type |
 | `completedAt` | Time the relay notified the observers |
@@ -448,7 +448,9 @@ is reported as `UNRESOLVABLE` with `DEFERRED`.
 - **The framework constructs the event.** Components may be added in later releases; read the
   accessors and do not construct the record or deconstruct it with a record pattern.
 - **No notification** for an attempt whose handler future never settles, whose repository call never
-  completes, or that is in flight when the relay stops and never completes.
+  completes, or that is in flight when the relay stops and never completes. Nor for a claimed entry
+  whose envelope the relay could not build: no attempt was made, and the entry stays claimed until
+  stale-lease recovery.
 - **Threading.** The callback runs on the relay's context — the event-loop context of the relay
   instance that made the attempt — whichever thread completes the repository call. Do not block in
   it. Several relay instances, each on its own context, may call one observer concurrently.

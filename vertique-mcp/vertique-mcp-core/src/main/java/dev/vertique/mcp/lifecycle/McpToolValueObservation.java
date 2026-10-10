@@ -34,7 +34,8 @@ public interface McpToolValueObservation extends McpRequestObservation {
      * failure) — such a request still receives {@link #onTerminal} and {@link #onCompleted}.
      *
      * <p>Exceptions thrown by this callback are caught, logged, and swallowed; they do not affect
-     * the enclosing operation.
+     * the enclosing operation. A {@link LinkageError} and an {@link AssertionError} are
+     * contained the same way, and a {@link LinkageError} is reported once at error level.
      *
      * @param observation the bounded, unmodifiable, normalized input observation; never {@code null}
      */
@@ -49,7 +50,8 @@ public interface McpToolValueObservation extends McpRequestObservation {
      * in this task invokes it.
      *
      * <p>Exceptions thrown by this callback are caught, logged, and swallowed; they do not affect
-     * the enclosing operation.
+     * the enclosing operation. A {@link LinkageError} and an {@link AssertionError} are
+     * contained the same way, and a {@link LinkageError} is reported once at error level.
      *
      * @param observation the bounded, normalized output observation; never {@code null}
      */

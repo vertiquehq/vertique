@@ -977,6 +977,10 @@ public class KafkaProducerFactory {
      * each hook is isolated in a {@code try/catch}, so a hook that throws an {@link Exception},
      * {@link LinkageError} or {@link AssertionError} never changes the result.
      *
+     * <p>A send without an origin reference fires the hooks through the seven-argument
+     * {@code fireHooks}, so a subclass that overrides only that form still sees it; a send with an
+     * origin reference fires them through the form that takes the reference.
+     *
      * @param topic          the target topic
      * @param key            the message key, or {@code null}
      * @param value          the serialized message bytes
@@ -1005,14 +1009,20 @@ public class KafkaProducerFactory {
             for (KafkaRecordHeader header : wire) {
                 record.addHeader(header.key(), header.value());
             }
-            return producer.send(record)
-                    .onComplete(ar -> fireHooks(origin, topic, key, value, wire, operation, originRef, ar));
+            return producer.send(record).onComplete(ar -> {
+                if (originRef == null) {
+                    fireHooks(origin, topic, key, value, wire, operation, ar);
+                } else {
+                    fireHooks(origin, topic, key, value, wire, operation, originRef, ar);
+                }
+            });
         });
     }
 
     /**
      * Fires all registered {@link KafkaProducerCaptureHook} instances for a send that has no origin
-     * reference. Delegates to
+     * reference. Every such send comes through this method; a send that has an origin reference
+     * calls the other form directly and does not come through here. Delegates to
      * {@link #fireHooks(KafkaSendOrigin, String, String, byte[], KafkaRecordHeaders, KafkaProducerOperation, String, io.vertx.core.AsyncResult)}
      * with a {@code null} reference.
      *

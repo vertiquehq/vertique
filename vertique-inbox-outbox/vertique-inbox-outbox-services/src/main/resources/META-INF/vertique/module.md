@@ -92,7 +92,9 @@ At relay time:
 9. A stored payload that cannot be decoded to the target's payload type, or a durable propagation
    context that cannot be decoded, returns `OutboxPublishResult.permanent(message, cause)` instead
    of being retried: the stored entry does not change between attempts. The message names the
-   target and never the payload content; the decode failure is the cause.
+   target and never the payload content; the decode failure is the cause. During a rolling deploy
+   this also applies to a payload that only an older node cannot decode: if that node claims the
+   entry, the entry is dead-lettered at once instead of being retried until a newer node claims it.
 
 `SERVICE` delivery guarantee: at-least-once handoff to the service. The service must be idempotent
 or use `InboxService` for dedup if needed.

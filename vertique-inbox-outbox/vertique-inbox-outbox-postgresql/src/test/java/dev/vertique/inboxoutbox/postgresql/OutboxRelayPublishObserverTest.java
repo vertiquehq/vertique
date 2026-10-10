@@ -20,6 +20,10 @@ import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import dev.vertique.inboxoutbox.ClaimScope;
 import dev.vertique.inboxoutbox.DestinationType;
 import dev.vertique.inboxoutbox.OutboxDestinationHandler;
@@ -63,6 +67,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
+import org.slf4j.LoggerFactory;
 
 /**
  * Tests that the deployed {@link OutboxRelay} notifies every {@link OutboxPublishObserver} exactly
@@ -267,8 +272,8 @@ class OutboxRelayPublishObserverTest {
         }
 
         @Test
-        @DisplayName("handler throws an Error: RETRYABLE_FAILURE / RETRY_SCHEDULED")
-        void errorFromPublish() throws Exception {
+        @DisplayName("handler throws a LinkageError: RETRYABLE_FAILURE / RETRY_SCHEDULED")
+        void linkageErrorFromPublish() throws Exception {
             RecordingObserver observer = new RecordingObserver();
             claim(record(DestinationType.SERVICE, 0, 3));
             deploy(
@@ -283,6 +288,25 @@ class OutboxRelayPublishObserverTest {
             assertTrue(n.event().dispositionRecorded());
             assertEquals(markRetryAvailableAt(), n.event().nextAttemptAt());
             assertEquals(NoClassDefFoundError.class.getName(), n.event().errorType());
+        }
+
+        @Test
+        @DisplayName("handler throws a StackOverflowError: one notification, RETRYABLE_FAILURE / RETRY_SCHEDULED")
+        void stackOverflowErrorFromPublish() throws Exception {
+            RecordingObserver observer = new RecordingObserver();
+            claim(record(DestinationType.SERVICE, 0, 3));
+            deploy(
+                    envelope -> {
+                        throw new StackOverflowError("handler recursed too deep");
+                    },
+                    observer);
+
+            Notification n = awaitTheOnlyNotification(observer);
+
+            assertAttemptFacts(n, OutboxPublishOutcome.RETRYABLE_FAILURE, OutboxEntryDisposition.RETRY_SCHEDULED, 0, 3);
+            assertTrue(n.event().dispositionRecorded());
+            assertEquals(markRetryAvailableAt(), n.event().nextAttemptAt());
+            assertEquals(StackOverflowError.class.getName(), n.event().errorType());
         }
 
         @Test
@@ -333,6 +357,30 @@ class OutboxRelayPublishObserverTest {
         }
     }
 
+    // --- No notification without an envelope ---
+
+    @Nested
+    @DisplayName("an entry whose envelope cannot be built")
+    class EnvelopeCannotBeBuilt {
+
+        @Test
+        @DisplayName("no notification, nothing recorded, slot released and polling continues")
+        void noNotificationWhenTheEnvelopeCannotBeBuilt() throws Exception {
+            RecordingObserver observer = new RecordingObserver();
+            // A record without metadata makes the relay's envelope construction throw.
+            claim(record(DestinationType.SERVICE, 0, 3, null));
+            deploy(envelope -> fail("the handler must not be called without an envelope"), observer);
+
+            // The slot is free again and polling goes on: claims keep asking for the full batch size.
+            verify(outboxRepository, timeout(WAIT_MS).atLeast(4)).claimBatch(eq(BATCH_SIZE), eq(NODE), any());
+            assertTrue(observer.notifications.isEmpty(), "there is no attempt to report without an envelope");
+            verify(outboxRepository, never()).markPublished(anyLong(), anyString());
+            verify(outboxRepository, never()).markRetry(anyLong(), anyString(), anyInt(), any(), any(), any());
+            verify(outboxRepository, never()).markDeadLetter(anyLong(), anyString(), any(), any());
+            verify(outboxRepository, never()).markUnresolvable(anyLong(), anyString(), any());
+        }
+    }
+
     // --- dispositionRecorded and notification timing ---
 
     @Nested
@@ -352,6 +400,23 @@ class OutboxRelayPublishObserverTest {
 
             assertAttemptFacts(n, OutboxPublishOutcome.SUCCESS, OutboxEntryDisposition.PUBLISHED, 0, 3);
             assertFalse(n.event().dispositionRecorded(), "a failed repository call did not record the transition");
+        }
+
+        @Test
+        @DisplayName("repository returns null instead of a future: one notification, dispositionRecorded false")
+        void repositoryReturnsNullFuture() throws Exception {
+            RecordingObserver observer = new RecordingObserver();
+            when(outboxRepository.markPublished(ENTRY_ID, NODE)).thenReturn(null);
+            claim(record(DestinationType.SERVICE, 0, 3));
+            deploy(envelope -> Future.succeededFuture(OutboxPublishResult.success()), observer);
+
+            // awaitTheOnlyNotification also proves the slot was released: later claims ask for the
+            // full batch size.
+            Notification n = awaitTheOnlyNotification(observer);
+
+            assertAttemptFacts(n, OutboxPublishOutcome.SUCCESS, OutboxEntryDisposition.PUBLISHED, 0, 3);
+            assertFalse(n.event().dispositionRecorded(), "a null future did not record the transition");
+            assertNull(n.event().nextAttemptAt());
         }
 
         @Test
@@ -482,7 +547,11 @@ class OutboxRelayPublishObserverTest {
             claim(record(DestinationType.SERVICE, 0, 3));
             deploy(envelope -> Future.succeededFuture(OutboxPublishResult.success()), first, second);
 
+            // awaitTheOnlyNotification waits for two more claims after the notification; the explicit
+            // check below is the "polling unaffected" part of the display names: claims keep asking
+            // for the full batch size, so the loop runs and no slot is held.
             Notification n = awaitTheOnlyNotification(second);
+            verify(outboxRepository, timeout(WAIT_MS).atLeast(3)).claimBatch(eq(BATCH_SIZE), eq(NODE), any());
 
             assertEquals(1, first.calls.size(), "the throwing observer was called once");
             assertAttemptFacts(n, OutboxPublishOutcome.SUCCESS, OutboxEntryDisposition.PUBLISHED, 0, 3);
@@ -491,6 +560,40 @@ class OutboxRelayPublishObserverTest {
             verify(outboxRepository, never()).markRetry(anyLong(), anyString(), anyInt(), any(), any(), any());
             verify(outboxRepository, never()).markDeadLetter(anyLong(), anyString(), any(), any());
             verify(outboxRepository, never()).markUnresolvable(anyLong(), anyString(), any());
+        }
+
+        @Test
+        @DisplayName("observer throws LinkageError on two attempts: logged at ERROR once, both attempts recorded")
+        void linkageErrorIsLoggedAtErrorOnceAcrossAttempts() throws Exception {
+            Logger relayLogger = (Logger) LoggerFactory.getLogger(OutboxRelay.class);
+            ListAppender<ILoggingEvent> appender = new ListAppender<>();
+            appender.start();
+            relayLogger.addAppender(appender);
+            try {
+                ThrowingObserver first = new ThrowingObserver(() -> new NoClassDefFoundError("com/example/Missing"));
+                RecordingObserver second = new RecordingObserver(1, "second");
+                // Two attempts of the same entry: the first claim and the one after it both return it.
+                when(outboxRepository.claimBatch(anyInt(), anyString(), any()))
+                        .thenReturn(
+                                Future.succeededFuture(List.of(record(DestinationType.SERVICE, 0, 3))),
+                                Future.succeededFuture(List.of(record(DestinationType.SERVICE, 1, 3))),
+                                Future.succeededFuture(List.of()));
+                deploy(envelope -> Future.succeededFuture(OutboxPublishResult.success()), first, second);
+
+                await(() -> second.notifications.size() == 2, "the second observer was not notified twice");
+
+                assertEquals(2, first.calls.size(), "the throwing observer was called for both attempts");
+                List<ILoggingEvent> errors = appender.list.stream()
+                        .filter(event -> event.getLevel() == Level.ERROR)
+                        .toList();
+                assertEquals(1, errors.size(), "a LinkageError is reported at ERROR once per observer class");
+                assertTrue(
+                        errors.get(0).getFormattedMessage().contains(ThrowingObserver.class.getName()),
+                        "the ERROR names the observer class: " + errors.get(0).getFormattedMessage());
+            } finally {
+                relayLogger.detachAppender(appender);
+                appender.stop();
+            }
         }
 
         @Test
@@ -639,6 +742,11 @@ class OutboxRelayPublishObserverTest {
     }
 
     private static OutboxRecord record(DestinationType destinationType, int attempt, int maxAttempts) {
+        return record(destinationType, attempt, maxAttempts, OutboxMetadata.empty());
+    }
+
+    private static OutboxRecord record(
+            DestinationType destinationType, int attempt, int maxAttempts, OutboxMetadata metadata) {
         return new OutboxRecord(
                 ENTRY_ID,
                 UUID.randomUUID(),
@@ -649,7 +757,7 @@ class OutboxRelayPublishObserverTest {
                 destinationType,
                 new JsonObject().put("orderId", ENTRY_ID),
                 Map.of(),
-                OutboxMetadata.empty(),
+                metadata,
                 null,
                 Instant.now(),
                 OutboxEntryState.PROCESSING,

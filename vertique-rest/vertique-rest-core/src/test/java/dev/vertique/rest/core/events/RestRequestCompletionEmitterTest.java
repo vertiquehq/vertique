@@ -2841,6 +2841,90 @@ class RestRequestCompletionEmitterTest {
                     }));
         }
 
+        @Test
+        @DisplayName("scope whose open() throws AssertionError: listeners still notified, opened scopes closed")
+        void assertionErrorFromOpenDoesNotStopListenersOrLeakScopes(VertxTestContext ctx) {
+            assertScopeErrorIsContained(new AssertionError("scope-open-assertion"), true, ctx);
+        }
+
+        @Test
+        @DisplayName("scope whose open() throws LinkageError: listeners still notified, opened scopes closed")
+        void linkageErrorFromOpenDoesNotStopListenersOrLeakScopes(VertxTestContext ctx) {
+            assertScopeErrorIsContained(new NoClassDefFoundError("com/example/Missing"), true, ctx);
+        }
+
+        @Test
+        @DisplayName("scope whose close() throws AssertionError: listeners notified, the other scope still closed")
+        void assertionErrorFromCloseDoesNotLeakOtherScopes(VertxTestContext ctx) {
+            assertScopeErrorIsContained(new AssertionError("scope-close-assertion"), false, ctx);
+        }
+
+        @Test
+        @DisplayName("scope whose close() throws LinkageError: listeners notified, the other scope still closed")
+        void linkageErrorFromCloseDoesNotLeakOtherScopes(VertxTestContext ctx) {
+            assertScopeErrorIsContained(new NoClassDefFoundError("com/example/Missing"), false, ctx);
+        }
+
+        /**
+         * Completes one request with a good scope opened first and a failing scope opened second, and
+         * asserts that nothing escaped {@code emit}, the listener received the event and the good scope
+         * was opened and closed once. The failing scope's {@code close} runs before the good scope's,
+         * because scopes close in reverse open order.
+         *
+         * @param thrown      the {@link Error} the failing scope throws
+         * @param failsOnOpen {@code true} to throw from {@code open}, {@code false} from {@code close}
+         * @param ctx         the test context
+         */
+        private void assertScopeErrorIsContained(Error thrown, boolean failsOnOpen, VertxTestContext ctx) {
+            AtomicInteger openGoodCount = new AtomicInteger();
+            AtomicInteger closeGoodCount = new AtomicInteger();
+            AtomicInteger failingCalls = new AtomicInteger();
+            RequestCompletionScope goodScope = rc -> {
+                openGoodCount.incrementAndGet();
+                return closeGoodCount::incrementAndGet;
+            };
+            RequestCompletionScope failingScope = rc -> {
+                if (failsOnOpen) {
+                    failingCalls.incrementAndGet();
+                    throw thrown;
+                }
+                return () -> {
+                    failingCalls.incrementAndGet();
+                    throw thrown;
+                };
+            };
+            Set<RequestCompletionScope> scopes = new java.util.LinkedHashSet<>();
+            scopes.add(goodScope);
+            scopes.add(failingScope);
+            List<RestRequestCompletedEvent> captured = new CopyOnWriteArrayList<>();
+            RestRequestCompletionEmitter em = emitterWithScopes(scopes, Set.of(captured::add));
+            String what = thrown.getClass().getSimpleName() + " from a scope's " + (failsOnOpen ? "open" : "close");
+            RouterWithBarrier rb = routerWithBarrier(
+                    vertx,
+                    em,
+                    rc -> ctx.verify(() -> assertDoesNotThrow(
+                            () -> em.emit(rc, RequestCompletionRecorder.boundState(rc), Future.succeededFuture()),
+                            "an " + what + " must not escape emit")));
+
+            startServer(rb.router())
+                    .compose(port -> client.get(port, "127.0.0.1", "/test").send())
+                    .compose(resp -> {
+                        ctx.verify(() -> assertEquals(200, resp.statusCode()));
+                        return awaitBarrier(vertx, rb.barrier());
+                    })
+                    .onComplete(ctx.succeeding(v -> {
+                        ctx.verify(() -> {
+                            assertEquals(1, failingCalls.get(), "the failing scope must have been reached");
+                            assertEquals(
+                                    1, captured.size(), "the listener must still receive the event after an " + what);
+                            assertEquals(1, openGoodCount.get(), "the good scope must have been opened once");
+                            assertEquals(
+                                    1, closeGoodCount.get(), "the good scope must still be closed after an " + what);
+                        });
+                        ctx.completeNow();
+                    }));
+        }
+
         /** T003 TP-007: the {@code /rest} request's log, the scope bracketing the REST listener. */
         private static final List<String> REST_BRACKETED = List.of("open", "rest(marker)", "close");
 

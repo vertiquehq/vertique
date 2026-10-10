@@ -1095,8 +1095,10 @@ would recurse.
 The protected `KafkaProducerFactory.sendWire`/`fireHooks` funnel carries the `KafkaProducerOperation`
 and, in the overloads with a trailing `originRef` parameter, the origin reference. A send without an
 origin reference goes through the `sendWire` form without that parameter, which delegates to the one
-with it; a send with a reference calls the form with the parameter directly. A subclass that
-intercepts every send overrides both, or only the form with `originRef`.
+with it; a send with a reference calls the form with the parameter directly. `fireHooks` follows
+the same rule. A subclass that intercepts every send overrides both, or only the form with
+`originRef`. A subclass that overrides only the older `sendWire`/`fireHooks` forms, the ones without
+`originRef`, does not see sends that carry an origin reference.
 
 `KafkaProducerFactory.create(Class)` also calls `validateProducer(Class<?> producerInterface)` on every
 hook, once, before it builds the proxy. Unlike `onSend`, it may throw: the exception propagates out of

@@ -67,7 +67,8 @@ public interface KafkaProducerCaptureHook extends OrderedExtension {
      * that form receives sends there instead.
      *
      * <p>Exceptions thrown by this callback are caught, logged, and swallowed; they do not affect
-     * the enclosing operation.
+     * the enclosing operation. A {@link LinkageError} and an {@link AssertionError} are
+     * contained the same way, and a {@link LinkageError} is reported once at error level.
      *
      * @deprecated this positional form cannot carry the origin reference
      *     ({@link KafkaProducerSend#originRef()}) or any send detail added later. Override
@@ -114,7 +115,8 @@ public interface KafkaProducerCaptureHook extends OrderedExtension {
      * never make the positional form delegate back to this one, which would recurse.
      *
      * <p>Exceptions thrown by this callback are caught, logged, and swallowed; they do not affect the
-     * enclosing operation.
+     * enclosing operation. A {@link LinkageError} and an {@link AssertionError} are
+     * contained the same way, and a {@link LinkageError} is reported once at error level.
      *
      * @param send the settled send; never {@code null}
      */

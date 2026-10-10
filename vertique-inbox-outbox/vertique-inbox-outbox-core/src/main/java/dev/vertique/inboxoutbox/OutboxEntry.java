@@ -167,13 +167,14 @@ public class OutboxEntry {
     /**
      * Returns the key-value metadata to pass alongside the payload.
      *
-     * <p>A {@code null} map given to the builder is reported as an empty map, so a reader never has
-     * to guard against {@code null}. The returned map is the entry's own unmodifiable copy.
+     * <p>A {@code null} map given to the builder is reported as an empty map — the copy taken at
+     * construction is never {@code null} — so a reader never has to guard against {@code null}. The
+     * returned map is the entry's own unmodifiable copy.
      *
      * @return the headers; an empty map when none were set; never {@code null}
      */
     public Map<String, String> headers() {
-        return headers == null ? Map.of() : headers;
+        return headers;
     }
 
     /**

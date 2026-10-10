@@ -34,7 +34,8 @@ public interface McpRawEvidenceObservation extends McpRequestObservation {
      * request.
      *
      * <p>Exceptions thrown by this callback are caught, logged, and swallowed; they do not affect
-     * the enclosing operation.
+     * the enclosing operation. A {@link LinkageError} and an {@link AssertionError} are
+     * contained the same way, and a {@link LinkageError} is reported once at error level.
      *
      * @param evidence this request's raw admission-time evidence; never {@code null}
      */
@@ -48,7 +49,8 @@ public interface McpRawEvidenceObservation extends McpRequestObservation {
      * response.
      *
      * <p>Exceptions thrown by this callback are caught, logged, and swallowed; they do not affect
-     * the enclosing operation.
+     * the enclosing operation. A {@link LinkageError} and an {@link AssertionError} are
+     * contained the same way, and a {@link LinkageError} is reported once at error level.
      *
      * @param evidence this request's raw response-side evidence; never {@code null}
      */

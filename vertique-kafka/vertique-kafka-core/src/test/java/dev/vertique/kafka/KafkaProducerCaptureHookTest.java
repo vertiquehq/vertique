@@ -229,13 +229,17 @@ class KafkaProducerCaptureHookTest {
 
     private static OriginCapturingFactory capturingFactory(KafkaProducerCaptureHook... hooks) {
         return new OriginCapturingFactory(
-                vertx,
-                KafkaConfig.fromConfig(
-                        new JsonObject().put("kafka", new JsonObject().put("bootstrap.servers", "localhost:9092")),
-                        new DefaultConfigParser(DefaultConfigMapper.lenient())),
-                KafkaTestSupport.noOpPropagator(),
-                new KafkaSerdeRegistry(Set.of(new TestJsonSerdeProvider())),
-                Set.of(hooks));
+                vertx, kafkaConfig(), KafkaTestSupport.noOpPropagator(), serdeRegistry(), Set.of(hooks));
+    }
+
+    private static KafkaConfig kafkaConfig() {
+        return KafkaConfig.fromConfig(
+                new JsonObject().put("kafka", new JsonObject().put("bootstrap.servers", "localhost:9092")),
+                new DefaultConfigParser(DefaultConfigMapper.lenient()));
+    }
+
+    private static KafkaSerdeRegistry serdeRegistry() {
+        return new KafkaSerdeRegistry(Set.of(new TestJsonSerdeProvider()));
     }
 
     // --- KafkaProducerCaptureHook contract ---
@@ -734,6 +738,84 @@ class KafkaProducerCaptureHookTest {
                     Future.succeededFuture(null));
 
             assertNull(send.originRef());
+        }
+    }
+
+    // --- The real wire funnel ---
+
+    @Nested
+    @DisplayName("the real wire funnel")
+    class RealWireFunnel {
+
+        private static final dev.vertique.core.context.DurableMetadata NO_CONTEXT =
+                dev.vertique.core.context.DurableMetadata.empty();
+
+        @Test
+        @DisplayName("a subclass overriding only the seven-argument fireHooks still sees a direct send")
+        void subclassOverridingOnlyTheOlderFireHooksSeesADirectSend() throws Exception {
+            List<String> intercepted = new CopyOnWriteArrayList<>();
+            OperationRecordingHook hook = new OperationRecordingHook();
+            KafkaProducerFactory factory =
+                    new KafkaProducerFactory(
+                            vertx, kafkaConfig(), KafkaTestSupport.noOpPropagator(), serdeRegistry(), Set.of(hook)) {
+                        @Override
+                        protected void fireHooks(
+                                KafkaSendOrigin origin,
+                                String topic,
+                                String key,
+                                byte[] value,
+                                KafkaRecordHeaders wire,
+                                KafkaProducerOperation operation,
+                                AsyncResult<RecordMetadata> ar) {
+                            intercepted.add(origin + ":" + topic);
+                            super.fireHooks(origin, topic, key, value, wire, operation, ar);
+                        }
+                    };
+            useMockProducer(factory);
+
+            Future<RecordMetadata> sent = factory.create(TestMsgProducer.class).publish("hello");
+
+            assertTrue(sent.succeeded(), "the send goes through the real wire funnel");
+            assertEquals(
+                    List.of("DIRECT_PRODUCER:hook.test.topic"),
+                    intercepted,
+                    "the overridden seven-argument fireHooks sees the send");
+            assertEquals(1, hook.sends.size(), "the hook is still called once");
+            assertNull(hook.sends.get(0).originRef());
+        }
+
+        @Test
+        @DisplayName("sendForOutbox with an entry id delivers originRef to an event-form hook through the real funnel")
+        void outboxSendDeliversOriginRefThroughTheRealFunnel() throws Exception {
+            OperationRecordingHook hook = new OperationRecordingHook();
+            KafkaProducerFactory factory = new KafkaProducerFactory(
+                    vertx, kafkaConfig(), KafkaTestSupport.noOpPropagator(), serdeRegistry(), Set.of(hook));
+            useMockProducer(factory);
+
+            Future<RecordMetadata> sent = factory.sendForOutbox(
+                    "outbox.topic", "k", new byte[] {1, 2}, KafkaRecordHeaders.empty(), NO_CONTEXT, "4711");
+
+            assertTrue(sent.succeeded(), "the send goes through the real wire funnel");
+            assertEquals(1, hook.sends.size(), "the hook is called once");
+            assertEquals(KafkaSendOrigin.OUTBOX, hook.sends.get(0).origin());
+            assertEquals("4711", hook.sends.get(0).originRef());
+            assertEquals("outbox.topic", hook.sends.get(0).topic());
+        }
+
+        /**
+         * Puts a mocked Vert.x producer in the factory's shared-producer slot, so the factory's own
+         * {@code sendWire} runs without a broker: every send succeeds at once.
+         */
+        @SuppressWarnings("unchecked")
+        private static void useMockProducer(KafkaProducerFactory factory) throws Exception {
+            io.vertx.kafka.client.producer.KafkaProducer<String, byte[]> producer =
+                    org.mockito.Mockito.mock(io.vertx.kafka.client.producer.KafkaProducer.class);
+            org.mockito.Mockito.when(producer.send(org.mockito.ArgumentMatchers.any()))
+                    .thenReturn(Future.succeededFuture(null));
+            org.mockito.Mockito.when(producer.close()).thenReturn(Future.succeededFuture());
+            java.lang.reflect.Field shared = KafkaProducerFactory.class.getDeclaredField("shared");
+            shared.setAccessible(true);
+            ((java.util.concurrent.atomic.AtomicReference<Object>) shared.get(factory)).set(producer);
         }
     }
 

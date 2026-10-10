@@ -23,8 +23,10 @@ import dev.vertique.core.extension.OrderedExtension;
  * <h2>Limits</h2>
  *
  * <p>There is no notification for an attempt whose handler future never settles, whose repository
- * call never completes, or that is in flight when the relay stops and never completes. An entry
- * whose claim goes stale is reclaimed and attempted again, and that later attempt is notified.
+ * call never completes, or that is in flight when the relay stops and never completes. Nor is there
+ * one for a claimed entry whose envelope the relay could not build: no attempt was made, and the
+ * entry stays claimed until stale-lease recovery. An entry whose claim goes stale is reclaimed and
+ * attempted again, and that later attempt is notified.
  *
  * <h2>Threading</h2>
  *
@@ -47,7 +49,8 @@ public interface OutboxPublishObserver extends OrderedExtension {
      * records the attempt has settled.
      *
      * <p>Exceptions thrown by this callback are caught, logged, and swallowed; they do not affect
-     * the enclosing operation.
+     * the enclosing operation. A {@link LinkageError} and an {@link AssertionError} are
+     * contained the same way, and a {@link LinkageError} is reported once at error level.
      *
      * @param event    the facts of the completed attempt; never {@code null}
      * @param envelope the relay-built envelope of the entry, the one given to the destination

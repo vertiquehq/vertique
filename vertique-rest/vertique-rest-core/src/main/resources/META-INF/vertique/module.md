@@ -1294,7 +1294,9 @@ another's side effects. A listener that throws an `Exception`, `AssertionError` 
 is logged and does not stop the remaining listeners or change the response: an `Exception` or
 `AssertionError` is logged at WARN each time, and a `LinkageError` at ERROR once per listener class,
 saying that the listener is unusable and its notifications are being lost. Any other `Error`
-propagates.
+propagates. A scope's `open` and `close` are contained the same way: when one throws an
+`Exception`, `AssertionError` or `LinkageError`, the listeners are still notified and the other
+scopes are still opened and closed.
 
 The logged failure is what keeps the fan-out diagnosable. The exception, including its message and
 any cause, is logged, so none of them may carry credentials, tokens, personal data, or raw request

@@ -43,7 +43,9 @@ import java.util.Objects;
  * @param nextAttemptAt       the earliest time of the next attempt for
  *                            {@link OutboxEntryDisposition#RETRY_SCHEDULED} and
  *                            {@link OutboxEntryDisposition#DEFERRED}; {@code null} for the other
- *                            dispositions, and when the relay could not compute the time
+ *                            dispositions, and when the relay could not compute the time. For
+ *                            {@code DEFERRED} it is approximate: the relay computes it from its own
+ *                            clock, while the stored entry is deferred from the database clock
  * @param errorType           the class name of the failure's cause, or {@code null} when the
  *                            attempt did not fail or the failure has no cause; never message text
  * @param elapsed             the time from the call to

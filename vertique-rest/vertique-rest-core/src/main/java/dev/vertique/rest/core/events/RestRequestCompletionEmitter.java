@@ -452,12 +452,12 @@ public final class RestRequestCompletionEmitter implements Middleware {
     }
 
     /**
-     * Reports a listener callback that failed with a {@link LinkageError}: logged at {@code ERROR}
-     * the first time it is seen for a listener class and callback, and not logged again for that
-     * pair.
+     * Reports a listener or completion-scope callback that failed with a {@link LinkageError}:
+     * logged at {@code ERROR} the first time it is seen for a class and callback, and not logged
+     * again for that pair.
      *
-     * @param listener the listener that failed
-     * @param callback the callback name, qualified by the listener interface
+     * @param listener the listener, completion scope or scope closeable that failed
+     * @param callback the callback name, qualified by the interface that declares it
      * @param failure  the linkage failure
      */
     private void reportUnusable(Object listener, String callback, LinkageError failure) {
@@ -539,9 +539,12 @@ public final class RestRequestCompletionEmitter implements Middleware {
     /**
      * Opens all {@link RequestCompletionScope} implementations in iteration order. Each
      * scope's {@link RequestCompletionScope#open(RoutingContext)} is guarded: if it throws an
-     * {@link Exception}, a {@code WARN} is logged for that scope (class name only) and the open
-     * is skipped — the remaining scopes are still attempted. Returns a list of only the
-     * successfully-opened {@link AutoCloseable}s, in open order, ready for reverse-order close.
+     * {@link Exception}, {@link LinkageError} or {@link AssertionError}, the open is skipped — the
+     * remaining scopes are still attempted, the listeners still run and the scopes already opened
+     * are still closed. An {@link Exception} or {@link AssertionError} is logged at {@code WARN} for
+     * that scope (class name only) each time; a {@link LinkageError} is logged at {@code ERROR} once
+     * per scope class, like a listener's. Any other {@link Error} propagates. Returns a list of only
+     * the successfully-opened {@link AutoCloseable}s, in open order, ready for reverse-order close.
      *
      * <p>Returns an empty list immediately when {@link #completionScopes} is empty.
      *
@@ -557,7 +560,9 @@ public final class RestRequestCompletionEmitter implements Middleware {
             try {
                 AutoCloseable closeable = scope.open(rc);
                 opened.add(closeable);
-            } catch (Exception e) {
+            } catch (LinkageError e) {
+                reportUnusable(scope, "RequestCompletionScope.open", e);
+            } catch (Exception | AssertionError e) {
                 log.warn(
                         "RequestCompletionScope.open() failed ({}); listeners will still run",
                         scope.getClass().getSimpleName());
@@ -568,10 +573,12 @@ public final class RestRequestCompletionEmitter implements Middleware {
 
     /**
      * Closes successfully-opened scopes in <em>reverse</em> open order so that scopes
-     * bracket correctly (last-opened closes first). Each close is guarded: an {@link Exception}
-     * is caught, logged at {@code WARN} (class name only), and processing continues to the next
-     * scope. {@code Error}s (e.g. OOM) are not caught and propagate as fatal — consistent with
-     * standard event-loop practice.
+     * bracket correctly (last-opened closes first). Each close is guarded: an {@link Exception},
+     * {@link LinkageError} or {@link AssertionError} is caught and processing continues to the next
+     * scope. An {@link Exception} or {@link AssertionError} is logged at {@code WARN} (class name
+     * only) each time; a {@link LinkageError} is logged at {@code ERROR} once per closeable class,
+     * like a listener's. Any other {@link Error} (e.g. OOM) is not caught and propagates as fatal —
+     * consistent with standard event-loop practice.
      *
      * @param opened the list of closeables in the order they were opened; reverse-iterated here
      */
@@ -582,7 +589,9 @@ public final class RestRequestCompletionEmitter implements Middleware {
         for (AutoCloseable closeable : reversed) {
             try {
                 closeable.close();
-            } catch (Exception e) {
+            } catch (LinkageError e) {
+                reportUnusable(closeable, "RequestCompletionScope.close", e);
+            } catch (Exception | AssertionError e) {
                 log.warn(
                         "RequestCompletionScope.close() failed ({})",
                         e.getClass().getSimpleName());

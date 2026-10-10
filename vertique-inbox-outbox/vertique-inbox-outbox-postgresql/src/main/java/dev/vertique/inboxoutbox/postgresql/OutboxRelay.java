@@ -61,7 +61,15 @@ import lombok.extern.slf4j.Slf4j;
  *
  * <p><b>Concurrency control:</b> An {@link AtomicInteger} tracks the number of in-flight
  * entries across all handlers. When the in-flight count reaches {@link OutboxRelayConfig#batchSize()},
- * claim cycles are skipped. Each entry occupies one slot from claim until its outcome is recorded.
+ * claim cycles are skipped. Each entry occupies one slot from the moment the relay starts to
+ * process it until the relay has asked the repository to record its outcome; the slot does not wait
+ * for that repository call to settle. An entry whose envelope cannot be built, or whose processing
+ * is left by an {@link Error} the relay does not handle, gives its slot back at once. An entry whose
+ * handler future never settles keeps its slot.
+ *
+ * <p><b>Poll loop:</b> every poll cycle schedules the next one, whatever happens in it: a claim
+ * that throws, returns {@code null} or completes with a {@code null} list, and a record whose
+ * processing throws, all leave the loop running.
  *
  * <p><b>Publish observers:</b> After each attempt the relay asks the repository to record what
  * happens to the entry next. When that call has settled — or failed, or thrown — every registered
@@ -275,35 +283,66 @@ public class OutboxRelay extends AbstractVerticle {
     /**
      * Executes one poll cycle: checks available capacity, claims eligible entries from the
      * repository, dispatches each one, and reschedules.
+     *
+     * <p>The next poll is always scheduled, exactly once per cycle: after the claim has settled and
+     * its entries have been dispatched, or at once when no claim is made. A claim that throws
+     * synchronously, or returns {@code null} instead of a future, is a failed poll. A claim that
+     * completes with a {@code null} list is an empty batch. An {@link Error} this method does not
+     * handle still propagates, after the next poll has been scheduled.
      */
     private void poll() {
-        int capacity = config.batchSize() - inFlight.get();
-        if (capacity <= 0) {
-            log.debug("OutboxRelay nodeId={}: all slots in use, skipping poll", nodeId);
+        Future<List<OutboxRecord>> claimed;
+        try {
+            int capacity = config.batchSize() - inFlight.get();
+            if (capacity <= 0) {
+                log.debug("OutboxRelay nodeId={}: all slots in use, skipping poll", nodeId);
+                schedulePoll();
+                return;
+            }
+            claimed = Objects.requireNonNull(
+                    outboxRepository.claimBatch(capacity, nodeId, capabilities),
+                    "OutboxRepository.claimBatch() returned null instead of a future");
+        } catch (Exception | LinkageError | AssertionError e) {
+            claimed = Future.failedFuture(e);
+        } catch (Throwable t) {
             schedulePoll();
-            return;
+            throw t;
         }
 
-        outboxRepository
-                .claimBatch(capacity, nodeId, capabilities)
-                .onSuccess(records -> {
-                    if (records.isEmpty()) {
-                        currentPollDelay =
-                                Math.min(currentPollDelay * 2, Math.min(config.pollingIntervalMs() * 4, 60_000L));
-                    } else {
-                        currentPollDelay = config.pollingIntervalMs();
-                        log.debug("OutboxRelay nodeId={}: claimed {} entries", nodeId, records.size());
-                        for (OutboxRecord record : records) {
-                            inFlight.incrementAndGet();
-                            processRecord(record);
-                        }
-                    }
-                    schedulePoll();
-                })
-                .onFailure(err -> {
-                    log.warn("OutboxRelay nodeId={}: poll failed: {}", nodeId, err.getMessage(), err);
-                    schedulePoll();
-                });
+        claimed.onComplete(ar -> {
+            try {
+                if (ar.succeeded()) {
+                    dispatchClaimed(ar.result() != null ? ar.result() : List.of());
+                } else {
+                    log.warn(
+                            "OutboxRelay nodeId={}: poll failed: {}",
+                            nodeId,
+                            ar.cause().getMessage(),
+                            ar.cause());
+                }
+            } finally {
+                schedulePoll();
+            }
+        });
+    }
+
+    /**
+     * Adapts the poll delay to the size of a claimed batch and processes each of its entries. An
+     * empty batch doubles the delay up to its cap; a non-empty one resets it.
+     *
+     * @param records the claimed entries; may be empty
+     */
+    private void dispatchClaimed(List<OutboxRecord> records) {
+        if (records.isEmpty()) {
+            currentPollDelay = Math.min(currentPollDelay * 2, Math.min(config.pollingIntervalMs() * 4, 60_000L));
+            return;
+        }
+        currentPollDelay = config.pollingIntervalMs();
+        log.debug("OutboxRelay nodeId={}: claimed {} entries", nodeId, records.size());
+        for (OutboxRecord record : records) {
+            inFlight.incrementAndGet();
+            processRecord(record);
+        }
     }
 
     // --- Entry processing ---
@@ -315,34 +354,58 @@ public class OutboxRelay extends AbstractVerticle {
      * The handler is selected by {@link DestinationType}. If no handler is registered for the
      * entry's destination type, the entry is returned to {@code PENDING} via
      * {@link OutboxPublishResult.Unresolvable}. Exceptions from the handler are treated as
-     * retryable failures. So is an {@link AssertionError} or a {@link LinkageError} thrown
-     * synchronously by the handler, a handler that returns {@code null} instead of a future, and a
-     * handler future that succeeds with {@code null}: each is a failed attempt of that one entry, so
-     * the entry's in-flight slot is released and the caller goes on with the rest of the claimed
-     * batch.
+     * retryable failures. So is an {@link AssertionError}, a {@link LinkageError} or a
+     * {@link StackOverflowError} thrown synchronously by the handler, a handler that returns
+     * {@code null} instead of a future, and a handler future that succeeds with {@code null}: each is
+     * a failed attempt of that one entry, so the entry's in-flight slot is released and the caller
+     * goes on with the rest of the claimed batch.
      *
-     * <p>Nothing thrown synchronously while a record is processed leaves this method. A throw while
-     * the envelope is built releases the slot and leaves the entry claimed, to be returned to
-     * {@code PENDING} by stale-lease recovery; with no envelope there is no attempt to report, so
-     * observers are not notified.
+     * <p>An {@link Exception}, {@link LinkageError} or {@link AssertionError} thrown while the
+     * envelope is built does not leave this method either: it releases the slot and leaves the entry
+     * claimed, to be returned to {@code PENDING} by stale-lease recovery; with no envelope there is
+     * no attempt to report, so observers are not notified.
+     *
+     * <p>Any other {@link Error} — an {@link OutOfMemoryError}, or a {@link StackOverflowError} from
+     * anywhere but the handler's publish call — does leave this method. The entry's slot is released
+     * first unless the outcome handling already owns it, the entry stays claimed until stale-lease
+     * recovery, and the caller schedules the next poll before the error propagates.
      *
      * @param record the claimed outbox entry to deliver
      */
     private void processRecord(OutboxRecord record) {
+        // The slot belongs to this method until the outcome handling takes it over; handleResult
+        // releases it itself, so it must not be released here as well.
+        boolean[] slotHandedOver = {false};
+        try {
+            processRecord(record, slotHandedOver);
+        } finally {
+            if (!slotHandedOver[0]) {
+                inFlight.decrementAndGet();
+            }
+        }
+    }
+
+    /**
+     * Does the work of {@link #processRecord(OutboxRecord)}.
+     *
+     * @param record         the claimed outbox entry to deliver
+     * @param slotHandedOver set to {@code true} just before the outcome handling takes over the
+     *                       entry's in-flight slot; while it is {@code false} the caller releases
+     *                       the slot
+     */
+    private void processRecord(OutboxRecord record, boolean[] slotHandedOver) {
         final OutboxEnvelope envelope;
         try {
             envelope = buildEnvelope(record);
         } catch (Exception | LinkageError | AssertionError e) {
-            // Letting the throwable out of here would leave the batch loop early: the slot would stay
-            // taken, the remaining claimed entries would wait for lease recovery, and the next poll
-            // would never be scheduled.
+            // Letting the throwable out of here would leave the batch loop early: the remaining
+            // claimed entries would wait for lease recovery. The caller releases the slot.
             log.error(
                     "OutboxRelay: could not build the envelope for entryId={}; the entry stays claimed until"
                             + " stale-lease recovery: {}",
                     record.id(),
                     e.getMessage(),
                     e);
-            inFlight.decrementAndGet();
             return;
         }
 
@@ -352,6 +415,7 @@ public class OutboxRelay extends AbstractVerticle {
                     "OutboxRelay: no handler registered for destinationType={} entryId={}",
                     record.destinationType(),
                     record.id());
+            slotHandedOver[0] = true;
             handleResult(
                     record,
                     envelope,
@@ -365,10 +429,10 @@ public class OutboxRelay extends AbstractVerticle {
         try {
             publishResult = Objects.requireNonNull(
                     handler.publish(envelope), "OutboxDestinationHandler.publish() returned null instead of a future");
-        } catch (Exception | LinkageError | AssertionError e) {
+        } catch (Exception | LinkageError | AssertionError | StackOverflowError e) {
             // A broken handler must cost one attempt of this entry only. Letting the throwable out of
-            // here would leave the batch loop early: the slot would stay taken, the remaining claimed
-            // entries would wait for lease recovery, and the next poll would never be scheduled.
+            // here would leave the batch loop early: the remaining claimed entries would wait for
+            // lease recovery.
             log.warn(
                     "OutboxRelay: synchronous exception from handler for entryId={}: {}",
                     record.id(),
@@ -377,6 +441,7 @@ public class OutboxRelay extends AbstractVerticle {
             publishResult = Future.succeededFuture(
                     OutboxPublishResult.retryable("Synchronous adapter failure: " + e.getMessage(), e));
         }
+        slotHandedOver[0] = true;
         publishResult
                 .recover(err -> {
                     log.warn(
