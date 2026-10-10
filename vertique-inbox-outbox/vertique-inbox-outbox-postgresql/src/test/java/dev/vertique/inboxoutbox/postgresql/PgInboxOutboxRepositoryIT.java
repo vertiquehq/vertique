@@ -256,6 +256,27 @@ public class PgInboxOutboxRepositoryIT {
     }
 
     @Test
+    @DisplayName("insert of an entry with a null payload fails and stores no row")
+    void insertWithNullPayloadFailsAndStoresNothing(VertxTestContext ctx) {
+        OutboxEntry entry = OutboxEntry.builder()
+                .destinationType(DestinationType.SERVICE)
+                .destination("test.target")
+                .eventType("test.event")
+                .payload(null)
+                .build();
+        pool.withTransaction(tx -> insert(entry, tx))
+                .onSuccess(id -> ctx.failNow("a null payload must not be stored, but got id " + id))
+                .onFailure(err -> pool.query("SELECT count(*) AS n FROM outbox")
+                        .execute()
+                        .onSuccess(rows -> ctx.verify(() -> {
+                            assertInstanceOf(dev.vertique.db.exception.DataIntegrityViolationException.class, err);
+                            assertEquals(0L, rows.iterator().next().getLong("n"));
+                            ctx.completeNow();
+                        }))
+                        .onFailure(ctx::failNow));
+    }
+
+    @Test
     @DisplayName("insert persists all fields including headers, aggregateType, aggregateId")
     void insertPersistsAllFields(VertxTestContext ctx) {
         OutboxEntry entry = OutboxEntry.builder()

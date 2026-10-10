@@ -139,8 +139,9 @@ The exception message names only the destination TYPE and reason category — ne
 
 **Per-publish metadata model:**
 - Application `headers` are stored and relayed as-is — application/transport headers only; no framework keys are merged in.
+- Headers are stored in the `headers` column as one JSON object with a text value per key (`NULL` when the entry has no headers). A JSON object has unique keys and JSONB does not keep key order, so headers come back from storage in no guaranteed order.
 - `OutboxService.publish` rejects headers that cannot be delivered before it inserts anything: a `null` key, a `null` value, or a key with the reserved `vertique-` prefix fails the returned future with an `IllegalArgumentException` that names the key (never the value), so the caller's transaction can still roll back. A `null` header map means no headers.
-- When a stored header value is JSON `null` (a row written without `OutboxService.publish`), the relay drops that header, logs one WARN with the entry id and the header key, and delivers the rest.
+- When a stored header value is JSON `null` (a row written without `OutboxService.publish`), that header is dropped on read — it does not become the text `"null"` — so the relay logs one WARN with the entry id and the header key, and delivers the rest.
 - Durable propagation context bound at publish is captured into `metadata.context` and, at the Kafka boundary, projected to reserved `vertique-<namespace>` headers (e.g. `vertique-correlation`).
 - Relay control (message id, `eventType`, `aggregateType`, `aggregateId`) is exposed at relay time via `metadata.delivery.outbox` (projected from the row columns) — it is **not** merged into `headers` and is internal to the relay. `aggregateId` is still used as the Kafka message key.
 
@@ -209,7 +210,7 @@ is frozen from this Stable release.** Every later schema change ships as `V2+`, 
 | `destination` | `VARCHAR(255) NOT NULL` | Stable target id or topic |
 | `destination_type` | `VARCHAR(32) NOT NULL` | Open value type — any id matching `[A-Za-z0-9_-]{1,32}` (built-ins: `SERVICE`, `DELAYED_JOB`, `KAFKA`) |
 | `payload` | `JSONB NOT NULL` | Event payload |
-| `headers` | `JSONB` | Application and transport headers only; no framework keys are merged in |
+| `headers` | `JSONB` | Application and transport headers only, as one JSON object of text values; no framework keys are merged in |
 | `metadata` | `JSONB NOT NULL DEFAULT '{}'` | Structured document `{"context": …, "delivery": …}` — durable propagation context and relay control |
 | `scheduled_at` | `TIMESTAMPTZ` | Optional scheduled publish time |
 | `available_at` | `TIMESTAMPTZ NOT NULL DEFAULT NOW()` | Earliest publish time |

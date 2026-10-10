@@ -5,6 +5,8 @@ package dev.vertique.inboxoutbox;
 
 import com.fasterxml.jackson.annotation.JsonAutoDetect;
 import java.time.Instant;
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import lombok.Builder;
 import lombok.Getter;
@@ -80,6 +82,16 @@ public class OutboxEntry {
      * Optional key-value metadata to pass alongside the payload. For Kafka destinations these
      * become Kafka record headers; for service destinations they are injected into the
      * dispatch context.
+     *
+     * <p>Headers are text only and keys are unique. The entry holds an unmodifiable copy of the map
+     * given to the builder, taken when the entry is built: a later change to that map does not reach
+     * the entry, and the map {@link #headers()} returns rejects mutation. The copy keeps the
+     * iteration order of the given map, but storage does not — once the entry is stored its headers
+     * carry no ordering guarantee.
+     *
+     * <p>A {@code null} key, a {@code null} value and a key that starts with the prefix reserved for
+     * framework headers are carried by the entry but cannot be delivered:
+     * {@link OutboxService#publish(io.vertx.sqlclient.SqlClient, OutboxEntry)} rejects such an entry.
      */
     @Builder.Default
     private final Map<String, String> headers = Map.of();
@@ -113,14 +125,70 @@ public class OutboxEntry {
     private final Instant availableAt;
 
     /**
+     * Creates an entry from the builder's values, taking an unmodifiable copy of the header map.
+     *
+     * @param aggregateType   optional domain aggregate type
+     * @param aggregateId     optional aggregate instance id
+     * @param eventType       logical event type name
+     * @param destinationType category of the destination system
+     * @param destination     destination address within the destination type
+     * @param payload         the event payload
+     * @param headers         application headers; copied, {@code null} means none
+     * @param maxAttempts     maximum number of delivery attempts
+     * @param scheduledAt     optional intended delivery time
+     * @param delayedJob      optional delayed-job scheduling snapshot
+     * @param availableAt     earliest time at which the entry may be claimed
+     */
+    OutboxEntry(
+            String aggregateType,
+            String aggregateId,
+            String eventType,
+            DestinationType destinationType,
+            String destination,
+            Object payload,
+            Map<String, String> headers,
+            int maxAttempts,
+            Instant scheduledAt,
+            DelayedJobControl delayedJob,
+            Instant availableAt) {
+        this.aggregateType = aggregateType;
+        this.aggregateId = aggregateId;
+        this.eventType = eventType;
+        this.destinationType = destinationType;
+        this.destination = destination;
+        this.payload = payload;
+        this.headers = unmodifiableCopy(headers);
+        this.maxAttempts = maxAttempts;
+        this.scheduledAt = scheduledAt;
+        this.delayedJob = delayedJob;
+        this.availableAt = availableAt;
+    }
+
+    /**
      * Returns the key-value metadata to pass alongside the payload.
      *
      * <p>A {@code null} map given to the builder is reported as an empty map, so a reader never has
-     * to guard against {@code null}.
+     * to guard against {@code null}. The returned map is the entry's own unmodifiable copy.
      *
      * @return the headers; an empty map when none were set; never {@code null}
      */
     public Map<String, String> headers() {
         return headers == null ? Map.of() : headers;
+    }
+
+    /**
+     * Takes the unmodifiable header copy an entry, a record or an envelope holds.
+     *
+     * <p>The copy keeps the iteration order of {@code headers} and carries {@code null} keys and
+     * values as given, so that publish can still reject them by name.
+     *
+     * @param headers the map to copy; {@code null} means no headers
+     * @return an unmodifiable copy; an empty map when {@code headers} is {@code null} or empty
+     */
+    static Map<String, String> unmodifiableCopy(Map<String, String> headers) {
+        if (headers == null || headers.isEmpty()) {
+            return Map.of();
+        }
+        return Collections.unmodifiableMap(new LinkedHashMap<>(headers));
     }
 }

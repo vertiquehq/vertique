@@ -29,7 +29,10 @@ import java.util.UUID;
  *                        {@link PayloadCodec#decode(io.vertx.core.json.JsonObject, Class)} to
  *                        deserialize it to the expected type
  * @param headers         application/transport headers only (no framework keys); durable
- *                        propagation context and delivery control live in {@link #metadata()}
+ *                        propagation context and delivery control live in {@link #metadata()}. Text
+ *                        only, unique keys, no ordering guarantee once stored. The record holds an
+ *                        unmodifiable copy taken at construction; {@code null} means none and reads
+ *                        back as an empty map
  * @param metadata        structured metadata document holding the durable propagation context
  *                        ({@code context}) and delivery control ({@code delivery}); never {@code null}
  * @param scheduledAt     optional earliest wall-clock time at which the entry may be delivered
@@ -67,4 +70,15 @@ public record OutboxRecord(
         String lastError,
         String errorType,
         Instant createdAt,
-        Instant updatedAt) {}
+        Instant updatedAt) {
+
+    /**
+     * Takes an unmodifiable copy of {@code headers}, so a later change to the given map does not
+     * reach the record and the map {@link #headers()} returns rejects mutation.
+     *
+     * @param headers the application headers; may be {@code null} (treated as empty)
+     */
+    public OutboxRecord {
+        headers = OutboxEntry.unmodifiableCopy(headers);
+    }
+}

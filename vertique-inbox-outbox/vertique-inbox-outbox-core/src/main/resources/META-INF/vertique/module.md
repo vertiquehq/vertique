@@ -100,11 +100,21 @@ Lombok `@Builder` value object describing a single outbound side-effect.
 | `destinationType` | Yes | `DestinationType` open value type identifying the adapter to use (e.g., `DestinationType.SERVICE`) |
 | `destination` | Yes | Stable service target id, durable delayed-job target id, or Kafka topic |
 | `payload` | Yes | Jackson-serializable payload; stored as JSONB |
-| `headers` | No | Additional outbound metadata; may carry adapter-specific snapshot data. A `null` map given to the builder reads back as an empty map. Keys and values must not be `null`, and keys must not start with the reserved `vertique-` prefix — `OutboxService.publish` fails for such an entry |
+| `headers` | No | Additional outbound metadata; may carry adapter-specific snapshot data. A `null` map given to the builder reads back as an empty map. Keys and values must not be `null`, and keys must not start with the reserved `vertique-` prefix — `OutboxService.publish` fails for such an entry. See [Header model](#header-model) |
 | `scheduledAt` | No | Time after which the relay may publish |
 | `availableAt` | No | Internal retry scheduling override; applications normally omit |
 
 For `SERVICE` destinations, `destination` must be a stable service target id (not a raw event bus address). For `DELAYED_JOB` destinations, `destination` must be a durable delayed-job target id. For `KAFKA` destinations, `destination` is the Kafka topic name. For custom adapter destinations, the meaning of `destination` is defined by the adapter's `OutboxDestinationHandler`.
+
+#### Header model
+
+Outbox headers are a `Map<String, String>` on `OutboxEntry`, `OutboxRecord` and `OutboxEnvelope`, with the same rules on all three:
+
+- **Text only.** A header value is a `String`; there are no binary values.
+- **Unique keys.** One value per key — a header cannot repeat.
+- **No ordering guarantee once stored.** The copy an entry takes keeps the iteration order of the map it was given, but storage does not preserve it, so a destination must not rely on header order.
+- **Copied immutably.** `OutboxEntry` takes an unmodifiable copy when the entry is built, and `OutboxRecord` and `OutboxEnvelope` take one when they are constructed. Changing the map you passed in afterwards does not change the entry, and the map returned by `headers()` throws `UnsupportedOperationException` on mutation. A `null` map reads back as an empty map.
+- **No reserved prefix, no `null`.** A key must not start with the reserved framework prefix `vertique-`, and neither a key nor a value may be `null`. The entry itself carries such a header, but `OutboxService.publish` rejects it before anything is inserted.
 
 ### `OutboxRecord`
 
@@ -119,7 +129,7 @@ Domain record representing a persisted outbox row. Carries all relay state field
 | `destination` | `String` | Stable target id or topic |
 | `destinationType` | `DestinationType` | Open value type; built-ins are `SERVICE`, `DELAYED_JOB`, `KAFKA`; adapter-declared types are also valid |
 | `payload` | `Object` | Deserialized payload (decoded from JSONB by `PayloadCodec`) |
-| `headers` | `Map<String, String>` | Application/transport headers only (no framework keys) |
+| `headers` | `Map<String, String>` | Application/transport headers only (no framework keys); an unmodifiable copy — see [Header model](#header-model) |
 | `scheduledAt` | `Instant` | Optional scheduled publish time |
 | `availableAt` | `Instant` | Earliest publish time after backoff |
 | `state` | `OutboxEntryState` | `PENDING`, `PROCESSING`, `PUBLISHED`, `DEAD_LETTER` |
@@ -151,7 +161,7 @@ Immutable record passed to `OutboxDestinationHandler.publish()` at relay time.
 | `entryId` | Outbox row id |
 | `aggregateType` / `aggregateId` / `eventType` | Row columns (used e.g. for the Kafka message key) |
 | `destination` / `payload` / `scheduledAt` / `attempt` / `createdAt` | Delivery fields from the row |
-| `headers` | Application/transport headers only (`OutboxEntry.headers`) — no framework keys |
+| `headers` | Application/transport headers only (`OutboxEntry.headers`) — no framework keys; an unmodifiable copy — see [Header model](#header-model) |
 | `metadata` | `OutboxMetadata`: durable propagation context (`context`) plus delivery control (`delivery.outbox`: `OutboxRelayControl`, relay control projected from the row columns; `delivery.delayedJob`: scheduling) |
 
 Framework relay control (`x-message-id`, `eventType`, `aggregate*`) is **not** merged into `headers`; it lives in `metadata.delivery.outbox`. Durable context lives in `metadata.context`, not headers.
