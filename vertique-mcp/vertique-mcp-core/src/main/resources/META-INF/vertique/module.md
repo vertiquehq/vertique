@@ -55,9 +55,10 @@ metadata declares a prerequisite only and does not implement client-driven sampl
 `McpCancellationSignal` is the only framework-supplied parameter a tool method may declare. It is
 excluded from the input schema and lets a handler stop cooperative work when the request settles as
 anything other than a successful write: a client disconnect, a response stream reset, a failed
-write, or the shared HTTP layer closing an idle or slow connection (MCP arms no whole-request
-timeout of its own). Its `progressReporter()` exposes standard request-scoped progress and is a
-successful no-op when the request has no progress token. Cancellation is cooperative: the framework
+write, the shared HTTP layer closing an idle or slow connection, or the mount's optional request
+deadline expiring (MCP arms no whole-request timeout unless one is configured). Its
+`progressReporter()` exposes standard request-scoped progress and is a successful no-op when the
+request has no progress token. Cancellation is cooperative: the framework
 cannot stop a handler that ignores the signal.
 
 `McpToolResult` is the immutable, complete-only result type a handler may return when it needs

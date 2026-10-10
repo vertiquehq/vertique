@@ -75,6 +75,9 @@ import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.http.HttpClosedException;
 import io.vertx.core.http.HttpMethod;
+import io.vertx.core.http.HttpServerRequest;
+import io.vertx.core.http.HttpServerResponse;
+import io.vertx.core.http.HttpVersion;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.RoutingContext;
 import io.vertx.json.schema.Validator;
@@ -102,8 +105,9 @@ import java.util.function.Supplier;
  *
  * <p>The dispatcher wires the framework-owned strict codec onto the live request path, enforces the
  * method/origin/content-type/accept admission checks, registers the disconnect/reset settlement seam,
- * and bounds the response write at {@code mcp.output.maxBytes}. MCP arms no whole-request deadline of
- * its own: transport liveness is meant to come from the shared {@link HttpConfig} idle/read-idle
+ * and bounds the response write at {@code mcp.output.maxBytes}. Unless {@code mcp.requestDeadlineMs}
+ * is configured, MCP arms no whole-request deadline of its own (see {@link #armRequestDeadline}):
+ * transport liveness is meant to come from the shared {@link HttpConfig} idle/read-idle
  * timeouts, so an idle or slow connection is closed by the shared HTTP layer and reaches this
  * dispatcher through the ordinary disconnect/reset settlement path — <strong>but only when at
  * least one of those two qualifying timeouts is actually armed</strong>. {@code
@@ -276,6 +280,14 @@ final class McpRequestDispatcher {
     static final String TERMINAL_FALLBACK_BODY_KEY = KEY_PREFIX + ".terminalFallbackBody";
     static final String SSE_SELECTED_KEY = KEY_PREFIX + ".sseSelected";
     private static final String STARTED_AT_KEY = KEY_PREFIX + ".startedAt";
+
+    /** The HTTP/2 {@code CANCEL} error code: the stream is no longer needed. */
+    private static final long STREAM_CANCEL_CODE = 0x8;
+
+    /** The HTTP/2 {@code NO_ERROR} code: the stream is closed without an application error. */
+    private static final long STREAM_NO_ERROR_CODE = 0x0;
+
+    private static final String REQUEST_DEADLINE_MESSAGE = "Request deadline exceeded";
 
     /**
      * Routing-context key for the request-owning Vert.x {@link Context} {@link #begin} materializes
@@ -3432,6 +3444,124 @@ final class McpRequestDispatcher {
         coordinator.finishWrite(transport, responseCommitted, Instant.now());
     }
 
+    // --- Request deadline ---
+
+    /**
+     * Arms the per-request wall-clock deadline of {@code mcp.requestDeadlineMs} for this request, a
+     * no-op when it is {@code 0}.
+     *
+     * <p>Called from the mount's first route, ahead of cheap admission and {@code BodyHandler}, so the
+     * deadline covers every stage a request can hang in. The timer is cancelled by the routing
+     * context's end handler on every exit path; a reroute that re-enters the mount arms a second
+     * timer that the same end handler cancels. A request that an application handler reroutes out of
+     * the mount after {@link #begin} stays under this deadline, so such a composition should leave the
+     * deadline disabled.
+     *
+     * @param context the request's routing context on the mount router
+     */
+    void armRequestDeadline(RoutingContext context) {
+        long deadlineMs = config.requestDeadlineMs();
+        if (deadlineMs <= 0) {
+            return;
+        }
+        long timerId = context.vertx().setTimer(deadlineMs, ignored -> expireRequestDeadline(context));
+        context.addEndHandler(ignored -> context.vertx().cancelTimer(timerId));
+    }
+
+    /**
+     * Stops the routing chain for a request whose response was already ended or whose connection is
+     * gone, so a stage that is released late (a hung authentication handler or identity resolver
+     * completing after the request deadline answered it) cannot run the stages that follow.
+     *
+     * @param context the request's routing context on the mount router
+     */
+    void continueWhileOpen(RoutingContext context) {
+        HttpServerResponse response = context.response();
+        if (response.ended() || response.closed()) {
+            return;
+        }
+        context.next();
+    }
+
+    /**
+     * Ends a request whose deadline elapsed while its response was still open.
+     *
+     * <p>Before {@link #begin} no lifecycle observation exists, so the request is answered with the
+     * bounded {@code 504} directly and its inbound side is aborted (see {@link #answerBeforeBegin}).
+     * After it, the request settles through its completion coordinator as a cancelled {@link
+     * McpErrorType#TIMEOUT} terminal that keeps the identity established so far, with a {@code RESET}
+     * completion and the cancellation signal fired, which also fences every later stage and a late
+     * tool result. The completion vocabulary has no timeout value, so a {@code CANCELLED} outcome
+     * with {@link McpErrorType#TIMEOUT} is the discriminator. A response whose head is not committed
+     * then receives a bounded {@code 504} JSON-RPC error; a committed (streaming) response is reset
+     * with {@code CANCEL}, or the connection is closed on HTTP/1.1, so the client sees an error
+     * instead of a silently truncated {@code 200}. A response whose final write was already issued is
+     * left to the shared connection write timeout.
+     */
+    private void expireRequestDeadline(RoutingContext context) {
+        HttpServerResponse response = context.response();
+        if (response.ended() || response.closed()) {
+            return;
+        }
+        try {
+            McpCompletionCoordinator coordinator = ownedCoordinator(context);
+            if (coordinator == null) {
+                answerBeforeBegin(context);
+                return;
+            }
+            boolean committed = response.headWritten();
+            // The terminal records what the client receives: the bounded 504 and its JSON-RPC code, or
+            // the status already on the wire for a stream that is about to be reset.
+            McpRequestTerminalEvent terminal = settlementTerminal(
+                    context,
+                    startedAt(context),
+                    McpErrorType.TIMEOUT,
+                    committed ? response.getStatusCode() : 504,
+                    committed ? null : INTERNAL_ERROR);
+            RequestCompletionRecorder.claimForOtherTransport(context);
+            // A bounded 504 or a stream reset is emitted either way, so the response counts as committed.
+            coordinator.settleReset(terminal, true);
+            if (committed) {
+                response.reset(STREAM_CANCEL_CODE);
+                return;
+            }
+            response.setStatusCode(504)
+                    .putHeader("content-type", JSON_CONTENT_TYPE)
+                    .end(Buffer.buffer(boundedErrorResponse(null, INTERNAL_ERROR, REQUEST_DEADLINE_MESSAGE)));
+        } catch (RuntimeException failure) {
+            // Never leave a request open because the expiry itself failed; the failure still reaches
+            // the context's exception handler.
+            response.reset(STREAM_CANCEL_CODE);
+            throw failure;
+        }
+    }
+
+    /**
+     * Answers a request that exceeded its deadline before {@link #begin} created a lifecycle
+     * observation (cheap admission or body aggregation), then aborts its inbound side.
+     *
+     * <p>Answering is not enough on its own: Vert.x ends only the response, so a stalled upload would
+     * keep its HTTP/2 stream slot and the buffered body for as long as the client trickles bytes.
+     * The stream is therefore reset with {@code NO_ERROR}, which RFC 9113 allows once a complete
+     * response was sent, and an HTTP/1.1 connection is closed after the response. The routing context
+     * is then failed so a late body completion cannot continue into later stages.
+     */
+    private void answerBeforeBegin(RoutingContext context) {
+        HttpServerRequest request = context.request();
+        HttpServerResponse response = context.response();
+        boolean multiplexed = request.version() == HttpVersion.HTTP_2;
+        if (!multiplexed) {
+            response.putHeader("connection", "close");
+        }
+        response.setStatusCode(504)
+                .putHeader("content-type", JSON_CONTENT_TYPE)
+                .end(Buffer.buffer(boundedErrorResponse(null, INTERNAL_ERROR, REQUEST_DEADLINE_MESSAGE)));
+        if (multiplexed && !request.isEnded()) {
+            response.reset(STREAM_NO_ERROR_CODE);
+        }
+        context.fail(504);
+    }
+
     // --- Settlement seam wiring ---
 
     /**
@@ -3448,11 +3578,12 @@ final class McpRequestDispatcher {
      * later, by which time the {@code end()} future has normally decided {@code WRITTEN} or {@code
      * WRITE_FAILED}; a write that is still pending then is recovered like any stalled write. Each
      * settlement drives the coordinator's first-observed-wins guard, so a hook that fires after a
-     * normal write is suppressed. MCP arms no
+     * normal write is suppressed. Unless {@code mcp.requestDeadlineMs} is configured, MCP arms no
      * whole-request timer of its own: transport liveness is shared {@link HttpConfig}
      * idle/read/write timeout behavior, so an idle or slow connection is closed by the shared HTTP
      * layer and reaches this same hook, classified as transport cancellation rather than a distinct
-     * timeout.
+     * timeout. The request deadline ends the response itself and settles through the coordinator
+     * directly, so it does not depend on this hook.
      *
      * <p><strong>Why not the response handlers.</strong> {@code context.response().closeHandler(...)}
      * and {@code .exceptionHandler(...)} are single-slot setters: last writer wins. Vert.x Web's {@code
@@ -3535,14 +3666,24 @@ final class McpRequestDispatcher {
      */
     private McpRequestTerminalEvent settlementTerminal(
             RoutingContext context, Instant startedAt, McpErrorType errorType) {
+        return settlementTerminal(context, startedAt, errorType, 0, null);
+    }
+
+    /** As above, for a settlement that also answers the client with {@code httpStatus}. */
+    private McpRequestTerminalEvent settlementTerminal(
+            RoutingContext context,
+            Instant startedAt,
+            McpErrorType errorType,
+            int httpStatus,
+            @Nullable Integer protocolErrorCode) {
         return McpRequestTerminalEvent.cancelled(
                 startedAt,
                 Instant.now(),
                 classifiedMethodOf(context),
                 resolvedToolNameOf(context),
                 errorType,
-                0,
-                null,
+                httpStatus,
+                protocolErrorCode,
                 protocolVersionOf(context),
                 authorizationOf(context),
                 establishedSecurity(),
@@ -3703,7 +3844,8 @@ final class McpRequestDispatcher {
 
     /**
      * MCP's one terminal writer: every MCP response, success, bounded error or rejection, is written
-     * and ended here, and no other code in this class ends the response.
+     * and ended here. The two exceptions are the request deadline's own bounded {@code 504} and stream
+     * reset ({@link #expireRequestDeadline}), which settle through the coordinator first.
      *
      * <p><strong>Ownership.</strong> The writer reads the request's coordinator through {@link
      * #ownedCoordinator}, so it uses only a coordinator that {@link #begin} built for this request. An

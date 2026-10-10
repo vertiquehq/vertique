@@ -542,10 +542,11 @@ final class McpCompletionCoordinator {
     // --- Settlement seam ---
     //
     // The disconnect and reset settlement entries below are the internal seam the dispatcher
-    // calls once a client disconnects or the response stream resets. MCP arms no whole-request timer
-    // of its own: a shared HttpConfig idle/read/write liveness expiry closes the connection, so
-    // it reaches this same seam through the ordinary disconnect/reset path rather than a distinct
-    // timeout entry. Each drives exactly one terminal and exactly one completion through the same
+    // calls once a client disconnects or the response stream resets. A shared HttpConfig
+    // idle/read/write liveness expiry closes the connection, so it reaches this same seam through
+    // the ordinary disconnect/reset path rather than a distinct timeout entry; the optional request
+    // deadline settles through settleReset with a TIMEOUT terminal. Each drives exactly one terminal and exactly one
+    // completion through the same
     // first-observed-wins completed-guard as the write path, on the request-owning Vert.x context
     // (inline when already current, otherwise redispatched), with the completion instant read from
     // the injected clock. A signal that arrives after settlement has already won is suppressed, so

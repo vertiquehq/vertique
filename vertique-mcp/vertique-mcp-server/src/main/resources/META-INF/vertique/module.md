@@ -40,8 +40,10 @@ also bounds the maximum decodable envelope document length. A configured `jsonPr
 if MCP is disabled, preventing a latent invalid deployment configuration.
 
 **Transport liveness is not provided out of the box, and startup enforces that at least one qualifying
-bound exists.** MCP arms no whole-request deadline of its own; it relies entirely on the shared
-`HttpConfig` idle/read timeouts to ever close a stalled or abandoned connection.
+bound exists.** Unless `mcp.requestDeadlineMs` is configured (see
+[Request deadline](#request-deadline)), MCP arms no whole-request deadline of its own; it relies
+entirely on the shared `HttpConfig` idle/read timeouts to ever close a stalled or abandoned
+connection, and the deadline never replaces that requirement.
 `http.idleTimeoutSeconds` and `http.readIdleTimeoutSeconds` both **default to `0`, which disables
 them**. Left unset, a hanging request-interceptor, a hanging tool-interceptor, a hanging tool handler,
 or a client that simply stops reading mid-response could hold its connection, and the MCP request
@@ -56,16 +58,59 @@ deployment — the mount will not start otherwise.
 **HTTP/2 residual.** The idle/read timers are connection-level: on a multiplexed HTTP/2
 connection, traffic on any sibling stream resets them, so a hung request on such a connection is
 **not** reclaimed by these timers (characterized against a real transport; an HTTP/1.1 connection
-with the same hung request is reclaimed as documented). Until a per-request deadline exists,
-deployments exposing the mount over HTTP/2 should bound streams at a fronting proxy
-(per-stream/route timeouts) or restrict the mount to HTTP/1.1.
+with the same hung request is reclaimed as documented). Set `mcp.requestDeadlineMs` to reclaim such a
+request at the deadline, or bound streams at a fronting proxy (per-stream/route timeouts), or restrict
+the mount to HTTP/1.1.
 
 **Configuration keys are flat under `mcp`.** `McpServerConfig` is bound from the `mcp` section by
 Jackson using the field names exactly as declared: `mcp.outputMaxBytes`, `mcp.ingressMaxTokens`,
-`mcp.outputMaxTokens`, `mcp.toolsPageSize`, `mcp.toolsTtlMs`, `mcp.bodyTracePolicy`, and
-`mcp.jsonProfile`, not dotted nested objects. There is no nested `tools`, `output`, or `json` object.
+`mcp.outputMaxTokens`, `mcp.toolsPageSize`, `mcp.toolsTtlMs`, `mcp.requestDeadlineMs`,
+`mcp.bodyTracePolicy`, and `mcp.jsonProfile`, not dotted nested objects. There is no nested
+`tools`, `output`, or `json` object.
 Ordinary unknown keys remain deliberately forward-compatible and are silently ignored, so use the
 declared field names rather than dotted prose spellings.
+
+### Request deadline
+
+`mcp.requestDeadlineMs` (default `0`, disabled; range 0–3,600,000) is an optional wall-clock deadline
+per request on this mount, measured from the moment the mount first sees the request until its
+response has ended. It is armed ahead of cheap admission and body aggregation, so it also bounds a
+stalled upload, a hung authentication handler, identity resolver, request interceptor or
+authorization decision, and a hung tool handler, on HTTP/2 streams that connection-level timers
+cannot reclaim.
+
+- **Before MCP has begun the request** (admission, body aggregation) the request is answered with a
+  bounded HTTP `504` JSON-RPC internal error and opens no lifecycle observation. The inbound side is
+  aborted too: an HTTP/2 stream is reset with `NO_ERROR` after the response and an HTTP/1.1
+  connection is closed, so a client that keeps trickling a body does not hold the stream slot or the
+  buffered body.
+- **After it has begun** the request settles through the normal lifecycle as a `CANCELLED` terminal
+  with `errorType=TIMEOUT` that keeps the method, tool identity and security snapshot established so
+  far and records the status the client receives, followed by a completion with transport outcome
+  `RESET` and `responseCommitted=true`. The completion vocabulary has no timeout value: a
+  `CANCELLED` terminal with `errorType=TIMEOUT` is the deadline, whereas a handler `@Timeout` is a
+  `FAILED` terminal with the same `errorType`. The request's `McpCancellationSignal` fires and a late
+  tool result publishes nothing. A stage released afterwards (an authentication handler, identity
+  resolver, request interceptor or authorization decision) does not run the stages that follow it.
+- **A response whose head is not committed** receives the bounded `504`; **a committed (streaming)
+  response** is reset with HTTP/2 `CANCEL`, or the connection is closed on HTTP/1.1 (which also fails
+  any request pipelined on it), so the client sees an error rather than a silently truncated `200`.
+
+Limits to design around:
+
+- The deadline is wall-clock: it also cuts a legitimate long streaming or progress response, so set
+  it above the longest legitimate request on the mount. It composes with a handler `@Timeout`; the
+  shorter one wins.
+- Cancellation is cooperative. A tool handler that ignores the signal keeps running and keeps its
+  resilience permits, and its side effects can complete after the client was told `504`; a client
+  retry must be safe for the tool.
+- A response whose final write was already issued is not interrupted. A client that stops reading
+  such a stream is bounded only by the connection-level timers, which sibling traffic on an HTTP/2
+  connection keeps resetting; front the mount with a per-stream proxy timeout where that matters.
+- A request that an application handler reroutes out of the mount after MCP began it stays under the
+  deadline, so leave the deadline disabled for such a composition.
+- The deadline does not replace the shared idle/read timeouts, which stay required at startup
+  because they alone reclaim a connection that never sends a request.
 
 ### MCP tool rate-limit admission
 
@@ -221,14 +266,14 @@ never-invent rule the unresolved-name rejection terminal below already follows. 
 security snapshot is likewise only the identity MCP itself established: when no scheme is configured,
 admit clears any ambient `SecurityRuntime` holder binding (alongside ambient Router user/evidence)
 before identity resolution, so a foreign ROOT-middleware snapshot cannot appear on a pre-identity
-settlement terminal. MCP arms no
+settlement terminal. Unless `mcp.requestDeadlineMs` is configured, MCP arms no
 whole-request timer of its own: transport liveness
 comes from the shared `HttpConfig` idle/read/write timeouts — guaranteed armed for every mount that
 actually starts by the startup gate described above — so an idle or slow connection is closed by the
 shared HTTP layer and reaches MCP through this same disconnect/reset settlement path, classified as
-transport cancellation (`McpErrorType.TRANSPORT`) rather than a distinct timeout outcome. `McpErrorType.TIMEOUT` has no producer in this module; it is retained in the frozen
-lifecycle enum purely for enum stability, reserved for a future cross-transport server-operation
-`@Timeout` capability. Observer `open`, callback, null-session, and retention failures are isolated
+transport cancellation (`McpErrorType.TRANSPORT`) rather than a distinct timeout outcome.
+`McpErrorType.TIMEOUT` marks either a handler `@Timeout` (a `FAILED` terminal) or the optional
+[request deadline](#request-deadline) (a `CANCELLED` terminal). Observer `open`, callback, null-session, and retention failures are isolated
 per observer and never change the protocol or business outcome — including a `StackOverflowError` from
 an observer's `open` or from any `onToolInput`/`onToolOutput`/`onTerminal`/`onCompleted` callback,
 which is isolated exactly like a `RuntimeException`: a deeply recursive application
@@ -328,7 +373,7 @@ write boundary (below), never delivered to a client whose connection is already 
 
 The successful-write path is two-phase: the terminal publishes before the byte write begins and the
 completion publishes only after it resolves. A slow client can leave that write pending indefinitely —
-this is not bounded by a request timer, since MCP arms none of its own — so a disconnect or reset
+this is not bounded by a request timer unless `mcp.requestDeadlineMs` is set — so a disconnect or reset
 signal that arrives while a write is still pending drives that same write's completion directly with
 the signal's own transport outcome (`DISCONNECTED` or `RESET`) instead of being dropped, guarded
 exactly-once by the same completion latch; a write that does genuinely resolve afterward is then a
@@ -338,9 +383,10 @@ timer task — is not treated as a peer signal: the `end()` result decides the o
 delivered in full is `WRITTEN` and never fires cancellation on HTTP/1.1 and HTTP/2 alike, and a write
 that is still pending one event-loop turn later is recovered like any stalled write. A write whose own
 transport future fails settles directly as `WRITE_FAILED`, recording the response's real commit state
-(`headWritten()` at settlement time) rather than a value inferred from the write's success flag. No MCP-owned whole-request deadline is introduced by any of
-this: transport liveness stays exclusively with the shared `HttpConfig` idle/read/write timeouts,
-guaranteed armed for every mount that actually starts by the startup gate described above.
+(`headWritten()` at settlement time) rather than a value inferred from the write's success flag. None
+of this introduces a whole-request deadline: transport liveness stays with the shared `HttpConfig`
+idle/read/write timeouts, guaranteed armed for every mount that actually starts by the startup gate
+described above, plus the opt-in [request deadline](#request-deadline).
 
 ## Bounded response output
 
@@ -1476,9 +1522,9 @@ is informational and does not make retry safe or enable retry. The application
 author must explicitly declare retry and own replay safety for side-effecting
 tools.
 
-Handler-attempt timeout is not transport liveness. MCP does not create a
-whole-request deadline; deployments must configure the shared HTTP idle/read
-timeouts, and HTTP/2 stream liveness may still require a fronting proxy. A
+Handler-attempt timeout is not transport liveness. MCP creates a whole-request
+deadline only when `mcp.requestDeadlineMs` is set; deployments must still configure
+the shared HTTP idle/read timeouts. A
 handler that accepts `McpCancellationSignal` receives cooperative cancellation,
 but the common resilience pipeline does not forcibly cancel an upstream future or
 its scheduler. MCP settlement still fences late results after disconnect.
@@ -1571,6 +1617,7 @@ keys, not rejected.
 | `mcp.outputMaxTokens` | `65536` | Structured-output reparse token budget (1024–262144) |
 | `mcp.toolsPageSize` | `100` | `tools/list` page size |
 | `mcp.toolsTtlMs` | `300000` | Client cache-freshness hint |
+| `mcp.requestDeadlineMs` | `0` | Per-request wall-clock deadline in ms; `0` disables; 0–3600000 (see [Request deadline](#request-deadline)) |
 | `mcp.bodyTracePolicy` | `IGNORE` | `IGNORE` or `LINK` |
 | `mcp.rateLimit.defaultPolicy` | absent | Shared policy applied to every tool without its own entry |
 | `mcp.rateLimit.subject` / `mcp.rateLimit.anonymous` | `EFFECTIVE_PRINCIPAL` / `SHARED_BUCKET` | Subject and anonymous handling for admission |

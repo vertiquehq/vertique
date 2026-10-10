@@ -10,11 +10,10 @@ import io.vertx.core.Future;
  *
  * <p>This is the only framework-supplied parameter a tool method may declare. It is excluded from
  * the published input schema. The server fires it exactly once when the request settles as anything
- * other than a successful write: a client disconnect, a response stream reset, a failed write, or —
- * because MCP arms no whole-request timer of its own — the shared HTTP layer closing an idle or slow
- * connection, which reaches this same disconnect/reset settlement path rather than a distinct
- * timeout. MCP-001 has no timeout producer of its own; every case above is a transport-level
- * settlement, never a deadline this signal fires on its own account.
+ * other than a successful write: a client disconnect, a response stream reset, a failed write, the
+ * shared HTTP layer closing an idle or slow connection (which reaches this same disconnect/reset
+ * settlement path rather than a distinct timeout), or the mount's optional request deadline
+ * expiring. The signal never fires a deadline on its own account.
  *
  * <p>Cancellation is cooperative only: the framework cannot forcibly stop a handler that ignores
  * the signal.
