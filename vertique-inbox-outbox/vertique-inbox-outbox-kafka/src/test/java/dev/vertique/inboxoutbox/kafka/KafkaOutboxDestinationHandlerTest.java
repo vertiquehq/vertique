@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -88,7 +89,7 @@ class KafkaOutboxDestinationHandlerTest {
         void usesDestinationAsTopicAndAggregateIdAsKey() throws Exception {
             byte[] bytes = new byte[] {1, 2, 3};
             when(objectMapper.writeValueAsBytes(any())).thenReturn(bytes);
-            when(producerFactory.sendForOutbox(eq("orders-topic"), eq("order-abc"), eq(bytes), any(), any()))
+            when(producerFactory.sendForOutbox(eq("orders-topic"), eq("order-abc"), eq(bytes), any(), any(), eq("77")))
                     .thenReturn(Future.succeededFuture(null));
 
             OutboxEnvelope envelope = new OutboxEnvelope(
@@ -110,11 +111,26 @@ class KafkaOutboxDestinationHandlerTest {
         }
 
         @Test
+        @DisplayName("passes the entry id to the producer send and never uses the send without one")
+        void passesTheEntryIdToTheProducerSend() throws Exception {
+            when(objectMapper.writeValueAsBytes(any())).thenReturn(new byte[] {1});
+            when(producerFactory.sendForOutbox(any(), any(), any(), any(), any(), any()))
+                    .thenReturn(Future.succeededFuture(null));
+
+            OutboxPublishResult result =
+                    handler.publish(makeEnvelope("order-123")).result();
+
+            assertInstanceOf(OutboxPublishResult.Success.class, result);
+            verify(producerFactory).sendForOutbox(eq("orders-topic"), eq("order-123"), any(), any(), any(), eq("77"));
+            verify(producerFactory, never()).sendForOutbox(any(), any(), any(), any(), any());
+        }
+
+        @Test
         @DisplayName("null aggregateId passes null key")
         void nullAggregateIdPassesNullKey() throws Exception {
             byte[] bytes = new byte[] {4, 5, 6};
             when(objectMapper.writeValueAsBytes(any())).thenReturn(bytes);
-            when(producerFactory.sendForOutbox(eq("orders-topic"), isNull(), eq(bytes), any(), any()))
+            when(producerFactory.sendForOutbox(eq("orders-topic"), isNull(), eq(bytes), any(), any(), eq("77")))
                     .thenReturn(Future.succeededFuture(null));
 
             OutboxPublishResult result = handler.publish(makeEnvelope(null)).result();
@@ -126,7 +142,7 @@ class KafkaOutboxDestinationHandlerTest {
         @DisplayName("transport error returns RetryableFailure")
         void transportErrorReturnsRetryableFailure() throws Exception {
             when(objectMapper.writeValueAsBytes(any())).thenReturn(new byte[] {7, 8, 9});
-            when(producerFactory.sendForOutbox(any(), any(), any(), any(), any()))
+            when(producerFactory.sendForOutbox(any(), any(), any(), any(), any(), any()))
                     .thenReturn(Future.failedFuture(new RuntimeException("Kafka broker unreachable")));
 
             OutboxPublishResult result =
@@ -142,7 +158,7 @@ class KafkaOutboxDestinationHandlerTest {
             // KafkaProducerFactory.sendForOutbox returns a FAILED FUTURE (not a synchronous throw) when
             // an application header uses the reserved framework prefix.
             // The handler must classify that as permanent so the un-fixable row is dead-lettered.
-            when(producerFactory.sendForOutbox(any(), any(), any(), any(), any()))
+            when(producerFactory.sendForOutbox(any(), any(), any(), any(), any(), any()))
                     .thenReturn(Future.failedFuture(new IllegalArgumentException(
                             "Application header uses reserved framework prefix 'vertique-': vertique-correlation")));
 
@@ -169,7 +185,7 @@ class KafkaOutboxDestinationHandlerTest {
         void scalarPayloadIsUnwrapped() throws Exception {
             // The scalar "hello" should be passed to Jackson as-is, not as {"_v": "hello"}
             when(objectMapper.writeValueAsBytes("hello")).thenReturn("\"hello\"".getBytes());
-            when(producerFactory.sendForOutbox(eq("orders-topic"), isNull(), any(), any(), any()))
+            when(producerFactory.sendForOutbox(eq("orders-topic"), isNull(), any(), any(), any(), eq("88")))
                     .thenReturn(Future.succeededFuture(null));
 
             OutboxEnvelope scalarEnvelope = new OutboxEnvelope(

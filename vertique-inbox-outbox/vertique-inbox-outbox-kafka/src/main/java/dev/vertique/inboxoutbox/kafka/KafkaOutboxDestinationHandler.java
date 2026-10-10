@@ -39,7 +39,9 @@ import lombok.extern.slf4j.Slf4j;
  * order — and forwarded as Kafka record headers.
  * The durable propagation context stored in {@link OutboxEnvelope#metadata()} is projected to
  * reserved {@code vertique-*} Kafka headers via the explicit-context send overload, so the
- * original producer's context (not the relay poller's ambient context) crosses the boundary.
+ * original producer's context (not the relay poller's ambient context) crosses the boundary. The
+ * entry id is passed to that send as its origin reference, so a producer capture hook can tell
+ * which outbox entry the wire bytes belong to.
  *
  * <p>The payload is serialized from the {@link io.vertx.core.json.JsonObject} via Jackson.
  * Serialization failures produce a {@link OutboxPublishResult#permanent(String, Throwable)
@@ -188,11 +190,11 @@ public class KafkaOutboxDestinationHandler implements OutboxDestinationHandler {
 
         // Use the outbox-origin overload so the record's persisted durable context (not the
         // relay poller's ambient context) is projected to reserved vertique-* Kafka headers,
-        // and so capture hooks see KafkaSendOrigin.OUTBOX for this send.
+        // and so producer capture hooks see KafkaSendOrigin.OUTBOX and the entry id for this send.
         // The converted application headers are forwarded unchanged, followed by the context headers.
         PayloadSource payloadSource = PayloadSources.buffered(value, null);
         return producerFactory
-                .sendForOutbox(topic, key, value, headers, envelope.metadata().context())
+                .sendForOutbox(topic, key, value, headers, envelope.metadata().context(), entryId)
                 .map(metadata -> (OutboxPublishResult) OutboxPublishResult.success())
                 .recover(err -> {
                     // A reserved-prefix collision is an authoring bug in the application headers: the

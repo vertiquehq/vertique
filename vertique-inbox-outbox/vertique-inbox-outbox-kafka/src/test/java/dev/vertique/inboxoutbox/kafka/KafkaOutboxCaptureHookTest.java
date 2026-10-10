@@ -240,7 +240,7 @@ class KafkaOutboxCaptureHookTest {
             handler = new KafkaOutboxDestinationHandler(producerFactory, objectMapper, Set.of(hook));
 
             when(objectMapper.writeValueAsBytes(any())).thenReturn(new byte[] {1, 2, 3});
-            when(producerFactory.sendForOutbox(any(), any(), any(), any(), any()))
+            when(producerFactory.sendForOutbox(any(), any(), any(), any(), any(), any()))
                     .thenReturn(Future.succeededFuture(null));
         }
 
@@ -268,7 +268,7 @@ class KafkaOutboxCaptureHookTest {
         @Test
         @DisplayName("hook receives null key when aggregateId is null")
         void receivesNullKeyForNullAggregateId() throws Exception {
-            when(producerFactory.sendForOutbox(any(), isNull(), any(), any(), any()))
+            when(producerFactory.sendForOutbox(any(), isNull(), any(), any(), any(), any()))
                     .thenReturn(Future.succeededFuture(null));
             handler.publish(makeEnvelope(null)).result();
             assertEquals(null, hook.captures.get(0).key());
@@ -326,7 +326,7 @@ class KafkaOutboxCaptureHookTest {
             handler = new KafkaOutboxDestinationHandler(producerFactory, objectMapper, Set.of(hook));
 
             when(objectMapper.writeValueAsBytes(any())).thenReturn(new byte[] {4, 5});
-            when(producerFactory.sendForOutbox(any(), any(), any(), any(), any()))
+            when(producerFactory.sendForOutbox(any(), any(), any(), any(), any(), any()))
                     .thenReturn(Future.failedFuture(new RuntimeException("broker down")));
         }
 
@@ -402,7 +402,7 @@ class KafkaOutboxCaptureHookTest {
                     new KafkaOutboxDestinationHandler(producerFactory, objectMapper, Set.of(throwing));
 
             when(objectMapper.writeValueAsBytes(any())).thenReturn(new byte[] {1});
-            when(producerFactory.sendForOutbox(any(), any(), any(), any(), any()))
+            when(producerFactory.sendForOutbox(any(), any(), any(), any(), any(), any()))
                     .thenReturn(Future.succeededFuture(null));
 
             OutboxPublishResult result =
@@ -421,7 +421,7 @@ class KafkaOutboxCaptureHookTest {
                     new KafkaOutboxDestinationHandler(producerFactory, objectMapper, Set.of(throwing, secondary));
 
             when(objectMapper.writeValueAsBytes(any())).thenReturn(new byte[] {2});
-            when(producerFactory.sendForOutbox(any(), any(), any(), any(), any()))
+            when(producerFactory.sendForOutbox(any(), any(), any(), any(), any(), any()))
                     .thenReturn(Future.succeededFuture(null));
 
             handler.publish(makeEnvelope("order-w")).result();
@@ -440,7 +440,7 @@ class KafkaOutboxCaptureHookTest {
                     new KafkaOutboxDestinationHandler(producerFactory, objectMapper, Set.of(throwing, secondary));
 
             when(objectMapper.writeValueAsBytes(any())).thenReturn(new byte[] {3});
-            when(producerFactory.sendForOutbox(any(), any(), any(), any(), any()))
+            when(producerFactory.sendForOutbox(any(), any(), any(), any(), any(), any()))
                     .thenReturn(Future.succeededFuture(null));
 
             Future<OutboxPublishResult> published =
@@ -461,7 +461,7 @@ class KafkaOutboxCaptureHookTest {
                     new KafkaOutboxDestinationHandler(producerFactory, objectMapper, Set.of(throwing, secondary));
 
             when(objectMapper.writeValueAsBytes(any())).thenReturn(new byte[] {4});
-            when(producerFactory.sendForOutbox(any(), any(), any(), any(), any()))
+            when(producerFactory.sendForOutbox(any(), any(), any(), any(), any(), any()))
                     .thenReturn(Future.failedFuture(new RuntimeException("broker down")));
 
             Future<OutboxPublishResult> published =
@@ -493,7 +493,7 @@ class KafkaOutboxCaptureHookTest {
                     OutboxPublishResult.PermanentFailure.class,
                     published.result(),
                     "result must still be the classified permanent failure");
-            verify(producerFactory, never()).sendForOutbox(any(), any(), any(), any(), any());
+            verify(producerFactory, never()).sendForOutbox(any(), any(), any(), any(), any(), any());
         }
     }
 
@@ -510,7 +510,7 @@ class KafkaOutboxCaptureHookTest {
                     new KafkaOutboxDestinationHandler(producerFactory, objectMapper, Set.of());
 
             when(objectMapper.writeValueAsBytes(any())).thenReturn(new byte[] {9});
-            when(producerFactory.sendForOutbox(any(), any(), any(), any(), any()))
+            when(producerFactory.sendForOutbox(any(), any(), any(), any(), any(), any()))
                     .thenReturn(Future.succeededFuture(null));
 
             OutboxPublishResult result =
@@ -525,7 +525,7 @@ class KafkaOutboxCaptureHookTest {
                     new KafkaOutboxDestinationHandler(producerFactory, objectMapper, Set.of());
 
             when(objectMapper.writeValueAsBytes(any())).thenReturn(new byte[] {9});
-            when(producerFactory.sendForOutbox(any(), any(), any(), any(), any()))
+            when(producerFactory.sendForOutbox(any(), any(), any(), any(), any(), any()))
                     .thenReturn(Future.failedFuture(new RuntimeException("down")));
 
             OutboxPublishResult result =
@@ -569,7 +569,7 @@ class KafkaOutboxCaptureHookTest {
                     new KafkaOutboxDestinationHandler(producerFactory, objectMapper, Set.of(hook));
 
             when(objectMapper.writeValueAsBytes(any())).thenReturn(new byte[] {1, 2, 3});
-            when(producerFactory.sendForOutbox(any(), any(), any(), any(), any()))
+            when(producerFactory.sendForOutbox(any(), any(), any(), any(), any(), any()))
                     .thenReturn(Future.succeededFuture(null));
 
             DurableMetadata context = DurableMetadata.of("correlation", new JsonObject().put("traceId", "t-123"));
@@ -630,7 +630,7 @@ class KafkaOutboxCaptureHookTest {
                     new KafkaOutboxDestinationHandler(producerFactory, objectMapper, Set.of(hook));
 
             when(objectMapper.writeValueAsBytes(any())).thenReturn(new byte[] {7, 8});
-            when(producerFactory.sendForOutbox(any(), any(), any(), any(), any()))
+            when(producerFactory.sendForOutbox(any(), any(), any(), any(), any(), any()))
                     .thenReturn(Future.failedFuture(new RuntimeException("broker down")));
 
             DurableMetadata context = DurableMetadata.of("correlation", new JsonObject().put("traceId", "t-789"));
@@ -659,7 +659,7 @@ class KafkaOutboxCaptureHookTest {
                     new KafkaOutboxDestinationHandler(producerFactory, objectMapper, Set.of(hook));
 
             when(objectMapper.writeValueAsBytes(any())).thenReturn(new byte[] {0});
-            when(producerFactory.sendForOutbox(any(), any(), any(), any(), any()))
+            when(producerFactory.sendForOutbox(any(), any(), any(), any(), any(), any()))
                     .thenReturn(Future.succeededFuture(null));
 
             // OutboxMetadata.empty() has DurableMetadata.empty() — no namespaces to project
@@ -697,7 +697,7 @@ class KafkaOutboxCaptureHookTest {
 
         private KafkaRecordHeaders sentHeaders() {
             ArgumentCaptor<KafkaRecordHeaders> sent = ArgumentCaptor.forClass(KafkaRecordHeaders.class);
-            verify(producerFactory).sendForOutbox(any(), any(), any(), sent.capture(), any());
+            verify(producerFactory).sendForOutbox(any(), any(), any(), sent.capture(), any(), any());
             return sent.getValue();
         }
 
@@ -708,7 +708,7 @@ class KafkaOutboxCaptureHookTest {
             KafkaOutboxDestinationHandler handler =
                     new KafkaOutboxDestinationHandler(producerFactory, objectMapper, Set.of(hook));
             when(objectMapper.writeValueAsBytes(any())).thenReturn(new byte[] {1});
-            when(producerFactory.sendForOutbox(any(), any(), any(), any(), any()))
+            when(producerFactory.sendForOutbox(any(), any(), any(), any(), any(), any()))
                     .thenReturn(Future.succeededFuture(null));
 
             Map<String, String> headers = new LinkedHashMap<>();
@@ -736,14 +736,14 @@ class KafkaOutboxCaptureHookTest {
             KafkaOutboxDestinationHandler handler =
                     new KafkaOutboxDestinationHandler(producerFactory, objectMapper, Set.of(hook));
             when(objectMapper.writeValueAsBytes(any())).thenReturn(new byte[] {1});
-            when(producerFactory.sendForOutbox(any(), any(), any(), any(), any()))
+            when(producerFactory.sendForOutbox(any(), any(), any(), any(), any(), any()))
                     .thenReturn(Future.succeededFuture(null));
 
             handler.publish(envelope(null, DurableMetadata.empty())).result();
             handler.publish(envelope(Map.of(), DurableMetadata.empty())).result();
 
             ArgumentCaptor<KafkaRecordHeaders> sent = ArgumentCaptor.forClass(KafkaRecordHeaders.class);
-            verify(producerFactory, times(2)).sendForOutbox(any(), any(), any(), sent.capture(), any());
+            verify(producerFactory, times(2)).sendForOutbox(any(), any(), any(), sent.capture(), any(), any());
             assertEquals(List.of(KafkaRecordHeaders.empty(), KafkaRecordHeaders.empty()), sent.getAllValues());
             assertEquals(KafkaRecordHeaders.empty(), hook.captures.get(0).headers());
             assertEquals(KafkaRecordHeaders.empty(), hook.captures.get(1).headers());
@@ -756,7 +756,7 @@ class KafkaOutboxCaptureHookTest {
             KafkaOutboxDestinationHandler handler =
                     new KafkaOutboxDestinationHandler(producerFactory, objectMapper, Set.of(hook));
             when(objectMapper.writeValueAsBytes(any())).thenReturn(new byte[] {1});
-            when(producerFactory.sendForOutbox(any(), any(), any(), any(), any()))
+            when(producerFactory.sendForOutbox(any(), any(), any(), any(), any(), any()))
                     .thenReturn(Future.failedFuture(new IllegalArgumentException(
                             "Application header uses reserved framework prefix 'vertique-': vertique-correlation")));
 
@@ -795,7 +795,7 @@ class KafkaOutboxCaptureHookTest {
                     assertInstanceOf(OutboxPublishResult.PermanentFailure.class, first.result());
             assertTrue(valueFailure.message().contains("ce-source"), valueFailure.message());
             assertInstanceOf(OutboxPublishResult.PermanentFailure.class, second.result());
-            verify(producerFactory, never()).sendForOutbox(any(), any(), any(), any(), any());
+            verify(producerFactory, never()).sendForOutbox(any(), any(), any(), any(), any(), any());
             assertEquals(2, hook.captures.size(), "the hook fires once per attempt");
             for (RecordingHook.Capture capture : hook.captures) {
                 assertEquals("orders-topic", capture.topic());

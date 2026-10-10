@@ -627,6 +627,116 @@ class KafkaProducerCaptureHookTest {
         }
     }
 
+    // --- Origin reference ---
+
+    @Nested
+    @DisplayName("origin reference on the send")
+    class OriginReference {
+
+        private static final dev.vertique.core.context.DurableMetadata NO_CONTEXT =
+                dev.vertique.core.context.DurableMetadata.empty();
+
+        @Test
+        @DisplayName("sendForOutbox with an entry id: the event form sees OUTBOX and the entry id as originRef")
+        void outboxSendWithEntryIdCarriesOriginRef() {
+            OperationRecordingHook hook = new OperationRecordingHook();
+            OriginCapturingFactory factory = capturingFactory(hook);
+
+            Future<RecordMetadata> sent = factory.sendForOutbox(
+                    "outbox.topic", "k", new byte[] {1, 2}, KafkaRecordHeaders.empty(), NO_CONTEXT, "4711");
+
+            assertTrue(sent.succeeded());
+            assertEquals(1, hook.sends.size(), "the hook is called once");
+            KafkaProducerSend send = hook.sends.get(0);
+            assertEquals(KafkaSendOrigin.OUTBOX, send.origin());
+            assertEquals("4711", send.originRef());
+            assertEquals("outbox.topic", send.topic());
+            assertEquals("k", send.key());
+            assertNull(send.operation(), "an outbox send has no producer operation");
+            assertEquals(List.of("4711"), factory.capturedOriginRefs, "the entry id reaches the wire funnel");
+        }
+
+        @Test
+        @DisplayName("sendForOutbox with an entry id: a hook overriding only the positional form still fires")
+        void positionalFormStillFiresForOutboxSendWithEntryId() {
+            RecordingHook hook = new RecordingHook();
+
+            capturingFactory(hook)
+                    .sendForOutbox("outbox.topic", "k", new byte[] {1}, KafkaRecordHeaders.empty(), NO_CONTEXT, "4711");
+
+            assertEquals(1, hook.captures.size());
+            assertEquals(KafkaSendOrigin.OUTBOX, hook.captures.get(0).origin());
+            assertEquals("outbox.topic", hook.captures.get(0).topic());
+            assertNull(hook.captures.get(0).producerMethod());
+        }
+
+        @Test
+        @DisplayName("sendForOutbox with an entry id rejects a reserved-prefix header like the form without one")
+        void outboxSendWithEntryIdRejectsReservedHeader() {
+            OperationRecordingHook hook = new OperationRecordingHook();
+            KafkaRecordHeaders reserved = KafkaRecordHeaders.of(Map.of("vertique-correlation", "x"));
+
+            Future<RecordMetadata> sent = capturingFactory(hook)
+                    .sendForOutbox("outbox.topic", "k", new byte[] {1}, reserved, NO_CONTEXT, "4711");
+
+            assertTrue(sent.failed(), "a reserved-prefix header fails the send");
+            assertTrue(sent.cause() instanceof IllegalArgumentException);
+            assertTrue(hook.sends.isEmpty(), "nothing was sent, so no hook is called");
+        }
+
+        @Test
+        @DisplayName("sendForOutbox without an entry id carries a null originRef")
+        void outboxSendWithoutEntryIdCarriesNoOriginRef() {
+            OperationRecordingHook hook = new OperationRecordingHook();
+
+            capturingFactory(hook)
+                    .sendForOutbox("outbox.topic", "k", new byte[] {1}, KafkaRecordHeaders.empty(), NO_CONTEXT);
+
+            assertEquals(1, hook.sends.size());
+            assertEquals(KafkaSendOrigin.OUTBOX, hook.sends.get(0).origin());
+            assertNull(hook.sends.get(0).originRef());
+        }
+
+        @Test
+        @DisplayName("internal, dead-letter and proxy sends carry a null originRef")
+        void otherOriginsCarryNoOriginRef() {
+            OperationRecordingHook hook = new OperationRecordingHook();
+            OriginCapturingFactory factory = capturingFactory(hook);
+
+            factory.send("t", "k", new byte[] {1}, KafkaRecordHeaders.empty());
+            factory.send("t", "k", new byte[] {1}, KafkaRecordHeaders.empty(), NO_CONTEXT);
+            factory.sendForDlq("dlq", "k", new byte[] {1}, DLQ_HEADERS);
+            factory.create(TestMsgProducer.class).publish("hello");
+
+            assertEquals(
+                    List.of(
+                            KafkaSendOrigin.INTERNAL,
+                            KafkaSendOrigin.INTERNAL,
+                            KafkaSendOrigin.DLQ,
+                            KafkaSendOrigin.DIRECT_PRODUCER),
+                    hook.sends.stream().map(KafkaProducerSend::origin).toList());
+            for (KafkaProducerSend send : hook.sends) {
+                assertNull(send.originRef(), "originRef must be null for origin " + send.origin());
+            }
+            assertTrue(factory.capturedOriginRefs.isEmpty(), "no send without a reference takes the reference path");
+        }
+
+        @Test
+        @DisplayName("the seven-argument KafkaProducerSend constructor gives a null originRef")
+        void sevenArgumentConstructorGivesNullOriginRef() {
+            KafkaProducerSend send = new KafkaProducerSend(
+                    KafkaSendOrigin.OUTBOX,
+                    "t",
+                    "k",
+                    dev.vertique.core.payload.PayloadSources.buffered(new byte[] {1}, null),
+                    KafkaRecordHeaders.empty(),
+                    null,
+                    Future.succeededFuture(null));
+
+            assertNull(send.originRef());
+        }
+    }
+
     // --- Origin-capturing test double ---
 
     /**
@@ -639,6 +749,7 @@ class KafkaProducerCaptureHookTest {
 
         final List<KafkaSendOrigin> capturedOrigins = new CopyOnWriteArrayList<>();
         final List<Method> capturedMethods = new CopyOnWriteArrayList<>();
+        final List<String> capturedOriginRefs = new CopyOnWriteArrayList<>();
 
         OriginCapturingFactory(
                 Vertx vertx,
@@ -661,6 +772,22 @@ class KafkaProducerCaptureHookTest {
             capturedMethods.add(operation != null ? operation.method() : null);
             // Fire hooks synchronously with a succeeded result so hook tests can assert without async
             fireHooks(origin, topic, key, value, wire, operation, Future.succeededFuture(null));
+            return Future.succeededFuture(null);
+        }
+
+        @Override
+        protected Future<RecordMetadata> sendWire(
+                String topic,
+                String key,
+                byte[] value,
+                KafkaRecordHeaders wire,
+                KafkaSendOrigin origin,
+                KafkaProducerOperation operation,
+                String originRef) {
+            capturedOrigins.add(origin);
+            capturedMethods.add(operation != null ? operation.method() : null);
+            capturedOriginRefs.add(originRef);
+            fireHooks(origin, topic, key, value, wire, operation, originRef, Future.succeededFuture(null));
             return Future.succeededFuture(null);
         }
     }
