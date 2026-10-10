@@ -1057,8 +1057,8 @@ final class McpRequestDispatcher {
      * before negotiation or application policy. A violation is a JSON-RPC {@code -32602} response over
      * HTTP 400. Only then does header/body and Phase-1 negotiation run; those failures are {@code
      * -32020}, except an unsupported version, which is {@code -32022}. A negotiated request enters
-     * the ordered, fail-closed pre-dispatch request-interceptor stage (contract §4.7 stage 5) before
-     * method dispatch, tool lookup, authorization, or application input processing.
+     * the ordered, fail-closed pre-dispatch request-interceptor stage before method dispatch, tool
+     * lookup, authorization, or application input processing.
      */
     void dispatch(RoutingContext context) {
         SecurityContextSnapshot security = establishedSecurity();
