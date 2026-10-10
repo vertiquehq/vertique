@@ -57,6 +57,7 @@ import dev.vertique.security.runtime.SnapshotHmac;
 import dev.vertique.security.runtime.SnapshotHmacConfig;
 import dev.vertique.security.runtime.SnapshotHmacKeyConfig;
 import dev.vertique.security.runtime.events.SecurityEventEmitter;
+import dev.vertique.services.config.ServiceAuthorizationConfig;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.internal.ContextInternal;
@@ -539,7 +540,13 @@ class IdentitySnapshotRoundTripTest {
     private static ServiceAuthorizationInterceptor authorizationPep(
             Authorizer authorizer, SecurityEventEmitter emitter, ContextHolder holder) {
         return new ServiceAuthorizationInterceptor(
-                Optional.of(authorizer), Optional.of(mock(ActionRegistry.class)), emitter, holder, Set.of());
+                Optional.of(authorizer),
+                Optional.of(mock(ActionRegistry.class)),
+                emitter,
+                holder,
+                Set.of(),
+                ServiceAuthorizationConfig.defaults(),
+                TestResilience.shared());
     }
 
     /**
