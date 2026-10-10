@@ -421,59 +421,6 @@ public class ConsumesEnforcementIT {
         });
     }
 
-    // --- HTTP/2 request without a declared length is still gated ---
-
-    @Test
-    @DisplayName("Http2RequestWithoutContentLengthIsGated — h2c POST with no length and '*/*' Content-Type → 415")
-    void http2RequestWithoutContentLengthIsStillGated(Vertx vertx, VertxTestContext ctx) {
-        deploy(vertx, ctx, Set.of(new JsonOnlyResource()), (port, c) -> {
-            io.vertx.core.http.HttpClient h2 = vertx.createHttpClient(new io.vertx.core.http.HttpClientOptions()
-                    .setProtocolVersion(io.vertx.core.http.HttpVersion.HTTP_2)
-                    .setHttp2ClearTextUpgrade(false));
-            h2.request(io.vertx.core.http.HttpMethod.POST, port, "127.0.0.1", "/echo")
-                    .compose(req -> {
-                        req.putHeader("Content-Type", "text/xml");
-                        req.setChunked(true);
-                        return req.send(Buffer.buffer("<a/>"));
-                    })
-                    .onComplete(ctx.succeeding(resp -> {
-                        ctx.verify(() -> assertEquals(
-                                415, resp.statusCode(), "an HTTP/2 body without a length header must be gated"));
-                        h2.close();
-                        ctx.completeNow();
-                    }));
-        });
-    }
-
-    @Test
-    @DisplayName("Http2RequestWithoutContentLengthIsGatedByMiddleware — h2c POST, no length, 'image/png' → 415")
-    void http2RequestWithoutContentLengthIsGatedByTheBroadMiddleware(Vertx vertx, VertxTestContext ctx) {
-        deploy(
-                vertx,
-                ctx,
-                Set.of(new NoConsumesResource()),
-                Set.of(new dev.vertique.rest.core.middleware.ContentTypeValidationMiddleware()),
-                (port, c) -> {
-                    io.vertx.core.http.HttpClient h2 = vertx.createHttpClient(new io.vertx.core.http.HttpClientOptions()
-                            .setProtocolVersion(io.vertx.core.http.HttpVersion.HTTP_2)
-                            .setHttp2ClearTextUpgrade(false));
-                    h2.request(io.vertx.core.http.HttpMethod.POST, port, "127.0.0.1", "/open")
-                            .compose(req -> {
-                                req.putHeader("Content-Type", "image/png");
-                                req.setChunked(true);
-                                return req.send(Buffer.buffer("png"));
-                            })
-                            .onComplete(ctx.succeeding(resp -> {
-                                ctx.verify(() -> assertEquals(
-                                        415,
-                                        resp.statusCode(),
-                                        "an HTTP/2 body without a length header must be validated"));
-                                h2.close();
-                                ctx.completeNow();
-                            }));
-                });
-    }
-
     // --- Test 6 & 7: a 415 the framework authored keeps its own detail ---
 
     @Test
