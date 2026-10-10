@@ -187,6 +187,8 @@
       "vertique-archetype-rest-postgresql",
       "vertique-archetype-services",
       "vertique-codegen-all"
-    ]
+    ],
+    "$attachedTestArtifactComment": "Attached test JARs (-tests.jar, -test-sources.jar, -test-javadoc.jar) hold a module's own test fixtures for sibling modules inside this reactor and are not a published surface, so a staged repository containing one fails verification. A module may be listed here only with a documented reason; the list ships empty. Fixtures users should have belong in a dedicated *-test module instead.",
+    "attachedTestArtifactExceptions": []
   }
 }

@@ -99,3 +99,10 @@ build and test suite.
 
 Tags in this repository do not publish artifacts. Release orchestration and
 publication credentials are maintainer-controlled outside this repository.
+
+Attached test JARs (`-tests.jar`, `-test-sources.jar`) are not a published
+surface. A few modules attach one so sibling modules can share test fixtures
+inside this reactor; publication verification (`release/verify-publication.mjs`)
+fails if one reaches a staged repository. Keep that fixture code unpublished, or
+move what users should have into a dedicated `*-test` module. A module may be
+exempted only with a documented reason in `release/publication-policy.json`.
