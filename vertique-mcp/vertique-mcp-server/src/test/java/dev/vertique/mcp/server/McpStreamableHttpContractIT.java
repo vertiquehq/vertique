@@ -82,6 +82,8 @@ public class McpStreamableHttpContractIT {
     private static final String ZERO_QUALITY_ACCEPT_ROW = "shouldRejectZeroQualityAcceptWithNotAcceptable";
     private static final String ZERO_QUALITY_MIXED_ACCEPT_ROW = "shouldRejectZeroQualityMixedAcceptWithNotAcceptable";
     private static final String WILDCARD_ACCEPT_ROW = "shouldAcceptAnyMediaRangeAcceptHeader";
+    private static final String WILDCARD_TYPE_CONCRETE_SUBTYPE_ACCEPT_ROW =
+            "shouldRejectWildcardTypeWithConcreteSubtypeAcceptWithNotAcceptable";
     private static final String APPLICATION_WILDCARD_ACCEPT_ROW = "shouldAcceptApplicationWildcardAcceptHeader";
     private static final String TEXT_WILDCARD_ACCEPT_ROW = "shouldAcceptTextWildcardAcceptHeader";
     private static final String JSON_ZERO_QUALITY_APPLICATION_WILDCARD_ACCEPT_ROW =
@@ -128,6 +130,7 @@ public class McpStreamableHttpContractIT {
                 ZERO_QUALITY_ACCEPT_ROW,
                 ZERO_QUALITY_MIXED_ACCEPT_ROW,
                 WILDCARD_ACCEPT_ROW,
+                WILDCARD_TYPE_CONCRETE_SUBTYPE_ACCEPT_ROW,
                 APPLICATION_WILDCARD_ACCEPT_ROW,
                 TEXT_WILDCARD_ACCEPT_ROW,
                 JSON_ZERO_QUALITY_APPLICATION_WILDCARD_ACCEPT_ROW,
@@ -313,6 +316,18 @@ public class McpStreamableHttpContractIT {
                 assertThat(response.statusCode()).isEqualTo(200);
                 assertServerInfo(response);
                 assertNoToolInvoked();
+            }
+            case WILDCARD_TYPE_CONCRETE_SUBTYPE_ACCEPT_ROW -> {
+                // Given: a discovery POST whose only Accept range has a wildcard type and a concrete
+                // subtype. RFC 9110 defines no such range, so it is malformed and admits nothing.
+                HttpRequest<Buffer> request = post().putHeader("Accept", "*/json");
+                HttpResponse<Buffer> response = await(request.sendBuffer(discover.toBuffer()));
+
+                assertThat(response.statusCode())
+                        .as("a wildcard type with a concrete subtype is not a media range and must be HTTP 406")
+                        .isEqualTo(406);
+                assertNoToolInvoked();
+                assertNoObservationOpened();
             }
             case APPLICATION_WILDCARD_ACCEPT_ROW -> {
                 // Given: a discovery POST that accepts every application/* type, which

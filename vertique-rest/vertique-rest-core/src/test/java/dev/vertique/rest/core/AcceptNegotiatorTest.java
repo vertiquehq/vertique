@@ -415,6 +415,16 @@ class AcceptNegotiatorTest {
     }
 
     @Test
+    @DisplayName("an Accept entry with a wildcard type and a concrete subtype is dropped, not read as */*")
+    void wildcardTypeWithConcreteSubtypeIsDropped() {
+        List<String> server = List.of("application/xml");
+        assertEquals(List.of(), AcceptNegotiator.parseAcceptHeader("*/xml"));
+        assertNull(AcceptNegotiator.negotiate("*/xml", server));
+        assertEquals(0.0, AcceptNegotiator.effectiveQuality("*/xml", "application/xml"), 0.0);
+        assertEquals("application/xml", AcceptNegotiator.negotiate("*/xml, application/xml", server));
+    }
+
+    @Test
     @DisplayName("effectiveQuality treats an Accept entry with an unusable q as not acceptable")
     void effectiveQualityRejectsUnusableQ() {
         assertEquals(0.0, AcceptNegotiator.effectiveQuality("image/png;q=abc", "image/png"), 0.0);

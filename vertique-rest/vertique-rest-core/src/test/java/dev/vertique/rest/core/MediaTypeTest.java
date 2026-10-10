@@ -12,6 +12,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.rest.core.request.MediaType;
+import java.util.Map;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -125,6 +126,28 @@ class MediaTypeTest {
         assertNotNull(appJson);
         assertTrue(wildcard.isCompatible(appJson));
         assertTrue(appJson.isCompatible(wildcard));
+    }
+
+    @Test
+    @DisplayName("a wildcard type with a concrete subtype is malformed, not a full wildcard")
+    void wildcardTypeWithConcreteSubtypeIsMalformed() {
+        assertNull(MediaType.parse("*/xml"));
+        assertNull(MediaType.parse("*/json;q=0.5"));
+        assertNull(MediaType.valueOf("*/xml; charset=utf-8"));
+    }
+
+    @Test
+    @DisplayName("a directly constructed */xml matches no concrete type")
+    void constructedWildcardTypeWithConcreteSubtypeMatchesNothingConcrete() {
+        MediaType wildcardType = new MediaType("*", "xml", Map.of(), 1.0);
+        MediaType appXml = MediaType.parse("application/xml");
+        MediaType textPlain = MediaType.parse("text/plain");
+        assertNotNull(appXml);
+        assertNotNull(textPlain);
+        assertFalse(wildcardType.isCompatible(appXml));
+        assertFalse(appXml.isCompatible(wildcardType));
+        assertFalse(wildcardType.isCompatible(textPlain));
+        assertFalse(textPlain.isCompatible(wildcardType));
     }
 
     @Test

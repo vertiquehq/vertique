@@ -22,7 +22,10 @@ import java.util.Objects;
  * quote-aware (see {@link HeaderElement}), and quoted-string parameter values are exposed unquoted.
  *
  * <p>Wildcard matching is supported via {@link #isCompatible(MediaType)}: {@code *}{@code /*}
- * matches any media type, and {@code application/*} matches any application subtype.
+ * matches any media type, and {@code application/*} matches any application subtype. RFC 9110
+ * defines no range with a wildcard type and a concrete subtype, so such a value (for example
+ * {@code *}{@code /xml}) is malformed: {@link #parse(String)} returns {@code null} for it and it never
+ * matches anything but a full wildcard.
  */
 public final class MediaType {
 
@@ -76,9 +79,10 @@ public final class MediaType {
      * <p>Returns {@code null} if the input is {@code null}, blank, does not contain a
      * {@code /} separator in the type/subtype portion, or is malformed as described by
      * {@link HeaderElement}: an unterminated quoted string, characters after a closing quote, an
-     * empty value, or more than {@value HeaderElement#MAX_PARAMETERS} parameters. A caller that
-     * guards a trust boundary with the result must treat {@code null} for a non-blank input as
-     * a rejection, not as "nothing declared".
+     * empty value, or more than {@value HeaderElement#MAX_PARAMETERS} parameters. A wildcard type
+     * with a concrete subtype, such as {@code *}{@code /xml}, is not a media range and yields
+     * {@code null} as well. A caller that guards a trust boundary with the result must treat
+     * {@code null} for a non-blank input as a rejection, not as "nothing declared".
      *
      * @param raw the raw media type string to parse, e.g. {@code "application/json;q=0.8"}
      * @return the parsed {@code MediaType}, or {@code null} if the input is invalid
@@ -89,8 +93,8 @@ public final class MediaType {
 
     /**
      * Builds a media type from a parsed header element, or returns {@code null} when the
-     * element value has no {@code /} separator, a blank type or subtype, or a control character
-     * in the type, the subtype or a parameter name.
+     * element value has no {@code /} separator, a blank type or subtype, a wildcard type with a
+     * concrete subtype, or a control character in the type, the subtype or a parameter name.
      */
     static MediaType fromElement(HeaderElement element) {
         if (element == null) {
@@ -104,6 +108,9 @@ public final class MediaType {
         String type = typeSubtype.substring(0, slashIndex).trim();
         String subtype = typeSubtype.substring(slashIndex + 1).trim();
         if (type.isEmpty() || subtype.isEmpty()) {
+            return null;
+        }
+        if ("*".equals(type) && !"*".equals(subtype)) {
             return null;
         }
         if (hasControlCharacter(type)
@@ -168,7 +175,9 @@ public final class MediaType {
     // --- Wildcard checks ---
 
     /**
-     * Returns {@code true} if the primary type is a wildcard ({@code *}).
+     * Returns {@code true} if the primary type is a wildcard ({@code *}). A parsed media type with a
+     * wildcard type is always {@code *}{@code /*}; only a directly constructed instance can pair a
+     * wildcard type with a concrete subtype, and that never matches anything but a full wildcard.
      *
      * @return {@code true} for {@code *}{@code /*} style media types
      */
@@ -193,7 +202,8 @@ public final class MediaType {
      *
      * <p>Compatibility rules (evaluated in order):
      * <ol>
-     *   <li>Either side has type {@code *} — always compatible</li>
+     *   <li>Either side is {@code *}{@code /*} (type and subtype both {@code *}) — always
+     *       compatible</li>
      *   <li>Types differ — not compatible</li>
      *   <li>Either side has subtype {@code *} — compatible (types already matched)</li>
      *   <li>Subtypes match — compatible (parameters are ignored in this check)</li>
@@ -206,7 +216,7 @@ public final class MediaType {
      */
     public boolean isCompatible(MediaType other) {
         Objects.requireNonNull(other, "other must not be null");
-        if (this.isWildcardType() || other.isWildcardType()) {
+        if (this.isFullWildcard() || other.isFullWildcard()) {
             return true;
         }
         if (!this.type.equalsIgnoreCase(other.type)) {
@@ -216,6 +226,10 @@ public final class MediaType {
             return true;
         }
         return this.subtype.equalsIgnoreCase(other.subtype);
+    }
+
+    private boolean isFullWildcard() {
+        return isWildcardType() && isWildcardSubtype();
     }
 
     // --- Specificity ---

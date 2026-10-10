@@ -573,7 +573,9 @@ boundary with `MediaType.parse` must treat `null` for a non-blank input as a rej
 horizontal tab in them as `_`, so a value never carries a line break into a header and two values
 that differ by a control character stay different (`evil.php` with U+0001 before the final `p` is
 written `evil.ph_p`, never `evil.php`); a value that held a control character therefore parses back with `_` in its place. `isCompatible(MediaType)` is wildcard-aware
-and ignores parameters; `specificity()` returns 0 for `*/*`, 1 for `type/*`, 2 for `type/subtype`, and
+and ignores parameters. A wildcard type with a concrete subtype such as `*/xml` is not a media range:
+`MediaType.parse` returns `null` for it, an `Accept` entry of that shape is dropped as malformed, and
+`isCompatible` treats only `*/*` as matching every type. `specificity()` returns 0 for `*/*`, 1 for `type/*`, 2 for `type/subtype`, and
 3 when parameters are present. Equality ignores the quality factor.
 
 `AcceptNegotiator.negotiate(String acceptHeader, List<String> serverTypes)` returns the best matching
