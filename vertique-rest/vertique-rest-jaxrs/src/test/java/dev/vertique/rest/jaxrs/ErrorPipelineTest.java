@@ -548,6 +548,20 @@ class ErrorPipelineTest {
         }
 
         @Test
+        @DisplayName("ProblemDetail instance drops a regex constraint from the route template")
+        void problemDetailInstanceDropsRegexConstraints() {
+            ctxData.put(VertxFailureStatus.KEY, 401);
+            recordMatchedOperation("/orders/{id: [0-9]{8}}/lines/{line:\\d+}");
+
+            Future<Response> future = pipeline.mapToResponse(ctx, new RuntimeException("auth failed"));
+            assertTrue(future.succeeded());
+
+            ProblemDetail pd =
+                    assertInstanceOf(ProblemDetail.class, future.result().getEntity());
+            assertEquals("/orders/{id}/lines/{line}", pd.instance());
+        }
+
+        @Test
         @DisplayName("ProblemDetail instance stays absent when no operation route matched")
         void problemDetailInstanceIsAbsentWithoutAMatchedOperation() {
             ctxData.put(VertxFailureStatus.KEY, 404);

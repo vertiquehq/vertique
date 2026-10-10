@@ -45,7 +45,13 @@ class SimpleLinkBuilder implements Link.Builder {
         if (!s.startsWith("<") || uriEnd < 0) {
             throw new IllegalArgumentException("Invalid link header format");
         }
-        UriBuilder parsedUri = UriBuilder.fromUri(s.substring(1, uriEnd));
+        UriBuilder parsedUri;
+        try {
+            parsedUri = UriBuilder.fromUri(s.substring(1, uriEnd));
+        } catch (IllegalArgumentException e) {
+            // The URI builder's own message carries the offending URI; the header value stays out.
+            throw new IllegalArgumentException("Invalid link header format");
+        }
         Map<String, String> parsedParams = new LinkedHashMap<>();
         String remaining = s.substring(uriEnd + 1).trim();
         if (!remaining.isEmpty()) {

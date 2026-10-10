@@ -248,12 +248,51 @@ public class ErrorPipeline {
         RestOperationDescriptor operation =
                 entity instanceof ProblemDetail ? RequestCompletionRecorder.recordedOperation(ctx) : null;
         if (entity instanceof ProblemDetail pd && pd.instance() == null && operation != null) {
-            ProblemDetail enriched =
-                    pd.toBuilder().instance(operation.routeTemplate()).build();
+            ProblemDetail enriched = pd.toBuilder()
+                    .instance(templateWithoutConstraints(operation.routeTemplate()))
+                    .build();
             Response.ResponseBuilder rb = Response.status(response.getStatus()).entity(enriched);
             return rebuildWithHeaders(response, rb, true);
         }
         return response;
+    }
+
+    /**
+     * Returns {@code template} with each variable's regular-expression constraint removed, so
+     * {@code /orders/{id: [0-9]{8}}} becomes {@code /orders/{id}}. The constraint is routing detail,
+     * not part of an occurrence identifier, and braces inside it would nest.
+     *
+     * @param template the operation's route template
+     * @return the template with variable names only
+     */
+    static String templateWithoutConstraints(String template) {
+        StringBuilder out = new StringBuilder(template.length());
+        int depth = 0;
+        boolean inConstraint = false;
+        for (int i = 0; i < template.length(); i++) {
+            char c = template.charAt(i);
+            if (c == '{') {
+                depth++;
+                if (depth == 1) {
+                    out.append(c);
+                } else if (!inConstraint) {
+                    out.append(c);
+                }
+            } else if (c == '}') {
+                if (depth == 1) {
+                    out.append(c);
+                    inConstraint = false;
+                } else if (!inConstraint) {
+                    out.append(c);
+                }
+                depth = Math.max(0, depth - 1);
+            } else if (c == ':' && depth == 1 && !inConstraint) {
+                inConstraint = true;
+            } else if (!inConstraint) {
+                out.append(c);
+            }
+        }
+        return out.toString();
     }
 
     /**

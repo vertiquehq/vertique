@@ -585,7 +585,8 @@ server type as `"type/subtype"`, or `null` when nothing matches — the signal a
 406. A `null`/blank Accept header, or one whose entries merely lack a `/` (`garbage`), yields the first
 server type; an empty `serverTypes` yields `null`. An `Accept` header with an entry dropped as
 **malformed** (an unterminated quote, an invalid, quoted, out-of-range or repeated `q`, too many
-parameters, or a `/` with an empty type or subtype such as `text/` or `/json`) and no usable entry is
+parameters, a `/` with an empty type or subtype such as `text/` or `/json`, or a wildcard type with a
+concrete subtype such as `*/xml`) and no usable entry is
 not "anything goes": the result is `null`. So is a header with a non-empty entry **past the 50-element
 cap** and no usable entry among the first 50: the entries beyond the cap are never read, and their
 existence counts as malformed, so 50 slashless tokens followed by `text/html;q=abc` is `null`, not the

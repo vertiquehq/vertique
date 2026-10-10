@@ -70,7 +70,11 @@ The `@Consumes` 415 gate checks body-carrying requests (POST, PUT, PATCH with a 
 against the operation's declared media types. Wildcards are legal on the declaration only: a
 declared `application/*` accepts any `application/...` request type. A request `Content-Type` is a
 media type, not a range, so a missing, unparseable or wildcard one (`*/*`, `application/*`, or the
-malformed `*/json`) satisfies no declaration and is answered with 415.
+malformed `*/json`) satisfies no declaration and is answered with 415. A body counts whether or not
+the request declared its length: an HTTP/2 request with neither `Content-Length` nor
+`Transfer-Encoding` is gated like any other. A declared `@Consumes` entry that is not a media type
+(`*/json`) matches no request; startup logs a warning naming the operation, and a route left with no
+usable entry answers every body request with 415.
 
 The candidate methods are the ones the resource class and its superclasses declare, plus every
 interface `default` method the class inherits without overriding. An annotated default method is a
@@ -631,21 +635,24 @@ deliberately authored client output and keeps its body; the framework's own 415 
 reach the client.
 
 **No request bytes in a problem detail.** The framework's own header-parse failures
-(`MediaType.valueOf`, `CacheControl.valueOf`, `Link.valueOf`, and the 415 of the `@Consumes` gate)
-carry a fixed message that names the failure but never the offending header value, so an oversized or
-control-character-laden header cannot be reflected into a `400` or `415` body or into a log line built
-from the message. The 415 detail names the declared types, which the server controls, and not the
-request's `Content-Type`.
+(`MediaType.valueOf`, `CacheControl.valueOf`, the link format of `Link.valueOf`, and the 415 of the
+`@Consumes` gate and of a body no decoder claims) carry a fixed message that names the failure but
+never the offending header value, so an oversized or control-character-laden header cannot be reflected
+into a `400` or `415` body or into a log line built from the message. The 415 detail of the gate names
+the declared types, which the server controls, and not the request's `Content-Type`. The URI part of a
+`Link` value is parsed by the URI builder, whose own diagnostics name the template they reject: do not
+pass a request header to `Link.valueOf` or `UriBuilder` and publish the exception message.
 
 The same rule covers `ProblemDetail.instance`. When a `ProblemDetail` leaves the error pipeline
 without one, the framework sets it to the route template of the operation the request matched, for
-example `/items/{id}`, never to the request path: the path of a failed request carries the very
-segment that failed conversion or validation. A request that matched no operation route (an unknown
-path, a method no route serves) gets no `instance`. An `instance` your own mapper sets is kept as
+example `/items/{id}` (a regular-expression constraint such as `{id: [0-9]+}` is dropped), never to
+the request path: the path of a failed request carries the very segment that failed conversion or
+validation. A request that matched no operation route (an unknown path, a method no route serves)
+gets no `instance`. An `instance` your own mapper sets is kept as
 written, so a mapper that wants an occurrence identifier supplies one.
 
 **Headers when the body is rebuilt.** Rebuilding the body — by this override, or by the `instance`
-enrichment every `ProblemDetail` gets — drops the headers your mapper set that describe the *octets*
+enrichment a `ProblemDetail` on a matched operation route gets — drops the headers your mapper set that describe the *octets*
 of the body it authored: `Content-Length`, `Content-Encoding`, `Content-Range`, `ETag`, and the
 digest headers (`Content-Digest`, `Repr-Digest`, `Digest`, `Content-MD5`). They would describe bytes
 the client never receives. Every other header survives, including `Content-Type`,
@@ -1850,7 +1857,8 @@ Beyond what `RestCoreModule` and `JsonRuntimeModule` contribute:
 
 `dev.vertique.rest.jaxrs.runtime.MagicBytesVerifierModule` is a separate opt-in `@Module` that
 contributes the built-in magic-byte `FileContentVerifier`. It fails closed on a declared content
-type that is present but unparsable (rejection type `fileContentTypeMalformed`), reads a `q` or
+type that is present but unparsable, such as a wildcard type with a concrete subtype like `*/png`
+(rejection type `fileContentTypeMalformed`), reads a `q` or
 other parameter on a mapped type without letting it skip the signature check, and looks the type up
 lowercased with `Locale.ROOT`, so the check does not depend on the JVM's default locale.
 

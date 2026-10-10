@@ -24,8 +24,8 @@ import java.util.Objects;
  * <p>Wildcard matching is supported via {@link #isCompatible(MediaType)}: {@code *}{@code /*}
  * matches any media type, and {@code application/*} matches any application subtype. RFC 9110
  * defines no range with a wildcard type and a concrete subtype, so such a value (for example
- * {@code *}{@code /xml}) is malformed: {@link #parse(String)} returns {@code null} for it and it never
- * matches anything but a full wildcard.
+ * {@code *}{@code /xml}) is malformed: {@link #parse(String)} returns {@code null} for it, and a
+ * directly constructed one is never compatible with a media type of another type or subtype.
  */
 public final class MediaType {
 
@@ -177,7 +177,8 @@ public final class MediaType {
     /**
      * Returns {@code true} if the primary type is a wildcard ({@code *}). A parsed media type with a
      * wildcard type is always {@code *}{@code /*}; only a directly constructed instance can pair a
-     * wildcard type with a concrete subtype, and that never matches anything but a full wildcard.
+     * wildcard type with a concrete subtype, and that is compatible only with a full wildcard or an
+     * identical value.
      *
      * @return {@code true} for {@code *}{@code /*} style media types
      */

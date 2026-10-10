@@ -589,7 +589,7 @@ public class JaxRsRouteRegistrar {
             // net for those routes.
             List<String> consumes = descriptor.consumes();
             if (!consumes.isEmpty()) {
-                route.handler(buildConsumesCheckHandler(consumes));
+                route.handler(buildConsumesCheckHandler(descriptor.operationId(), consumes));
             }
 
             // (a-2) Resolved request-body JSON profile. Resolve the effective profile for this method
@@ -1322,13 +1322,26 @@ public class JaxRsRouteRegistrar {
      * the exception's response (rather than relying on {@code ex.getMessage()}) keeps the diagnostic
      * through equal-status detail sanitization.
      *
+     * @param operationId the operation the handler guards, named in the startup warning
      * @param consumes the non-empty list of declared {@code @Consumes} media types
      * @return the per-route 415-check handler
      */
-    private static Handler<RoutingContext> buildConsumesCheckHandler(List<String> consumes) {
-        // Pre-parse the declared consume types once at registration time for efficiency.
-        List<MediaType> declaredTypes =
-                consumes.stream().map(MediaType::parse).filter(mt -> mt != null).toList();
+    private static Handler<RoutingContext> buildConsumesCheckHandler(String operationId, List<String> consumes) {
+        // Pre-parse the declared consume types once at registration time for efficiency. A declared
+        // entry that is not a media type matches nothing; it is named here rather than dropped
+        // silently, because a route left with no usable entry answers every body request with 415.
+        List<MediaType> declaredTypes = new ArrayList<>(consumes.size());
+        for (String declared : consumes) {
+            MediaType parsed = MediaType.parse(declared);
+            if (parsed == null) {
+                log.warn(
+                        "Operation '{}' declares @Consumes '{}', which is not a media type and matches no request",
+                        operationId,
+                        declared);
+            } else {
+                declaredTypes.add(parsed);
+            }
+        }
 
         return ctx -> {
             HttpMethod method = ctx.request().method();
@@ -1338,10 +1351,15 @@ public class JaxRsRouteRegistrar {
                 return;
             }
 
-            // Skip the check when the request has no body (Content-Length: 0 and no chunked encoding).
+            // Skip the check when the request has no body. The headers alone do not decide it: an
+            // HTTP/2 request may carry DATA frames with neither Content-Length nor Transfer-Encoding,
+            // so a body the body handler already read counts too.
             String contentLength = ctx.request().getHeader("Content-Length");
             String transferEncoding = ctx.request().getHeader("Transfer-Encoding");
-            boolean hasBody = (contentLength != null && !"0".equals(contentLength)) || transferEncoding != null;
+            io.vertx.ext.web.RequestBody readBody = ctx.body();
+            boolean hasBody = (contentLength != null && !"0".equals(contentLength))
+                    || transferEncoding != null
+                    || (readBody != null && readBody.length() > 0);
             if (!hasBody) {
                 ctx.next();
                 return;

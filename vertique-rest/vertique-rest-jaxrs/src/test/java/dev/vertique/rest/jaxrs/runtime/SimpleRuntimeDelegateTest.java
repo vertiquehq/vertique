@@ -547,5 +547,6 @@ class SimpleRuntimeDelegateTest {
     void linkFailureDoesNotEchoTheValue() {
         assertMessageDoesNotEcho(() -> Link.valueOf(MARKER));
         assertMessageDoesNotEcho(() -> Link.valueOf("</x>; title=\"" + MARKER));
+        assertMessageDoesNotEcho(() -> Link.valueOf("<" + MARKER + " with space>; rel=next"));
     }
 }
