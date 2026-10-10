@@ -60,7 +60,8 @@ import org.mockito.ArgumentCaptor;
  * RoutingContext} — mirroring {@code McpRequestInterceptorPipelineTest}'s driving style — carrying a
  * negotiation violation: a missing required header, a mismatched required header, or a {@code tools/call}
  * reserved-field violation. Each
- * must yield HTTP 400 / {@code -32020} <strong>and</strong> leave a permitting request interceptor and
+ * must yield HTTP 400 / {@code -32020} (an unsupported version is {@code -32022}) <strong>and</strong>
+ * leave a permitting request interceptor and
  * the policy enforcer completely uninvoked — the decisive proof that negotiation runs strictly before
  * the request-interceptor stage, tool lookup, and authorization, not merely that the response happens
  * to be 400. A row that only checked the response would pass identically whether negotiation ran first
@@ -69,12 +70,12 @@ import org.mockito.ArgumentCaptor;
  *
  * <p>One control row ({@link #BASELINE_ROW}) sends a fully valid negotiation and asserts the
  * interceptor <em>does</em> run — proving the fixture's baseline body/header shape is not itself
- * accidentally triggering {@code -32020}, so a negative row's rejection is attributable to the one
- * mutated fact it names.
+ * accidentally triggering {@code -32020} or {@code -32022}, so a negative row's rejection is
+ * attributable to the one mutated fact it names.
  *
  * <p>R15 separately proves the official per-method schema boundary. Those failures are JSON-RPC
  * {@code -32602}, not protocol-version negotiation failures, so they deliberately do not share this
- * matrix's {@code -32020} assertion.
+ * matrix's {@code -32020}/{@code -32022} assertion.
  */
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
 class McpProtocolNegotiationTest {
@@ -471,7 +472,9 @@ class McpProtocolNegotiationTest {
         Outcome outcome = drive(body, headers);
 
         assertRejectedBeforeDispatch(
-                outcome, "a well-formed protocolVersion the header and body agree on but the server does not support");
+                outcome,
+                "a well-formed protocolVersion the header and body agree on but the server does not support",
+                -32022);
     }
 
     // --- R07 item 1 (decisive): the control-character row settles bounded, not with a crash, and ---
@@ -607,10 +610,16 @@ class McpProtocolNegotiationTest {
     // --- Shared assertion ---
 
     private static void assertRejectedBeforeDispatch(Outcome outcome, String caseLabel) {
+        assertRejectedBeforeDispatch(outcome, caseLabel, -32020);
+    }
+
+    private static void assertRejectedBeforeDispatch(Outcome outcome, String caseLabel, int expectedCode) {
         assertThat(outcome.status())
                 .as(caseLabel + " must be rejected HTTP 400")
                 .isEqualTo(400);
-        assertThat(outcome.errorCode()).as(caseLabel + " must carry -32020").isEqualTo(-32020);
+        assertThat(outcome.errorCode())
+                .as(caseLabel + " must carry " + expectedCode)
+                .isEqualTo(expectedCode);
         assertThat(outcome.interceptorInvocations())
                 .as("DECISIVE (" + caseLabel + "): the request-interceptor stage must never run — a proof that "
                         + "only checked the response status would pass identically whether negotiation ran "

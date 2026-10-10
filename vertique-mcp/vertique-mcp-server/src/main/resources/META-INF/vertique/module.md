@@ -348,8 +348,8 @@ structured result is bounded the same way — see [Bounded output pipeline](#bou
 for the full output-stage order this cap is one part of. For SSE tool calls, the coordinator accounts
 for every progress and terminal frame against the same request-scoped byte budget.
 
-Every JSON-RPC error response — a negotiation-mismatch `-32020`, an official-params or
-unknown-or-unauthorized `-32602`, an interceptor rejection, an ordinary envelope-decode failure
+Every JSON-RPC error response — a negotiation-mismatch `-32020`, an unsupported-version `-32022`,
+an official-params or unknown-or-unauthorized `-32602`, an interceptor rejection, an ordinary envelope-decode failure
 (`-32700`/`-32600`/`-32601`), and every internal-error fallback — serializes through this exact same
 capped mechanism, never a separate unrestricted encode measured only after the fact. The one
 unbounded element any of these shapes can carry is the echoed request `id` (bounded only by the
@@ -437,10 +437,11 @@ forwards a different one of the duplicated values than the one this codec observ
 `_meta` shape and supported protocol version must satisfy Phase-1 policy,
 and `tools/call.params` must carry neither reserved multi-round-trip field
 `inputResponses`/`requestState`. A missing applicable header, header/body disagreement, or Phase-1
-negotiation-policy violation is exclusively `-32020`, mapped to HTTP 400 through the bounded,
-capped JSON writer. Its `message` is *Header/body mismatch*, except *Unsupported protocol version*
-for an unsupported version; see [Negotiation rejection reasons](#negotiation-rejection-reasons)
-for the `error.data.reason` that identifies the cause. Negotiation still completes before the request-interceptor
+negotiation-policy violation is HTTP 400 through the bounded, capped JSON writer. Its code is
+`-32020` with the message *Header/body mismatch*, except an unsupported version, which is `-32022`
+with the message *Unsupported protocol version*; see
+[Negotiation rejection reasons](#negotiation-rejection-reasons) for the `error.data.reason` that
+identifies the cause. Negotiation still completes before the request-interceptor
 stage below and every later application stage — see
 [Request interceptor stage](#request-interceptor-stage).
 
@@ -455,10 +456,10 @@ boundary and owns the HTTP/router composition only.
 
 ### Negotiation rejection reasons
 
-The `-32020` code and the HTTP 400 status are the same for every cause. The `message` is
-`Header/body mismatch` for every cause except `UNSUPPORTED_VERSION`, which uses
-`Unsupported protocol version`, and the text is not always accurate for the cause (a rejected
-`requestState` is not a header mismatch). Every rejection therefore also carries a bounded
+The HTTP 400 status is the same for every cause. The code is `-32020` and the `message` is
+`Header/body mismatch` for every cause except `UNSUPPORTED_VERSION`, which is code `-32022` with the
+message `Unsupported protocol version`, and the text is not always accurate for the cause (a
+rejected `requestState` is not a header mismatch). Every rejection therefore also carries a bounded
 `error.data.reason`. **Clients should switch on `reason`, not on `message`.** The values are a closed
 set of constants; a reason never repeats a header name, header value, field name or any other text
 from the request. The set may grow, so a client must treat a `reason` it does not recognize as a
@@ -470,7 +471,7 @@ generic negotiation failure.
 | `HEADER_MISMATCH` | A required routing header is present but differs from its body value, or is sent more than once (even with identical values). | Send each header exactly once, equal to its body mirror. |
 | `META_SHAPE` | `params._meta.io.modelcontextprotocol/protocolVersion` is a blank string, longer than 64 characters, or contains control characters. | Send a non-blank protocol-version string of at most 64 characters with no control characters. |
 | `RESERVED_FIELD` | A `tools/call` carries `inputResponses` or `requestState`, which this server does not implement. | Do not send them. |
-| `UNSUPPORTED_VERSION` | The version is well-formed but not supported. | Choose a version from `error.data.supported` and retry. |
+| `UNSUPPORTED_VERSION` | The version is well-formed but not supported, and the `MCP-Protocol-Version` header carries the same value. | Choose a version from `error.data.supported` and retry. |
 
 A request whose `params._meta` is absent or not an object, or whose `protocolVersion` is missing or
 not a string, or whose `clientCapabilities` is missing or not an object, violates the official
@@ -478,13 +479,50 @@ params schema and is rejected earlier as `-32602` *Invalid params*, never as `-3
 
 Several faults can coexist, and the first failing check decides the reason. After official params
 validation the checks run in this order: `protocolVersion` bounds, supported version, reserved
-fields, then the headers (`MCP-Protocol-Version`, `Mcp-Method`, `Mcp-Name`).
+fields, then the headers (`MCP-Protocol-Version`, `Mcp-Method`, `Mcp-Name`). The one exception is
+that an unsupported version is reported as `UNSUPPORTED_VERSION` only when the `MCP-Protocol-Version`
+header is present, sent once and equal to the unsupported body value; when that header is absent or
+disagrees, the request is a `MISSING_HEADER` or `HEADER_MISMATCH` rejection (`-32020`) instead. Only
+the `MCP-Protocol-Version` header is compared at that point, so an unsupported body whose version
+header agrees is `UNSUPPORTED_VERSION` (`-32022`) even if `Mcp-Method` or `Mcp-Name` is absent or
+wrong, and an unsupported body whose version header is absent or different is a header fault even
+when a reserved field is also present (a supported body with that reserved field reports
+`RESERVED_FIELD`).
 
 For every cause except `UNSUPPORTED_VERSION` the whole `data` object is `{"reason": "<value>"}`. An
-`UNSUPPORTED_VERSION` rejection keeps its existing `data.supported` (array of supported versions) and
-`data.requested` members and adds `reason` alongside them, so a client that already reads those two
-members is unaffected. Each rejection is also logged once at DEBUG naming only the reason, never any
+`UNSUPPORTED_VERSION` rejection carries `data.supported` (array of supported versions) and
+`data.requested`, the members the protocol requires for that error, and adds `reason` alongside
+them. Each rejection is also logged once at DEBUG naming only the reason, never any
 request value.
+
+## Wire-code changes
+
+Two JSON-RPC codes changed. A client that switches on the numeric `error.code` must adopt them;
+messages, `data` members, HTTP statuses and headers are as described in the sections above.
+
+| Condition | Previous code | Current code | What to do |
+| --- | --- | --- | --- |
+| An unsupported protocol version | `-32020` | `-32022`, the protocol's *Unsupported protocol version* error (HTTP `400`, `data.supported` and `data.requested`) | Treat `-32022` as "choose one of `error.data.supported` and retry", or switch on `error.data.reason` (`UNSUPPORTED_VERSION`). |
+| A rate-limit rejection: quota exceeded, admission unavailable, or a failed admission decision, whether raised by the admission stage or by the handler (a `TooManyRequestsException` or `RateLimitUnavailableException`, including from `@RateLimited`) | `-32022` | `-32010`, a server-defined code | Switch on HTTP `429`/`503` and `Retry-After`, or on `-32010`; stop treating `-32022` as a rate-limit signal. |
+
+Every other negotiation rejection (`MISSING_HEADER`, `HEADER_MISMATCH`, `META_SHAPE`,
+`RESERVED_FIELD`) keeps `-32020`, so a client that matched `-32020` alone to detect an unsupported
+version must now also match `-32022`. A request whose body names an unsupported version but whose
+`MCP-Protocol-Version` header is absent or differs from it is a header fault (`-32020`,
+`MISSING_HEADER` or `HEADER_MISMATCH`), as the protocol's header-mismatch error requires; it was
+previously reported with the `UNSUPPORTED_VERSION` reason.
+
+Rate-limit responses previously used `-32022`, which the protocol reserves for an unsupported
+protocol version, so the two conditions could not be told apart by code. `-32010` is not defined by
+the protocol and is not used by this server for anything else. The rate-limit HTTP status (`429`, or
+`503` when admission is unavailable), the `Retry-After` and `Cache-Control` headers, the messages and
+the terminal outcome and error type are unchanged, so a client that already branches on the HTTP
+status is unaffected.
+
+The terminal event's `protocolErrorCode`, and anything derived from it such as audit metadata or
+observer attributes, carries the new values: `-32022` for an unsupported version and `-32010` for a
+rate-limit rejection. Dashboards, alerts or audit filters that match the previous values must be
+updated.
 
 ## Body trace-context extraction
 
@@ -539,8 +577,8 @@ and before any tool is resolved, authorized, or passed to the application input 
 failure never reaches this stage; it settles through
 [Bounded JSON-RPC envelope codec](#bounded-json-rpc-envelope-codec) exactly as before. An official
 params failure returns HTTP 400 JSON-RPC `-32602` *Invalid params* before this stage, while a
-header/body or Phase-1 negotiation failure returns HTTP 400 JSON-RPC `-32020` (*Header/body mismatch*,
-or *Unsupported protocol version* for an unsupported version).
+header/body or Phase-1 negotiation failure returns HTTP 400 JSON-RPC `-32020` (*Header/body mismatch*),
+or `-32022` (*Unsupported protocol version*) for an unsupported version.
 Neither this interceptor stage nor anything after it observes either rejected request.
 
 Contribute `McpRequestInterceptor` through Dagger set multibinding (`McpServerModule`). The
@@ -1326,11 +1364,11 @@ produces the runtime `DISABLED` outcome. The runtime outcome mapping is:
 | `RateLimitOutcome` or condition | HTTP result | JSON-RPC | MCP terminal result |
 | --- | --- | --- | --- |
 | `PERMITTED` | continue to the handler | — | request proceeds |
-| `QUOTA_EXCEEDED` | `429`, `Retry-After` when supplied, `Cache-Control: no-store` | `-32022` | `REJECTED` / `RATE_LIMIT` |
+| `QUOTA_EXCEEDED` | `429`, `Retry-After` when supplied, `Cache-Control: no-store` | `-32010` | `REJECTED` / `RATE_LIMIT` |
 | `DISABLED` | continue to the handler | — | request proceeds |
 | `BACKEND_FAILURE_OPEN` | continue to the handler | — | request proceeds |
-| `BACKEND_FAILURE_CLOSED` | `503`, `Cache-Control: no-store` | `-32022` | `REJECTED` / `RATE_LIMIT` |
-| synchronous key-derivation throw, failed acquire future, or null decision | `503`, `Cache-Control: no-store` | `-32022` | `FAILED` / `RATE_LIMIT` |
+| `BACKEND_FAILURE_CLOSED` | `503`, `Cache-Control: no-store` | `-32010` | `REJECTED` / `RATE_LIMIT` |
+| synchronous key-derivation throw, failed acquire future, or null decision | `503`, `Cache-Control: no-store` | `-32010` | `FAILED` / `RATE_LIMIT` |
 
 Only `PERMITTED` consumes a token. Unknown and unauthorized tools are rejected
 before admission and never consume one. Fixed responses do not disclose policy
@@ -1445,6 +1483,8 @@ The bounded handler-failure mapping is:
 
 | Cause | Writable HTTP result | JSON-RPC | Terminal classification |
 | --- | --- | --- | --- |
+| `TooManyRequestsException`, including one raised by `@RateLimited` | `429`, `Retry-After` when the exception carries one, `Cache-Control: no-store` | `-32010`, `Rate limit exceeded` | `REJECTED` / `RATE_LIMIT` |
+| `RateLimitUnavailableException`, including one raised by `@RateLimited` | `503`, `Cache-Control: no-store` | `-32010`, `Rate limiting unavailable` | `REJECTED` / `RATE_LIMIT` |
 | `ResilienceTimeoutException` | `504`, `Cache-Control: no-store` | `-32603`, `Request timed out` | `FAILED` / `TIMEOUT` |
 | `ResilienceUnavailableException` | `503`, `Cache-Control: no-store` | `-32603`, `Service unavailable` | `FAILED` / `INTERNAL` |
 | `ResiliencePolicyException` or any other cause | existing `500` fallback | existing `-32603`, `Internal error` | existing `FAILED` / `INTERNAL` |

@@ -48,8 +48,9 @@ import org.mockito.ArgumentCaptor;
 import org.slf4j.LoggerFactory;
 
 /**
- * Proves every {@code -32020} negotiation rejection carries a bounded, enum-valued {@code
- * error.data.reason} while its code, HTTP status and {@code message} stay exactly as they were.
+ * Proves every negotiation rejection carries a bounded, enum-valued {@code error.data.reason}. The
+ * code is {@code -32020} for every cause except an unsupported version, which is {@code -32022}; the
+ * HTTP status and {@code message} of each cause are unchanged.
  *
  * <p>The codec-level table covers every rejection cause {@link
  * McpProtocolCodec#validateNegotiation} can produce (some are unreachable through the dispatcher
@@ -65,6 +66,12 @@ class McpNegotiationRejectionReasonTest {
     private static final String TOOL = "greet";
     private static final String MESSAGE = "Header/body mismatch";
     private static final String UNSUPPORTED_MESSAGE = "Unsupported protocol version";
+
+    /** The code of every negotiation rejection except an unsupported version. */
+    private static final int NEGOTIATION_CODE = -32020;
+
+    /** The code of an unsupported-version rejection. */
+    private static final int UNSUPPORTED_VERSION_CODE = -32022;
 
     /** Text no response may ever echo through {@code error.data.reason}. */
     private static final String HOSTILE = "<script>alert('x')</script>\"evil";
@@ -108,7 +115,7 @@ class McpNegotiationRejectionReasonTest {
         McpProtocolCodec.CodecError error = negotiate(row);
 
         assertThat(error).as(row.name() + " must be rejected").isNotNull();
-        assertThat(error.code()).isEqualTo(-32020);
+        assertThat(error.code()).isEqualTo(expectedCode(row));
         assertThat(error.message()).isEqualTo(row.expectedMessage());
         JsonObject data = dataOf(error);
         assertThat(data).as(row.name() + " must carry error.data").isNotNull();
@@ -193,13 +200,13 @@ class McpNegotiationRejectionReasonTest {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("wireRows")
-    @DisplayName("the HTTP response carries status 400, -32020, the unchanged message and the reason")
+    @DisplayName("the HTTP response carries status 400, the cause's code, its unchanged message and the reason")
     void shouldReportReasonOnTheWire(Row row) {
         Wire wire = drive(row.body(), row.headers());
 
         assertThat(wire.status()).isEqualTo(400);
         JsonObject error = wire.body().getJsonObject("error");
-        assertThat(error.getInteger("code")).isEqualTo(-32020);
+        assertThat(error.getInteger("code")).isEqualTo(expectedCode(row));
         assertThat(error.getString("message")).isEqualTo(row.expectedMessage());
         JsonObject data = error.getJsonObject("data");
         assertThat(data).as(row.name() + " must carry error.data on the wire").isNotNull();
@@ -209,6 +216,24 @@ class McpNegotiationRejectionReasonTest {
         } else {
             assertThat(data).isEqualTo(new JsonObject().put("reason", row.expectedReason()));
         }
+    }
+
+    @Test
+    @DisplayName("an unsupported version is -32022 with exactly the supported, requested and reason members")
+    void shouldReportAnUnsupportedVersionWithTheSchemaCodeAndItsRequiredData() {
+        Wire wire = drive(
+                discover(meta().put(META_VERSION, "1999-01-01")),
+                headers("server/discover", null).set("MCP-Protocol-Version", "1999-01-01"));
+
+        assertThat(wire.status()).isEqualTo(400);
+        JsonObject error = wire.body().getJsonObject("error");
+        assertThat(error.getInteger("code")).isEqualTo(-32022);
+        assertThat(error.getString("message")).isEqualTo(UNSUPPORTED_MESSAGE);
+        assertThat(error.getJsonObject("data"))
+                .isEqualTo(new JsonObject()
+                        .put("supported", new JsonArray().add(VERSION))
+                        .put("requested", "1999-01-01")
+                        .put("reason", UNSUPPORTED_VERSION));
     }
 
     @ParameterizedTest(name = "{0}")
@@ -236,12 +261,24 @@ class McpNegotiationRejectionReasonTest {
         assertThat(error.containsKey("data")).isFalse();
     }
 
+    private static int expectedCode(Row row) {
+        return UNSUPPORTED_VERSION.equals(row.expectedReason()) ? UNSUPPORTED_VERSION_CODE : NEGOTIATION_CODE;
+    }
+
     // --- Rows ---
 
     private static Stream<Row> codecRows() {
         return Stream.concat(
                 Stream.concat(metaRows(), reservedRows()),
-                Stream.concat(headerRows(), Stream.concat(headerOrderRows(), precedenceRows())));
+                Stream.concat(
+                        headerRows(),
+                        Stream.concat(
+                                headerOrderRows(),
+                                Stream.concat(
+                                        precedenceRows(),
+                                        Stream.concat(
+                                                unsupportedVersionWithHeaderFaultRows(),
+                                                unsupportedVersionPrecedenceRows())))));
     }
 
     private static Stream<Row> metaRows() {
@@ -385,13 +422,82 @@ class McpNegotiationRejectionReasonTest {
                 Row.unsupported(
                         "unsupported version outranks missing clientCapabilities",
                         list(without(meta(), META_CAPABILITIES).put(META_VERSION, "1999-01-01")),
-                        headers("tools/list", null),
+                        headers("tools/list", null).set("MCP-Protocol-Version", "1999-01-01"),
                         "1999-01-01"),
                 Row.codec(
                         "bad _meta outranks missing headers",
                         list(null).put("params", new JsonObject().put("_meta", "x")),
                         MultiMap.caseInsensitiveMultiMap(),
                         META_SHAPE));
+    }
+
+    /**
+     * An unsupported body version whose {@code MCP-Protocol-Version} header is absent or disagrees
+     * is a header fault, not an unsupported-version rejection: only a request whose header and body
+     * agree on an unsupported version is reported as one.
+     */
+    private static Stream<Row> unsupportedVersionWithHeaderFaultRows() {
+        JsonObject unsupported = discover(meta().put(META_VERSION, "v999.0.0"));
+        return Stream.of(
+                Row.codec(
+                        "unsupported body version with a mismatched protocol-version header",
+                        unsupported,
+                        headers("server/discover", null),
+                        HEADER_MISMATCH),
+                Row.codec(
+                        "unsupported body version with a duplicated protocol-version header",
+                        unsupported,
+                        headers("server/discover", null)
+                                .set("MCP-Protocol-Version", "v999.0.0")
+                                .add("MCP-Protocol-Version", "v999.0.0"),
+                        HEADER_MISMATCH),
+                Row.codec(
+                        "unsupported body version with no protocol-version header",
+                        unsupported,
+                        headers("server/discover", null).remove("MCP-Protocol-Version"),
+                        MISSING_HEADER));
+    }
+
+    /**
+     * What an unsupported body version outranks and what outranks it. Only the {@code
+     * MCP-Protocol-Version} header is compared when the version is unsupported, so an agreeing
+     * version header is an unsupported-version rejection whatever {@code Mcp-Method} or {@code
+     * Mcp-Name} say, while a version-header fault is reported ahead of a reserved field, which a
+     * supported body reports as {@code RESERVED_FIELD}.
+     */
+    private static Stream<Row> unsupportedVersionPrecedenceRows() {
+        String unsupported = "v999.0.0";
+        JsonObject unsupportedMeta = meta().put(META_VERSION, unsupported);
+        return Stream.of(
+                Row.unsupported(
+                        "unsupported version with an agreeing version header outranks a missing Mcp-Method",
+                        discover(unsupportedMeta),
+                        headers("server/discover", null)
+                                .set("MCP-Protocol-Version", unsupported)
+                                .remove("Mcp-Method"),
+                        unsupported),
+                Row.unsupported(
+                        "unsupported version with an agreeing version header outranks a mismatched Mcp-Method",
+                        discover(unsupportedMeta),
+                        headers("server/discover", null)
+                                .set("MCP-Protocol-Version", unsupported)
+                                .set("Mcp-Method", "tools/list"),
+                        unsupported),
+                Row.unsupported(
+                        "unsupported version with an agreeing version header outranks a missing Mcp-Name",
+                        callBody(callParams().put("_meta", unsupportedMeta)),
+                        headers("tools/call", null).set("MCP-Protocol-Version", unsupported),
+                        unsupported),
+                Row.codec(
+                        "unsupported version with a mismatched version header outranks a reserved field",
+                        callBody(callParams().put("_meta", unsupportedMeta).put("requestState", "opaque")),
+                        headers("tools/call", TOOL),
+                        HEADER_MISMATCH),
+                Row.codec(
+                        "a supported version with a mismatched version header reports the reserved field",
+                        callBody(callParams().put("requestState", "opaque")),
+                        headers("tools/call", TOOL).set("MCP-Protocol-Version", "1999-01-01"),
+                        RESERVED_FIELD));
     }
 
     private static Stream<Row> hostileRows() {
@@ -433,7 +539,9 @@ class McpNegotiationRejectionReasonTest {
     /** The causes a client can trigger through the dispatcher: the official params schema passes. */
     private static Stream<Row> wireRows() {
         return Stream.concat(
-                headerOrderRows(),
+                Stream.concat(
+                        headerOrderRows(),
+                        Stream.concat(unsupportedVersionWithHeaderFaultRows(), unsupportedVersionPrecedenceRows())),
                 Stream.of(
                         Row.codec(
                                 "blank protocolVersion",

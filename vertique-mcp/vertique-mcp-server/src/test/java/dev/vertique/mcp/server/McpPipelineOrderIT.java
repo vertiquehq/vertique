@@ -285,7 +285,7 @@ class McpPipelineOrderIT {
                         Setup.DRAIN_QUOTA,
                         Expect.rpc(
                                         429,
-                                        -32022,
+                                        McpRequestDispatcher.RATE_LIMITED,
                                         List.of(OPEN, IDENTITY, ADMITTED, REQUEST_INTERCEPTOR, ADMISSION, TERMINAL))
                                 .tool(LIMITED_TOOL)
                                 .json()),
