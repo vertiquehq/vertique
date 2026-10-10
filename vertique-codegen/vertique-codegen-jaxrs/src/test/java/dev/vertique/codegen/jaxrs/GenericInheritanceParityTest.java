@@ -131,6 +131,66 @@ class GenericInheritanceParityTest {
         }
     }
 
+    interface GenericMethodApi<T> {
+        @DELETE
+        @Path("/{id}")
+        @RolesAllowed("ops")
+        <X> String purge(@PathParam("id") T id);
+    }
+
+    @Path("/erased")
+    static class ErasedOverride implements GenericMethodApi<String> {
+        @Override
+        @DELETE
+        public String purge(String id) {
+            return "erased " + id;
+        }
+    }
+
+    static class VerbBase {
+        @jakarta.ws.rs.POST
+        @Path("/v")
+        public String m() {
+            return "base";
+        }
+    }
+
+    interface VerbApi {
+        @GET
+        @Path("/v")
+        String m();
+    }
+
+    @Path("/verbs")
+    static class VerbConflict extends VerbBase implements VerbApi {
+        @Override
+        public String m() {
+            return "verbs";
+        }
+    }
+
+    static class OverloadBase<T> {
+        @GET
+        @Path("/{id}")
+        public String get(@PathParam("id") T id) {
+            return "a " + id;
+        }
+
+        @GET
+        @Path("/{id}/times")
+        public String get(@PathParam("id") T id, @jakarta.ws.rs.QueryParam("times") String times) {
+            return "b " + id;
+        }
+    }
+
+    @Path("/overload-base")
+    static class OverloadDerived extends OverloadBase<String> {
+        @Override
+        public String get(String id) {
+            return "derived " + id;
+        }
+    }
+
     static class Implementor {
         public String read(String id) {
             return "inherited " + id;
@@ -340,6 +400,87 @@ class GenericInheritanceParityTest {
                                         """)),
                                 List.of(
                                         "GET /via-super/{id} Implementor id|PATH|java.lang.String roles=[reader] -> inherited 7")),
+                        new Shape(
+                                "a non-generic override of a generic method overrides it by erasure",
+                                new ErasedOverride(),
+                                "ErasedOverride",
+                                List.of(src("GenericMethodApi", """
+                                        public interface GenericMethodApi<T> {
+                                            @DELETE
+                                            @Path("/{id}")
+                                            @RolesAllowed("ops")
+                                            <X> String purge(@PathParam("id") T id);
+                                        }
+                                        """), src("ErasedOverride", """
+                                        @Path("/erased")
+                                        public class ErasedOverride implements GenericMethodApi<String> {
+                                            @Override
+                                            @DELETE
+                                            public String purge(String id) {
+                                                return "erased " + id;
+                                            }
+                                        }
+                                        """)),
+                                List.of(
+                                        "DELETE /erased/{id} ErasedOverride id|PATH|java.lang.String roles=[ops] -> erased 7")),
+                        new Shape(
+                                "a verb declared on a superclass and another on an interface follow the fixed priority",
+                                new VerbConflict(),
+                                "VerbConflict",
+                                List.of(src("VerbBase", """
+                                        public class VerbBase {
+                                            @jakarta.ws.rs.POST
+                                            @Path("/v")
+                                            public String m() {
+                                                return "base";
+                                            }
+                                        }
+                                        """), src("VerbApi", """
+                                        public interface VerbApi {
+                                            @GET
+                                            @Path("/v")
+                                            String m();
+                                        }
+                                        """), src("VerbConflict", """
+                                        @Path("/verbs")
+                                        public class VerbConflict extends VerbBase implements VerbApi {
+                                            @Override
+                                            public String m() {
+                                                return "verbs";
+                                            }
+                                        }
+                                        """)),
+                                List.of("GET /verbs/v VerbConflict  None -> verbs")),
+                        new Shape(
+                                "a same-name overload of another arity stays a route of its own",
+                                new OverloadDerived(),
+                                "OverloadDerived",
+                                List.of(src("OverloadBase", """
+                                        public class OverloadBase<T> {
+                                            @GET
+                                            @Path("/{id}")
+                                            public String get(@PathParam("id") T id) {
+                                                return "a " + id;
+                                            }
+
+                                            @GET
+                                            @Path("/{id}/times")
+                                            public String get(@PathParam("id") T id, @jakarta.ws.rs.QueryParam("times") String times) {
+                                                return "b " + id;
+                                            }
+                                        }
+                                        """), src("OverloadDerived", """
+                                        @Path("/overload-base")
+                                        public class OverloadDerived extends OverloadBase<String> {
+                                            @Override
+                                            public String get(String id) {
+                                                return "derived " + id;
+                                            }
+                                        }
+                                        """)),
+                                List.of(
+                                        "GET /overload-base/{id} OverloadDerived id|PATH|java.lang.String None -> derived 7",
+                                        "GET /overload-base/{id}/times OverloadBase id|PATH|java.lang.Object,times|QUERY|java.lang.String None -> b 7")),
                         new Shape(
                                 "an unrelated overload is not a route and takes nothing from the interface",
                                 new Overloads(),

@@ -16,6 +16,8 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 
 /**
  * General-purpose utility for annotation resolution over class hierarchies and meta-annotation
@@ -152,10 +154,10 @@ public final class AnnotationResolver {
     }
 
     /**
-     * Resolves all annotations present on a single method parameter by walking the same erased
-     * signature (see {@link #inheritedDeclarations}) on the method's superclass chain and the
-     * BFS-ordered interface hierarchy of the method's declaring class. This is the parameter-level
-     * analog of {@link #resolveMethodAnnotations(Method)}.
+     * Resolves all annotations present on a single method parameter by walking the declarations
+     * the method overrides (see {@link #inheritedDeclarations}) on the method's superclass chain
+     * and the BFS-ordered interface hierarchy of the method's declaring class. This is the
+     * parameter-level analog of {@link #resolveMethodAnnotations(Method)}.
      *
      * <p>Equivalent to {@link #resolveParameterAnnotations(Method, int, Class)
      * resolveParameterAnnotations(method, parameterIndex, method.getDeclaringClass())}.
@@ -171,10 +173,10 @@ public final class AnnotationResolver {
     }
 
     /**
-     * Resolves all annotations present on a single method parameter by walking the same erased
-     * signature on the method's superclass chain and the BFS-ordered interface hierarchy of
-     * {@code viewType}. This is the parameter-level analog of
-     * {@link #resolveMethodAnnotations(Method, Class)}.
+     * Resolves all annotations present on a single method parameter by walking the declarations
+     * the method overrides (see {@link #inheritedDeclarations}) on the method's superclass chain
+     * and the BFS-ordered interface hierarchy of {@code viewType}. This is the parameter-level
+     * analog of {@link #resolveMethodAnnotations(Method, Class)}.
      *
      * <p>Use case: a JAX-RS resource impl class declares
      * {@code public Response get(String id)} and the matching interface method declares
@@ -242,9 +244,10 @@ public final class AnnotationResolver {
      * public, non-static, non-bridge declaration of the same name and arity whose parameter types
      * are equal after resolution corresponds as well. That is how
      * {@code class Users implements Crud<String> { void delete(String id) }} is recognized as
-     * overriding {@code Crud<ID>.delete(ID)}. A generic method corresponds only to a declaration
-     * with the same number of method type parameters. Members that are not public are not seen,
-     * exactly as for the exact lookup.
+     * overriding {@code Crud<ID>.delete(ID)}. The rule for method type parameters is the Java
+     * one: a generic method corresponds only to a declaration with the same number of them whose
+     * bounds erase equally, and a non-generic method corresponds to a generic declaration by
+     * erasure. Members that are not public are not seen, exactly as for the exact lookup.
      *
      * @param method   the method whose overridden declarations are wanted; must not be {@code null}
      * @param viewType the type whose interface hierarchy contributes declarations (the resource
@@ -253,6 +256,23 @@ public final class AnnotationResolver {
      * @return the corresponding declarations, de-duplicated, never {@code null}
      */
     public static List<Method> inheritedDeclarations(Method method, Class<?> viewType) {
+        return DECLARATIONS.get(viewType).computeIfAbsent(method, m -> computeDeclarations(m, viewType));
+    }
+
+    /**
+     * Declarations by view type and method. A {@link ClassValue} keeps the cache with the view
+     * class, so it never outlives the class loader that owns the type; the lookup is repeated per
+     * route, per parameter and per policy axis, and the walk behind it reflects over every
+     * supertype.
+     */
+    private static final ClassValue<ConcurrentMap<Method, List<Method>>> DECLARATIONS = new ClassValue<>() {
+        @Override
+        protected ConcurrentMap<Method, List<Method>> computeValue(Class<?> type) {
+            return new ConcurrentHashMap<>();
+        }
+    };
+
+    private static List<Method> computeDeclarations(Method method, Class<?> viewType) {
         Class<?> declaring = method.getDeclaringClass();
         Map<TypeVariable<?>, Type> bindings = new LinkedHashMap<>(GenericBindings.of(declaring));
         GenericBindings.of(viewType).forEach(bindings::putIfAbsent);
@@ -277,9 +297,12 @@ public final class AnnotationResolver {
         } catch (NoSuchMethodException ignored) {
             // No declaration with the same erased signature on this type
         }
-        for (Method candidate : type.getDeclaredMethods()) {
+        // getMethods() loads public members only, as the exact lookup does, so the signature of a
+        // non-public member is never resolved here.
+        for (Method candidate : type.getMethods()) {
             int modifiers = candidate.getModifiers();
-            if (!Modifier.isPublic(modifiers)
+            if (candidate.getDeclaringClass() != type
+                    || !Modifier.isPublic(modifiers)
                     || Modifier.isStatic(modifiers)
                     || candidate.isBridge()
                     || candidate.isSynthetic()) {

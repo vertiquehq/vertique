@@ -160,7 +160,10 @@ public final class JaxRsHierarchy {
             TypeElement type,
             TypeElement resourceClass,
             boolean publicOnly) {
-        List<ExecutableElement> matches = new ArrayList<>();
+        // The exact erased matches come first, as at runtime (the exact lookup precedes the
+        // binding-aware scan); overrides-only matches follow, each group in declaration order.
+        List<ExecutableElement> exact = new ArrayList<>();
+        List<ExecutableElement> bound = new ArrayList<>();
         String key = null;
         for (javax.lang.model.element.Element enclosed : type.getEnclosedElements()) {
             if (enclosed.getKind() != ElementKind.METHOD || !(enclosed instanceof ExecutableElement candidate)) {
@@ -182,25 +185,14 @@ public final class JaxRsHierarchy {
             if (key == null) {
                 key = methodKey(ctx, method);
             }
-            if (methodKey(ctx, candidate).equals(key) || overrides(ctx, method, candidate, resourceClass)) {
-                matches.add(candidate);
+            if (methodKey(ctx, candidate).equals(key)) {
+                exact.add(candidate);
+            } else if (ctx.elements().overrides(method, candidate, resourceClass)) {
+                bound.add(candidate);
             }
         }
-        return matches;
-    }
-
-    /**
-     * Returns whether {@code method} overrides or implements {@code candidate} as a member of the
-     * resource class or, failing that, of the class that declares {@code method}.
-     */
-    private static boolean overrides(
-            CodegenContext ctx, ExecutableElement method, ExecutableElement candidate, TypeElement resourceClass) {
-        if (ctx.elements().overrides(method, candidate, resourceClass)) {
-            return true;
-        }
-        return method.getEnclosingElement() instanceof TypeElement owner
-                && !owner.equals(resourceClass)
-                && ctx.elements().overrides(method, candidate, owner);
+        exact.addAll(bound);
+        return exact;
     }
 
     /**

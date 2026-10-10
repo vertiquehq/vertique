@@ -86,7 +86,9 @@ for that match: `delete(String)` of `UserResource implements Crud<String>` inher
 `@Path`, `@RolesAllowed` and the `@PathParam` binding of `Crud<ID>.delete(ID)`, whether or not it
 declares a verb of its own, and so does an override of a generic superclass method. A superclass
 method that such an override inherits from is not routed a second time. The match covers public
-members, as before; a method that declares its own type parameter overrides nothing. What is not
+members, as before. The Java rule decides which methods correspond: a generic method overrides a
+declaration with the same number of type parameters whose bounds erase equally, and a non-generic
+method overrides a generic declaration by erasure. What is not
 resolved is the *type* of a method no class overrides: a non-overridden generic default (or generic
 superclass method) binds a type-variable parameter as its erasure, so a path, query, header, cookie,
 or form parameter typed `ID` fails startup with `UNRESOLVABLE_PARAM_CONVERTER`, and a body or return

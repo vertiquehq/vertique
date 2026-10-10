@@ -82,6 +82,28 @@ class AccessPolicyResolverBindingEquivalenceTest {
         public <X extends String> void delete(X id, int times) {}
     }
 
+    interface GenericMethod<T> {
+        @RequiresPolicy(AdminPolicy.class)
+        <X> void put(T value, X extra);
+    }
+
+    static class ErasureOverride implements GenericMethod<String> {
+        @Override
+        public void put(String value, Object extra) {}
+    }
+
+    interface CharSequenceBound {
+        @RequiresPolicy(AdminPolicy.class)
+        <U extends CharSequence> void take(U value);
+    }
+
+    static class DifferentBounds implements CharSequenceBound {
+        public <T extends Number> void take(T value) {}
+
+        @Override
+        public <U extends CharSequence> void take(U value) {}
+    }
+
     static class Unrelated implements Crud<Integer> {
         @Override
         public void delete(Integer id) {}
@@ -101,7 +123,12 @@ class AccessPolicyResolverBindingEquivalenceTest {
 
     private static void assertAgree(Class<?> consumer, String name, Class<?> parameter, boolean expected)
             throws NoSuchMethodException {
-        Method method = consumer.getDeclaredMethod(name, parameter);
+        assertAgree(consumer, name, new Class<?>[] {parameter}, expected);
+    }
+
+    private static void assertAgree(Class<?> consumer, String name, Class<?>[] parameters, boolean expected)
+            throws NoSuchMethodException {
+        Method method = consumer.getDeclaredMethod(name, parameters);
         assertEquals(expected, reachedByPrimitive(consumer, method), "core primitive for " + consumer.getSimpleName());
         assertEquals(
                 expected,
@@ -132,6 +159,14 @@ class AccessPolicyResolverBindingEquivalenceTest {
     @DisplayName("an inner class's variable bound by its owner type is reached by both")
     void ownerType() throws Exception {
         assertAgree(OwnerBound.class, "take", String.class, true);
+    }
+
+    @Test
+    @DisplayName("a non-generic override of a generic method is reached by erasure, and different bounds are not")
+    void methodTypeParameterRules() throws Exception {
+        assertAgree(ErasureOverride.class, "put", new Class<?>[] {String.class, Object.class}, true);
+        assertAgree(DifferentBounds.class, "take", new Class<?>[] {Number.class}, false);
+        assertAgree(DifferentBounds.class, "take", new Class<?>[] {CharSequence.class}, true);
     }
 
     @Test

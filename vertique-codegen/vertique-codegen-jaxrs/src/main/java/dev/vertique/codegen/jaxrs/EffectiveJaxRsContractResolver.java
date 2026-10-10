@@ -422,17 +422,14 @@ public final class EffectiveJaxRsContractResolver {
      * @return the HTTP verb annotation FQN, or {@code null} for non-endpoint methods
      */
     private String resolveHttpVerb(ExecutableElement method, TypeElement resourceClass) {
-        // Precedence 1: direct verb on the concrete method
+        // The runtime merges the method's own annotations with those of the declarations it
+        // overrides and then picks the verb by a fixed priority over the merged list, so the verb
+        // loop is outermost: a GET on an interface wins over a POST on a superclass declaration.
+        List<ExecutableElement> declarations = new ArrayList<>();
+        declarations.add(method);
+        declarations.addAll(JaxRsHierarchy.inheritedDeclarations(ctx, method, resourceClass, true));
         for (String verb : JaxRsAnnotations.HTTP_VERBS) {
-            if (AnnotationMirrors.isPresent(method, verb)) {
-                return verb;
-            }
-        }
-
-        // Precedence 2: the declarations the method overrides — superclass methods, then the
-        // matching methods of the BFS interfaces — as the runtime annotation merge walks them
-        for (ExecutableElement declaration : JaxRsHierarchy.inheritedDeclarations(ctx, method, resourceClass, true)) {
-            for (String verb : JaxRsAnnotations.HTTP_VERBS) {
+            for (ExecutableElement declaration : declarations) {
                 if (AnnotationMirrors.isPresent(declaration, verb)) {
                     return verb;
                 }
@@ -719,23 +716,21 @@ public final class EffectiveJaxRsContractResolver {
             int paramIndex,
             ExecutableElement method,
             TypeElement resourceClass) {
-        // Classify the concrete param first; if it falls through to BODY and there's an interface
-        // param with annotations, use those
-        JaxRsParamSource direct = JaxRsParamClassifier.classify(concreteParam, ctx.types(), ctx.elements());
-        if (direct != JaxRsParamSource.BODY) {
-            return direct;
-        }
-        // Check if the matching parameter of an overridden declaration would classify differently
+        // The runtime classifies a parameter from the annotations merged over the method and the
+        // declarations it overrides, taking the first source in a fixed priority. The enum is
+        // declared in that priority order (BODY last), so the effective source is the lowest
+        // ordinal among the concrete parameter and the matching parameter of each declaration.
+        JaxRsParamSource effective = JaxRsParamClassifier.classify(concreteParam, ctx.types(), ctx.elements());
         for (ExecutableElement declaration : JaxRsHierarchy.inheritedDeclarations(ctx, method, resourceClass, true)) {
             var declaredParams = declaration.getParameters();
             if (paramIndex >= declaredParams.size()) continue;
             JaxRsParamSource declaredSource =
                     JaxRsParamClassifier.classify(declaredParams.get(paramIndex), ctx.types(), ctx.elements());
-            if (declaredSource != JaxRsParamSource.BODY) {
-                return declaredSource;
+            if (declaredSource.ordinal() < effective.ordinal()) {
+                effective = declaredSource;
             }
         }
-        return JaxRsParamSource.BODY;
+        return effective;
     }
 
     /**

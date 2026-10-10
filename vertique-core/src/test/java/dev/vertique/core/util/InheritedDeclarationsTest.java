@@ -151,6 +151,66 @@ class InheritedDeclarationsTest {
         public void delete(String id, boolean force) {}
     }
 
+    interface MethodGeneric<T> {
+        <X> void put(T value, X extra);
+    }
+
+    static class ErasureOverride implements MethodGeneric<String> {
+        @Override
+        public void put(String value, Object extra) {}
+    }
+
+    interface BoundedMethod<T> {
+        <X extends Number> void put(T value, X extra);
+    }
+
+    static class BoundedErasure implements BoundedMethod<String> {
+        @Override
+        public void put(String value, Number extra) {}
+    }
+
+    interface BoundByClassVariable<T> {
+        <X extends T> void take(X value);
+    }
+
+    static class ByClassVariable implements BoundByClassVariable<String> {
+        @Override
+        public void take(String value) {}
+    }
+
+    static class GenericMethodBase<T> {
+        public <X> void put(T value, X extra) {}
+    }
+
+    static class GenericMethodDerived extends GenericMethodBase<String> {
+        @Override
+        public void put(String value, Object extra) {}
+    }
+
+    interface CharSequenceBound {
+        <U extends CharSequence> void take(U value);
+    }
+
+    static class DifferentBounds implements CharSequenceBound {
+        public <T extends Number> void take(T value) {}
+
+        @Override
+        public <U extends CharSequence> void take(U value) {}
+    }
+
+    interface BothApi<T> {
+        void both(T value);
+    }
+
+    static class BothBase<T> {
+        public void both(T value) {}
+    }
+
+    static class BothImpl extends BothBase<String> implements BothApi<String> {
+        @Override
+        public void both(String value) {}
+    }
+
     // --- Helpers ---
 
     private static Method method(Class<?> type, String name, Class<?>... parameters) throws NoSuchMethodException {
@@ -276,6 +336,41 @@ class InheritedDeclarationsTest {
     }
 
     @Test
+    @DisplayName("a non-generic override of a generic method overrides it by erasure")
+    void nonGenericOverrideOfGenericMethod() throws NoSuchMethodException {
+        Method plain = method(ErasureOverride.class, "put", String.class, Object.class);
+        Method bounded = method(BoundedErasure.class, "put", String.class, Number.class);
+        Method byClass = method(ByClassVariable.class, "take", String.class);
+        Method superclass = method(GenericMethodDerived.class, "put", String.class, Object.class);
+
+        assertEquals(
+                List.of("MethodGeneric.put[Object, Object]"),
+                ownerSignatures(AnnotationResolver.inheritedDeclarations(plain, ErasureOverride.class)));
+        assertEquals(
+                List.of("BoundedMethod.put[Object, Number]"),
+                ownerSignatures(AnnotationResolver.inheritedDeclarations(bounded, BoundedErasure.class)));
+        assertEquals(
+                List.of("BoundByClassVariable.take[Object]"),
+                ownerSignatures(AnnotationResolver.inheritedDeclarations(byClass, ByClassVariable.class)));
+        assertEquals(
+                List.of("GenericMethodBase.put[Object, Object]"),
+                ownerSignatures(AnnotationResolver.inheritedDeclarations(superclass, GenericMethodDerived.class)));
+    }
+
+    @Test
+    @DisplayName("generic methods with different bounds are unrelated overloads")
+    void differentBoundsAreUnrelated() throws NoSuchMethodException {
+        Method number = method(DifferentBounds.class, "take", Number.class);
+        Method charSequence = method(DifferentBounds.class, "take", CharSequence.class);
+
+        assertTrue(AnnotationResolver.inheritedDeclarations(number, DifferentBounds.class)
+                .isEmpty());
+        assertEquals(
+                List.of("CharSequenceBound.take[CharSequence]"),
+                ownerSignatures(AnnotationResolver.inheritedDeclarations(charSequence, DifferentBounds.class)));
+    }
+
+    @Test
     @DisplayName("an interface default overriding a generic default resolves from the declaring interface")
     void defaultOverridingGenericDefault() throws NoSuchMethodException {
         Method override = method(StringDefault.class, "remove", String.class);
@@ -292,6 +387,16 @@ class InheritedDeclarationsTest {
 
         assertTrue(AnnotationResolver.inheritedDeclarations(override, ProtectedDerived.class)
                 .isEmpty());
+    }
+
+    @Test
+    @DisplayName("a declaration on both a superclass and an interface lists the superclass first")
+    void superclassBeforeInterface() throws NoSuchMethodException {
+        Method both = method(BothImpl.class, "both", String.class);
+
+        assertEquals(
+                List.of("BothBase.both[Object]", "BothApi.both[Object]"),
+                ownerSignatures(AnnotationResolver.inheritedDeclarations(both, BothImpl.class)));
     }
 
     @Test

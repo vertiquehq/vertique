@@ -30,6 +30,11 @@ import javax.lang.model.util.Types;
  *   <li>On each level, take declared elements of kind {@link ElementKind#METHOD}.</li>
  *   <li>Deduplicate by {@code name:erasedParam1Type:...} so subclass overrides win (the resource
  *       class is visited first and its version is inserted first into the seen map).</li>
+ *   <li>Drop a superclass-chain method that a method of a more derived class overrides
+ *       ({@link JaxRsHierarchy#inheritedDeclarations}): the override inherits its declarations,
+ *       so keeping both would register the operation twice. A generic override such as
+ *       {@code get(String)} of {@code Base<T>.get(T)} has another erased key than the method it
+ *       overrides, which is why the key dedup alone does not catch it.</li>
  *   <li>Then add every {@code default} method of the transitively implemented interfaces (BFS
  *       order, {@link JaxRsHierarchy#allInterfaces}) that the class inherits: one that no inherited
  *       method of the superclass chain overrides and no method of a more specific interface

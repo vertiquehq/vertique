@@ -57,8 +57,12 @@ final class GenericBindings {
 
     /**
      * Returns whether {@code candidate} declares the signature that {@code method} overrides or
-     * implements once type variables are resolved: the same name and arity, the same number of
-     * method type parameters (mapped by position) and equal erased parameter types.
+     * implements once type variables are resolved (JLS 8.4.2: the same signature, or the erasure
+     * of the declaration's signature): the same name and arity and equal erased parameter types.
+     * A method with type parameters of its own corresponds only to a declaration with the same
+     * number of them, mapped by position, whose bounds erase equally; a method with none
+     * corresponds to a generic declaration by erasure, so a non-generic override of
+     * {@code <X> put(T, X)} is {@code put(String, Object)}.
      *
      * @param method    the method whose declarations are searched
      * @param candidate the possibly overridden declaration
@@ -72,13 +76,17 @@ final class GenericBindings {
         }
         TypeVariable<Method>[] own = method.getTypeParameters();
         TypeVariable<Method>[] other = candidate.getTypeParameters();
-        if (own.length != other.length) {
-            return false;
-        }
         Map<TypeVariable<?>, Type> effective = bindings;
-        if (other.length > 0) {
+        if (own.length > 0) {
+            if (own.length != other.length) {
+                return false;
+            }
             effective = new LinkedHashMap<>(bindings);
-            for (int i = 0; i < other.length; i++) {
+            for (int i = 0; i < own.length; i++) {
+                if (erasure(own[i], bindings, new IdentityHashMap<>())
+                        != erasure(other[i], bindings, new IdentityHashMap<>())) {
+                    return false;
+                }
                 effective.put(other[i], own[i]);
             }
         }

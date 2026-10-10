@@ -480,17 +480,22 @@ public final class AccessPolicyResolver {
             if (generic.length != wanted.length) {
                 return false;
             }
-            // A method type parameter corresponds by position, and only when both methods declare
-            // the same number of them: a method with its own type parameter overrides nothing.
+            // JLS 8.4.2: a method with type parameters of its own overrides only a declaration with
+            // the same number of them, mapped by position, whose bounds erase equally; a method
+            // with none overrides a generic declaration by erasure.
             TypeVariable<Method>[] own = canonical.getTypeParameters();
             TypeVariable<Method>[] other = candidate.getTypeParameters();
-            if (own.length != other.length) {
-                return false;
-            }
             Map<TypeVariable<?>, Type> effective = bindings;
-            if (other.length > 0) {
+            if (own.length > 0) {
+                if (own.length != other.length) {
+                    return false;
+                }
                 effective = new LinkedHashMap<>(bindings);
-                for (int i = 0; i < other.length; i++) {
+                for (int i = 0; i < own.length; i++) {
+                    if (resolveErasure(own[i], bindings, new IdentityHashMap<>())
+                            != resolveErasure(other[i], bindings, new IdentityHashMap<>())) {
+                        return false;
+                    }
                     effective.put(other[i], own[i]);
                 }
             }
