@@ -18,13 +18,19 @@
  * rule is reported as `unclassified`, which fails verification — that is the
  * mechanism preventing a new module from silently bypassing publication.
  *
+ * An attached test artifact (`-tests.jar`, `-test-sources.jar`,
+ * `-test-javadoc.jar`) holds a module's own test fixtures for sibling modules
+ * inside this reactor and is not a published surface. The deploy plan never
+ * selects one, and `--verify-staged` fails on a staged repository containing
+ * one. Fixtures users should have belong in a dedicated `*-test` module.
+ *
  * Usage:
  *   node release/verify-publication.mjs [--root <dir>] [--policy <file>] [--json]
  *
  * Exits 0 when the derived inventory matches the policy, 1 otherwise.
  */
 
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -412,6 +418,18 @@ export function buildDeployPlan(repoRoot, policy, { version, localRepository }) 
   return { units, errors };
 }
 
+/**
+ * Classifier of an attached test artifact (`tests`, `test-sources` or
+ * `test-javadoc`, as a JAR or POM), or undefined for any other file. Matched
+ * case-insensitively on the file-name tail, and before the generic
+ * sources/javadoc/jar rules: a `-test-sources.jar` would otherwise be read as a
+ * main `sources` payload.
+ */
+function attachedTestClassifier(fileName) {
+  const match = /-(tests|test-sources|test-javadoc)\.(?:jar|pom)$/i.exec(fileName);
+  return match ? match[1].toLowerCase() : undefined;
+}
+
 /** Recursively lists files beneath `dir`. */
 function listFiles(dir, acc = []) {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -466,6 +484,20 @@ export function verifyStagedRepository(stagedDir, { repoRoot, policy, version, m
       errors.push(`non-allowlisted payload staged: ${key}:${ver} (${fileName})`);
       continue;
     }
+
+    // An attached test artifact is not a published surface. Checked before the
+    // version and generic classification so it is always reported by name and
+    // can never count towards a module's required sources or jar payload.
+    const testClassifier = attachedTestClassifier(fileName);
+    if (testClassifier) {
+      errors.push(
+        `${key}: attached test artifact staged: ${fileName} (classifier "${testClassifier}"). ` +
+          `Test JARs are not a published surface and are never deployed; do not attach one to ` +
+          `the publication set. Fixtures users should have belong in a dedicated *-test module.`
+      );
+      continue;
+    }
+
     if (ver !== version) {
       errors.push(`${key}: staged version ${ver} does not match requested ${version}`);
       continue;
@@ -554,7 +586,26 @@ function parseArgs(argv) {
   return args;
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url))) {
+/**
+ * True when this module is the process entry point.
+ *
+ * `import.meta.url` is already symlink-resolved while `process.argv[1]` is the
+ * path as invoked, so comparing them unresolved makes the CLI silently not run
+ * — exit 0, no output — when the script is reached through a symlinked path
+ * (a macOS temp directory, or a linked checkout). That would fail this release
+ * gate open, so both sides are resolved to their real paths first.
+ */
+function isEntryPoint() {
+  if (!process.argv[1]) return false;
+  const self = fileURLToPath(import.meta.url);
+  try {
+    return realpathSync(process.argv[1]) === realpathSync(self);
+  } catch {
+    return path.resolve(process.argv[1]) === path.resolve(self);
+  }
+}
+
+if (isEntryPoint()) {
   try {
     const args = parseArgs(process.argv.slice(2));
     const repoRoot = path.resolve(args.root ?? path.join(path.dirname(fileURLToPath(import.meta.url)), '..'));

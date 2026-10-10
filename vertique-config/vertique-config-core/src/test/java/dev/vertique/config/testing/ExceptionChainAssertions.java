@@ -6,8 +6,8 @@ package dev.vertique.config.testing;
 /**
  * Assertion helpers for walking exception cause chains in tests.
  *
- * <p>Published via the {@code vertique-config} test-jar so all config-module tests can share them
- * without copying.
+ * <p>Shared in-reactor through the {@code vertique-config-core} test-jar so all config-module tests
+ * can use them without copying. The test-jar is not a published artifact.
  */
 public final class ExceptionChainAssertions {
 

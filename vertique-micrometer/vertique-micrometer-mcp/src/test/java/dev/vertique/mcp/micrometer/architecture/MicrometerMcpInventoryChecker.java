@@ -25,11 +25,10 @@ import java.util.stream.Stream;
 /**
  * Module-local public-surface reflection helper for {@link MicrometerMcpInventoryGuardTest}.
  *
- * <p>This checker is deliberately duplicated per guarded module rather than shared (T006's frozen
- * decision): no single artifact is on every guarded module's test classpath, and a cross-repository
- * test-jar would be a published-artifact change MCP-001 has no mandate to make. All module-specific
- * knowledge lives in the module's own inventory resource, so the duplication carries no design
- * decision.
+ * <p>This checker is deliberately duplicated per guarded module rather than shared: no single
+ * artifact is on every guarded module's test classpath, and sharing it through an attached test-jar
+ * would couple every guarded module to one module's test fixtures. All module-specific knowledge
+ * lives in the module's own inventory resource, so the duplication carries no design decision.
  *
  * <p>It scans only {@code vertique-micrometer-mcp}'s own compiled output, compares at full generic signature rather
  * than erased descriptor, and records hand-authored public surface only.
