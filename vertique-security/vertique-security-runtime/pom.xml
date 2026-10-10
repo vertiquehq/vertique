@@ -38,6 +38,10 @@ SPDX-License-Identifier: EUPL-1.2
             <artifactId>vertique-config-core</artifactId>
         </dependency>
         <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-resilience</artifactId>
+        </dependency>
+        <dependency>
             <groupId>io.vertx</groupId>
             <artifactId>vertx-core</artifactId>
         </dependency>

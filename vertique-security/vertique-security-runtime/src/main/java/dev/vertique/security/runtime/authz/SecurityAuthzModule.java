@@ -8,6 +8,8 @@ import dagger.Module;
 import dagger.Provides;
 import dagger.multibindings.IntoSet;
 import dagger.multibindings.Multibinds;
+import dev.vertique.resilience.Resilience;
+import dev.vertique.resilience.dagger.ResilienceModule;
 import dev.vertique.security.authz.ActionContributor;
 import dev.vertique.security.authz.ActionRegistry;
 import dev.vertique.security.authz.AuthorizationIntrospector;
@@ -17,7 +19,6 @@ import dev.vertique.security.authz.PolicyDefinition;
 import dev.vertique.security.authz.PolicyDefinitionSource;
 import dev.vertique.security.authz.PrincipalAuthorityResolver;
 import dev.vertique.security.authz.RolePolicyResolver;
-import io.vertx.core.Vertx;
 import jakarta.inject.Singleton;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -58,7 +59,7 @@ import java.util.stream.Collectors;
  *       wrapping the narrowing-decorated {@link Authorizer} with {@link ReconstructedAuthorityResolvingAuthorizer}
  *       — the opt-in Mode-2 live re-resolution of a reconstructed context's current authority (PRD
  *       identity-002 §14.3 Phase-2 Appendix). With no resolver bound, the exposed {@link Authorizer} is
- *       unchanged from Phase 1, and {@link Vertx} / {@link PrincipalAuthorityResolutionConfig} are
+ *       unchanged from Phase 1, and {@link Resilience} / {@link PrincipalAuthorityResolutionConfig} are
  *       resolved but never used.</li>
  *   <li>Declares an optional {@link PrincipalAuthorityResolutionConfig} binding ({@link BindsOptionalOf},
  *       defaulting to {@link PrincipalAuthorityResolutionConfig#defaults()} when absent) for the Mode-2
@@ -84,7 +85,7 @@ import java.util.stream.Collectors;
  * <p>Include this module in any Dagger {@code @Component} that wires the authorization engine.
  * Applications that use {@code JwtAuthModule} must also include this module explicitly.
  */
-@Module
+@Module(includes = ResilienceModule.class)
 public abstract class SecurityAuthzModule {
 
     // --- multibinding declarations ---
@@ -266,7 +267,7 @@ public abstract class SecurityAuthzModule {
      * Phase-2 Appendix). With an empty narrower set and no resolver bound, the exposed binding is
      * behavior-identical to the base {@link DefaultAuthorizer} — reconstructed contexts stay
      * {@link dev.vertique.security.authz.ReconstructedAuthorityMode#ATTRIBUTION_ONLY} (Phase-1
-     * behavior, byte-identical), and {@code vertx}/{@code resolutionConfig} are resolved but unused.
+     * behavior, byte-identical), and {@code resilience}/{@code resolutionConfig} are resolved but unused.
      *
      * @param registry        the authoritative action registry; must not be {@code null}
      * @param resolution      the shared, validated resolution core; must not be {@code null}
@@ -276,8 +277,8 @@ public abstract class SecurityAuthzModule {
      *                        stays inactive
      * @param resolutionConfig the optional Mode-2 resolution-timeout configuration; empty defaults
      *                         to {@link PrincipalAuthorityResolutionConfig#defaults()}
-     * @param vertx           the {@link Vertx} instance used to bound every wrapped resolver call
-     *                        with a timeout; must not be {@code null}
+     * @param resilience      the application's resilience runtime, which bounds every wrapped resolver
+     *                        call with a timeout; must not be {@code null}
      * @return the fully-decorated {@link Authorizer}; never {@code null}
      */
     @Provides
@@ -288,14 +289,15 @@ public abstract class SecurityAuthzModule {
             Set<AuthorizationNarrower> narrowers,
             Optional<PrincipalAuthorityResolver> resolver,
             Optional<PrincipalAuthorityResolutionConfig> resolutionConfig,
-            Vertx vertx) {
+            Resilience resilience) {
         Authorizer base = new DefaultAuthorizer(registry, resolution);
         Authorizer narrowing = new NarrowingAuthorizer(base, narrowers);
         return resolver.<Authorizer>map(r -> {
                     long timeoutMs = resolutionConfig
                             .orElseGet(PrincipalAuthorityResolutionConfig::defaults)
                             .resolutionTimeoutMs();
-                    PrincipalAuthorityResolver bounded = new TimeoutPrincipalAuthorityResolver(r, vertx, timeoutMs);
+                    PrincipalAuthorityResolver bounded =
+                            new TimeoutPrincipalAuthorityResolver(r, resilience, timeoutMs);
                     return new ReconstructedAuthorityResolvingAuthorizer(narrowing, bounded);
                 })
                 .orElse(narrowing);

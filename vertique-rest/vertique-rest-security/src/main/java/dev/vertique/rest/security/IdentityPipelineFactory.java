@@ -4,6 +4,7 @@
 package dev.vertique.rest.security;
 
 import dev.vertique.core.context.ContextHolder;
+import dev.vertique.resilience.Resilience;
 import dev.vertique.rest.core.security.SecurityRuntime;
 import dev.vertique.security.authz.AuthorizationPolicy;
 import dev.vertique.security.authz.Authorizer;
@@ -55,6 +56,7 @@ public final class IdentityPipelineFactory {
     private final Set<AuthorizationProvider> authorizationProviders;
     private final Optional<Authorizer> authorizer;
     private final Optional<AuthorizationGateConfig> authorizationGateConfig;
+    private final Resilience resilience;
 
     /**
      * The assembled middlewares, keyed by whether the bound {@link IdentitySnapshotCapture} is wired
@@ -101,6 +103,8 @@ public final class IdentityPipelineFactory {
      *                                    {@code null} as an {@link Optional}
      * @param authorizationGateConfig     the optional operator-configured gate deadline; must not be
      *                                    {@code null} as an {@link Optional}
+     * @param resilience                  the application's resilience runtime, which bounds the
+     *                                    authorization gates; must not be {@code null}
      */
     public IdentityPipelineFactory(
             Set<SecurityIdentityResolver> identityResolvers,
@@ -114,7 +118,8 @@ public final class IdentityPipelineFactory {
             Optional<AuthorizationPolicy> authorizationPolicy,
             Set<AuthorizationProvider> authorizationProviders,
             Optional<Authorizer> authorizer,
-            Optional<AuthorizationGateConfig> authorizationGateConfig) {
+            Optional<AuthorizationGateConfig> authorizationGateConfig,
+            Resilience resilience) {
         this.identityResolvers = Objects.requireNonNull(identityResolvers, "identityResolvers");
         this.claimMapper = Objects.requireNonNull(claimMapper, "claimMapper");
         this.emitter = Objects.requireNonNull(emitter, "emitter");
@@ -128,6 +133,7 @@ public final class IdentityPipelineFactory {
         this.authorizationProviders = Objects.requireNonNull(authorizationProviders, "authorizationProviders");
         this.authorizer = Objects.requireNonNull(authorizer, "authorizer");
         this.authorizationGateConfig = Objects.requireNonNull(authorizationGateConfig, "authorizationGateConfig");
+        this.resilience = Objects.requireNonNull(resilience, "resilience");
     }
 
     // --- Accessors ---
@@ -202,7 +208,8 @@ public final class IdentityPipelineFactory {
                         contextHolder,
                         securityRuntime,
                         authorizer,
-                        authorizationGateConfig);
+                        authorizationGateConfig,
+                        resilience);
             }
             return policyEnforcer;
         }

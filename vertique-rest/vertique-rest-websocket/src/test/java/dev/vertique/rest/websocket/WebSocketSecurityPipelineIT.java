@@ -14,8 +14,10 @@ import dev.vertique.core.context.DispatchBoundary;
 import dev.vertique.core.correlation.CorrelationContext;
 import dev.vertique.core.correlation.CorrelationIdentifier;
 import dev.vertique.correlation.CorrelationContextFactory;
+import dev.vertique.resilience.Resilience;
 import dev.vertique.rest.core.middleware.RequestContextLifecycle;
 import dev.vertique.rest.core.security.RouteAuthHandler;
+import dev.vertique.rest.security.AuthorizationImportConfig;
 import dev.vertique.rest.security.DefaultChannelIdentityManager;
 import dev.vertique.rest.security.DefaultSecurityClaimMapper;
 import dev.vertique.rest.security.HolderBackedSecurityRuntime;
@@ -232,7 +234,8 @@ public class WebSocketSecurityPipelineIT {
                 emitter,
                 contextHolder,
                 securityRuntime,
-                Optional.empty());
+                Optional.empty(),
+                Resilience.create(vertx));
 
         // --- RouteAuthHandler: stub JWT-style auth ---
         RouteAuthHandler stubAuth = new StubBearerAuthHandler();
@@ -493,7 +496,9 @@ public class WebSocketSecurityPipelineIT {
     @DisplayName("provider-granted role authorizes a constrained WS endpoint via the import-aware factory")
     void providerGrantedRoleAuthorizesConstrainedWebSocketEndpoint(Vertx vertx, VertxTestContext ctx) {
         WebSocketMount.Factory factory = importAwareFactory(Optional.of(new VertxAuthorizationImporter(
-                Set.of(grantingProvider("teams", RoleBasedAuthorization.create("team-lead"))))));
+                Set.of(grantingProvider("teams", RoleBasedAuthorization.create("team-lead"))),
+                TestResilience.shared(),
+                AuthorizationImportConfig.defaults())));
 
         startTeamServer(vertx, factory)
                 .onComplete(ctx.succeeding(srv -> connectWithToken(srv.actualPort(), "/ws/team", TOKEN_ALICE_VIEWER)
@@ -647,7 +652,8 @@ public class WebSocketSecurityPipelineIT {
                 Optional.empty(),
                 Set.of(),
                 Optional.empty(),
-                Optional.empty());
+                Optional.empty(),
+                TestResilience.shared());
 
         return new WebSocketMount.Factory(
                 new WebSocketMessageCodec(),
@@ -684,7 +690,8 @@ public class WebSocketSecurityPipelineIT {
                 Optional.empty(),
                 providers,
                 Optional.empty(),
-                Optional.empty());
+                Optional.empty(),
+                TestResilience.shared());
 
         return new WebSocketMount.Factory(
                 new WebSocketMessageCodec(),
@@ -761,7 +768,8 @@ public class WebSocketSecurityPipelineIT {
                 Optional.empty(),
                 Set.of(),
                 Optional.empty(),
-                Optional.empty());
+                Optional.empty(),
+                TestResilience.shared());
 
         WebSocketMount.Factory mountFactory = new WebSocketMount.Factory(
                 new WebSocketMessageCodec(),

@@ -44,6 +44,10 @@ final class TypedDocumentExpectations {
     static final JsonObject PROBLEM_403 =
             new JsonObject("{\"type\":\"about:blank\",\"title\":\"Forbidden\",\"status\":403}");
 
+    /** The body of a request failed closed because authorization could not decide. */
+    static final JsonObject PROBLEM_503 =
+            new JsonObject("{\"type\":\"about:blank\",\"title\":\"Service Unavailable\",\"status\":503}");
+
     /** The caller who sends no credential. */
     static final String ANONYMOUS = "anonymous";
 
@@ -73,6 +77,8 @@ final class TypedDocumentExpectations {
         UNAUTHORIZED,
         /** The caller is refused as authenticated but not permitted. */
         FORBIDDEN,
+        /** Authorization could not decide, so the request fails closed as unavailable. */
+        UNAVAILABLE,
         /** The document names no scheme, so the caller's credential is neither read nor asserted. */
         NOT_ASSERTED
     }
@@ -303,11 +309,16 @@ final class TypedDocumentExpectations {
      * @param reply   the response
      */
     static void assertDenied(String row, Outcome outcome, HttpMethod method, Reply reply) {
-        int status = outcome == Outcome.UNAUTHORIZED ? 401 : 403;
+        int status = outcome == Outcome.UNAUTHORIZED ? 401 : outcome == Outcome.UNAVAILABLE ? 503 : 403;
         assertEquals(status, reply.status(), row + ": status");
         assertNoDocumentContent(row, reply);
         if (method == HttpMethod.GET) {
-            assertEquals(outcome == Outcome.UNAUTHORIZED ? PROBLEM_401 : PROBLEM_403, json(reply), row + ": problem");
+            assertEquals(
+                    outcome == Outcome.UNAUTHORIZED
+                            ? PROBLEM_401
+                            : outcome == Outcome.UNAVAILABLE ? PROBLEM_503 : PROBLEM_403,
+                    json(reply),
+                    row + ": problem");
             assertEquals("no-store", reply.header("Cache-Control"), row + ": Cache-Control");
             assertEquals(List.of(), reply.headers().getAll("Vary"), row + ": no Vary");
         } else {

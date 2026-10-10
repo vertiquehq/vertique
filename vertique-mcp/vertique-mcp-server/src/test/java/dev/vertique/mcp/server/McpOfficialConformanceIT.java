@@ -22,6 +22,7 @@ import dev.vertique.mcp.tool.McpToolAnnotations;
 import dev.vertique.mcp.tool.McpToolDescriptor;
 import dev.vertique.mcp.tool.McpToolInvoker;
 import dev.vertique.mcp.tool.McpToolResult;
+import dev.vertique.resilience.Resilience;
 import dev.vertique.rest.core.config.HttpConfig;
 import dev.vertique.rest.core.middleware.RequestContextLifecycle;
 import dev.vertique.rest.core.security.SecurityRuntime;
@@ -458,7 +459,8 @@ public class McpOfficialConformanceIT {
                         new SecurityEventEmitter(Set.of()),
                         NO_OP_CONTEXT_HOLDER,
                         securityRuntime,
-                        Optional.empty()));
+                        Optional.empty(),
+                        Resilience.create(vertx)));
                 HttpConfig httpConfig =
                         HttpConfig.builder().idleTimeoutSeconds(60).build();
                 List<McpRequestTerminalEvent> events = new CopyOnWriteArrayList<>();

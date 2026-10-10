@@ -8,6 +8,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import dev.vertique.core.context.ContextHolder;
 import dev.vertique.core.context.ContextValue;
 import dev.vertique.core.context.DispatchBoundary;
+import dev.vertique.resilience.Resilience;
 import dev.vertique.rest.core.security.SecurityPolicy;
 import dev.vertique.rest.core.security.SecurityRuntime;
 import dev.vertique.security.AuthenticationState;
@@ -89,7 +90,8 @@ class SecurityPolicyEnforcerGateTimeoutContextTest {
                 NO_OP_CONTEXT_HOLDER,
                 NO_OP_SECURITY_RUNTIME,
                 Optional.empty(),
-                Optional.of(new AuthorizationGateConfig(TEST_GATE_DEADLINE_MS)));
+                Optional.of(new AuthorizationGateConfig(TEST_GATE_DEADLINE_MS)),
+                Resilience.create(vertx));
         SecurityPolicy.Constrained policy = new SecurityPolicy.Constrained(List.of("ops"), List.of(), false);
 
         Context requestContext = vertx.getOrCreateContext();

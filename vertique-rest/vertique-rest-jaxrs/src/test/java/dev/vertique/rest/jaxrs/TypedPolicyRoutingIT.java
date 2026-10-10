@@ -10,6 +10,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.core.context.ContextHolder;
 import dev.vertique.core.context.ContextValue;
+import dev.vertique.resilience.Resilience;
 import dev.vertique.rest.core.middleware.RequestContextLifecycle;
 import dev.vertique.rest.core.security.AuthEnforcementCapability;
 import dev.vertique.rest.core.security.SecurityPolicy;
@@ -187,7 +188,8 @@ class TypedPolicyRoutingIT {
                 new SecurityEventEmitter(Set.of()),
                 restOrigin(),
                 securityRuntime,
-                Optional.of(authorizer));
+                Optional.of(authorizer),
+                Resilience.create(vertx));
         JaxRsRouterMount.Factory factory = TestFactories.builder()
                 .authEnforcementCapability(Optional.of(AuthEnforcementCapability.INSTANCE))
                 .operationHandlerContributors(Set.of(new AuthorizationContributor(enforcer)))
@@ -328,7 +330,8 @@ class TypedPolicyRoutingIT {
                 new SecurityEventEmitter(Set.of()),
                 restOrigin(),
                 securityRuntime,
-                Optional.empty());
+                Optional.empty(),
+                Resilience.create(vertx));
         JaxRsRouterMount.Factory factory = TestFactories.builder()
                 .authEnforcementCapability(Optional.of(AuthEnforcementCapability.INSTANCE))
                 .operationHandlerContributors(Set.of(new AuthorizationContributor(enforcer)))

@@ -1094,7 +1094,9 @@ authorization event. Examination for one page stops at the first of:
 A page may therefore be underfilled or empty and still carry a `nextCursor` while candidates remain.
 Only an ordinary authorization deny is filtered: a hidden `@DenyAll` or role-mismatched candidate
 never appears, and the scan continues. A deny whose reason code is
-`AuthzReasonCodes.INTERNAL_AUTHZ_ERROR` instead means authorization infrastructure could not decide;
+`AuthzReasonCodes.INTERNAL_AUTHZ_ERROR` or `AuthzReasonCodes.AUTHORITY_RESOLUTION_FAILED` (a Mode-2
+principal-authority resolution that failed or timed out) instead means authorization infrastructure
+could not decide;
 the entire request fails with HTTP 500 and the bounded JSON-RPC `-32603` internal error. It returns
 no partial tools, cache hint, or cursor, and records the terminal lifecycle outcome as
 `McpErrorType.AUTHORIZATION`.

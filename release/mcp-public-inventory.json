@@ -509,6 +509,16 @@
           "public static final long dev.vertique.rest.security.AuthorizationGateConfig.DEFAULT_GATE_DEADLINE_MS"
         ],
         "dev.vertique.rest.security.AuthorizationGateConfigModule": [],
+        "dev.vertique.rest.security.AuthorizationImportConfig": [
+          "public dev.vertique.rest.security.AuthorizationImportConfig(long)",
+          "public final boolean dev.vertique.rest.security.AuthorizationImportConfig.equals(java.lang.Object)",
+          "public final int dev.vertique.rest.security.AuthorizationImportConfig.hashCode()",
+          "public final java.lang.String dev.vertique.rest.security.AuthorizationImportConfig.toString()",
+          "public long dev.vertique.rest.security.AuthorizationImportConfig.importTimeoutMs()",
+          "public static dev.vertique.rest.security.AuthorizationImportConfig dev.vertique.rest.security.AuthorizationImportConfig.defaults()",
+          "public static final long dev.vertique.rest.security.AuthorizationImportConfig.DEFAULT_IMPORT_TIMEOUT_MS"
+        ],
+        "dev.vertique.rest.security.AuthorizationImportConfigModule": [],
         "dev.vertique.rest.security.AuthorizationContributor": [
           "public dev.vertique.rest.security.AuthorizationContributor(dev.vertique.rest.security.SecurityPolicyEnforcer)",
           "public int dev.vertique.rest.security.AuthorizationContributor.priority()",
@@ -553,7 +563,7 @@
         ],
         "dev.vertique.rest.security.IdentityPipelineFactory": [
           "public dev.vertique.rest.core.security.SecurityRuntime dev.vertique.rest.security.IdentityPipelineFactory.securityRuntime()",
-          "public dev.vertique.rest.security.IdentityPipelineFactory(java.util.Set<dev.vertique.security.resolver.SecurityIdentityResolver>,java.util.Optional<dev.vertique.rest.security.SecurityClaimMapper>,dev.vertique.security.runtime.events.SecurityEventEmitter,dev.vertique.rest.core.security.SecurityRuntime,dev.vertique.core.context.ContextHolder,java.util.Optional<dev.vertique.security.runtime.IdentitySnapshotCapture>,java.util.Optional<dev.vertique.rest.security.VertxAuthorizationImporter>,java.util.Optional<dev.vertique.rest.security.AuthorizationDecisionPoint>,java.util.Optional<dev.vertique.security.authz.AuthorizationPolicy>,java.util.Set<io.vertx.ext.auth.authorization.AuthorizationProvider>,java.util.Optional<dev.vertique.security.authz.Authorizer>,java.util.Optional<dev.vertique.rest.security.AuthorizationGateConfig>)",
+          "public dev.vertique.rest.security.IdentityPipelineFactory(java.util.Set<dev.vertique.security.resolver.SecurityIdentityResolver>,java.util.Optional<dev.vertique.rest.security.SecurityClaimMapper>,dev.vertique.security.runtime.events.SecurityEventEmitter,dev.vertique.rest.core.security.SecurityRuntime,dev.vertique.core.context.ContextHolder,java.util.Optional<dev.vertique.security.runtime.IdentitySnapshotCapture>,java.util.Optional<dev.vertique.rest.security.VertxAuthorizationImporter>,java.util.Optional<dev.vertique.rest.security.AuthorizationDecisionPoint>,java.util.Optional<dev.vertique.security.authz.AuthorizationPolicy>,java.util.Set<io.vertx.ext.auth.authorization.AuthorizationProvider>,java.util.Optional<dev.vertique.security.authz.Authorizer>,java.util.Optional<dev.vertique.rest.security.AuthorizationGateConfig>,dev.vertique.resilience.Resilience)",
           "public dev.vertique.rest.security.IdentityResolutionMiddleware dev.vertique.rest.security.IdentityPipelineFactory.restIdentityResolution()",
           "public dev.vertique.rest.security.SecurityPolicyEnforcer dev.vertique.rest.security.IdentityPipelineFactory.policyEnforcer()",
           "public io.vertx.core.Handler<io.vertx.ext.web.RoutingContext> dev.vertique.rest.security.IdentityPipelineFactory.identityResolutionHandler(dev.vertique.rest.security.IdentityPipelineOptions)"
@@ -632,8 +642,8 @@
           "public dev.vertique.rest.security.SecurityModule()"
         ],
         "dev.vertique.rest.security.SecurityPolicyEnforcer": [
-          "public dev.vertique.rest.security.SecurityPolicyEnforcer(java.util.Optional<dev.vertique.rest.security.AuthorizationDecisionPoint>,java.util.Optional<dev.vertique.security.authz.AuthorizationPolicy>,java.util.Set<io.vertx.ext.auth.authorization.AuthorizationProvider>,dev.vertique.security.runtime.events.SecurityEventEmitter,dev.vertique.core.context.ContextHolder,dev.vertique.rest.core.security.SecurityRuntime,java.util.Optional<dev.vertique.security.authz.Authorizer>)",
-          "public dev.vertique.rest.security.SecurityPolicyEnforcer(java.util.Optional<dev.vertique.rest.security.AuthorizationDecisionPoint>,java.util.Optional<dev.vertique.security.authz.AuthorizationPolicy>,java.util.Set<io.vertx.ext.auth.authorization.AuthorizationProvider>,dev.vertique.security.runtime.events.SecurityEventEmitter,dev.vertique.core.context.ContextHolder,dev.vertique.rest.core.security.SecurityRuntime,java.util.Optional<dev.vertique.security.authz.Authorizer>,java.util.Optional<dev.vertique.rest.security.AuthorizationGateConfig>)",
+          "public dev.vertique.rest.security.SecurityPolicyEnforcer(java.util.Optional<dev.vertique.rest.security.AuthorizationDecisionPoint>,java.util.Optional<dev.vertique.security.authz.AuthorizationPolicy>,java.util.Set<io.vertx.ext.auth.authorization.AuthorizationProvider>,dev.vertique.security.runtime.events.SecurityEventEmitter,dev.vertique.core.context.ContextHolder,dev.vertique.rest.core.security.SecurityRuntime,java.util.Optional<dev.vertique.security.authz.Authorizer>,dev.vertique.resilience.Resilience)",
+          "public dev.vertique.rest.security.SecurityPolicyEnforcer(java.util.Optional<dev.vertique.rest.security.AuthorizationDecisionPoint>,java.util.Optional<dev.vertique.security.authz.AuthorizationPolicy>,java.util.Set<io.vertx.ext.auth.authorization.AuthorizationProvider>,dev.vertique.security.runtime.events.SecurityEventEmitter,dev.vertique.core.context.ContextHolder,dev.vertique.rest.core.security.SecurityRuntime,java.util.Optional<dev.vertique.security.authz.Authorizer>,java.util.Optional<dev.vertique.rest.security.AuthorizationGateConfig>,dev.vertique.resilience.Resilience)",
           "public io.vertx.core.Future<dev.vertique.security.authz.AuthorizationDecision> dev.vertique.rest.security.SecurityPolicyEnforcer.decide(dev.vertique.security.SecurityContext,dev.vertique.rest.core.security.SecurityPolicy,java.util.Optional<dev.vertique.security.authz.ActionRef>,dev.vertique.security.authz.ResourceRef,dev.vertique.security.authz.InvocationOrigin)",
           "public io.vertx.core.Handler<io.vertx.ext.web.RoutingContext> dev.vertique.rest.security.SecurityPolicyEnforcer.createHandler(dev.vertique.rest.core.security.SecurityPolicy$Constrained,java.lang.String)",
           "public io.vertx.core.Handler<io.vertx.ext.web.RoutingContext> dev.vertique.rest.security.SecurityPolicyEnforcer.createHandler(dev.vertique.rest.core.security.SecurityPolicy)",
@@ -647,7 +657,7 @@
           "public dev.vertique.rest.security.VertxAuthorizationImportModule()"
         ],
         "dev.vertique.rest.security.VertxAuthorizationImporter": [
-          "public dev.vertique.rest.security.VertxAuthorizationImporter(java.util.Set<io.vertx.ext.auth.authorization.AuthorizationProvider>)",
+          "public dev.vertique.rest.security.VertxAuthorizationImporter(java.util.Set<io.vertx.ext.auth.authorization.AuthorizationProvider>,dev.vertique.resilience.Resilience,dev.vertique.rest.security.AuthorizationImportConfig)",
           "public io.vertx.core.Future<dev.vertique.security.authz.AuthorizationClaims> dev.vertique.rest.security.VertxAuthorizationImporter.importInto(io.vertx.ext.auth.User,dev.vertique.security.authz.AuthorizationClaims)"
         ],
         "dev.vertique.rest.security.VertxProviderDecisionPoint": [

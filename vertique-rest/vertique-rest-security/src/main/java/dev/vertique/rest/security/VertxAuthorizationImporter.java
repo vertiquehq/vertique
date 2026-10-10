@@ -6,6 +6,13 @@ package dev.vertique.rest.security;
 import dev.vertique.context.WarningThrottle;
 import dev.vertique.core.async.Combinators;
 import dev.vertique.core.exception.UnavailableException;
+import dev.vertique.resilience.Resilience;
+import dev.vertique.resilience.ResiliencePipeline;
+import dev.vertique.resilience.ResolvedResiliencePolicy;
+import dev.vertique.resilience.TimeoutConfig;
+import dev.vertique.resilience.adapter.AdapterOperationIdentity;
+import dev.vertique.resilience.exception.ResilienceClosedException;
+import dev.vertique.resilience.exception.ResilienceTimeoutException;
 import dev.vertique.security.authz.AuthorityClaim;
 import dev.vertique.security.authz.AuthorityKind;
 import dev.vertique.security.authz.AuthorizationClaims;
@@ -53,9 +60,14 @@ import lombok.extern.slf4j.Slf4j;
  *       caller's {@link User#authorizations() authorizations} are neither read nor written. This is
  *       deliberate: Vert.x does not guarantee that {@link User#create(JsonObject, JsonObject)}
  *       defensively copies its arguments, so the copy is made here.</li>
- *   <li><strong>No importer-level timeout (v1).</strong> Providers must not block the event loop
- *       and own their own timeouts. A provider whose future never completes stalls that request's
- *       authorization indefinitely — the importer adds no watchdog.</li>
+ *   <li><strong>Bounded invocation.</strong> Providers must not block the event loop. A provider
+ *       whose future has not completed within {@link AuthorizationImportConfig#importTimeoutMs()} is
+ *       treated as failed, through the application's resilience runtime, exactly like any other
+ *       provider failure (see <em>All-or-nothing publication</em>); a future that is already complete
+ *       when the provider returns it is not timed. The bound applies to each provider separately, so
+ *       an import across {@code N} providers can wait up to {@code N × importTimeoutMs}. The timeout
+ *       does not cancel the provider's own work; a provider that later completes may still write to
+ *       the request-local user, which the failed import never reads again.</li>
  *   <li><strong>All-or-nothing publication.</strong> Claims are derived and merged only after
  *       <em>every</em> provider has succeeded. Any provider failure — a failed future or a
  *       synchronous throw — short-circuits the chain and fails the whole import with
@@ -63,7 +75,9 @@ import lombok.extern.slf4j.Slf4j;
  *       client-safe {@value #UNAVAILABLE_MESSAGE} and deliberately does <em>not</em> name the
  *       offending provider — that message is what reaches the caller as the 503 problem detail. The
  *       provider id is recorded server-side instead, in exactly one ERROR log event per failed
- *       import. No partially imported claim is ever observable.</li>
+ *       import. The one exception is an import failed only because the application's resilience
+ *       runtime had already closed at shutdown: no provider misbehaved, so it is logged at INFO.
+ *       No partially imported claim is ever observable.</li>
  *   <li><strong>Fail-closed mapping.</strong> Only resource-free {@link RoleBasedAuthorization} and
  *       {@link PermissionBasedAuthorization} grants with a non-blank value map to an
  *       {@link AuthorityClaim}. Everything else — wildcard permissions, {@code And}/{@code Or}/
@@ -79,7 +93,7 @@ import lombok.extern.slf4j.Slf4j;
  *       bucket, and a claim's {@code source} reflects the bucket it was read from, not necessarily
  *       the provider that wrote it.</li>
  *   <li><strong>Excluded providers.</strong> Providers whose id is excluded are neither invoked nor
- *       read. The safe single-argument constructor always excludes
+ *       read. The safe constructor always excludes
  *       {@value #EXCLUDED_JWT_CLAIMS_PROVIDER_ID}, whose bucket is a lossy re-projection of JWT
  *       claims already handled by the identity pipeline. When no provider remains after exclusion,
  *       the base claims instance is returned unchanged on an already-completed future — no async
@@ -120,19 +134,30 @@ public final class VertxAuthorizationImporter {
     /** Once-per-{@code (provider, authorization type)} WARN throttle for dropped authorizations. */
     private final WarningThrottle dropWarnings = new WarningThrottle();
 
+    /** Resilience identity of the provider-invocation fence. */
+    private static final AdapterOperationIdentity PROVIDER_INVOCATION =
+            new AdapterOperationIdentity("security.authz", List.of("import", "provider"));
+
+    /** Bounds each provider invocation; a provider future that is already complete is not fenced. */
+    private final ResiliencePipeline providerFence;
+
     // --- Construction ---
 
     /**
      * Creates an importer over the given providers with the default exclusion set — the safe
      * constructor, which always excludes {@value #EXCLUDED_JWT_CLAIMS_PROVIDER_ID}.
      *
-     * @param providers the registered Vert.x authorization providers; must not be {@code null} and
-     *                  must not contain {@code null} elements
+     * @param providers  the registered Vert.x authorization providers; must not be {@code null} and
+     *                   must not contain {@code null} elements
+     * @param resilience the application's resilience runtime, which bounds each provider invocation;
+     *                   must not be {@code null}
+     * @param config     the provider-invocation deadline; must not be {@code null}
      * @throws IllegalStateException if any provider exposes a {@code null} or blank id, or if two
      *                               providers share the same id
      */
-    public VertxAuthorizationImporter(Set<AuthorizationProvider> providers) {
-        this(providers, Set.of(EXCLUDED_JWT_CLAIMS_PROVIDER_ID));
+    public VertxAuthorizationImporter(
+            Set<AuthorizationProvider> providers, Resilience resilience, AuthorizationImportConfig config) {
+        this(providers, Set.of(EXCLUDED_JWT_CLAIMS_PROVIDER_ID), resilience, config);
     }
 
     /**
@@ -147,13 +172,30 @@ public final class VertxAuthorizationImporter {
      *                           {@code null} and must not contain {@code null} elements
      * @param excludedProviderIds ids of providers that must be neither invoked nor read; must not be
      *                           {@code null}
+     * @param resilience         the application's resilience runtime; must not be {@code null}
+     * @param config             the provider-invocation deadline; must not be {@code null}
      * @throws IllegalStateException if any provider exposes a {@code null} or blank id (the message
      *                               names the offending provider class), or if two providers share
      *                               the same id (the message names both provider classes)
      */
-    VertxAuthorizationImporter(Set<AuthorizationProvider> providers, Set<String> excludedProviderIds) {
+    VertxAuthorizationImporter(
+            Set<AuthorizationProvider> providers,
+            Set<String> excludedProviderIds,
+            Resilience resilience,
+            AuthorizationImportConfig config) {
         Objects.requireNonNull(providers, "providers");
         Objects.requireNonNull(excludedProviderIds, "excludedProviderIds");
+        Objects.requireNonNull(resilience, "resilience");
+        Objects.requireNonNull(config, "config");
+        this.providerFence = resilience
+                .adapterSupport()
+                .pipeline(
+                        PROVIDER_INVOCATION,
+                        new ResolvedResiliencePolicy(
+                                Optional.of(TimeoutConfig.ofMillis(config.importTimeoutMs())),
+                                Optional.empty(),
+                                Optional.empty(),
+                                Optional.empty()));
         Set<String> excluded = Set.copyOf(excludedProviderIds);
 
         // Validate ids before sorting: a null id would break the comparator, and a duplicate id
@@ -256,7 +298,7 @@ public final class VertxAuthorizationImporter {
      * @return a future completing when the provider has finished, or failed with
      *         {@link UnavailableException}
      */
-    private static Future<Void> invoke(AuthorizationProvider provider, User localUser) {
+    private Future<Void> invoke(AuthorizationProvider provider, User localUser) {
         String providerId = provider.getId();
         try {
             Future<Void> result = provider.getAuthorizations(localUser);
@@ -264,7 +306,10 @@ public final class VertxAuthorizationImporter {
                 return Future.failedFuture(
                         unavailable(providerId, new IllegalStateException("getAuthorizations returned a null future")));
             }
-            return result.recover(cause -> Future.failedFuture(unavailable(providerId, cause)));
+            // A future the provider already completed cannot hang and is left untimed; a pending one is
+            // bounded by the resilience fence, whose timeout or closed failure is a provider failure.
+            Future<Void> bounded = result.isComplete() ? result : providerFence.execute(() -> result);
+            return bounded.recover(cause -> Future.failedFuture(unavailable(providerId, cause)));
         } catch (RuntimeException e) {
             return Future.failedFuture(unavailable(providerId, e));
         }
@@ -284,8 +329,22 @@ public final class VertxAuthorizationImporter {
      * @return an {@link UnavailableException} with the generic {@value #UNAVAILABLE_MESSAGE} detail,
      *         carrying {@code cause}
      */
-    private static UnavailableException unavailable(String providerId, Throwable cause) {
-        log.error("Vert.x authorization provider [{}] failed to resolve authorizations", providerId, cause);
+    private UnavailableException unavailable(String providerId, Throwable cause) {
+        String fenceKey = providerFence.operationKey();
+        if (cause instanceof ResilienceClosedException closed && fenceKey.equals(closed.operationKey())) {
+            // The runtime closed at application shutdown; no provider misbehaved.
+            log.info(
+                    "Vert.x authorization import for provider [{}] was fenced after the resilience runtime closed",
+                    providerId);
+        } else if (cause instanceof ResilienceTimeoutException timeout && fenceKey.equals(timeout.operationKey())) {
+            // The stack trace of the deadline itself says nothing; the provider and the bound do.
+            log.error(
+                    "Vert.x authorization provider [{}] did not complete within {} ms",
+                    providerId,
+                    timeout.timeoutMs());
+        } else {
+            log.error("Vert.x authorization provider [{}] failed to resolve authorizations", providerId, cause);
+        }
         return new UnavailableException(UNAVAILABLE_MESSAGE, cause);
     }
 

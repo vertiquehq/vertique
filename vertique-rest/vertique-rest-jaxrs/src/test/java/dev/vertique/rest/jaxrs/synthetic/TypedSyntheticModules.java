@@ -23,6 +23,7 @@ import dev.vertique.security.authz.Authorizer;
 import dev.vertique.security.authz.AuthzReasonCodes;
 import dev.vertique.security.authz.ResourceRef;
 import io.vertx.core.Future;
+import io.vertx.core.Vertx;
 import io.vertx.core.json.JsonObject;
 import jakarta.annotation.Nullable;
 import jakarta.inject.Singleton;
@@ -61,6 +62,26 @@ final class TypedSyntheticModules {
     static final class ConfigSupport {
 
         private ConfigSupport() {}
+
+        /**
+         * The Vert.x instance the resilience runtime installed by the security modules needs. One
+         * instance is shared by every synthetic component in the test JVM, which exits without
+         * closing it.
+         *
+         * @return the shared Vert.x instance
+         */
+        @Provides
+        static Vertx vertx() {
+            return SharedVertx.INSTANCE;
+        }
+
+        /** Lazily creates the shared instance. */
+        private static final class SharedVertx {
+
+            static final Vertx INSTANCE = Vertx.vertx();
+
+            private SharedVertx() {}
+        }
 
         @Provides
         static ConfigParser configParser() {

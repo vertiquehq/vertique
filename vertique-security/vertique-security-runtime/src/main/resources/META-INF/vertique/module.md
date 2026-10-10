@@ -8,7 +8,7 @@ SPDX-License-Identifier: EUPL-1.2
 > **Status:** Stable
 > **Package:** `dev.vertique.security.runtime` (identity-snapshot durable carriage + reconstruction), `dev.vertique.security.runtime.authz`, `dev.vertique.security.runtime.events`
 > **Artifact:** `vertique-security-runtime`
-> **Depends on:** security-core, core, context, config-core
+> **Depends on:** security-core, core, context, config-core, resilience
 
 Default in-process authorization engine, event fan-out wiring, and identity-snapshot durable-carriage/reconstruction pipeline for the Vertique security model. This module implements the API and SPI contracts declared in `dev.vertique:vertique-security-core` and supplies the Dagger modules that wire them. It carries no dependency on any transport module or Vert.x Web.
 
@@ -32,7 +32,7 @@ Include `vertique-security-runtime` in any application that uses the authorizati
 
 ```java
 @Component(modules = {
-    VertxModule.class,           // required: SecurityAuthzModule needs a Vertx binding
+    VertxModule.class,           // required: SecurityAuthzModule installs the resilience runtime, which needs a Vertx binding
     SecurityAuthzModule.class,   // engine: ActionRegistry, Authorizer, AuthorizationIntrospector
     SecurityEventsModule.class,  // fan-out: SecurityEventEmitter, Set<SecurityEventObserver>
     AuthzConfigModule.class,     // optional: config-backed PolicyDefinitionSource + RolePolicyResolver
@@ -120,7 +120,7 @@ The Mode-2 decorator is outermost and present only when an application binds a `
 
 ### SecurityAuthzModule
 
-Abstract Dagger `@Module` (`dev.vertique.security.runtime.authz`). Declares four empty-by-default `@Multibinds` sets plus two optional bindings, and provides the entire engine stack. It requires a `Vertx` binding in the component (used to bound Mode-2 resolution).
+Abstract Dagger `@Module` (`dev.vertique.security.runtime.authz`). Declares four empty-by-default `@Multibinds` sets plus two optional bindings, and provides the entire engine stack. It includes `ResilienceModule`, so the component provides the application's `Resilience` runtime, which bounds Mode-2 resolution, and **must bind a `Vertx`**.
 
 **Multibinding declarations:**
 
@@ -327,7 +327,7 @@ Every decision this layer produces for a reconstructed context is stamped with `
 
 ```java
 public final class TimeoutPrincipalAuthorityResolver implements PrincipalAuthorityResolver {
-    public TimeoutPrincipalAuthorityResolver(PrincipalAuthorityResolver delegate, Vertx vertx, long timeoutMs);
+    public TimeoutPrincipalAuthorityResolver(PrincipalAuthorityResolver delegate, Resilience resilience, long timeoutMs);
 }
 
 public record PrincipalAuthorityResolutionConfig(long resolutionTimeoutMs) {
@@ -337,11 +337,11 @@ public record PrincipalAuthorityResolutionConfig(long resolutionTimeoutMs) {
 }
 ```
 
-`SecurityAuthzModule` wraps **every** installed `PrincipalAuthorityResolver` in this decorator before handing it to the Mode-2 authorizer — a resolver is bounded whether or not the application remembers to wrap it itself. Each call races the delegate's returned `Future` against a one-shot, non-recurring timer local to that single invocation, cancelled the instant the delegate settles. On timeout the returned `Future` fails (never a bare exception), which the Mode-2 layer maps to `AuthzReasonCodes#AUTHORITY_RESOLUTION_FAILED` — the same fail-closed path as any other resolver failure.
+`SecurityAuthzModule` wraps **every** installed `PrincipalAuthorityResolver` in this decorator before handing it to the Mode-2 authorizer — a resolver is bounded whether or not the application remembers to wrap it itself. The delegate is invoked first, synchronously: a delegate that throws or returns a `null` future fails the returned `Future` rather than escaping the call, and a `Future` the delegate has already completed is returned as is, untimed. A pending one is handed to a timeout-only pipeline of the application's `Resilience` runtime, which settles on the Vert.x context that made the call and reports a timed-out execution to any installed `ResilienceObserver`. On timeout — or once the runtime has closed at application shutdown — the returned `Future` fails (never a bare exception), which the Mode-2 layer maps to `AuthzReasonCodes#AUTHORITY_RESOLUTION_FAILED` — the same fail-closed path as any other resolver failure. The timeout is logged with the principal type, at WARN, so the hashed resilience identity in the exception is not the only diagnostic.
 
-**The timeout does not cancel the delegate's underlying work** — it is a `Future`-race, not cooperative cancellation; a delegate backed by a blocking store call or in-flight network request keeps running after this decorator has given up on it. Operators whose resolver performs I/O should also configure a transport-level timeout on that I/O.
+**The timeout does not cancel the delegate's underlying work** — it is a `Future` race, not cooperative cancellation; a delegate backed by a blocking store call or in-flight network request keeps running after this decorator has given up on it. Operators whose resolver performs I/O should also configure a transport-level timeout on that I/O.
 
-A non-positive `timeoutMs` (in the constructor or in config) is rejected: the constructor throws `IllegalArgumentException`, the config record throws `ConfigurationException`.
+A non-positive `timeoutMs` (in the constructor or in config) is rejected: the constructor throws `IllegalArgumentException`, the config record throws `ConfigurationException`. The constructor takes the application's `Resilience` runtime, created once per application with `Resilience.create(vertx)`, rather than a `Vertx`.
 
 `PrincipalAuthorityResolutionConfigModule` is the opt-in companion that config-drives `resolutionTimeoutMs` from `identity.authz.resolutionTimeoutMs` instead of the hardcoded default. Installing it has no effect unless the application has also bound a `PrincipalAuthorityResolver` — with no resolver bound, the configured timeout is simply unused.
 
