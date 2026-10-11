@@ -54,7 +54,7 @@ against the REST extension contract without pulling in the routing runtime.
 `createRouter()` it installs the body handler and upload cleanup, runs the router lifecycle hooks,
 configures security-scheme handlers, and then hands the resource set to `JaxRsRouteRegistrar`.
 
-For each public method carrying an HTTP-verb annotation the registrar resolves an `operationId`,
+For each method carrying an HTTP-verb annotation, its own or inherited, the registrar resolves an `operationId`,
 builds a `ResourceMethodMeta`, validates the declaration, and installs the per-operation handler
 chain:
 
@@ -90,11 +90,17 @@ methods correspond (JLS 8.4.2 and 8.4.8.1): a generic method overrides a declara
 type parameters and parameter types, a non-generic method may override a generic declaration by
 erasure, `purge(List<Integer>)` is **not** an override of `purge(T)` in a `Base<List<String>>`
 although both erase to `List` (and a private or static helper never is), and the declaration may be
-public, protected, or package-private in the overriding method's package. The verb is the first of
+public or protected, or package-private when it is inherited into the overriding method's class: by a
+class of its own package, or by a class of another package through a class of its package that
+overrides it. A direct subclass in another package does not override a package-private method, as in
+javac. The verb is the first of
 GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS found on the method or any declaration it overrides,
 whichever declares it. A single-valued security attribute such as `@RequiresAction` is taken from the
 nearest declaration (the override's own wins over a declaration it overrides); differing
-`@RolesAllowed` or `@Authorized` values across declarations fail startup. What is not
+`@RolesAllowed` or `@Authorized` values across declarations fail startup (a compile error with the
+processor). A method-level security annotation on an inherited declaration beats class-level
+security, as it does on the method itself: an interface `@PermitAll` makes an unannotated override
+public even under a class-level `@RolesAllowed`. What is not
 resolved is the *type* of a method no class overrides: a non-overridden generic default (or generic
 superclass method) binds a type-variable parameter as its erasure, so a path, query, header, cookie,
 or form parameter typed `ID` fails startup with `UNRESOLVABLE_PARAM_CONVERTER`, and a body or return

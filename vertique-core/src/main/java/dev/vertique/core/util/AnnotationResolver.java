@@ -244,7 +244,9 @@ public final class AnnotationResolver {
      * and 8.4.8.1): its signature is a subsignature of the declaration's once the type variables of
      * the declaring class and of {@code viewType} are bound through their superclasses, interfaces
      * and owner types; the declaration is not static, private or compiler-generated; and it is
-     * public, protected, or package-private in the overriding method's package. That is how
+     * public, protected, or package-private and inherited into the overriding method's class (a
+     * package-private declaration reaches another package only through a class of its own package
+     * that overrides it). That is how
      * {@code class Users implements Crud<String> { void delete(String id) }} is recognized as
      * overriding {@code Crud<ID>.delete(ID)}, and why {@code purge(List<Integer>)} is not an
      * override of {@code purge(T)} in a {@code Base<List<String>>} although both erase to
@@ -315,7 +317,7 @@ public final class AnnotationResolver {
         List<Method> exact = new ArrayList<>();
         List<Method> bound = new ArrayList<>();
         for (Method candidate : candidates) {
-            if (candidate.getDeclaringClass() != type || !overridable(method, candidate)) {
+            if (candidate.getDeclaringClass() != type || !overridable(method, candidate, bindings, found)) {
                 continue;
             }
             if (GenericBindings.corresponds(method, candidate, bindings)) {
@@ -332,10 +334,17 @@ public final class AnnotationResolver {
     /**
      * Whether {@code candidate} can be overridden by {@code method} as far as modifiers and
      * visibility go (JLS 8.4.8.1): not static, not private, not a compiler-generated bridge or
-     * synthetic member, and public, protected, or package-private in the package of the overriding
-     * method's declaring class.
+     * synthetic member, and public, protected, or package-private and inherited into the overriding
+     * method's class.
+     *
+     * <p>A package-private declaration is inherited only along a chain of classes of its own
+     * package, so a class of another package overrides it only through a class of its package that
+     * declares (and so itself overrides) the member; {@code found} holds the declarations the
+     * walk already accepted, bottom-up, which is where such an intermediate declaration shows up.
+     * A direct subclass of another package does not override it, as in javac.
      */
-    private static boolean overridable(Method method, Method candidate) {
+    private static boolean overridable(
+            Method method, Method candidate, Map<TypeVariable<?>, Type> bindings, Set<Method> found) {
         int modifiers = candidate.getModifiers();
         if (Modifier.isStatic(modifiers)
                 || Modifier.isPrivate(modifiers)
@@ -343,14 +352,41 @@ public final class AnnotationResolver {
                 || candidate.isSynthetic()) {
             return false;
         }
-        if (Modifier.isPublic(modifiers) || Modifier.isProtected(modifiers)) {
+        Class<?> declaring = candidate.getDeclaringClass();
+        if (Modifier.isPublic(modifiers) || Modifier.isProtected(modifiers) || declaring.isInterface()) {
             return true;
         }
-        return candidate.getDeclaringClass().isInterface()
-                || candidate
-                        .getDeclaringClass()
-                        .getPackageName()
-                        .equals(method.getDeclaringClass().getPackageName());
+        if (inheritedAlongPackage(method.getDeclaringClass(), declaring)) {
+            return true;
+        }
+        for (Method intermediate : found) {
+            Class<?> owner = intermediate.getDeclaringClass();
+            if (!owner.isInterface()
+                    && inheritedAlongPackage(owner, declaring)
+                    && GenericBindings.corresponds(intermediate, candidate, bindings)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Whether a package-private member of {@code declaring} is inherited into {@code from}: every
+     * class from {@code from} up to {@code declaring} lies in the member's runtime package (the
+     * package name and the defining class loader). This is javac's {@code isInheritedIn}.
+     */
+    private static boolean inheritedAlongPackage(Class<?> from, Class<?> declaring) {
+        for (Class<?> current = from; current != null && current != declaring; current = current.getSuperclass()) {
+            if (!samePackage(current, declaring)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean samePackage(Class<?> left, Class<?> right) {
+        return left.getClassLoader() == right.getClassLoader()
+                && left.getPackageName().equals(right.getPackageName());
     }
 
     /**

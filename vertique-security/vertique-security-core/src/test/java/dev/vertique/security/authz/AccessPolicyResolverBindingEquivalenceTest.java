@@ -4,8 +4,11 @@
 package dev.vertique.security.authz;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.core.util.AnnotationResolver;
+import dev.vertique.security.authz.chain.ChainMid;
 import jakarta.annotation.security.RolesAllowed;
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Method;
@@ -14,11 +17,12 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Pins that {@link AccessPolicyResolver}, which binds type variables with its own walk, and
- * {@link AnnotationResolver#inheritedDeclarations}, which the inline-annotation path uses, agree on
- * which declarations an override reaches. The two binders are separate code; this is the test that
- * keeps them from drifting apart, in particular for the owner-type and method-type-parameter shapes
- * where a binder is easiest to get wrong.
+ * Pins that {@link AccessPolicyResolver} and {@link AnnotationResolver#inheritedDeclarations},
+ * which the inline-annotation path uses, agree on which declarations an override reaches. The
+ * resolver asks the shared override predicate for the signature and for package-private
+ * visibility, so this is the test that keeps the typed-policy walk and the inline walk from
+ * drifting apart, in particular for the owner-type, method-type-parameter and package-chain shapes
+ * where the rule is easiest to get wrong.
  */
 class AccessPolicyResolverBindingEquivalenceTest {
 
@@ -121,6 +125,18 @@ class AccessPolicyResolverBindingEquivalenceTest {
         public void delete(String id) {}
     }
 
+    /**
+     * Carries a type-level policy over a class of another package that overrides, through
+     * {@link ChainMid}, the secured package-private method of its base.
+     */
+    @RequiresPolicy(AdminPolicy.class)
+    static class PolicyOverChain extends ChainMid {
+        @Override
+        public String m() {
+            return "consumer";
+        }
+    }
+
     private static boolean reachedByResolver(Class<?> consumer, Method method) {
         List<Annotation> collected = AccessPolicyResolver.collectMethodAnnotations(consumer, method, List.of());
         return collected.stream().anyMatch(a -> a.annotationType() == RequiresPolicy.class);
@@ -193,5 +209,23 @@ class AccessPolicyResolverBindingEquivalenceTest {
         assertEquals(false, reachedByResolver(MethodLevel.class, typeParameter));
         assertAgree(Unrelated.class, "delete", String.class, false);
         assertAgree(Unrelated.class, "delete", Integer.class, true);
+    }
+
+    @Test
+    @DisplayName("an inline annotation reached through a package-private chain is not replaced by a type policy")
+    void inlineSecurityThroughPackageChainIsNotSilentlyReplaced() throws Exception {
+        Method method = PolicyOverChain.class.getDeclaredMethod("m");
+        List<Annotation> legacy = AnnotationResolver.resolveMethodAnnotations(method, PolicyOverChain.class);
+
+        assertTrue(
+                legacy.stream().anyMatch(a -> a.annotationType() == RolesAllowed.class),
+                "the inline walk reaches the secured declaration through the intermediate class");
+        assertEquals(
+                "RequiresPolicy is mixed with an inline security annotation",
+                assertThrows(
+                                IllegalArgumentException.class,
+                                () -> AccessPolicyResolver.collectMethodAnnotations(
+                                        PolicyOverChain.class, method, legacy))
+                        .getMessage());
     }
 }

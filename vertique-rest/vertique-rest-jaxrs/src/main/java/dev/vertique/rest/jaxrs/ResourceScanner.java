@@ -42,6 +42,8 @@ import jakarta.ws.rs.QueryParam;
 import jakarta.ws.rs.core.Context;
 import jakarta.ws.rs.core.EntityPart;
 import java.lang.annotation.Annotation;
+import java.lang.reflect.GenericSignatureFormatError;
+import java.lang.reflect.MalformedParameterizedTypeException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.lang.reflect.Parameter;
@@ -158,10 +160,18 @@ class ResourceScanner {
             // use the same pre-resolved lists and avoid redundant AnnotationResolver traversal.
             // Interface defaults keep their declaring-interface view; class-declared methods
             // (including superclass ones) use the resource class so interfaces it implements
-            // contribute annotations (vertiquehq/vertique-dev#636).
+            // contribute annotations.
             Class<?> annotationView = annotationViewType(method, clazz);
-            List<Annotation> legacyMethodAnnotations =
-                    AnnotationResolver.resolveMethodAnnotations(method, annotationView);
+            List<Annotation> legacyMethodAnnotations;
+            try {
+                legacyMethodAnnotations = AnnotationResolver.resolveMethodAnnotations(method, annotationView);
+            } catch (TypeNotPresentException | MalformedParameterizedTypeException | GenericSignatureFormatError ex) {
+                // The walk reads the generic signatures of every supertype declaration of the
+                // method; one that cannot be resolved must name the method, not escape bare.
+                throw new IllegalStateException(
+                        "Cannot resolve the inherited declarations of " + method + " on " + clazz.getName() + ": " + ex,
+                        ex);
+            }
             // Only operations that are routes carry a policy; a helper method is skipped before
             // its declarations are collected, as on the inline-only path.
             if (resolveHttpMethod(legacyMethodAnnotations) == null) {
@@ -794,7 +804,7 @@ class ResourceScanner {
      * route; one the override did not reach stays a route of its own.
      *
      * <p>An inherited default method is a resource method of the class exactly as an override
-     * would be (issue #630). A superclass's private method with the same signature is not
+     * would be. A superclass's private method with the same signature is not
      * inherited and never shadows it. {@link Class#getMethods()} already applies the Java selection rules:
      * a method declared by a class — including a bridge that a generic override produces — hides
      * an interface method with the same signature, and a more specific interface's method hides

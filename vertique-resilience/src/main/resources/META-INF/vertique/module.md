@@ -191,7 +191,8 @@ Callback failures become cause-free `ResiliencePolicyException` values with only
 and exception-class metadata. Fatal `Error` values are rethrown.
 
 `ResiliencePolicyResolver` resolves immutable policy values using operation override, annotation,
-default, then disabled precedence independently for each concern. `RetryConfig`, `RetryBackoff`,
+default, then disabled precedence independently for each concern. Annotation inheritance follows the Java override rules: a method also inherits the annotations of a generic declaration whose type variables its class binds (`delete(String)` overrides `Crud<ID>.delete(ID)` of a `Crud<String>`), and of protected and same-package declarations; a same-erasure overload with another type argument, and a static or private method, override nothing.
+ `RetryConfig`, `RetryBackoff`,
 `CircuitBreakerConfig`, and `BulkheadConfig` validate eagerly. `ResolvedResiliencePolicy.executionBudget()`
 reports conservative active, queue, and total bounds using saturating arithmetic; unknown or
 unbounded inputs remain explicit.

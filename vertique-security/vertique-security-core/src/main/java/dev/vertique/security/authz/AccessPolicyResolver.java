@@ -147,7 +147,7 @@ public final class AccessPolicyResolver {
                 if (!self && !AnnotationResolver.overridesBySignature(canonical, candidate, consumerType)) {
                     continue;
                 }
-                if (!self && !includeMethod(candidate, consumerType)) {
+                if (!self && !includeMethod(candidate, canonical, consumerType)) {
                     for (Annotation annotation : candidate.getDeclaredAnnotations()) {
                         if (isSecurityDeclaration(annotation)) {
                             excluded.add(annotation);
@@ -452,7 +452,7 @@ public final class AccessPolicyResolver {
                 && !candidate.isSynthetic();
     }
 
-    private static boolean includeMethod(Method candidate, Class<?> consumer) {
+    private static boolean includeMethod(Method candidate, Method canonical, Class<?> consumer) {
         int modifiers = candidate.getModifiers();
         if (Modifier.isStatic(modifiers)
                 || Modifier.isPrivate(modifiers)
@@ -461,7 +461,9 @@ public final class AccessPolicyResolver {
             return false;
         }
         if (!Modifier.isPublic(modifiers) && !Modifier.isProtected(modifiers)) {
-            return candidate.getDeclaringClass().getPackageName().equals(consumer.getPackageName());
+            // Package-private: whether the scanned method overrides it is the Java rule the
+            // annotation walks apply, so the two cannot disagree about the same declaration.
+            return AnnotationResolver.inheritedDeclarations(canonical, consumer).contains(candidate);
         }
         return true;
     }

@@ -11,7 +11,6 @@ import java.lang.reflect.Type;
 import java.lang.reflect.TypeVariable;
 import java.lang.reflect.WildcardType;
 import java.util.HashSet;
-import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
@@ -93,15 +92,8 @@ final class GenericBindings {
                 effective.put(other[i], own[i]);
             }
             for (int i = 0; i < own.length; i++) {
-                Type[] ownBounds = own[i].getBounds();
-                Type[] otherBounds = other[i].getBounds();
-                if (ownBounds.length != otherBounds.length) {
+                if (!sameBounds(own[i].getBounds(), other[i].getBounds(), effective)) {
                     return false;
-                }
-                for (int j = 0; j < ownBounds.length; j++) {
-                    if (!sameType(ownBounds[j], otherBounds[j], effective, 0)) {
-                        return false;
-                    }
                 }
             }
         }
@@ -120,8 +112,33 @@ final class GenericBindings {
         // A method without type parameters of its own is also a subsignature when its parameter
         // types equal the erasure of the declaration's substituted signature.
         for (int i = 0; i < wanted.length; i++) {
-            Class<?> erased = erasure(declared[i], bindings, new IdentityHashMap<>());
+            Class<?> erased = erasure(declared[i], bindings, new HashSet<>());
             if (!(wanted[i] instanceof Class<?> raw) || raw != erased) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Compares two intersection bounds as sets: {@code <T extends A & B>} and
+     * {@code <T extends B & A>} declare the same type parameter, and javac accepts one as an
+     * override of the other.
+     */
+    private static boolean sameBounds(Type[] left, Type[] right, Map<TypeVariable<?>, Type> bindings) {
+        if (left.length != right.length) {
+            return false;
+        }
+        boolean[] used = new boolean[right.length];
+        for (Type bound : left) {
+            boolean matched = false;
+            for (int j = 0; j < right.length && !matched; j++) {
+                if (!used[j] && sameType(bound, right[j], bindings, 0)) {
+                    used[j] = true;
+                    matched = true;
+                }
+            }
+            if (!matched) {
                 return false;
             }
         }
@@ -140,7 +157,7 @@ final class GenericBindings {
         return current;
     }
 
-    private static boolean sameType(Type a, Type b, Map<TypeVariable<?>, Type> bindings, int depth) {
+    static boolean sameType(Type a, Type b, Map<TypeVariable<?>, Type> bindings, int depth) {
         if (depth > 32) {
             return false;
         }
@@ -177,7 +194,10 @@ final class GenericBindings {
             return sameTypes(leftWildcard.getUpperBounds(), rightWildcard.getUpperBounds(), bindings, depth)
                     && sameTypes(leftWildcard.getLowerBounds(), rightWildcard.getLowerBounds(), bindings, depth);
         }
-        return left instanceof TypeVariable<?> && left == right;
+        // Reflection may hand out equal but not identical TypeVariable instances: generic info is
+        // initialised lazily and without synchronisation, so a concurrent first read of a class
+        // produces two copies, and every Method copy parses its own. equals() is the contract.
+        return left instanceof TypeVariable<?> && left.equals(right);
     }
 
     private static boolean sameTypes(Type[] left, Type[] right, Map<TypeVariable<?>, Type> bindings, int depth) {
@@ -202,8 +222,7 @@ final class GenericBindings {
         return null;
     }
 
-    private static Class<?> erasure(
-            Type type, Map<TypeVariable<?>, Type> bindings, IdentityHashMap<Type, Boolean> seen) {
+    private static Class<?> erasure(Type type, Map<TypeVariable<?>, Type> bindings, Set<TypeVariable<?>> seen) {
         if (type instanceof Class<?> clazz) {
             return clazz;
         }
@@ -218,7 +237,7 @@ final class GenericBindings {
             Type[] upper = wildcard.getUpperBounds();
             return upper.length == 0 ? Object.class : erasure(upper[0], bindings, seen);
         }
-        if (type instanceof TypeVariable<?> variable && seen.put(variable, Boolean.TRUE) == null) {
+        if (type instanceof TypeVariable<?> variable && seen.add(variable)) {
             Type bound = bindings.get(variable);
             if (bound != null) {
                 return erasure(bound, bindings, seen);

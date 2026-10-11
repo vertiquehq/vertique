@@ -141,8 +141,10 @@ public final class JaxRsHierarchy {
      * applied) or when {@code method} overrides it according to the Java language rules for the
      * resource class, which resolves a type variable bound in the hierarchy: {@code delete(String)}
      * of {@code Users implements Crud<String>} overrides {@code Crud<ID>.delete(ID)}. A private or
-     * static declaration is never inherited and never corresponds, and a package-private one of
-     * another package is not overridden. This is the rule of the runtime's
+     * static method overrides nothing and gets an empty result; a private or static declaration is
+     * never inherited and never corresponds. A package-private declaration is overridden by a class
+     * of its own package, or by a class of another package through a class of its package that
+     * declares it (JLS 8.4.8.1), and by no other. This is the rule of the runtime's
      * {@code AnnotationResolver.inheritedDeclarations}. All matches are returned, not the first.
      *
      * @param ctx           the shared codegen context; must not be {@code null}
@@ -153,6 +155,11 @@ public final class JaxRsHierarchy {
      */
     public static List<ExecutableElement> findMatchingMethods(
             CodegenContext ctx, ExecutableElement method, TypeElement type, TypeElement resourceClass) {
+        Set<Modifier> own = method.getModifiers();
+        if (own.contains(Modifier.PRIVATE) || own.contains(Modifier.STATIC)) {
+            // A private or static method overrides nothing (JLS 8.4.8).
+            return List.of();
+        }
         // The exact erased matches come first, as at runtime (the exact lookup precedes the
         // binding-aware scan); overrides-only matches follow, each group in declaration order.
         List<ExecutableElement> exact = new ArrayList<>();
@@ -175,10 +182,16 @@ public final class JaxRsHierarchy {
             if (key == null) {
                 key = methodKey(ctx, method);
             }
-            if (methodKey(ctx, candidate).equals(key)) {
-                if (visibleTo(candidate, type, method, ctx)) {
-                    exact.add(candidate);
+            boolean sameKey = methodKey(ctx, candidate).equals(key);
+            boolean packagePrivate = type.getKind() != ElementKind.INTERFACE
+                    && !modifiers.contains(Modifier.PUBLIC)
+                    && !modifiers.contains(Modifier.PROTECTED);
+            if (packagePrivate) {
+                if (reachesAlongPackage(ctx, method, candidate, resourceClass, 0)) {
+                    (sameKey ? exact : bound).add(candidate);
                 }
+            } else if (sameKey) {
+                exact.add(candidate);
             } else if (ctx.elements().overrides(method, candidate, resourceClass)) {
                 bound.add(candidate);
             }
@@ -188,20 +201,81 @@ public final class JaxRsHierarchy {
     }
 
     /**
-     * Whether {@code candidate} can be overridden by {@code method} as far as visibility goes
-     * (JLS 8.4.8.1): public or protected, an interface member, or package-private in the package of
-     * the overriding method's declaring class.
+     * Whether {@code method} overrides the package-private {@code candidate}: directly, when every
+     * class from the method's class up to the candidate's lies in the candidate's package, or
+     * through a class of that package between them that declares an overriding member which
+     * {@code method} in turn overrides (JLS 8.4.8.1). A direct subclass of another package does
+     * not.
      */
-    private static boolean visibleTo(
-            ExecutableElement candidate, TypeElement type, ExecutableElement method, CodegenContext ctx) {
-        Set<Modifier> modifiers = candidate.getModifiers();
-        if (modifiers.contains(Modifier.PUBLIC)
-                || modifiers.contains(Modifier.PROTECTED)
-                || type.getKind() == ElementKind.INTERFACE) {
-            return true;
+    private static boolean reachesAlongPackage(
+            CodegenContext ctx,
+            ExecutableElement method,
+            ExecutableElement candidate,
+            TypeElement resourceClass,
+            int depth) {
+        if (depth > 16
+                || !(method.getEnclosingElement() instanceof TypeElement from)
+                || !(candidate.getEnclosingElement() instanceof TypeElement declaring)) {
+            return false;
         }
-        return method.getEnclosingElement() instanceof TypeElement owner
-                && ctx.elements().getPackageOf(owner).equals(ctx.elements().getPackageOf(type));
+        if (inheritedAlongPackage(ctx, from, declaring)) {
+            return signatureMatches(ctx, method, candidate, from)
+                    || signatureMatches(ctx, method, candidate, resourceClass);
+        }
+        for (TypeElement between = superClass(ctx, from);
+                between != null && !between.equals(declaring) && !isObject(between);
+                between = superClass(ctx, between)) {
+            if (!inheritedAlongPackage(ctx, between, declaring)) {
+                continue;
+            }
+            for (javax.lang.model.element.Element enclosed : between.getEnclosedElements()) {
+                if (enclosed.getKind() != ElementKind.METHOD
+                        || !(enclosed instanceof ExecutableElement intermediate)
+                        || !intermediate.getSimpleName().contentEquals(candidate.getSimpleName())
+                        || intermediate.getParameters().size()
+                                != candidate.getParameters().size()
+                        || intermediate.getModifiers().contains(Modifier.PRIVATE)
+                        || intermediate.getModifiers().contains(Modifier.STATIC)
+                        || !signatureMatches(ctx, intermediate, candidate, between)) {
+                    continue;
+                }
+                boolean open = intermediate.getModifiers().contains(Modifier.PUBLIC)
+                        || intermediate.getModifiers().contains(Modifier.PROTECTED);
+                if (open
+                        ? signatureMatches(ctx, method, intermediate, resourceClass)
+                        : reachesAlongPackage(ctx, method, intermediate, resourceClass, depth + 1)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Whether a package-private member of {@code declaring} is inherited into {@code from}: every
+     * class from {@code from} up to {@code declaring} lies in the member's package (javac's
+     * {@code isInheritedIn}).
+     */
+    private static boolean inheritedAlongPackage(CodegenContext ctx, TypeElement from, TypeElement declaring) {
+        var pkg = ctx.elements().getPackageOf(declaring);
+        for (TypeElement current = from;
+                current != null && !current.equals(declaring);
+                current = superClass(ctx, current)) {
+            if (!ctx.elements().getPackageOf(current).equals(pkg)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean signatureMatches(
+            CodegenContext ctx, ExecutableElement overrider, ExecutableElement overridden, TypeElement origin) {
+        return methodKey(ctx, overrider).equals(methodKey(ctx, overridden))
+                || ctx.elements().overrides(overrider, overridden, origin);
+    }
+
+    private static boolean isObject(TypeElement type) {
+        return "java.lang.Object".contentEquals(type.getQualifiedName());
     }
 
     /**

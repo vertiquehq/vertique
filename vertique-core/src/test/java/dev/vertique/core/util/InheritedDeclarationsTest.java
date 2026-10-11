@@ -4,10 +4,15 @@
 package dev.vertique.core.util;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import dev.vertique.core.util.foreign.ChainMiddle;
+import dev.vertique.core.util.foreign.RelayLeaf;
 import java.lang.reflect.Method;
+import java.lang.reflect.TypeVariable;
 import java.util.List;
+import java.util.Map;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -260,6 +265,47 @@ class InheritedDeclarationsTest {
 
         @Override
         public void visible(String value) {}
+    }
+
+    /** Overrides {@link ChainMiddle#m()}, which overrides the package-private method of its base. */
+    static class ChainLeaf extends ChainMiddle {
+        @Override
+        public String m() {
+            return "leaf";
+        }
+    }
+
+    interface BoundsApi {
+        <T extends Runnable & Comparable<T>> void m(T value);
+    }
+
+    /** The same type parameter with its intersection bounds in the other order. */
+    static class ReorderedBounds implements BoundsApi {
+        @Override
+        public <T extends Comparable<T> & Runnable> void m(T value) {}
+    }
+
+    static class PrivateKeyBase {
+        @SuppressWarnings("unused")
+        private String x(Object value) {
+            return "private";
+        }
+    }
+
+    interface PrivateKeyApi<ID> {
+        String x(ID id);
+    }
+
+    /** The private base method has the erased signature of the interface method, and no more. */
+    static class PrivateKeyResource extends PrivateKeyBase implements PrivateKeyApi<String> {
+        @Override
+        public String x(String id) {
+            return "resource";
+        }
+    }
+
+    static class TypeVariableHolder {
+        public static <X> void g(X value) {}
     }
 
     // --- Helpers ---
@@ -517,5 +563,62 @@ class InheritedDeclarationsTest {
         assertEquals(
                 List.of("Base.get[Object]"),
                 ownerSignatures(AnnotationResolver.inheritedDeclarations(get, ClassAndInterface.class)));
+    }
+
+    @Test
+    @DisplayName("type variables that are equal but not identical are the same type")
+    void equalTypeVariablesAreTheSameType() throws NoSuchMethodException {
+        // Every Method copy parses its own generic signature, and concurrent first reflection on a
+        // class does the same for its type parameters; equals() is the contract, not identity.
+        TypeVariable<?> first =
+                TypeVariableHolder.class.getMethod("g", Object.class).getTypeParameters()[0];
+        TypeVariable<?> second =
+                TypeVariableHolder.class.getMethod("g", Object.class).getTypeParameters()[0];
+
+        assertNotSame(first, second);
+        assertEquals(first, second);
+        assertTrue(GenericBindings.sameType(first, second, Map.of(), 0));
+    }
+
+    @Test
+    @DisplayName("a package-private method is overridden from another package through a class of its package")
+    void packagePrivateIsReachedThroughAnIntermediateOfItsPackage() throws NoSuchMethodException {
+        Method leaf = method(ChainLeaf.class, "m");
+
+        assertEquals(
+                List.of("ChainMiddle.m[]", "ChainBase.m[]"),
+                ownerSignatures(AnnotationResolver.inheritedDeclarations(leaf, ChainLeaf.class)));
+    }
+
+    @Test
+    @DisplayName("a package-private method is not overridden in its package across a class of another package")
+    void packagePrivateIsNotReachedAcrossAForeignIntermediate() throws NoSuchMethodException {
+        Method leaf = method(RelayLeaf.class, "m", String.class);
+
+        assertTrue(
+                AnnotationResolver.inheritedDeclarations(leaf, RelayLeaf.class).isEmpty());
+    }
+
+    @Test
+    @DisplayName("intersection bounds in another order are the same type parameter")
+    void reorderedIntersectionBoundsOverride() throws NoSuchMethodException {
+        Method override = method(ReorderedBounds.class, "m", Comparable.class);
+
+        assertEquals(
+                List.of("BoundsApi.m[Runnable]"),
+                ownerSignatures(AnnotationResolver.inheritedDeclarations(override, ReorderedBounds.class)));
+    }
+
+    @Test
+    @DisplayName("a private method overrides nothing even when its erased signature equals an interface method's")
+    void privateMethodWithTheErasedKeyOfAnInterfaceMethodOverridesNothing() throws NoSuchMethodException {
+        Method helper = method(PrivateKeyBase.class, "x", Object.class);
+        Method resource = method(PrivateKeyResource.class, "x", String.class);
+
+        assertTrue(AnnotationResolver.inheritedDeclarations(helper, PrivateKeyResource.class)
+                .isEmpty());
+        assertEquals(
+                List.of("PrivateKeyApi.x[Object]"),
+                ownerSignatures(AnnotationResolver.inheritedDeclarations(resource, PrivateKeyResource.class)));
     }
 }

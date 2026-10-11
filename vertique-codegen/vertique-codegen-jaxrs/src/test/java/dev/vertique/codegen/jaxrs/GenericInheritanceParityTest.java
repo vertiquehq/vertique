@@ -5,13 +5,20 @@ package dev.vertique.codegen.jaxrs;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
+import dev.vertique.codegen.jaxrs.gip.chain.ChainMiddle;
+import dev.vertique.codegen.jaxrs.gip.chain.RelayLeaf;
 import dev.vertique.codegen.test.ProcessorTestHarness;
 import dev.vertique.codegen.test.fixtures.SourceFiles;
+import dev.vertique.rest.core.security.RequiresActionResolver;
 import dev.vertique.rest.core.security.SecurityPolicy;
+import dev.vertique.rest.core.security.SecurityPolicyViolationException;
 import dev.vertique.rest.jaxrs.JaxRsRouteRegistrar;
 import dev.vertique.rest.jaxrs.ResourceMethodMeta;
 import dev.vertique.rest.jaxrs.runtime.GeneratedJaxRsDescriptorSupport;
+import dev.vertique.security.authz.ActionRef;
+import dev.vertique.security.authz.RequiresAction;
 import io.swagger.v3.oas.annotations.Operation;
 import jakarta.annotation.security.RolesAllowed;
 import jakarta.ws.rs.DELETE;
@@ -25,6 +32,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Optional;
 import java.util.stream.Stream;
 import javax.tools.JavaFileObject;
 import org.junit.jupiter.api.DisplayName;
@@ -238,6 +246,10 @@ class GenericInheritanceParityTest {
         }
     }
 
+    /** A resource that only inherits a protected secured route from its generic superclass. */
+    @Path("/prot-inherited")
+    static class ProtectedInherited extends ProtectedBase<String> {}
+
     interface AttributeApi<T> {
         @GET
         @Path("/{id}")
@@ -319,6 +331,77 @@ class GenericInheritanceParityTest {
         }
     }
 
+    /** Overrides {@code ChainMiddle.find}, which overrides the secured package-private route. */
+    @Path("/chain")
+    static class ChainLeaf extends ChainMiddle {
+        @Override
+        public String find(String id) {
+            return "leaf " + id;
+        }
+    }
+
+    static class PrivateKeyBase {
+        @SuppressWarnings("unused")
+        private String x(Object value) {
+            return "private " + value;
+        }
+    }
+
+    interface PrivateKeyApi<I> {
+        @GET
+        @Path("/{id}")
+        String x(@PathParam("id") I id);
+    }
+
+    /** A private base method with the erased signature of an interface route overrides nothing. */
+    @Path("/priv-key")
+    static class PrivateKeyResource extends PrivateKeyBase implements PrivateKeyApi<String> {
+        @Override
+        public String x(String id) {
+            return "resource " + id;
+        }
+    }
+
+    interface RoleApi<I> {
+        @GET
+        @Path("/{id}")
+        @RolesAllowed("admin")
+        String read(@PathParam("id") I id);
+    }
+
+    @Path("/roles")
+    static class RoleOverride implements RoleApi<String> {
+        @Override
+        @RolesAllowed("user")
+        public String read(String id) {
+            return "roles " + id;
+        }
+    }
+
+    interface ActionApi<I> {
+        @DELETE
+        @Path("/{id}")
+        @RequiresAction("shop.order.delete")
+        String remove(@PathParam("id") I id);
+    }
+
+    @Path("/actions")
+    static class ActionOverride implements ActionApi<String> {
+        @Override
+        @RequiresAction("shop.order.read")
+        public String remove(String id) {
+            return "override " + id;
+        }
+    }
+
+    @Path("/actions-inherited")
+    static class ActionInherited implements ActionApi<String> {
+        @Override
+        public String remove(String id) {
+            return "inherited " + id;
+        }
+    }
+
     // --- Generated-side sources ---
 
     private static JavaFileObject src(String simpleName, String body) {
@@ -334,6 +417,20 @@ class GenericInheritanceParityTest {
                 import jakarta.ws.rs.QueryParam;
 
                 """ + body);
+    }
+
+    private static JavaFileObject srcIn(String pkg, String simpleName, String body) {
+        return SourceFiles.inline(pkg + "." + simpleName, "package " + pkg + ";\n\n" + """
+                import jakarta.annotation.security.RolesAllowed;
+                import jakarta.ws.rs.GET;
+                import jakarta.ws.rs.Path;
+                import jakarta.ws.rs.PathParam;
+
+                """ + body);
+    }
+
+    private static String fqn(String generatedResource) {
+        return generatedResource.contains(".") ? generatedResource : PKG + "." + generatedResource;
     }
 
     private static JavaFileObject readApi() {
@@ -664,6 +761,25 @@ class GenericInheritanceParityTest {
                                 List.of(
                                         "GET /prot/{id} ProtectedDerived id|PATH|java.lang.String roles=[admin] -> prot 7")),
                         new Shape(
+                                "a protected route declared only on a superclass is resolved along the class chain",
+                                new ProtectedInherited(),
+                                "ProtectedInherited",
+                                List.of(src("ProtectedBase", """
+                                        public class ProtectedBase<T> {
+                                            @GET
+                                            @Path("/{id}")
+                                            @RolesAllowed("admin")
+                                            protected String find(@PathParam("id") T id) {
+                                                return "base " + id;
+                                            }
+                                        }
+                                        """), src("ProtectedInherited", """
+                                        @Path("/prot-inherited")
+                                        public class ProtectedInherited extends ProtectedBase<String> {}
+                                        """)),
+                                List.of(
+                                        "GET /prot-inherited/{id} ProtectedBase id|PATH|java.lang.Object roles=[admin] -> base 7")),
+                        new Shape(
                                 "an unrelated overload is not a route and takes nothing from the interface",
                                 new Overloads(),
                                 "Overloads",
@@ -681,7 +797,98 @@ class GenericInheritanceParityTest {
                                         }
                                         """)),
                                 List.of(
-                                        "GET /overloads/{id} Overloads id|PATH|java.lang.String roles=[reader] -> read 7")))
+                                        "GET /overloads/{id} Overloads id|PATH|java.lang.String roles=[reader] -> read 7")),
+                        new Shape(
+                                "a package-private route is overridden from another package through a public override of its package",
+                                new ChainLeaf(),
+                                "ChainLeaf",
+                                List.of(
+                                        srcIn(PKG + ".chain", "ChainBase", """
+                                        public class ChainBase {
+                                            @GET
+                                            @Path("/{id}")
+                                            @RolesAllowed("admin")
+                                            String find(@PathParam("id") String id) {
+                                                return "base " + id;
+                                            }
+                                        }
+                                        """),
+                                        srcIn(PKG + ".chain", "ChainMiddle", """
+                                        public class ChainMiddle extends ChainBase {
+                                            @Override
+                                            public String find(String id) {
+                                                return "middle " + id;
+                                            }
+                                        }
+                                        """),
+                                        src("ChainLeaf", """
+                                        @Path("/chain")
+                                        public class ChainLeaf extends dev.vertique.test.gip.chain.ChainMiddle {
+                                            @Override
+                                            public String find(String id) {
+                                                return "leaf " + id;
+                                            }
+                                        }
+                                        """)),
+                                List.of("GET /chain/{id} ChainLeaf id|PATH|java.lang.String roles=[admin] -> leaf 7")),
+                        new Shape(
+                                "a package-private route is not overridden in its package across a class of another package",
+                                new RelayLeaf(),
+                                PKG + ".chain.RelayLeaf",
+                                List.of(
+                                        srcIn(PKG + ".chain", "RelayBase", """
+                                        public class RelayBase<T> {
+                                            @GET
+                                            @Path("/{id}")
+                                            @RolesAllowed("admin")
+                                            String get(@PathParam("id") T id) {
+                                                return "base " + id;
+                                            }
+                                        }
+                                        """),
+                                        srcIn(PKG + ".relay", "Relay", """
+                                        public class Relay<T> extends dev.vertique.test.gip.chain.RelayBase<T> {}
+                                        """),
+                                        srcIn(PKG + ".chain", "RelayLeaf", """
+                                        @Path("/relay")
+                                        public class RelayLeaf extends dev.vertique.test.gip.relay.Relay<String> {
+                                            String get(String id) {
+                                                return "relay " + id;
+                                            }
+                                        }
+                                        """)),
+                                List.of("GET /relay/{id} RelayBase id|PATH|java.lang.Object roles=[admin] -> base 7")),
+                        new Shape(
+                                "a private method with the erased signature of an interface route overrides nothing",
+                                new PrivateKeyResource(),
+                                "PrivateKeyResource",
+                                List.of(
+                                        src("PrivateKeyBase", """
+                                        public class PrivateKeyBase {
+                                            @SuppressWarnings("unused")
+                                            private String x(Object value) {
+                                                return "private " + value;
+                                            }
+                                        }
+                                        """),
+                                        src("PrivateKeyApi", """
+                                        public interface PrivateKeyApi<I> {
+                                            @GET
+                                            @Path("/{id}")
+                                            String x(@PathParam("id") I id);
+                                        }
+                                        """),
+                                        src("PrivateKeyResource", """
+                                        @Path("/priv-key")
+                                        public class PrivateKeyResource extends PrivateKeyBase implements PrivateKeyApi<String> {
+                                            @Override
+                                            public String x(String id) {
+                                                return "resource " + id;
+                                            }
+                                        }
+                                        """)),
+                                List.of(
+                                        "GET /priv-key/{id} PrivateKeyResource id|PATH|java.lang.String None -> resource 7")))
                 .map(Arguments::of);
     }
 
@@ -694,7 +901,7 @@ class GenericInheritanceParityTest {
         var result = ProcessorTestHarness.run(
                 new JaxRsPipelineProcessor(), shape.sources().toArray(JavaFileObject[]::new));
         result.assertSuccess();
-        String resourceFqn = PKG + "." + shape.generatedResource();
+        String resourceFqn = fqn(shape.generatedResource());
         Object generatedInstance = result.generatedClassLoader()
                 .loadClass(resourceFqn)
                 .getDeclaredConstructor()
@@ -811,7 +1018,7 @@ class GenericInheritanceParityTest {
         var result = ProcessorTestHarness.run(
                 new JaxRsPipelineProcessor(), shape.sources().toArray(JavaFileObject[]::new));
         result.assertSuccess();
-        String resourceFqn = PKG + "." + shape.generatedResource();
+        String resourceFqn = fqn(shape.generatedResource());
         Object generatedInstance = result.generatedClassLoader()
                 .loadClass(resourceFqn)
                 .getDeclaredConstructor()
@@ -831,6 +1038,100 @@ class GenericInheritanceParityTest {
                                 .toList())
                 .sorted()
                 .toList();
+    }
+
+    // --- Security precedence across declarations ---
+
+    @org.junit.jupiter.api.Test
+    @DisplayName("differing @RolesAllowed on an override and its generic declaration is rejected by both engines")
+    void differingRolesAreRejectedByBothEngines() {
+        assertThrows(SecurityPolicyViolationException.class, () -> new JaxRsRouteRegistrar()
+                .scanResource(new RoleOverride()));
+
+        var result =
+                ProcessorTestHarness.run(new JaxRsPipelineProcessor(), src("RoleApi", """
+                        public interface RoleApi<I> {
+                            @GET
+                            @Path("/{id}")
+                            @RolesAllowed("admin")
+                            String read(@PathParam("id") I id);
+                        }
+                        """), src("RoleOverride", """
+                        @Path("/roles")
+                        public class RoleOverride implements RoleApi<String> {
+                            @Override
+                            @RolesAllowed("user")
+                            public String read(String id) {
+                                return "roles " + id;
+                            }
+                        }
+                        """));
+        result.assertFailed();
+        result.assertErrorMessage("Conflicting security annotations");
+    }
+
+    @org.junit.jupiter.api.Test
+    @DisplayName("the nearest @RequiresAction wins on both engines, and an override without one inherits it")
+    void nearestRequiresActionWinsOnBothEngines() throws Throwable {
+        var result = ProcessorTestHarness.run(
+                new JaxRsPipelineProcessor(),
+                src("ActionApi", """
+                        public interface ActionApi<I> {
+                            @DELETE
+                            @Path("/{id}")
+                            @dev.vertique.security.authz.RequiresAction("shop.order.delete")
+                            String remove(@PathParam("id") I id);
+                        }
+                        """),
+                src("ActionOverride", """
+                        @Path("/actions")
+                        public class ActionOverride implements ActionApi<String> {
+                            @Override
+                            @dev.vertique.security.authz.RequiresAction("shop.order.read")
+                            public String remove(String id) {
+                                return "override " + id;
+                            }
+                        }
+                        """),
+                src("ActionInherited", """
+                        @Path("/actions-inherited")
+                        public class ActionInherited implements ActionApi<String> {
+                            @Override
+                            public String remove(String id) {
+                                return "inherited " + id;
+                            }
+                        }
+                        """));
+        result.assertSuccess();
+        RequiresActionResolver actions = new RequiresActionResolver();
+
+        for (String name : List.of("ActionOverride", "ActionInherited")) {
+            Object reflectiveResource = name.equals("ActionOverride") ? new ActionOverride() : new ActionInherited();
+            List<ResourceMethodMeta> reflective = new JaxRsRouteRegistrar().scanResource(reflectiveResource);
+            String resourceFqn = fqn(name);
+            Object instance = result.generatedClassLoader()
+                    .loadClass(resourceFqn)
+                    .getDeclaredConstructor()
+                    .newInstance();
+            List<ResourceMethodMeta> generated = callDescribe(result, instance, resourceFqn + "_JaxRsDescriptor");
+            Optional<ActionRef> expected = Optional.of(
+                    ActionRef.parse(name.equals("ActionOverride") ? "shop.order.read" : "shop.order.delete"));
+
+            assertEquals(1, reflective.size(), "reflective routes of " + name);
+            assertEquals(1, generated.size(), "generated routes of " + name);
+            assertEquals(
+                    expected,
+                    actions.resolve(
+                            reflective.get(0).methodAnnotations(),
+                            reflective.get(0).classAnnotations()),
+                    "reflective action of " + name);
+            assertEquals(
+                    expected,
+                    actions.resolve(
+                            generated.get(0).methodAnnotations(),
+                            generated.get(0).classAnnotations()),
+                    "generated action of " + name);
+        }
     }
 
     // --- Normalization ---
