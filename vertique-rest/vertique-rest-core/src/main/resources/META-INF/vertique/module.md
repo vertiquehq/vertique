@@ -244,7 +244,8 @@ All fields are optional and omitted from JSON when `null`. Extension members dec
 `extension(...)` are serialized as sibling JSON fields. The REST error pipeline gives a problem
 without an `instance` an opaque `urn:uuid:<random UUID>` occurrence id, which is also on the failure's
 log line, and never a request-derived value (the request path carries the caller's bytes and a route
-template is not a URI reference). An `instance` set in your own mapper is kept as written.
+template is not a URI reference). An `instance` set in your own mapper is kept as written; it then
+identifies the occurrence, so make it unique per occurrence and log it yourself.
 
 ```java
 ProblemDetail simple = ProblemDetail.of(404, "Item 123 not found");

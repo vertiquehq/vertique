@@ -654,7 +654,10 @@ without an `instance` gets an opaque occurrence id, `urn:uuid:<random UUID>`, on
 a client that reports it can be matched to the server's record: an unhandled exception is logged at
 ERROR with the id, a response a specific mapper produced at WARN (server error, no stack) or DEBUG
 (client error). An `instance` your own mapper or interceptor sets is kept as written, including
-across a status override, and a response that is not a problem document is left alone.
+across a status override, and a response that is not a problem document is left alone. RFC 9457
+makes `instance` the identifier of one occurrence, so a mapper that sets it owns that identity: make
+it unique per occurrence and log it yourself, because the pipeline logs the value it finds. A
+deliberately fixed value (the blob routes' uniform denial) is not findable in the logs.
 
 **Headers when the body is rebuilt.** Rebuilding the body — by this override, or by the equal-status
 detail sanitization — drops the headers your mapper set that describe the *octets*
