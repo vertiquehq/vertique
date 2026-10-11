@@ -956,8 +956,10 @@ final class McpRequestDispatcher {
      * pre-dispatch identity every other abort terminal in this class already carries.
      */
     private static McpMethod classifiedMethodOf(RoutingContext context) {
-        McpMethod stored = context.get(METHOD_KEY);
-        return stored != null ? stored : McpMethod.OTHER;
+        // The key is predictable and the data map is shared, so a value of another type counts as
+        // none instead of failing the failure handler with a ClassCastException.
+        Object stored = context.get(METHOD_KEY);
+        return stored instanceof McpMethod method ? method : McpMethod.OTHER;
     }
 
     /**
@@ -2596,16 +2598,14 @@ final class McpRequestDispatcher {
                         // Every complete result is normalized exactly once — bounded by
                         // mcp.output.maxBytes as bytes are produced, exactly like the terminal write below —
                         // validated against the advertised output schema, encoded into the bounded terminal
-                        // envelope, reported through the completion view's toolOutput only once that envelope exists,
-                        // and
-                        // only then handed to the single terminal writer (contract §4.7 stage 7). The raw
+                        // envelope, reported through the completion view's toolOutput only once that
+                        // envelope exists, and only then handed to the single terminal writer. The raw
                         // application value is converted to its bounded, JSON-compatible canonical shape here —
-                        // once — and that exact same value is reused below for schema validation, the observation
-                        // callback, and the wire embed; nothing downstream re-serializes the original application
-                        // object. writeToolResult (not this block) arms the output, strictly
-                        // after its own encodeCapped call succeeds — see its Javadoc — so a listener can never
+                        // once — and that exact same value is reused below for schema validation and the
+                        // wire embed; nothing downstream re-serializes the original application object.
+                        // writeToolResult (not this block) arms the output, strictly after its own
+                        // encodeCapped call succeeds — see its Javadoc — so a listener can never
                         // see a value the wire cap or the schema check would still reject.
-                        //
                         McpToolResult<?> toolResult = ar.result();
                         Object normalizedOutput;
                         try {
@@ -2626,7 +2626,7 @@ final class McpRequestDispatcher {
                         try {
                             if (!outputSchemaValid(toolName, normalizedOutput)) {
                                 // The schema-invalid value never reaches writeToolResult/encodeCapped: it is
-                                // rejected here, before any wire byte is produced and before the output
+                                // rejected here, before any wire byte is produced and before the
                                 // output is armed, so an invalid structured result never reaches the wire or a
                                 // listener's view.
                                 writeOutputValidationFailure(context, envelope, security, toolName);
@@ -3373,10 +3373,13 @@ final class McpRequestDispatcher {
             errorType = McpErrorType.INTERNAL;
             security = establishedSecurity();
         }
+        // An authentication rejection keeps OTHER, exactly as handleFailure reports it, so it never
+        // enters tools/call evidence capture.
+        McpMethod method = errorType == McpErrorType.AUTHENTICATION ? McpMethod.OTHER : classifiedMethodOf(context);
         McpRequestTerminalEvent terminal = McpRequestTerminalEvent.rejected(
                 startedAt(context),
                 Instant.now(),
-                classifiedMethodOf(context),
+                method,
                 McpRequestTerminalEvent.UNKNOWN_TOOL_NAME,
                 errorType,
                 status,

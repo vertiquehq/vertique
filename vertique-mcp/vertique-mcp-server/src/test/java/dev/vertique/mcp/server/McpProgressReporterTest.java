@@ -170,7 +170,8 @@ class McpProgressReporterTest {
             when(routing.response()).thenReturn(response);
             when(response.write(any(Buffer.class))).thenReturn(Future.succeededFuture());
             when(response.end(any(Buffer.class))).thenReturn(Future.succeededFuture());
-            // The terminal writer reads the response headers to bind the request view's response.
+            // No completion listener is registered, so the terminal writer does not read the response
+            // headers; the stub only keeps a mocked response from returning null if it ever does.
             when(response.headers()).thenReturn(MultiMap.caseInsensitiveMultiMap());
 
             byte[] fallback =

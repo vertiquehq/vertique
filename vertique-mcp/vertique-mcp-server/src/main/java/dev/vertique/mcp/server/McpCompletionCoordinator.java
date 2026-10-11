@@ -939,9 +939,9 @@ final class McpCompletionCoordinator {
      * {@link Error} propagates.
      *
      * <p>Isolates {@code Exception | AssertionError | StackOverflowError | LinkageError}, not
-     * {@code Exception} alone. Every
-     * settlement path funnels through here: {@code onTerminal} and {@code onCompleted} on every
-     * retained session, plus {@code onCompleted} on every completion listener — all application-supplied code. An escaping {@code Error} of these kinds from
+     * {@code Exception} alone. Every settlement path funnels through here: {@code onTerminal} and
+     * {@code onCompleted} on every retained session, plus {@code onCompleted} on every completion
+     * listener — all application-supplied code. An escaping {@code Error} of these kinds from
      * any one of them mid-loop would strand every session and listener still queued behind it, leave
      * the completion scopes opened around the loop unclosed, and — on the settlement
      * paths — escape inside a {@code context.runOnContext} task with no caller left to

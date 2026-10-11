@@ -5,6 +5,7 @@ package dev.vertique.mcp.server;
 
 import static dev.vertique.mcp.server.McpRequestDispatcher.COMPLETION_COORDINATOR_KEY;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
@@ -64,11 +65,13 @@ import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 
 /**
@@ -194,10 +197,12 @@ class McpDispatcherCoordinatorOwnershipTest {
     }
 
     @Test
-    @DisplayName("a cancelled coordinator that belongs to the request stops the call before any write")
+    @DisplayName("a cancelled coordinator that belongs to the request stops the call before any "
+            + "authorization, input work or tool invocation, and before any write")
     void shouldStopTheCallWhenTheRequestsOwnCoordinatorWasCancelled() throws Exception {
         // Given: the slot holds this request's own coordinator, whose cancellation has fired.
-        Fixture fixture = new Fixture(List.of());
+        FixtureTool tool = new FixtureTool();
+        Fixture fixture = new Fixture(List.of(), tool);
         McpCompletionCoordinator owned = new McpCompletionCoordinator(
                 vertx.getOrCreateContext(),
                 Set.<McpRequestLifecycleObserver>of(),
@@ -211,24 +216,46 @@ class McpDispatcherCoordinatorOwnershipTest {
         // When: a tools/call is dispatched.
         fixture.dispatch();
 
-        // Then: the control: the guard stopped the call, so nothing was written.
+        // Then: the control: the guard stopped the call, so no authorization decision was made, the
+        // tool's input was not prepared, the tool never ran and nothing was written. The write is
+        // suppressed by its own settlement claim whether or not the guard fired, and the invocation
+        // itself is also refused by the cancellation signal, so the decision and the preparation are
+        // what show that the guard did.
+        verify(
+                        fixture.policyEnforcer,
+                        never().description("DECISIVE: no authorization decision for a " + "settled request"))
+                .decide(any(), any());
+        assertAll(
+                () -> assertThat(tool.preparations())
+                        .as("DECISIVE: the settled request's input was not prepared")
+                        .isZero(),
+                () -> assertThat(tool.invocations())
+                        .as("the settled request never invoked the tool")
+                        .isZero());
         verify(fixture.response, never().description("the settled request is not answered a second time"))
                 .end(any(Buffer.class));
     }
 
     // --- The method a failure through the failure handler reports ---
 
-    @ParameterizedTest(name = "dispatched={0}, responseEnded={1} -> {2}")
+    @ParameterizedTest(name = "status={0}, dispatched={1}, responseEnded={2} -> {3}")
     @CsvSource({
-        "true,  false, TOOLS_CALL",
-        "true,  true,  TOOLS_CALL",
-        "false, false, OTHER",
-        "false, true,  OTHER",
+        // A server failure reports the method dispatch had classified, or OTHER when it had none.
+        "500, true,  false, TOOLS_CALL",
+        "500, true,  true,  TOOLS_CALL",
+        "500, false, false, OTHER",
+        "500, false, true,  OTHER",
+        // An authentication rejection reports OTHER even when dispatch had classified tools/call: the
+        // ended-response rows are the ones that move; the open-response rows are the controls.
+        "401, true,  true,  OTHER",
+        "403, true,  true,  OTHER",
+        "401, true,  false, OTHER",
+        "403, true,  false, OTHER",
     })
     @DisplayName("a failure handled after the request was admitted reports the method dispatch had "
-            + "classified, or OTHER when it had classified none")
+            + "classified, or OTHER when it had classified none or the failure is an authentication rejection")
     void shouldReportTheClassifiedMethodOfAFailedRequest(
-            boolean dispatched, boolean responseEnded, McpMethod expectedMethod) throws Exception {
+            int status, boolean dispatched, boolean responseEnded, McpMethod expectedMethod) throws Exception {
         // Given: an admitted request with a listener, whose tool call is in flight when dispatched.
         McpRecordingCompletedListener listener = new McpRecordingCompletedListener();
         HeldTool tool = new HeldTool();
@@ -240,7 +267,7 @@ class McpDispatcherCoordinatorOwnershipTest {
                     .as("precondition: the tool is in flight, so dispatch classified the method")
                     .isTrue();
         }
-        when(fixture.context.statusCode()).thenReturn(500);
+        when(fixture.context.statusCode()).thenReturn(status);
         if (responseEnded) {
             when(fixture.response.ended()).thenReturn(true);
             when(fixture.response.headWritten()).thenReturn(true);
@@ -255,6 +282,47 @@ class McpDispatcherCoordinatorOwnershipTest {
         assertThat(completions.get(0).event().terminal().method())
                 .as("DECISIVE: the failure's terminal reports the method known when it failed")
                 .isEqualTo(expectedMethod);
+        assertThat(listener.arrivesWithin(2, Duration.ofMillis(200)))
+                .as("no second completion follows")
+                .isFalse();
+    }
+
+    @ParameterizedTest(name = "responseEnded={0}")
+    @ValueSource(booleans = {false, true})
+    @DisplayName("a value of another type in the classified-method slot counts as no classified method and "
+            + "does not fail the failure handler")
+    void shouldReportOtherWhenTheClassifiedMethodSlotHoldsAnotherType(boolean responseEnded) throws Exception {
+        // Given: a dispatched request whose classified-method slot, a predictable key in shared
+        // routing-context data, was overwritten with a String.
+        McpRecordingCompletedListener listener = new McpRecordingCompletedListener();
+        HeldTool tool = new HeldTool();
+        Fixture fixture = new Fixture(List.of(listener), tool);
+        fixture.begin();
+        fixture.dispatch();
+        assertThat(tool.invoked.await(WAIT_SECONDS, TimeUnit.SECONDS))
+                .as("precondition: the tool is in flight, so dispatch classified the method")
+                .isTrue();
+        String methodKey = McpRequestDispatcher.class.getName() + ".method";
+        assertThat((Object) fixture.context.get(methodKey))
+                .as("precondition: the slot held the classified method")
+                .isEqualTo(McpMethod.TOOLS_CALL);
+        fixture.context.put(methodKey, "tools/call");
+        when(fixture.context.statusCode()).thenReturn(500);
+        if (responseEnded) {
+            when(fixture.response.ended()).thenReturn(true);
+            when(fixture.response.headWritten()).thenReturn(true);
+        }
+
+        // When: the request fails through the failure handler.
+        // Then: the handler does not throw.
+        assertThatCode(() -> fixture.dispatcher.handleFailure(fixture.context))
+                .as("DECISIVE: a foreign value in the slot does not fail the handler")
+                .doesNotThrowAnyException();
+
+        // Then: the request is completed once, with OTHER as its method.
+        List<Completion> completions = listener.await(1);
+        assertThat(completions).hasSize(1);
+        assertThat(completions.get(0).event().terminal().method()).isEqualTo(McpMethod.OTHER);
         assertThat(listener.arrivesWithin(2, Duration.ofMillis(200)))
                 .as("no second completion follows")
                 .isFalse();
@@ -335,8 +403,22 @@ class McpDispatcherCoordinatorOwnershipTest {
             return Future.succeededFuture(McpToolResult.structured(Map.of("marker", RESULT_MARKER)));
         }
 
+        private final AtomicInteger preparations = new AtomicInteger();
+        private final AtomicInteger invocations = new AtomicInteger();
+
+        /** Returns how many times this tool's input was prepared. */
+        int preparations() {
+            return preparations.get();
+        }
+
+        /** Returns how many times a prepared call of this tool was invoked. */
+        int invocations() {
+            return invocations.get();
+        }
+
         @Override
         public McpPreparedToolCall prepare(Map<String, Object> arguments, McpCancellationSignal cancellation) {
+            preparations.incrementAndGet();
             return new McpPreparedToolCall() {
                 @Override
                 public Map<String, Object> normalizedArguments() {
@@ -345,6 +427,7 @@ class McpDispatcherCoordinatorOwnershipTest {
 
                 @Override
                 public Future<McpToolResult<?>> invoke() {
+                    invocations.incrementAndGet();
                     return result();
                 }
             };
@@ -354,6 +437,7 @@ class McpDispatcherCoordinatorOwnershipTest {
     /** One dispatcher with a permitting policy enforcer, and one request's map-backed routing context. */
     private final class Fixture {
         private final McpRequestDispatcher dispatcher;
+        private final McpPolicyEnforcer policyEnforcer = mock(McpPolicyEnforcer.class);
         private final RoutingContext context = mock(RoutingContext.class);
         private final HttpServerResponse response = mock(HttpServerResponse.class);
 
@@ -365,7 +449,6 @@ class McpDispatcherCoordinatorOwnershipTest {
             SecurityRuntime securityRuntime = mock(SecurityRuntime.class);
             SecurityContext anonymous = SecurityContexts.unauthenticated(SecurityIdentity.anonymous());
             when(securityRuntime.current()).thenReturn(anonymous);
-            McpPolicyEnforcer policyEnforcer = mock(McpPolicyEnforcer.class);
             when(policyEnforcer.decide(any(), any()))
                     .thenReturn(Future.succeededFuture(AuthorizationDecision.permit("PERMITTED")));
             this.dispatcher = new McpRequestDispatcher(

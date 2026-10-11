@@ -10,10 +10,12 @@ package dev.vertique.mcp.lifecycle;
  * failures and does not define listener ordering.
  *
  * <p>The callback runs synchronously on the Vert.x context that owns the request, and concurrently
- * for different requests. It fires once for every request the MCP mount admits. A request rejected
- * before it enters the mount, such as a disallowed method, {@code Origin}, {@code Content-Type} or
- * {@code Accept}, or an oversized body, opens no coordinator and produces no callback. A request whose
- * tool handler never completes produces none until the connection settles.
+ * for different requests. It fires once for every request MCP settles. It does not fire for a request
+ * the mount rejects before it opens a coordinator (a disallowed method, {@code Origin}, {@code
+ * Content-Type} or {@code Accept}, or an oversized body), for a request rerouted out of the mount, or
+ * for one whose failure another mount's failure handler takes. A request whose tool handler never
+ * completes produces a callback only when the connection settles or a configured request deadline
+ * expires.
  *
  * <p>The server always calls {@link #onCompleted(McpRequestCompletedEvent, McpRequestView)}. Its
  * default delegates to {@link #onCompleted(McpRequestCompletedEvent)}, so a listener that needs only
