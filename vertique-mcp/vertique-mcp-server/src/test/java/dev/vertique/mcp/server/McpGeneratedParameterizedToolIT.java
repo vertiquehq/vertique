@@ -5,6 +5,7 @@ package dev.vertique.mcp.server;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import dev.vertique.mcp.server.McpRecordingCompletedListener.Completion;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
@@ -14,6 +15,7 @@ import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.client.HttpRequest;
 import io.vertx.ext.web.client.HttpResponse;
 import io.vertx.ext.web.client.WebClient;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
@@ -128,17 +130,18 @@ class McpGeneratedParameterizedToolIT {
                         + " before the handler ever ran")
                 .isEqualTo(EXPECTED_GREETING);
 
-        // --- Then (d): the delivered onToolInput observation carries the post-processing tree, never
-        // the raw wire tree — DECISIVE: normalizedArguments() must reflect the sanitized value; the raw
-        // wire value "ada" reaching this callback would mean the server substituted (or a stand-in
-        // fabricated) the pre-processing map instead of McpPreparedToolCall's own real value. ---
-        assertThat(fixture.session().toolInputCount())
-                .as("exactly the one valid call must have reached the value-observation stage")
+        // --- Then (d): the request view reports the post-processing tree, never the raw wire tree —
+        // DECISIVE: toolInput() must reflect the sanitized value; the raw wire value "ada" reaching
+        // this view would mean the server substituted (or a stand-in fabricated) the pre-processing
+        // map instead of McpPreparedToolCall's own real value. ---
+        List<Completion> afterValidCall = fixture.listener().await(1);
+        assertThat(toolInputCount(afterValidCall))
+                .as("exactly the one valid call must have reached a prepared invocation")
                 .isEqualTo(1);
-        assertThat(fixture.session().observed().normalizedArguments())
-                .as("DECISIVE: the observed tree must be the post-processing (sanitized) value, not the"
+        assertThat(afterValidCall.get(0).toolInput())
+                .as("DECISIVE: the reported tree must be the post-processing (sanitized) value, not the"
                         + " pre-processing wire value")
-                .isEqualTo(Map.of("name", SANITIZED_NAME));
+                .contains(Map.of("name", SANITIZED_NAME));
 
         // --- When: a constraint-violating call — a blank/whitespace-only "name" the declared
         // @NotBlank rejects only after stage 2/3 succeed (the sanitizer's uppercase transform leaves
@@ -171,8 +174,9 @@ class McpGeneratedParameterizedToolIT {
         softly.assertThat(rejectedResult.containsKey("structuredContent"))
                 .as("text-only: no structured content")
                 .isFalse();
-        softly.assertThat(fixture.session().toolInputCount())
-                .as("the rejected call must never have reached the value-observation stage")
+        softly.assertThat(toolInputCount(fixture.listener().await(2)))
+                .as("the rejected call must never have reached a prepared invocation, so its view reports"
+                        + " no tool input")
                 .isEqualTo(1);
         softly.assertAll();
 
@@ -206,12 +210,19 @@ class McpGeneratedParameterizedToolIT {
         assertThat(rejectedResult.getBoolean("isError")).isTrue();
         assertThat(rejectedResult.getJsonArray("content").getJsonObject(0).getString("text"))
                 .isEqualTo(BEAN_VALIDATION_MESSAGE);
-        assertThat(fixture.session().toolInputCount())
-                .as("the invalid cascaded value must not reach tool-input observation")
+        assertThat(toolInputCount(fixture.listener().await(2)))
+                .as("the invalid cascaded value must not reach a prepared invocation")
                 .isEqualTo(1);
     }
 
     // --- Wire helpers ---
+
+    /** Counts the completions whose view reported a prepared call's normalized arguments. */
+    private static long toolInputCount(List<Completion> completions) {
+        return completions.stream()
+                .filter(completion -> completion.toolInput().isPresent())
+                .count();
+    }
 
     private HttpRequest<Buffer> post(String toolName) {
         return client.post(fixture.port(), "127.0.0.1", REQUEST_PATH)

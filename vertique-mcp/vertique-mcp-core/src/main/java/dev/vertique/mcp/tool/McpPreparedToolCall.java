@@ -19,8 +19,8 @@ public interface McpPreparedToolCall {
     /**
      * Returns the exact argument tree as it stands after input policy processing.
      *
-     * <p>The map is deeply immutable, bounded, and JSON-compatible. The server hands this exact
-     * tree to opt-in value-observation sessions; it never substitutes the pre-processing map and
+     * <p>The map is deeply immutable, bounded, and JSON-compatible. The server reports this exact
+     * tree through {@code McpRequestView#toolInput()}; it never substitutes the pre-processing map and
      * never re-runs processing to rebuild it.
      *
      * @return the deeply immutable post-processing argument tree

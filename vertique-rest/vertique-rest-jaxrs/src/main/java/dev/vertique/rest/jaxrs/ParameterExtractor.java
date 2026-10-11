@@ -1246,7 +1246,8 @@ final class ParameterExtractor {
         }
 
         // No decoder found — fail with 415 so the error pipeline produces a proper response
-        throw new jakarta.ws.rs.NotSupportedException("No RequestBodyDecoder for Content-Type: " + contentType);
+        // The message is fixed: the request's Content-Type is the caller's and must not be reflected.
+        throw new jakarta.ws.rs.NotSupportedException("No RequestBodyDecoder for the request Content-Type");
     }
 
     /**

@@ -22,8 +22,8 @@ import lombok.extern.slf4j.Slf4j;
  *
  * <p>Pipeline: fire {@link RequestInterceptor#onError} sync observers with the original cause →
  * {@link ErrorInterceptor#beforeMapping} async chain → {@link RestExceptionMapper} →
- * {@link ExceptionMapperRegistry} → {@link ProblemDetail} instance enrichment →
- * {@link ErrorInterceptor#afterMapping} async chain → returns {@link Future}{@code <Response>}
+ * {@link ExceptionMapperRegistry} → {@link ErrorInterceptor#afterMapping} async chain → returns
+ * {@link Future}{@code <Response>}
  * to the caller for unified dispatch via {@link ResponsePipeline#sendResponse}.
  *
  * <p>The original {@link Throwable} (before any mapping) is stored in
@@ -102,9 +102,6 @@ public class ErrorPipeline {
      *   <li>{@link ErrorInterceptor#beforeMapping} async chain (transforms the throwable)</li>
      *   <li>{@link RestExceptionMapper} (Throwable to Throwable pre-translation)</li>
      *   <li>{@link ExceptionMapperRegistry} (Throwable to {@link Response})</li>
-     *   <li>Instance enrichment — populates {@link ProblemDetail#instance()} from the
-     *       request path if the response entity is a {@link ProblemDetail} and
-     *       {@code instance} is not already set</li>
      *   <li>{@link ErrorInterceptor#afterMapping} async chain (transforms the response)</li>
      *   <li>Framework catch-all logging, once, using the status of the response leaving the chain</li>
      * </ol>
@@ -173,7 +170,7 @@ public class ErrorPipeline {
                     if (!exceptionMapperRegistry.hasSpecificMapper(translated.getClass())) {
                         response = applyVertxStatusCodeFallback(response, vertxFailureStatus, translated);
                     }
-                    return new MappingOutcome(enrichProblemDetail(ctx, response), translated, frameworkCatchAll);
+                    return new MappingOutcome(response, translated, frameworkCatchAll);
                 })
                 .compose(outcome -> Combinators.foldSequential(
                                 errorInterceptors,
@@ -201,7 +198,8 @@ public class ErrorPipeline {
     /**
      * Per-invocation result of the mapping step carried into the {@code afterMapping} chain.
      *
-     * @param response         the mapped (fallback-applied, enriched) response entering the chain
+     * @param response         the mapped response entering the chain, after the Vert.x status-code
+     *                         fallback (status override or equal-status detail sanitization)
      * @param translated       the cause after {@link RestExceptionMapper#translate}
      * @param frameworkCatchAll whether the framework {@code Throwable} catch-all produced the response
      */
@@ -224,28 +222,6 @@ public class ErrorPipeline {
             return;
         }
         log.error("Unhandled exception", cause);
-    }
-
-    // --- ProblemDetail enrichment ---
-
-    /**
-     * Enriches the response entity if it is a {@link ProblemDetail} without an instance set.
-     * The instance is populated from the request path. All response headers and media type
-     * are preserved.
-     *
-     * @param ctx      the current routing context (used to read the request path)
-     * @param response the response produced by the exception mapper
-     * @return the enriched response, or the original response unchanged
-     */
-    private static Response enrichProblemDetail(RoutingContext ctx, Response response) {
-        Object entity = response.getEntity();
-        if (entity instanceof ProblemDetail pd && pd.instance() == null) {
-            ProblemDetail enriched =
-                    pd.toBuilder().instance(ctx.request().path()).build();
-            Response.ResponseBuilder rb = Response.status(response.getStatus()).entity(enriched);
-            return rebuildWithHeaders(response, rb, true);
-        }
-        return response;
     }
 
     /**
@@ -291,7 +267,9 @@ public class ErrorPipeline {
      * contradict the title and publish a message the framework never intended for the client. The same
      * reasoning applies to everything else the superseded body carried: typed subclass fields (such as
      * {@link dev.vertique.rest.core.ValidationProblemDetail#errors()}) and RFC 9457 extension members
-     * are dropped with it, so only {@code instance} — request-scoped and status-independent — survives.
+     * are dropped with it, so only {@code instance} — which a mapper sets for this occurrence and which is
+     * status-independent — survives. The pipeline itself never fills {@code instance}: the request
+     * path carries the caller's bytes, and a route template is not a URI reference.
      * A non-{@code ProblemDetail} entity is fail-closed the same way: replaced with a fresh
      * {@link ProblemDetail} for the winning status and {@code application/problem+json}, rather than
      * shipping the superseded body under a new status line.
@@ -336,14 +314,14 @@ public class ErrorPipeline {
             // ProblemDetail subclass (e.g. ValidationProblemDetail) or carry RFC 9457 extension
             // members, and toBuilder() would copy those fields — which describe the status being
             // superseded — straight into the overriding status, defeating the cleared detail. Only
-            // instance carries over; it is request-scoped and status-independent.
+            // instance carries over; a mapper set it for this occurrence and it is status-independent.
             Response.ResponseBuilder rb =
                     Response.status(vertxStatus).entity(ProblemDetail.of(vertxStatus, null, pd.instance()));
             return rebuildWithHeaders(response, rb, true, false);
         }
         // Fail closed: a non-ProblemDetail entity (or a missing one) describes the superseded status —
         // including via its Content-Type. Replace it with a fresh problem document for the winning
-        // status rather than re-labelling the old body. instance is filled by enrichProblemDetail.
+        // status rather than re-labelling the old body.
         Response.ResponseBuilder rb = Response.status(vertxStatus)
                 .entity(ProblemDetail.of(vertxStatus, null))
                 .type("application/problem+json");
@@ -434,7 +412,7 @@ public class ErrorPipeline {
 
     /**
      * Copies the source response's headers into the builder when the entity was replaced but the
-     * media type still describes the rebuilt body (ProblemDetail enrichment / ProblemDetail override).
+     * media type still describes the rebuilt body (equal-status detail sanitization).
      *
      * @param source         the original response whose headers should be preserved
      * @param builder        the response builder (with status and entity already set)

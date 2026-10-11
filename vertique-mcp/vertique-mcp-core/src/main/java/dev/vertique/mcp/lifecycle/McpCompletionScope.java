@@ -21,8 +21,7 @@ package dev.vertique.mcp.lifecycle;
  * <p>This mirrors {@code dev.vertique.rest.core.events.RequestCompletionScope}'s role for REST, but as
  * an opt-in session capability rather than a separately multibound set: the MCP completion dispatch
  * already threads through the per-request {@link McpRequestObservation} sessions {@link
- * McpRequestLifecycleObserver#open} returned (see {@link McpToolValueObservation} for the established
- * precedent of layering an opt-in capability the same way), so this needs no new Dagger wiring and no
+ * McpRequestLifecycleObserver#open} returned, so this needs no new Dagger wiring and no
  * OpenTelemetry type ever needs to enter this module or {@code vertique-micrometer-mcp}.
  *
  * <p>{@link #openCompletionScope()} is called once per request, before any retained {@link

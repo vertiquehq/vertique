@@ -491,8 +491,7 @@ class ErrorPipelineTest {
             ctxData.put(VertxFailureStatus.KEY, 415);
 
             Response authored = Response.status(415)
-                    .entity(ProblemDetail.of(
-                            415, "Unsupported Content-Type: text/xml; expected one of [application/json]"))
+                    .entity(ProblemDetail.of(415, "Unsupported Content-Type; expected one of [application/json]"))
                     .type("application/problem+json")
                     .build();
             Future<Response> future =
@@ -503,30 +502,97 @@ class ErrorPipelineTest {
             assertEquals(415, response.getStatus());
             ProblemDetail pd = assertInstanceOf(ProblemDetail.class, response.getEntity());
             assertEquals(
-                    "Unsupported Content-Type: text/xml; expected one of [application/json]",
+                    "Unsupported Content-Type; expected one of [application/json]",
                     pd.detail(),
                     "an authored WAE entity must survive equal-status sanitization");
         }
 
         @Test
-        @DisplayName("ProblemDetail instance field is populated from request path")
-        void problemDetailInstanceIsPopulated() {
-            ctxData.put(VertxFailureStatus.KEY, 401);
+        @DisplayName("The pipeline never fills ProblemDetail.instance, so a malformed path segment is not echoed")
+        void problemDetailInstanceIsNeverFilledFromTheRequest() {
+            ctxData.put(VertxFailureStatus.KEY, 400);
+            lenient().when(request.path()).thenReturn("/items/not-a-uuid");
+            lenient().when(request.uri()).thenReturn("/items/not-a-uuid?q=leaky-marker");
 
-            Future<Response> future = pipeline.mapToResponse(ctx, new RuntimeException("auth failed"));
+            Future<Response> future = pipeline.mapToResponse(ctx, new RuntimeException("bad request"));
             assertTrue(future.succeeded());
 
-            Response response = future.result();
-            assertInstanceOf(ProblemDetail.class, response.getEntity());
-            ProblemDetail pd = (ProblemDetail) response.getEntity();
-            assertEquals("/test", pd.instance());
+            ProblemDetail pd =
+                    assertInstanceOf(ProblemDetail.class, future.result().getEntity());
+            assertNull(pd.instance(), "no request bytes, and no route template, in a framework-filled instance");
+        }
+
+        @Test
+        @DisplayName("An instance the mapper set is kept as written")
+        void explicitInstanceIsKept() {
+            DefaultExceptionMapper defaults = new DefaultExceptionMapper()
+                    .on(Throwable.class, ex -> Response.status(409)
+                            .entity(ProblemDetail.of(409, "Conflict", "/orders/42"))
+                            .type("application/problem+json")
+                            .build());
+            ErrorPipeline customPipeline = new ErrorPipeline(
+                    List.of(), List.of(), new RestExceptionMapper(), new ExceptionMapperRegistry(defaults, Set.of()));
+
+            Future<Response> future = customPipeline.mapToResponse(ctx, new RuntimeException("conflict"));
+            assertTrue(future.succeeded());
+
+            ProblemDetail pd =
+                    assertInstanceOf(ProblemDetail.class, future.result().getEntity());
+            assertEquals("/orders/42", pd.instance());
+        }
+
+        @Test
+        @DisplayName("A mapper-set instance survives a status override")
+        void explicitInstanceSurvivesAStatusOverride() {
+            DefaultExceptionMapper defaults = new DefaultExceptionMapper()
+                    .on(Throwable.class, ex -> Response.status(500)
+                            .entity(ProblemDetail.of(500, "Internal Server Error", "urn:uuid:7"))
+                            .type("application/problem+json")
+                            .build());
+            ErrorPipeline customPipeline = new ErrorPipeline(
+                    List.of(), List.of(), new RestExceptionMapper(), new ExceptionMapperRegistry(defaults, Set.of()));
+            ctxData.put(VertxFailureStatus.KEY, 400);
+
+            ProblemDetail pd = assertInstanceOf(
+                    ProblemDetail.class,
+                    customPipeline
+                            .mapToResponse(ctx, new RuntimeException("bad request"))
+                            .result()
+                            .getEntity());
+
+            assertEquals(400, pd.status());
+            assertEquals("urn:uuid:7", pd.instance());
+        }
+
+        @Test
+        @DisplayName("Equal-status sanitization drops a catch-all mapper's detail but keeps its instance")
+        void explicitInstanceSurvivesEqualStatusSanitization() {
+            DefaultExceptionMapper defaults = new DefaultExceptionMapper()
+                    .on(Throwable.class, ex -> Response.status(409)
+                            .entity(ProblemDetail.of(409, "order 42 is locked by session 9", "urn:uuid:8"))
+                            .type("application/problem+json")
+                            .build());
+            ErrorPipeline customPipeline = new ErrorPipeline(
+                    List.of(), List.of(), new RestExceptionMapper(), new ExceptionMapperRegistry(defaults, Set.of()));
+            ctxData.put(VertxFailureStatus.KEY, 409);
+
+            Response response = customPipeline
+                    .mapToResponse(ctx, new RuntimeException("conflict"))
+                    .result();
+            ProblemDetail pd = assertInstanceOf(ProblemDetail.class, response.getEntity());
+
+            assertEquals(409, response.getStatus());
+            assertEquals(409, pd.status());
+            assertNull(pd.detail(), "equal-status sanitization must drop the mapper's detail");
+            assertEquals("urn:uuid:8", pd.instance(), "the instance the mapper set must survive the rebuild");
         }
 
         @Test
         @DisplayName("A rebuilt body does not inherit Content-Length from the response it replaced")
         void rebuiltBodyDropsInheritedContentLength() {
-            // The mapper declares the length of the body it authored. Instance enrichment replaces that
-            // body, so the declared length describes bytes that will never be written — and the wire path
+            // The mapper declares the length of the body it authored. Equal-status sanitization replaces
+            // that body (the synthesized detail is cleared), so the declared length describes bytes that
+            // will never be written — and the wire path
             // copies JAX-RS headers verbatim while the JSON encoder supplies no length of its own, so an
             // inherited value would ship a framing violation. Every other header still belongs to the
             // response and must survive.
@@ -540,12 +606,14 @@ class ErrorPipelineTest {
             ExceptionMapperRegistry registry = new ExceptionMapperRegistry(defaults, Set.of());
             ErrorPipeline customPipeline = new ErrorPipeline(List.of(), List.of(), new RestExceptionMapper(), registry);
 
+            ctxData.put(VertxFailureStatus.KEY, 401);
+
             Future<Response> future = customPipeline.mapToResponse(ctx, new RuntimeException("no credentials"));
             assertTrue(future.succeeded());
 
             Response response = future.result();
             ProblemDetail pd = assertInstanceOf(ProblemDetail.class, response.getEntity());
-            assertEquals("/test", pd.instance(), "the body must actually have been rebuilt by enrichment");
+            assertNull(pd.detail(), "the body must actually have been rebuilt by equal-status sanitization");
             assertNull(
                     response.getHeaderString("Content-Length"),
                     "a Content-Length describing the superseded body must not survive onto the rebuilt one");
@@ -575,12 +643,14 @@ class ErrorPipelineTest {
             ExceptionMapperRegistry registry = new ExceptionMapperRegistry(defaults, Set.of());
             ErrorPipeline customPipeline = new ErrorPipeline(List.of(), List.of(), new RestExceptionMapper(), registry);
 
+            ctxData.put(VertxFailureStatus.KEY, 401);
+
             Future<Response> future = customPipeline.mapToResponse(ctx, new RuntimeException("no credentials"));
             assertTrue(future.succeeded());
 
             Response response = future.result();
             ProblemDetail pd = assertInstanceOf(ProblemDetail.class, response.getEntity());
-            assertEquals("/test", pd.instance(), "the body must actually have been rebuilt by enrichment");
+            assertNull(pd.detail(), "the body must actually have been rebuilt by equal-status sanitization");
             assertNull(
                     response.getHeaderString("Content-Encoding"),
                     "an encoding the rebuilt body was never encoded with would make it undecodable");

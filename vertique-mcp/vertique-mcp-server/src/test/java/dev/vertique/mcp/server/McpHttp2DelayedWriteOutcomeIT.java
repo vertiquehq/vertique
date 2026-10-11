@@ -16,10 +16,8 @@ import dev.vertique.mcp.lifecycle.McpRequestLifecycleObserver;
 import dev.vertique.mcp.lifecycle.McpRequestObservation;
 import dev.vertique.mcp.lifecycle.McpRequestTerminalEvent;
 import dev.vertique.mcp.lifecycle.McpRequestTerminalObservation;
-import dev.vertique.mcp.lifecycle.McpToolInputObservation;
-import dev.vertique.mcp.lifecycle.McpToolOutputObservation;
-import dev.vertique.mcp.lifecycle.McpToolValueObservation;
 import dev.vertique.mcp.lifecycle.McpTransportOutcome;
+import dev.vertique.mcp.server.McpRecordingCompletedListener.Completion;
 import dev.vertique.mcp.tool.McpAccessMode;
 import dev.vertique.mcp.tool.McpCancellationSignal;
 import dev.vertique.mcp.tool.McpPreparedToolCall;
@@ -148,6 +146,11 @@ class McpHttp2DelayedWriteOutcomeIT {
         assertThat(session.completions()).hasSize(1);
         assertThat(session.completions().get(0).transportOutcome()).isEqualTo(McpTransportOutcome.WRITTEN);
         assertThat(fixture.plain().signal().isCancelled()).isFalse();
+        Completion view = awaitNonDiscoverView();
+        assertThat(view.toolOutput())
+                .as("the result's own write won settlement, so the tool output is reported")
+                .isPresent();
+        assertThat(view.responseBody()).isEqualTo(reply.body());
     }
 
     @Test
@@ -172,6 +175,14 @@ class McpHttp2DelayedWriteOutcomeIT {
         assertThat(fixture.held().signal().isCancelled())
                 .as("a response that was delivered in full must not cancel the request")
                 .isFalse();
+        Completion view = awaitNonDiscoverView();
+        assertThat(view.toolOutput())
+                .as("a result written from a timer task is still the write that won settlement")
+                .isPresent();
+        assertThat(view.responseBody())
+                .as("the view's response is the delayed result the client received")
+                .isEqualTo(reply.body())
+                .contains("\"late\"");
     }
 
     @Test
@@ -190,6 +201,14 @@ class McpHttp2DelayedWriteOutcomeIT {
         assertThat(session.completions().get(0).transportOutcome()).isEqualTo(McpTransportOutcome.WRITTEN);
         assertThat(session.completions().get(0).responseCommitted()).isTrue();
         assertThat(fixture.streamed().signal().isCancelled()).isFalse();
+        Completion view = awaitNonDiscoverView();
+        assertThat(view.toolOutput())
+                .as("the terminal frame carries the result itself, so the tool output is reported")
+                .isPresent();
+        assertThat(view.responseBody())
+                .as("the view reports the terminal frame, which is the tail of what the client received")
+                .contains("streamed")
+                .satisfies(terminalFrame -> assertThat(reply.body()).endsWith(terminalFrame));
     }
 
     @Test
@@ -207,6 +226,9 @@ class McpHttp2DelayedWriteOutcomeIT {
         assertThat(session.completions()).hasSize(1);
         assertThat(session.completions().get(0).transportOutcome()).isEqualTo(McpTransportOutcome.WRITTEN);
         assertThat(fixture.held().signal().isCancelled()).isFalse();
+        assertThat(awaitNonDiscoverView().toolOutput())
+                .as("the result's own write won settlement, so the tool output is reported")
+                .isPresent();
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -227,6 +249,7 @@ class McpHttp2DelayedWriteOutcomeIT {
         assertThat(session.completions()).hasSize(1);
         assertThat(session.completions().get(0).transportOutcome()).isEqualTo(McpTransportOutcome.RESET);
         assertThat(fixture.held().signal().isCancelled()).isTrue();
+        assertThatNoOutputWasReported(awaitNonDiscoverView());
     }
 
     @Test
@@ -243,6 +266,7 @@ class McpHttp2DelayedWriteOutcomeIT {
         assertThat(session.completions()).hasSize(1);
         assertThat(session.completions().get(0).transportOutcome()).isEqualTo(McpTransportOutcome.DISCONNECTED);
         assertThat(fixture.held().signal().isCancelled()).isTrue();
+        assertThatNoOutputWasReported(awaitNonDiscoverView());
     }
 
     @Test
@@ -259,11 +283,32 @@ class McpHttp2DelayedWriteOutcomeIT {
         assertThat(session.completions()).hasSize(1);
         assertThat(session.completions().get(0).transportOutcome()).isEqualTo(McpTransportOutcome.DISCONNECTED);
         assertThat(fixture.held().signal().isCancelled()).isTrue();
+        assertThatNoOutputWasReported(awaitNonDiscoverView());
     }
 
     // ---------------------------------------------------------------------------------------------
     // Harness
     // ---------------------------------------------------------------------------------------------
+
+    /** Awaits the view of the one non-discover request, which the listener receives right after the observer. */
+    private Completion awaitNonDiscoverView() throws Exception {
+        return fixture.listener()
+                .await(completion -> completion.event().terminal().method() != McpMethod.SERVER_DISCOVER, 1)
+                .get(0);
+    }
+
+    /** A request settled before its tool answered reports the prepared call and no output or response. */
+    private static void assertThatNoOutputWasReported(Completion view) {
+        assertThat(view.toolInput())
+                .as("the held call was prepared before the transport settled the request")
+                .isPresent();
+        assertThat(view.toolOutput())
+                .as("DECISIVE: the transport won settlement, so no tool output is reported")
+                .isEmpty();
+        assertThat(view.hasResponseBody())
+                .as("no terminal write happened, so no response body is reported")
+                .isFalse();
+    }
 
     private void start(HttpVersion version) throws Exception {
         fixture = new Fixture(vertx);
@@ -367,6 +412,7 @@ class McpHttp2DelayedWriteOutcomeIT {
         private final Tool plain;
         private final Tool streamed;
         private final Recorder recorder = new Recorder();
+        private final McpRecordingCompletedListener listener = new McpRecordingCompletedListener();
 
         private Fixture(Vertx vertx) throws Exception {
             McpAccessMode permitAll = McpAccessMode.PERMIT_ALL;
@@ -401,7 +447,7 @@ class McpHttp2DelayedWriteOutcomeIT {
                             config,
                             securityRuntime,
                             Set.of(recorder),
-                            Set.of(),
+                            Set.of(listener),
                             Set.of(),
                             Set.of(),
                             httpConfig,
@@ -446,6 +492,10 @@ class McpHttp2DelayedWriteOutcomeIT {
 
         Recorder recorder() {
             return recorder;
+        }
+
+        McpRecordingCompletedListener listener() {
+            return listener;
         }
 
         private static IdentityResolutionMiddleware identityResolution(SecurityRuntime securityRuntime) {
@@ -559,7 +609,7 @@ class McpHttp2DelayedWriteOutcomeIT {
         }
     }
 
-    private static final class Session implements McpCompletionScope, McpToolValueObservation {
+    private static final class Session implements McpCompletionScope {
         private final Recorder recorder;
         private final List<McpRequestTerminalEvent> terminals = new CopyOnWriteArrayList<>();
         private final List<McpRequestCompletedEvent> completions = new CopyOnWriteArrayList<>();
@@ -580,12 +630,6 @@ class McpHttp2DelayedWriteOutcomeIT {
                 recorder.firstNonDiscoverCompletion.complete(this);
             }
         }
-
-        @Override
-        public void onToolInput(McpToolInputObservation observation) {}
-
-        @Override
-        public void onToolOutput(McpToolOutputObservation observation) {}
 
         @Override
         public AutoCloseable openCompletionScope() {

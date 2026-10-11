@@ -66,6 +66,20 @@ The operation-route identity handler records the operation's route template and 
 the request's completion event; as a Vert.x `PlatformHandler` it runs ahead of authentication, and
 it never fails a request.
 
+The `@Consumes` 415 gate checks body-carrying requests (POST, PUT, PATCH with a non-empty body)
+against the operation's declared media types. Wildcards are legal on the declaration only: a
+declared `application/*` accepts any `application/...` request type. A request `Content-Type` is a
+media type, not a range, so a missing, unparseable or wildcard one (`*/*`, `application/*`, or the
+malformed `*/json`) satisfies no declaration and is answered with 415. A body counts whether or not
+the request declared its length: a non-empty body the body handler read always counts, so an HTTP/2
+request with neither `Content-Length` nor `Transfer-Encoding` is gated like any other. Otherwise a
+request has a body when it carries `Transfer-Encoding` or a non-zero `Content-Length`, and a
+request the body handler treats as multipart or form (by its Content-Type) counts as a body. An
+explicit `Content-Length: 0` without `Transfer-Encoding` is an empty request and is not gated. The
+broad `ContentTypeValidationMiddleware` applies the same rule. A declared `@Consumes` entry that
+is not a media type (`*/json`) matches no request; startup logs a warning naming the operation, and
+a route left with no usable entry answers every body request with 415.
+
 The candidate methods are the ones the resource class and its superclasses declare, plus every
 interface `default` method the class inherits without overriding. An annotated default method is a
 route of each class that implements its interface, exactly as an override would be, which matches
@@ -557,7 +571,6 @@ RequestInterceptor.onError sync observers, with the original cause
   → RestExceptionMapper.translate(cause)
   → ExceptionMapperRegistry.toResponse(translated)
   → Vert.x status-code fallback (only when no specific mapper matched)
-  → ProblemDetail instance enrichment from the request path
   → ErrorInterceptor.afterMapping (async chain, Response → Response)
   → unhandled-exception logging (framework Throwable catch-all only; level follows the final status)
 ```
@@ -644,16 +657,31 @@ deliberately authored client output and keeps its body; the framework's own 415 
 `ProblemDetail` on that response before failing the context, so their content-type diagnostics still
 reach the client.
 
-**Headers when the body is rebuilt.** Rebuilding the body — by this override, or by the `instance`
-enrichment every `ProblemDetail` gets — drops the headers your mapper set that describe the *octets*
+**No request bytes in a problem detail.** The framework's own header-parse failures
+(`MediaType.valueOf`, `CacheControl.valueOf`, the link format of `Link.valueOf`, and the 415 of the
+`@Consumes` gate and of a body no decoder claims) carry a fixed message that names the failure but
+never the offending header value, so an oversized or control-character-laden header cannot be reflected
+into a `400` or `415` body or into a log line built from the message. The 415 detail of the gate names
+the declared types, which the server controls, and not the request's `Content-Type`. The URI part of a
+`Link` value is parsed by the URI builder, whose own diagnostics name the template they reject: do not
+pass a request header to `Link.valueOf` or `UriBuilder` and publish the exception message.
+
+The same rule covers `ProblemDetail.instance`: the framework never fills it. The request path of a
+failed request carries the very segment that failed conversion or validation, and a route template
+(`/items/{id}`) is not a URI reference, which RFC 9457 requires. An `instance` your own mapper sets
+is kept as written, including across a status override, so a mapper that wants an occurrence
+identifier supplies one (a server-generated `urn:uuid:` value, never an inbound header).
+
+**Headers when the body is rebuilt.** Rebuilding the body — by this override, or by the equal-status
+detail sanitization — drops the headers your mapper set that describe the *octets*
 of the body it authored: `Content-Length`, `Content-Encoding`, `Content-Range`, `ETag`, and the
 digest headers (`Content-Digest`, `Repr-Digest`, `Digest`, `Content-MD5`). They would describe bytes
 the client never receives. Every other header survives, including `Content-Type`,
 `Content-Language`, and response-level headers such as `WWW-Authenticate`, `Retry-After` and
 `Allow` — a `WWW-Authenticate` is exactly what a status overridden *to* 401 needs. Set a
 representation header on an error response only if the body is one the framework will not touch
-(a non-`ProblemDetail` entity, or a `ProblemDetail` whose `instance` you set yourself and whose
-status is not overridden).
+(a response whose status Vert.x did not override and whose `ProblemDetail` carries no synthesized
+`detail`).
 
 ### `DefaultResponseSerializer`
 
@@ -1856,7 +1884,8 @@ Beyond what `RestCoreModule` and `JsonRuntimeModule` contribute:
 
 `dev.vertique.rest.jaxrs.runtime.MagicBytesVerifierModule` is a separate opt-in `@Module` that
 contributes the built-in magic-byte `FileContentVerifier`. It fails closed on a declared content
-type that is present but unparsable (rejection type `fileContentTypeMalformed`), reads a `q` or
+type that is present but unparsable, such as a wildcard type with a concrete subtype like `*/png`
+(rejection type `fileContentTypeMalformed`), reads a `q` or
 other parameter on a mapped type without letting it skip the signature check, and looks the type up
 lowercased with `Locale.ROOT`, so the check does not depend on the JVM's default locale.
 
