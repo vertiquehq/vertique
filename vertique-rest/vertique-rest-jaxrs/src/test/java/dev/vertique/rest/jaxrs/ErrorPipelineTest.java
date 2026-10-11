@@ -41,6 +41,8 @@ import org.slf4j.LoggerFactory;
  */
 class ErrorPipelineTest {
 
+    private static final String OCCURRENCE_ID = "urn:uuid:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
+
     private RoutingContext ctx;
     private HttpServerRequest request;
     private Map<String, Object> ctxData;
@@ -508,8 +510,8 @@ class ErrorPipelineTest {
         }
 
         @Test
-        @DisplayName("The pipeline never fills ProblemDetail.instance, so a malformed path segment is not echoed")
-        void problemDetailInstanceIsNeverFilledFromTheRequest() {
+        @DisplayName("A problem without an instance gets an opaque occurrence id, not a request byte")
+        void problemWithoutInstanceGetsAnOpaqueOccurrenceId() {
             ctxData.put(VertxFailureStatus.KEY, 400);
             lenient().when(request.path()).thenReturn("/items/not-a-uuid");
             lenient().when(request.uri()).thenReturn("/items/not-a-uuid?q=leaky-marker");
@@ -519,7 +521,75 @@ class ErrorPipelineTest {
 
             ProblemDetail pd =
                     assertInstanceOf(ProblemDetail.class, future.result().getEntity());
-            assertNull(pd.instance(), "no request bytes, and no route template, in a framework-filled instance");
+            assertTrue(
+                    pd.instance().matches(OCCURRENCE_ID),
+                    "instance must be urn:uuid:<random UUID>, found: " + pd.instance());
+            assertFalse(pd.instance().contains("items"), "no request bytes in the occurrence id");
+            assertFalse(pd.instance().contains("leaky-marker"), "no request bytes in the occurrence id");
+        }
+
+        @Test
+        @DisplayName("Every error response gets its own occurrence id")
+        void occurrenceIdsAreUniquePerResponse() {
+            ProblemDetail first = assertInstanceOf(
+                    ProblemDetail.class,
+                    pipeline.mapToResponse(ctx, new RuntimeException("one"))
+                            .result()
+                            .getEntity());
+            ProblemDetail second = assertInstanceOf(
+                    ProblemDetail.class,
+                    pipeline.mapToResponse(ctx, new RuntimeException("two"))
+                            .result()
+                            .getEntity());
+
+            assertNotEquals(first.instance(), second.instance());
+        }
+
+        @Test
+        @DisplayName("An instance an afterMapping interceptor sets is kept, not replaced by an occurrence id")
+        void interceptorSetInstanceIsKept() {
+            ErrorInterceptor interceptor = new ErrorInterceptor() {
+                @Override
+                public Future<Response> afterMapping(RoutingContext rc, Response response) {
+                    ProblemDetail pd = (ProblemDetail) response.getEntity();
+                    return Future.succeededFuture(Response.status(response.getStatus())
+                            .entity(pd.toBuilder()
+                                    .instance("urn:uuid:interceptor")
+                                    .build())
+                            .build());
+                }
+            };
+            ErrorPipeline customPipeline = new ErrorPipeline(
+                    List.of(interceptor),
+                    List.of(),
+                    new RestExceptionMapper(),
+                    new ExceptionMapperRegistry(RestModule.defaultExceptionMapper(), Set.of()));
+
+            ProblemDetail pd = assertInstanceOf(
+                    ProblemDetail.class,
+                    customPipeline
+                            .mapToResponse(ctx, new RuntimeException("boom"))
+                            .result()
+                            .getEntity());
+
+            assertEquals("urn:uuid:interceptor", pd.instance());
+        }
+
+        @Test
+        @DisplayName("A response that is not a problem document is left alone")
+        void nonProblemEntityIsNotStamped() {
+            DefaultExceptionMapper defaults = new DefaultExceptionMapper()
+                    .on(
+                            Throwable.class,
+                            ex -> Response.status(418).entity("teapot").build());
+            ErrorPipeline customPipeline = new ErrorPipeline(
+                    List.of(), List.of(), new RestExceptionMapper(), new ExceptionMapperRegistry(defaults, Set.of()));
+
+            Response response = customPipeline
+                    .mapToResponse(ctx, new RuntimeException("brew"))
+                    .result();
+
+            assertEquals("teapot", response.getEntity());
         }
 
         @Test
@@ -769,6 +839,16 @@ class ErrorPipelineTest {
             return new ErrorPipeline(List.of(), List.of(), new RestExceptionMapper(), registry);
         }
 
+        /** Returns the message with the occurrence id removed, asserting that the id is there. */
+        private static String withoutInstance(ILoggingEvent event) {
+            String message = event.getFormattedMessage();
+            java.util.regex.Matcher id = java.util.regex.Pattern.compile(
+                            " \\(instance (urn:uuid:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\\)")
+                    .matcher(message);
+            assertTrue(id.find(), "the log line must carry the occurrence id: " + message);
+            return id.replaceFirst("");
+        }
+
         private List<ILoggingEvent> unhandledEvents() {
             return appender.list.stream()
                     .filter(e -> e.getFormattedMessage().contains("Unhandled exception"))
@@ -787,7 +867,7 @@ class ErrorPipelineTest {
             List<ILoggingEvent> events = unhandledEvents();
             assertEquals(1, events.size());
             assertEquals(Level.ERROR, events.getFirst().getLevel());
-            assertEquals("Unhandled exception", events.getFirst().getFormattedMessage());
+            assertEquals("Unhandled exception", withoutInstance(events.getFirst()));
         }
 
         @Test
@@ -803,9 +883,7 @@ class ErrorPipelineTest {
             List<ILoggingEvent> events = unhandledEvents();
             assertEquals(1, events.size());
             assertEquals(Level.DEBUG, events.getFirst().getLevel());
-            assertEquals(
-                    "Unhandled exception mapped to client error 400",
-                    events.getFirst().getFormattedMessage());
+            assertEquals("Unhandled exception mapped to client error 400", withoutInstance(events.getFirst()));
         }
 
         @Test
@@ -832,6 +910,30 @@ class ErrorPipelineTest {
             assertEquals(422, future.result().getStatus());
 
             assertTrue(unhandledEvents().isEmpty(), "a specific application mapper owns the outcome");
+        }
+
+        @Test
+        @DisplayName("A specific mapper's server error is logged at WARN with the id the client received")
+        void specificMapperServerErrorLogsWarnWithTheResponseInstance() {
+            ExceptionMapperRegistry registry = new ExceptionMapperRegistry(
+                    RestModule.defaultExceptionMapper(), Set.of(new UnavailableIllegalStateMapper()));
+            ErrorPipeline customPipeline = new ErrorPipeline(List.of(), List.of(), new RestExceptionMapper(), registry);
+
+            Response response = customPipeline
+                    .mapToResponse(ctx, new IllegalStateException("backend down"))
+                    .result();
+            String instance =
+                    assertInstanceOf(ProblemDetail.class, response.getEntity()).instance();
+
+            List<ILoggingEvent> events = appender.list.stream()
+                    .filter(e -> e.getFormattedMessage().contains("Server error response 503"))
+                    .toList();
+            assertEquals(1, events.size());
+            assertEquals(Level.WARN, events.getFirst().getLevel());
+            assertEquals(
+                    "Server error response 503 (instance " + instance + ") mapped from java.lang.IllegalStateException",
+                    events.getFirst().getFormattedMessage());
+            assertNull(events.getFirst().getThrowableProxy(), "a mapped server error logs no stack");
         }
 
         private ErrorPipeline pipelineWithAfterMapping(ErrorInterceptor... interceptors) {
@@ -862,9 +964,7 @@ class ErrorPipelineTest {
             List<ILoggingEvent> events = unhandledEvents();
             assertEquals(1, events.size());
             assertEquals(Level.DEBUG, events.getFirst().getLevel());
-            assertEquals(
-                    "Unhandled exception mapped to client error 409",
-                    events.getFirst().getFormattedMessage());
+            assertEquals("Unhandled exception mapped to client error 409", withoutInstance(events.getFirst()));
         }
 
         @Test
@@ -883,7 +983,7 @@ class ErrorPipelineTest {
             List<ILoggingEvent> events = unhandledEvents();
             assertEquals(1, events.size());
             assertEquals(Level.ERROR, events.getFirst().getLevel());
-            assertEquals("Unhandled exception", events.getFirst().getFormattedMessage());
+            assertEquals("Unhandled exception", withoutInstance(events.getFirst()));
         }
 
         @Test
@@ -905,9 +1005,7 @@ class ErrorPipelineTest {
             List<ILoggingEvent> events = unhandledEvents();
             assertEquals(1, events.size());
             assertEquals(Level.DEBUG, events.getFirst().getLevel());
-            assertEquals(
-                    "Unhandled exception mapped to client error 422",
-                    events.getFirst().getFormattedMessage());
+            assertEquals("Unhandled exception mapped to client error 422", withoutInstance(events.getFirst()));
         }
 
         @Test
@@ -961,6 +1059,17 @@ class ErrorPipelineTest {
             List<ILoggingEvent> events = unhandledEvents();
             assertEquals(1, events.size());
             assertEquals(Level.DEBUG, events.getFirst().getLevel());
+        }
+    }
+
+    /** Application mapper answering 503 for {@link IllegalStateException}, with no instance of its own. */
+    private static final class UnavailableIllegalStateMapper implements ExceptionMapper<IllegalStateException> {
+        @Override
+        public Response toResponse(IllegalStateException exception) {
+            return Response.status(503)
+                    .entity(ProblemDetail.of(503, "unavailable"))
+                    .type("application/problem+json")
+                    .build();
         }
     }
 

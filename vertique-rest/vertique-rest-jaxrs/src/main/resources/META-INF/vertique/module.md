@@ -646,11 +646,15 @@ the declared types, which the server controls, and not the request's `Content-Ty
 `Link` value is parsed by the URI builder, whose own diagnostics name the template they reject: do not
 pass a request header to `Link.valueOf` or `UriBuilder` and publish the exception message.
 
-The same rule covers `ProblemDetail.instance`: the framework never fills it. The request path of a
-failed request carries the very segment that failed conversion or validation, and a route template
-(`/items/{id}`) is not a URI reference, which RFC 9457 requires. An `instance` your own mapper sets
-is kept as written, including across a status override, so a mapper that wants an occurrence
-identifier supplies one (a server-generated `urn:uuid:` value, never an inbound header).
+The same rule covers `ProblemDetail.instance`. The request path of a failed request carries the very
+segment that failed conversion or validation, and a route template (`/items/{id}`) is not a URI
+reference, which RFC 9457 requires, so neither is used. A problem document that leaves the pipeline
+without an `instance` gets an opaque occurrence id, `urn:uuid:<random UUID>`, once the
+`ErrorInterceptor.afterMapping` chain has settled. The same id is on the log line of the failure, so
+a client that reports it can be matched to the server's record: an unhandled exception is logged at
+ERROR with the id, a response a specific mapper produced at WARN (server error, no stack) or DEBUG
+(client error). An `instance` your own mapper or interceptor sets is kept as written, including
+across a status override, and a response that is not a problem document is left alone.
 
 **Headers when the body is rebuilt.** Rebuilding the body — by this override, or by the equal-status
 detail sanitization — drops the headers your mapper set that describe the *octets*

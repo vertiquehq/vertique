@@ -42,8 +42,8 @@ import org.slf4j.LoggerFactory;
  * from this ROOT-scoped middleware — before the request ever reaches a mount's own handler chain —
  * still lands in the matching mount's failure handler (for a JAX-RS mount, {@code
  * JaxRsRouterMount.handleFailure}), which runs the full {@code ErrorPipeline}/{@code
- * ResponsePipeline}: interceptor chains and profile-aware error serialization (the pipeline fills no
- * {@code ProblemDetail} instance) — exactly the pipeline a resource method's own thrown exception traverses. This
+ * ResponsePipeline}: interceptor chains and profile-aware error serialization (the pipeline gives
+ * the {@code ProblemDetail} an opaque occurrence id as its instance) — exactly the pipeline a resource method's own thrown exception traverses. This
  * middleware therefore never builds a response itself; it always delegates via {@code ctx.fail} with
  * an explicit status (never the bare {@code ctx.fail(Throwable)} overload, which would stamp {@code
  * 500} regardless of the denial's real status on any path that escapes to Vert.x's own default

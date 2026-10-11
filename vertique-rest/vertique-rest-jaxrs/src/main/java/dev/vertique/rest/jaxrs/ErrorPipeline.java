@@ -14,6 +14,7 @@ import jakarta.ws.rs.core.Response;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import java.util.UUID;
 import lombok.extern.slf4j.Slf4j;
 
 /**
@@ -103,7 +104,11 @@ public class ErrorPipeline {
      *   <li>{@link RestExceptionMapper} (Throwable to Throwable pre-translation)</li>
      *   <li>{@link ExceptionMapperRegistry} (Throwable to {@link Response})</li>
      *   <li>{@link ErrorInterceptor#afterMapping} async chain (transforms the response)</li>
-     *   <li>Framework catch-all logging, once, using the status of the response leaving the chain</li>
+     *   <li>Occurrence id: a problem document without an {@code instance} gets
+     *       {@code urn:uuid:<random UUID>}; a mapper- or interceptor-set instance is kept</li>
+     *   <li>Failure logging, once, using the status of the response leaving the chain, with the
+     *       occurrence id: the framework catch-all at ERROR or DEBUG, a specific mapper's response at
+     *       WARN (server error) or DEBUG</li>
      * </ol>
      *
      * <p>The Vert.x failure-status hint ({@code VertxFailureStatus.KEY}) and the failure-cycle
@@ -184,12 +189,17 @@ public class ErrorPipeline {
                                                     mf);
                                             return Future.succeededFuture(r);
                                         }))
-                        .map(finalResponse -> {
+                        .map(mapped -> {
                             // The afterMapping chain may replace the response and its status, so the
-                            // level is decided once, here, from the response that will actually be sent.
+                            // occurrence id is stamped, and the level decided, once, here, from the
+                            // response that will actually be sent.
+                            Response finalResponse = stampOccurrence(mapped);
+                            int status = finalResponse != null ? finalResponse.getStatus() : 500;
+                            String occurrence = occurrenceOf(finalResponse);
                             if (outcome.frameworkCatchAll()) {
-                                int status = finalResponse != null ? finalResponse.getStatus() : 500;
-                                logUnhandledAfterMapping(outcome.translated(), status);
+                                logUnhandledAfterMapping(outcome.translated(), status, occurrence);
+                            } else {
+                                logMappedError(outcome.translated(), status, occurrence);
                             }
                             return finalResponse;
                         }));
@@ -216,12 +226,60 @@ public class ErrorPipeline {
      * @param cause  the throwable the catch-all mapped
      * @param status the HTTP status of the response leaving the {@code afterMapping} chain
      */
-    private static void logUnhandledAfterMapping(Throwable cause, int status) {
+    private static void logUnhandledAfterMapping(Throwable cause, int status, String occurrence) {
         if (status >= 400 && status < 500) {
-            log.debug("Unhandled exception mapped to client error {}", status, cause);
+            log.debug("Unhandled exception mapped to client error {} (instance {})", status, occurrence, cause);
             return;
         }
-        log.error("Unhandled exception", cause);
+        log.error("Unhandled exception (instance {})", occurrence, cause);
+    }
+
+    /**
+     * Logs a response a specific exception mapper produced, with the occurrence id the client was
+     * given, so a reported id can be found in the logs. A server error is logged at WARN without a
+     * stack (the mapper owns the failure; the id and the exception type locate it), a client error
+     * at DEBUG with the cause.
+     *
+     * @param cause      the throwable the mapper handled
+     * @param status     the HTTP status of the response leaving the {@code afterMapping} chain
+     * @param occurrence the problem {@code instance} of the response, or {@code null} when the
+     *                   response carries no problem document
+     */
+    private static void logMappedError(Throwable cause, int status, String occurrence) {
+        if (status >= 500) {
+            log.warn(
+                    "Server error response {} (instance {}) mapped from {}",
+                    status,
+                    occurrence,
+                    cause.getClass().getName());
+        } else if (log.isDebugEnabled()) {
+            log.debug("Client error response {} (instance {})", status, occurrence, cause);
+        }
+    }
+
+    /**
+     * Gives a problem document that has no {@code instance} a fresh opaque occurrence id,
+     * {@code urn:uuid:<random UUID>}. The id is a valid URI reference (RFC 9457 allows an opaque
+     * {@code instance}), identifies this one response, is logged with the failure, and carries no
+     * byte of the request: the request path is attacker-controlled and a route template is not a URI
+     * reference. An {@code instance} set by a mapper or an interceptor is kept as written, and a
+     * response that is not a problem document is left alone.
+     *
+     * @param response the response leaving the {@code afterMapping} chain; may be {@code null}
+     * @return the response, with an occurrence id when it is a problem document without one
+     */
+    private static Response stampOccurrence(Response response) {
+        if (response == null || !(response.getEntity() instanceof ProblemDetail pd) || pd.instance() != null) {
+            return response;
+        }
+        ProblemDetail stamped =
+                pd.toBuilder().instance("urn:uuid:" + UUID.randomUUID()).build();
+        Response.ResponseBuilder rb = Response.status(response.getStatus()).entity(stamped);
+        return rebuildWithHeaders(response, rb, true);
+    }
+
+    private static String occurrenceOf(Response response) {
+        return response != null && response.getEntity() instanceof ProblemDetail pd ? pd.instance() : null;
     }
 
     /**
@@ -268,8 +326,10 @@ public class ErrorPipeline {
      * reasoning applies to everything else the superseded body carried: typed subclass fields (such as
      * {@link dev.vertique.rest.core.ValidationProblemDetail#errors()}) and RFC 9457 extension members
      * are dropped with it, so only {@code instance} — which a mapper sets for this occurrence and which is
-     * status-independent — survives. The pipeline itself never fills {@code instance}: the request
-     * path carries the caller's bytes, and a route template is not a URI reference.
+     * status-independent — survives. The pipeline gives a problem without an {@code instance} an
+     * opaque occurrence id once the {@code afterMapping} chain has settled (see
+     * {@link #stampOccurrence}); the request path carries the caller's bytes, and a route template is
+     * not a URI reference.
      * A non-{@code ProblemDetail} entity is fail-closed the same way: replaced with a fresh
      * {@link ProblemDetail} for the winning status and {@code application/problem+json}, rather than
      * shipping the superseded body under a new status line.
