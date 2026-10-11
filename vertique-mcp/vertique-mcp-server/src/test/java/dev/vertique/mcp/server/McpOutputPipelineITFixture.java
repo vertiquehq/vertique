@@ -7,12 +7,10 @@ import dev.vertique.core.context.ContextHolder;
 import dev.vertique.core.context.ContextValue;
 import dev.vertique.correlation.CorrelationContextFactory;
 import dev.vertique.mcp.lifecycle.McpRequestCompletedEvent;
+import dev.vertique.mcp.lifecycle.McpRequestCompletedListener;
 import dev.vertique.mcp.lifecycle.McpRequestLifecycleObserver;
 import dev.vertique.mcp.lifecycle.McpRequestObservation;
 import dev.vertique.mcp.lifecycle.McpRequestTerminalObservation;
-import dev.vertique.mcp.lifecycle.McpToolInputObservation;
-import dev.vertique.mcp.lifecycle.McpToolOutputObservation;
-import dev.vertique.mcp.lifecycle.McpToolValueObservation;
 import dev.vertique.mcp.tool.McpAccessMode;
 import dev.vertique.mcp.tool.McpCancellationSignal;
 import dev.vertique.mcp.tool.McpPreparedToolCall;
@@ -49,9 +47,9 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * Framework wiring for {@code dev.vertique.mcp.server.McpOutputPipelineIT} (T020 TP-001): fixture
- * server construction, the three fixture tools the contract matrix requires, and the two fixture
- * observer shapes. Nothing decisive lives here.
+ * Framework wiring for {@code dev.vertique.mcp.server.McpOutputPipelineIT}: fixture server
+ * construction, the three fixture tools the contract matrix requires, the plain fixture observer and
+ * the contributed completion listener. Nothing decisive lives here.
  *
  * <p>Lives in {@code dev.vertique.mcp.server} for exactly the reason {@link
  * McpInputLifecycleObservationITFixture}'s Javadoc records: starting a real port-0 server requires
@@ -63,30 +61,32 @@ public final class McpOutputPipelineITFixture {
 
     /**
      * Starts a real port-0 server, bound and connected only on the literal {@code 127.0.0.1}, exposing
-     * the three fixture tools this task's contract matrix requires plus the two observer sessions.
+     * the three fixture tools the contract matrix requires plus the plain observer and the completion
+     * listener that reads the request view.
      */
     public static Started start(
             Vertx vertx,
             int outputMaxBytes,
             MetricsShapedObserver metrics,
-            CapableObserver capable,
+            McpRecordingCompletedListener listener,
             StructuredResultToolInvoker structuredTool,
             InvalidOutputToolInvoker invalidTool,
             OversizedResultToolInvoker oversizedTool)
             throws Exception {
-        return start(vertx, outputMaxBytes, metrics, capable, Set.of(structuredTool, invalidTool, oversizedTool));
+        return start(vertx, outputMaxBytes, metrics, listener, Set.of(structuredTool, invalidTool, oversizedTool));
     }
 
     /**
      * Starts a real port-0 server, bound and connected only on the literal {@code 127.0.0.1}, exposing
-     * an arbitrary tool set plus the two observer sessions — the R04 decisive proof needs a fourth,
-     * instrumented tool the fixed three-tool overload above cannot carry.
+     * an arbitrary tool set plus the plain observer and the completion listener — the bounded
+     * normalization proof needs a fourth, instrumented tool the fixed three-tool overload above
+     * cannot carry.
      */
     public static Started start(
             Vertx vertx,
             int outputMaxBytes,
             McpRequestLifecycleObserver metrics,
-            McpRequestLifecycleObserver capable,
+            McpRequestCompletedListener listener,
             Set<McpToolInvoker> tools)
             throws Exception {
         McpServerConfig config = McpServerConfig.builder()
@@ -96,12 +96,19 @@ public final class McpOutputPipelineITFixture {
                 .outputMaxBytes(outputMaxBytes)
                 .build();
 
-        return start(vertx, config, Set.of(metrics, capable), tools);
+        return start(vertx, config, Set.of(metrics), Set.of(listener), tools);
     }
 
-    /** Starts the shared output-pipeline fixture with an explicit MCP configuration and observers. */
+    /**
+     * Starts the shared output-pipeline fixture with an explicit MCP configuration, observers and
+     * completion listeners.
+     */
     static Started start(
-            Vertx vertx, McpServerConfig config, Set<McpRequestLifecycleObserver> observers, Set<McpToolInvoker> tools)
+            Vertx vertx,
+            McpServerConfig config,
+            Set<McpRequestLifecycleObserver> observers,
+            Set<McpRequestCompletedListener> listeners,
+            Set<McpToolInvoker> tools)
             throws Exception {
 
         McpToolRegistry registry = McpToolRegistry.build(tools);
@@ -122,7 +129,7 @@ public final class McpOutputPipelineITFixture {
                 config,
                 securityRuntime,
                 observers,
-                Set.of(),
+                listeners,
                 Set.of(),
                 Set.of(),
                 httpConfig,
@@ -234,7 +241,7 @@ public final class McpOutputPipelineITFixture {
             this.descriptor = new McpToolDescriptor(
                     TOOL_NAME,
                     null,
-                    "T020 TP-001 structured-result fixture tool.",
+                    "Output pipeline structured-result fixture tool.",
                     new McpToolAnnotations(true, false, true, false),
                     "{\"type\":\"object\"}",
                     "{\"type\":\"object\",\"properties\":{\"name\":{\"type\":\"string\"}},\"required\":[\"name\"]}",
@@ -276,7 +283,7 @@ public final class McpOutputPipelineITFixture {
      * The application value {@link StructuredResultToolInvoker} returns: a plain Java class (not a
      * {@code Map}/{@code List}/scalar) whose one getter increments a caller-supplied counter every time
      * Jackson invokes it. The server's output-normalization pass is the only place that can ever touch
-     * this getter — once normalized, downstream code (schema validation, the observation callback, the
+     * this getter — once normalized, downstream code (schema validation, the request view's tool output, the
      * wire embed) operates only on the resulting plain {@code Map}, which carries no reference back to
      * this object.
      */
@@ -308,7 +315,7 @@ public final class McpOutputPipelineITFixture {
             this.descriptor = new McpToolDescriptor(
                     TOOL_NAME,
                     null,
-                    "T020 TP-001 schema-violating fixture tool.",
+                    "Output pipeline schema-violating fixture tool.",
                     new McpToolAnnotations(true, false, true, false),
                     "{\"type\":\"object\"}",
                     "{\"type\":\"object\",\"properties\":{\"value\":{\"type\":\"string\"}},\"required\":[\"value\"]}",
@@ -353,7 +360,7 @@ public final class McpOutputPipelineITFixture {
             this.descriptor = new McpToolDescriptor(
                     TOOL_NAME,
                     null,
-                    "T020 TP-001 oversized-result fixture tool.",
+                    "Output pipeline oversized-result fixture tool.",
                     new McpToolAnnotations(true, false, true, false),
                     "{\"type\":\"object\"}",
                     null,
@@ -390,11 +397,11 @@ public final class McpOutputPipelineITFixture {
     }
 
     /**
-     * R04 TP-001's decisive fixture: a tool whose structured result's own canonical JSON representation
+     * The bounded-normalization fixture: a tool whose structured result's own canonical JSON representation
      * exceeds a small {@code mcp.output.maxBytes} cap, exposed as an {@link Iterable} rather than a
      * plain {@code List} so {@link #accessCount()} decisively counts exactly how many elements
      * serialization actually consumed before the capped sink aborted — distinguishing a bounded,
-     * as-bytes-are-produced abort (a small count, near what the cap admits) from the pre-R04 unbounded
+     * as-bytes-are-produced abort (a small count, near what the cap admits) from an unbounded
      * {@code convertValue} tree build, which would consume every element ({@link #ELEMENT_COUNT}) before
      * any cap check ever ran.
      *
@@ -420,7 +427,7 @@ public final class McpOutputPipelineITFixture {
             this.descriptor = new McpToolDescriptor(
                     TOOL_NAME,
                     null,
-                    "R04 TP-001 counting oversized-result fixture tool.",
+                    "Output pipeline counting oversized-result fixture tool.",
                     new McpToolAnnotations(true, false, true, false),
                     "{\"type\":\"object\"}",
                     null,
@@ -431,7 +438,7 @@ public final class McpOutputPipelineITFixture {
          * Returns how many elements of this tool's {@code ELEMENT_COUNT}-element result were actually
          * visited during serialization — decisive for "aborts before a full tree is retained": a count
          * that reaches {@link #ELEMENT_COUNT} would mean every element was produced before any cap check
-         * ran, exactly the pre-R04 defect.
+         * ran, exactly the unbounded-normalization defect.
          */
         public int accessCount() {
             return accessCount.get();
@@ -501,14 +508,14 @@ public final class McpOutputPipelineITFixture {
     }
 
     /**
-     * R04 TP-001's second decisive fixture: a structured result whose own canonical JSON representation
+     * The enveloped-cap fixture: a structured result whose own canonical JSON representation
      * is comfortably <em>under</em> {@code mcp.output.maxBytes} (so normalization and output-schema
      * validation both succeed, exactly like {@link StructuredResultToolInvoker}) but whose canonical
      * JSON <em>once embedded in the full terminal envelope</em> — {@code content}/{@code isError}/{@code
-     * _meta} overhead plus this value — exceeds the cap. This isolates #426 from #427: it decisively
-     * distinguishes an over-cap {@code writeToolResult} encode from an over-cap normalization, so
-     * observation ordering — not normalization boundedness — is the only thing that can explain whether
-     * a capable observer is notified for this exact scenario.
+     * _meta} overhead plus this value — exceeds the cap. It decisively distinguishes an over-cap
+     * {@code writeToolResult} encode from an over-cap normalization, so the order of the terminal-message
+     * encode and the output's visibility — not normalization boundedness — is the only thing that can
+     * explain whether the request view reports a tool output for this exact scenario.
      */
     public static final class NearCapResultToolInvoker implements McpToolInvoker {
         public static final String TOOL_NAME = "output.pipeline.oversized.nearcap";
@@ -527,7 +534,7 @@ public final class McpOutputPipelineITFixture {
             this.descriptor = new McpToolDescriptor(
                     TOOL_NAME,
                     null,
-                    "R04 TP-001 near-cap fixture tool: under cap alone, over cap once enveloped.",
+                    "Output pipeline near-cap fixture tool: under cap alone, over cap once enveloped.",
                     new McpToolAnnotations(true, false, true, false),
                     "{\"type\":\"object\"}",
                     null,
@@ -593,70 +600,6 @@ public final class McpOutputPipelineITFixture {
 
         public int completedCount() {
             return completedCount;
-        }
-    }
-
-    /** The capability-implementing observer, recording both the input and output value callbacks. */
-    public static final class CapableObserver implements McpRequestLifecycleObserver {
-        private final CapableSession session = new CapableSession();
-
-        @Override
-        public McpRequestObservation open(Instant startedAt) {
-            return session;
-        }
-
-        public CapableSession session() {
-            return session;
-        }
-    }
-
-    /** The capability-implementing session. */
-    public static final class CapableSession implements McpToolValueObservation {
-        private int terminalCount;
-        private int completedCount;
-        private int toolInputCount;
-        private int toolOutputCount;
-        private McpToolOutputObservation observedOutput;
-
-        @Override
-        public void onTerminal(McpRequestTerminalObservation observation) {
-            terminalCount++;
-        }
-
-        @Override
-        public void onCompleted(McpRequestCompletedEvent event) {
-            completedCount++;
-        }
-
-        @Override
-        public void onToolInput(McpToolInputObservation observation) {
-            toolInputCount++;
-        }
-
-        @Override
-        public void onToolOutput(McpToolOutputObservation observation) {
-            toolOutputCount++;
-            observedOutput = observation;
-        }
-
-        public int terminalCount() {
-            return terminalCount;
-        }
-
-        public int completedCount() {
-            return completedCount;
-        }
-
-        public int toolInputCount() {
-            return toolInputCount;
-        }
-
-        public int toolOutputCount() {
-            return toolOutputCount;
-        }
-
-        public McpToolOutputObservation observedOutput() {
-            return observedOutput;
         }
     }
 }

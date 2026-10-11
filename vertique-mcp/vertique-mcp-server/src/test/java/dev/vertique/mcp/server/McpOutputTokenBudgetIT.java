@@ -12,9 +12,6 @@ import dev.vertique.mcp.lifecycle.McpRequestCompletedEvent;
 import dev.vertique.mcp.lifecycle.McpRequestLifecycleObserver;
 import dev.vertique.mcp.lifecycle.McpRequestObservation;
 import dev.vertique.mcp.lifecycle.McpRequestTerminalObservation;
-import dev.vertique.mcp.lifecycle.McpToolInputObservation;
-import dev.vertique.mcp.lifecycle.McpToolOutputObservation;
-import dev.vertique.mcp.lifecycle.McpToolValueObservation;
 import dev.vertique.mcp.server.support.McpJsonTokenCorpus;
 import dev.vertique.mcp.server.support.McpJsonTokenCorpus.Expected;
 import dev.vertique.mcp.server.support.McpJsonTokenCorpus.Row;
@@ -50,7 +47,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
-/** R19 proof that the output-normalization reparse consumes the configured token budget once. */
+/** Proof that the output-normalization reparse consumes the configured token budget once. */
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
 public class McpOutputTokenBudgetIT {
 
@@ -135,6 +132,7 @@ public class McpOutputTokenBudgetIT {
                 .contains("\"precise\":" + expected.group(1))
                 .contains("\"large\":" + expected.group(2))
                 .doesNotContain("Infinity");
+        observer.awaitCompletion();
         assertThat(observer.outputCount()).isEqualTo(1);
         assertThat(observer.terminal().errorType()).isEqualTo(McpErrorType.NONE);
         closeStartedServer();
@@ -158,6 +156,9 @@ public class McpOutputTokenBudgetIT {
         assertThat(tool.serializationAttempts())
                 .as("%s: the raw result must be serialized exactly once", scenario.name())
                 .isEqualTo(1);
+        // The completion listener runs after transport completion, so it is awaited before any
+        // completion-side count is read.
+        observer.awaitCompletion();
         assertThat(observer.terminalCount())
                 .as("%s: the request must emit exactly one terminal event", scenario.name())
                 .isEqualTo(1);
@@ -171,8 +172,12 @@ public class McpOutputTokenBudgetIT {
                     .as("%s: an accepted result must remain a complete success", scenario.name())
                     .contains("\"isError\":false");
             assertThat(observer.outputCount())
-                    .as("%s: only a complete normalized value is observed", scenario.name())
+                    .as("%s: only a complete normalized value is reported", scenario.name())
                     .isEqualTo(1);
+            assertThat(observer.reportedOutput())
+                    .as("%s: the reported value is the complete normalized array", scenario.name())
+                    .asInstanceOf(org.assertj.core.api.InstanceOfAssertFactories.LIST)
+                    .hasSize(scenario.scalarCount());
             assertThat(observer.terminal().errorType()).isEqualTo(McpErrorType.NONE);
         } else {
             assertThat(response.statusCode()).as(scenario.name()).isEqualTo(500);
@@ -183,7 +188,7 @@ public class McpOutputTokenBudgetIT {
                     .contains("\"code\":-32603")
                     .doesNotContain("\"structuredContent\"");
             assertThat(observer.outputCount())
-                    .as("%s: a rejected normalized value must not be observed", scenario.name())
+                    .as("%s: a rejected normalized value must not be reported", scenario.name())
                     .isZero();
             assertThat(observer.terminal().errorType())
                     .as("%s: serialization-bound failure has one lifecycle classification", scenario.name())
@@ -214,8 +219,8 @@ public class McpOutputTokenBudgetIT {
                 .outputMaxTokens(scenario.outputMaxTokens())
                 .outputMaxBytes(scenario.outputMaxBytes())
                 .build();
-        McpOutputPipelineITFixture.Started started =
-                McpOutputPipelineITFixture.start(vertx, config, Set.of(observer), Set.of(tool));
+        McpOutputPipelineITFixture.Started started = McpOutputPipelineITFixture.start(
+                vertx, config, Set.of(observer), Set.of(observer.listener()), Set.of(tool));
         return new Started(started.server(), started.port());
     }
 
@@ -382,14 +387,30 @@ public class McpOutputTokenBudgetIT {
 
     private static final class RecordingObserver implements McpRequestLifecycleObserver {
         private final RecordingSession session = new RecordingSession();
+        private final McpRecordingCompletedListener listener = new McpRecordingCompletedListener();
 
         @Override
         public McpRequestObservation open(Instant startedAt) {
             return session;
         }
 
+        McpRecordingCompletedListener listener() {
+            return listener;
+        }
+
+        /** Awaits the one completion the listener receives for the one request of a scenario. */
+        void awaitCompletion() throws InterruptedException {
+            listener.await(1);
+        }
+
         int outputCount() {
-            return session.outputCount.get();
+            return (int) listener.completions().stream()
+                    .filter(completion -> completion.toolOutput().isPresent())
+                    .count();
+        }
+
+        Object reportedOutput() {
+            return listener.completions().get(0).structuredOutput().orElseThrow();
         }
 
         int terminalCount() {
@@ -405,20 +426,11 @@ public class McpOutputTokenBudgetIT {
         }
     }
 
-    private static final class RecordingSession implements McpToolValueObservation {
-        private final AtomicInteger outputCount = new AtomicInteger();
+    private static final class RecordingSession implements McpRequestObservation {
         private final AtomicInteger terminalCount = new AtomicInteger();
         private final AtomicInteger completedCount = new AtomicInteger();
         private final AtomicReference<dev.vertique.mcp.lifecycle.McpRequestTerminalEvent> terminal =
                 new AtomicReference<>();
-
-        @Override
-        public void onToolInput(McpToolInputObservation observation) {}
-
-        @Override
-        public void onToolOutput(McpToolOutputObservation observation) {
-            outputCount.incrementAndGet();
-        }
 
         @Override
         public void onTerminal(McpRequestTerminalObservation observation) {

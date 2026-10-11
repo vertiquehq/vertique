@@ -21,6 +21,7 @@ import dev.vertique.mcp.lifecycle.McpRequestTerminalObservation;
 import dev.vertique.mcp.lifecycle.McpTransportOutcome;
 import dev.vertique.security.origin.RequestOrigin;
 import io.vertx.core.Context;
+import io.vertx.core.MultiMap;
 import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
@@ -303,6 +304,8 @@ class McpWritePhaseSettlementTest {
             when(context.response()).thenReturn(response);
             when(context.get(anyString())).thenReturn(coordinator);
             when(response.headWritten()).thenAnswer(invocation -> headWritten.get());
+            // The terminal writer reads the response headers to bind the request view's response.
+            when(response.headers()).thenReturn(MultiMap.caseInsensitiveMultiMap());
             when(response.end(any(Buffer.class))).thenAnswer(invocation -> {
                 headWritten.set(true);
                 writePromise = Promise.promise();
