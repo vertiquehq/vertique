@@ -27,7 +27,6 @@ import lombok.experimental.SuperBuilder;
  *   "title": "Bad Request",
  *   "status": 400,
  *   "detail": "Request validation failed",
- *   "instance": "/api/users",
  *   "errors": [
  *     { "path": "/name", "detail": "must not be blank", "location": "body" },
  *     { "path": "/age",  "detail": "must be a positive integer", "location": "body" }

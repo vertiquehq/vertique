@@ -198,7 +198,8 @@ public class ErrorPipeline {
     /**
      * Per-invocation result of the mapping step carried into the {@code afterMapping} chain.
      *
-     * @param response         the mapped (fallback-applied, enriched) response entering the chain
+     * @param response         the mapped response entering the chain, after the Vert.x status-code
+     *                         fallback (status override or equal-status detail sanitization)
      * @param translated       the cause after {@link RestExceptionMapper#translate}
      * @param frameworkCatchAll whether the framework {@code Throwable} catch-all produced the response
      */
@@ -411,7 +412,7 @@ public class ErrorPipeline {
 
     /**
      * Copies the source response's headers into the builder when the entity was replaced but the
-     * media type still describes the rebuilt body (ProblemDetail enrichment / ProblemDetail override).
+     * media type still describes the rebuilt body (equal-status detail sanitization).
      *
      * @param source         the original response whose headers should be preserved
      * @param builder        the response builder (with status and entity already set)

@@ -27,10 +27,9 @@ import java.time.Duration;
  */
 public final class RateLimitExceptionMapper {
 
-    // Both bodies are constant across every request: neither status carries a per-request field
-    // (contracts/rest-adapter.md, "HTTP mapping"). ProblemDetail is immutable (final fields), and
-    // ErrorPipeline.enrichProblemDetail derives a copy via toBuilder() rather than mutating the
-    // instance passed in, so sharing one instance across concurrent requests is safe.
+    // Both bodies are constant across every request: neither status carries a per-request field.
+    // ProblemDetail is immutable (final fields), and the error pipeline builds fresh problems and
+    // never mutates the mapper's instance, so sharing one instance across concurrent requests is safe.
     private static final ProblemDetail EXCEEDED_BODY = ProblemDetail.of(429, null);
     private static final ProblemDetail UNAVAILABLE_BODY = ProblemDetail.of(503, null);
 
