@@ -198,9 +198,18 @@ class ConsumesEnforcementHttp2IT {
         });
     }
 
+    /**
+     * Reads the status and body of the response to {@code req}, failing unless the exchange was
+     * HTTP/2: a silent fallback to HTTP/1.1 would declare a length and test nothing here.
+     */
     private static Future<Reply> reply(HttpClientRequest req) {
         Future<HttpClientResponse> response = req.response();
-        return response.compose(resp -> resp.body().map(buffer -> new Reply(resp.statusCode(), buffer.toString())));
+        return response.compose(resp -> {
+            if (resp.version() != HttpVersion.HTTP_2) {
+                return Future.failedFuture(new AssertionError("expected an HTTP/2 exchange but was " + resp.version()));
+            }
+            return resp.body().map(buffer -> new Reply(resp.statusCode(), buffer.toString()));
+        });
     }
 
     private void deploy(

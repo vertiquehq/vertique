@@ -565,6 +565,29 @@ class ErrorPipelineTest {
         }
 
         @Test
+        @DisplayName("Equal-status sanitization drops a catch-all mapper's detail but keeps its instance")
+        void explicitInstanceSurvivesEqualStatusSanitization() {
+            DefaultExceptionMapper defaults = new DefaultExceptionMapper()
+                    .on(Throwable.class, ex -> Response.status(409)
+                            .entity(ProblemDetail.of(409, "order 42 is locked by session 9", "urn:uuid:8"))
+                            .type("application/problem+json")
+                            .build());
+            ErrorPipeline customPipeline = new ErrorPipeline(
+                    List.of(), List.of(), new RestExceptionMapper(), new ExceptionMapperRegistry(defaults, Set.of()));
+            ctxData.put(VertxFailureStatus.KEY, 409);
+
+            Response response = customPipeline
+                    .mapToResponse(ctx, new RuntimeException("conflict"))
+                    .result();
+            ProblemDetail pd = assertInstanceOf(ProblemDetail.class, response.getEntity());
+
+            assertEquals(409, response.getStatus());
+            assertEquals(409, pd.status());
+            assertNull(pd.detail(), "equal-status sanitization must drop the mapper's detail");
+            assertEquals("urn:uuid:8", pd.instance(), "the instance the mapper set must survive the rebuild");
+        }
+
+        @Test
         @DisplayName("A rebuilt body does not inherit Content-Length from the response it replaced")
         void rebuiltBodyDropsInheritedContentLength() {
             // The mapper declares the length of the body it authored. Equal-status sanitization replaces

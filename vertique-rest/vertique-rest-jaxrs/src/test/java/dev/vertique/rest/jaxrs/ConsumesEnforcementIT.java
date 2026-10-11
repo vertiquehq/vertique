@@ -337,6 +337,21 @@ public class ConsumesEnforcementIT {
         });
     }
 
+    // --- A declared Content-Length: 0 is an empty request and is not gated ---
+
+    @Test
+    @DisplayName("DeclaredEmptyRequestWithoutContentTypePasses — Content-Length: 0, no Content-Type, JSON route → 200")
+    void declaredEmptyRequestWithoutContentTypePasses(Vertx vertx, VertxTestContext ctx) {
+        assertDeclaredEmptyPostPasses(vertx, ctx, null);
+    }
+
+    @Test
+    @DisplayName(
+            "DeclaredEmptyRequestWithMismatchedContentTypePasses — Content-Length: 0, 'text/xml', JSON route → 200")
+    void declaredEmptyRequestWithMismatchedContentTypePasses(Vertx vertx, VertxTestContext ctx) {
+        assertDeclaredEmptyPostPasses(vertx, ctx, "text/xml");
+    }
+
     // --- Wildcard request Content-Type never satisfies a declared @Consumes ---
 
     @Test
@@ -489,6 +504,34 @@ public class ConsumesEnforcementIT {
     }
 
     // --- Helper ---
+
+    /**
+     * Posts an empty body with an explicit {@code Content-Length: 0} to the JSON-only route and
+     * asserts it passes the per-route gate. The gate would answer a body without a matching
+     * {@code Content-Type} with 415, so {@code 200|ok} shows the declared-empty request was not gated.
+     *
+     * @param vertx       the Vert.x instance
+     * @param ctx         the test context
+     * @param contentType the {@code Content-Type} header value to send, or {@code null} for none
+     */
+    private void assertDeclaredEmptyPostPasses(Vertx vertx, VertxTestContext ctx, String contentType) {
+        deploy(vertx, ctx, Set.of(new JsonOnlyResource()), (port, c) -> {
+            io.vertx.ext.web.client.HttpRequest<Buffer> request =
+                    c.post(port, "127.0.0.1", "/echo").putHeader("Content-Length", "0");
+            if (contentType != null) {
+                request.putHeader("Content-Type", contentType);
+            }
+            request.sendBuffer(Buffer.buffer())
+                    .map(resp -> resp.statusCode() + "|" + String.valueOf(resp.bodyAsString()))
+                    .onComplete(ctx.succeeding(result -> {
+                        ctx.verify(() -> assertEquals(
+                                "200|ok",
+                                result,
+                                "a declared-empty request is not gated (Content-Type " + contentType + ")"));
+                        ctx.completeNow();
+                    }));
+        });
+    }
 
     /**
      * Deploys {@code resource}, posts a small body with {@code contentType}, and asserts the status.

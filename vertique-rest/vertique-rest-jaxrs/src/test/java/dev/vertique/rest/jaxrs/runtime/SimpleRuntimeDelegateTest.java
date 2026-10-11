@@ -543,10 +543,35 @@ class SimpleRuntimeDelegateTest {
     }
 
     @Test
+    @DisplayName("CacheControl.valueOf: a balanced quoted value with trailing characters fails with a fixed message")
+    void cacheControlTrailingCharactersAfterQuoteFailWithAFixedMessage() {
+        // Balanced quotes get past the directive split, so each input reaches the unquote check.
+        IllegalArgumentException extension =
+                assertThrows(IllegalArgumentException.class, () -> CacheControl.valueOf("x=\"a\"" + MARKER));
+        assertEquals("Invalid cache control value", extension.getMessage());
+        assertFalse(extension.getMessage().contains(MARKER));
+
+        IllegalArgumentException fieldNames =
+                assertThrows(IllegalArgumentException.class, () -> CacheControl.valueOf("no-cache=\"a\"" + MARKER));
+        assertEquals("Invalid quoted field-name list", fieldNames.getMessage());
+        assertFalse(fieldNames.getMessage().contains(MARKER));
+    }
+
+    @Test
     @DisplayName("Link.valueOf failure message carries no part of the header value")
     void linkFailureDoesNotEchoTheValue() {
         assertMessageDoesNotEcho(() -> Link.valueOf(MARKER));
         assertMessageDoesNotEcho(() -> Link.valueOf("</x>; title=\"" + MARKER));
         assertMessageDoesNotEcho(() -> Link.valueOf("<" + MARKER + " with space>; rel=next"));
+    }
+
+    @Test
+    @DisplayName("Link.valueOf: a balanced quoted parameter with trailing characters fails with a fixed message")
+    void linkTrailingCharactersAfterQuoteFailWithAFixedMessage() {
+        // Balanced quotes get past the parameter split, so the input reaches the unquote check.
+        IllegalArgumentException thrown =
+                assertThrows(IllegalArgumentException.class, () -> Link.valueOf("</x>; title=\"a\"" + MARKER));
+        assertEquals("Invalid link header format", thrown.getMessage());
+        assertFalse(thrown.getMessage().contains(MARKER));
     }
 }

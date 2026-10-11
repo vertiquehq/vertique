@@ -255,6 +255,15 @@ class SimpleLinkBuilderTest {
     }
 
     @Test
+    @DisplayName("link(String) rejects characters after the closing quote with a fixed message")
+    void shouldRejectCharactersAfterClosingQuoteWithoutEchoingThem() {
+        IllegalArgumentException thrown = assertThrows(
+                IllegalArgumentException.class, () -> new SimpleLinkBuilder().link("</x>; title=\"a\"leaky-marker"));
+        assertEquals("Invalid link header format", thrown.getMessage());
+        assertFalse(thrown.getMessage().contains("leaky-marker"));
+    }
+
+    @Test
     @DisplayName("a rejected link(String) leaves the builder unchanged")
     void shouldKeepBuilderStateWhenLinkStringIsRejected() {
         Link.Builder builder = new SimpleLinkBuilder().link("</a>; rel=\"first\"");
