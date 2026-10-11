@@ -293,9 +293,17 @@ public final class AccessPolicyAnnotationResolver {
         if (!candidate.getSimpleName().contentEquals(method.getSimpleName())) {
             return false;
         }
-        if (!includeMethod(candidate, consumer)) {
+        if (!includeMethod(candidate, method, consumer, 0)) {
             return false;
         }
+        return sameSignature(consumer, method, candidate);
+    }
+
+    /**
+     * Reports whether two methods have the same signature viewed from {@code consumer}: either is
+     * a subsignature of the other, so a type-variable parameter matches the type that binds it.
+     */
+    private boolean sameSignature(TypeElement consumer, ExecutableElement method, ExecutableElement candidate) {
         if (!(consumer.asType() instanceof DeclaredType viewedFrom)) {
             return false;
         }
@@ -305,24 +313,85 @@ public final class AccessPolicyAnnotationResolver {
     }
 
     /**
-     * Reports whether {@code candidate} belongs to {@code consumer}'s operation.
+     * Reports whether {@code candidate} belongs to {@code method}'s operation as far as modifiers
+     * and visibility go.
      *
-     * <p>Static methods, private methods, and package-private methods declared in another package
-     * are hidden. That is the same rule the runtime resolver applies.
+     * <p>Static methods and private methods are hidden. A package-private declaration is part of the
+     * operation when {@code method} overrides it under the Java rules (JLS 8.4.8.1): from a class
+     * of its own package, or from another package through a class of its package that declares it.
+     * That is the same rule the runtime resolver applies.
      *
      * @param candidate a method found on the consumer hierarchy
+     * @param method the operation being scanned
      * @param consumer the resource type collection starts from
+     * @param depth recursion depth, bounding a pathological hierarchy
      * @return {@code true} when the method is part of the operation
      */
-    private boolean includeMethod(ExecutableElement candidate, TypeElement consumer) {
+    private boolean includeMethod(
+            ExecutableElement candidate, ExecutableElement method, TypeElement consumer, int depth) {
         Set<Modifier> modifiers = candidate.getModifiers();
         if (modifiers.contains(Modifier.STATIC) || modifiers.contains(Modifier.PRIVATE)) {
             return false;
         }
-        if (!modifiers.contains(Modifier.PUBLIC) && !modifiers.contains(Modifier.PROTECTED)) {
-            return packageName(consumer).equals(packageName(candidate.getEnclosingElement()));
+        if (modifiers.contains(Modifier.PUBLIC) || modifiers.contains(Modifier.PROTECTED)) {
+            return true;
+        }
+        if (!(candidate.getEnclosingElement() instanceof TypeElement declaring)
+                || declaring.getKind() == ElementKind.INTERFACE) {
+            return true;
+        }
+        if (depth > 16 || !(method.getEnclosingElement() instanceof TypeElement from)) {
+            return false;
+        }
+        if (inheritedAlongPackage(from, declaring)) {
+            return true;
+        }
+        for (TypeElement between = superclassOf(from);
+                between != null
+                        && !between.equals(declaring)
+                        && !between.getQualifiedName().contentEquals("java.lang.Object");
+                between = superclassOf(between)) {
+            if (!inheritedAlongPackage(between, declaring)) {
+                continue;
+            }
+            for (ExecutableElement intermediate : ElementFilter.methodsIn(between.getEnclosedElements())) {
+                Set<Modifier> flags = intermediate.getModifiers();
+                if (flags.contains(Modifier.STATIC)
+                        || flags.contains(Modifier.PRIVATE)
+                        || !intermediate.getSimpleName().contentEquals(candidate.getSimpleName())
+                        || !sameSignature(consumer, intermediate, candidate)) {
+                    continue;
+                }
+                boolean open = flags.contains(Modifier.PUBLIC) || flags.contains(Modifier.PROTECTED);
+                if (open
+                        ? sameSignature(consumer, method, intermediate)
+                        : includeMethod(intermediate, method, consumer, depth + 1)
+                                && sameSignature(consumer, method, intermediate)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Whether a package-private member of {@code declaring} is inherited into {@code from}: every
+     * class from {@code from} up to {@code declaring} lies in the member's package.
+     */
+    private boolean inheritedAlongPackage(TypeElement from, TypeElement declaring) {
+        String pkg = packageName(declaring);
+        for (TypeElement current = from;
+                current != null && !current.equals(declaring);
+                current = superclassOf(current)) {
+            if (!packageName(current).equals(pkg)) {
+                return false;
+            }
         }
         return true;
+    }
+
+    private TypeElement superclassOf(TypeElement type) {
+        return types.asElement(type.getSuperclass()) instanceof TypeElement superclass ? superclass : null;
     }
 
     private void walk(TypeElement type, List<TypeElement> hierarchy, Set<String> seen) {

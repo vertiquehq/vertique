@@ -384,6 +384,8 @@ class McpResultEncodingCharacterizationTest {
             when(requestBody.buffer()).thenReturn(body.toBuffer());
             when(request.headers()).thenReturn(headers());
             when(response.putHeader(anyString(), anyString())).thenReturn(response);
+            // The terminal writer reads the response headers to bind the request view's response.
+            when(response.headers()).thenReturn(MultiMap.caseInsensitiveMultiMap());
             when(response.setStatusCode(anyInt())).thenAnswer(invocation -> {
                 responseStatus.set(invocation.getArgument(0));
                 return response;

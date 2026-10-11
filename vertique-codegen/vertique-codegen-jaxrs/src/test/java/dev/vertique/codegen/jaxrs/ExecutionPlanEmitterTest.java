@@ -256,8 +256,9 @@ class ExecutionPlanEmitterTest {
         @DisplayName("descriptor emits null executionPlan literal for non-public method")
         void descriptor_emitsNullPlanLiteralForNonPublicMethod() {
             // Verify at the generated-source level that the descriptor passes null (not new XXX_ExecutionPlan())
-            // for the non-public method. We cannot call describe() reflectively for non-public methods
-            // because support.resolveMethod uses Class.getMethod which only finds public methods.
+            // for the non-public method. This row asserts at the source level only; the runtime lookup
+            // of a non-public route (a declared-method fallback along the class chain) is exercised
+            // by GenericInheritanceParityTest.
             var result = ProcessorTestHarness.run(
                     new JaxRsPipelineProcessor(), SourceFiles.inline("dev.vertique.test.PpResource", """
                             package dev.vertique.test;

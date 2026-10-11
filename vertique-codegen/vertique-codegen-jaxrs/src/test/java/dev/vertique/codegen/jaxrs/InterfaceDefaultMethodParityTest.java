@@ -375,7 +375,7 @@ class InterfaceDefaultMethodParityTest {
                                 1,
                                 List.of("SoftCrud")),
                         new ParityCase(
-                                "generic default overridden by a class adds no default route",
+                                "generic default overridden by a class is one route backed by the class method",
                                 new OrderResource(),
                                 "OrderResource",
                                 List.of(genericCrudSource(), src("OrderResource", """
@@ -387,10 +387,10 @@ class InterfaceDefaultMethodParityTest {
                                     }
                                 }
                                 """)),
-                                0,
-                                List.of()),
+                                1,
+                                List.of("OrderResource")),
                         new ParityCase(
-                                "generic default overridden by a sub-interface default adds no default route",
+                                "generic default overridden by a sub-interface default is one route backed by the sub-interface",
                                 new InvoiceResource(),
                                 "InvoiceResource",
                                 List.of(genericCrudSource(), src("StringCrud", """
@@ -404,8 +404,8 @@ class InterfaceDefaultMethodParityTest {
                                         @Path("/invoices")
                                         public class InvoiceResource implements StringCrud {}
                                         """)),
-                                0,
-                                List.of()),
+                                1,
+                                List.of("StringCrud")),
                         new ParityCase(
                                 "method and resource class-level security on defaults",
                                 new VaultResource(),

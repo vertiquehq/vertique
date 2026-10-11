@@ -41,7 +41,7 @@ import org.junit.jupiter.api.Test;
  * Unit tests for {@link DefaultBoundRequest}, the binding facade over a Vert.x
  * {@link RoutingContext}.
  *
- * <p>Verifies the FR-024 binding model: case-insensitive header/cookie lookup, path-param coercion
+ * <p>Verifies the FR-024 binding model: case-insensitive header lookup, path-param coercion
  * to the declared scalar type, scalar-first vs collection-all multiplicity driven by the matching
  * {@link ParamDescriptor}, and the never-null body contract.
  */

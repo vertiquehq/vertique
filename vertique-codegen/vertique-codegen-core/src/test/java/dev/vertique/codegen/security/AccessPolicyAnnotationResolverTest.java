@@ -160,6 +160,70 @@ class AccessPolicyAnnotationResolverTest {
         Probe.expect = Expect.STATIC_OPERATION;
     }
 
+    @Test
+    @DisplayName("a package-private method corresponds through a public override of its package, not directly")
+    void shouldFollowPackagePrivateOverrideChains() throws Exception {
+        Path dir = Files.createTempDirectory("policy-package-chain");
+        try {
+            Probe.failures.clear();
+            Probe.ran = false;
+            Probe.expect = Expect.PACKAGE_CHAIN;
+            CompileResult result = compile(
+                    dir.resolve("package-chain"),
+                    false,
+                    frameworkSources(),
+                    List.of(
+                            source("chain.Base", """
+                                    package chain;
+                                    public class Base {
+                                      String m() { return "base"; }
+                                    }
+                                    """),
+                            source("chain.Mid", """
+                                    package chain;
+                                    public class Mid extends Base {
+                                      @Override public String m() { return "mid"; }
+                                    }
+                                    """),
+                            source("leaf.Leaf", """
+                                    package leaf;
+                                    public class Leaf extends chain.Mid {
+                                      @Override public String m() { return "leaf"; }
+                                    }
+                                    """),
+                            source("leaf.Direct", """
+                                    package leaf;
+                                    public class Direct extends chain.Base {
+                                      public String m() { return "direct"; }
+                                    }
+                                    """),
+                            source("chain.RelayBase", """
+                                    package chain;
+                                    public class RelayBase<T> {
+                                      void r(T value) {}
+                                    }
+                                    """),
+                            source("relay.Relay", """
+                                    package relay;
+                                    public class Relay<T> extends chain.RelayBase<T> {}
+                                    """),
+                            source("chain.RelayLeaf", """
+                                    package chain;
+                                    public class RelayLeaf extends relay.Relay<String> {
+                                      void r(String value) {}
+                                    }
+                                    """)));
+            assertTrue(result.success(), result.errors()::toString);
+            assertTrue(Probe.ran, "the probe must have run");
+            assertTrue(Probe.failures.isEmpty(), Probe.failures::toString);
+        } finally {
+            Probe.failures.clear();
+            Probe.ran = false;
+            Probe.expect = Expect.FRESH;
+            delete(dir);
+        }
+    }
+
     private static CompileResult whenStaticOperationsAreCompiled(Path out) throws IOException {
         return compile(out, false, frameworkSources(), List.of(source("fixture.StaticShapes", STATIC_FIXTURES)));
     }
@@ -284,7 +348,8 @@ class AccessPolicyAnnotationResolverTest {
         FRESH,
         CLASS_VISIBLE,
         SOURCE_ERASED,
-        STATIC_OPERATION
+        STATIC_OPERATION,
+        PACKAGE_CHAIN
     }
 
     @SupportedAnnotationTypes("*")
@@ -310,6 +375,8 @@ class AccessPolicyAnnotationResolverTest {
                     checkClassVisible(resolver);
                 } else if (expect == Expect.STATIC_OPERATION) {
                     checkStaticOperation(resolver);
+                } else if (expect == Expect.PACKAGE_CHAIN) {
+                    checkPackageChain(resolver);
                 } else {
                     checkSourceErased(resolver);
                 }
@@ -383,6 +450,24 @@ class AccessPolicyAnnotationResolverTest {
             if (!resolver.corresponds(sub, subInstance, subInstance)
                     || !resolver.corresponds(sub, subInstance, baseInstance)) {
                 failures.add("an instance method must correspond to itself and to the method it overrides");
+            }
+        }
+
+        private void checkPackageChain(AccessPolicyAnnotationResolver resolver) {
+            TypeElement base = type("chain.Base");
+            TypeElement leaf = type("leaf.Leaf");
+            if (!resolver.corresponds(leaf, method(leaf, "m"), method(base, "m"))) {
+                failures.add("a class of another package overrides a package-private method through a public"
+                        + " override in its package");
+            }
+            TypeElement direct = type("leaf.Direct");
+            if (resolver.corresponds(direct, method(direct, "m"), method(base, "m"))) {
+                failures.add("a direct subclass of another package does not override a package-private method");
+            }
+            TypeElement relayBase = type("chain.RelayBase");
+            TypeElement relayLeaf = type("chain.RelayLeaf");
+            if (resolver.corresponds(relayLeaf, method(relayLeaf, "r"), method(relayBase, "r"))) {
+                failures.add("a package-private method is not inherited across a class of another package");
             }
         }
 

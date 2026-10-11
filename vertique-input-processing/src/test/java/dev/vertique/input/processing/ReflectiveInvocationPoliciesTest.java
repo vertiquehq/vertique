@@ -152,6 +152,38 @@ class ReflectiveInvocationPoliciesTest {
                 ex.getMessage());
     }
 
+    /** A generic interface declaring the sanitizer directly on a method whose parameter is the variable. */
+    interface IGenericDirect<T> {
+        @Sanitize(A.class)
+        void baz(T p);
+    }
+
+    /** Binds the variable to {@code String}: {@code baz(String)} overrides {@code IGenericDirect.baz(T)}. */
+    static class GenericDirectImpl implements IGenericDirect<String> {
+        @Override
+        @ComposedSanitize
+        @SkipSanitization
+        public void baz(String p) {}
+    }
+
+    @Test
+    @DisplayName("an override of a generic declaration resolves its value and names that declaration as the site")
+    void genericOverrideNamesTheDeclarationItInheritedFrom() throws Exception {
+        Method baz = GenericDirectImpl.class.getMethod("baz", String.class);
+
+        InvocationPolicyConflictException ex = assertThrows(
+                InvocationPolicyConflictException.class,
+                () -> ReflectiveInvocationPolicies.resolveRoute(baz, GenericDirectImpl.class));
+
+        assertEquals(
+                dev.vertique.input.processing.testkit.InvocationPolicyScenarios.expectedConflictMessage(
+                        PolicyAxis.SANITIZE,
+                        "IGenericDirect.baz",
+                        "GenericDirectImpl.baz",
+                        "method GenericDirectImpl.baz"),
+                ex.getMessage());
+    }
+
     // --- R2 (security review): an inherited skip that silently removes a class-level chain ---
 
     /** The interface method carries the skip; the implementation never mentions it. */

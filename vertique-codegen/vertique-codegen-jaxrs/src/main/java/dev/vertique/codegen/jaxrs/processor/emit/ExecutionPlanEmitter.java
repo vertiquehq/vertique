@@ -299,7 +299,7 @@ public final class ExecutionPlanEmitter {
             TypeElement current = concreteClass;
             while (current != null
                     && !"java.lang.Object".equals(current.getQualifiedName().toString())) {
-                if (JaxRsHierarchy.findMatchingMethod(ctx, method.concreteMethod(), current) != null) {
+                if (JaxRsHierarchy.findErasedMatch(ctx, method.concreteMethod(), current) != null) {
                     return false;
                 }
                 current = JaxRsHierarchy.superClass(ctx, current);

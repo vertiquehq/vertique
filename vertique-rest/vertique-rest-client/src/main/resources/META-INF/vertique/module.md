@@ -46,7 +46,10 @@ request/response JSON.
 ### The interface is the contract
 
 One annotated interface describes one upstream service. Method annotations carry the HTTP verb, the
-path template, and the parameter bindings; the return type carries the response shape.
+path template, and the parameter bindings; the return type carries the response shape. A method also
+inherits the annotations of a generic super-interface declaration whose type variables the interface
+binds (`delete(String)` of a `Crud<String>` client inherits those of `Crud<ID>.delete(ID)`), under the
+Java override rules.
 
 ```java
 @RestClient(name = "user-service", value = "http://user-service:8080")

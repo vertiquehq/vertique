@@ -44,9 +44,9 @@ import org.junit.jupiter.params.provider.MethodSource;
  *
  * <p>Observers are opened in the coordinator constructor, and the disconnect settlement path then
  * delivers the terminal and completion callbacks to every opened session. Both rows drive that path
- * and assert that a healthy observer receives its terminal and completion in order. Value
- * observation ({@code onToolInput}/{@code onToolOutput}) is owned by T009 and is deliberately not
- * exercised here.
+ * and assert that a healthy observer receives its terminal and completion in order. The request's
+ * values (tool input, tool output, request and response bodies) are read through the completion
+ * view a listener receives, and are deliberately not exercised here.
  *
  * <p>Sensitivity: injecting exactly one duplicate terminal/completion signal must move the
  * exactly-once count assertion from 1 to 2 while the callback order is unchanged.

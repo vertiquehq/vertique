@@ -187,10 +187,11 @@ class RouteValidator {
      * whether they share a source and a name under that source's matching rule.
      *
      * <p>The name comparison mirrors {@code DefaultBoundRequest.findDescriptor} exactly, including its use
-     * of {@link String#equalsIgnoreCase(String)} rather than a lower-cased key: {@code HEADER} and
-     * {@code COOKIE} match case-insensitively (both bound maps are keyed by lower-cased name, and HTTP/2
-     * transmits header names in lower case per RFC 9113 §8.2.1), while {@code PATH} and {@code QUERY}
-     * match verbatim. Diverging from that rule would misjudge which declarations actually collide.
+     * of {@link String#equalsIgnoreCase(String)} rather than a lower-cased key: {@code HEADER} matches
+     * case-insensitively (the bound map is keyed by lower-cased name, and HTTP/2 transmits header names
+     * in lower case per RFC 9113 §8.2.1), while {@code PATH}, {@code QUERY}, and {@code COOKIE} match
+     * verbatim (cookie names are case-sensitive per RFC 6265). Diverging from that rule would misjudge
+     * which declarations actually collide.
      *
      * @param first  the earlier declaration; its source is descriptor-matched and its name non-{@code null}
      * @param second the later declaration
@@ -210,10 +211,10 @@ class RouteValidator {
      * {@code DefaultBoundRequest.findDescriptor} and {@code ParameterExtractor.lookup}.
      *
      * @param source the parameter's source
-     * @return {@code true} for {@code HEADER} and {@code COOKIE}
+     * @return {@code true} for {@code HEADER}
      */
     private static boolean matchesNameCaseInsensitively(ResourceMethodMeta.ParamSource source) {
-        return source == ResourceMethodMeta.ParamSource.HEADER || source == ResourceMethodMeta.ParamSource.COOKIE;
+        return source == ResourceMethodMeta.ParamSource.HEADER;
     }
 
     /**

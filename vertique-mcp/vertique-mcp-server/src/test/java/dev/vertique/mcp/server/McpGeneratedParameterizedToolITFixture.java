@@ -81,14 +81,13 @@ final class McpGeneratedParameterizedToolITFixture {
     private final McpToolInvoker cascadedInvoker;
     private final HttpServer server;
     private final int port;
-    private final McpInputLifecycleObservationITFixture.CapableSession session;
+    private final McpRecordingCompletedListener listener = new McpRecordingCompletedListener();
 
     /**
      * Compiles the real {@code GreetingTools}/{@code UpperCaseSanitizer} sources with the real {@link
      * McpToolProcessor}, loads the generated invoker through its real constructor, and starts one
-     * composed server contributing two generated tools and one {@link
-     * McpInputLifecycleObservationITFixture.CapableObserver} so the delivered {@code onToolInput}
-     * normalized-argument tree can be observed directly.
+     * composed server contributing two generated tools and one {@link McpRecordingCompletedListener}
+     * so the normalized-argument tree the request view reports can be observed directly.
      *
      * @param vertx the owning Vert.x instance
      * @throws Exception if compilation, class loading, or server startup fails
@@ -230,18 +229,14 @@ final class McpGeneratedParameterizedToolITFixture {
                 Resilience.create(vertx)));
         HttpConfig httpConfig = HttpConfig.builder().idleTimeoutSeconds(60).build();
 
-        McpInputLifecycleObservationITFixture.CapableObserver capable =
-                new McpInputLifecycleObservationITFixture.CapableObserver();
-        this.session = capable.session();
-
         McpRouterMount mount = new McpRouterMount(
                 config,
                 new McpServerConfigValidator(),
                 new McpRequestDispatcher(
                         config,
                         securityRuntime,
-                        Set.of(capable),
                         Set.of(),
+                        Set.of(listener),
                         Set.of(),
                         Set.of(),
                         httpConfig,
@@ -284,9 +279,9 @@ final class McpGeneratedParameterizedToolITFixture {
         return invoker;
     }
 
-    /** The value-observation session contributed to the dispatcher, recording {@code onToolInput}. */
-    McpInputLifecycleObservationITFixture.CapableSession session() {
-        return session;
+    /** The completion listener contributed to the dispatcher, recording each request's view. */
+    McpRecordingCompletedListener listener() {
+        return listener;
     }
 
     /** The raw {@code compile-testing} result, exposed so the test can independently assert on it. */

@@ -134,7 +134,10 @@ class ServedContractTest {
                     "GET",
                     "/orders",
                     false,
-                    Set.of(new InputKey(ParamLocation.QUERY, "debug"), new InputKey(ParamLocation.HEADER, "X-Debug"))),
+                    Set.of(
+                            new InputKey(ParamLocation.QUERY, "debug"),
+                            new InputKey(ParamLocation.HEADER, "X-Debug"),
+                            new InputKey(ParamLocation.COOKIE, "sessionToken"))),
             new RoutedOperation("createOrder", "POST", "/orders", false, Set.of()),
             new RoutedOperation(
                     "uploadNote",
@@ -443,6 +446,18 @@ class ServedContractTest {
                         [{"name": "x-debug", "in": "header", "description": "zq7", "schema": {"type": "string"}}]
                         """)),
                         refused("listOrders", HIDDEN_INPUT, LIST_ORDERS + "/parameters/0")));
+        rows.put(
+                "listOrders describing the hidden cookie sessionToken",
+                row(
+                        root -> obj(root, LIST_ORDERS).set("parameters", json("""
+                        [{"name": "sessionToken", "in": "cookie", "description": "zq7", "schema": {"type": "string"}}]
+                        """)),
+                        refused("listOrders", HIDDEN_INPUT, LIST_ORDERS + "/parameters/0")));
+        rows.put(
+                "listOrders describing a cookie that differs from the hidden cookie only in case",
+                row(root -> obj(root, LIST_ORDERS).set("parameters", json("""
+                        [{"name": "SessionToken", "in": "cookie", "description": "zq7", "schema": {"type": "string"}}]
+                        """)), passes()));
         rows.put(
                 "(32) an unreferenced components Path Item describing the hidden trace of getOrderInternal",
                 row(
