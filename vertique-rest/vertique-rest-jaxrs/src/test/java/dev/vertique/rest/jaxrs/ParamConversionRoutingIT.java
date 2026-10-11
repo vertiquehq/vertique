@@ -4,6 +4,7 @@
 package dev.vertique.rest.jaxrs;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 
 import io.swagger.v3.oas.annotations.Operation;
 import io.vertx.core.Future;
@@ -258,6 +259,18 @@ public class ParamConversionRoutingIT {
                 ctx,
                 "/convert/uuid/not-a-uuid",
                 statusAndBody -> assertEquals("400", statusAndBody.substring(0, statusAndBody.indexOf('|'))));
+    }
+
+    @Test
+    @DisplayName("A malformed @PathParam UUID 400 carries neither the segment nor a framework-filled instance")
+    void badUuidProblemCarriesNoRequestBytes(io.vertx.core.Vertx vertx, VertxTestContext ctx) {
+        get(vertx, ctx, "/convert/uuid/not-a-uuid", statusAndBody -> {
+            String body = statusAndBody.substring(statusAndBody.indexOf('|') + 1);
+            assertFalse(body.contains("not-a-uuid"), "the body must not echo the malformed segment: " + body);
+            assertFalse(
+                    new io.vertx.core.json.JsonObject(body).containsKey("instance"),
+                    "the framework does not fill instance: " + body);
+        });
     }
 
     @Test

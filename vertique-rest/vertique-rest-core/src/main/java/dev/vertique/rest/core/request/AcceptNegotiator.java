@@ -45,8 +45,9 @@ public final class AcceptNegotiator {
      *   <li>Entries without a {@code /} are silently skipped. If the header holds only such
      *       entries, the first server type is returned.</li>
      *   <li>Entries that are malformed (an unterminated quoted string, an invalid, quoted,
-     *       out-of-range or repeated {@code q}, too many parameters, or a {@code /} with an empty
-     *       type or subtype such as {@code text/} or {@code /json}) are dropped and never make
+     *       out-of-range or repeated {@code q}, too many parameters, a {@code /} with an empty
+     *       type or subtype such as {@code text/} or {@code /json}, or a wildcard type with a
+     *       concrete subtype such as {@code *}{@code /xml}) are dropped and never make
      *       a type acceptable. So are the entries past the first
      *       {@value HeaderElement#MAX_ELEMENTS} non-empty ones: they are never read, and their
      *       existence counts as a malformed entry. When no usable entry remains and at least one
@@ -164,8 +165,9 @@ public final class AcceptNegotiator {
      * as a tiebreaker (more specific types win ties). The header is split into entries and
      * parameters only outside quoted strings, so a quoted comma or semicolon does not change how
      * the entry is read. Malformed entries are silently excluded: those lacking a {@code /}
-     * separator, having an empty type or subtype, containing an unterminated quoted string,
-     * carrying an invalid or repeated {@code q}, or having too many parameters (see
+     * separator, having an empty type or subtype or a wildcard type with a concrete subtype,
+     * containing an unterminated quoted string, carrying an invalid or repeated {@code q}, or
+     * having too many parameters (see
      * {@link HeaderElement}). At most the first {@value HeaderElement#MAX_ELEMENTS} non-empty
      * entries are considered; this method does not report that more followed, while
      * {@link #negotiate(String, List)} treats them as a malformed entry.

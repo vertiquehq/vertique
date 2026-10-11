@@ -589,7 +589,7 @@ public class JaxRsRouteRegistrar {
             // net for those routes.
             List<String> consumes = descriptor.consumes();
             if (!consumes.isEmpty()) {
-                route.handler(buildConsumesCheckHandler(consumes));
+                route.handler(buildConsumesCheckHandler(descriptor.operationId(), consumes));
             }
 
             // (a-2) Resolved request-body JSON profile. Resolve the effective profile for this method
@@ -1302,15 +1302,21 @@ public class JaxRsRouteRegistrar {
      * authentication handlers (Vert.x's {@code USER}-after-{@code AUTHENTICATION} ordering rule), so
      * authentication runs first at request time.
      *
-     * <p>Matching uses wildcard-aware {@link MediaType#isCompatible}: {@code *}{@code /*} accepts
-     * anything, {@code application/*} accepts any application subtype, and a concrete type (e.g.
-     * {@code application/json}) performs an exact subtype match (case-insensitive, parameters
-     * ignored).
+     * <p>Matching uses wildcard-aware {@link MediaType#isCompatible}: a declared {@code *}{@code /*}
+     * accepts anything, a declared {@code application/*} accepts any application subtype, and a
+     * concrete type (e.g. {@code application/json}) performs an exact subtype match
+     * (case-insensitive, parameters ignored). Wildcards are legal only on the declared side: a
+     * request {@code Content-Type} is a media type, not a range, so a wildcard one such as
+     * {@code *}{@code /*} or {@code application/*} satisfies no declaration.
      *
-     * <p>A missing or unparseable {@code Content-Type} header is treated as absent — the request
-     * does not match any declared consume and is rejected with 415. An absent body (as signalled
-     * by {@code Content-Length: 0} and no {@code Transfer-Encoding}) is never checked, consistent
-     * with the broad {@code ContentTypeValidationMiddleware} safety net.
+     * <p>A missing, unparseable or wildcard {@code Content-Type} header is treated as absent — the
+     * request does not match any declared consume and is rejected with 415. A request without a body
+     * is never checked, by the same rule as the broad {@code ContentTypeValidationMiddleware} safety
+     * net: a non-empty body the body handler read always counts, including an HTTP/2 body sent
+     * without {@code Content-Length} or {@code Transfer-Encoding}; otherwise a request has a body
+     * when it carries {@code Transfer-Encoding} or a non-zero {@code Content-Length}, or when the
+     * body handler treats it as multipart or form (by its {@code Content-Type}). A declared
+     * {@code Content-Length: 0} without {@code Transfer-Encoding} is empty.
      *
      * <p>On mismatch the handler delegates to {@code ctx.fail(415, NotSupportedException)} carrying a
      * JAX-RS {@link Response} whose entity is already the diagnostic {@link ProblemDetail} — exactly
@@ -1320,13 +1326,26 @@ public class JaxRsRouteRegistrar {
      * the exception's response (rather than relying on {@code ex.getMessage()}) keeps the diagnostic
      * through equal-status detail sanitization.
      *
+     * @param operationId the operation the handler guards, named in the startup warning
      * @param consumes the non-empty list of declared {@code @Consumes} media types
      * @return the per-route 415-check handler
      */
-    private static Handler<RoutingContext> buildConsumesCheckHandler(List<String> consumes) {
-        // Pre-parse the declared consume types once at registration time for efficiency.
-        List<MediaType> declaredTypes =
-                consumes.stream().map(MediaType::parse).filter(mt -> mt != null).toList();
+    private static Handler<RoutingContext> buildConsumesCheckHandler(String operationId, List<String> consumes) {
+        // Pre-parse the declared consume types once at registration time for efficiency. A declared
+        // entry that is not a media type matches nothing; it is named here rather than dropped
+        // silently, because a route left with no usable entry answers every body request with 415.
+        List<MediaType> declaredTypes = new ArrayList<>(consumes.size());
+        for (String declared : consumes) {
+            MediaType parsed = MediaType.parse(declared);
+            if (parsed == null) {
+                log.warn(
+                        "Operation '{}' declares @Consumes '{}', which is not a media type and matches no request",
+                        operationId,
+                        declared);
+            } else {
+                declaredTypes.add(parsed);
+            }
+        }
 
         return ctx -> {
             HttpMethod method = ctx.request().method();
@@ -1336,19 +1355,33 @@ public class JaxRsRouteRegistrar {
                 return;
             }
 
-            // Skip the check when the request has no body (Content-Length: 0 and no chunked encoding).
+            // Skip the check when the request has no body. A body the body handler read always
+            // counts: an HTTP/2 request may carry DATA frames with neither Content-Length nor
+            // Transfer-Encoding. Otherwise the request has a body when it carries Transfer-Encoding
+            // or a Content-Length, or when the body handler treats it as multipart or form (a request
+            // flag it sets from the Content-Type, not proof of a decoded body). An explicit
+            // Content-Length of 0 with no Transfer-Encoding suppresses only those header signals.
+            // ContentTypeValidationMiddleware applies the same rule; change both together.
             String contentLength = ctx.request().getHeader("Content-Length");
             String transferEncoding = ctx.request().getHeader("Transfer-Encoding");
-            boolean hasBody = (contentLength != null && !"0".equals(contentLength)) || transferEncoding != null;
+            io.vertx.ext.web.RequestBody readBody = ctx.body();
+            boolean declaredEmpty = "0".equals(contentLength) && transferEncoding == null;
+            boolean readNonEmpty = readBody != null && readBody.length() > 0;
+            boolean hasBody = readNonEmpty
+                    || (!declaredEmpty
+                            && (contentLength != null
+                                    || transferEncoding != null
+                                    || ctx.request().isExpectMultipart()));
             if (!hasBody) {
                 ctx.next();
                 return;
             }
 
-            // A missing or unparseable Content-Type is treated as absent (no match → 415).
+            // A missing, unparseable or wildcard Content-Type is treated as absent (no match → 415):
+            // a wildcard is a range, legal on the declared side only, and would satisfy every route.
             String rawContentType = ctx.request().getHeader("Content-Type");
             MediaType requestType = MediaType.parse(rawContentType);
-            if (requestType != null) {
+            if (requestType != null && !requestType.isWildcardType() && !requestType.isWildcardSubtype()) {
                 for (MediaType declared : declaredTypes) {
                     if (declared.isCompatible(requestType)) {
                         ctx.next();
@@ -1361,9 +1394,7 @@ public class JaxRsRouteRegistrar {
             // and the REST error pipeline — the same path as ContentTypeValidationMiddleware. The
             // NotSupportedException carries an authored ProblemDetail entity so equal-status
             // sanitization (which drops synthesized ex.getMessage() details) leaves the diagnostic.
-            String message = "Unsupported Content-Type: "
-                    + (rawContentType != null ? rawContentType : "(none)")
-                    + "; expected one of " + consumes;
+            String message = "Unsupported Content-Type; expected one of " + consumes;
             Response unsupported = Response.status(415)
                     .entity(ProblemDetail.of(415, message))
                     .type("application/problem+json")

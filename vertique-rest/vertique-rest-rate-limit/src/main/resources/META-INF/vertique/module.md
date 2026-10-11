@@ -46,8 +46,8 @@ time), unauthenticated edge traffic never poisons a per-operation business quota
 
 A `QUOTA_EXCEEDED`/`BACKEND_FAILURE_CLOSED` edge decision delegates via
 `ctx.fail(status, exception)` into the full JAX-RS failure pipeline — the same
-`ErrorPipeline`/`ResponsePipeline` (interceptor chains, `ProblemDetail` instance
-enrichment, profile-aware error serialization) a resource method's own thrown
+`ErrorPipeline`/`ResponsePipeline` (interceptor chains, profile-aware error
+serialization; the pipeline fills no `instance`) a resource method's own thrown
 exception traverses, resolved through the mount's own real `ExceptionMapperRegistry`
 rather than any middleware-local rendering. An application that contributes its own
 `ExceptionMapper<RateLimitExceededException>`/`ExceptionMapper<RateLimitUnavailableException>`

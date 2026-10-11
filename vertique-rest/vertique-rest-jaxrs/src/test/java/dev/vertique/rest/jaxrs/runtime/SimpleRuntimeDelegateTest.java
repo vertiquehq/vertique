@@ -512,4 +512,66 @@ class SimpleRuntimeDelegateTest {
         assertTrue(result.contains("; SameSite=Strict"));
         assertTrue(result.contains("; Expires="));
     }
+
+    // --- parse failures never echo the offending value ---
+
+    private static final String MARKER = "leaky-marker";
+
+    private static void assertMessageDoesNotEcho(org.junit.jupiter.api.function.Executable parse) {
+        IllegalArgumentException thrown = assertThrows(IllegalArgumentException.class, parse);
+        String message = String.valueOf(thrown.getMessage());
+        assertFalse(message.contains(MARKER), "the message must not echo the header value: " + message);
+        assertTrue(message.length() < 100, "the message must stay bounded: " + message.length());
+    }
+
+    @Test
+    @DisplayName("MediaType.valueOf failure message carries no part of the header value")
+    void mediaTypeFailureDoesNotEchoTheValue() {
+        String oversized = MARKER + "\u0001".repeat(4) + "x".repeat(10_000);
+        assertMessageDoesNotEcho(() -> MediaType.valueOf(oversized));
+        assertMessageDoesNotEcho(() -> MediaType.valueOf("text/plain; a=\"" + MARKER));
+        assertMessageDoesNotEcho(() -> MediaType.valueOf("text/plain; a=\"b\"" + MARKER));
+    }
+
+    @Test
+    @DisplayName("CacheControl.valueOf failure message carries no part of the header value")
+    void cacheControlFailureDoesNotEchoTheValue() {
+        assertMessageDoesNotEcho(() -> CacheControl.valueOf("x=\"" + MARKER));
+        assertMessageDoesNotEcho(() -> CacheControl.valueOf("no-cache=\"" + MARKER));
+        assertMessageDoesNotEcho(() -> CacheControl.valueOf("max-age=" + MARKER));
+        assertMessageDoesNotEcho(() -> CacheControl.valueOf("s-maxage=" + MARKER));
+    }
+
+    @Test
+    @DisplayName("CacheControl.valueOf: a balanced quoted value with trailing characters fails with a fixed message")
+    void cacheControlTrailingCharactersAfterQuoteFailWithAFixedMessage() {
+        // Balanced quotes get past the directive split, so each input reaches the unquote check.
+        IllegalArgumentException extension =
+                assertThrows(IllegalArgumentException.class, () -> CacheControl.valueOf("x=\"a\"" + MARKER));
+        assertEquals("Invalid cache control value", extension.getMessage());
+        assertFalse(extension.getMessage().contains(MARKER));
+
+        IllegalArgumentException fieldNames =
+                assertThrows(IllegalArgumentException.class, () -> CacheControl.valueOf("no-cache=\"a\"" + MARKER));
+        assertEquals("Invalid quoted field-name list", fieldNames.getMessage());
+        assertFalse(fieldNames.getMessage().contains(MARKER));
+    }
+
+    @Test
+    @DisplayName("Link.valueOf failure message carries no part of the header value")
+    void linkFailureDoesNotEchoTheValue() {
+        assertMessageDoesNotEcho(() -> Link.valueOf(MARKER));
+        assertMessageDoesNotEcho(() -> Link.valueOf("</x>; title=\"" + MARKER));
+        assertMessageDoesNotEcho(() -> Link.valueOf("<" + MARKER + " with space>; rel=next"));
+    }
+
+    @Test
+    @DisplayName("Link.valueOf: a balanced quoted parameter with trailing characters fails with a fixed message")
+    void linkTrailingCharactersAfterQuoteFailWithAFixedMessage() {
+        // Balanced quotes get past the parameter split, so the input reaches the unquote check.
+        IllegalArgumentException thrown =
+                assertThrows(IllegalArgumentException.class, () -> Link.valueOf("</x>; title=\"a\"" + MARKER));
+        assertEquals("Invalid link header format", thrown.getMessage());
+        assertFalse(thrown.getMessage().contains(MARKER));
+    }
 }

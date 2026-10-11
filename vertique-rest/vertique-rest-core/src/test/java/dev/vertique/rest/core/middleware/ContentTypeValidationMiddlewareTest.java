@@ -236,6 +236,75 @@ class ContentTypeValidationMiddlewareTest {
         verify(ctx, never()).next();
     }
 
+    @Test
+    @DisplayName("Should call ctx.fail(415) for an HTTP/2 POST with a read body and no length headers")
+    void shouldRejectPostWhoseBodyWasReadWithoutLengthHeaders() {
+        RoutingContext ctx = mockContext(HttpMethod.POST, "image/png", null, null);
+        io.vertx.ext.web.RequestBody body = mock(io.vertx.ext.web.RequestBody.class);
+        when(body.length()).thenReturn(4);
+        when(ctx.body()).thenReturn(body);
+
+        middleware.handle(ctx);
+
+        verify(ctx).fail(eq(415), any(jakarta.ws.rs.NotSupportedException.class));
+        verify(ctx, never()).next();
+    }
+
+    @Test
+    @DisplayName("Should call ctx.fail(415) for an HTTP/2 POST flagged multipart or form and no Content-Type")
+    void shouldRejectPostFlaggedMultipartWithoutLengthHeaders() {
+        // Parity guard: the per-route @Consumes gate counts the same isExpectMultipart() request flag.
+        RoutingContext ctx = mockContext(HttpMethod.POST, null, null, null);
+        when(ctx.request().isExpectMultipart()).thenReturn(true);
+
+        middleware.handle(ctx);
+
+        verify(ctx).fail(eq(415), any(jakarta.ws.rs.NotSupportedException.class));
+        verify(ctx, never()).next();
+    }
+
+    @Test
+    @DisplayName("Should call ctx.next() for an HTTP/2 POST whose body handler read nothing")
+    void shouldPassPostWhoseBodyHandlerReadNothing() {
+        RoutingContext ctx = mockContext(HttpMethod.POST, null, null, null);
+        io.vertx.ext.web.RequestBody body = mock(io.vertx.ext.web.RequestBody.class);
+        when(body.length()).thenReturn(-1);
+        when(ctx.body()).thenReturn(body);
+
+        middleware.handle(ctx);
+
+        verify(ctx).next();
+        verify(ctx, never()).fail(anyInt(), any(Throwable.class));
+    }
+
+    @Test
+    @DisplayName("Should call ctx.next() for an HTTP/2 POST whose read body is empty")
+    void shouldPassPostWhoseReadBodyIsEmpty() {
+        RoutingContext ctx = mockContext(HttpMethod.POST, null, null, null);
+        io.vertx.ext.web.RequestBody body = mock(io.vertx.ext.web.RequestBody.class);
+        when(body.length()).thenReturn(0);
+        when(ctx.body()).thenReturn(body);
+
+        middleware.handle(ctx);
+
+        verify(ctx).next();
+        verify(ctx, never()).fail(anyInt(), any(Throwable.class));
+    }
+
+    @Test
+    @DisplayName("Should call ctx.fail(415) when the body handler read bytes despite a declared Content-Length: 0")
+    void shouldRejectPostWhoseReadBodyContradictsADeclaredEmptyLength() {
+        RoutingContext ctx = mockContext(HttpMethod.POST, null, "0", null);
+        io.vertx.ext.web.RequestBody body = mock(io.vertx.ext.web.RequestBody.class);
+        when(body.length()).thenReturn(5);
+        when(ctx.body()).thenReturn(body);
+
+        middleware.handle(ctx);
+
+        verify(ctx).fail(eq(415), any(jakarta.ws.rs.NotSupportedException.class));
+        verify(ctx, never()).next();
+    }
+
     // --- Helpers ---
 
     /**

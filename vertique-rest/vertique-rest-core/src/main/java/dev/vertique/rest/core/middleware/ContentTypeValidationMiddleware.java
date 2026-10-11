@@ -24,12 +24,16 @@ import java.util.Locale;
  * <p>This middleware acts as a broad router-level safety net for all routes. Fine-grained
  * per-route {@code Content-Type} validation against an operation's {@code @Consumes} list is
  * enforced per-route at registration time by {@code JaxRsRouteRegistrar}, which installs a
- * dedicated 415-check handler as the first handler on each route that declares a non-empty
- * {@code @Consumes} annotation.
+ * dedicated 415-check handler on each route that declares a non-empty {@code @Consumes}
+ * annotation (after the operation's identity and authentication handlers).
  *
  * <p>Returns 415 Unsupported Media Type when the {@code Content-Type} header is absent or not
- * accepted, except when the request has no body (i.e. {@code Content-Length: 0} or no
- * {@code Content-Length} and no {@code Transfer-Encoding}), in which case validation is skipped.
+ * accepted, except when the request has no body, in which case validation is skipped. A non-empty
+ * body the body handler read always counts, including one an HTTP/2 request sent in DATA frames
+ * without {@code Content-Length} or {@code Transfer-Encoding}. Otherwise a request has a body when
+ * it carries {@code Transfer-Encoding} or a non-zero {@code Content-Length}, or when the body
+ * handler treats it as multipart or form (by its {@code Content-Type}). A declared
+ * {@code Content-Length: 0} without {@code Transfer-Encoding} is empty.
  *
  * <p>Priority: 20 (APPLICATION phase).
  */
@@ -55,10 +59,24 @@ public class ContentTypeValidationMiddleware implements Middleware {
         HttpMethod method = ctx.request().method();
 
         if (method == HttpMethod.POST || method == HttpMethod.PUT || method == HttpMethod.PATCH) {
-            // Skip validation if the request has no body
+            // Skip validation if the request has no body. A body the body handler read always
+            // counts: an HTTP/2 request may carry DATA frames with neither Content-Length nor
+            // Transfer-Encoding. Otherwise the request has a body when it carries Transfer-Encoding
+            // or a Content-Length, or when the body handler treats it as multipart or form (a
+            // request flag it sets from the Content-Type, not proof of a decoded body). An explicit
+            // Content-Length of 0 with no Transfer-Encoding suppresses only those header signals.
+            // The per-route @Consumes gate in vertique-rest-jaxrs applies the same rule; change both
+            // together.
             String contentLength = ctx.request().getHeader("Content-Length");
             String transferEncoding = ctx.request().getHeader("Transfer-Encoding");
-            boolean hasBody = (contentLength != null && !"0".equals(contentLength)) || transferEncoding != null;
+            io.vertx.ext.web.RequestBody readBody = ctx.body();
+            boolean declaredEmpty = "0".equals(contentLength) && transferEncoding == null;
+            boolean readNonEmpty = readBody != null && readBody.length() > 0;
+            boolean hasBody = readNonEmpty
+                    || (!declaredEmpty
+                            && (contentLength != null
+                                    || transferEncoding != null
+                                    || ctx.request().isExpectMultipart()));
 
             if (hasBody) {
                 String contentType = ctx.request().getHeader("Content-Type");

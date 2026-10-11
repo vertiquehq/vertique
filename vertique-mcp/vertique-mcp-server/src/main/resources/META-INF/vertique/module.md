@@ -222,7 +222,8 @@ request to any instance. Every request is admitted through the fixed pipeline be
   An entry with `q=0` does not make its type acceptable. A comma or semicolon inside a quoted
   parameter value (`profile="a,b"`) is part of that value, not an entry or parameter separator. A
   malformed entry is skipped and never admits anything: an unterminated quoted string, characters
-  after a closing quote, an empty value, or a `q` that is not a valid qvalue (`0`, `1`, `0.xxx` or
+  after a closing quote, an empty value, a wildcard type with a concrete subtype (`*/json`, which
+  RFC 9110 has no range for), or a `q` that is not a valid qvalue (`0`, `1`, `0.xxx` or
   `1.000`, at most three decimals — a quoted, negative, over-precise or above-1 `q` is malformed and
   is not clamped or read as `1`). Only the first 50 non-empty entries are considered, so a type
   listed after them is not admitted. Admission applies only the acceptable-or-not decision, not

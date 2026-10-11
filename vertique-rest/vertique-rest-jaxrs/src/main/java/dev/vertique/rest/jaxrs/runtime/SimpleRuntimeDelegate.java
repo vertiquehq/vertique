@@ -75,11 +75,11 @@ public class SimpleRuntimeDelegate extends RuntimeDelegate {
             }
             List<String> segments = HeaderElement.splitOutsideQuotes(value.trim(), ';');
             if (segments == null) {
-                throw new IllegalArgumentException("Invalid media type: " + value);
+                throw new IllegalArgumentException("Invalid media type");
             }
             String[] typeParts = segments.get(0).trim().split("/", 2);
             if (typeParts.length != 2) {
-                throw new IllegalArgumentException("Invalid media type: " + value);
+                throw new IllegalArgumentException("Invalid media type");
             }
             String type = typeParts[0].trim();
             String subtype = typeParts[1].trim();
@@ -92,7 +92,7 @@ public class SimpleRuntimeDelegate extends RuntimeDelegate {
                 if (kv.length == 2) {
                     String paramValue = HeaderElement.unquote(kv[1].trim());
                     if (paramValue == null) {
-                        throw new IllegalArgumentException("Invalid media type: " + value);
+                        throw new IllegalArgumentException("Invalid media type");
                     }
                     params.put(kv[0].trim(), paramValue);
                 }
@@ -127,7 +127,7 @@ public class SimpleRuntimeDelegate extends RuntimeDelegate {
             cc.setNoTransform(false); // default is true, but we only set if directive present
             List<String> directives = HeaderElement.splitOutsideQuotes(value, ',');
             if (directives == null) {
-                throw new IllegalArgumentException("Invalid cache control value: " + value);
+                throw new IllegalArgumentException("Invalid cache control value");
             }
             for (String directive : directives) {
                 String trimmed = directive.trim();
@@ -152,15 +152,15 @@ public class SimpleRuntimeDelegate extends RuntimeDelegate {
                     cc.setPrivate(true);
                     parseFieldNames(rawVal, cc.getPrivateFields());
                 } else if (key.equals("max-age")) {
-                    cc.setMaxAge(Integer.parseInt(rawVal));
+                    cc.setMaxAge(parseDeltaSeconds(rawVal));
                 } else if (key.equals("s-maxage")) {
-                    cc.setSMaxAge(Integer.parseInt(rawVal));
+                    cc.setSMaxAge(parseDeltaSeconds(rawVal));
                 } else if (!key.isEmpty()) {
                     // Cache extension — preserve original value case
                     if (rawVal != null) {
                         String extensionValue = HeaderElement.unquote(rawVal);
                         if (extensionValue == null) {
-                            throw new IllegalArgumentException("Invalid cache control value: " + value);
+                            throw new IllegalArgumentException("Invalid cache control value");
                         }
                         cc.getCacheExtension().put(key, extensionValue);
                     } else {
@@ -295,6 +295,18 @@ public class SimpleRuntimeDelegate extends RuntimeDelegate {
         throw new UnsupportedOperationException();
     }
 
+    /**
+     * Parses a {@code max-age} or {@code s-maxage} value. The failure message is fixed: the number
+     * parser's own message would carry the header value.
+     */
+    private static int parseDeltaSeconds(String rawVal) {
+        try {
+            return Integer.parseInt(rawVal);
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException("Invalid cache control value");
+        }
+    }
+
     /** Parses an optional comma-separated, quoted field-name list (e.g. {@code "Authorization, Set-Cookie"}) into the target list. */
     private static void parseFieldNames(String rawVal, List<String> target) {
         if (rawVal == null) {
@@ -302,7 +314,7 @@ public class SimpleRuntimeDelegate extends RuntimeDelegate {
         }
         String v = HeaderElement.unquote(rawVal.trim());
         if (v == null) {
-            throw new IllegalArgumentException("Invalid quoted field-name list: " + rawVal);
+            throw new IllegalArgumentException("Invalid quoted field-name list");
         }
         for (String field : v.split(",")) {
             String trimmed = field.trim();
