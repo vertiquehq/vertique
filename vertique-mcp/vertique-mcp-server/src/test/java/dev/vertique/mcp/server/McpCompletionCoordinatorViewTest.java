@@ -5,6 +5,7 @@ package dev.vertique.mcp.server;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.junit.jupiter.api.Assertions.assertAll;
 
 import dev.vertique.core.payload.PayloadSource;
 import dev.vertique.mcp.interceptor.McpRequestContext;
@@ -243,6 +244,60 @@ class McpCompletionCoordinatorViewTest {
         assertThat(listener.snapshots.get(0).requestBody()).isEqualTo("request-bytes");
     }
 
+    @Test
+    @DisplayName("a disarmed tool output is not made visible by a later write that carries its bytes")
+    void shouldReportNoToolOutputWhenTheArmedResultWasDisarmed() throws Exception {
+        // Given: a result armed for a write that never promoted it, then disarmed.
+        RecordingListener listener = new RecordingListener();
+        McpCompletionCoordinator coordinator = coordinator(Set.of(listener));
+
+        // When: a later write of the same request is reported as carrying a result, and it completes.
+        complete(coordinator, () -> {
+            coordinator.armToolOutput(Map.of("v", 1));
+            coordinator.disarmToolOutput();
+            coordinator.promoteToolOutput(true);
+        });
+
+        // Then: the listener sees no tool output.
+        assertThat(listener.snapshots.get(0).toolOutput())
+                .as("DECISIVE: a disarmed result is never promoted")
+                .isEmpty();
+    }
+
+    @Test
+    @DisplayName(
+            "the coordinator drops the request id and the request content type once the completion " + "is published")
+    void shouldClearTheRequestIdAndContentTypeOnceTheCompletionIsPublished() throws Exception {
+        // Given: a coordinator that bound a request content type and a JSON-RPC id. The two are read
+        // through reflection on the private fields: the view exposes the content type only through
+        // the request body's media type, and nothing exposes either after completion.
+        RecordingListener listener = new RecordingListener();
+        McpCompletionCoordinator coordinator = coordinator(Set.of(listener));
+        CompletableFuture<Object[]> beforeCompletion = new CompletableFuture<>();
+
+        // When: the request completes.
+        complete(coordinator, () -> {
+            coordinator.bindRequest(Map.of(), bytes("request-bytes"), "application/json");
+            coordinator.bindJsonRpcId("17");
+            beforeCompletion.complete(new Object[] {
+                privateField(coordinator, "requestContentType"), privateField(coordinator, "jsonRpcRequestId")
+            });
+        });
+
+        // Then: both were held until completion, the listener saw them, and both are gone afterwards.
+        assertThat(beforeCompletion.get(WAIT_SECONDS, TimeUnit.SECONDS))
+                .as("precondition: both facts were bound before completion")
+                .containsExactly("application/json", "17");
+        assertThat(listener.snapshots.get(0).jsonRpcRequestId()).contains("17");
+        assertAll(
+                () -> assertThat(privateField(coordinator, "requestContentType"))
+                        .as("DECISIVE: the content type is dropped with the rest of the request")
+                        .isNull(),
+                () -> assertThat(privateField(coordinator, "jsonRpcRequestId"))
+                        .as("DECISIVE: the request id is dropped with the rest of the request")
+                        .isNull());
+    }
+
     // --- harness ---
 
     private McpCompletionCoordinator coordinator(Set<McpRequestCompletedListener> listeners) {
@@ -268,6 +323,16 @@ class McpCompletionCoordinatorViewTest {
             }
         });
         done.get(WAIT_SECONDS, TimeUnit.SECONDS);
+    }
+
+    private static Object privateField(McpCompletionCoordinator coordinator, String name) {
+        try {
+            java.lang.reflect.Field field = McpCompletionCoordinator.class.getDeclaredField(name);
+            field.setAccessible(true);
+            return field.get(coordinator);
+        } catch (ReflectiveOperationException failure) {
+            throw new AssertionError("cannot read the coordinator's field " + name, failure);
+        }
     }
 
     private static byte[] bytes(String text) {

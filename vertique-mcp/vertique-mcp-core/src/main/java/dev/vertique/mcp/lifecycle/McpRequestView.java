@@ -20,11 +20,13 @@ import java.util.Optional;
  * rejection, a tool error, a disconnect, a failed write, or an expired request deadline. A part the
  * request never reached is empty.
  *
- * <p>The view is read-only. Request and response bytes are {@link PayloadSource}s that expose no
- * write path, and every map and tree is unmodifiable. Each listener receives its own view over the
- * same underlying bytes, so one listener cannot change what another reads, and no listener can
- * change the response written to the caller. The bytes are not copied on behalf of a listener: a
- * listener that keeps a body beyond its callback copies it.
+ * <p>The view is read-only. Request and response bytes are {@link PayloadSource}s: none of their
+ * accessors returns the bound array ({@code bufferedView()} and {@code copyPrefix} copy,
+ * {@code bufferedStream()} is a read cursor), and every map and tree is unmodifiable. Each listener
+ * receives its own view over the same underlying bytes, so one listener cannot change what another
+ * reads, and no listener can change the response written to the caller. The bytes are not copied on
+ * behalf of a listener. The framework never writes a bound array after binding it, so a listener may
+ * keep a source beyond its callback; doing so keeps the bytes alive for as long as it is held.
  *
  * <p>The raw request and response carry whatever the caller and the tool put there, credentials
  * included. {@code toString()} of every implementation prints no header, body or value.
@@ -56,8 +58,8 @@ public interface McpRequestView {
     /**
      * Returns the request body, as read to decode the JSON-RPC envelope.
      *
-     * @return a read-only source over the body bytes, empty when the request carried none; never
-     *     {@code null}
+     * @return a read-only source over the body bytes; a request that carried none reports a
+     *     zero-length buffered source, not {@code ABSENT}; never {@code null}
      */
     PayloadSource requestBody();
 
@@ -77,7 +79,8 @@ public interface McpRequestView {
      * or the bounded {@code 504} of an expired request deadline.
      *
      * @return a read-only source over the response bytes; {@link PayloadSource#kind()} is {@code
-     *     ABSENT} when no terminal write happened; never {@code null}
+     *     ABSENT} when no terminal write happened or the write carried no body, and {@link
+     *     #responseHeaders()} tells the two apart; never {@code null}
      */
     PayloadSource responseBody();
 

@@ -133,7 +133,7 @@ import java.util.function.Supplier;
  * Validation), signalling a rejection there through {@link McpInputRejectionException}. Every complete
  * result is then normalized exactly once, bounded at {@code mcp.output.maxBytes} as bytes
  * are produced, validated against the tool's advertised output schema before exposure, encoded into the
- * same bounded terminal envelope, offered to the opt-in {@code onToolOutput} observation only once that
+ * same bounded terminal envelope, reported through the completion view's {@code toolOutput} only once that
  * envelope exists, and only then handed to the single terminal writer — contract §4.7 stage 7's fixed
  * order.
  */
@@ -726,10 +726,11 @@ final class McpRequestDispatcher {
      * binding), so the other request's observation and completion stay unchanged. A typed read would
      * instead fail with a {@link ClassCastException} on a value of another type.
      *
-     * <p>{@link #begin} and the terminal writer read the slot through this method: {@link #begin} to
-     * recognize a reroute back into this mount, and the writer because it is the slot's only reader
-     * before {@link #begin} runs, for an admission rejection or a body-limit rejection. The other
-     * reads of the slot run after {@link #begin}, which leaves the request's own coordinator there.
+     * <p>Every read of the slot goes through this method: {@link #begin} to recognize a reroute back
+     * into this mount, the terminal writer for an admission rejection or a body-limit rejection that
+     * runs before {@link #begin}, and every later stage that binds a fact, arms a result or checks
+     * settlement. The slot is a predictable key in shared routing-context data, so no later stage may
+     * assume it still holds the request's own coordinator.
      *
      * @param context the request context
      * @return the request's own coordinator, or {@code null} when the slot is empty, holds another
@@ -854,7 +855,7 @@ final class McpRequestDispatcher {
      * @return {@code true} when this request has already settled and must do no further work
      */
     private static boolean isSettled(RoutingContext context) {
-        McpCompletionCoordinator coordinator = context.get(COMPLETION_COORDINATOR_KEY);
+        McpCompletionCoordinator coordinator = ownedCoordinator(context);
         return coordinator != null && coordinator.cancellation().isCancelled();
     }
 
@@ -1090,7 +1091,7 @@ final class McpRequestDispatcher {
         // does not carry a body trace component.
         TraceReference linkedTrace =
                 config.bodyTracePolicy() == McpBodyTracePolicy.LINK ? codec.extractBodyTraceContext(envelope) : null;
-        McpCompletionCoordinator coordinator = context.get(COMPLETION_COORDINATOR_KEY);
+        McpCompletionCoordinator coordinator = ownedCoordinator(context);
         if (coordinator != null) {
             coordinator.bindLinkedTrace(linkedTrace);
         }
@@ -1319,7 +1320,7 @@ final class McpRequestDispatcher {
             outcome = interceptor.beforeRequest(requestContext);
         } catch (RuntimeException | StackOverflowError thrown) {
             // interceptor.beforeRequest is application-supplied
-            // lifecycle code, exactly like the stage-5/stage-7 callbacks below — a pathologically deep
+            // lifecycle code, exactly like the stage-7 guard below — a pathologically deep
             // argument or context graph can drive native-recursion StackOverflowError here just as
             // easily as a RuntimeException. Failing the future (rather than letting it escape
             // synchronously through dispatch(), out to the Vert.x router) keeps this on the same
@@ -1655,7 +1656,7 @@ final class McpRequestDispatcher {
      * @param security the established security snapshot, recorded on the terminal event
      */
     private void writeToolsList(RoutingContext context, JsonNode envelope, @Nullable SecurityContextSnapshot security) {
-        McpCompletionCoordinator coordinator = context.get(COMPLETION_COORDINATOR_KEY);
+        McpCompletionCoordinator coordinator = ownedCoordinator(context);
         if (coordinator != null && coordinator.cancellation().isCancelled()) {
             return;
         }
@@ -2437,13 +2438,13 @@ final class McpRequestDispatcher {
             String toolName,
             McpToolInvoker invoker) {
         selectSse(context);
-        McpCompletionCoordinator progressCoordinator = context.get(COMPLETION_COORDINATOR_KEY);
+        McpCompletionCoordinator progressCoordinator = ownedCoordinator(context);
         if (progressCoordinator != null) {
             progressCoordinator.bindProgressToken(progressTokenOf(envelope));
         }
         Map<String, Object> arguments = argumentsOf(envelope);
         if (!schemaValid(toolName, arguments)) {
-            // Same rationale as above: rejected before invocation, no output observation.
+            // Same rationale as above: rejected before invocation, no output reported.
             writeToolResult(
                     context,
                     envelope,
@@ -2455,7 +2456,7 @@ final class McpRequestDispatcher {
                     null);
             return;
         }
-        McpCompletionCoordinator coordinator = context.get(COMPLETION_COORDINATOR_KEY);
+        McpCompletionCoordinator coordinator = ownedCoordinator(context);
         // The coordinator owns the request's cancellation signal, fired exactly once when the
         // request settles as a disconnect, a stream reset, or a failed write. Every admitted request
         // has a coordinator by the time invocation is reached (begin() always constructs one before
@@ -2473,7 +2474,7 @@ final class McpRequestDispatcher {
             // Stages 2-4 (generated fixed input boundary) rejected before any application handler ran;
             // this is the same bounded tool-error outcome stage 1 produces above, never the internal
             // fallback a genuine bug in prepare()/invoke() produces.
-            // The generated fixed input boundary rejected before any handler ran: no output observation.
+            // The generated fixed input boundary rejected before any handler ran: no output reported.
             writeToolResult(
                     context,
                     envelope,
@@ -2595,13 +2596,14 @@ final class McpRequestDispatcher {
                         // Every complete result is normalized exactly once — bounded by
                         // mcp.output.maxBytes as bytes are produced, exactly like the terminal write below —
                         // validated against the advertised output schema, encoded into the bounded terminal
-                        // envelope, offered to the opt-in output observation only once that envelope exists, and
+                        // envelope, reported through the completion view's toolOutput only once that envelope exists,
+                        // and
                         // only then handed to the single terminal writer (contract §4.7 stage 7). The raw
                         // application value is converted to its bounded, JSON-compatible canonical shape here —
                         // once — and that exact same value is reused below for schema validation, the observation
                         // callback, and the wire embed; nothing downstream re-serializes the original application
-                        // object. writeToolResult (not this block) publishes the output observation, strictly
-                        // after its own encodeCapped call succeeds — see its Javadoc — so an observer can never
+                        // object. writeToolResult (not this block) arms the output, strictly
+                        // after its own encodeCapped call succeeds — see its Javadoc — so a listener can never
                         // see a value the wire cap or the schema check would still reject.
                         //
                         McpToolResult<?> toolResult = ar.result();
@@ -2625,8 +2627,8 @@ final class McpRequestDispatcher {
                             if (!outputSchemaValid(toolName, normalizedOutput)) {
                                 // The schema-invalid value never reaches writeToolResult/encodeCapped: it is
                                 // rejected here, before any wire byte is produced and before the output
-                                // observation fires, so an invalid structured result never reaches the wire or a
-                                // capable session.
+                                // output is armed, so an invalid structured result never reaches the wire or a
+                                // listener's view.
                                 writeOutputValidationFailure(context, envelope, security, toolName);
                                 return;
                             }
@@ -2695,7 +2697,7 @@ final class McpRequestDispatcher {
     /**
      * Runs the output stage's single, bounded normalization pass: converts an application handler's
      * structured result value to the one bounded, JSON-compatible canonical shape ({@code Map}/
-     * {@code List}/scalar) reused for output-schema validation, the {@code onToolOutput} observation,
+     * {@code List}/scalar) reused for output-schema validation, the completion view's {@code toolOutput},
      * and the wire embed — the output cap bounds both the terminal message and the structured-value
      * normalization.
      *
@@ -2787,8 +2789,8 @@ final class McpRequestDispatcher {
     /**
      * Settles a schema-invalid structured result through the bounded, non-leaking internal-error
      * fallback: the invalid value is never embedded in a response, so it never reaches the wire,
-     * and — because {@link #invokeAndRespond} calls this before publishing the output observation — it
-     * never reaches a capable session either. Mirrors {@link #writeSseFallback}'s degrade-to-id-less
+     * and — because {@link #invokeAndRespond} calls this before arming the output — it
+     * never reaches a listener's view either. Mirrors {@link #writeSseFallback}'s degrade-to-id-less
      * shape, framed as SSE since SSE was already selected before invocation began.
      *
      * @param context the request context
@@ -2899,7 +2901,14 @@ final class McpRequestDispatcher {
         if (coordinator != null) {
             coordinator.armToolOutput(normalizedStructuredContent);
         }
-        writeSse(context, 200, payload, terminal);
+        try {
+            writeSse(context, 200, payload, terminal);
+        } finally {
+            // Whatever the write did, an armed result must not be promoted by a later write.
+            if (coordinator != null) {
+                coordinator.disarmToolOutput();
+            }
+        }
     }
 
     /**
@@ -3244,8 +3253,8 @@ final class McpRequestDispatcher {
      *
      * @return {@code true} when this call won the coordinator's first-observed-wins settlement race
      *     and the write proceeded, {@code false} when a prior settlement already claimed it and this
-     *     write was suppressed ({@link #writeToolResult} uses this to gate
-     *     its output observation)
+     *     write was suppressed ({@link #writeToolResult} uses this to decide
+     *     whether its result is reported)
      */
     private static boolean writeSse(
             RoutingContext context, int status, byte[] jsonPayload, McpRequestTerminalEvent terminal) {
@@ -3331,7 +3340,7 @@ final class McpRequestDispatcher {
         }
         // An internal failure can occur on either side of identity establishment; the snapshot is
         // null exactly when no context was established before the failure.
-        reject(context, McpMethod.OTHER, McpErrorType.INTERNAL, status, establishedSecurity());
+        reject(context, classifiedMethodOf(context), McpErrorType.INTERNAL, status, establishedSecurity());
     }
 
     /**
@@ -3367,7 +3376,7 @@ final class McpRequestDispatcher {
         McpRequestTerminalEvent terminal = McpRequestTerminalEvent.rejected(
                 startedAt(context),
                 Instant.now(),
-                McpMethod.OTHER,
+                classifiedMethodOf(context),
                 McpRequestTerminalEvent.UNKNOWN_TOOL_NAME,
                 errorType,
                 status,
@@ -3464,9 +3473,12 @@ final class McpRequestDispatcher {
             byte[] deadlineBody =
                     committed ? null : boundedErrorResponse(null, INTERNAL_ERROR, REQUEST_DEADLINE_MESSAGE);
             if (deadlineBody != null) {
-                // Bound before settlement: settleReset publishes the completion, and a listener's view
-                // must report the 504 the client receives.
-                coordinator.bindResponse(deadlineBody, Map.of("content-type", List.of(JSON_CONTENT_TYPE)));
+                response.setStatusCode(504).putHeader("content-type", JSON_CONTENT_TYPE);
+                if (coordinator.hasListeners()) {
+                    // Bound before settlement: settleReset publishes the completion, and a listener's
+                    // view must report the 504 the client receives, with the headers it carries.
+                    coordinator.bindResponse(deadlineBody, headerListsOf(response.headers()));
+                }
             }
             // A bounded 504 or a stream reset is emitted either way, so the response counts as committed.
             coordinator.settleReset(terminal, true);
@@ -3474,9 +3486,7 @@ final class McpRequestDispatcher {
                 response.reset(STREAM_CANCEL_CODE);
                 return;
             }
-            response.setStatusCode(504)
-                    .putHeader("content-type", JSON_CONTENT_TYPE)
-                    .end(Buffer.buffer(deadlineBody));
+            response.end(Buffer.buffer(deadlineBody));
         } catch (RuntimeException failure) {
             // Never leave a request open because the expiry itself failed; the failure still reaches
             // the context's exception handler.
@@ -3783,7 +3793,7 @@ final class McpRequestDispatcher {
     // The boolean return reports only
     // whether this call won beginWrite's settlement race and the write proceeded — most callers
     // ignore it; only writeSse/writeToolResult
-    // observe it, to gate the output observation on the write having actually won.
+    // observe it, to arm the tool output only for a write that actually won.
     static boolean write(RoutingContext context, int status, @Nullable byte[] body, McpRequestTerminalEvent terminal) {
         @Nullable
         byte[] terminalFallbackBody =
@@ -3875,8 +3885,10 @@ final class McpRequestDispatcher {
         // inline end handler cannot build the view first. A tool result is made visible only when the
         // bytes written are the result's own.
         if (coordinator != null) {
-            coordinator.bindResponse(
-                    effectiveBody, headerListsOf(context.response().headers()));
+            if (coordinator.hasListeners()) {
+                coordinator.bindResponse(
+                        effectiveBody, headerListsOf(context.response().headers()));
+            }
             coordinator.promoteToolOutput(effectiveBody == body);
         }
         Handler<AsyncResult<Void>> onEnd = result -> {

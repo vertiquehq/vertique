@@ -739,7 +739,8 @@ response body, not that the client received it: `McpRequestCompletedEvent#transp
 carries that, and a write can still fail after the value was bound.
 
 The coordinator drops every bound reference once the completion has been dispatched to all
-listeners. A listener that keeps a body beyond its callback copies it, because the framework does not.
+listeners. The framework never writes a bound array after binding it, so a listener that keeps a
+body source beyond its callback keeps those bytes alive, and need not copy them to keep them stable.
 
 The raw request and response carry whatever the caller and the tool put there, `Authorization` and
 `Cookie` headers included, and the server does not redact them. The view is not an access-control

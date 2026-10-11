@@ -28,10 +28,12 @@ import dev.vertique.security.resolver.SecurityIdentityResolutionContext;
 import dev.vertique.security.resolver.SecurityIdentityResolver;
 import dev.vertique.security.runtime.events.SecurityEventEmitter;
 import io.vertx.core.Future;
+import io.vertx.core.Handler;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.http.HttpServer;
 import io.vertx.ext.web.Router;
+import io.vertx.ext.web.RoutingContext;
 import io.vertx.ext.web.client.HttpRequest;
 import io.vertx.ext.web.client.HttpResponse;
 import io.vertx.ext.web.client.WebClient;
@@ -84,6 +86,20 @@ final class McpRequestViewITSupport {
             Set<McpToolInvoker> tools,
             AtomicBoolean failIdentity)
             throws Exception {
+        return start(vertx, listeners, tools, failIdentity, RoutingContext::next);
+    }
+
+    /**
+     * As {@link #start(Vertx, Set, Set, AtomicBoolean)}, with {@code rootMiddleware} mounted on the root
+     * router ahead of the MCP mount, as application middleware is. It must call {@code next()}.
+     */
+    static Started start(
+            Vertx vertx,
+            Set<McpRequestCompletedListener> listeners,
+            Set<McpToolInvoker> tools,
+            AtomicBoolean failIdentity,
+            Handler<RoutingContext> rootMiddleware)
+            throws Exception {
         McpServerConfig config = McpServerConfig.builder()
                 .enabled(true)
                 .serverName("vertique-test")
@@ -128,6 +144,7 @@ final class McpRequestViewITSupport {
                 registry);
         Router router = Router.router(vertx);
         router.route().handler(new RequestContextLifecycle());
+        router.route().handler(rootMiddleware);
         router.route(config.mountPath()).subRouter(await(mount.createRouter(vertx)));
         HttpServer server =
                 await(vertx.createHttpServer().requestHandler(router).listen(0, LOOPBACK));

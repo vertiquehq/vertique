@@ -9,6 +9,12 @@ package dev.vertique.mcp.lifecycle;
  * <p>Implementations must not block or alter request processing. The server isolates listener
  * failures and does not define listener ordering.
  *
+ * <p>The callback runs synchronously on the Vert.x context that owns the request, and concurrently
+ * for different requests. It fires once for every request the MCP mount admits. A request rejected
+ * before it enters the mount, such as a disallowed method, {@code Origin}, {@code Content-Type} or
+ * {@code Accept}, or an oversized body, opens no coordinator and produces no callback. A request whose
+ * tool handler never completes produces none until the connection settles.
+ *
  * <p>The server always calls {@link #onCompleted(McpRequestCompletedEvent, McpRequestView)}. Its
  * default delegates to {@link #onCompleted(McpRequestCompletedEvent)}, so a listener that needs only
  * the event implements the one-argument form, as it always did, and a lambda still works. A listener
@@ -47,7 +53,9 @@ public interface McpRequestCompletedListener {
      * #onCompleted(McpRequestCompletedEvent)}.
      *
      * <p>Exceptions thrown by this callback are caught, logged, and swallowed; they do not affect
-     * the enclosing operation.
+     * the enclosing operation. A {@link LinkageError} and an {@link AssertionError} are contained
+     * the same way, and so is a {@link StackOverflowError}; a {@link LinkageError} is reported at
+     * error level at a limited rate.
      *
      * @param event the transport completion facts for this request
      * @param request the request's raw bytes and normalized values; each listener receives its own

@@ -250,10 +250,12 @@ method; never make the one-argument form delegate back, which would recurse.
 | `toolInput()` | The normalized arguments the tool was invoked with, as `McpPreparedToolCall#normalizedArguments()` produced them; not the wire value |
 | `toolOutput()` | An `Optional<McpToolOutput>` whose `structuredContent()` is the normalized, schema-valid structured result |
 
-The view is read-only and per listener. Each listener receives its own view over the same bytes,
-`PayloadSource` exposes no write path, and every map and tree is unmodifiable, so no listener can
+The view is read-only and per listener. Each listener receives its own view over the same bytes.
+No `PayloadSource` accessor returns the bound array (`bufferedView()` and `copyPrefix` copy,
+`bufferedStream()` is a read cursor) and every map and tree is unmodifiable, so no listener can
 change the response or what another listener reads. The framework copies no body on behalf of a
-listener: a listener that keeps a body beyond its callback copies it.
+listener and never writes a bound array after binding it, so a listener may keep a source beyond its
+callback; doing so keeps the bytes alive for as long as it is held.
 
 The server binds each part as it handles the request, before any interceptor or observer can alter it:
 
@@ -268,7 +270,9 @@ The server binds each part as it handles the request, before any interceptor or 
   mean the client received it; `McpRequestCompletedEvent#transportOutcome()` carries that.
 
 A part the request never reached is empty: a rejection before a prepared call has an empty
-`toolContext` and `toolInput`, and a disconnect before the write has an absent `responseBody`.
+`toolContext` and `toolInput`, and a disconnect before the write has an absent `responseBody`. A
+rejection written with no body also has an absent `responseBody`; `responseHeaders()` tells the two
+apart. A request that carried no body reports a zero-length buffered `requestBody`, not an absent one.
 
 The raw request and response carry whatever the caller and the tool put there, `Authorization` and
 `Cookie` headers included. The view is not an access-control boundary: every contributed listener

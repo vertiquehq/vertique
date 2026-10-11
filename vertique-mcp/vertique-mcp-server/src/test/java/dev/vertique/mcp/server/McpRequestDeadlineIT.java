@@ -64,7 +64,9 @@ import io.vertx.ext.web.Router;
 import io.vertx.ext.web.RoutingContext;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -209,6 +211,14 @@ class McpRequestDeadlineIT {
                 .as("DECISIVE: the view's response is the bounded 504 the client received")
                 .isEqualTo(reply.body())
                 .contains("-32603");
+        assertThat(view.responseHeader("content-type"))
+                .as("DECISIVE: the view reports the content type the 504 was sent with")
+                .contains("application/json")
+                .isEqualTo(Optional.ofNullable(reply.headers().get("content-type")));
+        assertThat(view.responseHeader("x-accel-buffering"))
+                .as("DECISIVE: the view carries a header the response already held before the 504")
+                .contains("no")
+                .isEqualTo(Optional.ofNullable(reply.headers().get("x-accel-buffering")));
         assertThat(view.toolInput())
                 .as("the held call was prepared before the deadline expired")
                 .isPresent();
@@ -514,10 +524,13 @@ class McpRequestDeadlineIT {
                 }
                 HttpClientResponse response = responded.result();
                 int status = response.statusCode();
+                Map<String, String> wireHeaders = new HashMap<>();
+                response.headers()
+                        .forEach(entry -> wireHeaders.put(entry.getKey().toLowerCase(Locale.ROOT), entry.getValue()));
                 response.body()
                         .onComplete(read -> done.complete(
                                 read.succeeded()
-                                        ? new Reply(status, read.result().toString(), null)
+                                        ? new Reply(status, read.result().toString(), null, wireHeaders)
                                         : new Reply(status, null, read.cause())));
             });
             request.end(body);
@@ -640,8 +653,12 @@ class McpRequestDeadlineIT {
         return future.toCompletionStage().toCompletableFuture().get(ASYNC_TIMEOUT_SECONDS, TimeUnit.SECONDS);
     }
 
-    /** What the client observed for one request. */
-    private record Reply(int status, String body, Throwable failure) {}
+    /** What the client observed for one request; {@code headers} holds lower-cased names, when read. */
+    private record Reply(int status, String body, Throwable failure, Map<String, String> headers) {
+        Reply(int status, String body, Throwable failure) {
+            this(status, body, failure, Map.of());
+        }
+    }
 
     /** Periodic sibling {@code server/discover} traffic multiplexed on the same connection. */
     private final class Siblings {
