@@ -71,12 +71,14 @@ against the operation's declared media types. Wildcards are legal on the declara
 declared `application/*` accepts any `application/...` request type. A request `Content-Type` is a
 media type, not a range, so a missing, unparseable or wildcard one (`*/*`, `application/*`, or the
 malformed `*/json`) satisfies no declaration and is answered with 415. A body counts whether or not
-the request declared its length: an HTTP/2 request with neither `Content-Length` nor
-`Transfer-Encoding` is gated like any other, including a body the body handler buffered and a
-multipart or form body it decoded into attributes and uploads. An explicit `Content-Length: 0`
-without `Transfer-Encoding` is an empty request and is not gated. A declared `@Consumes` entry that is not a media type
-(`*/json`) matches no request; startup logs a warning naming the operation, and a route left with no
-usable entry answers every body request with 415.
+the request declared its length: a non-empty body the body handler read always counts, so an HTTP/2
+request with neither `Content-Length` nor `Transfer-Encoding` is gated like any other. Otherwise a
+request has a body when it carries `Transfer-Encoding` or a non-zero `Content-Length`, and a
+request the body handler treats as multipart or form (by its Content-Type) counts as a body. An
+explicit `Content-Length: 0` without `Transfer-Encoding` is an empty request and is not gated. The
+broad `ContentTypeValidationMiddleware` applies the same rule. A declared `@Consumes` entry that
+is not a media type (`*/json`) matches no request; startup logs a warning naming the operation, and
+a route left with no usable entry answers every body request with 415.
 
 The candidate methods are the ones the resource class and its superclasses declare, plus every
 interface `default` method the class inherits without overriding. An annotated default method is a

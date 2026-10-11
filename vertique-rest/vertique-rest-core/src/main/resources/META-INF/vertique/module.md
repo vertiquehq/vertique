@@ -144,6 +144,12 @@ Framework middlewares occupy these positions:
 | `DefaultHeadersMiddleware` | default | `10` | ROOT |
 | `ContentTypeValidationMiddleware` | default | `20` | API |
 
+`ContentTypeValidationMiddleware` decides whether a POST, PUT or PATCH has a body the same way as the
+per-route `@Consumes` 415 gate: a non-empty body the body handler read, `Transfer-Encoding`, a
+non-zero `Content-Length`, or a request the body handler treats as multipart or form (by its
+Content-Type). An HTTP/2 body sent in DATA frames without a length therefore counts, and a declared
+`Content-Length: 0` without `Transfer-Encoding` is empty.
+
 `RequestContextLifecycle.ORDER` and `CorrelationIngressMiddleware.ORDER` are `public` and may be used
 as anchors. An application middleware that must observe an authenticated identity belongs at a
 positive priority. `RestRequestCompletionEmitter` runs in `SYSTEM_FIRST` right after

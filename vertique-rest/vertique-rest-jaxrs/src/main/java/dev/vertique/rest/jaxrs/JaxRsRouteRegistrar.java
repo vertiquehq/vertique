@@ -1310,11 +1310,13 @@ public class JaxRsRouteRegistrar {
      * {@code *}{@code /*} or {@code application/*} satisfies no declaration.
      *
      * <p>A missing, unparseable or wildcard {@code Content-Type} header is treated as absent — the
-     * request does not match any declared consume and is rejected with 415. An absent body (as signalled
-     * by {@code Content-Length: 0} and no {@code Transfer-Encoding}) is never checked, consistent
-     * with the broad {@code ContentTypeValidationMiddleware} safety net. A request without
-     * {@code Content-Length} or {@code Transfer-Encoding} (HTTP/2) still has a body when the body
-     * handler read one or decoded a multipart or form body.
+     * request does not match any declared consume and is rejected with 415. A request without a body
+     * is never checked, by the same rule as the broad {@code ContentTypeValidationMiddleware} safety
+     * net: a non-empty body the body handler read always counts, including an HTTP/2 body sent
+     * without {@code Content-Length} or {@code Transfer-Encoding}; otherwise a request has a body
+     * when it carries {@code Transfer-Encoding} or a non-zero {@code Content-Length}, or when the
+     * body handler treats it as multipart or form (by its {@code Content-Type}). A declared
+     * {@code Content-Length: 0} without {@code Transfer-Encoding} is empty.
      *
      * <p>On mismatch the handler delegates to {@code ctx.fail(415, NotSupportedException)} carrying a
      * JAX-RS {@link Response} whose entity is already the diagnostic {@link ProblemDetail} — exactly
@@ -1353,21 +1355,23 @@ public class JaxRsRouteRegistrar {
                 return;
             }
 
-            // Skip the check when the request has no body. The headers alone do not decide it: an
-            // HTTP/2 request may carry DATA frames with neither Content-Length nor Transfer-Encoding,
-            // so a body the body handler read counts too, and so does a multipart or form body, which
-            // the body handler decodes into form attributes and uploads instead of buffering. An
-            // explicit Content-Length of 0 with no Transfer-Encoding is definitively empty.
+            // Skip the check when the request has no body. A body the body handler read always
+            // counts: an HTTP/2 request may carry DATA frames with neither Content-Length nor
+            // Transfer-Encoding. Otherwise the request has a body when it carries Transfer-Encoding
+            // or a Content-Length, or when the body handler treats it as multipart or form (a request
+            // flag it sets from the Content-Type, not proof of a decoded body). An explicit
+            // Content-Length of 0 with no Transfer-Encoding suppresses only those header signals.
             // ContentTypeValidationMiddleware applies the same rule; change both together.
             String contentLength = ctx.request().getHeader("Content-Length");
             String transferEncoding = ctx.request().getHeader("Transfer-Encoding");
             io.vertx.ext.web.RequestBody readBody = ctx.body();
             boolean declaredEmpty = "0".equals(contentLength) && transferEncoding == null;
-            boolean hasBody = !declaredEmpty
-                    && (contentLength != null
-                            || transferEncoding != null
-                            || (readBody != null && readBody.length() > 0)
-                            || ctx.request().isExpectMultipart());
+            boolean readNonEmpty = readBody != null && readBody.length() > 0;
+            boolean hasBody = readNonEmpty
+                    || (!declaredEmpty
+                            && (contentLength != null
+                                    || transferEncoding != null
+                                    || ctx.request().isExpectMultipart()));
             if (!hasBody) {
                 ctx.next();
                 return;
