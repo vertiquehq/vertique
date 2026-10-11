@@ -969,8 +969,9 @@ final class McpRequestDispatcher {
      * retained or returned here.
      */
     private static String resolvedToolNameOf(RoutingContext context) {
-        String stored = context.get(RESOLVED_TOOL_NAME_KEY);
-        return stored != null ? stored : McpRequestTerminalEvent.UNKNOWN_TOOL_NAME;
+        // A predictable key in shared data: a value of another type counts as none.
+        Object stored = context.get(RESOLVED_TOOL_NAME_KEY);
+        return stored instanceof String name ? name : McpRequestTerminalEvent.UNKNOWN_TOOL_NAME;
     }
 
     /**
@@ -3380,7 +3381,7 @@ final class McpRequestDispatcher {
                 startedAt(context),
                 Instant.now(),
                 method,
-                McpRequestTerminalEvent.UNKNOWN_TOOL_NAME,
+                toolNameFor(context, method),
                 errorType,
                 status,
                 null,
@@ -3778,7 +3779,7 @@ final class McpRequestDispatcher {
                         startedAt(context),
                         Instant.now(),
                         method,
-                        McpRequestTerminalEvent.UNKNOWN_TOOL_NAME,
+                        toolNameFor(context, method),
                         errorType,
                         status,
                         null,
@@ -3787,6 +3788,20 @@ final class McpRequestDispatcher {
                         security,
                         correlationOf(context),
                         originOf(context)));
+    }
+
+    /**
+     * Returns the tool name a terminal for {@code method} reports: the resolved tool when this request
+     * is a {@code tools/call} whose tool was found in the registry, and {@code UNKNOWN} otherwise,
+     * including a failure before the tool was known. A non-tool method always reports {@code UNKNOWN},
+     * which the terminal event requires.
+     *
+     * @param context the request context
+     * @param method the method the terminal reports
+     * @return the resolved tool name or {@link McpRequestTerminalEvent#UNKNOWN_TOOL_NAME}
+     */
+    private static String toolNameFor(RoutingContext context, McpMethod method) {
+        return method == McpMethod.TOOLS_CALL ? resolvedToolNameOf(context) : McpRequestTerminalEvent.UNKNOWN_TOOL_NAME;
     }
 
     // Package-private (not private) so McpWritePhaseSettlementTest can drive this exact

@@ -309,10 +309,11 @@ entered another mount and fell through to the MCP mount. REST listeners, and the
 them through `McpRequestLifecycleObserver` and `McpRequestCompletedListener`.
 
 A `tools/call` whose failure MCP's failure handler takes after the envelope was classified, with an
-internal error status, reports `McpMethod.TOOLS_CALL` in its terminal and completed events, with tool
-name `UNKNOWN`, instead of `OTHER`. Such a request therefore counts under the `tools/call` metrics and
-span dimensions and is eligible for evidence capture like any other `tools/call`. An authentication or
-authorization rejection, and a failure before the envelope was classified, still report `OTHER`.
+internal error status, reports `McpMethod.TOOLS_CALL` in its terminal and completed events, with the
+resolved tool name when the tool was found and `UNKNOWN` otherwise, instead of `OTHER`. Such a
+request therefore counts under the `tools/call` metrics and span dimensions and is eligible for
+evidence capture like any other `tools/call`. An authentication or authorization rejection, and a
+failure before the envelope was classified, still report `OTHER`.
 
 Failures taken by another mount, and reroutes by an application `RouteAuthHandler`, work as follows:
 

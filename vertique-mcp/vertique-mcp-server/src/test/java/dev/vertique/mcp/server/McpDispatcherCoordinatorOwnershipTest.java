@@ -66,11 +66,14 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 
@@ -323,6 +326,77 @@ class McpDispatcherCoordinatorOwnershipTest {
         List<Completion> completions = listener.await(1);
         assertThat(completions).hasSize(1);
         assertThat(completions.get(0).event().terminal().method()).isEqualTo(McpMethod.OTHER);
+        assertThat(listener.arrivesWithin(2, Duration.ofMillis(200)))
+                .as("no second completion follows")
+                .isFalse();
+    }
+
+    private static final String METHOD_KEY = McpRequestDispatcher.class.getName() + ".method";
+    private static final String RESOLVED_TOOL_KEY = McpRequestDispatcher.class.getName() + ".resolvedToolName";
+    private static final String UNKNOWN = McpRequestTerminalEvent.UNKNOWN_TOOL_NAME;
+
+    private static Stream<Arguments> failedRequestToolNames() {
+        return Stream.of(
+                // A tools/call whose tool was found reports that tool, on both failure paths.
+                Arguments.of(500, false, McpMethod.TOOLS_CALL, "resolved.tool", McpMethod.TOOLS_CALL, "resolved.tool"),
+                Arguments.of(500, true, McpMethod.TOOLS_CALL, "resolved.tool", McpMethod.TOOLS_CALL, "resolved.tool"),
+                // A tools/call that failed before its tool was found reports no tool.
+                Arguments.of(500, false, McpMethod.TOOLS_CALL, null, McpMethod.TOOLS_CALL, UNKNOWN),
+                Arguments.of(500, true, McpMethod.TOOLS_CALL, null, McpMethod.TOOLS_CALL, UNKNOWN),
+                // Another method never reports a tool, even when a name is present.
+                Arguments.of(500, false, McpMethod.OTHER, "resolved.tool", McpMethod.OTHER, UNKNOWN),
+                Arguments.of(500, true, McpMethod.OTHER, "resolved.tool", McpMethod.OTHER, UNKNOWN),
+                // A value of another type under the name's key counts as no name, and does not throw.
+                Arguments.of(500, false, McpMethod.TOOLS_CALL, 42, McpMethod.TOOLS_CALL, UNKNOWN),
+                Arguments.of(500, true, McpMethod.TOOLS_CALL, 42, McpMethod.TOOLS_CALL, UNKNOWN),
+                // An authentication rejection stays OTHER and reports no tool.
+                Arguments.of(401, false, McpMethod.TOOLS_CALL, "resolved.tool", McpMethod.OTHER, UNKNOWN),
+                Arguments.of(401, true, McpMethod.TOOLS_CALL, "resolved.tool", McpMethod.OTHER, UNKNOWN),
+                Arguments.of(403, false, McpMethod.TOOLS_CALL, "resolved.tool", McpMethod.OTHER, UNKNOWN),
+                Arguments.of(403, true, McpMethod.TOOLS_CALL, "resolved.tool", McpMethod.OTHER, UNKNOWN));
+    }
+
+    @ParameterizedTest(name = "status={0}, responseEnded={1}, method={2}, resolved={3} -> {4}/{5}")
+    @MethodSource("failedRequestToolNames")
+    @DisplayName("a failure handled after the request was admitted reports the resolved tool only for a "
+            + "tools/call whose tool was found")
+    void shouldReportTheResolvedToolNameOfAFailedToolCall(
+            int status,
+            boolean responseEnded,
+            McpMethod classifiedMethod,
+            Object resolvedValue,
+            McpMethod expectedMethod,
+            String expectedToolName)
+            throws Exception {
+        // Given: an admitted request with a listener, and the dispatcher's two slots holding the given
+        // classified method and resolved tool value.
+        McpRecordingCompletedListener listener = new McpRecordingCompletedListener();
+        Fixture fixture = new Fixture(List.of(listener));
+        fixture.begin();
+        fixture.context.put(METHOD_KEY, classifiedMethod);
+        if (resolvedValue != null) {
+            fixture.context.put(RESOLVED_TOOL_KEY, resolvedValue);
+        }
+        when(fixture.context.statusCode()).thenReturn(status);
+        if (responseEnded) {
+            when(fixture.response.ended()).thenReturn(true);
+            when(fixture.response.headWritten()).thenReturn(true);
+        }
+
+        // When: the request fails through the failure handler.
+        // Then: the handler does not throw.
+        assertThatCode(() -> fixture.dispatcher.handleFailure(fixture.context))
+                .as("the handler does not fail")
+                .doesNotThrowAnyException();
+
+        // Then: exactly one completion, whose terminal carries the method and the tool known then.
+        List<Completion> completions = listener.await(1);
+        assertThat(completions).hasSize(1);
+        McpRequestTerminalEvent terminal = completions.get(0).event().terminal();
+        assertAll(() -> assertThat(terminal.method()).as("the method").isEqualTo(expectedMethod), () -> assertThat(
+                        terminal.toolName())
+                .as("DECISIVE: the tool the failure's terminal reports")
+                .isEqualTo(expectedToolName));
         assertThat(listener.arrivesWithin(2, Duration.ofMillis(200)))
                 .as("no second completion follows")
                 .isFalse();

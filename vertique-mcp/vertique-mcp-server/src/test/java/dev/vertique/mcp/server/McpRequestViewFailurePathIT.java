@@ -113,6 +113,25 @@ class McpRequestViewFailurePathIT {
     }
 
     @Test
+    @DisplayName("a tool call failed through the failure handler after its tool was found is reported "
+            + "with that tool's name")
+    void shouldReportTheResolvedToolNameOfACallFailedAfterDispatch() throws Exception {
+        // Given: a server whose registered tool fails the request's routing context while invoked.
+        start(new AtomicBoolean(), new AtomicReference<>());
+
+        // When: a tools/call reaches the tool.
+        HttpResponse<Buffer> response =
+                await(post(client, port, FAILING_TOOL, callBody(FAILING_TOOL, "{}", ID), Map.of()));
+        Completion view = onlyCompletion();
+
+        // Then: the failure handler answered, and its terminal names the tool that was called.
+        assertThat(response.statusCode()).as("the failure handler answered").isEqualTo(500);
+        assertThat(view.event().terminal().toolName())
+                .as("DECISIVE: the failure's terminal carries the real tool name")
+                .isEqualTo(FAILING_TOOL);
+    }
+
+    @Test
     @DisplayName("a request failed through the failure handler before dispatch classified it is reported "
             + "as OTHER, to one listener view")
     void shouldReportOtherForAFailureBeforeDispatchClassifiedTheMethod() throws Exception {
@@ -130,6 +149,9 @@ class McpRequestViewFailurePathIT {
                 .as("DECISIVE: no method was classified before the failure")
                 .isEqualTo(McpMethod.OTHER);
         assertThat(view.event().terminal().errorType()).isEqualTo(McpErrorType.INTERNAL);
+        assertThat(view.event().terminal().toolName())
+                .as("no tool was resolved before the failure")
+                .isEqualTo(McpRequestTerminalEvent.UNKNOWN_TOOL_NAME);
         assertThat(view.jsonRpcRequestId()).isEmpty();
     }
 
