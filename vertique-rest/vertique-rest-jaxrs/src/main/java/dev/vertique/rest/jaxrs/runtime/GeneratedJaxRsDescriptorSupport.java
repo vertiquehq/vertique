@@ -140,6 +140,17 @@ public final class GeneratedJaxRsDescriptorSupport {
         return result;
     }
 
+    private static Method declaredAlongChain(Class<?> type, String name, Class<?>[] paramTypes) {
+        for (Class<?> current = type; current != null && current != Object.class; current = current.getSuperclass()) {
+            try {
+                return current.getDeclaredMethod(name, paramTypes);
+            } catch (NoSuchMethodException ignored) {
+                // Not declared at this level; continue up the chain.
+            }
+        }
+        return null;
+    }
+
     /**
      * Resolves a resource method by name and erased parameter type FQNs.
      *
@@ -147,6 +158,9 @@ public final class GeneratedJaxRsDescriptorSupport {
      * resolution works correctly for class loaders that isolate the resource from the support
      * class loader. Primitive type names are handled without invoking {@link Class#forName};
      * see {@link #resolveClass(String, ClassLoader)}.
+     *
+     * <p>A method that is not public (the reflective scanner routes protected and package-private
+     * methods too) is resolved along the class chain by its declaration.
      *
      * <p>The method is made accessible, exactly as {@code ResourceScanner} does for the methods it
      * discovers, because a route without a generated execution plan dispatches through
@@ -169,7 +183,17 @@ public final class GeneratedJaxRsDescriptorSupport {
             throws ClassNotFoundException, NoSuchMethodException {
         ClassLoader cl = resourceType.getClassLoader();
         Class<?>[] paramTypes = resolveClasses(paramTypeFqns, cl);
-        Method method = resourceType.getMethod(name, paramTypes);
+        Method method;
+        try {
+            method = resourceType.getMethod(name, paramTypes);
+        } catch (NoSuchMethodException publicLookupFailed) {
+            // A protected or package-private route: the reflective scanner routes those too, so the
+            // generated descriptor resolves the declaration along the class chain.
+            method = declaredAlongChain(resourceType, name, paramTypes);
+            if (method == null) {
+                throw publicLookupFailed;
+            }
+        }
         method.setAccessible(true);
         return method;
     }

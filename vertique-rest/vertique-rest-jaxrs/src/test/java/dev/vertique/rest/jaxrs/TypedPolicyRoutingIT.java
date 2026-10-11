@@ -371,6 +371,64 @@ class TypedPolicyRoutingIT {
     }
 
     @Test
+    @DisplayName("inline security on a generic interface method is enforced on a concrete override with its own verb")
+    void shouldEnforceInlineInterfaceSecurityThroughABoundTypeVariable(VertxTestContext ctx) {
+        InlineGenericResource.work.set(0);
+        AuthorizationPolicy policy = request -> {
+            Object required = request.context().get("requiredRoles");
+            if (required instanceof List<?> roles) {
+                Set<String> held = request.securityContext().authorization().valuesOf(AuthorityKind.ROLE);
+                boolean allowed = roles.stream().allMatch(role -> held.contains(String.valueOf(role)));
+                return allowed ? AuthorizationDecision.permit("ROLES") : AuthorizationDecision.deny("ROLES");
+            }
+            return AuthorizationDecision.permit("NO_ROLES_REQUIRED");
+        };
+        HolderBackedSecurityRuntime securityRuntime = new HolderBackedSecurityRuntime((bound, secure) -> null);
+        SecurityPolicyEnforcer enforcer = new SecurityPolicyEnforcer(
+                Optional.empty(),
+                Optional.of(policy),
+                Set.of(),
+                new SecurityEventEmitter(Set.of()),
+                restOrigin(),
+                securityRuntime,
+                Optional.empty(),
+                Resilience.create(vertx));
+        JaxRsRouterMount.Factory factory = TestFactories.builder()
+                .authEnforcementCapability(Optional.of(AuthEnforcementCapability.INSTANCE))
+                .operationHandlerContributors(Set.of(new AuthorizationContributor(enforcer)))
+                .build();
+        Router api = factory.create("/*", "openapi.json", Set.of(new InlineGenericResource()))
+                .createRouter(vertx)
+                .result();
+        Router root = Router.router(vertx);
+        root.route("/*").handler(new RequestContextLifecycle());
+        root.route("/*").handler(routingContext -> bindCaller(routingContext, securityRuntime));
+        root.route("/*").subRouter(api);
+
+        vertx.createHttpServer()
+                .requestHandler(root)
+                .listen(0, "127.0.0.1")
+                .compose(http -> {
+                    server = http;
+                    int port = http.actualPort();
+                    return exchange(port, "/inline-generic/7", "user", "user").compose(denied -> {
+                        ctx.verify(() -> {
+                            assertEquals(403, denied.statusCode());
+                            assertEquals(
+                                    0, InlineGenericResource.work.get(), "a denied caller must not reach the override");
+                        });
+                        return exchange(port, "/inline-generic/7", "admin", "admin");
+                    });
+                })
+                .onComplete(ctx.succeeding(allowed -> ctx.verify(() -> {
+                    assertEquals(200, allowed.statusCode());
+                    assertEquals("read:7", allowed.body());
+                    assertEquals(1, InlineGenericResource.work.get());
+                    ctx.completeNow();
+                })));
+    }
+
+    @Test
     @DisplayName("a scanned method keeps its own policy and its own inline security under a type policy")
     void shouldNeverReplaceTheScannedMethodsOwnSecurity() {
         ResourceMethodMeta ancestor =
@@ -541,6 +599,26 @@ class TypedPolicyRoutingIT {
     @Path("/typed")
     static class InheritedResource extends InheritedBase implements InheritedOps {
         static final AtomicInteger work = new AtomicInteger();
+    }
+
+    interface InlineSecuredOps<ID> {
+        @GET
+        @Path("/{id}")
+        @RolesAllowed("admin")
+        String read(@PathParam("id") ID id);
+    }
+
+    @Path("/inline-generic")
+    static class InlineGenericResource implements InlineSecuredOps<String> {
+        static final AtomicInteger work = new AtomicInteger();
+
+        @Override
+        @GET
+        @Path("/{id}")
+        public String read(@PathParam("id") String id) {
+            work.incrementAndGet();
+            return "read:" + id;
+        }
     }
 
     interface GenericOps<ID> {

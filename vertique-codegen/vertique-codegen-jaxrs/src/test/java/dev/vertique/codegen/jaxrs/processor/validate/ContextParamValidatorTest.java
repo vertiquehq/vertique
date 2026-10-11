@@ -263,6 +263,40 @@ class ContextParamValidatorTest {
         }
 
         @Test
+        @DisplayName("generic interface @Context, impl @PathParam on the bound type → CONFLICT")
+        void genericInterfaceContext_implPathParam_conflict() {
+            // The interface parameter is typed by a class type variable, so its erased signature is
+            // get(Object); the override get(String) matches it only through the bound variable.
+            var result = ProcessorTestHarness.run(
+                    new JaxRsPipelineProcessor(),
+                    SourceFiles.inline("dev.vertique.test.GenericResApi", """
+                            package dev.vertique.test;
+
+                            import jakarta.ws.rs.GET;
+                            import jakarta.ws.rs.Path;
+                            import jakarta.ws.rs.core.Context;
+
+                            @Path("/res")
+                            public interface GenericResApi<T> {
+                                @GET @Path("/{id}")
+                                String get(@Context T id);
+                            }
+                            """),
+                    SourceFiles.inline("dev.vertique.test.GenericResImpl", """
+                            package dev.vertique.test;
+
+                            import jakarta.ws.rs.PathParam;
+
+                            public class GenericResImpl implements GenericResApi<String> {
+                                @Override
+                                public String get(@PathParam("id") String id) { return ""; }
+                            }
+                            """));
+            result.assertFailed();
+            result.assertErrorMessage("also carries a value-binding annotation");
+        }
+
+        @Test
         @DisplayName("interface @PathParam, impl @Context → CONFLICT")
         void interfacePathParam_implContext_conflict() {
             // Interface declares @PathParam; the concrete impl carries @Context.

@@ -381,7 +381,7 @@ attempt. `@Retry.abortOn` wins over `retryOn`; when `retryOn` is empty, failures
 capacity is exhausted. `QUEUE` mode admits a bounded FIFO queue using `maxQueueSize` and
 `queueTimeoutMs`; the permit covers the complete execution, including retries and backoff. The
 annotation may be placed on the service interface or operation, with operation declarations
-overriding interface declarations.
+overriding interface declarations. Annotation inheritance follows the Java override rules: a method also inherits the annotations of a generic declaration whose type variables its class binds (`delete(String)` overrides `Crud<ID>.delete(ID)` of a `Crud<String>`), and of protected and same-package declarations; a same-erasure overload with another type argument, and a static or private method, override nothing.
 
 The event-bus send timeout uses operation, service, and global `sendTimeoutMs` overrides before the
 resolved active execution budget plus the compatibility margin. Custom-backoff, unbounded, or

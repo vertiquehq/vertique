@@ -54,7 +54,7 @@ against the REST extension contract without pulling in the routing runtime.
 `createRouter()` it installs the body handler and upload cleanup, runs the router lifecycle hooks,
 configures security-scheme handlers, and then hands the resource set to `JaxRsRouteRegistrar`.
 
-For each public method carrying an HTTP-verb annotation the registrar resolves an `operationId`,
+For each method carrying an HTTP-verb annotation, its own or inherited, the registrar resolves an `operationId`,
 builds a `ResourceMethodMeta`, validates the declaration, and installs the per-operation handler
 chain:
 
@@ -94,12 +94,32 @@ declaring superclass — so a `Base.delete` that implements `Crud.delete` for `R
 implements Crud` is routed with `Crud`'s `@DELETE` / `@Path` / `@PathParam` even when `Base`
 implements nothing. The route takes the resource class's class-level annotations
 (`@Path`, security, media types) together with the default method's merged method annotations.
-Inherited annotations are matched by erased signature, and type variables are not resolved against
-the implementing class: a generic interface method (`Crud<ID>`) overridden with a concrete parameter
-type inherits none of its annotations, and a non-overridden generic default (or generic superclass
-method) binds a type-variable parameter as its erasure, so a path, query, header, cookie, or form
-parameter typed `ID` fails startup with `UNRESOLVABLE_PARAM_CONVERTER`. Declare routed methods with
-concrete parameter types. A default route's `operationId` is the same in every class that inherits
+A method inherits the annotations of every declaration it overrides — superclass methods, then the
+methods of the interfaces — and a type variable bound in the resource class's hierarchy is resolved
+for that match: `delete(String)` of `UserResource implements Crud<String>` inherits `@DELETE`,
+`@Path`, `@RolesAllowed` and the `@PathParam` binding of `Crud<ID>.delete(ID)`, whether or not it
+declares a verb of its own, and so does an override of a generic superclass method. A superclass
+method that such an override inherits from is not routed a second time. The Java rules decide which
+methods correspond (JLS 8.4.2 and 8.4.8.1): a generic method overrides a declaration with the same
+type parameters and parameter types, a non-generic method may override a generic declaration by
+erasure, `purge(List<Integer>)` is **not** an override of `purge(T)` in a `Base<List<String>>`
+although both erase to `List` (and a private or static helper never is), and the declaration may be
+public or protected, or package-private when it is inherited into the overriding method's class: by a
+class of its own package, or by a class of another package through a class of its package that
+overrides it. A direct subclass in another package does not override a package-private method, as in
+javac. The verb is the first of
+GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS found on the method or any declaration it overrides,
+whichever declares it. A single-valued security attribute such as `@RequiresAction` is taken from the
+nearest declaration (the override's own wins over a declaration it overrides); differing
+`@RolesAllowed` or `@Authorized` values across declarations fail startup (a compile error with the
+processor). A method-level security annotation on an inherited declaration beats class-level
+security, as it does on the method itself: an interface `@PermitAll` makes an unannotated override
+public even under a class-level `@RolesAllowed`. What is not
+resolved is the *type* of a method no class overrides: a non-overridden generic default (or generic
+superclass method) binds a type-variable parameter as its erasure, so a path, query, header, cookie,
+or form parameter typed `ID` fails startup with `UNRESOLVABLE_PARAM_CONVERTER`, and a body or return
+type bound by a variable is `Object`. Override such a method with concrete parameter types. A
+default route's `operationId` is the same in every class that inherits
 it, and operationIds are unique per mount, so only one resource per mount can inherit a given
 default route; give the others their own route by overriding it with a distinct
 `@Operation(operationId = "…")`. Once any `@RestApplication` is registered (active or not) or an

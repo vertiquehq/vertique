@@ -637,7 +637,7 @@ The resolved shape is a `SecurityPolicy` — a sealed interface with `None`, `Pe
 from `OperationRegistrationContext.securityPolicy()` and
 `RestOperationDescriptor.effectiveSecurityPolicy()`.
 
-`@RequiresPolicy` names an `AccessPolicy` interface. `AnnotationSecurityPolicyResolver` expands the
+Security annotations are collected from every declaration a method overrides, under the Java override rules (bound type variables of generic declarations, protected and same-package declarations; see the `vertique-rest-jaxrs` module for precedence). `@RequiresPolicy` names an `AccessPolicy` interface. `AnnotationSecurityPolicyResolver` expands the
 selected policy's direct requirements into that same `SecurityPolicy`. `RequiresActionResolver`
 reads `@RequiresAction` from the same selection. A method policy replaces a type policy. Inline
 annotations with no policy keep their existing precedence.

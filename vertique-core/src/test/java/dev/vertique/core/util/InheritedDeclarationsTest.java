@@ -1,0 +1,686 @@
+// SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
+// SPDX-License-Identifier: EUPL-1.2
+
+package dev.vertique.core.util;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import dev.vertique.core.util.foreign.ChainMiddle;
+import dev.vertique.core.util.foreign.RelayLeaf;
+import java.lang.reflect.GenericDeclaration;
+import java.lang.reflect.Method;
+import java.lang.reflect.TypeVariable;
+import java.util.List;
+import java.util.Map;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+
+/**
+ * Unit tests for {@link AnnotationResolver#inheritedDeclarations(Method, Class)}: which declarations
+ * a method overrides once the type variables of its hierarchy are bound.
+ */
+class InheritedDeclarationsTest {
+
+    // --- Fixtures ---
+
+    interface Crud<ID> {
+        void delete(ID id);
+
+        void delete(ID id, boolean force);
+    }
+
+    static class Users implements Crud<String> {
+        @Override
+        public void delete(String id) {}
+
+        @Override
+        public void delete(String id, boolean force) {}
+    }
+
+    interface StringCrud extends Crud<String> {}
+
+    static class Forwarded implements StringCrud {
+        @Override
+        public void delete(String id) {}
+
+        @Override
+        public void delete(String id, boolean force) {}
+    }
+
+    interface Mid<T extends CharSequence> extends Crud<T> {}
+
+    static class Bounded implements Mid<String> {
+        @Override
+        public void delete(String id) {}
+
+        @Override
+        public void delete(String id, boolean force) {}
+    }
+
+    static class Base<T> {
+        public void get(T value) {}
+    }
+
+    static class Derived extends Base<String> {
+        @Override
+        public void get(String value) {}
+    }
+
+    static class Deeper extends Derived {
+        @Override
+        public void get(String value) {}
+    }
+
+    static class ForwardingBase<T> extends Base<T> {}
+
+    static class ForwardedDerived extends ForwardingBase<Integer> {
+        @Override
+        public void get(Integer value) {}
+    }
+
+    static class Outer<T> {
+        public class Inner {
+            public void take(T value) {}
+        }
+    }
+
+    static class OwnerBound extends Outer<String>.Inner {
+        OwnerBound(Outer<String> outer) {
+            outer.super();
+        }
+
+        @Override
+        public void take(String value) {}
+    }
+
+    interface Plain {
+        void run(String value);
+    }
+
+    static class PlainImpl implements Plain {
+        @Override
+        public void run(String value) {}
+    }
+
+    interface Same<A> {
+        void put(A value);
+
+        void put(Integer value);
+    }
+
+    static class SameImpl implements Same<String> {
+        @Override
+        public void put(String value) {}
+
+        @Override
+        public void put(Integer value) {}
+    }
+
+    static class MethodLevel implements Crud<String> {
+        @Override
+        public void delete(String id) {}
+
+        @Override
+        public void delete(String id, boolean force) {}
+
+        public <X extends String> void delete(X id, int times) {}
+    }
+
+    interface GenericDefault<ID> {
+        default void remove(ID id) {}
+    }
+
+    interface StringDefault extends GenericDefault<String> {
+        @Override
+        default void remove(String id) {}
+    }
+
+    static class ProtectedBase<T> {
+        protected void touch(T value) {}
+    }
+
+    static class ProtectedDerived extends ProtectedBase<String> {
+        @Override
+        protected void touch(String value) {}
+    }
+
+    static class ClassAndInterface extends Base<String> implements Crud<String> {
+        @Override
+        public void get(String value) {}
+
+        @Override
+        public void delete(String id) {}
+
+        @Override
+        public void delete(String id, boolean force) {}
+    }
+
+    interface MethodGeneric<T> {
+        <X> void put(T value, X extra);
+    }
+
+    static class ErasureOverride implements MethodGeneric<String> {
+        @Override
+        public void put(String value, Object extra) {}
+    }
+
+    interface BoundedMethod<T> {
+        <X extends Number> void put(T value, X extra);
+    }
+
+    static class BoundedErasure implements BoundedMethod<String> {
+        @Override
+        public void put(String value, Number extra) {}
+    }
+
+    interface BoundByClassVariable<T> {
+        <X extends T> void take(X value);
+    }
+
+    static class ByClassVariable implements BoundByClassVariable<String> {
+        @Override
+        public void take(String value) {}
+    }
+
+    static class GenericMethodBase<T> {
+        public <X> void put(T value, X extra) {}
+    }
+
+    static class GenericMethodDerived extends GenericMethodBase<String> {
+        @Override
+        public void put(String value, Object extra) {}
+    }
+
+    interface CharSequenceBound {
+        <U extends CharSequence> void take(U value);
+    }
+
+    static class DifferentBounds implements CharSequenceBound {
+        public <T extends Number> void take(T value) {}
+
+        @Override
+        public <U extends CharSequence> void take(U value) {}
+    }
+
+    interface BothApi<T> {
+        void both(T value);
+    }
+
+    static class BothBase<T> {
+        public void both(T value) {}
+    }
+
+    static class BothImpl extends BothBase<String> implements BothApi<String> {
+        @Override
+        public void both(String value) {}
+    }
+
+    static class SecuredBase<T> {
+        public String purge(T value) {
+            return "base";
+        }
+    }
+
+    /** Overloads {@code purge} with a type argument that differs from the binding: not an override. */
+    static class PublicOverload extends SecuredBase<List<String>> {
+        public String purge(List<Integer> value) {
+            return "overload";
+        }
+    }
+
+    static class PrivateHelper extends SecuredBase<List<String>> {
+        @SuppressWarnings("unused")
+        private String purge(List<Integer> value) {
+            return "helper";
+        }
+    }
+
+    static class StaticHelper extends SecuredBase<List<String>> {
+        static String purge(List<Integer> value) {
+            return "static";
+        }
+    }
+
+    /** A raw parameter equals the erasure of the declaration's signature, so it overrides. */
+    static class RawOverride extends SecuredBase<List<String>> {
+        @Override
+        @SuppressWarnings("rawtypes")
+        public String purge(List value) {
+            return "raw";
+        }
+    }
+
+    static class PackageBase<T> {
+        void pkg(T value) {}
+    }
+
+    static class PackageDerived extends PackageBase<String> {
+        @Override
+        void pkg(String value) {}
+    }
+
+    static class ForeignDerived extends dev.vertique.core.util.foreign.ForeignBase<String> {
+        void hidden(String value) {}
+
+        @Override
+        public void visible(String value) {}
+    }
+
+    /** Overrides {@link ChainMiddle#m()}, which overrides the package-private method of its base. */
+    static class ChainLeaf extends ChainMiddle {
+        @Override
+        public String m() {
+            return "leaf";
+        }
+    }
+
+    interface BoundsApi {
+        <T extends Runnable & Comparable<T>> void m(T value);
+    }
+
+    /** The same type parameter with its intersection bounds in the other order. */
+    static class ReorderedBounds implements BoundsApi {
+        @Override
+        public <T extends Comparable<T> & Runnable> void m(T value) {}
+    }
+
+    static class PrivateKeyBase {
+        @SuppressWarnings("unused")
+        private String x(Object value) {
+            return "private";
+        }
+    }
+
+    interface PrivateKeyApi<ID> {
+        String x(ID id);
+    }
+
+    /** The private base method has the erased signature of the interface method, and no more. */
+    static class PrivateKeyResource extends PrivateKeyBase implements PrivateKeyApi<String> {
+        @Override
+        public String x(String id) {
+            return "resource";
+        }
+    }
+
+    static class TypeVariableHolder {
+        public static <X> void g(X value) {}
+    }
+
+    // --- Helpers ---
+
+    private static Method method(Class<?> type, String name, Class<?>... parameters) throws NoSuchMethodException {
+        return type.getDeclaredMethod(name, parameters);
+    }
+
+    private static List<String> ownerSignatures(List<Method> declarations) {
+        return declarations.stream()
+                .map(m -> m.getDeclaringClass().getSimpleName() + "." + m.getName()
+                        + java.util.Arrays.stream(m.getParameterTypes())
+                                .map(Class::getSimpleName)
+                                .toList())
+                .toList();
+    }
+
+    // --- Tests ---
+
+    @Test
+    @DisplayName("a class override of a generic interface method resolves the interface declaration")
+    void genericInterfaceMethod() throws NoSuchMethodException {
+        Method override = method(Users.class, "delete", String.class);
+
+        List<Method> inherited = AnnotationResolver.inheritedDeclarations(override, Users.class);
+
+        assertEquals(List.of("Crud.delete[Object]"), ownerSignatures(inherited));
+    }
+
+    @Test
+    @DisplayName("an overload with another arity maps to its own declaration only")
+    void arityKeepsOverloadsApart() throws NoSuchMethodException {
+        Method override = method(Users.class, "delete", String.class, boolean.class);
+
+        List<Method> inherited = AnnotationResolver.inheritedDeclarations(override, Users.class);
+
+        assertEquals(List.of("Crud.delete[Object, boolean]"), ownerSignatures(inherited));
+    }
+
+    @Test
+    @DisplayName("a forwarding sub-interface binds the variable through the chain")
+    void forwardingInterface() throws NoSuchMethodException {
+        Method override = method(Forwarded.class, "delete", String.class);
+
+        assertEquals(
+                List.of("Crud.delete[Object]"),
+                ownerSignatures(AnnotationResolver.inheritedDeclarations(override, Forwarded.class)));
+    }
+
+    @Test
+    @DisplayName("a bounded variable bound two interfaces up resolves")
+    void boundedVariableAtDepthTwo() throws NoSuchMethodException {
+        Method override = method(Bounded.class, "delete", String.class);
+
+        assertEquals(
+                List.of("Crud.delete[Object]"),
+                ownerSignatures(AnnotationResolver.inheritedDeclarations(override, Bounded.class)));
+    }
+
+    @Test
+    @DisplayName("a generic superclass method is found, and a deeper override sees both superclasses")
+    void genericSuperclass() throws NoSuchMethodException {
+        Method derived = method(Derived.class, "get", String.class);
+        Method deeper = method(Deeper.class, "get", String.class);
+
+        assertEquals(
+                List.of("Base.get[Object]"),
+                ownerSignatures(AnnotationResolver.inheritedDeclarations(derived, Derived.class)));
+        assertEquals(
+                List.of("Derived.get[String]", "Base.get[Object]"),
+                ownerSignatures(AnnotationResolver.inheritedDeclarations(deeper, Deeper.class)));
+    }
+
+    @Test
+    @DisplayName("a variable forwarded through an intermediate generic superclass resolves")
+    void forwardedSuperclassVariable() throws NoSuchMethodException {
+        Method override = method(ForwardedDerived.class, "get", Integer.class);
+
+        assertEquals(
+                List.of("Base.get[Object]"),
+                ownerSignatures(AnnotationResolver.inheritedDeclarations(override, ForwardedDerived.class)));
+    }
+
+    @Test
+    @DisplayName("the argument of an owner type binds the inner class's variable")
+    void ownerTypeArgument() throws NoSuchMethodException {
+        Method override = method(OwnerBound.class, "take", String.class);
+
+        assertEquals(
+                List.of("Inner.take[Object]"),
+                ownerSignatures(AnnotationResolver.inheritedDeclarations(override, OwnerBound.class)));
+    }
+
+    @Test
+    @DisplayName("an exact erased match is unchanged")
+    void exactMatchStillResolves() throws NoSuchMethodException {
+        Method override = method(PlainImpl.class, "run", String.class);
+
+        assertEquals(
+                List.of("Plain.run[String]"),
+                ownerSignatures(AnnotationResolver.inheritedDeclarations(override, PlainImpl.class)));
+    }
+
+    @Test
+    @DisplayName("an unrelated same-arity overload is not merged")
+    void unrelatedOverload() throws NoSuchMethodException {
+        Method generic = method(SameImpl.class, "put", String.class);
+        Method concrete = method(SameImpl.class, "put", Integer.class);
+
+        assertEquals(
+                List.of("Same.put[Object]"),
+                ownerSignatures(AnnotationResolver.inheritedDeclarations(generic, SameImpl.class)));
+        assertEquals(
+                List.of("Same.put[Integer]"),
+                ownerSignatures(AnnotationResolver.inheritedDeclarations(concrete, SameImpl.class)));
+    }
+
+    @Test
+    @DisplayName("a method that declares its own type parameter overrides nothing")
+    void methodLevelTypeParameter() throws NoSuchMethodException {
+        Method generic = method(MethodLevel.class, "delete", String.class, int.class);
+
+        assertTrue(AnnotationResolver.inheritedDeclarations(generic, MethodLevel.class)
+                .isEmpty());
+    }
+
+    @Test
+    @DisplayName("a non-generic override of a generic method overrides it by erasure")
+    void nonGenericOverrideOfGenericMethod() throws NoSuchMethodException {
+        Method plain = method(ErasureOverride.class, "put", String.class, Object.class);
+        Method bounded = method(BoundedErasure.class, "put", String.class, Number.class);
+        Method byClass = method(ByClassVariable.class, "take", String.class);
+        Method superclass = method(GenericMethodDerived.class, "put", String.class, Object.class);
+
+        assertEquals(
+                List.of("MethodGeneric.put[Object, Object]"),
+                ownerSignatures(AnnotationResolver.inheritedDeclarations(plain, ErasureOverride.class)));
+        assertEquals(
+                List.of("BoundedMethod.put[Object, Number]"),
+                ownerSignatures(AnnotationResolver.inheritedDeclarations(bounded, BoundedErasure.class)));
+        assertEquals(
+                List.of("BoundByClassVariable.take[Object]"),
+                ownerSignatures(AnnotationResolver.inheritedDeclarations(byClass, ByClassVariable.class)));
+        assertEquals(
+                List.of("GenericMethodBase.put[Object, Object]"),
+                ownerSignatures(AnnotationResolver.inheritedDeclarations(superclass, GenericMethodDerived.class)));
+    }
+
+    @Test
+    @DisplayName("generic methods with different bounds are unrelated overloads")
+    void differentBoundsAreUnrelated() throws NoSuchMethodException {
+        Method number = method(DifferentBounds.class, "take", Number.class);
+        Method charSequence = method(DifferentBounds.class, "take", CharSequence.class);
+
+        assertTrue(AnnotationResolver.inheritedDeclarations(number, DifferentBounds.class)
+                .isEmpty());
+        assertEquals(
+                List.of("CharSequenceBound.take[CharSequence]"),
+                ownerSignatures(AnnotationResolver.inheritedDeclarations(charSequence, DifferentBounds.class)));
+    }
+
+    @Test
+    @DisplayName("an interface default overriding a generic default resolves from the declaring interface")
+    void defaultOverridingGenericDefault() throws NoSuchMethodException {
+        Method override = method(StringDefault.class, "remove", String.class);
+
+        assertEquals(
+                List.of("GenericDefault.remove[Object]"),
+                ownerSignatures(AnnotationResolver.inheritedDeclarations(override, StringDefault.class)));
+    }
+
+    @Test
+    @DisplayName("protected and same-package members are overridden, as the Java rules say")
+    void protectedAndPackageMembersAreSeen() throws NoSuchMethodException {
+        Method protectedOverride = method(ProtectedDerived.class, "touch", String.class);
+        Method packageOverride = method(PackageDerived.class, "pkg", String.class);
+
+        assertEquals(
+                List.of("ProtectedBase.touch[Object]"),
+                ownerSignatures(AnnotationResolver.inheritedDeclarations(protectedOverride, ProtectedDerived.class)));
+        assertEquals(
+                List.of("PackageBase.pkg[Object]"),
+                ownerSignatures(AnnotationResolver.inheritedDeclarations(packageOverride, PackageDerived.class)));
+    }
+
+    @Test
+    @DisplayName("a package-private member of another package is not overridden; its public sibling is")
+    void foreignPackageMembersAreNotOverridden() throws NoSuchMethodException {
+        Method hidden = method(ForeignDerived.class, "hidden", String.class);
+        Method visible = method(ForeignDerived.class, "visible", String.class);
+
+        assertTrue(AnnotationResolver.inheritedDeclarations(hidden, ForeignDerived.class)
+                .isEmpty());
+        assertEquals(
+                List.of("ForeignBase.visible[Object]"),
+                ownerSignatures(AnnotationResolver.inheritedDeclarations(visible, ForeignDerived.class)));
+    }
+
+    @Test
+    @DisplayName(
+            "a same-erasure method with another type argument, a private helper and a static helper override nothing")
+    void sameErasureNonOverridesAreNotMerged() throws NoSuchMethodException {
+        Method overload = method(PublicOverload.class, "purge", List.class);
+        Method helper = method(PrivateHelper.class, "purge", List.class);
+        Method staticHelper = method(StaticHelper.class, "purge", List.class);
+
+        assertTrue(AnnotationResolver.inheritedDeclarations(overload, PublicOverload.class)
+                .isEmpty());
+        assertTrue(AnnotationResolver.inheritedDeclarations(helper, PrivateHelper.class)
+                .isEmpty());
+        assertTrue(AnnotationResolver.inheritedDeclarations(staticHelper, StaticHelper.class)
+                .isEmpty());
+    }
+
+    @Test
+    @DisplayName("a raw parameter overrides the declaration by erasure")
+    void rawParameterOverridesByErasure() throws NoSuchMethodException {
+        Method raw = method(RawOverride.class, "purge", List.class);
+
+        assertEquals(
+                List.of("SecuredBase.purge[Object]"),
+                ownerSignatures(AnnotationResolver.inheritedDeclarations(raw, RawOverride.class)));
+    }
+
+    @Test
+    @DisplayName("overridesBySignature applies the Java signature rule without visibility")
+    void overridesBySignatureIgnoresVisibility() throws NoSuchMethodException {
+        Method base = SecuredBase.class.getDeclaredMethod("purge", Object.class);
+        Method overload = method(PublicOverload.class, "purge", List.class);
+        Method raw = method(RawOverride.class, "purge", List.class);
+
+        assertEquals(false, AnnotationResolver.overridesBySignature(overload, base, PublicOverload.class));
+        assertEquals(true, AnnotationResolver.overridesBySignature(raw, base, RawOverride.class));
+    }
+
+    @Test
+    @DisplayName("a declaration on both a superclass and an interface lists the superclass first")
+    void superclassBeforeInterface() throws NoSuchMethodException {
+        Method both = method(BothImpl.class, "both", String.class);
+
+        assertEquals(
+                List.of("BothBase.both[Object]", "BothApi.both[Object]"),
+                ownerSignatures(AnnotationResolver.inheritedDeclarations(both, BothImpl.class)));
+    }
+
+    @Test
+    @DisplayName("superclasses come first, then interfaces, each declaration once")
+    void walkOrder() throws NoSuchMethodException {
+        Method delete = method(ClassAndInterface.class, "delete", String.class);
+        Method get = method(ClassAndInterface.class, "get", String.class);
+
+        assertEquals(
+                List.of("Crud.delete[Object]"),
+                ownerSignatures(AnnotationResolver.inheritedDeclarations(delete, ClassAndInterface.class)));
+        assertEquals(
+                List.of("Base.get[Object]"),
+                ownerSignatures(AnnotationResolver.inheritedDeclarations(get, ClassAndInterface.class)));
+    }
+
+    @Test
+    @DisplayName("type variables that are equal but not identical are the same type")
+    void equalTypeVariablesAreTheSameType() throws NoSuchMethodException {
+        // Reflection may hand out equal but not identical instances (concurrent first reflection on a
+        // class, a Method copy parsing its own signature), and which JDK does so varies: the twin
+        // makes the premise deterministic. equals() is the contract, not identity.
+        TypeVariable<?> original =
+                TypeVariableHolder.class.getMethod("g", Object.class).getTypeParameters()[0];
+        TypeVariable<?> twin = new TypeVariableTwin(original);
+
+        assertNotSame(original, twin);
+        assertEquals(twin, original);
+        assertTrue(GenericBindings.sameType(twin, original, Map.of(), 0));
+    }
+
+    @Test
+    @DisplayName("a package-private method is overridden from another package through a class of its package")
+    void packagePrivateIsReachedThroughAnIntermediateOfItsPackage() throws NoSuchMethodException {
+        Method leaf = method(ChainLeaf.class, "m");
+
+        assertEquals(
+                List.of("ChainMiddle.m[]", "ChainBase.m[]"),
+                ownerSignatures(AnnotationResolver.inheritedDeclarations(leaf, ChainLeaf.class)));
+    }
+
+    @Test
+    @DisplayName("a package-private method is not overridden in its package across a class of another package")
+    void packagePrivateIsNotReachedAcrossAForeignIntermediate() throws NoSuchMethodException {
+        Method leaf = method(RelayLeaf.class, "m", String.class);
+
+        assertTrue(
+                AnnotationResolver.inheritedDeclarations(leaf, RelayLeaf.class).isEmpty());
+    }
+
+    @Test
+    @DisplayName("intersection bounds in another order are the same type parameter")
+    void reorderedIntersectionBoundsOverride() throws NoSuchMethodException {
+        Method override = method(ReorderedBounds.class, "m", Comparable.class);
+
+        assertEquals(
+                List.of("BoundsApi.m[Runnable]"),
+                ownerSignatures(AnnotationResolver.inheritedDeclarations(override, ReorderedBounds.class)));
+    }
+
+    @Test
+    @DisplayName("a private method overrides nothing even when its erased signature equals an interface method's")
+    void privateMethodWithTheErasedKeyOfAnInterfaceMethodOverridesNothing() throws NoSuchMethodException {
+        Method helper = method(PrivateKeyBase.class, "x", Object.class);
+        Method resource = method(PrivateKeyResource.class, "x", String.class);
+
+        assertTrue(AnnotationResolver.inheritedDeclarations(helper, PrivateKeyResource.class)
+                .isEmpty());
+        assertEquals(
+                List.of("PrivateKeyApi.x[Object]"),
+                ownerSignatures(AnnotationResolver.inheritedDeclarations(resource, PrivateKeyResource.class)));
+    }
+
+    /** A type variable equal to, and distinct from, the one it delegates to. */
+    private static final class TypeVariableTwin implements TypeVariable<GenericDeclaration> {
+        private final TypeVariable<?> delegate;
+
+        TypeVariableTwin(TypeVariable<?> delegate) {
+            this.delegate = delegate;
+        }
+
+        @Override
+        public java.lang.reflect.Type[] getBounds() {
+            return delegate.getBounds();
+        }
+
+        @Override
+        public GenericDeclaration getGenericDeclaration() {
+            return delegate.getGenericDeclaration();
+        }
+
+        @Override
+        public String getName() {
+            return delegate.getName();
+        }
+
+        @Override
+        public java.lang.reflect.AnnotatedType[] getAnnotatedBounds() {
+            return delegate.getAnnotatedBounds();
+        }
+
+        @Override
+        public <T extends java.lang.annotation.Annotation> T getAnnotation(Class<T> annotationClass) {
+            return delegate.getAnnotation(annotationClass);
+        }
+
+        @Override
+        public java.lang.annotation.Annotation[] getAnnotations() {
+            return delegate.getAnnotations();
+        }
+
+        @Override
+        public java.lang.annotation.Annotation[] getDeclaredAnnotations() {
+            return delegate.getDeclaredAnnotations();
+        }
+
+        @Override
+        public boolean equals(Object other) {
+            return other instanceof TypeVariable<?> variable
+                    && variable.getName().equals(getName())
+                    && variable.getGenericDeclaration().equals(getGenericDeclaration());
+        }
+
+        @Override
+        public int hashCode() {
+            return delegate.hashCode();
+        }
+
+        @Override
+        public String toString() {
+            return delegate.toString();
+        }
+    }
+}

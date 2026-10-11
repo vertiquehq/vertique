@@ -42,16 +42,20 @@ import jakarta.ws.rs.QueryParam;
 import jakarta.ws.rs.core.Context;
 import jakarta.ws.rs.core.EntityPart;
 import java.lang.annotation.Annotation;
+import java.lang.reflect.GenericSignatureFormatError;
+import java.lang.reflect.MalformedParameterizedTypeException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.lang.reflect.Parameter;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import lombok.extern.slf4j.Slf4j;
 
 /**
@@ -156,10 +160,18 @@ class ResourceScanner {
             // use the same pre-resolved lists and avoid redundant AnnotationResolver traversal.
             // Interface defaults keep their declaring-interface view; class-declared methods
             // (including superclass ones) use the resource class so interfaces it implements
-            // contribute annotations (vertiquehq/vertique-dev#636).
+            // contribute annotations.
             Class<?> annotationView = annotationViewType(method, clazz);
-            List<Annotation> legacyMethodAnnotations =
-                    AnnotationResolver.resolveMethodAnnotations(method, annotationView);
+            List<Annotation> legacyMethodAnnotations;
+            try {
+                legacyMethodAnnotations = AnnotationResolver.resolveMethodAnnotations(method, annotationView);
+            } catch (TypeNotPresentException | MalformedParameterizedTypeException | GenericSignatureFormatError ex) {
+                // The walk reads the generic signatures of every supertype declaration of the
+                // method; one that cannot be resolved must name the method, not escape bare.
+                throw new IllegalStateException(
+                        "Cannot resolve the inherited declarations of " + method + " on " + clazz.getName() + ": " + ex,
+                        ex);
+            }
             // Only operations that are routes carry a policy; a helper method is skipped before
             // its declarations are collected, as on the inline-only path.
             if (resolveHttpMethod(legacyMethodAnnotations) == null) {
@@ -786,10 +798,13 @@ class ResourceScanner {
      * {@code default} methods the class inherits.
      *
      * <p>Deduplicates by method name + parameter types: subclass overrides win. Skips bridge and
-     * synthetic methods.
+     * synthetic methods. A superclass method that an overriding class method reached through
+     * {@link AnnotationResolver#inheritedDeclarations} (an override of a generic declaration has
+     * another erased key) is dropped, because the override inherited its annotations and is the
+     * route; one the override did not reach stays a route of its own.
      *
      * <p>An inherited default method is a resource method of the class exactly as an override
-     * would be (issue #630). A superclass's private method with the same signature is not
+     * would be. A superclass's private method with the same signature is not
      * inherited and never shadows it. {@link Class#getMethods()} already applies the Java selection rules:
      * a method declared by a class — including a bridge that a generic override produces — hides
      * an interface method with the same signature, and a more specific interface's method hides
@@ -812,6 +827,7 @@ class ResourceScanner {
             }
             current = current.getSuperclass();
         }
+        dropOverriddenSuperclassMethods(clazz, seen);
         for (Method method : clazz.getMethods()) {
             // An interface bridge is a synthetic default method; it is never a resource method.
             if (method.isDefault() && !method.isBridge() && !method.isSynthetic()) {
@@ -826,6 +842,30 @@ class ResourceScanner {
             }
         }
         return List.copyOf(seen.values());
+    }
+
+    /**
+     * Removes the class-chain entries that an overriding class method has merged. A generic
+     * override such as {@code get(String)} of {@code Base<T>.get(T)} has another erased key than
+     * the method it overrides, so both were collected; the override now inherits the superclass
+     * method's annotations ({@link AnnotationResolver#inheritedDeclarations}) and is the route, so
+     * routing the superclass method as well would register the operation twice. A superclass
+     * method is dropped only when the override reached it: one that the lookup did not match stays
+     * a route of its own.
+     *
+     * @param clazz the resource class
+     * @param seen  the class-chain entries by key, modified in place
+     */
+    private void dropOverriddenSuperclassMethods(Class<?> clazz, Map<String, Method> seen) {
+        Set<Method> merged = new HashSet<>();
+        for (Method method : seen.values()) {
+            if (!method.getDeclaringClass().isInterface()) {
+                merged.addAll(AnnotationResolver.inheritedDeclarations(method, clazz));
+            }
+        }
+        if (!merged.isEmpty()) {
+            seen.values().removeIf(merged::contains);
+        }
     }
 
     /**
