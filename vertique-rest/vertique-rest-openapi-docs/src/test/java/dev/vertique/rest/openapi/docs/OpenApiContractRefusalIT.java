@@ -525,7 +525,19 @@ public class OpenApiContractRefusalIT {
         HttpResponse<Buffer> received = Futures.await(response, StartupDeployments.BOUND);
         Buffer body = received.body();
         return new Exchange(
-                received.statusCode(), received.getHeader("Content-Type"), body == null ? "" : body.toString());
+                received.statusCode(),
+                received.getHeader("Content-Type"),
+                body == null ? "" : withoutOccurrenceId(body.toString()));
+    }
+
+    /**
+     * Masks the per-response occurrence id of a problem document: it is the one member that
+     * legitimately differs between two otherwise identical responses, and these tests compare whole
+     * bodies.
+     */
+    private static String withoutOccurrenceId(String body) {
+        return body.replaceAll(
+                "urn:uuid:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", "urn:uuid:<occurrence>");
     }
 
     /** Matches the application's name quoted on its own, not as part of a path, a key, or a class name. */

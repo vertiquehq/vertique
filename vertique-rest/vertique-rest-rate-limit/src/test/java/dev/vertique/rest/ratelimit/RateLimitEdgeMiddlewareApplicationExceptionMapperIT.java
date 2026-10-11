@@ -5,6 +5,7 @@ package dev.vertique.rest.ratelimit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dagger.BindsInstance;
 import dagger.Component;
@@ -56,7 +57,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * RestTestMounts}) rather than a bare, failure-handler-less {@code RouterMount}: the middleware now
  * delegates via {@code ctx.fail}, so the response is no longer byte-identical to a hand-built {@link
  * dev.vertique.rest.core.ProblemDetail} — {@code ErrorPipeline} runs the mapping, which leaves
- * {@code instance} absent (the pipeline never fills it). See {@code
+ * {@code instance} an opaque occurrence id (the pipeline stamps it). See {@code
  * RateLimitEdgeFullPipelineRenderingIT} for the full-pipeline dressing proof (transformResponse,
  * ErrorInterceptor.afterMapping, the new framework default); this class stays focused on precedence:
  * built-in vs. application-contributed mapper, and the mapper-throw fallback.
@@ -99,9 +100,9 @@ class RateLimitEdgeMiddlewareApplicationExceptionMapperIT {
                     JsonObject body = response.bodyAsJsonObject();
                     assertEquals(429, body.getInteger("status"));
                     assertNull(body.getString("detail"), "the built-in mapper's body carries no detail");
-                    assertNull(
-                            body.getString("instance"),
-                            "the pipeline never fills instance, so the request path is not reflected");
+                    assertTrue(
+                            String.valueOf(body.getString("instance")).matches("urn:uuid:[0-9a-f-]{36}"),
+                            "instance is an opaque occurrence id, not the request path: " + body);
                     ctx.completeNow();
                 }));
     }
@@ -123,7 +124,9 @@ class RateLimitEdgeMiddlewareApplicationExceptionMapperIT {
                     assertNull(response.getHeader("Retry-After"));
                     JsonObject body = response.bodyAsJsonObject();
                     assertEquals(503, body.getInteger("status"));
-                    assertNull(body.getString("instance"), "the pipeline never fills instance");
+                    assertTrue(
+                            String.valueOf(body.getString("instance")).matches("urn:uuid:[0-9a-f-]{36}"),
+                            "instance is an opaque occurrence id, not the request path: " + body);
                     ctx.completeNow();
                 }));
     }

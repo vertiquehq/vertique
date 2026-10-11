@@ -112,9 +112,9 @@ class RateLimitEdgeFullPipelineRenderingIT {
                     assertEquals("no-store", response.getHeader("Cache-Control"));
                     JsonObject body = response.bodyAsJsonObject();
                     assertEquals(429, body.getInteger("status"));
-                    assertNull(
-                            body.getString("instance"),
-                            "the pipeline never fills instance, so the request path is not reflected");
+                    assertTrue(
+                            String.valueOf(body.getString("instance")).matches("urn:uuid:[0-9a-f-]{36}"),
+                            "instance is an opaque occurrence id, not the request path: " + body);
                     ctx.completeNow();
                 }));
     }
@@ -135,7 +135,9 @@ class RateLimitEdgeFullPipelineRenderingIT {
                     assertNull(response.getHeader("Retry-After"));
                     JsonObject body = response.bodyAsJsonObject();
                     assertEquals(503, body.getInteger("status"));
-                    assertNull(body.getString("instance"), "the pipeline never fills instance");
+                    assertTrue(
+                            String.valueOf(body.getString("instance")).matches("urn:uuid:[0-9a-f-]{36}"),
+                            "instance is an opaque occurrence id, not the request path: " + body);
                     ctx.completeNow();
                 }));
     }
@@ -274,7 +276,9 @@ class RateLimitEdgeFullPipelineRenderingIT {
                     assertEquals("application/problem+json", response.getHeader("Content-Type"));
                     JsonObject body = response.bodyAsJsonObject();
                     assertEquals(503, body.getInteger("status"));
-                    assertNull(body.getString("instance"), "the pipeline never fills instance");
+                    assertTrue(
+                            String.valueOf(body.getString("instance")).matches("urn:uuid:[0-9a-f-]{36}"),
+                            "instance is an opaque occurrence id, not the request path: " + body);
                     ctx.completeNow();
                 }));
     }
