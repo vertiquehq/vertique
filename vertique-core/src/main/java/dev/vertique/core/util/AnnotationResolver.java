@@ -9,6 +9,8 @@ import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.lang.reflect.Type;
 import java.lang.reflect.TypeVariable;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -84,10 +86,11 @@ public final class AnnotationResolver {
      * <p>Traversal order:
      * <ol>
      *   <li>Annotations directly declared on {@code method}</li>
-     *   <li>Annotations from the same method signature in each superclass of the declaring class
+     *   <li>Annotations from the declarations the method overrides (see
+     *       {@link #inheritedDeclarations}) in each superclass of the declaring class
      *       (bottom-up)</li>
-     *   <li>Annotations from the same method signature in each transitively reachable interface of
-     *       {@code viewType} (discovery order from {@link TypeResolver#getAllInterfaces})</li>
+     *   <li>Annotations from the declarations it overrides in each transitively reachable interface
+     *       of {@code viewType} (discovery order from {@link TypeResolver#getAllInterfaces})</li>
      * </ol>
      *
      * <p>{@code viewType} is the type in whose context the method is being resolved. For a method
@@ -237,17 +240,20 @@ public final class AnnotationResolver {
      * modules that must see the same declarations; not an application contract and outside the
      * module's compatibility promise.
      *
-     * <p>A declaration corresponds in two steps, and both contribute. The exact erased lookup
-     * ({@link Class#getMethod}) is first, so every declaration matched by erased signature before
-     * is still matched. A binding-aware scan follows: the type variables of the declaring class and
-     * of {@code viewType} are bound through their superclasses, interfaces and owner types, and a
-     * public, non-static, non-bridge declaration of the same name and arity whose parameter types
-     * are equal after resolution corresponds as well. That is how
+     * <p>A declaration is returned when {@code method} overrides it by the Java rules (JLS 8.4.2
+     * and 8.4.8.1): its signature is a subsignature of the declaration's once the type variables of
+     * the declaring class and of {@code viewType} are bound through their superclasses, interfaces
+     * and owner types; the declaration is not static, private or compiler-generated; and it is
+     * public, protected, or package-private in the overriding method's package. That is how
      * {@code class Users implements Crud<String> { void delete(String id) }} is recognized as
-     * overriding {@code Crud<ID>.delete(ID)}. The rule for method type parameters is the Java
-     * one: a generic method corresponds only to a declaration with the same number of them whose
-     * bounds erase equally, and a non-generic method corresponds to a generic declaration by
-     * erasure. Members that are not public are not seen, exactly as for the exact lookup.
+     * overriding {@code Crud<ID>.delete(ID)}, and why {@code purge(List<Integer>)} is not an
+     * override of {@code purge(T)} in a {@code Base<List<String>>} although both erase to
+     * {@code List}. A static or private {@code method} overrides nothing and gets an empty result.
+     * A method with type parameters of its own overrides only a declaration with the same type
+     * parameters; a non-generic method may override a generic declaration by erasure.
+     *
+     * <p>The method's declaring class must be {@code viewType} or one of its supertypes: results are
+     * cached per view type.
      *
      * @param method   the method whose overridden declarations are wanted; must not be {@code null}
      * @param viewType the type whose interface hierarchy contributes declarations (the resource
@@ -273,9 +279,13 @@ public final class AnnotationResolver {
     };
 
     private static List<Method> computeDeclarations(Method method, Class<?> viewType) {
+        int modifiers = method.getModifiers();
+        if (Modifier.isStatic(modifiers) || Modifier.isPrivate(modifiers)) {
+            // A static or private method overrides nothing (JLS 8.4.8).
+            return List.of();
+        }
         Class<?> declaring = method.getDeclaringClass();
-        Map<TypeVariable<?>, Type> bindings = new LinkedHashMap<>(GenericBindings.of(declaring));
-        GenericBindings.of(viewType).forEach(bindings::putIfAbsent);
+        Map<TypeVariable<?>, Type> bindings = bindingsFor(declaring, viewType);
 
         Set<Method> found = new LinkedHashSet<>();
         Class<?> current = declaring.getSuperclass();
@@ -290,28 +300,75 @@ public final class AnnotationResolver {
         return List.copyOf(found);
     }
 
+    private static Map<TypeVariable<?>, Type> bindingsFor(Class<?> declaring, Class<?> viewType) {
+        Map<TypeVariable<?>, Type> bindings = new LinkedHashMap<>(GenericBindings.of(declaring));
+        GenericBindings.of(viewType).forEach(bindings::putIfAbsent);
+        return bindings;
+    }
+
     private static void collectDeclarations(
             Class<?> type, Method method, Map<TypeVariable<?>, Type> bindings, Set<Method> found) {
-        try {
-            found.add(type.getMethod(method.getName(), method.getParameterTypes()));
-        } catch (NoSuchMethodException ignored) {
-            // No declaration with the same erased signature on this type
-        }
-        // getMethods() loads public members only, as the exact lookup does, so the signature of a
-        // non-public member is never resolved here.
-        for (Method candidate : type.getMethods()) {
-            int modifiers = candidate.getModifiers();
-            if (candidate.getDeclaringClass() != type
-                    || !Modifier.isPublic(modifiers)
-                    || Modifier.isStatic(modifiers)
-                    || candidate.isBridge()
-                    || candidate.isSynthetic()) {
+        // A class contributes every member the method can override (JLS 8.4.8.1: public and
+        // protected, and package-private ones of its own package); an interface contributes its
+        // public members, which getMethods() lists without resolving other signatures.
+        Method[] candidates = type.isInterface() ? type.getMethods() : type.getDeclaredMethods();
+        List<Method> exact = new ArrayList<>();
+        List<Method> bound = new ArrayList<>();
+        for (Method candidate : candidates) {
+            if (candidate.getDeclaringClass() != type || !overridable(method, candidate)) {
                 continue;
             }
             if (GenericBindings.corresponds(method, candidate, bindings)) {
-                found.add(candidate);
+                // A declaration with the very same erased signature precedes the ones that match
+                // only through a bound type variable, whatever order the JVM lists them in.
+                (Arrays.equals(candidate.getParameterTypes(), method.getParameterTypes()) ? exact : bound)
+                        .add(candidate);
             }
         }
+        found.addAll(exact);
+        found.addAll(bound);
+    }
+
+    /**
+     * Whether {@code candidate} can be overridden by {@code method} as far as modifiers and
+     * visibility go (JLS 8.4.8.1): not static, not private, not a compiler-generated bridge or
+     * synthetic member, and public, protected, or package-private in the package of the overriding
+     * method's declaring class.
+     */
+    private static boolean overridable(Method method, Method candidate) {
+        int modifiers = candidate.getModifiers();
+        if (Modifier.isStatic(modifiers)
+                || Modifier.isPrivate(modifiers)
+                || candidate.isBridge()
+                || candidate.isSynthetic()) {
+            return false;
+        }
+        if (Modifier.isPublic(modifiers) || Modifier.isProtected(modifiers)) {
+            return true;
+        }
+        return candidate.getDeclaringClass().isInterface()
+                || candidate
+                        .getDeclaringClass()
+                        .getPackageName()
+                        .equals(method.getDeclaringClass().getPackageName());
+    }
+
+    /**
+     * Returns whether the signature of {@code method} is a subsignature of {@code candidate}'s
+     * once the type variables of {@code method}'s declaring class and of {@code viewType} are
+     * resolved (JLS 8.4.2). Modifiers and visibility are not considered.
+     *
+     * <p>INTERNAL framework seam for sibling framework modules that apply their own visibility
+     * rules on top of the Java signature rule; not an application contract.
+     *
+     * @param method    the possibly overriding method; must not be {@code null}
+     * @param candidate the possibly overridden declaration; must not be {@code null}
+     * @param viewType  the type whose hierarchy binds the type variables (normally the resource or
+     *                  consumer class); must not be {@code null}
+     * @return {@code true} when {@code method}'s signature is a subsignature of {@code candidate}'s
+     */
+    public static boolean overridesBySignature(Method method, Method candidate, Class<?> viewType) {
+        return GenericBindings.corresponds(method, candidate, bindingsFor(method.getDeclaringClass(), viewType));
     }
 
     // --- Meta-annotation resolution ---

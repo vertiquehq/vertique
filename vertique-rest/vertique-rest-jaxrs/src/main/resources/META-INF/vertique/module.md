@@ -85,10 +85,16 @@ methods of the interfaces — and a type variable bound in the resource class's 
 for that match: `delete(String)` of `UserResource implements Crud<String>` inherits `@DELETE`,
 `@Path`, `@RolesAllowed` and the `@PathParam` binding of `Crud<ID>.delete(ID)`, whether or not it
 declares a verb of its own, and so does an override of a generic superclass method. A superclass
-method that such an override inherits from is not routed a second time. The match covers public
-members, as before. The Java rule decides which methods correspond: a generic method overrides a
-declaration with the same number of type parameters whose bounds erase equally, and a non-generic
-method overrides a generic declaration by erasure. What is not
+method that such an override inherits from is not routed a second time. The Java rules decide which
+methods correspond (JLS 8.4.2 and 8.4.8.1): a generic method overrides a declaration with the same
+type parameters and parameter types, a non-generic method may override a generic declaration by
+erasure, `purge(List<Integer>)` is **not** an override of `purge(T)` in a `Base<List<String>>`
+although both erase to `List` (and a private or static helper never is), and the declaration may be
+public, protected, or package-private in the overriding method's package. The verb is the first of
+GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS found on the method or any declaration it overrides,
+whichever declares it. A single-valued security attribute such as `@RequiresAction` is taken from the
+nearest declaration (the override's own wins over a declaration it overrides); differing
+`@RolesAllowed` or `@Authorized` values across declarations fail startup. What is not
 resolved is the *type* of a method no class overrides: a non-overridden generic default (or generic
 superclass method) binds a type-variable parameter as its erasure, so a path, query, header, cookie,
 or form parameter typed `ID` fails startup with `UNRESOLVABLE_PARAM_CONVERTER`, and a body or return

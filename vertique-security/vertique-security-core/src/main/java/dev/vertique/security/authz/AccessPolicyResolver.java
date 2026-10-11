@@ -3,24 +3,19 @@
 
 package dev.vertique.security.authz;
 
+import dev.vertique.core.util.AnnotationResolver;
 import jakarta.annotation.security.DenyAll;
 import jakarta.annotation.security.PermitAll;
 import jakarta.annotation.security.RolesAllowed;
 import java.lang.annotation.Annotation;
-import java.lang.reflect.Array;
-import java.lang.reflect.GenericArrayType;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
-import java.lang.reflect.TypeVariable;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.IdentityHashMap;
-import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
@@ -129,9 +124,8 @@ public final class AccessPolicyResolver {
         }
         List<Annotation> legacy = legacyMethodAnnotations == null ? List.of() : legacyMethodAnnotations;
         Method canonical = canonicalize(method);
-        Map<TypeVariable<?>, Type> bindings = new LinkedHashMap<>();
         List<Class<?>> hierarchy = new ArrayList<>();
-        walkHierarchy(consumerType, hierarchy, bindings, new LinkedHashSet<>());
+        walkHierarchy(consumerType, hierarchy, new LinkedHashSet<>());
 
         List<Annotation> methodSet = new ArrayList<>();
         List<Annotation> typeSet = new ArrayList<>();
@@ -150,7 +144,7 @@ public final class AccessPolicyResolver {
                 // the operation being secured, and dropping it would let a broader declaration
                 // replace its own.
                 boolean self = candidate.equals(canonical);
-                if (!self && !corresponds(canonical, candidate, bindings)) {
+                if (!self && !AnnotationResolver.overridesBySignature(canonical, candidate, consumerType)) {
                     continue;
                 }
                 if (!self && !includeMethod(candidate, consumerType)) {
@@ -472,105 +466,23 @@ public final class AccessPolicyResolver {
         return true;
     }
 
-    private static boolean corresponds(Method canonical, Method candidate, Map<TypeVariable<?>, Type> bindings) {
-        if (canonical.getName().equals(candidate.getName())
-                && canonical.getParameterCount() == candidate.getParameterCount()) {
-            Type[] generic = candidate.getGenericParameterTypes();
-            Type[] wanted = canonical.getGenericParameterTypes();
-            if (generic.length != wanted.length) {
-                return false;
-            }
-            // JLS 8.4.2: a method with type parameters of its own overrides only a declaration with
-            // the same number of them, mapped by position, whose bounds erase equally; a method
-            // with none overrides a generic declaration by erasure.
-            TypeVariable<Method>[] own = canonical.getTypeParameters();
-            TypeVariable<Method>[] other = candidate.getTypeParameters();
-            Map<TypeVariable<?>, Type> effective = bindings;
-            if (own.length > 0) {
-                if (own.length != other.length) {
-                    return false;
-                }
-                effective = new LinkedHashMap<>(bindings);
-                for (int i = 0; i < own.length; i++) {
-                    if (resolveErasure(own[i], bindings, new IdentityHashMap<>())
-                            != resolveErasure(other[i], bindings, new IdentityHashMap<>())) {
-                        return false;
-                    }
-                    effective.put(other[i], own[i]);
-                }
-            }
-            for (int i = 0; i < generic.length; i++) {
-                Class<?> resolved = resolveErasure(generic[i], effective, new IdentityHashMap<>());
-                Class<?> expected = resolveErasure(wanted[i], effective, new IdentityHashMap<>());
-                if (resolved != expected) {
-                    return false;
-                }
-            }
-            return true;
-        }
-        return false;
-    }
-
-    private static Class<?> resolveErasure(
-            Type type, Map<TypeVariable<?>, Type> bindings, IdentityHashMap<Type, Boolean> seen) {
-        if (type instanceof Class<?> clazz) {
-            return clazz;
-        }
-        if (!seen.containsKey(type) && type instanceof TypeVariable<?> variable) {
-            seen.put(type, Boolean.TRUE);
-            Type bound = bindings.get(variable);
-            if (bound != null) {
-                return resolveErasure(bound, bindings, seen);
-            }
-            Type[] bounds = variable.getBounds();
-            return bounds.length == 0 ? Object.class : resolveErasure(bounds[0], bindings, seen);
-        }
-        if (type instanceof ParameterizedType parameterized) {
-            return resolveErasure(parameterized.getRawType(), bindings, seen);
-        }
-        if (type instanceof GenericArrayType array) {
-            Class<?> component = resolveErasure(array.getGenericComponentType(), bindings, seen);
-            return Array.newInstance(component, 0).getClass();
-        }
-        return Object.class;
-    }
-
-    private static void walkHierarchy(
-            Class<?> type, List<Class<?>> hierarchy, Map<TypeVariable<?>, Type> bindings, Set<Class<?>> seen) {
+    private static void walkHierarchy(Class<?> type, List<Class<?>> hierarchy, Set<Class<?>> seen) {
         if (type == null || type == Object.class || !seen.add(type)) {
             return;
         }
         hierarchy.add(type);
         Type superclass = type.getGenericSuperclass();
         if (superclass instanceof ParameterizedType parameterized) {
-            bind(parameterized, bindings);
-            walkHierarchy((Class<?>) parameterized.getRawType(), hierarchy, bindings, seen);
+            walkHierarchy((Class<?>) parameterized.getRawType(), hierarchy, seen);
         } else if (superclass instanceof Class<?> raw) {
-            walkHierarchy(raw, hierarchy, bindings, seen);
+            walkHierarchy(raw, hierarchy, seen);
         }
         for (Type genericInterface : type.getGenericInterfaces()) {
             if (genericInterface instanceof ParameterizedType parameterized) {
-                bind(parameterized, bindings);
-                walkHierarchy((Class<?>) parameterized.getRawType(), hierarchy, bindings, seen);
+                walkHierarchy((Class<?>) parameterized.getRawType(), hierarchy, seen);
             } else if (genericInterface instanceof Class<?> raw) {
-                walkHierarchy(raw, hierarchy, bindings, seen);
+                walkHierarchy(raw, hierarchy, seen);
             }
-        }
-    }
-
-    private static void bind(ParameterizedType parameterized, Map<TypeVariable<?>, Type> bindings) {
-        if (!(parameterized.getRawType() instanceof Class<?> raw)) {
-            return;
-        }
-        TypeVariable<?>[] parameters = raw.getTypeParameters();
-        Type[] arguments = parameterized.getActualTypeArguments();
-        for (int i = 0; i < parameters.length && i < arguments.length; i++) {
-            bindings.putIfAbsent(parameters[i], arguments[i]);
-        }
-        // The argument of an owner type ({@code Outer<String>.Inner}) binds the inner class's
-        // variables from the enclosing class.
-        if (parameterized.getOwnerType() instanceof ParameterizedType owner) {
-            bind(owner, bindings);
         }
     }
 }

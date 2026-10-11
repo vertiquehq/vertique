@@ -110,24 +110,21 @@ public final class JaxRsHierarchy {
      * @param ctx           the shared codegen context; must not be {@code null}
      * @param method        the method whose overridden declarations are wanted
      * @param resourceClass the resource class the method is a member of
-     * @param publicOnly    {@code true} to accept public (and interface) declarations only, the set
-     *                      the runtime resolver sees; {@code false} to accept every inherited
-     *                      declaration that is not private or static
      * @return the corresponding declarations; never {@code null}
      */
     static List<ExecutableElement> inheritedDeclarations(
-            CodegenContext ctx, ExecutableElement method, TypeElement resourceClass, boolean publicOnly) {
+            CodegenContext ctx, ExecutableElement method, TypeElement resourceClass) {
         List<ExecutableElement> result = new ArrayList<>();
         if (method.getEnclosingElement() instanceof TypeElement owner && owner.getKind() != ElementKind.INTERFACE) {
             TypeElement current = superClass(ctx, owner);
             while (current != null
                     && !"java.lang.Object".equals(current.getQualifiedName().toString())) {
-                result.addAll(findMatchingMethods(ctx, method, current, resourceClass, publicOnly));
+                result.addAll(findMatchingMethods(ctx, method, current, resourceClass));
                 current = superClass(ctx, current);
             }
         }
         for (TypeElement iface : interfacesForMethod(ctx, method, resourceClass)) {
-            for (ExecutableElement declaration : findMatchingMethods(ctx, method, iface, resourceClass, publicOnly)) {
+            for (ExecutableElement declaration : findMatchingMethods(ctx, method, iface, resourceClass)) {
                 if (!result.contains(declaration)) {
                     result.add(declaration);
                 }
@@ -144,22 +141,18 @@ public final class JaxRsHierarchy {
      * applied) or when {@code method} overrides it according to the Java language rules for the
      * resource class, which resolves a type variable bound in the hierarchy: {@code delete(String)}
      * of {@code Users implements Crud<String>} overrides {@code Crud<ID>.delete(ID)}. A private or
-     * static declaration is never inherited and never corresponds. All matches are returned, not
-     * the first.
+     * static declaration is never inherited and never corresponds, and a package-private one of
+     * another package is not overridden. This is the rule of the runtime's
+     * {@code AnnotationResolver.inheritedDeclarations}. All matches are returned, not the first.
      *
      * @param ctx           the shared codegen context; must not be {@code null}
      * @param method        the overriding method; must not be {@code null}
      * @param type          the superclass or interface whose declarations are searched
      * @param resourceClass the resource class the method is a member of
-     * @param publicOnly    whether only public (and interface) declarations are accepted
      * @return the matching declarations in declaration order; never {@code null}
      */
     public static List<ExecutableElement> findMatchingMethods(
-            CodegenContext ctx,
-            ExecutableElement method,
-            TypeElement type,
-            TypeElement resourceClass,
-            boolean publicOnly) {
+            CodegenContext ctx, ExecutableElement method, TypeElement type, TypeElement resourceClass) {
         // The exact erased matches come first, as at runtime (the exact lookup precedes the
         // binding-aware scan); overrides-only matches follow, each group in declaration order.
         List<ExecutableElement> exact = new ArrayList<>();
@@ -179,20 +172,36 @@ public final class JaxRsHierarchy {
             if (modifiers.contains(Modifier.PRIVATE) || modifiers.contains(Modifier.STATIC)) {
                 continue;
             }
-            if (publicOnly && type.getKind() != ElementKind.INTERFACE && !modifiers.contains(Modifier.PUBLIC)) {
-                continue;
-            }
             if (key == null) {
                 key = methodKey(ctx, method);
             }
             if (methodKey(ctx, candidate).equals(key)) {
-                exact.add(candidate);
+                if (visibleTo(candidate, type, method, ctx)) {
+                    exact.add(candidate);
+                }
             } else if (ctx.elements().overrides(method, candidate, resourceClass)) {
                 bound.add(candidate);
             }
         }
         exact.addAll(bound);
         return exact;
+    }
+
+    /**
+     * Whether {@code candidate} can be overridden by {@code method} as far as visibility goes
+     * (JLS 8.4.8.1): public or protected, an interface member, or package-private in the package of
+     * the overriding method's declaring class.
+     */
+    private static boolean visibleTo(
+            ExecutableElement candidate, TypeElement type, ExecutableElement method, CodegenContext ctx) {
+        Set<Modifier> modifiers = candidate.getModifiers();
+        if (modifiers.contains(Modifier.PUBLIC)
+                || modifiers.contains(Modifier.PROTECTED)
+                || type.getKind() == ElementKind.INTERFACE) {
+            return true;
+        }
+        return method.getEnclosingElement() instanceof TypeElement owner
+                && ctx.elements().getPackageOf(owner).equals(ctx.elements().getPackageOf(type));
     }
 
     /**

@@ -788,7 +788,10 @@ class ResourceScanner {
      * {@code default} methods the class inherits.
      *
      * <p>Deduplicates by method name + parameter types: subclass overrides win. Skips bridge and
-     * synthetic methods.
+     * synthetic methods. A superclass method that an overriding class method reached through
+     * {@link AnnotationResolver#inheritedDeclarations} (an override of a generic declaration has
+     * another erased key) is dropped, because the override inherited its annotations and is the
+     * route; one the override did not reach stays a route of its own.
      *
      * <p>An inherited default method is a resource method of the class exactly as an override
      * would be (issue #630). A superclass's private method with the same signature is not

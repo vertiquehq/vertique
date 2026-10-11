@@ -427,7 +427,7 @@ public final class EffectiveJaxRsContractResolver {
         // loop is outermost: a GET on an interface wins over a POST on a superclass declaration.
         List<ExecutableElement> declarations = new ArrayList<>();
         declarations.add(method);
-        declarations.addAll(JaxRsHierarchy.inheritedDeclarations(ctx, method, resourceClass, true));
+        declarations.addAll(JaxRsHierarchy.inheritedDeclarations(ctx, method, resourceClass));
         for (String verb : JaxRsAnnotations.HTTP_VERBS) {
             for (ExecutableElement declaration : declarations) {
                 if (AnnotationMirrors.isPresent(declaration, verb)) {
@@ -455,7 +455,7 @@ public final class EffectiveJaxRsContractResolver {
             return direct;
         }
         // Precedence 2: overridden declarations — superclass methods, then BFS interfaces
-        for (ExecutableElement declaration : JaxRsHierarchy.inheritedDeclarations(ctx, method, resourceClass, true)) {
+        for (ExecutableElement declaration : JaxRsHierarchy.inheritedDeclarations(ctx, method, resourceClass)) {
             String v = findAnnotationString(declaration, annotationFqn, attributeName);
             if (v != null) {
                 return v;
@@ -478,7 +478,7 @@ public final class EffectiveJaxRsContractResolver {
             return direct;
         }
         // Precedence 2: overridden declarations — superclass methods, then BFS interfaces
-        for (ExecutableElement declaration : JaxRsHierarchy.inheritedDeclarations(ctx, method, resourceClass, true)) {
+        for (ExecutableElement declaration : JaxRsHierarchy.inheritedDeclarations(ctx, method, resourceClass)) {
             String v = findAnnotationString(declaration, OPERATION_FQN, "operationId");
             if (v != null && !v.isBlank()) {
                 return v;
@@ -503,7 +503,7 @@ public final class EffectiveJaxRsContractResolver {
             return direct;
         }
         // Precedence 2: overridden declarations — superclass methods, then BFS interfaces
-        for (ExecutableElement declaration : JaxRsHierarchy.inheritedDeclarations(ctx, method, resourceClass, true)) {
+        for (ExecutableElement declaration : JaxRsHierarchy.inheritedDeclarations(ctx, method, resourceClass)) {
             List<String> v = findAnnotationStringArray(declaration, annotationFqn);
             if (v != null) {
                 return v;
@@ -563,7 +563,7 @@ public final class EffectiveJaxRsContractResolver {
             while (current != null
                     && !"java.lang.Object".equals(current.getQualifiedName().toString())) {
                 for (ExecutableElement superMethod :
-                        JaxRsHierarchy.findMatchingMethods(ctx, method, current, resourceClass, false)) {
+                        JaxRsHierarchy.findMatchingMethods(ctx, method, current, resourceClass)) {
                     EffectiveSecurityContract sc = buildSecurityContract(superMethod);
                     if (!sc.isEmpty()) {
                         EffectiveSecurityContract merged = accumulateSecurity(found, sc);
@@ -595,7 +595,7 @@ public final class EffectiveJaxRsContractResolver {
             return direct;
         }
         // Precedence 2: overridden declarations — superclass methods, then BFS interfaces
-        for (ExecutableElement declaration : JaxRsHierarchy.inheritedDeclarations(ctx, method, resourceClass, true)) {
+        for (ExecutableElement declaration : JaxRsHierarchy.inheritedDeclarations(ctx, method, resourceClass)) {
             List<TypeMirror> v = findAnnotationClassArray(declaration, VALIDATE_WITH_FQN);
             if (v != null) {
                 return v;
@@ -721,7 +721,7 @@ public final class EffectiveJaxRsContractResolver {
         // declared in that priority order (BODY last), so the effective source is the lowest
         // ordinal among the concrete parameter and the matching parameter of each declaration.
         JaxRsParamSource effective = JaxRsParamClassifier.classify(concreteParam, ctx.types(), ctx.elements());
-        for (ExecutableElement declaration : JaxRsHierarchy.inheritedDeclarations(ctx, method, resourceClass, true)) {
+        for (ExecutableElement declaration : JaxRsHierarchy.inheritedDeclarations(ctx, method, resourceClass)) {
             var declaredParams = declaration.getParameters();
             if (paramIndex >= declaredParams.size()) continue;
             JaxRsParamSource declaredSource =
@@ -768,7 +768,7 @@ public final class EffectiveJaxRsContractResolver {
         // Superclass chain (excluding the concrete class itself). An inherited interface default has
         // none: like the runtime, which walks from the declaring interface, it merges only the
         // interfaces it overrides.
-        for (ExecutableElement declaration : JaxRsHierarchy.inheritedDeclarations(ctx, method, resourceClass, true)) {
+        for (ExecutableElement declaration : JaxRsHierarchy.inheritedDeclarations(ctx, method, resourceClass)) {
             if (paramIndex < declaration.getParameters().size()) {
                 sources.add(declaration.getParameters().get(paramIndex));
             }
@@ -803,7 +803,7 @@ public final class EffectiveJaxRsContractResolver {
             return direct;
         }
         // Precedence 2: overridden declarations — superclass methods, then BFS interfaces
-        for (ExecutableElement declaration : JaxRsHierarchy.inheritedDeclarations(ctx, method, resourceClass, true)) {
+        for (ExecutableElement declaration : JaxRsHierarchy.inheritedDeclarations(ctx, method, resourceClass)) {
             var declaredParams = declaration.getParameters();
             if (paramIndex >= declaredParams.size()) continue;
             String v = findAnnotationString(declaredParams.get(paramIndex), annotationFqn, "value");
@@ -852,7 +852,7 @@ public final class EffectiveJaxRsContractResolver {
             return direct;
         }
         // Precedence 2: overridden declarations — superclass methods, then BFS interfaces
-        for (ExecutableElement declaration : JaxRsHierarchy.inheritedDeclarations(ctx, method, resourceClass, true)) {
+        for (ExecutableElement declaration : JaxRsHierarchy.inheritedDeclarations(ctx, method, resourceClass)) {
             var declaredParams = declaration.getParameters();
             if (paramIndex >= declaredParams.size()) continue;
             String v = findAnnotationString(declaredParams.get(paramIndex), DEFAULT_VALUE_FQN, "value");
@@ -1121,7 +1121,7 @@ public final class EffectiveJaxRsContractResolver {
         for (TypeElement iface : interfaces) {
             List<? extends javax.lang.model.element.Element> targets = classLevel
                     ? List.of(iface)
-                    : JaxRsHierarchy.findMatchingMethods(ctx, (ExecutableElement) element, iface, resourceClass, false);
+                    : JaxRsHierarchy.findMatchingMethods(ctx, (ExecutableElement) element, iface, resourceClass);
             for (javax.lang.model.element.Element target : targets) {
                 EffectiveSecurityContract sc = buildSecurityContract(target);
                 if (sc.isEmpty()) {

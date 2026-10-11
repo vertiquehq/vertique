@@ -211,6 +211,57 @@ class InheritedDeclarationsTest {
         public void both(String value) {}
     }
 
+    static class SecuredBase<T> {
+        public String purge(T value) {
+            return "base";
+        }
+    }
+
+    /** Overloads {@code purge} with a type argument that differs from the binding: not an override. */
+    static class PublicOverload extends SecuredBase<List<String>> {
+        public String purge(List<Integer> value) {
+            return "overload";
+        }
+    }
+
+    static class PrivateHelper extends SecuredBase<List<String>> {
+        @SuppressWarnings("unused")
+        private String purge(List<Integer> value) {
+            return "helper";
+        }
+    }
+
+    static class StaticHelper extends SecuredBase<List<String>> {
+        static String purge(List<Integer> value) {
+            return "static";
+        }
+    }
+
+    /** A raw parameter equals the erasure of the declaration's signature, so it overrides. */
+    static class RawOverride extends SecuredBase<List<String>> {
+        @Override
+        @SuppressWarnings("rawtypes")
+        public String purge(List value) {
+            return "raw";
+        }
+    }
+
+    static class PackageBase<T> {
+        void pkg(T value) {}
+    }
+
+    static class PackageDerived extends PackageBase<String> {
+        @Override
+        void pkg(String value) {}
+    }
+
+    static class ForeignDerived extends dev.vertique.core.util.foreign.ForeignBase<String> {
+        void hidden(String value) {}
+
+        @Override
+        public void visible(String value) {}
+    }
+
     // --- Helpers ---
 
     private static Method method(Class<?> type, String name, Class<?>... parameters) throws NoSuchMethodException {
@@ -381,12 +432,67 @@ class InheritedDeclarationsTest {
     }
 
     @Test
-    @DisplayName("members that are not public stay unseen, as for the exact lookup")
-    void nonPublicMembersAreNotSeen() throws NoSuchMethodException {
-        Method override = method(ProtectedDerived.class, "touch", String.class);
+    @DisplayName("protected and same-package members are overridden, as the Java rules say")
+    void protectedAndPackageMembersAreSeen() throws NoSuchMethodException {
+        Method protectedOverride = method(ProtectedDerived.class, "touch", String.class);
+        Method packageOverride = method(PackageDerived.class, "pkg", String.class);
 
-        assertTrue(AnnotationResolver.inheritedDeclarations(override, ProtectedDerived.class)
+        assertEquals(
+                List.of("ProtectedBase.touch[Object]"),
+                ownerSignatures(AnnotationResolver.inheritedDeclarations(protectedOverride, ProtectedDerived.class)));
+        assertEquals(
+                List.of("PackageBase.pkg[Object]"),
+                ownerSignatures(AnnotationResolver.inheritedDeclarations(packageOverride, PackageDerived.class)));
+    }
+
+    @Test
+    @DisplayName("a package-private member of another package is not overridden; its public sibling is")
+    void foreignPackageMembersAreNotOverridden() throws NoSuchMethodException {
+        Method hidden = method(ForeignDerived.class, "hidden", String.class);
+        Method visible = method(ForeignDerived.class, "visible", String.class);
+
+        assertTrue(AnnotationResolver.inheritedDeclarations(hidden, ForeignDerived.class)
                 .isEmpty());
+        assertEquals(
+                List.of("ForeignBase.visible[Object]"),
+                ownerSignatures(AnnotationResolver.inheritedDeclarations(visible, ForeignDerived.class)));
+    }
+
+    @Test
+    @DisplayName(
+            "a same-erasure method with another type argument, a private helper and a static helper override nothing")
+    void sameErasureNonOverridesAreNotMerged() throws NoSuchMethodException {
+        Method overload = method(PublicOverload.class, "purge", List.class);
+        Method helper = method(PrivateHelper.class, "purge", List.class);
+        Method staticHelper = method(StaticHelper.class, "purge", List.class);
+
+        assertTrue(AnnotationResolver.inheritedDeclarations(overload, PublicOverload.class)
+                .isEmpty());
+        assertTrue(AnnotationResolver.inheritedDeclarations(helper, PrivateHelper.class)
+                .isEmpty());
+        assertTrue(AnnotationResolver.inheritedDeclarations(staticHelper, StaticHelper.class)
+                .isEmpty());
+    }
+
+    @Test
+    @DisplayName("a raw parameter overrides the declaration by erasure")
+    void rawParameterOverridesByErasure() throws NoSuchMethodException {
+        Method raw = method(RawOverride.class, "purge", List.class);
+
+        assertEquals(
+                List.of("SecuredBase.purge[Object]"),
+                ownerSignatures(AnnotationResolver.inheritedDeclarations(raw, RawOverride.class)));
+    }
+
+    @Test
+    @DisplayName("overridesBySignature applies the Java signature rule without visibility")
+    void overridesBySignatureIgnoresVisibility() throws NoSuchMethodException {
+        Method base = SecuredBase.class.getDeclaredMethod("purge", Object.class);
+        Method overload = method(PublicOverload.class, "purge", List.class);
+        Method raw = method(RawOverride.class, "purge", List.class);
+
+        assertEquals(false, AnnotationResolver.overridesBySignature(overload, base, PublicOverload.class));
+        assertEquals(true, AnnotationResolver.overridesBySignature(raw, base, RawOverride.class));
     }
 
     @Test

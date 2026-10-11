@@ -56,18 +56,24 @@ final class GenericBindings {
     }
 
     /**
-     * Returns whether {@code candidate} declares the signature that {@code method} overrides or
-     * implements once type variables are resolved (JLS 8.4.2: the same signature, or the erasure
-     * of the declaration's signature): the same name and arity and equal erased parameter types.
-     * A method with type parameters of its own corresponds only to a declaration with the same
-     * number of them, mapped by position, whose bounds erase equally; a method with none
-     * corresponds to a generic declaration by erasure, so a non-generic override of
-     * {@code <X> put(T, X)} is {@code put(String, Object)}.
+     * Returns whether {@code method}'s signature is a subsignature of {@code candidate}'s once type
+     * variables are resolved (JLS 8.4.2): the same name, arity and parameter types after
+     * substitution, or parameter types equal to the erasure of the declaration's substituted
+     * signature. This is the signature half of "overrides"; modifiers and visibility are the
+     * caller's.
      *
-     * @param method    the method whose declarations are searched
+     * <p>Parameter types are compared structurally, not by erasure: {@code purge(List<Integer>)}
+     * does not override {@code purge(T)} of a {@code Base<List<String>>}, although both erase to
+     * {@code List}. A method with type parameters of its own overrides only a declaration with the
+     * same number of them, mapped by position, with equal bounds and the same parameter types; a
+     * method with none may also override a generic declaration by erasure, so
+     * {@code put(String, Object)} overrides {@code <X> put(T, X)} of a {@code Base<String>}, and a
+     * raw {@code List} parameter overrides {@code List<String>}.
+     *
+     * @param method    the possibly overriding method
      * @param candidate the possibly overridden declaration
      * @param bindings  the type variable bindings in effect
-     * @return {@code true} when the two correspond
+     * @return {@code true} when {@code method}'s signature is a subsignature of {@code candidate}'s
      */
     static boolean corresponds(Method method, Method candidate, Map<TypeVariable<?>, Type> bindings) {
         if (!method.getName().equals(candidate.getName())
@@ -76,29 +82,124 @@ final class GenericBindings {
         }
         TypeVariable<Method>[] own = method.getTypeParameters();
         TypeVariable<Method>[] other = candidate.getTypeParameters();
+        boolean generic = own.length > 0;
         Map<TypeVariable<?>, Type> effective = bindings;
-        if (own.length > 0) {
+        if (generic) {
             if (own.length != other.length) {
                 return false;
             }
             effective = new LinkedHashMap<>(bindings);
             for (int i = 0; i < own.length; i++) {
-                if (erasure(own[i], bindings, new IdentityHashMap<>())
-                        != erasure(other[i], bindings, new IdentityHashMap<>())) {
+                effective.put(other[i], own[i]);
+            }
+            for (int i = 0; i < own.length; i++) {
+                Type[] ownBounds = own[i].getBounds();
+                Type[] otherBounds = other[i].getBounds();
+                if (ownBounds.length != otherBounds.length) {
                     return false;
                 }
-                effective.put(other[i], own[i]);
+                for (int j = 0; j < ownBounds.length; j++) {
+                    if (!sameType(ownBounds[j], otherBounds[j], effective, 0)) {
+                        return false;
+                    }
+                }
             }
         }
         Type[] wanted = method.getGenericParameterTypes();
         Type[] declared = candidate.getGenericParameterTypes();
+        boolean same = true;
+        for (int i = 0; i < wanted.length && same; i++) {
+            same = sameType(wanted[i], declared[i], effective, 0);
+        }
+        if (same) {
+            return true;
+        }
+        if (generic) {
+            return false;
+        }
+        // A method without type parameters of its own is also a subsignature when its parameter
+        // types equal the erasure of the declaration's substituted signature.
         for (int i = 0; i < wanted.length; i++) {
-            if (erasure(wanted[i], effective, new IdentityHashMap<>())
-                    != erasure(declared[i], effective, new IdentityHashMap<>())) {
+            Class<?> erased = erasure(declared[i], bindings, new IdentityHashMap<>());
+            if (!(wanted[i] instanceof Class<?> raw) || raw != erased) {
                 return false;
             }
         }
         return true;
+    }
+
+    private static Type resolve(Type type, Map<TypeVariable<?>, Type> bindings) {
+        Type current = type;
+        for (int hops = 0; hops < 64 && current instanceof TypeVariable<?> variable; hops++) {
+            Type bound = bindings.get(variable);
+            if (bound == null) {
+                break;
+            }
+            current = bound;
+        }
+        return current;
+    }
+
+    private static boolean sameType(Type a, Type b, Map<TypeVariable<?>, Type> bindings, int depth) {
+        if (depth > 32) {
+            return false;
+        }
+        Type left = resolve(a, bindings);
+        Type right = resolve(b, bindings);
+        if (left instanceof Class<?> leftClass && right instanceof Class<?> rightClass) {
+            return leftClass == rightClass;
+        }
+        if (left instanceof ParameterizedType leftType && right instanceof ParameterizedType rightType) {
+            Type[] leftArguments = leftType.getActualTypeArguments();
+            Type[] rightArguments = rightType.getActualTypeArguments();
+            if (leftType.getRawType() != rightType.getRawType() || leftArguments.length != rightArguments.length) {
+                return false;
+            }
+            for (int i = 0; i < leftArguments.length; i++) {
+                if (!sameType(leftArguments[i], rightArguments[i], bindings, depth + 1)) {
+                    return false;
+                }
+            }
+            Type leftOwner = leftType.getOwnerType();
+            Type rightOwner = rightType.getOwnerType();
+            return leftOwner == null || rightOwner == null
+                    ? leftOwner == rightOwner
+                    : sameType(leftOwner, rightOwner, bindings, depth + 1);
+        }
+        Type leftComponent = componentOf(left);
+        Type rightComponent = componentOf(right);
+        if (leftComponent != null || rightComponent != null) {
+            return leftComponent != null
+                    && rightComponent != null
+                    && sameType(leftComponent, rightComponent, bindings, depth + 1);
+        }
+        if (left instanceof WildcardType leftWildcard && right instanceof WildcardType rightWildcard) {
+            return sameTypes(leftWildcard.getUpperBounds(), rightWildcard.getUpperBounds(), bindings, depth)
+                    && sameTypes(leftWildcard.getLowerBounds(), rightWildcard.getLowerBounds(), bindings, depth);
+        }
+        return left instanceof TypeVariable<?> && left == right;
+    }
+
+    private static boolean sameTypes(Type[] left, Type[] right, Map<TypeVariable<?>, Type> bindings, int depth) {
+        if (left.length != right.length) {
+            return false;
+        }
+        for (int i = 0; i < left.length; i++) {
+            if (!sameType(left[i], right[i], bindings, depth + 1)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static Type componentOf(Type type) {
+        if (type instanceof GenericArrayType array) {
+            return array.getGenericComponentType();
+        }
+        if (type instanceof Class<?> clazz && clazz.isArray()) {
+            return clazz.getComponentType();
+        }
+        return null;
     }
 
     private static Class<?> erasure(

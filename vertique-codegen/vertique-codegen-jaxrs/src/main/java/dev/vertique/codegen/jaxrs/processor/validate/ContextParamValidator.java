@@ -187,7 +187,7 @@ public final class ContextParamValidator {
             Predicate<VariableElement> test) {
         for (TypeElement iface : interfaces) {
             for (ExecutableElement ifaceMethod :
-                    JaxRsHierarchy.findMatchingMethods(ctx, concreteMethod, iface, resourceClass, true)) {
+                    JaxRsHierarchy.findMatchingMethods(ctx, concreteMethod, iface, resourceClass)) {
                 var ifaceParams = ifaceMethod.getParameters();
                 if (paramIndex >= ifaceParams.size()) {
                     continue;

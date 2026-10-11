@@ -211,6 +211,75 @@ class ResourceScannerInterfaceDefaultMethodTest {
         }
     }
 
+    /** Generic superclass with a secured route. */
+    static class SecuredGenericBase<T> {
+
+        /**
+         * Purges by id.
+         *
+         * @param id the identifier
+         * @return a description of the purge
+         */
+        @GET
+        @Path("/{id}")
+        @RolesAllowed("admin")
+        public String purge(@PathParam("id") T id) {
+            return "base " + id;
+        }
+    }
+
+    /**
+     * Declares a same-named public method whose parameter has the base's erasure but another type
+     * argument: it does not override {@code purge(T)} of {@code SecuredGenericBase<List<String>>}.
+     */
+    @Path("/overload-only")
+    static class OverloadOnlyResource extends SecuredGenericBase<java.util.List<String>> {
+        /**
+         * A helper, not an override.
+         *
+         * @param ids the identifiers
+         * @return a description
+         */
+        public String purge(java.util.List<Integer> ids) {
+            return "overload " + ids;
+        }
+    }
+
+    /** A private helper with the same erasure as the secured base method. */
+    @Path("/private-helper")
+    static class GenericPrivateHelperResource extends SecuredGenericBase<java.util.List<String>> {
+        @SuppressWarnings("unused")
+        private String purge(java.util.List<Integer> ids) {
+            return "helper " + ids;
+        }
+    }
+
+    /** Generic superclass whose secured route is protected. */
+    static class ProtectedGenericBase<T> {
+
+        /**
+         * Finds by id.
+         *
+         * @param id the identifier
+         * @return a description of the find
+         */
+        @GET
+        @Path("/{id}")
+        @RolesAllowed("admin")
+        protected String find(@PathParam("id") T id) {
+            return "base " + id;
+        }
+    }
+
+    /** Overrides the protected generic method with a concrete type and no annotations. */
+    @Path("/protected")
+    static class ProtectedGenericResource extends ProtectedGenericBase<String> {
+        @Override
+        protected String find(String id) {
+            return "protected " + id;
+        }
+    }
+
     /** Overrides the generic superclass method with a concrete type and no annotations. */
     @Path("/derived")
     static class GenericDerivedResource extends GenericBase<String> {
@@ -405,6 +474,46 @@ class ResourceScannerInterfaceDefaultMethodTest {
             assertEquals(List.of("admin"), policy.requiredRoles());
             assertEquals("/secured/{id}", purge.path());
             assertEquals("secured 7", invoke(purge, "7"));
+        }
+
+        @Test
+        @DisplayName("a same-erasure overload that overrides nothing leaves the secured superclass route in place")
+        void sameErasureOverload_doesNotDisplaceTheSecuredSuperclassRoute() throws Exception {
+            List<ResourceMethodMeta> metas = scan(new OverloadOnlyResource());
+
+            ResourceMethodMeta purge = only(metas, "GET");
+            assertEquals(1, metas.size(), metas.toString());
+            assertEquals(SecuredGenericBase.class, purge.method().getDeclaringClass());
+            SecurityPolicy.Constrained policy =
+                    assertInstanceOf(SecurityPolicy.Constrained.class, purge.securityPolicy());
+            assertEquals(List.of("admin"), policy.requiredRoles());
+            assertEquals("base 7", invoke(purge, "7"));
+        }
+
+        @Test
+        @DisplayName("a private helper with the same erasure leaves the secured superclass route in place")
+        void privateHelper_doesNotDisplaceTheSecuredSuperclassRoute() throws Exception {
+            List<ResourceMethodMeta> metas = scan(new GenericPrivateHelperResource());
+
+            ResourceMethodMeta purge = only(metas, "GET");
+            assertEquals(1, metas.size(), metas.toString());
+            assertEquals(SecuredGenericBase.class, purge.method().getDeclaringClass());
+            assertEquals("base 7", invoke(purge, "7"));
+        }
+
+        @Test
+        @DisplayName("a protected generic override inherits the superclass declaration's route and security")
+        void protectedGenericOverride_inheritsRouteAndSecurity() throws Exception {
+            List<ResourceMethodMeta> metas = scan(new ProtectedGenericResource());
+
+            ResourceMethodMeta find = only(metas, "GET");
+            assertEquals(1, metas.size(), metas.toString());
+            assertEquals(ProtectedGenericResource.class, find.method().getDeclaringClass());
+            SecurityPolicy.Constrained policy =
+                    assertInstanceOf(SecurityPolicy.Constrained.class, find.securityPolicy());
+            assertEquals(List.of("admin"), policy.requiredRoles());
+            assertEquals("/protected/{id}", find.path());
+            assertEquals("protected 7", invoke(find, "7"));
         }
 
         @Test

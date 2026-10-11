@@ -104,6 +104,16 @@ class AccessPolicyResolverBindingEquivalenceTest {
         public <U extends CharSequence> void take(U value) {}
     }
 
+    static class SecuredBase<T> {
+        @RequiresPolicy(AdminPolicy.class)
+        public void purge(T value) {}
+    }
+
+    /** Same erasure as the base method, another type argument: an overload, not an override. */
+    static class SameErasureOverload extends SecuredBase<java.util.List<String>> {
+        public void purge(java.util.List<Integer> value) {}
+    }
+
     static class Unrelated implements Crud<Integer> {
         @Override
         public void delete(Integer id) {}
@@ -167,6 +177,12 @@ class AccessPolicyResolverBindingEquivalenceTest {
         assertAgree(ErasureOverride.class, "put", new Class<?>[] {String.class, Object.class}, true);
         assertAgree(DifferentBounds.class, "take", new Class<?>[] {Number.class}, false);
         assertAgree(DifferentBounds.class, "take", new Class<?>[] {CharSequence.class}, true);
+    }
+
+    @Test
+    @DisplayName("a same-erasure overload with another type argument reaches no declaration, in both")
+    void sameErasureOverloadIsNotAnOverride() throws Exception {
+        assertAgree(SameErasureOverload.class, "purge", java.util.List.class, false);
     }
 
     @Test

@@ -115,7 +115,7 @@ public final class JaxRsMethodDiscovery {
             CodegenContext ctx, TypeElement resource, Map<String, ExecutableElement> seen) {
         List<ExecutableElement> overridden = new ArrayList<>();
         for (ExecutableElement method : seen.values()) {
-            for (ExecutableElement declaration : JaxRsHierarchy.inheritedDeclarations(ctx, method, resource, true)) {
+            for (ExecutableElement declaration : JaxRsHierarchy.inheritedDeclarations(ctx, method, resource)) {
                 if (declaration.getEnclosingElement().getKind() != ElementKind.INTERFACE) {
                     overridden.add(declaration);
                 }
