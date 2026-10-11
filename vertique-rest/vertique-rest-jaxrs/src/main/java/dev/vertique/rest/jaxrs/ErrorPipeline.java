@@ -5,10 +5,8 @@ package dev.vertique.rest.jaxrs;
 
 import dev.vertique.core.async.Combinators;
 import dev.vertique.rest.core.ProblemDetail;
-import dev.vertique.rest.core.events.RequestCompletionRecorder;
 import dev.vertique.rest.core.interceptor.ErrorInterceptor;
 import dev.vertique.rest.core.interceptor.RequestInterceptor;
-import dev.vertique.rest.core.routing.RestOperationDescriptor;
 import io.vertx.core.Future;
 import io.vertx.ext.web.RoutingContext;
 import jakarta.ws.rs.WebApplicationException;
@@ -24,8 +22,8 @@ import lombok.extern.slf4j.Slf4j;
  *
  * <p>Pipeline: fire {@link RequestInterceptor#onError} sync observers with the original cause →
  * {@link ErrorInterceptor#beforeMapping} async chain → {@link RestExceptionMapper} →
- * {@link ExceptionMapperRegistry} → {@link ProblemDetail} instance enrichment →
- * {@link ErrorInterceptor#afterMapping} async chain → returns {@link Future}{@code <Response>}
+ * {@link ExceptionMapperRegistry} → {@link ErrorInterceptor#afterMapping} async chain → returns
+ * {@link Future}{@code <Response>}
  * to the caller for unified dispatch via {@link ResponsePipeline#sendResponse}.
  *
  * <p>The original {@link Throwable} (before any mapping) is stored in
@@ -104,10 +102,6 @@ public class ErrorPipeline {
      *   <li>{@link ErrorInterceptor#beforeMapping} async chain (transforms the throwable)</li>
      *   <li>{@link RestExceptionMapper} (Throwable to Throwable pre-translation)</li>
      *   <li>{@link ExceptionMapperRegistry} (Throwable to {@link Response})</li>
-     *   <li>Instance enrichment — populates {@link ProblemDetail#instance()} with the route
-     *       template of the matched operation if the response entity is a {@link ProblemDetail}
-     *       and {@code instance} is not already set; a request that matched no operation route
-     *       leaves it absent</li>
      *   <li>{@link ErrorInterceptor#afterMapping} async chain (transforms the response)</li>
      *   <li>Framework catch-all logging, once, using the status of the response leaving the chain</li>
      * </ol>
@@ -176,7 +170,7 @@ public class ErrorPipeline {
                     if (!exceptionMapperRegistry.hasSpecificMapper(translated.getClass())) {
                         response = applyVertxStatusCodeFallback(response, vertxFailureStatus, translated);
                     }
-                    return new MappingOutcome(enrichProblemDetail(ctx, response), translated, frameworkCatchAll);
+                    return new MappingOutcome(response, translated, frameworkCatchAll);
                 })
                 .compose(outcome -> Combinators.foldSequential(
                                 errorInterceptors,
@@ -229,72 +223,6 @@ public class ErrorPipeline {
         log.error("Unhandled exception", cause);
     }
 
-    // --- ProblemDetail enrichment ---
-
-    /**
-     * Enriches the response entity if it is a {@link ProblemDetail} without an instance set.
-     * The instance is the route template of the operation the request matched, such as
-     * {@code /items/{id}}. It is never read from the request path: the path carries the caller's
-     * bytes, which a problem detail must not reflect. A request that matched no operation route (an
-     * unknown path, a method the route does not serve) has no template and keeps no instance. All
-     * response headers and media type are preserved.
-     *
-     * @param ctx      the current routing context (used to read the matched operation)
-     * @param response the response produced by the exception mapper
-     * @return the enriched response, or the original response unchanged
-     */
-    private static Response enrichProblemDetail(RoutingContext ctx, Response response) {
-        Object entity = response.getEntity();
-        RestOperationDescriptor operation =
-                entity instanceof ProblemDetail ? RequestCompletionRecorder.recordedOperation(ctx) : null;
-        if (entity instanceof ProblemDetail pd && pd.instance() == null && operation != null) {
-            ProblemDetail enriched = pd.toBuilder()
-                    .instance(templateWithoutConstraints(operation.routeTemplate()))
-                    .build();
-            Response.ResponseBuilder rb = Response.status(response.getStatus()).entity(enriched);
-            return rebuildWithHeaders(response, rb, true);
-        }
-        return response;
-    }
-
-    /**
-     * Returns {@code template} with each variable's regular-expression constraint removed, so
-     * {@code /orders/{id: [0-9]{8}}} becomes {@code /orders/{id}}. The constraint is routing detail,
-     * not part of an occurrence identifier, and braces inside it would nest.
-     *
-     * @param template the operation's route template
-     * @return the template with variable names only
-     */
-    static String templateWithoutConstraints(String template) {
-        StringBuilder out = new StringBuilder(template.length());
-        int depth = 0;
-        boolean inConstraint = false;
-        for (int i = 0; i < template.length(); i++) {
-            char c = template.charAt(i);
-            if (c == '{') {
-                depth++;
-                if (depth == 1) {
-                    out.append(c);
-                } else if (!inConstraint) {
-                    out.append(c);
-                }
-            } else if (c == '}') {
-                if (depth == 1) {
-                    out.append(c);
-                    inConstraint = false;
-                } else if (!inConstraint) {
-                    out.append(c);
-                }
-                depth = Math.max(0, depth - 1);
-            } else if (c == ':' && depth == 1 && !inConstraint) {
-                inConstraint = true;
-            } else if (!inConstraint) {
-                out.append(c);
-            }
-        }
-        return out.toString();
-    }
-
     /**
      * Applies the Vert.x status code fallback: when the routing context carries an authoritative
      * Vert.x failure status that differs from the status the exception mapper produced, the Vert.x
@@ -338,7 +266,9 @@ public class ErrorPipeline {
      * contradict the title and publish a message the framework never intended for the client. The same
      * reasoning applies to everything else the superseded body carried: typed subclass fields (such as
      * {@link dev.vertique.rest.core.ValidationProblemDetail#errors()}) and RFC 9457 extension members
-     * are dropped with it, so only {@code instance} — request-scoped and status-independent — survives.
+     * are dropped with it, so only {@code instance} — which a mapper sets for this occurrence and which is
+     * status-independent — survives. The pipeline itself never fills {@code instance}: the request
+     * path carries the caller's bytes, and a route template is not a URI reference.
      * A non-{@code ProblemDetail} entity is fail-closed the same way: replaced with a fresh
      * {@link ProblemDetail} for the winning status and {@code application/problem+json}, rather than
      * shipping the superseded body under a new status line.
@@ -383,14 +313,14 @@ public class ErrorPipeline {
             // ProblemDetail subclass (e.g. ValidationProblemDetail) or carry RFC 9457 extension
             // members, and toBuilder() would copy those fields — which describe the status being
             // superseded — straight into the overriding status, defeating the cleared detail. Only
-            // instance carries over; it is request-scoped and status-independent.
+            // instance carries over; a mapper set it for this occurrence and it is status-independent.
             Response.ResponseBuilder rb =
                     Response.status(vertxStatus).entity(ProblemDetail.of(vertxStatus, null, pd.instance()));
             return rebuildWithHeaders(response, rb, true, false);
         }
         // Fail closed: a non-ProblemDetail entity (or a missing one) describes the superseded status —
         // including via its Content-Type. Replace it with a fresh problem document for the winning
-        // status rather than re-labelling the old body. instance is filled by enrichProblemDetail.
+        // status rather than re-labelling the old body.
         Response.ResponseBuilder rb = Response.status(vertxStatus)
                 .entity(ProblemDetail.of(vertxStatus, null))
                 .type("application/problem+json");

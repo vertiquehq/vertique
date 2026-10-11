@@ -148,8 +148,8 @@ class ApplicationIT {
 
         // A malformed identifier is rejected by the built-in UUID parameter converter, which answers
         // 400 with a detail naming the parameter and its target type. Neither that detail nor the RFC
-        // 9457 "instance" member (the matched route template, never the request path) carries the
-        // submitted value, so it is absent from the whole body.
+        // 9457 "instance" member carries the submitted value: the framework fills no instance, so the
+        // value is absent from the whole body.
         String malformedIdBody = given().when()
                 .get("/items/not-a-uuid")
                 .then()
@@ -159,6 +159,9 @@ class ApplicationIT {
         assertFalse(
                 malformedIdBody.contains("not-a-uuid"),
                 "the 400 body for a malformed id must not echo the submitted value, found: " + malformedIdBody);
+        assertFalse(
+                new JsonObject(malformedIdBody).containsKey("instance"),
+                "the framework fills no instance, found: " + malformedIdBody);
 
         Response created = given().contentType(ContentType.JSON)
                 .body(new JsonObject()

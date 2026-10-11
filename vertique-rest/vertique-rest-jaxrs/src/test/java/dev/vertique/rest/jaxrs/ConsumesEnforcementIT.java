@@ -87,6 +87,8 @@ public class ConsumesEnforcementIT {
 
     private HttpServer server;
     private WebClient client;
+    private ch.qos.logback.classic.Logger attachedLogger;
+    private ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> attachedAppender;
 
     // --- Teardown ---
 
@@ -101,6 +103,9 @@ public class ConsumesEnforcementIT {
      */
     @AfterEach
     void tearDown(VertxTestContext ctx) {
+        if (attachedLogger != null) {
+            attachedLogger.detachAppender(attachedAppender);
+        }
         if (client != null) {
             client.close();
         }
@@ -394,14 +399,12 @@ public class ConsumesEnforcementIT {
     @Test
     @DisplayName("MalformedDeclaredConsumesIsWarnedAndRejectsEveryBody — '*/json' declared → WARN at startup, 415")
     void malformedDeclaredConsumesIsWarnedAndRejectsEveryBody(Vertx vertx, VertxTestContext ctx) {
-        ch.qos.logback.classic.Logger registrarLog =
-                (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(JaxRsRouteRegistrar.class);
-        ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> appender =
-                new ch.qos.logback.core.read.ListAppender<>();
-        appender.start();
-        registrarLog.addAppender(appender);
+        attachedLogger = (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(JaxRsRouteRegistrar.class);
+        attachedAppender = new ch.qos.logback.core.read.ListAppender<>();
+        attachedAppender.start();
+        attachedLogger.addAppender(attachedAppender);
+        ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> appender = attachedAppender;
         deploy(vertx, ctx, Set.of(new MalformedConsumesResource()), (port, c) -> {
-            registrarLog.detachAppender(appender);
             c.post(port, "127.0.0.1", "/typo")
                     .putHeader("Content-Type", "application/json")
                     .sendBuffer(Buffer.buffer("{}"))

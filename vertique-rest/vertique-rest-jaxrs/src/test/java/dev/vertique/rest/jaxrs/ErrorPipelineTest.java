@@ -13,9 +13,7 @@ import ch.qos.logback.core.read.ListAppender;
 import dev.vertique.rest.core.ProblemDetail;
 import dev.vertique.rest.core.ValidationErrorDetail;
 import dev.vertique.rest.core.ValidationProblemDetail;
-import dev.vertique.rest.core.events.RequestCompletionRecorder;
 import dev.vertique.rest.core.interceptor.ErrorInterceptor;
-import dev.vertique.rest.core.routing.RestOperationDescriptor;
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
 import io.vertx.core.http.HttpServerRequest;
@@ -46,7 +44,6 @@ class ErrorPipelineTest {
     private RoutingContext ctx;
     private HttpServerRequest request;
     private Map<String, Object> ctxData;
-    private Map<String, Object> ctxHolders;
     private ErrorPipeline pipeline;
 
     @BeforeEach
@@ -57,19 +54,6 @@ class ErrorPipelineTest {
         lenient().when(ctx.data()).thenReturn(ctxData);
         lenient().when(ctx.request()).thenReturn(request);
         lenient().when(request.path()).thenReturn("/test");
-        // The completion-state holder is read and written through RoutingContext.put/get, which the
-        // mock otherwise ignores.
-        ctxHolders = new HashMap<>();
-        lenient()
-                .doAnswer(invocation -> {
-                    ctxHolders.put(invocation.getArgument(0), invocation.getArgument(1));
-                    return ctx;
-                })
-                .when(ctx)
-                .put(anyString(), any());
-        lenient()
-                .when(ctx.get(anyString()))
-                .thenAnswer(invocation -> ctxHolders.get(invocation.<String>getArgument(0)));
 
         DefaultExceptionMapper defaults = new DefaultExceptionMapper().on(Throwable.class, ex -> Response.status(500)
                 .entity(ProblemDetail.of(500, "Internal Server Error"))
@@ -80,14 +64,6 @@ class ErrorPipelineTest {
         RestExceptionMapper failureMapper = new RestExceptionMapper();
 
         pipeline = new ErrorPipeline(List.of(), List.of(), failureMapper, registry);
-    }
-
-    /** Records {@code routeTemplate} as the operation the request matched, as the route handler does. */
-    private void recordMatchedOperation(String routeTemplate) {
-        RestOperationDescriptor operation = mock(RestOperationDescriptor.class);
-        lenient().when(operation.routeTemplate()).thenReturn(routeTemplate);
-        RequestCompletionRecorder.installHolder(ctx);
-        RequestCompletionRecorder.operationRouteHandler(operation).handle(ctx);
     }
 
     @Nested
@@ -532,51 +508,22 @@ class ErrorPipelineTest {
         }
 
         @Test
-        @DisplayName("ProblemDetail instance is the matched route template, not the request path")
-        void problemDetailInstanceIsTheRouteTemplate() {
-            ctxData.put(VertxFailureStatus.KEY, 401);
+        @DisplayName("The pipeline never fills ProblemDetail.instance, so a malformed path segment is not echoed")
+        void problemDetailInstanceIsNeverFilledFromTheRequest() {
+            ctxData.put(VertxFailureStatus.KEY, 400);
             lenient().when(request.path()).thenReturn("/items/not-a-uuid");
-            recordMatchedOperation("/items/{id}");
+            lenient().when(request.uri()).thenReturn("/items/not-a-uuid?q=leaky-marker");
 
-            Future<Response> future = pipeline.mapToResponse(ctx, new RuntimeException("auth failed"));
-            assertTrue(future.succeeded());
-
-            Response response = future.result();
-            assertInstanceOf(ProblemDetail.class, response.getEntity());
-            ProblemDetail pd = (ProblemDetail) response.getEntity();
-            assertEquals("/items/{id}", pd.instance());
-        }
-
-        @Test
-        @DisplayName("ProblemDetail instance drops a regex constraint from the route template")
-        void problemDetailInstanceDropsRegexConstraints() {
-            ctxData.put(VertxFailureStatus.KEY, 401);
-            recordMatchedOperation("/orders/{id: [0-9]{8}}/lines/{line:\\d+}");
-
-            Future<Response> future = pipeline.mapToResponse(ctx, new RuntimeException("auth failed"));
+            Future<Response> future = pipeline.mapToResponse(ctx, new RuntimeException("bad request"));
             assertTrue(future.succeeded());
 
             ProblemDetail pd =
                     assertInstanceOf(ProblemDetail.class, future.result().getEntity());
-            assertEquals("/orders/{id}/lines/{line}", pd.instance());
+            assertNull(pd.instance(), "no request bytes, and no route template, in a framework-filled instance");
         }
 
         @Test
-        @DisplayName("ProblemDetail instance stays absent when no operation route matched")
-        void problemDetailInstanceIsAbsentWithoutAMatchedOperation() {
-            ctxData.put(VertxFailureStatus.KEY, 404);
-            lenient().when(request.path()).thenReturn("/no-such-route/leaky-marker");
-
-            Future<Response> future = pipeline.mapToResponse(ctx, new RuntimeException("not found"));
-            assertTrue(future.succeeded());
-
-            ProblemDetail pd =
-                    assertInstanceOf(ProblemDetail.class, future.result().getEntity());
-            assertNull(pd.instance(), "an unmatched request has no template and must not echo its path");
-        }
-
-        @Test
-        @DisplayName("An instance the mapper set is kept")
+        @DisplayName("An instance the mapper set is kept as written")
         void explicitInstanceIsKept() {
             DefaultExceptionMapper defaults = new DefaultExceptionMapper()
                     .on(Throwable.class, ex -> Response.status(409)
@@ -585,7 +532,6 @@ class ErrorPipelineTest {
                             .build());
             ErrorPipeline customPipeline = new ErrorPipeline(
                     List.of(), List.of(), new RestExceptionMapper(), new ExceptionMapperRegistry(defaults, Set.of()));
-            recordMatchedOperation("/orders/{id}");
 
             Future<Response> future = customPipeline.mapToResponse(ctx, new RuntimeException("conflict"));
             assertTrue(future.succeeded());
@@ -596,10 +542,34 @@ class ErrorPipelineTest {
         }
 
         @Test
+        @DisplayName("A mapper-set instance survives a status override")
+        void explicitInstanceSurvivesAStatusOverride() {
+            DefaultExceptionMapper defaults = new DefaultExceptionMapper()
+                    .on(Throwable.class, ex -> Response.status(500)
+                            .entity(ProblemDetail.of(500, "Internal Server Error", "urn:uuid:7"))
+                            .type("application/problem+json")
+                            .build());
+            ErrorPipeline customPipeline = new ErrorPipeline(
+                    List.of(), List.of(), new RestExceptionMapper(), new ExceptionMapperRegistry(defaults, Set.of()));
+            ctxData.put(VertxFailureStatus.KEY, 400);
+
+            ProblemDetail pd = assertInstanceOf(
+                    ProblemDetail.class,
+                    customPipeline
+                            .mapToResponse(ctx, new RuntimeException("bad request"))
+                            .result()
+                            .getEntity());
+
+            assertEquals(400, pd.status());
+            assertEquals("urn:uuid:7", pd.instance());
+        }
+
+        @Test
         @DisplayName("A rebuilt body does not inherit Content-Length from the response it replaced")
         void rebuiltBodyDropsInheritedContentLength() {
-            // The mapper declares the length of the body it authored. Instance enrichment replaces that
-            // body, so the declared length describes bytes that will never be written — and the wire path
+            // The mapper declares the length of the body it authored. Equal-status sanitization replaces
+            // that body (the synthesized detail is cleared), so the declared length describes bytes that
+            // will never be written — and the wire path
             // copies JAX-RS headers verbatim while the JSON encoder supplies no length of its own, so an
             // inherited value would ship a framing violation. Every other header still belongs to the
             // response and must survive.
@@ -613,14 +583,14 @@ class ErrorPipelineTest {
             ExceptionMapperRegistry registry = new ExceptionMapperRegistry(defaults, Set.of());
             ErrorPipeline customPipeline = new ErrorPipeline(List.of(), List.of(), new RestExceptionMapper(), registry);
 
-            recordMatchedOperation("/test");
+            ctxData.put(VertxFailureStatus.KEY, 401);
 
             Future<Response> future = customPipeline.mapToResponse(ctx, new RuntimeException("no credentials"));
             assertTrue(future.succeeded());
 
             Response response = future.result();
             ProblemDetail pd = assertInstanceOf(ProblemDetail.class, response.getEntity());
-            assertEquals("/test", pd.instance(), "the body must actually have been rebuilt by enrichment");
+            assertNull(pd.detail(), "the body must actually have been rebuilt by equal-status sanitization");
             assertNull(
                     response.getHeaderString("Content-Length"),
                     "a Content-Length describing the superseded body must not survive onto the rebuilt one");
@@ -650,14 +620,14 @@ class ErrorPipelineTest {
             ExceptionMapperRegistry registry = new ExceptionMapperRegistry(defaults, Set.of());
             ErrorPipeline customPipeline = new ErrorPipeline(List.of(), List.of(), new RestExceptionMapper(), registry);
 
-            recordMatchedOperation("/test");
+            ctxData.put(VertxFailureStatus.KEY, 401);
 
             Future<Response> future = customPipeline.mapToResponse(ctx, new RuntimeException("no credentials"));
             assertTrue(future.succeeded());
 
             Response response = future.result();
             ProblemDetail pd = assertInstanceOf(ProblemDetail.class, response.getEntity());
-            assertEquals("/test", pd.instance(), "the body must actually have been rebuilt by enrichment");
+            assertNull(pd.detail(), "the body must actually have been rebuilt by equal-status sanitization");
             assertNull(
                     response.getHeaderString("Content-Encoding"),
                     "an encoding the rebuilt body was never encoded with would make it undecodable");

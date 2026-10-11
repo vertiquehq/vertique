@@ -25,7 +25,7 @@ import java.util.Objects;
  * matches any media type, and {@code application/*} matches any application subtype. RFC 9110
  * defines no range with a wildcard type and a concrete subtype, so such a value (for example
  * {@code *}{@code /xml}) is malformed: {@link #parse(String)} returns {@code null} for it, and a
- * directly constructed one is never compatible with a media type of another type or subtype.
+ * directly constructed one is compatible only with a full wildcard and with an identical value.
  */
 public final class MediaType {
 

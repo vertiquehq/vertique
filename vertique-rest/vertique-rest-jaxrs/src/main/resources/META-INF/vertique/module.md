@@ -72,7 +72,9 @@ declared `application/*` accepts any `application/...` request type. A request `
 media type, not a range, so a missing, unparseable or wildcard one (`*/*`, `application/*`, or the
 malformed `*/json`) satisfies no declaration and is answered with 415. A body counts whether or not
 the request declared its length: an HTTP/2 request with neither `Content-Length` nor
-`Transfer-Encoding` is gated like any other. A declared `@Consumes` entry that is not a media type
+`Transfer-Encoding` is gated like any other, including a body the body handler buffered and a
+multipart or form body it decoded into attributes and uploads. An explicit `Content-Length: 0`
+without `Transfer-Encoding` is an empty request and is not gated. A declared `@Consumes` entry that is not a media type
 (`*/json`) matches no request; startup logs a warning naming the operation, and a route left with no
 usable entry answers every body request with 415.
 
@@ -547,7 +549,6 @@ RequestInterceptor.onError sync observers, with the original cause
   → RestExceptionMapper.translate(cause)
   → ExceptionMapperRegistry.toResponse(translated)
   → Vert.x status-code fallback (only when no specific mapper matched)
-  → ProblemDetail instance enrichment from the matched route template (absent when no operation matched)
   → ErrorInterceptor.afterMapping (async chain, Response → Response)
   → unhandled-exception logging (framework Throwable catch-all only; level follows the final status)
 ```
@@ -643,24 +644,22 @@ the declared types, which the server controls, and not the request's `Content-Ty
 `Link` value is parsed by the URI builder, whose own diagnostics name the template they reject: do not
 pass a request header to `Link.valueOf` or `UriBuilder` and publish the exception message.
 
-The same rule covers `ProblemDetail.instance`. When a `ProblemDetail` leaves the error pipeline
-without one, the framework sets it to the route template of the operation the request matched, for
-example `/items/{id}` (a regular-expression constraint such as `{id: [0-9]+}` is dropped), never to
-the request path: the path of a failed request carries the very segment that failed conversion or
-validation. A request that matched no operation route (an unknown path, a method no route serves)
-gets no `instance`. An `instance` your own mapper sets is kept as
-written, so a mapper that wants an occurrence identifier supplies one.
+The same rule covers `ProblemDetail.instance`: the framework never fills it. The request path of a
+failed request carries the very segment that failed conversion or validation, and a route template
+(`/items/{id}`) is not a URI reference, which RFC 9457 requires. An `instance` your own mapper sets
+is kept as written, including across a status override, so a mapper that wants an occurrence
+identifier supplies one (a server-generated `urn:uuid:` value, never an inbound header).
 
-**Headers when the body is rebuilt.** Rebuilding the body — by this override, or by the `instance`
-enrichment a `ProblemDetail` on a matched operation route gets — drops the headers your mapper set that describe the *octets*
+**Headers when the body is rebuilt.** Rebuilding the body — by this override, or by the equal-status
+detail sanitization — drops the headers your mapper set that describe the *octets*
 of the body it authored: `Content-Length`, `Content-Encoding`, `Content-Range`, `ETag`, and the
 digest headers (`Content-Digest`, `Repr-Digest`, `Digest`, `Content-MD5`). They would describe bytes
 the client never receives. Every other header survives, including `Content-Type`,
 `Content-Language`, and response-level headers such as `WWW-Authenticate`, `Retry-After` and
 `Allow` — a `WWW-Authenticate` is exactly what a status overridden *to* 401 needs. Set a
 representation header on an error response only if the body is one the framework will not touch
-(a non-`ProblemDetail` entity, or a `ProblemDetail` whose `instance` you set yourself and whose
-status is not overridden).
+(a response whose status Vert.x did not override and whose `ProblemDetail` carries no synthesized
+`detail`).
 
 ### `DefaultResponseSerializer`
 

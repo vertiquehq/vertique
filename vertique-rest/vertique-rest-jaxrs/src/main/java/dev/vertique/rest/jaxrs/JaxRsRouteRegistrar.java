@@ -1312,7 +1312,9 @@ public class JaxRsRouteRegistrar {
      * <p>A missing, unparseable or wildcard {@code Content-Type} header is treated as absent — the
      * request does not match any declared consume and is rejected with 415. An absent body (as signalled
      * by {@code Content-Length: 0} and no {@code Transfer-Encoding}) is never checked, consistent
-     * with the broad {@code ContentTypeValidationMiddleware} safety net.
+     * with the broad {@code ContentTypeValidationMiddleware} safety net. A request without
+     * {@code Content-Length} or {@code Transfer-Encoding} (HTTP/2) still has a body when the body
+     * handler read one or decoded a multipart or form body.
      *
      * <p>On mismatch the handler delegates to {@code ctx.fail(415, NotSupportedException)} carrying a
      * JAX-RS {@link Response} whose entity is already the diagnostic {@link ProblemDetail} — exactly
@@ -1353,13 +1355,19 @@ public class JaxRsRouteRegistrar {
 
             // Skip the check when the request has no body. The headers alone do not decide it: an
             // HTTP/2 request may carry DATA frames with neither Content-Length nor Transfer-Encoding,
-            // so a body the body handler already read counts too.
+            // so a body the body handler read counts too, and so does a multipart or form body, which
+            // the body handler decodes into form attributes and uploads instead of buffering. An
+            // explicit Content-Length of 0 with no Transfer-Encoding is definitively empty.
+            // ContentTypeValidationMiddleware applies the same rule; change both together.
             String contentLength = ctx.request().getHeader("Content-Length");
             String transferEncoding = ctx.request().getHeader("Transfer-Encoding");
             io.vertx.ext.web.RequestBody readBody = ctx.body();
-            boolean hasBody = (contentLength != null && !"0".equals(contentLength))
-                    || transferEncoding != null
-                    || (readBody != null && readBody.length() > 0);
+            boolean declaredEmpty = "0".equals(contentLength) && transferEncoding == null;
+            boolean hasBody = !declaredEmpty
+                    && (contentLength != null
+                            || transferEncoding != null
+                            || (readBody != null && readBody.length() > 0)
+                            || ctx.request().isExpectMultipart());
             if (!hasBody) {
                 ctx.next();
                 return;

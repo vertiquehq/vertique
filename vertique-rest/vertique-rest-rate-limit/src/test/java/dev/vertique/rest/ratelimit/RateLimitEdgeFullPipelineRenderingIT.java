@@ -114,8 +114,7 @@ class RateLimitEdgeFullPipelineRenderingIT {
                     assertEquals(429, body.getInteger("status"));
                     assertNull(
                             body.getString("instance"),
-                            "an edge denial happens before any operation route matches, so the pipeline has no "
-                                    + "route template to report and never reflects the request path");
+                            "the pipeline never fills instance, so the request path is not reflected");
                     ctx.completeNow();
                 }));
     }
@@ -136,7 +135,7 @@ class RateLimitEdgeFullPipelineRenderingIT {
                     assertNull(response.getHeader("Retry-After"));
                     JsonObject body = response.bodyAsJsonObject();
                     assertEquals(503, body.getInteger("status"));
-                    assertNull(body.getString("instance"), "no operation route matched at the edge");
+                    assertNull(body.getString("instance"), "the pipeline never fills instance");
                     ctx.completeNow();
                 }));
     }
@@ -275,7 +274,7 @@ class RateLimitEdgeFullPipelineRenderingIT {
                     assertEquals("application/problem+json", response.getHeader("Content-Type"));
                     JsonObject body = response.bodyAsJsonObject();
                     assertEquals(503, body.getInteger("status"));
-                    assertNull(body.getString("instance"), "no operation route matched at the edge");
+                    assertNull(body.getString("instance"), "the pipeline never fills instance");
                     ctx.completeNow();
                 }));
     }
