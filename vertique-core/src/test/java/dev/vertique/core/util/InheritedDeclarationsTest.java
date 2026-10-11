@@ -9,6 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.core.util.foreign.ChainMiddle;
 import dev.vertique.core.util.foreign.RelayLeaf;
+import java.lang.reflect.GenericDeclaration;
 import java.lang.reflect.Method;
 import java.lang.reflect.TypeVariable;
 import java.util.List;
@@ -568,16 +569,16 @@ class InheritedDeclarationsTest {
     @Test
     @DisplayName("type variables that are equal but not identical are the same type")
     void equalTypeVariablesAreTheSameType() throws NoSuchMethodException {
-        // Every Method copy parses its own generic signature, and concurrent first reflection on a
-        // class does the same for its type parameters; equals() is the contract, not identity.
-        TypeVariable<?> first =
+        // Reflection may hand out equal but not identical instances (concurrent first reflection on a
+        // class, a Method copy parsing its own signature), and which JDK does so varies: the twin
+        // makes the premise deterministic. equals() is the contract, not identity.
+        TypeVariable<?> original =
                 TypeVariableHolder.class.getMethod("g", Object.class).getTypeParameters()[0];
-        TypeVariable<?> second =
-                TypeVariableHolder.class.getMethod("g", Object.class).getTypeParameters()[0];
+        TypeVariable<?> twin = new TypeVariableTwin(original);
 
-        assertNotSame(first, second);
-        assertEquals(first, second);
-        assertTrue(GenericBindings.sameType(first, second, Map.of(), 0));
+        assertNotSame(original, twin);
+        assertEquals(twin, original);
+        assertTrue(GenericBindings.sameType(twin, original, Map.of(), 0));
     }
 
     @Test
@@ -620,5 +621,66 @@ class InheritedDeclarationsTest {
         assertEquals(
                 List.of("PrivateKeyApi.x[Object]"),
                 ownerSignatures(AnnotationResolver.inheritedDeclarations(resource, PrivateKeyResource.class)));
+    }
+
+    /** A type variable equal to, and distinct from, the one it delegates to. */
+    private static final class TypeVariableTwin implements TypeVariable<GenericDeclaration> {
+        private final TypeVariable<?> delegate;
+
+        TypeVariableTwin(TypeVariable<?> delegate) {
+            this.delegate = delegate;
+        }
+
+        @Override
+        public java.lang.reflect.Type[] getBounds() {
+            return delegate.getBounds();
+        }
+
+        @Override
+        public GenericDeclaration getGenericDeclaration() {
+            return delegate.getGenericDeclaration();
+        }
+
+        @Override
+        public String getName() {
+            return delegate.getName();
+        }
+
+        @Override
+        public java.lang.reflect.AnnotatedType[] getAnnotatedBounds() {
+            return delegate.getAnnotatedBounds();
+        }
+
+        @Override
+        public <T extends java.lang.annotation.Annotation> T getAnnotation(Class<T> annotationClass) {
+            return delegate.getAnnotation(annotationClass);
+        }
+
+        @Override
+        public java.lang.annotation.Annotation[] getAnnotations() {
+            return delegate.getAnnotations();
+        }
+
+        @Override
+        public java.lang.annotation.Annotation[] getDeclaredAnnotations() {
+            return delegate.getDeclaredAnnotations();
+        }
+
+        @Override
+        public boolean equals(Object other) {
+            return other instanceof TypeVariable<?> variable
+                    && variable.getName().equals(getName())
+                    && variable.getGenericDeclaration().equals(getGenericDeclaration());
+        }
+
+        @Override
+        public int hashCode() {
+            return delegate.hashCode();
+        }
+
+        @Override
+        public String toString() {
+            return delegate.toString();
+        }
     }
 }
