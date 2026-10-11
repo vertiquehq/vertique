@@ -38,8 +38,9 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * {@code Transfer-Encoding}. A check that decides "has a body" from those two headers alone skips
  * such a request entirely, whatever its {@code Content-Type}. The per-route {@code @Consumes} gate
  * and the broad {@code ContentTypeValidationMiddleware} must count a body the body handler read,
- * and a multipart or form body the body handler decodes instead of buffering, and must let a
- * request that carries no body at all through.
+ * and a request the body handler treats as multipart or form by its {@code Content-Type} (it
+ * decodes such a body instead of buffering it), and must let a request that carries no body at all
+ * through.
  *
  * <p>The client is a raw Vert.x {@code HttpClient}, because {@code WebClient} always declares a
  * length for a buffer; the response continuation is attached before the request ends, so no body
