@@ -107,7 +107,7 @@ SPDX-License-Identifier: EUPL-1.2
     </modules>
 
     <properties>
-        <revision>0.3.0-SNAPSHOT</revision>
+        <revision>0.4.0-SNAPSHOT</revision>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
 
