@@ -52,6 +52,7 @@ SPDX-License-Identifier: EUPL-1.2
         <module>vertique-resilience</module>
         <module>vertique-json</module>
         <module>vertique-json-schema</module>
+        <module>vertique-json-schema-validation</module>
         <module>vertique-security</module>
         <module>vertique-config</module>
         <module>vertique-bootstrap</module>
@@ -317,6 +318,11 @@ SPDX-License-Identifier: EUPL-1.2
             <dependency>
                 <groupId>dev.vertique</groupId>
                 <artifactId>vertique-json-schema</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-json-schema-validation</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>
