@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
 // SPDX-License-Identifier: EUPL-1.2
 
-package dev.vertique.rest.validation;
+package dev.vertique.json.schema.validation;
 
 import java.net.URI;
 import java.net.URISyntaxException;
