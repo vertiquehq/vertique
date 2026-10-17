@@ -87,6 +87,20 @@ it: a retry with the same idempotency key and a corrected payload completes the 
 transactional task service owns that rollback and must roll the transaction back when the completion
 future fails.
 
+Starting an instance validates the start payload the same way and rejects caller-caused problems with
+`WorkflowInvalidPayloadException` (HTTP 400 class, message `invalid start payload`, structured details with
+a root pointer path):
+
+- a missing payload for a start type that needs one, or a payload for a start type without one (`void`),
+  is reported with type `payload`;
+- a payload that does not bind to the declared start type is reported with type `binding`.
+
+The rejection is value-free: it carries no payload value, class name or decode message. The decode cause
+is logged at DEBUG level only. It happens before any instance row, history entry or deduplication claim is
+kept, because the start transaction rolls back; a retry with the same idempotency key and a corrected
+payload starts the instance. An application initial-state function that throws is still reported as
+`WorkflowDefinitionException`, now with the thrown exception as its cause and without its message.
+
 ---
 
 ## Key Classes

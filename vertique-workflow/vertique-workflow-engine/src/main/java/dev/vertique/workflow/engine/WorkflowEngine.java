@@ -21,6 +21,7 @@ import dev.vertique.workflow.exception.WorkflowConflictException;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
 import dev.vertique.workflow.exception.WorkflowIdempotencyConflictException;
 import dev.vertique.workflow.exception.WorkflowInstanceNotFoundException;
+import dev.vertique.workflow.exception.WorkflowInvalidPayloadException;
 import dev.vertique.workflow.exception.WorkflowPlanHashDriftException;
 import dev.vertique.workflow.exception.WorkflowSignalRejectedException;
 import dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException;
@@ -61,6 +62,8 @@ import java.time.Instant;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Dialect-neutral implementation of {@link WorkflowOperations} and
@@ -90,6 +93,8 @@ import java.util.UUID;
  */
 @Singleton
 final class WorkflowEngine implements WorkflowEngineHandle {
+
+    private static final Logger log = LoggerFactory.getLogger(WorkflowEngine.class);
 
     // --- Dependencies ---
 
@@ -579,8 +584,16 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      */
     private Future<WorkflowInstanceId> doCreateInstance(
             StartCommand cmd, RuntimeWorkflow rw, WorkflowInstanceId id, SqlClient tx) {
-        // Coerce payload to the declared start payload type.
-        Object coercedPayload = coercePayload(cmd.payload(), rw.startPayloadType());
+        // Validate and coerce the payload to the declared start payload type.
+        Object coercedPayload;
+        try {
+            coercedPayload = WorkflowPayloads.validateAndCoerceStartPayload(cmd.payload(), rw.startPayloadType());
+        } catch (WorkflowInvalidPayloadException e) {
+            if (e.getCause() != null) {
+                log.debug("Start payload rejected", e.getCause());
+            }
+            return Future.failedFuture(e);
+        }
 
         // Derive initial state via the init function.
         Object initialState;
@@ -588,7 +601,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             initialState = rw.initialState().apply(coercedPayload);
         } catch (Exception e) {
             return Future.failedFuture(new WorkflowDefinitionException(
-                    "initialState function threw for definition '" + cmd.definitionId() + "': " + e.getMessage()));
+                    "initialState function threw for definition '" + cmd.definitionId() + "'", e));
         }
         String stateJson = Json.encode(initialState);
 
@@ -1500,20 +1513,6 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      */
     private static Future<Void> requireRowUpdated(int rowCount, String context) {
         return WorkflowPayloads.requireRowUpdated(rowCount, context);
-    }
-
-    /**
-     * Coerces {@code payload} to {@code targetType} using {@code Json.encode → Json.decodeValue}
-     * when the payload is not already an instance of the target type.
-     *
-     * <p>Delegates to {@link WorkflowPayloads#coercePayload}.
-     *
-     * @param payload the incoming payload; may be null
-     * @param targetType the target class to coerce to; if null, returns payload unchanged
-     * @return the coerced payload, or the original payload if no coercion is needed
-     */
-    private static Object coercePayload(Object payload, Class<?> targetType) {
-        return WorkflowPayloads.coercePayload(payload, targetType);
     }
 
     /**

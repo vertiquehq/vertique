@@ -40,6 +40,9 @@ import java.util.List;
  */
 final class WorkflowPayloads {
 
+    private static final String DECISION_REJECTION = "invalid decision payload";
+    private static final String START_REJECTION = "invalid start payload";
+
     /** Utility class — no instances. */
     private WorkflowPayloads() {}
 
@@ -93,8 +96,11 @@ final class WorkflowPayloads {
         // ("java.lang.Void") are accepted as no-payload decisions.
         if ("void".equals(payloadTypeName) || "java.lang.Void".equals(payloadTypeName)) {
             if (payload != null) {
-                throw invalidDecisionPayload(
-                        "payload is not accepted for a decision without a payload type", "payload", null);
+                throw invalidPayload(
+                        DECISION_REJECTION,
+                        "payload is not accepted for a decision without a payload type",
+                        "payload",
+                        null);
             }
             return null;
         }
@@ -108,12 +114,57 @@ final class WorkflowPayloads {
         }
 
         if (payload == null) {
-            throw invalidDecisionPayload("payload is required", "payload", null);
+            throw invalidPayload(DECISION_REJECTION, "payload is required", "payload", null);
         }
         try {
             return coercePayload(payload, payloadClass);
         } catch (DecodeException e) {
             throw bindingFailure(e);
+        }
+    }
+
+    /**
+     * Validates the start payload against the definition's declared start payload type and coerces
+     * it if necessary.
+     *
+     * <p>Payload-nullability rule:
+     * <ul>
+     *   <li>If {@code startPayloadType} is {@code void.class} or {@code Void.class}, the payload
+     *       MUST be {@code null}.</li>
+     *   <li>If {@code startPayloadType} is {@code null}, the payload is handled exactly as
+     *       {@link #coercePayload(Object, Class)} does.</li>
+     *   <li>Otherwise the payload MUST be non-null and is coerced via JSON round-trip if it is not
+     *       already an instance of the declared class.</li>
+     * </ul>
+     *
+     * <p>Caller mistakes are reported as {@link WorkflowInvalidPayloadException} whose message and
+     * details never carry a payload value, a payload type name, or a binder message. A payload that
+     * cannot bind to the declared class retains the {@link DecodeException} as the cause.
+     *
+     * @param payload the raw payload from the start command; may be null
+     * @param startPayloadType the declared start payload type; may be null
+     * @return the coerced payload (may be {@code null} for void start types)
+     * @throws WorkflowInvalidPayloadException if the payload violates the nullability rule or does
+     *     not bind to the declared class
+     */
+    static Object validateAndCoerceStartPayload(Object payload, Class<?> startPayloadType) {
+        if (startPayloadType == null) {
+            return coercePayload(payload, null);
+        }
+        if (startPayloadType == void.class || startPayloadType == Void.class) {
+            if (payload != null) {
+                throw invalidPayload(
+                        START_REJECTION, "payload is not accepted for a start type without a payload", "payload", null);
+            }
+            return null;
+        }
+        if (payload == null) {
+            throw invalidPayload(START_REJECTION, "payload is required", "payload", null);
+        }
+        try {
+            return coercePayload(payload, startPayloadType);
+        } catch (DecodeException e) {
+            throw invalidPayload(START_REJECTION, "payload does not bind to the declared type", "binding", e);
         }
     }
 
@@ -124,7 +175,7 @@ final class WorkflowPayloads {
      * @return the exception to fail the completion with
      */
     static WorkflowInvalidPayloadException unknownDecision() {
-        return invalidDecisionPayload("decision is not declared for this task step", "decision", null);
+        return invalidPayload(DECISION_REJECTION, "decision is not declared for this task step", "decision", null);
     }
 
     /**
@@ -135,15 +186,15 @@ final class WorkflowPayloads {
      * @return the exception to fail the command with
      */
     static WorkflowInvalidPayloadException bindingFailure(DecodeException cause) {
-        return invalidDecisionPayload("payload does not bind to the declared type", "binding", cause);
+        return invalidPayload(DECISION_REJECTION, "payload does not bind to the declared type", "binding", cause);
     }
 
-    private static WorkflowInvalidPayloadException invalidDecisionPayload(
-            String detailMessage, String detailType, @Nullable Throwable cause) {
+    private static WorkflowInvalidPayloadException invalidPayload(
+            String message, String detailMessage, String detailType, @Nullable Throwable cause) {
         List<ViolationDetail> details = List.of(new ViolationDetail("", detailMessage, detailType, null));
         return cause == null
-                ? new WorkflowInvalidPayloadException("invalid decision payload", details)
-                : new WorkflowInvalidPayloadException("invalid decision payload", details, cause);
+                ? new WorkflowInvalidPayloadException(message, details)
+                : new WorkflowInvalidPayloadException(message, details, cause);
     }
 
     /**
