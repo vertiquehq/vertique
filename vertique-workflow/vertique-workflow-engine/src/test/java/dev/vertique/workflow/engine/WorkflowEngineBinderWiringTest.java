@@ -713,6 +713,7 @@ class WorkflowEngineBinderWiringTest {
         WorkflowInstance inst = instanceAt("human-task", WaitType.TASK, taskId.toString(), null, tenantMetadata("T1"));
         TaskRecord task = minimalOpenTask(taskId, inst.id());
         when(h.taskStore().findById(taskId, tx)).thenReturn(Future.succeededFuture(Optional.of(task)));
+        when(h.taskStore().lockForCompletion(taskId, tx)).thenReturn(Future.succeededFuture(Optional.of(task)));
         when(h.dedup().claimOrResolveTaskReassignment(eq(taskId), any(), eq(inst.id()), any(), eq(tx)))
                 .thenReturn(Future.succeededFuture(new DedupClaim(true, "fp")));
         when(h.instances().findById(inst.id(), tx)).thenReturn(Future.succeededFuture(Optional.of(inst)));
@@ -1699,6 +1700,7 @@ class WorkflowEngineBinderWiringTest {
         WorkflowInstance inst = instanceAt("human-task", WaitType.TASK, taskId.toString(), null, null);
         TaskRecord task = minimalOpenTask(taskId, inst.id());
         when(h.taskStore().findById(taskId, tx)).thenReturn(Future.succeededFuture(Optional.of(task)));
+        when(h.taskStore().lockForCompletion(taskId, tx)).thenReturn(Future.succeededFuture(Optional.of(task)));
         when(h.dedup().claimOrResolveTaskReassignment(eq(taskId), any(), eq(inst.id()), any(), eq(tx)))
                 .thenReturn(Future.succeededFuture(new DedupClaim(true, "fp")));
         when(h.instances().findById(inst.id(), tx)).thenReturn(Future.succeededFuture(Optional.of(inst)));

@@ -15,6 +15,7 @@ import dev.vertique.workflow.exception.WorkflowConflictException;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
 import dev.vertique.workflow.exception.WorkflowIdempotencyConflictException;
 import dev.vertique.workflow.exception.WorkflowPlanHashDriftException;
+import dev.vertique.workflow.exception.WorkflowStaleAssignmentException;
 import dev.vertique.workflow.exception.WorkflowStaleSubjectVersionException;
 import dev.vertique.workflow.exception.WorkflowTaskNotFoundException;
 import dev.vertique.workflow.exception.WorkflowTaskNotWaitingException;
@@ -390,7 +391,7 @@ final class TaskLifecycleService {
      *   <li>Decision validation and payload coercion.</li>
      *   <li>Non-locking instance read; validates WAITING/TASK/wait-key slot.</li>
      *   <li>Cancel the due-date timer (if present) — lock order: timers before tasks.</li>
-     *   <li>Lock the task row for completion.</li>
+     *   <li>Lock the task row for completion; a supplied {@code expectedAssignment} must still match.</li>
      *   <li>Write completion columns.</li>
      *   <li>Apply decision applicator to state.</li>
      *   <li>Optimistic UPDATE on workflow_instances.</li>
@@ -584,6 +585,14 @@ final class TaskLifecycleService {
                         return Future.<TaskMutationResult>failedFuture(
                                 new WorkflowConflictException("Task '" + cmd.taskId() + "' is no longer OPEN"));
                     }
+                    // Precondition: the assignment the caller saw must still match the locked row.
+                    if (cmd.expectedAssignment() != null
+                            && !cmd.expectedAssignment().equals(optLocked.get().assignment())) {
+                        return Future.<TaskMutationResult>failedFuture(new WorkflowStaleAssignmentException(
+                                cmd.taskId(),
+                                cmd.expectedAssignment(),
+                                optLocked.get().assignment()));
+                    }
 
                     Instant now = clock.instant();
                     String payloadJson = finalCoercedPayload != null ? Json.encode(finalCoercedPayload) : null;
@@ -716,6 +725,14 @@ final class TaskLifecycleService {
                     if (optLocked.isEmpty()
                             || optLocked.get().status() != dev.vertique.workflow.tasks.TaskStatus.OPEN) {
                         return Future.<TaskMutationResult>succeededFuture(TaskMutationResult.STALE_NOOP);
+                    }
+                    // Precondition: the assignment the caller saw must still match the locked row.
+                    if (cmd.expectedAssignment() != null
+                            && !cmd.expectedAssignment().equals(optLocked.get().assignment())) {
+                        return Future.<TaskMutationResult>failedFuture(new WorkflowStaleAssignmentException(
+                                taskId,
+                                cmd.expectedAssignment(),
+                                optLocked.get().assignment()));
                     }
                     // Step 3: Lock the branch token.
                     return branchTokens.findByIdForUpdate(branchTokenId, tx).compose(optBranch -> {
@@ -1443,7 +1460,7 @@ final class TaskLifecycleService {
      * <ol>
      *   <li>Non-locking task lookup to discover workflowId.</li>
      *   <li>Fingerprint computation and dedup claim.</li>
-     *   <li>Conditional reassignment UPDATE on the task row.</li>
+     *   <li>Lock the task row; require OPEN and a matching {@code expectedAssignment} when supplied; reassign.</li>
      *   <li>Append {@code TASK_REASSIGNED} history on success.</li>
      * </ol>
      *
@@ -1510,8 +1527,26 @@ final class TaskLifecycleService {
     private Future<TaskMutationResult> doReassignBound(
             TaskReassignmentCommand cmd, TaskRecord task, WorkflowInstance inst, SqlClient tx) {
         Instant now = clock.instant();
+        // Lock the task row first so the expectedAssignment precondition is checked against the
+        // row the reassignment then mutates.
         return taskStore
-                .reassign(cmd.taskId(), cmd.newAssignment(), cmd.reassignedBy(), cmd.reason(), now, tx)
+                .lockForCompletion(cmd.taskId(), tx)
+                .compose(optLocked -> {
+                    if (optLocked.isEmpty()
+                            || optLocked.get().status() != dev.vertique.workflow.tasks.TaskStatus.OPEN) {
+                        return Future.<TaskReassignmentResult>failedFuture(new WorkflowConflictException(
+                                "Task '" + cmd.taskId() + "' is no longer OPEN; reassignment lost"));
+                    }
+                    if (cmd.expectedAssignment() != null
+                            && !cmd.expectedAssignment().equals(optLocked.get().assignment())) {
+                        return Future.<TaskReassignmentResult>failedFuture(new WorkflowStaleAssignmentException(
+                                cmd.taskId(),
+                                cmd.expectedAssignment(),
+                                optLocked.get().assignment()));
+                    }
+                    return taskStore.reassign(
+                            cmd.taskId(), cmd.newAssignment(), cmd.reassignedBy(), cmd.reason(), now, tx);
+                })
                 .compose(result -> switch (result) {
                     case TaskReassignmentResult.LostToTerminal ltt ->
                         Future.failedFuture(new WorkflowConflictException(

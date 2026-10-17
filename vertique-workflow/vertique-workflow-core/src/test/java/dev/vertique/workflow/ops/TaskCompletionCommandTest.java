@@ -9,6 +9,7 @@ import static org.assertj.core.api.Assertions.assertThatNoException;
 import static org.assertj.core.api.Assertions.assertThatNullPointerException;
 
 import dev.vertique.workflow.actor.WorkflowActor;
+import dev.vertique.workflow.tasks.TaskAssignment;
 import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -176,6 +177,79 @@ class TaskCompletionCommandTest {
                     new TaskCompletionCommand(TASK_ID, "approve", null, "my-idempotency-key", ACTOR, null);
 
             assertThat(cmd.reviewedSubjectVersion()).isNull();
+        }
+    }
+
+    // --- expectedAssignment precondition ---
+
+    @Nested
+    @DisplayName("expectedAssignment precondition")
+    class ExpectedAssignmentPrecondition {
+
+        @Test
+        @DisplayName("legacy six-argument constructor leaves expectedAssignment null")
+        void legacyConstructorLeavesExpectedAssignmentNull() {
+            TaskCompletionCommand cmd = new TaskCompletionCommand(TASK_ID, "approve", null, "idem-1", ACTOR, "v3");
+
+            assertThat(cmd.expectedAssignment()).isNull();
+            assertThat(cmd.reviewedSubjectVersion()).isEqualTo("v3");
+        }
+
+        @Test
+        @DisplayName("canonical constructor round-trips a Queue expectedAssignment")
+        void canonicalConstructorRoundTripsQueue() {
+            TaskAssignment expected = new TaskAssignment.Queue("review-queue");
+
+            TaskCompletionCommand cmd =
+                    new TaskCompletionCommand(TASK_ID, "approve", null, "idem-1", ACTOR, null, expected);
+
+            assertThat(cmd.expectedAssignment()).isEqualTo(expected);
+        }
+
+        @Test
+        @DisplayName("canonical constructor round-trips a User expectedAssignment alongside the other components")
+        void canonicalConstructorRoundTripsUser() {
+            TaskAssignment expected = new TaskAssignment.User("alice");
+            Object payload = new Object();
+
+            TaskCompletionCommand cmd =
+                    new TaskCompletionCommand(TASK_ID, "approve", payload, "my-key", ACTOR, "v3", expected);
+
+            assertThat(cmd.expectedAssignment()).isEqualTo(expected);
+            assertThat(cmd.taskId()).isEqualTo(TASK_ID);
+            assertThat(cmd.decisionName()).isEqualTo("approve");
+            assertThat(cmd.payload()).isSameAs(payload);
+            assertThat(cmd.idempotencyKey()).isEqualTo("my-key");
+            assertThat(cmd.completedBy()).isEqualTo(ACTOR);
+            assertThat(cmd.reviewedSubjectVersion()).isEqualTo("v3");
+        }
+
+        @Test
+        @DisplayName("canonical constructor accepts an explicit null expectedAssignment")
+        void canonicalConstructorAcceptsNullExpectedAssignment() {
+            TaskCompletionCommand cmd =
+                    new TaskCompletionCommand(TASK_ID, "approve", null, "idem-1", ACTOR, null, null);
+
+            assertThat(cmd.expectedAssignment()).isNull();
+        }
+
+        @Test
+        @DisplayName("blank idempotencyKey still throws IllegalArgumentException through the canonical constructor")
+        void blankIdempotencyKeyStillRejected() {
+            TaskAssignment expected = new TaskAssignment.Queue("review-queue");
+
+            assertThatIllegalArgumentException()
+                    .isThrownBy(() -> new TaskCompletionCommand(TASK_ID, "approve", null, "  ", ACTOR, null, expected));
+        }
+
+        @Test
+        @DisplayName("null taskId still throws NullPointerException through the canonical constructor")
+        void nullTaskIdStillRejected() {
+            TaskAssignment expected = new TaskAssignment.Queue("review-queue");
+
+            assertThatNullPointerException()
+                    .isThrownBy(() -> new TaskCompletionCommand(null, "approve", null, "idem-1", ACTOR, null, expected))
+                    .withMessageContaining("taskId");
         }
     }
 }

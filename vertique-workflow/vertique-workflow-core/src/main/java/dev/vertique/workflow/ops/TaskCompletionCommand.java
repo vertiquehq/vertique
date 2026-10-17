@@ -4,6 +4,7 @@
 package dev.vertique.workflow.ops;
 
 import dev.vertique.workflow.actor.WorkflowActor;
+import dev.vertique.workflow.tasks.TaskAssignment;
 import jakarta.annotation.Nullable;
 import java.util.Objects;
 import java.util.UUID;
@@ -45,6 +46,14 @@ import java.util.UUID;
  * instead). See ADR-0055 (version-aware approvals) and ADR-0057 (fingerprint v2) for the full
  * contract.
  *
+ * <p>{@code expectedAssignment} is an optional precondition: the assignment the caller observed
+ * when it decided that {@code completedBy} was eligible to act. The engine compares it against the
+ * task row it holds locked for the completion and fails with
+ * {@link dev.vertique.workflow.exception.WorkflowStaleAssignmentException} when the assignment has
+ * moved in the meantime, so an eligibility decision made outside the transaction cannot be applied
+ * to a task that has since been reassigned. {@code null} disables the check. It is a precondition,
+ * not mutation content, and is <b>not</b> part of the idempotency fingerprint.
+ *
  * @param taskId the stable UUID of the task to complete; must not be null
  * @param decisionName the name of the decision being submitted; must not be null or blank
  * @param payload the decision payload; nullability is decision-specific and validated by the engine
@@ -53,6 +62,10 @@ import java.util.UUID;
  * @param reviewedSubjectVersion the version of the subject object the reviewer reviewed when making
  *     the decision; may be null; ignored for version-stability validation when the target task's
  *     {@code requireVersionStability=false}, but always participates in idempotency fingerprinting
+ * @param expectedAssignment the assignment the caller observed when it decided the actor was eligible;
+ *     compared against the locked task row, with a mismatch failing the command with
+ *     {@link dev.vertique.workflow.exception.WorkflowStaleAssignmentException}; may be null, which
+ *     disables the check; not part of the idempotency fingerprint
  */
 public record TaskCompletionCommand(
         UUID taskId,
@@ -60,7 +73,34 @@ public record TaskCompletionCommand(
         Object payload,
         String idempotencyKey,
         WorkflowActor completedBy,
-        @Nullable String reviewedSubjectVersion) {
+        @Nullable String reviewedSubjectVersion,
+        @Nullable TaskAssignment expectedAssignment) {
+
+    /**
+     * Creates a completion command without an assignment precondition.
+     *
+     * <p>Equivalent to the canonical constructor with a {@code null} {@code expectedAssignment}.
+     *
+     * @param taskId the stable UUID of the task to complete; must not be null
+     * @param decisionName the name of the decision being submitted; must not be null or blank
+     * @param payload the decision payload; nullability is decision-specific and validated by the engine
+     * @param idempotencyKey caller-supplied key used to de-duplicate retries; must not be null or blank
+     * @param completedBy the actor completing the task; required for audit; must not be null
+     * @param reviewedSubjectVersion the version of the subject object the reviewer reviewed; may be null
+     * @throws NullPointerException if {@code taskId}, {@code decisionName}, {@code idempotencyKey},
+     *     or {@code completedBy} is null
+     * @throws IllegalArgumentException if {@code decisionName} or {@code idempotencyKey} is blank, or
+     *     {@code reviewedSubjectVersion} is blank
+     */
+    public TaskCompletionCommand(
+            UUID taskId,
+            String decisionName,
+            Object payload,
+            String idempotencyKey,
+            WorkflowActor completedBy,
+            @Nullable String reviewedSubjectVersion) {
+        this(taskId, decisionName, payload, idempotencyKey, completedBy, reviewedSubjectVersion, null);
+    }
 
     /**
      * Validates required fields at the public-API boundary.

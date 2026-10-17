@@ -35,12 +35,15 @@ import java.util.UUID;
  *       task (status / wait_type / wait_key mismatch).</li>
  *   <li>{@code WorkflowConflictException} — concurrent task transition or stale optimistic
  *       version.</li>
+ *   <li>{@code WorkflowStaleAssignmentException} — a supplied {@code expectedAssignment} no
+ *       longer matches the locked task row.</li>
  *   <li>{@code WorkflowIdempotencyConflictException} — same idempotency key reused with a
  *       different fingerprint.</li>
  * </ul>
  *
  * <p>For {@link #reassign}, the same {@code APPLIED} / {@code LOST_TO_RACE} → success
- * translation applies; not-OPEN paths surface as {@code WorkflowConflictException}.
+ * translation applies; not-OPEN paths surface as {@code WorkflowConflictException} and a stale
+ * {@code expectedAssignment} as {@code WorkflowStaleAssignmentException}.
  *
  * <p>{@link TaskMutationResult#STALE_NOOP} is reserved for the engine-internal due-date firing
  * path and is never observed by callers of this service. If a misbehaving SPI were to return it
@@ -73,7 +76,8 @@ public interface TaskService {
      * <p>{@link TaskMutationResult#APPLIED} and {@link TaskMutationResult#LOST_TO_RACE} both
      * produce a succeeded {@link Future}. No-wait / not-OPEN paths surface as failed
      * {@link Future}s with typed exceptions ({@link WorkflowTaskNotWaitingException},
-     * {@code WorkflowConflictException}, {@code WorkflowIdempotencyConflictException}). The
+     * {@code WorkflowConflictException}, {@code WorkflowStaleAssignmentException},
+     * {@code WorkflowIdempotencyConflictException}). The
      * engine never returns {@link TaskMutationResult#STALE_NOOP} from completion.
      *
      * @param cmd the completion command; must not be null
