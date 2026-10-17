@@ -1,0 +1,206 @@
+// SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
+// SPDX-License-Identifier: EUPL-1.2
+
+package dev.vertique.workflow.schema;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+import dagger.Component;
+import dagger.Module;
+import dagger.Provides;
+import dagger.multibindings.IntoSet;
+import dev.vertique.core.json.JsonMapperProfileRegistry;
+import dev.vertique.json.JsonConfig;
+import dev.vertique.workflow.definition.callbacks.NamedStartStateMapper;
+import dev.vertique.workflow.definition.callbacks.NamedStateReducer;
+import dev.vertique.workflow.definition.callbacks.StartStateMapperContributor;
+import dev.vertique.workflow.definition.callbacks.StateReducerContributor;
+import dev.vertique.workflow.definition.di.WorkflowDefinitionModule;
+import dev.vertique.workflow.definition.parser.DocumentFormat;
+import dev.vertique.workflow.definition.service.ActivationStatus;
+import dev.vertique.workflow.definition.service.CompiledDefinitionRef;
+import dev.vertique.workflow.definition.service.WorkflowDefinitionService;
+import dev.vertique.workflow.definition.source.SourceMetadata;
+import dev.vertique.workflow.di.WorkflowCoreModule;
+import dev.vertique.workflow.exception.WorkflowDefinitionException;
+import dev.vertique.workflow.exception.WorkflowDefinitionMissingException;
+import dev.vertique.workflow.registry.WorkflowRegistry;
+import dev.vertique.workflow.schema.fixtures.Payloads;
+import dev.vertique.workflow.schema.fixtures.ReviewState;
+import dev.vertique.workflow.schema.fixtures.StartReview;
+import jakarta.inject.Singleton;
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
+import java.time.Instant;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+
+/**
+ * Verifies activation of a stored definition through the definition service: the schema validator rejects the
+ * candidate exactly as it does at registration, and the failed activation can be retried.
+ */
+class SchemaActivationTest {
+
+    private static final String SCALAR_DECISION_MESSAGE =
+            "definition 'review-note' v1 step 'review' decision 'note' payload type 'java.lang.String'"
+                    + " is not object-shaped (root type string); wrap the value in a record";
+
+    // --- Wiring ---
+
+    /** Everything the schema module needs from the application, plus the callbacks the document names. */
+    @Module
+    static final class ApplicationModule {
+
+        private ApplicationModule() {}
+
+        @Provides
+        @Singleton
+        static JsonMapperProfileRegistry profileRegistry() {
+            return Profiles.builtIn();
+        }
+
+        @Provides
+        static JsonConfig jsonConfig() {
+            return Profiles.VERTIQUE;
+        }
+
+        @Provides
+        @IntoSet
+        static StartStateMapperContributor startStateMappers() {
+            return builder -> builder.register(new NamedStartStateMapper<>(
+                            "review.init", StartReview.class, ReviewState.class, start -> new ReviewState(start.id())))
+                    .register(new NamedStartStateMapper<>(
+                            "review.initFromText", String.class, ReviewState.class, ReviewState::new));
+        }
+
+        @Provides
+        @IntoSet
+        static StateReducerContributor stateReducers() {
+            return builder -> builder.register(
+                    new NamedStateReducer<>("review.apply", ReviewState.class, (state, payload) -> state));
+        }
+    }
+
+    @Singleton
+    @Component(
+            modules = {
+                WorkflowCoreModule.class,
+                WorkflowDefinitionModule.class,
+                WorkflowSchemaModule.class,
+                ApplicationModule.class
+            })
+    interface Platform {
+
+        WorkflowDefinitionService definitions();
+
+        WorkflowRegistry registry();
+    }
+
+    // --- Tests ---
+
+    @Test
+    @DisplayName("activation through the definition service fails the same way")
+    void activationThroughTheDefinitionServiceFailsTheSameWay() {
+        // Given: a stored candidate whose human task declares payloadType java.lang.String
+        Platform platform = DaggerSchemaActivationTest_Platform.create();
+        WorkflowDefinitionService definitions = platform.definitions();
+        definitions.load(
+                document(StartReview.class.getName(), "review.init", String.class.getName()),
+                DocumentFormat.YAML,
+                metadata());
+
+        // When: it is activated
+        // Then: activation fails with the registration wording and the registry does not resolve the id
+        assertThatThrownBy(() -> definitions.activate("review-note", 1L))
+                .isInstanceOf(WorkflowDefinitionException.class)
+                .hasMessage(SCALAR_DECISION_MESSAGE);
+        assertThatThrownBy(() -> platform.registry().resolveCurrent("review-note"))
+                .isInstanceOf(WorkflowDefinitionMissingException.class);
+    }
+
+    @Test
+    @DisplayName("a failed activation leaves the candidate retryable with the same outcome")
+    void aFailedActivationLeavesTheCandidateRetryable() {
+        // Given: a stored candidate with a scalar decision type
+        Platform platform = DaggerSchemaActivationTest_Platform.create();
+        WorkflowDefinitionService definitions = platform.definitions();
+        definitions.load(
+                document(StartReview.class.getName(), "review.init", String.class.getName()),
+                DocumentFormat.YAML,
+                metadata());
+
+        // When: activation fails once
+        assertThatThrownBy(() -> definitions.activate("review-note", 1L))
+                .isInstanceOf(WorkflowDefinitionException.class);
+
+        // Then: the candidate is still a candidate, and a second activation fails the same way
+        assertThat(definitions.list())
+                .extracting(CompiledDefinitionRef::status)
+                .containsExactly(ActivationStatus.CANDIDATE);
+        assertThatThrownBy(() -> definitions.activate("review-note", 1L))
+                .isInstanceOf(WorkflowDefinitionException.class)
+                .hasMessage(SCALAR_DECISION_MESSAGE);
+    }
+
+    @Test
+    @DisplayName("a scalar start payload type fails activation with the start payload wording")
+    void aScalarStartPayloadTypeFailsActivation() {
+        // Given: a stored candidate that starts with a String
+        Platform platform = DaggerSchemaActivationTest_Platform.create();
+        WorkflowDefinitionService definitions = platform.definitions();
+        definitions.load(
+                document(String.class.getName(), "review.initFromText", Payloads.PlainRecord.class.getName()),
+                DocumentFormat.YAML,
+                metadata());
+
+        // When / Then: activation fails naming the start payload
+        assertThatThrownBy(() -> definitions.activate("review-note", 1L))
+                .isInstanceOf(WorkflowDefinitionException.class)
+                .hasMessageStartingWith("definition 'review-note' v1 start payload")
+                .hasMessageContaining("payload type 'java.lang.String' is not object-shaped (root type string)");
+    }
+
+    @Test
+    @DisplayName("a candidate with object payload types activates and resolves")
+    void aCandidateWithObjectPayloadTypesActivates() {
+        // Given: a stored candidate whose decision type is a record
+        Platform platform = DaggerSchemaActivationTest_Platform.create();
+        WorkflowDefinitionService definitions = platform.definitions();
+        definitions.load(
+                document(StartReview.class.getName(), "review.init", Payloads.PlainRecord.class.getName()),
+                DocumentFormat.YAML,
+                metadata());
+
+        // When: it is activated
+        definitions.activate("review-note", 1L);
+
+        // Then: the registry resolves it and the service reports it active
+        assertThat(platform.registry().resolveCurrent("review-note").plan().definitionVersion())
+                .isEqualTo(1L);
+        assertThat(definitions.list())
+                .extracting(CompiledDefinitionRef::status)
+                .containsExactly(ActivationStatus.ACTIVE);
+    }
+
+    // --- Helpers ---
+
+    private static SourceMetadata metadata() {
+        return new SourceMetadata("test", null, null, null, null, Instant.now());
+    }
+
+    /** The review workflow document with the three type-related placeholders filled in. */
+    private static byte[] document(String startPayloadType, String initialStateMapper, String decisionPayloadType) {
+        try (InputStream resource =
+                SchemaActivationTest.class.getResourceAsStream("/definitions/review-note.workflow.yaml")) {
+            String template = new String(resource.readAllBytes(), StandardCharsets.UTF_8);
+            return template.replace("START_PAYLOAD_TYPE", startPayloadType)
+                    .replace("INITIAL_STATE_MAPPER", initialStateMapper)
+                    .replace("DECISION_PAYLOAD_TYPE", decisionPayloadType)
+                    .getBytes(StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            throw new IllegalStateException("cannot read the review workflow document", e);
+        }
+    }
+}

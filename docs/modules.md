@@ -120,5 +120,6 @@ SPDX-License-Identifier: EUPL-1.2
 | `vertique-workflow-engine` | [module.md](../vertique-workflow/vertique-workflow-engine/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-workflow-events` | [module.md](../vertique-workflow/vertique-workflow-events/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-workflow-postgresql` | [module.md](../vertique-workflow/vertique-workflow-postgresql/src/main/resources/META-INF/vertique/module.md) |
+| `vertique-workflow-schema` | [module.md](../vertique-workflow/vertique-workflow-schema/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-workflow-services` | [module.md](../vertique-workflow/vertique-workflow-services/src/main/resources/META-INF/vertique/module.md) |
 | `vertique-workflow-tasks` | [module.md](../vertique-workflow/vertique-workflow-tasks/src/main/resources/META-INF/vertique/module.md) |
