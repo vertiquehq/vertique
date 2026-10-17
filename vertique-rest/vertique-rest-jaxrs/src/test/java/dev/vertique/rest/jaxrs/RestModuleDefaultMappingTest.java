@@ -258,6 +258,23 @@ class RestModuleDefaultMappingTest {
     }
 
     @Test
+    @DisplayName("application mapper for a carrier subclass still wins over the default carrier rendering")
+    void applicationMapperForACarrierSubclassStillWinsOverTheDefaultCarrierRendering() {
+        DefaultExceptionMapper mapper = RestModule.defaultExceptionMapper()
+                .on(CarrierValidationException.class, ex -> Response.status(422)
+                        .entity("custom: " + ex.getMessage())
+                        .build());
+        CarrierValidationException exception = new CarrierValidationException(
+                "invalid decision payload",
+                List.of(new ViolationDetail("/comment", "must have a maximum length of 3", "maxLength", Map.of())));
+
+        Response response = mapper.toResponse(exception);
+
+        assertEquals(422, response.getStatus());
+        assertEquals("custom: invalid decision payload", response.getEntity());
+    }
+
+    @Test
     @DisplayName("plain ValidationException stays message-only and BeanValidationException output is unchanged")
     void plainValidationExceptionStaysMessageOnlyAndBeanValidationExceptionIsUnchanged() {
         DefaultExceptionMapper mapper = RestModule.defaultExceptionMapper();
