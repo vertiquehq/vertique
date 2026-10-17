@@ -116,7 +116,7 @@ SPDX-License-Identifier: EUPL-1.2
              tooling all read this property, so the build JDK (CI uses 25) can be newer than the
              Java 21 the framework compiles for and ships. -->
         <maven.compiler.release>${java.version}</maven.compiler.release>
-        <vertx.version>5.1.8</vertx.version>
+        <vertx.version>5.2.0</vertx.version>
         <lettuce.version>7.8.0.RELEASE</lettuce.version>
         <dagger.version>2.60.1</dagger.version>
         <!-- Jackson 2.x line — the framework imports the Jackson 2 BOM (see dependencyManagement)
