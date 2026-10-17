@@ -525,8 +525,8 @@ The framework's `ExceptionMapper<Throwable>`, pre-configured by `RestModule`:
 |-----------|--------|------|
 | `jakarta.ws.rs.WebApplicationException` | from `getResponse()` | the JAX-RS `Response` as-is — entity passthrough when present, else a problem detail |
 | `RestValidationException` (rest-core) | 400 | `ValidationProblemDetail` with an `errors` array |
-| `BeanValidationException` (core.validation) | 400 | `ValidationProblemDetail`; violations become `ValidationErrorDetail` with `location` `null` |
-| `ValidationException` (core.exception) | 400 | `ProblemDetail` |
+| any `ValidationException` implementing `ViolationCarrier` (core.validation), including `BeanValidationException` | 400 | `ValidationProblemDetail`; violations become `ValidationErrorDetail` with `location` `null` |
+| `ValidationException` (core.exception) that is not a carrier | 400 | `ProblemDetail` |
 | `ParamConversionException` (rest-core `convert`) | 400 | `ProblemDetail` — an inbound value failed conversion to its declared type |
 | `ParamConverterNotFoundException` (rest-core `convert`) | 500 | `ProblemDetail` with the fixed detail `"Internal Server Error"` — no converter satisfies a declared type at request time; the exception's diagnostic message (parameter name and target type) is logged server-side and never echoed |
 | `IllegalArgumentException` | 400 | `ProblemDetail` |
@@ -536,6 +536,13 @@ The framework's `ExceptionMapper<Throwable>`, pre-configured by `RestModule`:
 | `NotFoundException` (core.exception) | 404 | `ProblemDetail` |
 | `UnavailableException` (core.exception) | 503 | `ProblemDetail` |
 | `Throwable` (catch-all) | 500 | `ProblemDetail` with the fixed detail `"Internal Server Error"` — the exception message is never echoed. Logging is deferred to `ErrorPipeline` (see below) so a Vert.x 4xx fallback is not recorded as an unhandled server fault |
+
+`errors[].path` is producer-defined: Jakarta dotted paths from `BeanValidationException`, `#/...`
+fragments from `RestValidationException`, and RFC 6901 pointers from workflow payload exceptions.
+
+The mapper dispatches by class and checks for `ViolationCarrier` inside the `ValidationException`
+handler. To change how every carrier renders, override the `ValidationException` mapping; a
+`BeanValidationException`-only override no longer covers workflow payload errors.
 
 `UnauthorizedException` and `ForbiddenException` are registered by fully-qualified name to avoid
 ambiguity with `jakarta.ws.rs.NotAuthorizedException` and `jakarta.ws.rs.ForbiddenException`.

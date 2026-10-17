@@ -4,13 +4,24 @@
 package dev.vertique.rest.jaxrs;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
 import dev.vertique.core.exception.BusinessRuleException;
 import dev.vertique.core.exception.ConflictException;
 import dev.vertique.core.exception.TooManyRequestsException;
+import dev.vertique.core.exception.ValidationException;
+import dev.vertique.core.validation.BeanValidationException;
+import dev.vertique.core.validation.ViolationCarrier;
+import dev.vertique.core.validation.ViolationDetail;
+import dev.vertique.rest.core.ProblemDetail;
+import dev.vertique.rest.core.ValidationErrorDetail;
+import dev.vertique.rest.core.ValidationProblemDetail;
 import jakarta.ws.rs.core.Response;
 import java.time.Duration;
+import java.util.List;
+import java.util.Map;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -74,6 +85,25 @@ class RestModuleDefaultMappingTest {
     private static final class InsufficientRoleException extends dev.vertique.core.exception.ForbiddenException {
         InsufficientRoleException(String message) {
             super(message);
+        }
+    }
+
+    /**
+     * {@link BusinessRuleException} subclass (two levels below {@link ValidationException}) that
+     * carries structured violations, used to verify the carrier branch is reached through
+     * hierarchy walking.
+     */
+    private static final class CarrierValidationException extends BusinessRuleException implements ViolationCarrier {
+        private final List<ViolationDetail> violations;
+
+        CarrierValidationException(String message, List<ViolationDetail> violations) {
+            super(message);
+            this.violations = violations;
+        }
+
+        @Override
+        public List<ViolationDetail> violations() {
+            return violations;
         }
     }
 
@@ -200,5 +230,58 @@ class RestModuleDefaultMappingTest {
         Response response = mapper.toResponse(new CustomTooManyRequestsException("quota exceeded"));
 
         assertEquals(429, response.getStatus());
+    }
+
+    @Test
+    @DisplayName("ValidationException implementing ViolationCarrier should map to 400 ValidationProblemDetail")
+    void violationCarrierValidationExceptionShouldMapToValidationProblemDetail() {
+        DefaultExceptionMapper mapper = RestModule.defaultExceptionMapper();
+        CarrierValidationException exception = new CarrierValidationException(
+                "invalid decision payload",
+                List.of(new ViolationDetail(
+                        "/comment", "must have a maximum length of 3", "maxLength", Map.of("maxLength", 3))));
+
+        Response response = mapper.toResponse(exception);
+
+        assertEquals(400, response.getStatus());
+        assertEquals("application", response.getMediaType().getType());
+        assertEquals("problem+json", response.getMediaType().getSubtype());
+        ValidationProblemDetail body = assertInstanceOf(ValidationProblemDetail.class, response.getEntity());
+        assertEquals("invalid decision payload", body.detail());
+        assertEquals(1, body.errors().size());
+        ValidationErrorDetail error = body.errors().get(0);
+        assertEquals("/comment", error.path());
+        assertEquals("must have a maximum length of 3", error.detail());
+        assertNull(error.location());
+        assertEquals("maxLength", error.type());
+        assertEquals(Map.of("maxLength", 3), error.args());
+    }
+
+    @Test
+    @DisplayName("plain ValidationException stays message-only and BeanValidationException output is unchanged")
+    void plainValidationExceptionStaysMessageOnlyAndBeanValidationExceptionIsUnchanged() {
+        DefaultExceptionMapper mapper = RestModule.defaultExceptionMapper();
+
+        Response plain = mapper.toResponse(new ValidationException("bad"));
+
+        assertEquals(400, plain.getStatus());
+        assertFalse(plain.getEntity() instanceof ValidationProblemDetail);
+        ProblemDetail plainBody = assertInstanceOf(ProblemDetail.class, plain.getEntity());
+        assertEquals("bad", plainBody.detail());
+
+        Response bean = mapper.toResponse(new BeanValidationException(
+                "validation failed",
+                List.of(new ViolationDetail("name", "must not be blank", "required", Map.of("min", 1)))));
+
+        assertEquals(400, bean.getStatus());
+        ValidationProblemDetail beanBody = assertInstanceOf(ValidationProblemDetail.class, bean.getEntity());
+        assertEquals("validation failed", beanBody.detail());
+        assertEquals(1, beanBody.errors().size());
+        ValidationErrorDetail error = beanBody.errors().get(0);
+        assertEquals("name", error.path());
+        assertEquals("must not be blank", error.detail());
+        assertNull(error.location());
+        assertEquals("required", error.type());
+        assertEquals(Map.of("min", 1), error.args());
     }
 }
