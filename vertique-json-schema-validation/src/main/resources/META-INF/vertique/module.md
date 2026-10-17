@@ -144,8 +144,10 @@ Compiles a schema into a `Validator` whose pattern positions are bounded.
   `finally`. Never nest windows: opening a window while one is open on the same thread returns a
   no-op window, so the outer window's total keeps running and the inner close does nothing. A window
   removes its own tally only, and only from the thread that opened it; closing it twice, after a
-  newer window opened, or from another thread removes nothing else. With no window open only the
-  per-string limit applies.
+  newer window opened, or from another thread removes nothing else. Close a window on the thread that
+  opened it, in a `finally` block: a window opened on one thread and closed on another, or never
+  closed, leaves the opener thread's tally in place, so later windows on that thread are no-ops and
+  share one growing total. With no window open only the per-string limit applies.
 - `PatternInputGuard.PatternInputTooLong` (`maxChars()`) and
   `PatternInputGuard.PatternInputTotalExceeded` (`maxTotalChars()`) — thrown out of
   `Validator.validate` when a bound is exceeded.

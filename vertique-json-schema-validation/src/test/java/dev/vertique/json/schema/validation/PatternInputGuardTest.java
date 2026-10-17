@@ -390,6 +390,24 @@ class PatternInputGuardTest {
         }
 
         @Test
+        @DisplayName("a window opened after an earlier one ended in a rejection starts its total from zero")
+        void aNewWindowAfterARejectionStartsFromZero() {
+            PatternInputGuard guard = new PatternInputGuard(10, 10);
+            PatternInputGuard.Window first = guard.openWindow();
+            try {
+                assertThat(countEight(guard)).isNull();
+                assertThat(countEight(guard)).isInstanceOf(PatternInputGuard.PatternInputTotalExceeded.class);
+            } finally {
+                first.close();
+            }
+
+            try (PatternInputGuard.Window second = guard.openWindow()) {
+                assertThat(second).isNotNull();
+                assertThat(countEight(guard)).isNull();
+            }
+        }
+
+        @Test
         @DisplayName("closing another thread's window does not remove the closing thread's own total")
         void closingAForeignWindowKeepsTheClosingThreadsOwnTotal() throws Exception {
             PatternInputGuard guard = new PatternInputGuard(10, 10);

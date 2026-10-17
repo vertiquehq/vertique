@@ -242,7 +242,8 @@ public final class PatternInputGuard implements JsonFormatValidator {
     }
 
     /**
-     * Applies the bound at {@link #BOUND_FORMAT}, decides a renamed reused format at {@code REUSED_FORMAT_CHECKS}, and delegates every other format, {@code null} included, to
+     * Applies the bound at {@link #BOUND_FORMAT}, decides a renamed reused format at
+     * {@code REUSED_FORMAT_CHECKS}, and delegates every other format, {@code null} included, to
      * {@link JsonFormatValidator#DEFAULT_VALIDATOR}.
      *
      * <p>At the bound entry, a string of length {@code L} (UTF-16 code units) longer than the per-string limit
@@ -328,6 +329,10 @@ public final class PatternInputGuard implements JsonFormatValidator {
      * <p>Closing a window removes its tally only if that tally is still the calling thread's current one, so
      * closing a window twice, closing a stale window after a newer one was opened, or closing a window from a
      * different thread than the one that opened it never removes another window's tally.
+     *
+     * <p>Close a window on the thread that opened it, in a {@code finally} block (or try-with-resources). A
+     * window opened on one thread and closed on another, or never closed, leaves the opening thread's tally in
+     * place, so later windows on that thread are no-ops and share one growing total.
      *
      * @return the window
      */

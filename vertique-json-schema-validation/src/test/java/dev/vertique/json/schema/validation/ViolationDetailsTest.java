@@ -637,6 +637,16 @@ class ViolationDetailsTest {
             assertThat(detail).isEqualTo(keyword + " constraint violated").doesNotContain(sentinel);
         }
 
+        @Test
+        @DisplayName("a null keyword yields the fixed message and never the engine's message")
+        void aNullKeywordYieldsTheFixedMessage() {
+            String sentinel = "SENTINEL-SECRET-submitted-value";
+
+            String detail = ViolationDetails.safeDetail(null, Map.of(), "the value " + sentinel + " is bad");
+
+            assertThat(detail).isEqualTo("is invalid").doesNotContain(sentinel);
+        }
+
         static Stream<Arguments> messages() {
             String raw = "500 is greater than 100";
             return Stream.of(

@@ -100,8 +100,9 @@ public final class ViolationDetails {
      *
      * <p>An error whose keyword location is absent or empty, rather than naming a structural keyword, has no
      * keyword to describe. It yields a value-free detail at the error's own location, on the single-error branch
-     * and the multi-error branch alike, without consulting the engine's message; {@link #safeDetail(String, Map, String)}
-     * itself answers a {@code null} keyword with the fixed, value-free message {@code is invalid}.
+     * and the multi-error branch alike, without consulting the engine's message;
+     * {@link #safeDetail(String, Map, String)} itself answers a {@code null} keyword
+     * with the fixed, value-free message {@code is invalid}.
      *
      * <p>A result that is not valid always yields at least one detail: when every error it reported was
      * structural, exactly one value-free detail is returned, at the location of the first reported error.
@@ -223,14 +224,15 @@ public final class ViolationDetails {
     /**
      * Maps a pattern-input guard failure to its detail.
      *
-     * <p>The failure is recognised when {@code thrown} is a guard exception or has one as its cause. The detail
+     * <p>The failure is recognised when {@code thrown} is a guard exception or its direct cause is one; the cause
+     * is checked once, not down a chain. The detail
      * has an empty path, the type {@value #PATTERN_INPUT_LENGTH_TYPE} or {@value #PATTERN_INPUT_TOTAL_LENGTH_TYPE},
      * a message naming the configured limit, and the limit as the {@code limit} argument. The value, the key and
      * the pattern never appear.
      *
      * @param thrown the exception a validation call threw
-     * @return the detail, or {@link Optional#empty()} when neither {@code thrown} nor its cause is a guard
-     *     exception
+     * @return the detail, or {@link Optional#empty()} when neither {@code thrown} nor its direct cause is a
+     *     guard exception
      */
     public static Optional<ViolationDetail> patternInputBound(Throwable thrown) {
         Throwable guardFailure = isGuardFailure(thrown) ? thrown : thrown.getCause();
@@ -256,7 +258,8 @@ public final class ViolationDetails {
      * Converts an engine instance location into an RFC 6901 JSON pointer.
      *
      * <p>A leading {@code #} is removed and each segment is percent-decoded as UTF-8; an escape that is not
-     * well formed, including one written with a non-ASCII digit, is left as written. The pointer escapes {@code ~0} and {@code ~1} are kept. The root, in any
+     * well formed, including one written with a non-ASCII digit, is left as written. The pointer escapes
+     * {@code ~0} and {@code ~1} are kept. The root, in any
      * spelling ({@code #}, the empty string, {@code /}, or {@code null}), becomes the empty string.
      *
      * @param engineLocation the engine's instance location, for example {@code #/a%20b/0/a~1b}; may be
