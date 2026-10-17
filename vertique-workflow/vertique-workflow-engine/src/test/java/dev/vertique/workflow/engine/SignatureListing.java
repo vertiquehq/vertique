@@ -20,6 +20,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
 /**
@@ -31,6 +32,9 @@ import java.util.stream.Stream;
  * constructor, method and field, each rendered with {@code toGenericString()}. Synthetic and bridge
  * members, {@code package-info} and Dagger-generated classes (and their nested classes) are left
  * out. Lines are sorted by natural {@code String} order and written with LF line endings.
+ *
+ * <p>Lines are normalized so that the listing does not depend on the JDK that renders it, see
+ * {@link #normalize(String)}.
  */
 final class SignatureListing {
 
@@ -43,6 +47,15 @@ final class SignatureListing {
     private static final Path CLASSES_DIR = Path.of("target/classes");
 
     private static final String PACKAGE_PREFIX = "dev.vertique.workflow";
+
+    /**
+     * A {@code sealed} or {@code non-sealed} modifier in a type header. Newer JDKs print it in
+     * {@code toGenericString()} while JDK 21 does not, so it is dropped from every line to keep one
+     * recorded form valid on all JDKs.
+     */
+    private static final Pattern SEALED_MODIFIER =
+            Pattern.compile("^((?:(?:public|protected|abstract|static|final|strictfp) )*)(?:non-)?sealed "
+                    + "(?=(?:@?interface|class|record|enum) )");
 
     private SignatureListing() {}
 
@@ -88,7 +101,21 @@ final class SignatureListing {
                 addMember(lines, field);
             }
         }
-        return new Result(List.copyOf(lines), Set.copyOf(generated));
+        Set<String> normalized = new TreeSet<>();
+        for (String line : lines) {
+            normalized.add(normalize(line));
+        }
+        return new Result(List.copyOf(normalized), Set.copyOf(generated));
+    }
+
+    /**
+     * Removes the JDK-dependent rendering differences from one signature line.
+     *
+     * @param line a signature line as rendered by {@code toGenericString()} or read from the record
+     * @return the line without a {@code sealed} or {@code non-sealed} modifier in a type header
+     */
+    static String normalize(String line) {
+        return SEALED_MODIFIER.matcher(line).replaceFirst("$1");
     }
 
     /** Renders lines as the file content: one line each, LF terminated. */
@@ -131,11 +158,18 @@ final class SignatureListing {
         }
     }
 
-    /** Splits file content into lines; a single trailing line terminator adds no empty line. */
+    /**
+     * Splits file content into normalized lines; a single trailing line terminator adds no empty
+     * line.
+     */
     static List<String> lines(String content) {
-        List<String> lines = new ArrayList<>(List.of(content.split("\n", -1)));
-        if (!lines.isEmpty() && lines.get(lines.size() - 1).isEmpty()) {
-            lines.remove(lines.size() - 1);
+        List<String> raw = new ArrayList<>(List.of(content.split("\n", -1)));
+        if (!raw.isEmpty() && raw.get(raw.size() - 1).isEmpty()) {
+            raw.remove(raw.size() - 1);
+        }
+        List<String> lines = new ArrayList<>(raw.size());
+        for (String line : raw) {
+            lines.add(normalize(line));
         }
         return lines;
     }
