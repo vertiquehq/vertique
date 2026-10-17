@@ -76,14 +76,17 @@ pointer details):
 - a payload that does not bind to the declared payload type is reported with type `binding`, and the
   decode exception is the cause.
 
-Messages and details are value-free: they carry no payload value, decision name, class name or decode
-message. The cause is logged at DEBUG level only. A payload class that cannot be resolved remains a
+Messages and details built by the engine are value-free: they carry no payload value, decision name,
+class name, decode message or map key. The cause is logged at DEBUG level only, but it stays on the
+exception and can carry submitted text, so applications must not log the cause of a
+`WorkflowInvalidPayloadException` at INFO or above. A payload class that cannot be resolved remains a
 definition error (`WorkflowDefinitionException`), not a caller error. A failure thrown by an application
 decision applicator is also reported as a definition error, with the applicator exception as its cause
 and without its message.
 
-Because the rejection happens inside the completion transaction, the idempotency claim rolls back with
-it: a retry with the same idempotency key and a corrected payload completes the task. A caller that uses a
+The rejection happens inside the completion transaction, so the idempotency claim rolls back with it, and
+so does any earlier side effect of the same transaction (on the branch path the timer cancel, locks and
+history work run first). A retry with the same idempotency key and a corrected payload completes the task. A caller that uses a
 transactional task service owns that rollback and must roll the transaction back when the completion
 future fails.
 
@@ -95,9 +98,10 @@ a root pointer path):
   is reported with type `payload`;
 - a payload that does not bind to the declared start type is reported with type `binding`.
 
-The rejection is value-free: it carries no payload value, class name or decode message. The decode cause
-is logged at DEBUG level only. It happens before any instance row, history entry or deduplication claim is
-kept, because the start transaction rolls back; a retry with the same idempotency key and a corrected
+The details the engine builds are value-free: they carry no payload value, class name, decode message or map
+key. The decode cause is logged at DEBUG level only, and the same caution applies: do not log it at INFO or
+above. The rejection happens before the instance is started and rolls the start transaction back, so no
+instance row, history entry or deduplication claim is kept; a retry with the same idempotency key and a corrected
 payload starts the instance. An application initial-state function that throws is still reported as
 `WorkflowDefinitionException`, now with the thrown exception as its cause and without its message.
 
@@ -105,7 +109,7 @@ payload starts the instance. An application initial-state function that throws i
 
 When a `BeanValidator` is bound, the engine also checks the coerced payload against its Bean Validation
 constraints: the decision payload (instance and branch tasks) and the start payload. The check runs after
-coercion and before any mutation, and fails with `WorkflowInvalidPayloadException` carrying one detail per
+coercion and before the task is completed or the instance started, inside the same transaction, and fails with `WorkflowInvalidPayloadException` carrying one detail per
 violation:
 
 - **path** is an RFC 6901 pointer over the payload's wire (JSON) names, for example `items[0].name`
@@ -116,12 +120,17 @@ violation:
   An unmapped constraint keeps the annotation simple name.
 - **message** is exactly what the validator produced.
 
+The rejection happens inside the transaction, so any earlier side effect of the same transaction rolls
+back together with the deduplication claim. An idempotent replay or a stale or already-completed task
+is answered before payload validation.
+
 Installing the validation module (`ValidationModule`) switches enforcement on. With no `BeanValidator`
 bound, behavior is unchanged and the payload is checked for binding only. The engine logs one INFO line at
 construction saying whether payload constraint enforcement is enabled or disabled. The rejection rolls back
 the completion or start transaction like the binding checks above.
 
-Constraint messages pass through unchanged, so keep them value-free:
+Details built by the engine are value-free. Constraint messages produced by an application's constraints
+pass through unchanged, so applications must not interpolate the validated value:
 
 - Do not interpolate the validated value into a constraint message.
 - Do not build custom violations from untrusted text through the template-building API

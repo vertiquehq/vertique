@@ -13,8 +13,10 @@ import java.util.List;
  * mapping does this for every {@link dev.vertique.core.exception.ValidationException} that
  * implements this interface.
  *
- * <p>Implementors keep every detail value-free: the details reach clients verbatim, so a path,
- * message, type or argument must never contain a submitted value. The form of
+ * <p>The details reach clients verbatim, so an implementor builds every detail it creates without a
+ * submitted value in a path, message, type or argument. A constraint message produced by an
+ * application's own constraints passes through unchanged, so applications must not interpolate the
+ * validated value into a message. The form of
  * {@link ViolationDetail#path()} is defined by the producing exception, for example dotted
  * property paths from {@link BeanValidationException} or JSON Pointers from a payload validator.
  */

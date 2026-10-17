@@ -105,7 +105,7 @@ public class PgWorkflowEngineStartPayloadIT {
     // --- Domain types ---
 
     /** Start payload of the typed and throwing fixtures. */
-    record StartPayload(String requester) {}
+    record StartPayload(String requester, int seats) {}
 
     /** Workflow state of every fixture. */
     record State(String requester) {
@@ -286,17 +286,20 @@ public class PgWorkflowEngineStartPayloadIT {
     @Test
     @DisplayName("an unbindable start payload fails and leaves no instance or dedup row")
     void unbindableStartPayloadFailsAndLeavesNoInstanceOrDedupRow() {
-        // Given: a typed start and a payload whose requester is an object, so it cannot bind
+        // Given: a typed start and a payload whose int seats holds the sentinel string, so it cannot bind
         String key = "s1";
 
         // When: the start is attempted
         WorkflowInvalidPayloadException rejection =
-                startExpectingInvalidPayload(TYPED_DEFINITION_ID, unbindableRequester(), key);
+                startExpectingInvalidPayload(TYPED_DEFINITION_ID, unbindableSeats(), key);
 
         // Then: one binding detail, the decode failure as cause, no payload value anywhere
         assertEquals(REJECTION_MESSAGE, rejection.getMessage());
         assertSingleDetail(rejection, BINDING_MESSAGE, "binding");
         assertInstanceOf(DecodeException.class, rejection.getCause(), "the decode failure must be the cause");
+        assertTrue(
+                rejection.getCause().getMessage().contains(SENTINEL),
+                "precondition: the decode cause message echoes the payload value, so interpolating it would leak");
         assertFalse(rejection.getMessage().contains(SENTINEL), "message must not carry the payload value");
         assertFalse(rejection.violations().toString().contains(SENTINEL), "no detail may carry the payload value");
 
@@ -305,7 +308,7 @@ public class PgWorkflowEngineStartPayloadIT {
         assertEquals(0L, startDedupRows(TYPED_DEFINITION_ID, key), "a rejected start must not retain the claim");
 
         // When: the same key is retried with a corrected payload
-        WorkflowInstanceId created = start(TYPED_DEFINITION_ID, Map.of("requester", "ann"), key);
+        WorkflowInstanceId created = start(TYPED_DEFINITION_ID, Map.of("requester", "ann", "seats", 2), key);
 
         // Then: the retry creates the instance and holds the claim
         assertNotNull(created, "the corrected retry must create an instance");
@@ -357,7 +360,8 @@ public class PgWorkflowEngineStartPayloadIT {
 
         // When: it is started with a valid payload
         CompletionException failure = assertThrows(
-                CompletionException.class, () -> start(THROWING_DEFINITION_ID, Map.of("requester", "ann"), key));
+                CompletionException.class,
+                () -> start(THROWING_DEFINITION_ID, Map.of("requester", "ann", "seats", 2), key));
 
         // Then: a definition exception (not the new type) naming the definition, not the application text
         WorkflowDefinitionException definitionFailure = assertInstanceOf(
@@ -387,11 +391,14 @@ public class PgWorkflowEngineStartPayloadIT {
         logs = CapturedLogs.attach(Level.INFO);
 
         // When: an unbindable start payload is rejected
-        WorkflowInvalidPayloadException rejection = startExpectingInvalidPayload(
-                TYPED_DEFINITION_ID, unbindableRequester(), "idem-info-" + UUID.randomUUID());
+        WorkflowInvalidPayloadException rejection =
+                startExpectingInvalidPayload(TYPED_DEFINITION_ID, unbindableSeats(), "idem-info-" + UUID.randomUUID());
 
         // Then: no event at INFO or above carries the decode cause or the payload value
         assertInstanceOf(DecodeException.class, rejection.getCause());
+        assertTrue(
+                rejection.getCause().getMessage().contains(SENTINEL),
+                "precondition: the decode cause message echoes the payload value, so interpolating it would leak");
         for (ILoggingEvent event : logs.events()) {
             if (event.getLevel().isGreaterOrEqual(Level.INFO)) {
                 assertFalse(
@@ -406,7 +413,7 @@ public class PgWorkflowEngineStartPayloadIT {
         // When: the same rejection runs with DEBUG enabled
         logs.setLevel(Level.DEBUG);
         logs.clear();
-        startExpectingInvalidPayload(TYPED_DEFINITION_ID, unbindableRequester(), "idem-debug-" + UUID.randomUUID());
+        startExpectingInvalidPayload(TYPED_DEFINITION_ID, unbindableSeats(), "idem-debug-" + UUID.randomUUID());
 
         // Then: exactly one event carries the decode cause, at DEBUG, and no message carries the value
         List<ILoggingEvent> events = logs.events();
@@ -426,9 +433,12 @@ public class PgWorkflowEngineStartPayloadIT {
     // Helpers
     // =========================================================================
 
-    /** A payload whose {@code requester} is an object, so it cannot bind to {@link StartPayload}. */
-    private static Map<String, Object> unbindableRequester() {
-        return Map.of("requester", Map.of("zz", SENTINEL));
+    /**
+     * A payload whose {@code seats} is the sentinel string, so it cannot bind to the {@code int} of
+     * {@link StartPayload}; the binder's message echoes the string.
+     */
+    private static Map<String, Object> unbindableSeats() {
+        return Map.of("requester", "ann", "seats", SENTINEL);
     }
 
     /**

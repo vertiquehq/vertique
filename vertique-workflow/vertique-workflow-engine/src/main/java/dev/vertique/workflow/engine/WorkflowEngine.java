@@ -603,7 +603,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
         Object coercedPayload;
         try {
             coercedPayload = WorkflowPayloads.validateAndCoerceStartPayload(cmd.payload(), rw.startPayloadType());
-            payloadConstraintCheck.check(coercedPayload, PayloadConstraintCheck.START_REJECTION);
+            payloadConstraintCheck.check(coercedPayload, WorkflowPayloads.START_REJECTION);
         } catch (WorkflowInvalidPayloadException e) {
             if (e.getCause() != null) {
                 log.debug("Start payload rejected", e.getCause());

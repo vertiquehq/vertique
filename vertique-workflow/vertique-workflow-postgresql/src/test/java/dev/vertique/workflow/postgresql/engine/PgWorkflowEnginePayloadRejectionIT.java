@@ -120,6 +120,9 @@ public class PgWorkflowEnginePayloadRejectionIT {
     /** Payload of the {@code comment} and {@code explode} decisions. */
     record Comment(String comment) {}
 
+    /** Payload of the {@code count} decision; a string in {@code n} fails with a message that echoes it. */
+    record Count(int n) {}
+
     interface InstanceContract {}
 
     interface BranchContract {}
@@ -128,7 +131,8 @@ public class PgWorkflowEnginePayloadRejectionIT {
 
     /**
      * Instance fixture: one task step with the decisions {@code approve} (no payload),
-     * {@code comment} (a {@link Comment}) and {@code explode} (applicator throws).
+     * {@code comment} (a {@link Comment}), {@code count} (a {@link Count}) and {@code explode}
+     * (applicator throws).
      */
     static final WorkflowDefinition<State, InstanceContract> INSTANCE_DEF = new WorkflowDefinition<>() {
         @Override
@@ -161,6 +165,9 @@ public class PgWorkflowEnginePayloadRejectionIT {
                     .onDecision((s, p) -> s)
                     .toStep("done")
                     .decision("comment", Comment.class)
+                    .onDecision((s, p) -> s)
+                    .toStep("done")
+                    .decision("count", Count.class)
                     .onDecision((s, p) -> s)
                     .toStep("done")
                     .decision("explode", Comment.class)
@@ -211,6 +218,9 @@ public class PgWorkflowEnginePayloadRejectionIT {
                     .onDecision((s, p) -> s)
                     .toStep("complete-a")
                     .decision("comment", Comment.class)
+                    .onDecision((s, p) -> s)
+                    .toStep("complete-a")
+                    .decision("count", Count.class)
                     .onDecision((s, p) -> s)
                     .toStep("complete-a")
                     .decision("explode", Comment.class)
@@ -419,17 +429,20 @@ public class PgWorkflowEnginePayloadRejectionIT {
     }
 
     private void assertUnbindablePayloadRejectedValueFree(String definitionId) {
-        // Given: an open task on a decision typed Comment
+        // Given: an open task on a decision typed Count
         UUID taskId = startAndFindOpenTask(definitionId);
 
-        // When: it is completed with a payload that cannot bind to Comment
+        // When: it is completed with a payload whose int field holds the sentinel string
         WorkflowInvalidPayloadException rejection =
-                completeExpectingInvalidPayload(taskId, "comment", unbindableComment(), "idem-" + UUID.randomUUID());
+                completeExpectingInvalidPayload(taskId, "count", unbindableCount(), "idem-" + UUID.randomUUID());
 
         // Then: one binding detail, the decode failure as cause, no token anywhere, task open
         assertEquals(REJECTION_MESSAGE, rejection.getMessage());
         assertSingleDetail(rejection, BINDING_MESSAGE, "binding");
         assertInstanceOf(DecodeException.class, rejection.getCause(), "the decode failure must be the cause");
+        assertTrue(
+                rejection.getCause().getMessage().contains(SENTINEL),
+                "precondition: the decode cause message echoes the payload value, so interpolating it would leak");
         assertFalse(rejection.getMessage().contains(SENTINEL), "message must not carry the payload value");
         assertFalse(
                 rejection.violations().toString().contains(SENTINEL), "no detail field may carry the payload value");
@@ -456,11 +469,11 @@ public class PgWorkflowEnginePayloadRejectionIT {
         // Given: a completion rejected for an unbindable payload under key k1
         UUID taskId = startAndFindOpenTask(definitionId);
         String k1 = "idem-k1-" + UUID.randomUUID();
-        completeExpectingInvalidPayload(taskId, "comment", unbindableComment(), k1);
+        completeExpectingInvalidPayload(taskId, "count", unbindableCount(), k1);
         assertEquals(0L, dedupRows(k1), "the rejected attempt must not leave a dedup claim");
 
         // When: the same key is used with a corrected payload
-        TaskMutationResult retry = complete(taskId, "comment", Map.of("comment", "ok"), k1)
+        TaskMutationResult retry = complete(taskId, "count", Map.of("n", 1), k1)
                 .toCompletionStage()
                 .toCompletableFuture()
                 .join();
@@ -478,11 +491,14 @@ public class PgWorkflowEnginePayloadRejectionIT {
         logs.clear();
 
         // When: an unbindable payload is rejected
-        WorkflowInvalidPayloadException rejection = completeExpectingInvalidPayload(
-                taskId, "comment", unbindableComment(), "idem-info-" + UUID.randomUUID());
+        WorkflowInvalidPayloadException rejection =
+                completeExpectingInvalidPayload(taskId, "count", unbindableCount(), "idem-info-" + UUID.randomUUID());
 
         // Then: no event at INFO or above carries the decode cause or the payload value
         assertInstanceOf(DecodeException.class, rejection.getCause());
+        assertTrue(
+                rejection.getCause().getMessage().contains(SENTINEL),
+                "precondition: the decode cause message echoes the payload value, so interpolating it would leak");
         for (ILoggingEvent event : logs.events()) {
             if (event.getLevel().isGreaterOrEqual(Level.INFO)) {
                 assertFalse(
@@ -497,7 +513,7 @@ public class PgWorkflowEnginePayloadRejectionIT {
         // When: the same rejection runs with DEBUG enabled
         logs.setLevel(Level.DEBUG);
         logs.clear();
-        completeExpectingInvalidPayload(taskId, "comment", unbindableComment(), "idem-debug-" + UUID.randomUUID());
+        completeExpectingInvalidPayload(taskId, "count", unbindableCount(), "idem-debug-" + UUID.randomUUID());
 
         // Then: exactly one event carries the decode cause, and no message carries the payload value
         List<ILoggingEvent> events = logs.events();
@@ -546,9 +562,12 @@ public class PgWorkflowEnginePayloadRejectionIT {
     // Helpers
     // =========================================================================
 
-    /** A payload whose {@code comment} is an object, so it cannot bind to {@link Comment}. */
-    private static Map<String, Object> unbindableComment() {
-        return Map.of("comment", Map.of("nested", SENTINEL));
+    /**
+     * A payload whose {@code n} is the sentinel string, so it cannot bind to the {@code int} of
+     * {@link Count}; the binder's message echoes the string.
+     */
+    private static Map<String, Object> unbindableCount() {
+        return Map.of("n", SENTINEL);
     }
 
     /**

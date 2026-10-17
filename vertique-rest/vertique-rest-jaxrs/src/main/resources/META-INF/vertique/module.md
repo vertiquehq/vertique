@@ -541,8 +541,13 @@ The framework's `ExceptionMapper<Throwable>`, pre-configured by `RestModule`:
 fragments from `RestValidationException`, and RFC 6901 pointers from workflow payload exceptions.
 
 The mapper dispatches by class and checks for `ViolationCarrier` inside the `ValidationException`
-handler. To change how every carrier renders, override the `ValidationException` mapping; a
-`BeanValidationException`-only override no longer covers workflow payload errors.
+handler. Overriding the `ValidationException` mapping changes how every carrier that is not itself
+covered by a more specific registered mapper renders. `BeanValidationException` keeps its own explicit
+mapping, whose output is identical to the carrier rendering, so a `ValidationException` override does not
+change it; override `BeanValidationException` as well to change that one. A workflow payload error is
+covered by the `ValidationException` mapping, and also by an application mapper registered for
+`WorkflowException` or `BusinessRuleException` (supertypes of the payload exception), which takes over
+payload errors as well.
 
 `UnauthorizedException` and `ForbiddenException` are registered by fully-qualified name to avoid
 ambiguity with `jakarta.ws.rs.NotAuthorizedException` and `jakarta.ws.rs.ForbiddenException`.

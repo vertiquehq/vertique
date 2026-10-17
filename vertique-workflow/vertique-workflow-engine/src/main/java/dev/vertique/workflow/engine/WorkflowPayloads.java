@@ -16,8 +16,6 @@ import dev.vertique.workflow.state.BranchStatus;
 import dev.vertique.workflow.state.BranchToken;
 import dev.vertique.workflow.state.WorkflowHistoryEntry;
 import dev.vertique.workflow.state.WorkflowInstance;
-import dev.vertique.workflow.tasks.TaskDecisionDescriptor;
-import dev.vertique.workflow.tasks.TaskRecord;
 import io.vertx.core.Future;
 import io.vertx.core.json.DecodeException;
 import io.vertx.core.json.Json;
@@ -40,8 +38,11 @@ import java.util.List;
  */
 final class WorkflowPayloads {
 
-    private static final String DECISION_REJECTION = "invalid decision payload";
-    private static final String START_REJECTION = "invalid start payload";
+    /** Rejection message for a decision payload. */
+    static final String DECISION_REJECTION = "invalid decision payload";
+
+    /** Rejection message for a start payload. */
+    static final String START_REJECTION = "invalid start payload";
 
     /** Utility class — no instances. */
     private WorkflowPayloads() {}
@@ -195,24 +196,6 @@ final class WorkflowPayloads {
         return cause == null
                 ? new WorkflowInvalidPayloadException(message, details)
                 : new WorkflowInvalidPayloadException(message, details, cause);
-    }
-
-    /**
-     * Resolves the declared payload type name for a named decision on a task record.
-     *
-     * @param task the task record whose decisions list is searched
-     * @param decisionName the name of the decision to look up
-     * @return the payload type name declared for the matching decision
-     * @throws WorkflowDefinitionException if no decision with {@code decisionName} exists on
-     *     {@code task}
-     */
-    static String resolveDecisionPayloadType(TaskRecord task, String decisionName) {
-        return task.decisions().stream()
-                .filter(d -> d.name().equals(decisionName))
-                .map(TaskDecisionDescriptor::payloadTypeName)
-                .findFirst()
-                .orElseThrow(() -> new WorkflowDefinitionException(
-                        "Unknown decision '" + decisionName + "' for branch task '" + task.taskId() + "'"));
     }
 
     // --- History payload decoding guards ---

@@ -383,8 +383,11 @@ WorkflowActorMapper customActorMapper() {
 `ViolationCarrier`, so the default REST mapping renders it as a structured validation problem with one
 error per violation instead of a message-only 400. `violations()` returns an unmodifiable list of
 `ViolationDetail` (`path`, `message`, `type`, `args`) and is never `null`. Each `path` is an RFC 6901
-JSON pointer. The violations are value-free by construction of the code that raises the exception:
-path, message, type and args reach clients verbatim and never contain a submitted value.
+JSON pointer. Details built by the engine are value-free (no payload value, decision name, class name,
+decode message or map key). Constraint messages produced by an application's constraints pass through
+unchanged, so applications must not interpolate the validated value. A binding failure keeps the decode
+exception as the cause, and it can carry submitted text, so applications must not log the cause of a
+`WorkflowInvalidPayloadException` at INFO or above.
 
 `vertique-workflow-engine` translates DB-origin failures into this hierarchy at the persistence boundary; see `dev.vertique:vertique-workflow-engine` for the translation table.
 

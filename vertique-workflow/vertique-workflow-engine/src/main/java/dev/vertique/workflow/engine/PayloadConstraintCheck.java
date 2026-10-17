@@ -31,12 +31,6 @@ final class PayloadConstraintCheck {
 
     private static final Logger log = LoggerFactory.getLogger(PayloadConstraintCheck.class);
 
-    /** Rejection message for a decision payload; duplicates the constant in {@link WorkflowPayloads}. */
-    static final String DECISION_REJECTION = "invalid decision payload";
-
-    /** Rejection message for a start payload; duplicates the constant in {@link WorkflowPayloads}. */
-    static final String START_REJECTION = "invalid start payload";
-
     private final BeanValidator validator;
 
     /**

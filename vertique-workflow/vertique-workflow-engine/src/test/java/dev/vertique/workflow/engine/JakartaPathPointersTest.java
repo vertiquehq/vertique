@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.params.provider.Arguments.arguments;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import java.util.List;
 import java.util.Map;
@@ -67,6 +68,24 @@ class JakartaPathPointersTest {
     /** A root whose {@code tags} is a set, so its element nodes carry empty brackets. */
     record SetRoot(Set<String> tags) {}
 
+    /**
+     * A bean whose collection properties the process mapper cannot resolve: one is ignored, the other
+     * has neither accessor nor mutator.
+     */
+    public static class Hiding {
+
+        @JsonIgnore
+        public List<Item> hidden;
+
+        @SuppressWarnings("unused")
+        private List<Item> internal;
+
+        public String visible;
+    }
+
+    /** A root whose properties are not (all) known non-map containers, plus typed array and nested list. */
+    record Shapes(Object blob, String[] codes, String plain, List<List<String>> grid, Hiding hiding) {}
+
     static Stream<Arguments> rows() {
         return Stream.of(
                 // --- root property and wire names ---
@@ -105,7 +124,33 @@ class JakartaPathPointersTest {
                 arguments("unknown segment under a known element", Root.class, "items[0].ghost", "/items/0/ghost"),
                 arguments(
                         "unknown segment under a known bean", Root.class, "owner.ghost.deeper", "/owner/ghost/deeper"),
-                arguments("unknown indexed segment", Root.class, "ghost[3].x", "/ghost/3/x"),
+                // --- an integer-looking bracket is an index only after a resolved non-map container ---
+                arguments("unknown indexed segment", Root.class, "ghost[3].x", "/ghost"),
+                arguments("unresolved property with a numeric key", Root.class, "ghost[123]", "/ghost"),
+                arguments(
+                        "unresolved property with a numeric key then property",
+                        Root.class,
+                        "ghost[1].secret",
+                        "/ghost"),
+                arguments("Object-typed property with an index", Shapes.class, "blob[7].x", "/blob"),
+                arguments("non-container property with an index", Shapes.class, "plain[2]", "/plain"),
+                arguments(
+                        "ignored collection property with an index",
+                        Shapes.class,
+                        "hiding.hidden[0].name",
+                        "/hiding/hidden"),
+                arguments(
+                        "accessorless collection property with an index",
+                        Shapes.class,
+                        "hiding.internal[2]",
+                        "/hiding/internal"),
+                arguments(
+                        "element of a list that is not a container takes no second index",
+                        Root.class,
+                        "items[0][1]",
+                        "/items/0"),
+                arguments("array index", Shapes.class, "codes[2]", "/codes/2"),
+                arguments("nested list indexes", Shapes.class, "grid[0][1]", "/grid/0/1"),
                 // --- no path ---
                 arguments("empty path", Root.class, "", ""));
     }

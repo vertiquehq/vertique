@@ -151,7 +151,10 @@ final class TaskLifecycleService {
 
     /**
      * Opt-in constraint check applied to coerced decision payloads right after coercion and before
-     * any mutation. A no-op when the application binds no bean validator.
+     * the task is completed. On the branch path the timer cancel, locks and history work run first,
+     * inside the same transaction; a rejection rolls that transaction back, so any earlier side
+     * effect and the deduplication claim roll back with it. A no-op when the application binds no
+     * bean validator.
      */
     private final PayloadConstraintCheck payloadConstraintCheck;
 
@@ -562,7 +565,7 @@ final class TaskLifecycleService {
         try {
             coercedPayload =
                     WorkflowPayloads.validateAndCoerceTaskPayload(cmd.payload(), planDecision.payloadTypeName());
-            payloadConstraintCheck.check(coercedPayload, PayloadConstraintCheck.DECISION_REJECTION);
+            payloadConstraintCheck.check(coercedPayload, WorkflowPayloads.DECISION_REJECTION);
         } catch (Exception e) {
             logRejectedPayloadCause(e);
             return Future.failedFuture(e);
@@ -817,7 +820,7 @@ final class TaskLifecycleService {
                             try {
                                 coercedPayload = WorkflowPayloads.validateAndCoerceTaskPayload(
                                         cmd.payload(), planDecision.payloadTypeName());
-                                payloadConstraintCheck.check(coercedPayload, PayloadConstraintCheck.DECISION_REJECTION);
+                                payloadConstraintCheck.check(coercedPayload, WorkflowPayloads.DECISION_REJECTION);
                             } catch (Exception e) {
                                 logRejectedPayloadCause(e);
                                 return Future.failedFuture(e);

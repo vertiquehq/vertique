@@ -12,10 +12,15 @@ import java.util.List;
  *
  * <p>This is a client-class (400) failure in the {@link WorkflowException} hierarchy. It is a
  * {@link ViolationCarrier}: a transport that recognizes carriers renders each {@link
- * ViolationDetail} individually. Every detail is value-free: the {@code path} is an RFC 6901 JSON
- * Pointer, and the {@code type} names the failed keyword, the bean validator's constraint type, or
- * one of {@code decision}, {@code payload} or {@code binding}. No submitted value appears in a
- * detail.
+ * ViolationDetail} individually. The {@code path} is an RFC 6901 JSON Pointer, and the {@code type}
+ * names the failed keyword, the bean validator's constraint type, or one of {@code decision},
+ * {@code payload} or {@code binding}. Details built by the engine are value-free: no payload value,
+ * decision name, class name, decode message or map key. A constraint message produced by an
+ * application's constraints passes through unchanged, so applications must not interpolate the
+ * validated value into a message.
+ *
+ * <p>A binding failure keeps the decode exception as the cause. It can carry submitted text, so
+ * applications must not log the cause of this exception at INFO or above.
  */
 public class WorkflowInvalidPayloadException extends WorkflowException implements ViolationCarrier {
 

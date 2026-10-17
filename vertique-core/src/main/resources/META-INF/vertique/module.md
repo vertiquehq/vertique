@@ -326,9 +326,10 @@ not configured to resolve them.
 
 `ViolationCarrier` is the seam a transport uses to render structured violations: the default REST
 mapping renders any `ValidationException` that implements it as a 400 with one error per
-violation. `BeanValidationException` implements it. An implementor
-keeps every `ViolationDetail` value-free, because path, message, type and args reach clients
-verbatim and must never contain a submitted value. The `path` form is producer-defined (for
+violation. `BeanValidationException` implements it. Path, message, type and args reach clients
+verbatim, so an implementor builds every `ViolationDetail` it creates without a submitted value. A
+constraint message produced by an application's own constraints passes through unchanged, so
+applications must not interpolate the validated value into a message. The `path` form is producer-defined (for
 example Jakarta dotted paths from `BeanValidationException`).
 
 `@ValidateWith(Class<?>[] value)` selects Bean Validation groups for a single method; the default

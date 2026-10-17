@@ -20,11 +20,14 @@ import dev.vertique.core.json.VertiqueJson;
  * <ul>
  *   <li>The property name is the text up to the first {@code [} or {@code <}; a node that starts
  *       with {@code <} is a container-element marker and is dropped together with its suffix.
- *   <li>A bracket holding one or more digits is a sequence index and the pointer continues into the
- *       element type. Any other bracket content (empty, or a map key) ends the pointer at the
- *       property, and the rest of the path is ignored, so a caller-chosen key never reaches the
- *       output. A bracket closes only at a {@code ]} that is followed by {@code .}, {@code [} or the
- *       end of the string.
+ *   <li>A bracket holding one or more digits is a sequence index only when the current property
+ *       type resolves to a list, set, collection or array that is not map-like; the pointer then
+ *       continues into the element type. In every other case the pointer ends at the property and
+ *       the rest of the path is ignored: empty or non-numeric bracket content, a map, and a property
+ *       whose type is unresolved, ignored, without accessors, {@code Object}, a scalar or a bean. A
+ *       numeric map key is therefore never taken for an index, and a caller-chosen key never reaches
+ *       the output. A bracket closes only at a {@code ]} that is followed by {@code .}, {@code [} or
+ *       the end of the string.
  *   <li>Each property name is mapped to its wire name along the type path. A segment that cannot be
  *       resolved keeps its Java name and ends type tracking, and the remaining segments keep their
  *       Java names too.
@@ -90,12 +93,12 @@ final class JakartaPathPointers {
                         break;
                     }
                     String content = jakartaPath.substring(pos + 1, close);
-                    if (!isIndex(content) || (current != null && current.isMapLikeType())) {
+                    if (!isIndex(content) || !isSequenceType(current)) {
                         stopped = true;
                         break;
                     }
                     pointer.append('/').append(content);
-                    current = current == null ? null : elementType(current);
+                    current = current.getContentType();
                     pos = close + 1;
                 }
                 if (stopped) {
@@ -186,8 +189,9 @@ final class JakartaPathPointers {
         }
     }
 
-    private static JavaType elementType(JavaType type) {
-        return type.isContainerType() ? type.getContentType() : null;
+    /** Returns whether the type is a resolved list, set, collection or array, and not map-like. */
+    private static boolean isSequenceType(JavaType type) {
+        return type != null && !type.isMapLikeType() && (type.isArrayType() || type.isCollectionLikeType());
     }
 
     private static String escape(String name) {
