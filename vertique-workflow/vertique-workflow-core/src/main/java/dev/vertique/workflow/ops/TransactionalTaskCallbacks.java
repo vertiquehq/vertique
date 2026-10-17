@@ -49,7 +49,9 @@ public interface TransactionalTaskCallbacks<TX> {
      * No-wait / not-OPEN paths surface as failed {@code Future}s with typed exceptions:
      * {@code WorkflowTaskNotWaitingException} (instance not WAITING / not TASK / wait-key
      * mismatch), {@code WorkflowConflictException} (concurrent task-row transition or stale
-     * optimistic version), or {@code WorkflowIdempotencyConflictException} (same idempotency key
+     * optimistic version), {@code WorkflowStaleAssignmentException} (a supplied
+     * {@code expectedAssignment} no longer matches the locked row), or
+     * {@code WorkflowIdempotencyConflictException} (same idempotency key
      * with a different fingerprint). The {@code TaskService} layer treats {@link
      * TaskMutationResult#STALE_NOOP} from this method as an SPI contract violation and surfaces it
      * as {@code IllegalStateException}.
@@ -108,8 +110,9 @@ public interface TransactionalTaskCallbacks<TX> {
      * <p>{@link TaskMutationResult#STALE_NOOP} is <strong>never</strong> returned by this method —
      * reassignment has no stale-no-wait path. A task that is no longer
      * {@link dev.vertique.workflow.tasks.TaskStatus#OPEN} surfaces as a failed {@code Future} with
-     * {@code WorkflowConflictException} (carrying the observed terminal transition), and a
-     * fingerprint mismatch on the dedup row surfaces as
+     * {@code WorkflowConflictException} (carrying the observed terminal transition), a supplied
+     * {@code expectedAssignment} that no longer matches the locked row surfaces as
+     * {@code WorkflowStaleAssignmentException}, and a fingerprint mismatch on the dedup row surfaces as
      * {@code WorkflowIdempotencyConflictException}. The service treats {@code STALE_NOOP} from this
      * SPI as an SPI contract violation and fails the future with {@code IllegalStateException}.
      *

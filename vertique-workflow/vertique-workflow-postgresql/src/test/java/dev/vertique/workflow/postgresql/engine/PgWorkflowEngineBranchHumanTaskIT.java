@@ -4,7 +4,9 @@
 package dev.vertique.workflow.postgresql.engine;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.core.context.DurableMetadata;
@@ -17,9 +19,11 @@ import dev.vertique.workflow.contract.IdempotencyKeyed;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.engine.WorkflowEngineHandle;
+import dev.vertique.workflow.exception.WorkflowStaleAssignmentException;
 import dev.vertique.workflow.ops.StartCommand;
 import dev.vertique.workflow.ops.TaskCompletionCommand;
 import dev.vertique.workflow.ops.TaskMutationResult;
+import dev.vertique.workflow.ops.TaskReassignmentCommand;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.postgresql.repository.PgBranchTokenRepository;
 import dev.vertique.workflow.postgresql.repository.PgJoinStateRepository;
@@ -33,6 +37,8 @@ import dev.vertique.workflow.sideeffect.IntentKind;
 import dev.vertique.workflow.sideeffect.RecorderResult;
 import dev.vertique.workflow.sideeffect.WorkflowSideEffectIntent;
 import dev.vertique.workflow.sideeffect.WorkflowSideEffectRecorder;
+import dev.vertique.workflow.state.WorkflowEntryType;
+import dev.vertique.workflow.tasks.TaskAssignment;
 import dev.vertique.workflow.timer.TimerIntentPayload;
 import dev.vertique.workflow.timer.TimerRecord;
 import dev.vertique.workflow.timer.TimerStatus;
@@ -51,6 +57,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterAll;
@@ -312,6 +319,31 @@ public class PgWorkflowEngineBranchHumanTaskIT {
                 .join();
     }
 
+    private JsonObject taskStatusAndAssignee(UUID taskId) {
+        return pool.preparedQuery("SELECT status, assignee_type, assignee_key FROM workflow_tasks WHERE task_id = $1")
+                .execute(Tuple.of(taskId))
+                .map(rs -> {
+                    var row = rs.iterator().next();
+                    return new JsonObject()
+                            .put("status", row.getString("status"))
+                            .put("assigneeType", row.getString("assignee_type"))
+                            .put("assigneeKey", row.getString("assignee_key"));
+                })
+                .toCompletionStage()
+                .toCompletableFuture()
+                .join();
+    }
+
+    private long historyCount(WorkflowInstanceId workflowId, WorkflowEntryType entryType) {
+        return historyRepo
+                .listByInstance(workflowId, pool)
+                .map(entries ->
+                        entries.stream().filter(e -> e.entryType() == entryType).count())
+                .toCompletionStage()
+                .toCompletableFuture()
+                .join();
+    }
+
     // --- Tests ---
 
     @Test
@@ -389,5 +421,65 @@ public class PgWorkflowEngineBranchHumanTaskIT {
         assertNotNull(row.getString("forkStepId"), "fork_step_id must be non-null on task row");
         assertEquals("branch-a", row.getString("branchId"), "branch_id must be 'branch-a'");
         ctx.completeNow();
+    }
+
+    @Test
+    @DisplayName("branch task completion with a stale expectedAssignment fails and leaves the branch task OPEN")
+    void staleExpectedAssignmentRejectsBranchTaskCompletion() {
+        WorkflowInstanceId workflowId = startWorkflow("wf-stale-assignment");
+        UUID taskId = findOpenTaskForWorkflow(workflowId);
+        assertNotNull(taskId, "branch A task must exist");
+        TaskAssignment original = new TaskAssignment.Role("reviewers");
+        TaskAssignment reassignedTo = new TaskAssignment.User("carol");
+
+        // The task is reassigned (unconditionally) after the caller observed the original assignment.
+        TaskReassignmentCommand reassign = new TaskReassignmentCommand(
+                taskId,
+                reassignedTo,
+                new WorkflowActor.User("manager-bob"),
+                "idem-reassign-" + UUID.randomUUID(),
+                null,
+                null);
+        TaskMutationResult reassignResult = pool.withTransaction(tx -> engine.taskReassigned(reassign, tx))
+                .toCompletionStage()
+                .toCompletableFuture()
+                .join();
+        assertEquals(TaskMutationResult.APPLIED, reassignResult, "unconditioned reassignment applies");
+
+        TaskCompletionCommand complete = new TaskCompletionCommand(
+                taskId,
+                "approve",
+                null,
+                "idem-stale-complete-" + UUID.randomUUID(),
+                new WorkflowActor.User("user-1"),
+                null,
+                original);
+        CompletionException failure = assertThrows(
+                CompletionException.class, () -> pool.withTransaction(tx -> engine.taskCompleted(complete, tx))
+                        .toCompletionStage()
+                        .toCompletableFuture()
+                        .join());
+
+        WorkflowStaleAssignmentException stale = assertInstanceOf(
+                WorkflowStaleAssignmentException.class,
+                failure.getCause(),
+                "must fail with WorkflowStaleAssignmentException");
+        assertEquals(taskId, stale.taskId());
+        assertEquals(original, stale.expectedAssignment());
+        assertEquals(reassignedTo, stale.actualAssignment());
+
+        // Rollback proof: nothing about the branch task or the workflow moved.
+        JsonObject task = taskStatusAndAssignee(taskId);
+        assertEquals("OPEN", task.getString("status"), "branch task must stay OPEN");
+        assertEquals("USER", task.getString("assigneeType"), "assignment must remain the reassigned one");
+        assertEquals("carol", task.getString("assigneeKey"), "assignment must remain the reassigned one");
+        assertEquals(
+                0L,
+                historyCount(workflowId, WorkflowEntryType.BRANCH_TASK_COMPLETED),
+                "no branch task completion may be recorded");
+        String status = instanceStatus(workflowId);
+        assertTrue(
+                status.equals("RUNNING") || status.equals("WAITING"),
+                "parent instance must still be parked at JOIN, got: " + status);
     }
 }

@@ -6,6 +6,7 @@ package dev.vertique.workflow.postgresql.engine;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.core.context.DurableMetadata;
@@ -20,6 +21,7 @@ import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.engine.WorkflowEngineHandle;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
 import dev.vertique.workflow.exception.WorkflowIdempotencyConflictException;
+import dev.vertique.workflow.exception.WorkflowStaleAssignmentException;
 import dev.vertique.workflow.ops.StartCommand;
 import dev.vertique.workflow.ops.TaskCompletionCommand;
 import dev.vertique.workflow.ops.TaskMutationResult;
@@ -1577,5 +1579,375 @@ public class PgWorkflowEngineHumanTaskIT {
                         ctx.completeNow();
                     }
                 });
+    }
+
+    // =========================================================================
+    // expectedAssignment precondition
+    // =========================================================================
+
+    /**
+     * The {@code expectedAssignment} precondition is compared against the locked task row's
+     * current assignment. A mismatch fails the command with
+     * {@link WorkflowStaleAssignmentException} and rolls the whole transaction back: the task
+     * stays OPEN with its current assignment, the instance stays WAITING, and no history for the
+     * rejected command is written.
+     */
+    @Nested
+    @DisplayName("expectedAssignment precondition")
+    class ExpectedAssignmentPrecondition {
+
+        private static final TaskAssignment ORIGINAL = new TaskAssignment.Role("compliance");
+        private static final TaskAssignment REASSIGNED_TO = new TaskAssignment.User("carol");
+        private static final TaskAssignment OTHER = new TaskAssignment.Queue("overflow");
+
+        /** Converts a future that must fail into one that succeeds with its failure cause. */
+        private <T> Future<Throwable> failureOf(Future<T> future) {
+            return future.<Throwable>transform(ar -> ar.succeeded()
+                    ? Future.<Throwable>failedFuture(new AssertionError("command must have failed but succeeded"))
+                    : Future.<Throwable>succeededFuture(ar.cause()));
+        }
+
+        private Future<String> readTaskStatus(UUID taskId) {
+            return pool.preparedQuery("SELECT status FROM workflow_tasks WHERE task_id = $1")
+                    .execute(Tuple.of(taskId))
+                    .map(rs -> rs.iterator().next().getString("status"));
+        }
+
+        private Future<WorkflowStatus> readInstanceStatus(WorkflowInstanceId workflowId) {
+            return pool.withTransaction(tx -> instanceRepo.findById(workflowId, tx))
+                    .map(opt -> opt.orElseThrow().status());
+        }
+
+        private TaskReassignmentCommand reassign(UUID taskId, TaskAssignment target, TaskAssignment expected) {
+            return reassign(taskId, target, expected, "idem-reassign-" + UUID.randomUUID());
+        }
+
+        private TaskReassignmentCommand reassign(
+                UUID taskId, TaskAssignment target, TaskAssignment expected, String idempotencyKey) {
+            return new TaskReassignmentCommand(
+                    taskId, target, new WorkflowActor.User("manager-bob"), idempotencyKey, null, expected);
+        }
+
+        private TaskCompletionCommand complete(UUID taskId, TaskAssignment expected) {
+            return complete(taskId, expected, "idem-complete-" + UUID.randomUUID());
+        }
+
+        private TaskCompletionCommand complete(UUID taskId, TaskAssignment expected, String idempotencyKey) {
+            return new TaskCompletionCommand(
+                    taskId, "approve", "ok", idempotencyKey, new WorkflowActor.User("alice"), null, expected);
+        }
+
+        @Test
+        @DisplayName("completion with a matching expectedAssignment completes the task and the workflow")
+        void matchingExpectedAssignmentCompletes(VertxTestContext ctx) {
+            TaskState state = TaskState.of("expect-match-" + UUID.randomUUID());
+
+            startWorkflow("human-task-review-test", state)
+                    .compose(workflowId -> readTaskId(workflowId).compose(taskId -> pool.withTransaction(
+                                    tx -> engine.taskCompleted(complete(taskId, ORIGINAL), tx))
+                            .compose(result -> {
+                                ctx.verify(() -> assertEquals(TaskMutationResult.APPLIED, result));
+                                return Future.all(readTaskStatus(taskId), readInstanceStatus(workflowId));
+                            })
+                            .map(statuses -> {
+                                ctx.verify(() -> {
+                                    assertEquals("COMPLETED", statuses.<String>resultAt(0));
+                                    assertEquals(WorkflowStatus.COMPLETED, statuses.<WorkflowStatus>resultAt(1));
+                                });
+                                return null;
+                            })))
+                    .onComplete(ar -> {
+                        if (ar.failed()) {
+                            ctx.failNow(ar.cause());
+                        } else {
+                            ctx.completeNow();
+                        }
+                    });
+        }
+
+        @Test
+        @DisplayName("stale expectedAssignment rejects completion, rolls back, and the same key succeeds corrected")
+        void staleExpectedAssignmentRejectsCompletion(VertxTestContext ctx) {
+            TaskState state = TaskState.of("expect-stale-complete-" + UUID.randomUUID());
+            String idemKey = "idem-stale-complete-" + UUID.randomUUID();
+
+            startWorkflow("human-task-review-test", state)
+                    .compose(workflowId -> readTaskId(workflowId).compose(taskId -> pool.withTransaction(
+                                    tx -> engine.taskReassigned(reassign(taskId, REASSIGNED_TO, null), tx))
+                            .compose(r -> failureOf(pool.withTransaction(
+                                    tx -> engine.taskCompleted(complete(taskId, ORIGINAL, idemKey), tx))))
+                            .compose(cause -> {
+                                ctx.verify(() -> {
+                                    WorkflowStaleAssignmentException stale = assertInstanceOf(
+                                            WorkflowStaleAssignmentException.class,
+                                            cause,
+                                            "must fail with WorkflowStaleAssignmentException");
+                                    assertEquals(taskId, stale.taskId());
+                                    assertEquals(ORIGINAL, stale.expectedAssignment());
+                                    assertEquals(REASSIGNED_TO, stale.actualAssignment());
+                                });
+                                return Future.all(
+                                        readTaskStatus(taskId),
+                                        readTaskAssignment(taskId),
+                                        readTaskJsonbColumn(taskId, "completed_by"),
+                                        readInstanceStatus(workflowId),
+                                        countHistoryEntries(workflowId, WorkflowEntryType.TASK_COMPLETED));
+                            })
+                            .compose(after -> {
+                                ctx.verify(() -> {
+                                    assertEquals("OPEN", after.<String>resultAt(0), "task must stay OPEN");
+                                    String[] assignment = after.resultAt(1);
+                                    assertEquals("USER", assignment[0], "assignment must remain the new one");
+                                    assertEquals("carol", assignment[1], "assignment must remain the new one");
+                                    assertNull(after.<String>resultAt(2), "completed_by must not be stamped");
+                                    assertEquals(
+                                            WorkflowStatus.WAITING,
+                                            after.<WorkflowStatus>resultAt(3),
+                                            "instance must stay WAITING");
+                                    assertEquals(
+                                            0L, after.<Long>resultAt(4), "no TASK_COMPLETED history may be written");
+                                });
+                                // Rollback proof: the rejected attempt must not have left a dedup claim
+                                // behind, so the same key resubmitted with the corrected precondition is
+                                // a fresh completion rather than a replay.
+                                TaskCompletionCommand corrected = complete(taskId, REASSIGNED_TO, idemKey);
+                                return pool.withTransaction(tx -> engine.taskCompleted(corrected, tx))
+                                        .compose(result -> {
+                                            ctx.verify(() -> assertEquals(TaskMutationResult.APPLIED, result));
+                                            return readInstanceStatus(workflowId);
+                                        })
+                                        .map(status -> {
+                                            ctx.verify(() -> assertEquals(WorkflowStatus.COMPLETED, status));
+                                            return null;
+                                        });
+                            })))
+                    .onComplete(ar -> {
+                        if (ar.failed()) {
+                            ctx.failNow(ar.cause());
+                        } else {
+                            ctx.completeNow();
+                        }
+                    });
+        }
+
+        @Test
+        @DisplayName("completion with null expectedAssignment still completes after a reassignment")
+        void nullExpectedAssignmentCompletesAfterReassignment(VertxTestContext ctx) {
+            TaskState state = TaskState.of("expect-null-" + UUID.randomUUID());
+
+            startWorkflow("human-task-review-test", state)
+                    .compose(workflowId -> readTaskId(workflowId).compose(taskId -> pool.withTransaction(
+                                    tx -> engine.taskReassigned(reassign(taskId, REASSIGNED_TO, null), tx))
+                            .compose(r -> pool.withTransaction(tx -> engine.taskCompleted(complete(taskId, null), tx)))
+                            .compose(result -> {
+                                ctx.verify(() -> assertEquals(TaskMutationResult.APPLIED, result));
+                                return readInstanceStatus(workflowId);
+                            })
+                            .map(status -> {
+                                ctx.verify(() -> assertEquals(WorkflowStatus.COMPLETED, status));
+                                return null;
+                            })))
+                    .onComplete(ar -> {
+                        if (ar.failed()) {
+                            ctx.failNow(ar.cause());
+                        } else {
+                            ctx.completeNow();
+                        }
+                    });
+        }
+
+        @Test
+        @DisplayName("reassignment with a matching expectedAssignment is applied")
+        void matchingExpectedAssignmentReassigns(VertxTestContext ctx) {
+            TaskState state = TaskState.of("expect-match-reassign-" + UUID.randomUUID());
+
+            startWorkflow("human-task-review-test", state)
+                    .compose(workflowId -> readTaskId(workflowId).compose(taskId -> pool.withTransaction(
+                                    tx -> engine.taskReassigned(reassign(taskId, REASSIGNED_TO, ORIGINAL), tx))
+                            .compose(result -> {
+                                ctx.verify(() -> assertEquals(TaskMutationResult.APPLIED, result));
+                                return Future.all(
+                                        readTaskAssignment(taskId),
+                                        countHistoryEntries(workflowId, WorkflowEntryType.TASK_REASSIGNED));
+                            })
+                            .map(after -> {
+                                ctx.verify(() -> {
+                                    String[] assignment = after.resultAt(0);
+                                    assertEquals("USER", assignment[0]);
+                                    assertEquals("carol", assignment[1]);
+                                    assertEquals(1L, after.<Long>resultAt(1));
+                                });
+                                return null;
+                            })))
+                    .onComplete(ar -> {
+                        if (ar.failed()) {
+                            ctx.failNow(ar.cause());
+                        } else {
+                            ctx.completeNow();
+                        }
+                    });
+        }
+
+        @Test
+        @DisplayName("stale expectedAssignment rejects reassignment, rolls back, and the same key succeeds corrected")
+        void staleExpectedAssignmentRejectsReassignment(VertxTestContext ctx) {
+            TaskState state = TaskState.of("expect-stale-reassign-" + UUID.randomUUID());
+            String idemKey = "idem-stale-reassign-" + UUID.randomUUID();
+
+            startWorkflow("human-task-review-test", state)
+                    .compose(workflowId -> readTaskId(workflowId).compose(taskId -> pool.withTransaction(
+                                    tx -> engine.taskReassigned(reassign(taskId, REASSIGNED_TO, null), tx))
+                            .compose(r -> failureOf(pool.withTransaction(
+                                    tx -> engine.taskReassigned(reassign(taskId, OTHER, ORIGINAL, idemKey), tx))))
+                            .compose(cause -> {
+                                ctx.verify(() -> {
+                                    WorkflowStaleAssignmentException stale = assertInstanceOf(
+                                            WorkflowStaleAssignmentException.class,
+                                            cause,
+                                            "must fail with WorkflowStaleAssignmentException");
+                                    assertEquals(taskId, stale.taskId());
+                                    assertEquals(ORIGINAL, stale.expectedAssignment());
+                                    assertEquals(REASSIGNED_TO, stale.actualAssignment());
+                                });
+                                return Future.all(
+                                        readTaskStatus(taskId),
+                                        readTaskAssignment(taskId),
+                                        readInstanceStatus(workflowId),
+                                        countHistoryEntries(workflowId, WorkflowEntryType.TASK_REASSIGNED));
+                            })
+                            .compose(after -> {
+                                ctx.verify(() -> {
+                                    assertEquals("OPEN", after.<String>resultAt(0), "task must stay OPEN");
+                                    String[] assignment = after.resultAt(1);
+                                    assertEquals("USER", assignment[0], "assignment must still be the first target");
+                                    assertEquals("carol", assignment[1], "assignment must still be the first target");
+                                    assertEquals(
+                                            WorkflowStatus.WAITING,
+                                            after.<WorkflowStatus>resultAt(2),
+                                            "instance must stay WAITING");
+                                    assertEquals(
+                                            1L,
+                                            after.<Long>resultAt(3),
+                                            "only the first reassignment may be in history");
+                                });
+                                // Rollback proof: the same key resubmitted with the corrected
+                                // precondition must be applied, not treated as a replay.
+                                return pool.withTransaction(tx -> engine.taskReassigned(
+                                                reassign(taskId, OTHER, REASSIGNED_TO, idemKey), tx))
+                                        .compose(result -> {
+                                            ctx.verify(() -> assertEquals(TaskMutationResult.APPLIED, result));
+                                            return readTaskAssignment(taskId);
+                                        })
+                                        .map(assignment -> {
+                                            ctx.verify(() -> {
+                                                assertEquals("QUEUE", assignment[0]);
+                                                assertEquals("overflow", assignment[1]);
+                                            });
+                                            return null;
+                                        });
+                            })))
+                    .onComplete(ar -> {
+                        if (ar.failed()) {
+                            ctx.failNow(ar.cause());
+                        } else {
+                            ctx.completeNow();
+                        }
+                    });
+        }
+
+        @Test
+        @DisplayName("replay with a stale expectedAssignment still resolves through dedup and applies nothing twice")
+        void replayWithStaleExpectedAssignmentStillSucceeds(VertxTestContext ctx) {
+            TaskState state = TaskState.of("expect-replay-" + UUID.randomUUID());
+            String idemKey = "idem-replay-" + UUID.randomUUID();
+
+            startWorkflow("human-task-review-test", state)
+                    .compose(workflowId -> readTaskId(workflowId).compose(taskId -> pool.withTransaction(
+                                    tx -> engine.taskCompleted(complete(taskId, ORIGINAL, idemKey), tx))
+                            .compose(first -> {
+                                ctx.verify(() -> assertEquals(TaskMutationResult.APPLIED, first));
+                                // Same key, decision, payload and actor; only the precondition differs.
+                                return pool.withTransaction(
+                                        tx -> engine.taskCompleted(complete(taskId, OTHER, idemKey), tx));
+                            })
+                            .compose(replay -> {
+                                ctx.verify(() -> assertEquals(
+                                        TaskMutationResult.LOST_TO_RACE,
+                                        replay,
+                                        "retry must resolve through dedup despite the wrong expectedAssignment"));
+                                return Future.all(
+                                        readTaskStatus(taskId),
+                                        countHistoryEntries(workflowId, WorkflowEntryType.TASK_COMPLETED));
+                            })
+                            .map(after -> {
+                                ctx.verify(() -> {
+                                    assertEquals("COMPLETED", after.<String>resultAt(0));
+                                    assertEquals(
+                                            1L,
+                                            after.<Long>resultAt(1),
+                                            "the replay must not apply the completion a second time");
+                                });
+                                return null;
+                            })))
+                    .onComplete(ar -> {
+                        if (ar.failed()) {
+                            ctx.failNow(ar.cause());
+                        } else {
+                            ctx.completeNow();
+                        }
+                    });
+        }
+
+        @Test
+        @DisplayName("reassigning a completed task is a plain conflict, not a stale-assignment failure")
+        void terminalTaskRejectsReassignmentAsConflictNotStale(VertxTestContext ctx) {
+            TaskState state = TaskState.of("expect-terminal-reassign-" + UUID.randomUUID());
+
+            startWorkflow("human-task-review-test", state)
+                    .compose(workflowId -> readTaskId(workflowId).compose(taskId -> pool.withTransaction(
+                                    tx -> engine.taskCompleted(complete(taskId, null), tx))
+                            .compose(done -> {
+                                ctx.verify(() -> assertEquals(TaskMutationResult.APPLIED, done));
+                                // OTHER deliberately mismatches the row; the terminal state must win.
+                                return failureOf(pool.withTransaction(
+                                        tx -> engine.taskReassigned(reassign(taskId, REASSIGNED_TO, OTHER), tx)));
+                            })
+                            .compose(cause -> {
+                                ctx.verify(() -> {
+                                    assertInstanceOf(
+                                            dev.vertique.workflow.exception.WorkflowConflictException.class,
+                                            cause,
+                                            "terminal task must fail with WorkflowConflictException");
+                                    assertEquals(
+                                            dev.vertique.workflow.exception.WorkflowConflictException.class,
+                                            cause.getClass(),
+                                            "must not be the stale-assignment subtype");
+                                    assertTrue(
+                                            cause.getMessage().contains("no longer OPEN"),
+                                            "message must name the terminal state: " + cause.getMessage());
+                                });
+                                return Future.all(
+                                        readTaskStatus(taskId),
+                                        readTaskAssignment(taskId),
+                                        countHistoryEntries(workflowId, WorkflowEntryType.TASK_REASSIGNED));
+                            })
+                            .map(after -> {
+                                ctx.verify(() -> {
+                                    assertEquals("COMPLETED", after.<String>resultAt(0));
+                                    String[] assignment = after.resultAt(1);
+                                    assertEquals("ROLE", assignment[0], "assignment must be unchanged");
+                                    assertEquals("compliance", assignment[1], "assignment must be unchanged");
+                                    assertEquals(0L, after.<Long>resultAt(2), "no reassignment history may exist");
+                                });
+                                return null;
+                            })))
+                    .onComplete(ar -> {
+                        if (ar.failed()) {
+                            ctx.failNow(ar.cause());
+                        } else {
+                            ctx.completeNow();
+                        }
+                    });
+        }
     }
 }

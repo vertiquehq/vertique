@@ -151,4 +151,79 @@ class TaskReassignmentCommandTest {
             assertThat(cmd.reason()).isEqualTo("vacation");
         }
     }
+
+    // --- expectedAssignment precondition ---
+
+    @Nested
+    @DisplayName("expectedAssignment precondition")
+    class ExpectedAssignmentPrecondition {
+
+        @Test
+        @DisplayName("legacy five-argument constructor leaves expectedAssignment null")
+        void legacyConstructorLeavesExpectedAssignmentNull() {
+            TaskReassignmentCommand cmd =
+                    new TaskReassignmentCommand(TASK_ID, NEW_ASSIGNMENT, ACTOR, "idem-1", "vacation");
+
+            assertThat(cmd.expectedAssignment()).isNull();
+            assertThat(cmd.reason()).isEqualTo("vacation");
+        }
+
+        @Test
+        @DisplayName("canonical constructor round-trips a Queue expectedAssignment")
+        void canonicalConstructorRoundTripsQueue() {
+            TaskAssignment expected = new TaskAssignment.Queue("review-queue");
+
+            TaskReassignmentCommand cmd =
+                    new TaskReassignmentCommand(TASK_ID, NEW_ASSIGNMENT, ACTOR, "idem-1", null, expected);
+
+            assertThat(cmd.expectedAssignment()).isEqualTo(expected);
+        }
+
+        @Test
+        @DisplayName("canonical constructor round-trips a User expectedAssignment alongside the other components")
+        void canonicalConstructorRoundTripsUser() {
+            TaskAssignment expected = new TaskAssignment.User("alice");
+
+            TaskReassignmentCommand cmd =
+                    new TaskReassignmentCommand(TASK_ID, NEW_ASSIGNMENT, ACTOR, "my-key", "vacation", expected);
+
+            assertThat(cmd.expectedAssignment()).isEqualTo(expected);
+            assertThat(cmd.taskId()).isEqualTo(TASK_ID);
+            assertThat(cmd.newAssignment()).isEqualTo(NEW_ASSIGNMENT);
+            assertThat(cmd.reassignedBy()).isEqualTo(ACTOR);
+            assertThat(cmd.idempotencyKey()).isEqualTo("my-key");
+            assertThat(cmd.reason()).isEqualTo("vacation");
+        }
+
+        @Test
+        @DisplayName("canonical constructor accepts an explicit null expectedAssignment")
+        void canonicalConstructorAcceptsNullExpectedAssignment() {
+            TaskReassignmentCommand cmd =
+                    new TaskReassignmentCommand(TASK_ID, NEW_ASSIGNMENT, ACTOR, "idem-1", null, null);
+
+            assertThat(cmd.expectedAssignment()).isNull();
+        }
+
+        @Test
+        @DisplayName("blank idempotencyKey still throws IllegalArgumentException through the canonical constructor")
+        void blankIdempotencyKeyStillRejected() {
+            TaskAssignment expected = new TaskAssignment.Queue("review-queue");
+
+            assertThatIllegalArgumentException()
+                    .isThrownBy(
+                            () -> new TaskReassignmentCommand(TASK_ID, NEW_ASSIGNMENT, ACTOR, "   ", null, expected));
+        }
+
+        @Test
+        @DisplayName("blank reason is still normalized to null through the canonical constructor")
+        void blankReasonStillNormalized() {
+            TaskAssignment expected = new TaskAssignment.Queue("review-queue");
+
+            TaskReassignmentCommand cmd =
+                    new TaskReassignmentCommand(TASK_ID, NEW_ASSIGNMENT, ACTOR, "idem-1", "   ", expected);
+
+            assertThat(cmd.reason()).isNull();
+            assertThat(cmd.expectedAssignment()).isEqualTo(expected);
+        }
+    }
 }

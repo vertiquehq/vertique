@@ -273,4 +273,69 @@ class FingerprintCanonicalizerTest {
             assertThat(CANON.fingerprintReassignment(cmdReal)).isNotEqualTo(CANON.fingerprintReassignment(cmdNull));
         }
     }
+
+    // =========================================================================
+    // expectedAssignment precondition is excluded from the fingerprint
+    // =========================================================================
+
+    @Nested
+    @DisplayName("expectedAssignment exclusion")
+    class ExpectedAssignmentExclusion {
+
+        @Test
+        @DisplayName("completion fingerprint is the same with and without expectedAssignment")
+        void completionFingerprintIgnoresExpectedAssignment() {
+            WorkflowActor actor = new WorkflowActor.User("alice");
+            TaskCompletionCommand without = new TaskCompletionCommand(TASK_ID, "approve", "p", "k", actor, "v1", null);
+            TaskCompletionCommand withQueue = new TaskCompletionCommand(
+                    TASK_ID, "approve", "p", "k", actor, "v1", new TaskAssignment.Queue("review-queue"));
+            TaskCompletionCommand withUser = new TaskCompletionCommand(
+                    TASK_ID, "approve", "p", "k", actor, "v1", new TaskAssignment.User("bob"));
+
+            String fpWithout = CANON.fingerprintCompletion(without);
+
+            assertThat(CANON.fingerprintCompletion(withQueue)).isEqualTo(fpWithout);
+            assertThat(CANON.fingerprintCompletion(withUser)).isEqualTo(fpWithout);
+        }
+
+        @Test
+        @DisplayName("completion fingerprint with expectedAssignment equals the legacy-constructor fingerprint")
+        void completionFingerprintMatchesLegacyConstructor() {
+            WorkflowActor actor = new WorkflowActor.User("alice");
+            TaskCompletionCommand legacy = new TaskCompletionCommand(TASK_ID, "approve", "p", "k", actor, "v1");
+            TaskCompletionCommand conditioned = new TaskCompletionCommand(
+                    TASK_ID, "approve", "p", "k", actor, "v1", new TaskAssignment.Queue("review-queue"));
+
+            assertThat(CANON.fingerprintCompletion(conditioned)).isEqualTo(CANON.fingerprintCompletion(legacy));
+        }
+
+        @Test
+        @DisplayName("reassignment fingerprint is the same with and without expectedAssignment")
+        void reassignmentFingerprintIgnoresExpectedAssignment() {
+            WorkflowActor actor = new WorkflowActor.User("mgr");
+            TaskAssignment target = new TaskAssignment.Role("compliance");
+            TaskReassignmentCommand without = new TaskReassignmentCommand(TASK_ID, target, actor, "k", "why", null);
+            TaskReassignmentCommand withQueue = new TaskReassignmentCommand(
+                    TASK_ID, target, actor, "k", "why", new TaskAssignment.Queue("review-queue"));
+            TaskReassignmentCommand withUser =
+                    new TaskReassignmentCommand(TASK_ID, target, actor, "k", "why", new TaskAssignment.User("bob"));
+
+            String fpWithout = CANON.fingerprintReassignment(without);
+
+            assertThat(CANON.fingerprintReassignment(withQueue)).isEqualTo(fpWithout);
+            assertThat(CANON.fingerprintReassignment(withUser)).isEqualTo(fpWithout);
+        }
+
+        @Test
+        @DisplayName("reassignment fingerprint with expectedAssignment equals the legacy-constructor fingerprint")
+        void reassignmentFingerprintMatchesLegacyConstructor() {
+            WorkflowActor actor = new WorkflowActor.User("mgr");
+            TaskAssignment target = new TaskAssignment.Role("compliance");
+            TaskReassignmentCommand legacy = new TaskReassignmentCommand(TASK_ID, target, actor, "k", "why");
+            TaskReassignmentCommand conditioned = new TaskReassignmentCommand(
+                    TASK_ID, target, actor, "k", "why", new TaskAssignment.Queue("review-queue"));
+
+            assertThat(CANON.fingerprintReassignment(conditioned)).isEqualTo(CANON.fingerprintReassignment(legacy));
+        }
+    }
 }

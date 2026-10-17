@@ -74,6 +74,9 @@ final class FingerprintCanonicalizer {
      * causes a fingerprint mismatch, which surfaces as
      * {@link dev.vertique.workflow.exception.WorkflowIdempotencyConflictException}.
      *
+     * <p>{@code expectedAssignment} is deliberately excluded: it is a precondition, not mutation
+     * content, so an idempotent retry resolves through dedup regardless of the expected value.
+     *
      * @param cmd the completion command; must not be null
      * @return a 64-character lowercase hex SHA-256 fingerprint
      * @throws IllegalStateException if SHA-256 is unavailable or JSON serialization fails
@@ -112,6 +115,9 @@ final class FingerprintCanonicalizer {
      * <p>The fingerprint covers: version tag, kind discriminator, the new assignment (kind + value),
      * the reassigning actor (kind + value), and the normalized reason ({@code null} for blank
      * strings — normalization is already applied by the command's compact constructor).
+     *
+     * <p>{@code expectedAssignment} is deliberately excluded: it is a precondition, not mutation
+     * content, so an idempotent retry resolves through dedup regardless of the expected value.
      *
      * @param cmd the reassignment command; must not be null
      * @return a 64-character lowercase hex SHA-256 fingerprint

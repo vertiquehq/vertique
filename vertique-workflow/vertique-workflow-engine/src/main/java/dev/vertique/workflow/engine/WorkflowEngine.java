@@ -1355,7 +1355,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      *   <li>Decision validation and payload coercion.</li>
      *   <li>Non-locking instance read; validates WAITING/TASK/wait-key slot.</li>
      *   <li>Cancel the due-date timer (if present) — lock order: timers before tasks.</li>
-     *   <li>Lock the task row for completion.</li>
+     *   <li>Lock the task row for completion; a supplied {@code expectedAssignment} must still match.</li>
      *   <li>Write completion columns.</li>
      *   <li>Apply decision applicator to state.</li>
      *   <li>Optimistic UPDATE on workflow_instances.</li>
@@ -1404,7 +1404,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      * <ol>
      *   <li>Non-locking task lookup to discover workflowId.</li>
      *   <li>Fingerprint computation and dedup claim.</li>
-     *   <li>Conditional reassignment UPDATE on the task row.</li>
+     *   <li>Lock the task row; require OPEN and a matching {@code expectedAssignment} when supplied; reassign.</li>
      *   <li>Append {@code TASK_REASSIGNED} history on success.</li>
      * </ol>
      *
