@@ -101,6 +101,35 @@ kept, because the start transaction rolls back; a retry with the same idempotenc
 payload starts the instance. An application initial-state function that throws is still reported as
 `WorkflowDefinitionException`, now with the thrown exception as its cause and without its message.
 
+#### Payload Constraint Enforcement
+
+When a `BeanValidator` is bound, the engine also checks the coerced payload against its Bean Validation
+constraints: the decision payload (instance and branch tasks) and the start payload. The check runs after
+coercion and before any mutation, and fails with `WorkflowInvalidPayloadException` carrying one detail per
+violation:
+
+- **path** is an RFC 6901 pointer over the payload's wire (JSON) names, for example `items[0].name`
+  becomes `/items/0/name`. Index segments are numeric, container-element nodes are dropped, and `~` and `/`
+  are escaped as `~0` and `~1`. A map entry ends the pointer at the map property, so the caller's key never
+  appears in the path.
+- **type** is the validation module's mapped name: `size`, `required`, `min`, `max`, `pattern`, `email`.
+  An unmapped constraint keeps the annotation simple name.
+- **message** is exactly what the validator produced.
+
+Installing the validation module (`ValidationModule`) switches enforcement on. With no `BeanValidator`
+bound, behavior is unchanged and the payload is checked for binding only. The engine logs one INFO line at
+construction saying whether payload constraint enforcement is enabled or disabled. The rejection rolls back
+the completion or start transaction like the binding checks above.
+
+Constraint messages pass through unchanged, so keep them value-free:
+
+- Do not interpolate the validated value into a constraint message.
+- Do not build custom violations from untrusted text through the template-building API
+  (`buildConstraintViolationWithTemplate`).
+
+Residual: a `@Pattern` constraint on this path runs on unbounded strings, the same posture as REST bean
+validation. Keyed validation is the bounded path.
+
 ---
 
 ## Key Classes
@@ -123,10 +152,12 @@ the engine package can hold a fully wired engine without depending on the packag
 
 Static factory that is the non-Dagger parallel to `WorkflowEngineModule`. Accepts the repository SPIs,
 task/timer stores, workflow registry, `Clock`, side-effect recorders, optional intent kinds, optional
-`WorkflowMigrationRegistry`, and optional `DurableContextPropagator`, and assembles the entire
-package-private collaborator graph — including hand-wiring the `WorkflowTransitionDriver` ↔
+`WorkflowMigrationRegistry`, optional `DurableContextPropagator`, and optional `BeanValidator`, and
+assembles the entire package-private collaborator graph — including hand-wiring the `WorkflowTransitionDriver` ↔
 `ForkJoinCoordinator` mutual-recursion cycle using a one-element holder array. Returns the assembled
-engine as a `WorkflowEngineHandle`.
+engine as a `WorkflowEngineHandle`. The 16-argument overload takes the `Optional<BeanValidator>` that
+enables payload constraint enforcement; the shorter overloads delegate with an empty optional, so
+enforcement stays off.
 
 Key members:
 
@@ -159,6 +190,7 @@ Dagger module owning the engine-internal bindings:
 - Declares the `@WorkflowRecorders`-qualified `Set<WorkflowSideEffectRecorder<SqlClient>>` multibinding.
 - Provides the `@OptionalIntentKinds Set<IntentKind>` (delegates to `WorkflowEngineFactory.DEFAULT_OPTIONAL_INTENT_KINDS`).
 - Declares `WorkflowMigrationRegistry` as `@BindsOptionalOf` (opt-in migration support).
+- Declares `BeanValidator` as `@BindsOptionalOf` (opt-in payload constraint enforcement; bound by installing the validation module).
 - Includes `WorkflowCoreModule` and `ContextRuntimeModule`.
 
 Adapter modules (`WorkflowPostgresqlModule`) include this module, so applications installing only the

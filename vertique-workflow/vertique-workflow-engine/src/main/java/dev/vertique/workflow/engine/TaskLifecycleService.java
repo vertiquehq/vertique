@@ -150,6 +150,12 @@ final class TaskLifecycleService {
     private final WorkflowContextBinder contextBinder;
 
     /**
+     * Opt-in constraint check applied to coerced decision payloads right after coercion and before
+     * any mutation. A no-op when the application binds no bean validator.
+     */
+    private final PayloadConstraintCheck payloadConstraintCheck;
+
+    /**
      * Constructs a new task-lifecycle service.
      *
      * @param registry the workflow registry used to resolve the pinned {@link RuntimeWorkflow}
@@ -173,6 +179,7 @@ final class TaskLifecycleService {
      * @param contextBinder the binder-row seam for the instance-owned task drives; never
      *     {@code null} (the engine assembly seam substitutes {@link WorkflowContextBinder#noop()}
      *     when durable-context wiring is not exercised)
+     * @param payloadConstraintCheck the opt-in constraint check applied to coerced decision payloads
      */
     @Inject
     TaskLifecycleService(
@@ -190,7 +197,8 @@ final class TaskLifecycleService {
             WorkflowTransitionDriver driver,
             Clock clock,
             Provider<TimerLifecycleService> timerPvd,
-            WorkflowContextBinder contextBinder) {
+            WorkflowContextBinder contextBinder,
+            PayloadConstraintCheck payloadConstraintCheck) {
         this.registry = registry;
         this.instances = instances;
         this.history = history;
@@ -206,6 +214,7 @@ final class TaskLifecycleService {
         this.clock = clock;
         this.timerPvd = timerPvd;
         this.contextBinder = contextBinder;
+        this.payloadConstraintCheck = payloadConstraintCheck;
     }
 
     // --- Task-creation helpers (reached by the driver via Provider<TaskLifecycleService>) ---
@@ -553,6 +562,7 @@ final class TaskLifecycleService {
         try {
             coercedPayload =
                     WorkflowPayloads.validateAndCoerceTaskPayload(cmd.payload(), planDecision.payloadTypeName());
+            payloadConstraintCheck.check(coercedPayload, PayloadConstraintCheck.DECISION_REJECTION);
         } catch (Exception e) {
             logRejectedPayloadCause(e);
             return Future.failedFuture(e);
@@ -807,6 +817,7 @@ final class TaskLifecycleService {
                             try {
                                 coercedPayload = WorkflowPayloads.validateAndCoerceTaskPayload(
                                         cmd.payload(), planDecision.payloadTypeName());
+                                payloadConstraintCheck.check(coercedPayload, PayloadConstraintCheck.DECISION_REJECTION);
                             } catch (Exception e) {
                                 logRejectedPayloadCause(e);
                                 return Future.failedFuture(e);
