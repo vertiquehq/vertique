@@ -6,8 +6,10 @@ package dev.vertique.workflow.engine;
 import dev.vertique.context.ContextValues;
 import dev.vertique.core.context.DurableMetadata;
 import dev.vertique.core.correlation.CorrelationContext;
+import dev.vertique.core.validation.ViolationDetail;
 import dev.vertique.workflow.exception.WorkflowConflictException;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
+import dev.vertique.workflow.exception.WorkflowInvalidPayloadException;
 import dev.vertique.workflow.exception.WorkflowPlanHashDriftException;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.state.BranchStatus;
@@ -17,10 +19,12 @@ import dev.vertique.workflow.state.WorkflowInstance;
 import dev.vertique.workflow.tasks.TaskDecisionDescriptor;
 import dev.vertique.workflow.tasks.TaskRecord;
 import io.vertx.core.Future;
+import io.vertx.core.json.DecodeException;
 import io.vertx.core.json.Json;
 import io.vertx.core.json.JsonObject;
 import jakarta.annotation.Nullable;
 import java.time.Instant;
+import java.util.List;
 
 /**
  * Package-private collection of static payload and guard utilities used by {@link WorkflowEngine}
@@ -69,10 +73,16 @@ final class WorkflowPayloads {
      *       already an instance of the declared class.</li>
      * </ul>
      *
+     * <p>Caller mistakes are reported as {@link WorkflowInvalidPayloadException} whose message and
+     * details never carry a payload value, a payload type name, or a binder message. A payload
+     * that cannot bind to the declared class retains the {@link DecodeException} as the cause.
+     *
      * @param payload the raw payload from the command
      * @param payloadTypeName the fully-qualified class name declared in the plan decision
      * @return the coerced payload (may be {@code null} for Void decisions)
-     * @throws WorkflowDefinitionException if the payload violates the nullability rule
+     * @throws WorkflowInvalidPayloadException if the payload violates the nullability rule or does
+     *     not bind to the declared class
+     * @throws WorkflowDefinitionException if the declared class cannot be resolved
      */
     static Object validateAndCoerceTaskPayload(Object payload, String payloadTypeName) {
         // Special-case the Void / void markers BEFORE Class.forName: the primitive `void.class`
@@ -83,8 +93,8 @@ final class WorkflowPayloads {
         // ("java.lang.Void") are accepted as no-payload decisions.
         if ("void".equals(payloadTypeName) || "java.lang.Void".equals(payloadTypeName)) {
             if (payload != null) {
-                throw new WorkflowDefinitionException(
-                        "Decision declared payloadType Void but a non-null payload was provided");
+                throw invalidDecisionPayload(
+                        "payload is not accepted for a decision without a payload type", "payload", null);
             }
             return null;
         }
@@ -98,10 +108,42 @@ final class WorkflowPayloads {
         }
 
         if (payload == null) {
-            throw new WorkflowDefinitionException(
-                    "Decision declared payloadType '" + payloadTypeName + "' but payload is null");
+            throw invalidDecisionPayload("payload is required", "payload", null);
         }
-        return coercePayload(payload, payloadClass);
+        try {
+            return coercePayload(payload, payloadClass);
+        } catch (DecodeException e) {
+            throw bindingFailure(e);
+        }
+    }
+
+    /**
+     * Builds the value-free rejection for a decision name that the pinned plan does not declare for
+     * the task step. Neither the message nor the detail carries the decision name.
+     *
+     * @return the exception to fail the completion with
+     */
+    static WorkflowInvalidPayloadException unknownDecision() {
+        return invalidDecisionPayload("decision is not declared for this task step", "decision", null);
+    }
+
+    /**
+     * Builds the value-free rejection for a payload that does not bind to its declared class. The
+     * binder's exception is retained as the cause only; its message never reaches the result.
+     *
+     * @param cause the binder failure
+     * @return the exception to fail the command with
+     */
+    static WorkflowInvalidPayloadException bindingFailure(DecodeException cause) {
+        return invalidDecisionPayload("payload does not bind to the declared type", "binding", cause);
+    }
+
+    private static WorkflowInvalidPayloadException invalidDecisionPayload(
+            String detailMessage, String detailType, @Nullable Throwable cause) {
+        List<ViolationDetail> details = List.of(new ViolationDetail("", detailMessage, detailType, null));
+        return cause == null
+                ? new WorkflowInvalidPayloadException("invalid decision payload", details)
+                : new WorkflowInvalidPayloadException("invalid decision payload", details, cause);
     }
 
     /**

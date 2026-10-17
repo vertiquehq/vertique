@@ -66,6 +66,27 @@ The engine performs no transaction management of its own. Public operation metho
 and pass the resulting `SqlClient` handle into their transactional variants. Callers that already own a
 transaction use `TransactionalWorkflowOperations<SqlClient>` directly.
 
+Task completion validates the caller's decision and payload inside the completion transaction and
+rejects caller-caused problems with `WorkflowInvalidPayloadException` (HTTP 400 class, structured
+pointer details):
+
+- an unknown decision name is reported with type `decision`;
+- a non-null payload for a decision without a payload type, or a missing payload for a decision that
+  declares one, is reported with type `payload`;
+- a payload that does not bind to the declared payload type is reported with type `binding`, and the
+  decode exception is the cause.
+
+Messages and details are value-free: they carry no payload value, decision name, class name or decode
+message. The cause is logged at DEBUG level only. A payload class that cannot be resolved remains a
+definition error (`WorkflowDefinitionException`), not a caller error. A failure thrown by an application
+decision applicator is also reported as a definition error, with the applicator exception as its cause
+and without its message.
+
+Because the rejection happens inside the completion transaction, the idempotency claim rolls back with
+it: a retry with the same idempotency key and a corrected payload completes the task. A caller that uses a
+transactional task service owns that rollback and must roll the transaction back when the completion
+future fails.
+
 ---
 
 ## Key Classes
