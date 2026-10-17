@@ -24,6 +24,7 @@ import dev.vertique.core.json.JsonMapperProfile;
 import dev.vertique.core.json.JsonProfileId;
 import dev.vertique.json.JsonMapperProfiles;
 import dev.vertique.json.schema.AnnotationJsonSchemaGenerator;
+import dev.vertique.json.schema.validation.PatternInputGuard;
 import dev.vertique.rest.core.RestValidationException;
 import dev.vertique.rest.core.ValidationErrorDetail;
 import dev.vertique.rest.core.config.JaxRsConfig;

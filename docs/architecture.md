@@ -55,7 +55,8 @@ nor `vertique-json` depends on it.
 against generated JSON Schema documents with `vertx-json-schema`: the pattern-input guard, the
 keyword vocabulary, the registration-time pattern walk, and the value-free violation-detail
 builder. It depends only on `vertique-core` and `vertx-json-schema` — it has no dependency on
-REST, MCP, Vert.x Web, or Dagger — and `vertique-json-schema` does not depend on it.
+REST, MCP, Vert.x Web, or Dagger — and `vertique-json-schema` does not depend on it. `vertique-rest-validation` consumes it
+for the pattern-input bound, the regular-expression check and the violation translation.
 
 `vertique-rest-openapi-docs` is the opt-in runtime OpenAPI documentation module: it depends on
 `vertique-rest-jaxrs`, `vertique-rest-core`, `vertique-security-core`, `vertique-core`, and

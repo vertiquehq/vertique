@@ -61,6 +61,12 @@ SPDX-License-Identifier: EUPL-1.2
             <artifactId>vertique-json-schema</artifactId>
         </dependency>
 
+        <!-- Shared transport-neutral schema-validation support (structural keywords, pattern-input guard) -->
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-json-schema-validation</artifactId>
+        </dependency>
+
         <!-- Annotation sources the schema generator introspects -->
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>
