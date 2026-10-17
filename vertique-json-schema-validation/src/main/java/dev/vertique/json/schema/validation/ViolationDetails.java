@@ -100,8 +100,8 @@ public final class ViolationDetails {
      *
      * <p>An error whose keyword location is absent or empty, rather than naming a structural keyword, has no
      * keyword to describe. It yields a value-free detail at the error's own location, on the single-error branch
-     * and the multi-error branch alike, and {@link #safeDetail(String, Map, String)} is never called with a
-     * {@code null} keyword.
+     * and the multi-error branch alike, without consulting the engine's message; {@link #safeDetail(String, Map, String)}
+     * itself answers a {@code null} keyword with the fixed, value-free message {@code is invalid}.
      *
      * <p>A result that is not valid always yields at least one detail: when every error it reported was
      * structural, exactly one value-free detail is returned, at the location of the first reported error.
@@ -173,17 +173,26 @@ public final class ViolationDetails {
      *
      * <p>When the keyword's constraint is resolved, the message is a canonical description built from the
      * keyword and the constraint alone, for example {@code must have a minimum length of 3}. The engine's message
-     * is used only for {@code required}, which names the missing property and no value, and for a keyword whose
-     * constraint could not be resolved. Every other keyword, including one this method does not know, renders as
-     * {@code "<keyword> constraint violated"}, so an unreviewed keyword fails closed.
+     * is used only for {@code required}, which names the missing property and no value; {@code required} falls
+     * back to {@code is missing a required field} when there is no engine message. Every other keyword,
+     * including one this method does not know and one whose constraint could not be resolved from {@code args},
+     * renders as {@code "<keyword> constraint violated"}, so an unreviewed keyword fails closed and the engine's
+     * message, whose wording may quote the submitted value, is never returned for it. A {@code null} keyword
+     * yields the fixed, value-free {@code is invalid} message whatever the engine's message says.
      *
      * @param keyword    the failed keyword, or {@code null} when it cannot be resolved
      * @param args       the resolved constraint arguments, empty when the constraint could not be resolved
-     * @param rawMessage the engine's message, or {@code null}
+     * @param rawMessage the engine's message, or {@code null}; used only for {@code required}
      * @return the message
      */
     public static String safeDetail(String keyword, Map<String, Object> args, String rawMessage) {
-        if (keyword != null && args != null && args.containsKey(keyword)) {
+        if (keyword == null) {
+            return "is invalid";
+        }
+        if ("required".equals(keyword)) {
+            return rawMessage != null ? rawMessage : "is missing a required field";
+        }
+        if (args != null && args.containsKey(keyword)) {
             Object constraintValue = args.get(keyword);
             return switch (keyword) {
                 case "minLength" -> "must have a minimum length of " + constraintValue;
@@ -198,7 +207,6 @@ public final class ViolationDetails {
                 case "maxProperties" -> "must have at most " + constraintValue + " properties";
                 case "multipleOf" -> "must be a multiple of " + constraintValue;
                 case "pattern" -> "must match pattern: " + constraintValue;
-                case "required" -> rawMessage != null ? rawMessage : "is missing a required field";
                 case "type" -> typeDetail(constraintValue);
                 // The engine's messages for these two quote the client's own property name, and for
                 // patternProperties the generated expression, so they are given fixed messages.
@@ -209,7 +217,7 @@ public final class ViolationDetails {
                 default -> keyword + " constraint violated";
             };
         }
-        return rawMessage != null ? rawMessage : (keyword != null ? keyword + " constraint violated" : "is invalid");
+        return keyword + " constraint violated";
     }
 
     /**
@@ -248,7 +256,7 @@ public final class ViolationDetails {
      * Converts an engine instance location into an RFC 6901 JSON pointer.
      *
      * <p>A leading {@code #} is removed and each segment is percent-decoded as UTF-8; an escape that is not
-     * well formed is left as written. The pointer escapes {@code ~0} and {@code ~1} are kept. The root, in any
+     * well formed, including one written with a non-ASCII digit, is left as written. The pointer escapes {@code ~0} and {@code ~1} are kept. The root, in any
      * spelling ({@code #}, the empty string, {@code /}, or {@code null}), becomes the empty string.
      *
      * @param engineLocation the engine's instance location, for example {@code #/a%20b/0/a~1b}; may be
@@ -704,13 +712,30 @@ public final class ViolationDetails {
         return decoded.toString();
     }
 
-    /** The byte a {@code %XX} escape at {@code index} spells, or {@code -1} when there is no such escape. */
+    /**
+     * The byte a {@code %XX} escape at {@code index} spells, or {@code -1} when there is no such escape. Only
+     * ASCII hexadecimal digits of either case are accepted; a full-width or other Unicode digit is not.
+     */
     private static int hexEscapeAt(String text, int index) {
         if (text.charAt(index) != '%' || index + 2 >= text.length()) {
             return -1;
         }
-        int high = Character.digit(text.charAt(index + 1), 16);
-        int low = Character.digit(text.charAt(index + 2), 16);
+        int high = asciiHexValue(text.charAt(index + 1));
+        int low = asciiHexValue(text.charAt(index + 2));
         return high < 0 || low < 0 ? -1 : high * 16 + low;
+    }
+
+    /** The value of an ASCII hexadecimal digit ({@code 0-9}, {@code a-f}, {@code A-F}), or {@code -1}. */
+    private static int asciiHexValue(char c) {
+        if (c >= '0' && c <= '9') {
+            return c - '0';
+        }
+        if (c >= 'a' && c <= 'f') {
+            return c - 'a' + 10;
+        }
+        if (c >= 'A' && c <= 'F') {
+            return c - 'A' + 10;
+        }
+        return -1;
     }
 }

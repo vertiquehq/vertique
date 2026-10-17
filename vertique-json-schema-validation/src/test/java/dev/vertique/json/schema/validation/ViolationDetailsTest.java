@@ -578,6 +578,33 @@ class ViolationDetailsTest {
             assertThat(ViolationDetails.rfc6901(engineLocation)).isEqualTo(expected);
         }
 
+        @ParameterizedTest(name = "{0} -> {1}")
+        @CsvSource({
+            "'#/%4A', '/J'",
+            "'#/%4a', '/J'",
+            "'#/%c3%A9', '/é'",
+            "'#/%C3%a9', '/é'",
+            "'#/%2F', '//'",
+            "'#/%41%42', '/AB'"
+        })
+        @DisplayName("an escape written with ASCII hex digits of either case is decoded")
+        void asciiHexDigitsOfEitherCaseAreDecoded(String engineLocation, String expected) {
+            assertThat(ViolationDetails.rfc6901(engineLocation)).isEqualTo(expected);
+        }
+
+        @Test
+        @DisplayName("an escape written with full-width digits or letters is not decoded and its text is kept")
+        void nonAsciiHexDigitsAreNotDecoded() {
+            String fullWidthFour = new String(Character.toChars(0xFF14));
+            String fullWidthOne = new String(Character.toChars(0xFF11));
+            String fullWidthA = new String(Character.toChars(0xFF21));
+
+            assertThat(ViolationDetails.rfc6901("#/%" + fullWidthFour + fullWidthOne))
+                    .isEqualTo("/%" + fullWidthFour + fullWidthOne);
+            assertThat(ViolationDetails.rfc6901("#/%" + fullWidthA + "0")).isEqualTo("/%" + fullWidthA + "0");
+            assertThat(ViolationDetails.rfc6901("#/%4" + fullWidthOne)).isEqualTo("/%4" + fullWidthOne);
+        }
+
         @Test
         @DisplayName("a multi-byte sequence is decoded as UTF-8")
         void aMultiByteSequenceIsDecodedAsUtf8() {
@@ -597,6 +624,17 @@ class ViolationDetailsTest {
                 + " only where it is reviewed to be value-free")
         void rendersTheCanonicalMessage(String keyword, Map<String, Object> args, String rawMessage, String expected) {
             assertThat(ViolationDetails.safeDetail(keyword, args, rawMessage)).isEqualTo(expected);
+        }
+
+        @ParameterizedTest(name = "{0}")
+        @ValueSource(strings = {"minLength", "maxLength", "minimum", "pattern", "type", "format", "const", "enum"})
+        @DisplayName("a keyword whose constraint is missing from the args never returns the engine's message")
+        void aMissingConstraintNeverReturnsTheEnginesMessage(String keyword) {
+            String sentinel = "SENTINEL-" + SECRET;
+
+            String detail = ViolationDetails.safeDetail(keyword, Map.of(), "the value " + sentinel + " is bad");
+
+            assertThat(detail).isEqualTo(keyword + " constraint violated").doesNotContain(sentinel);
         }
 
         static Stream<Arguments> messages() {
@@ -635,7 +673,10 @@ class ViolationDetailsTest {
                             "patternProperties", Map.of("patternProperties", true), raw, "does not satisfy the schema"),
                     Arguments.of("format", Map.of("format", true), raw, "format constraint violated"),
                     Arguments.of("const", Map.of("const", true), raw, "const constraint violated"),
-                    Arguments.of("minLength", Map.of(), "raw message", "raw message"),
+                    Arguments.of("minLength", Map.of(), "raw message", "minLength constraint violated"),
+                    Arguments.of("pattern", Map.of("other", 1), raw, "pattern constraint violated"),
+                    Arguments.of("type", Map.of(), raw, "type constraint violated"),
+                    Arguments.of("format", Map.of(), raw, "format constraint violated"),
                     Arguments.of("minLength", Map.of(), null, "minLength constraint violated"),
                     Arguments.of(null, Map.of(), null, "is invalid"));
         }

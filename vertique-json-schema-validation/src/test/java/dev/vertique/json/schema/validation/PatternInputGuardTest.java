@@ -4,6 +4,7 @@
 package dev.vertique.json.schema.validation;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.catchThrowable;
 import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
@@ -13,6 +14,9 @@ import io.vertx.core.json.JsonObject;
 import io.vertx.json.schema.OutputUnit;
 import io.vertx.json.schema.Validator;
 import java.time.Duration;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Named;
@@ -20,6 +24,7 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
@@ -300,6 +305,149 @@ class PatternInputGuardTest {
 
         private JsonObject schemaPayload(String value) {
             return new JsonObject().put("s", value);
+        }
+    }
+
+    @Nested
+    @DisplayName("the counting window")
+    class Windows {
+
+        private static final String BOUND = PatternInputGuard.BOUND_FORMAT;
+
+        /** Counts an eight-character string at the bound entry, returning what the guard throws or {@code null}. */
+        private Throwable countEight(PatternInputGuard guard) {
+            return catchThrowable(() -> guard.validateFormat("string", BOUND, "a".repeat(8)));
+        }
+
+        @Test
+        @DisplayName("closing an inner window leaves the outer window's total bound in force")
+        void closingAnInnerWindowKeepsTheOuterTotal() {
+            PatternInputGuard guard = new PatternInputGuard(10, 10);
+
+            try (PatternInputGuard.Window outer = guard.openWindow()) {
+                assertThat(countEight(guard)).isNull();
+                try (PatternInputGuard.Window inner = guard.openWindow()) {
+                    assertThat(inner).isNotNull();
+                }
+
+                assertThat(countEight(guard)).isInstanceOf(PatternInputGuard.PatternInputTotalExceeded.class);
+            }
+        }
+
+        @Test
+        @DisplayName("closing a window twice does not remove the total of a window opened since")
+        void closingTheSameWindowTwiceKeepsANewerWindowsTotal() {
+            PatternInputGuard guard = new PatternInputGuard(10, 10);
+            PatternInputGuard.Window first = guard.openWindow();
+            first.close();
+            PatternInputGuard.Window newer = guard.openWindow();
+            try {
+                assertThat(countEight(guard)).isNull();
+
+                first.close();
+
+                assertThat(countEight(guard)).isInstanceOf(PatternInputGuard.PatternInputTotalExceeded.class);
+            } finally {
+                newer.close();
+            }
+        }
+
+        @Test
+        @DisplayName("closing stale windows after a newer one was opened does not remove the newer window's total")
+        void closingStaleWindowsKeepsTheNewerWindowsTotal() {
+            PatternInputGuard guard = new PatternInputGuard(10, 10);
+            PatternInputGuard.Window first = guard.openWindow();
+            first.close();
+            PatternInputGuard.Window second = guard.openWindow();
+            second.close();
+            PatternInputGuard.Window newest = guard.openWindow();
+            try {
+                assertThat(countEight(guard)).isNull();
+
+                first.close();
+                second.close();
+
+                assertThat(countEight(guard)).isInstanceOf(PatternInputGuard.PatternInputTotalExceeded.class);
+            } finally {
+                newest.close();
+            }
+        }
+
+        @Test
+        @DisplayName("a window closed on another thread does not remove the opening thread's total")
+        void closingOnAnotherThreadKeepsTheOpeningThreadsTotal() throws Exception {
+            PatternInputGuard guard = new PatternInputGuard(10, 10);
+            ExecutorService other = Executors.newSingleThreadExecutor();
+            try (PatternInputGuard.Window window = guard.openWindow()) {
+                assertThat(countEight(guard)).isNull();
+
+                other.submit(window::close).get(10, TimeUnit.SECONDS);
+
+                assertThat(countEight(guard)).isInstanceOf(PatternInputGuard.PatternInputTotalExceeded.class);
+            } finally {
+                other.shutdownNow();
+            }
+        }
+
+        @Test
+        @DisplayName("closing another thread's window does not remove the closing thread's own total")
+        void closingAForeignWindowKeepsTheClosingThreadsOwnTotal() throws Exception {
+            PatternInputGuard guard = new PatternInputGuard(10, 10);
+            ExecutorService other = Executors.newSingleThreadExecutor();
+            try (PatternInputGuard.Window foreign = guard.openWindow()) {
+                Throwable onOtherThread = other.submit(() -> {
+                            try (PatternInputGuard.Window own = guard.openWindow()) {
+                                assertThat(countEight(guard)).isNull();
+
+                                foreign.close();
+
+                                return countEight(guard);
+                            }
+                        })
+                        .get(10, TimeUnit.SECONDS);
+
+                assertThat(onOtherThread).isInstanceOf(PatternInputGuard.PatternInputTotalExceeded.class);
+            } finally {
+                other.shutdownNow();
+            }
+        }
+    }
+
+    @Nested
+    @DisplayName("construction")
+    class Construction {
+
+        @ParameterizedTest(name = "limits ({0}, {1}) are rejected")
+        @CsvSource({"0, 10", "-1, -1", "10, 5", "1, 0"})
+        @DisplayName("limits below one, or a total smaller than the per-string limit, are rejected")
+        void nonsensicalLimitsAreRejected(int maxChars, int maxTotalChars) {
+            assertThatCode(() -> new PatternInputGuard(maxChars, maxTotalChars))
+                    .isInstanceOf(IllegalArgumentException.class);
+        }
+
+        @ParameterizedTest(name = "limits ({0}, {1}) are accepted")
+        @CsvSource({"1, 1", "4096, 262144", "5, 5"})
+        @DisplayName("limits from one up, with the total no smaller than the per-string limit, are accepted")
+        void sensibleLimitsAreAccepted(int maxChars, int maxTotalChars) {
+            assertThatCode(() -> new PatternInputGuard(maxChars, maxTotalChars)).doesNotThrowAnyException();
+        }
+
+        @Test
+        @DisplayName("a rejection message never echoes the configured values")
+        void aRejectionNeverEchoesTheConfiguredValues() {
+            assertThat(catchThrowable(() -> new PatternInputGuard(12345, 5)))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .satisfies(thrown ->
+                            assertThat(String.valueOf(thrown.getMessage())).doesNotContain("12345"));
+            assertThat(catchThrowable(() -> new PatternInputGuard(-98765, -98765)))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .satisfies(thrown ->
+                            assertThat(String.valueOf(thrown.getMessage())).doesNotContain("98765"));
+            assertThat(catchThrowable(() -> new PatternInputGuard(4321, 1234)))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .satisfies(thrown -> assertThat(String.valueOf(thrown.getMessage()))
+                            .doesNotContain("4321")
+                            .doesNotContain("1234"));
         }
     }
 

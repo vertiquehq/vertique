@@ -14,12 +14,11 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Pins that the transport-neutral schema-validation support module and the REST-side definitions agree on the
- * structural keyword set and on the pattern-input bound defaults, so moving this module onto the shared
- * support cannot change either observable behavior.
- *
- * <p>{@code PatternInputGuard} is imported explicitly from the shared module; the single-type import shadows
- * this package's own guard of the same simple name.
+ * Pins two agreements between the transport-neutral schema-validation support module and the REST side: the
+ * module's structural keyword set equals the REST structural keyword set, and the module's two pattern-input
+ * bound defaults equal the defaults of the JAX-RS configuration. A change to either side that breaks one of
+ * them fails here rather than silently changing which errors are treated as wrappers or where the input bounds
+ * sit.
  */
 class SharedValidationSupportParityTest {
 

@@ -48,7 +48,11 @@ units:
 - **Per string** — a single string longer than the limit is rejected before any expression runs.
   The default is `PatternInputGuard.DEFAULT_MAX_CHARS` (4,096).
 - **Per validation window** — the running sum of every bounded string within one window is limited as
-  a whole. The default is `PatternInputGuard.DEFAULT_MAX_TOTAL_CHARS` (262,144).
+  a whole. The bound is per window, not per request: the window is whatever span the caller opens.
+  The default is `PatternInputGuard.DEFAULT_MAX_TOTAL_CHARS` (262,144).
+
+Without an open window only the per-string limit applies; the total is not counted. The constructor
+rejects nonsensical limits (see "PatternInputGuard" below).
 
 Both apply at the same positions: the instance string at a `pattern` keyword, the property names
 under a non-empty `patternProperties`, and the instance string under the three regex-backed formats
@@ -62,7 +66,7 @@ fixed message that never contains the instance.
 
 No method in this module places instance text into a message. A violation message is built from the
 failed keyword and its schema arguments, or it is the fixed text `"does not satisfy the schema"`
-(`ViolationDetails.VALUE_FREE_MESSAGE`). A raw engine message reaches a detail only as the fallback for
+(`ViolationDetails.VALUE_FREE_MESSAGE`). A raw engine message reaches a detail only for
 a `required` violation, which names a property, never a value.
 
 ### Pattern walk at registration time
@@ -74,7 +78,8 @@ member of `properties`, `patternProperties`, `$defs`, and `dependentSchemas` as 
 its name. A `patternProperties` key is itself a regular expression, so a failure there, or beneath
 it, reports the key as `[key-N]` (its ordinal among that object's keys) and never as the expression.
 The failure carries the JSON Pointer of the position, the JDK's description of the syntax error, and
-its index — never the pattern text.
+its index — never the complete pattern. The description may quote a fragment of the pattern or of the
+key, so treat it as schema-author content, not as a constant.
 
 ### Violation detail shape
 
@@ -89,8 +94,9 @@ entries:
   when no actionable keyword exists.
 - **`message`** — a value-free message for that keyword, rendered from the schema's own arguments.
 - **`args`** — the constraint arguments resolved from the schema (for example `{maxLength: 3}`), or
-  `null` when there are none. Resolution follows at most 16 `$ref` hops, 64 composed subschemas, and
-  10 index digits; beyond those it returns no arguments rather than guessing.
+  `null` when there are none. Resolution reads at most 10 index digits in an array-index segment;
+  beyond that it returns no arguments rather than guessing. The cut-back to a declared location
+  follows at most 16 `$ref` hops and 64 composed subschemas, and shares the 10-digit index bound.
 
 A keyword that only traverses structure (`properties`, `items`, `allOf`, `anyOf`, `additionalProperties`,
 and the like — `SchemaKeywords.STRUCTURAL_KEYWORDS`) is a wrapper, not a violation: `collect` looks
@@ -123,7 +129,9 @@ from.
 Compiles a schema into a `Validator` whose pattern positions are bounded.
 
 - `new PatternInputGuard(maxChars, maxTotalChars)` — the two limits, in UTF-16 code units; the
-  `DEFAULT_MAX_CHARS` and `DEFAULT_MAX_TOTAL_CHARS` constants hold the defaults.
+  `DEFAULT_MAX_CHARS` and `DEFAULT_MAX_TOTAL_CHARS` constants hold the defaults. The constructor
+  throws `IllegalArgumentException` unless `1 <= maxChars <= maxTotalChars`; its message does not
+  contain the configured values.
 - `static JsonObject rewrite(JsonObject schema)` — returns a copy of the schema in which each bounded
   position gains one entry `{"format": "x-vertique-pattern-input-bound"}` appended to its `allOf`
   (`BOUND_FORMAT`), and each non-empty `patternProperties` gains a `propertyNames` entry carrying the
@@ -132,7 +140,12 @@ Compiles a schema into a `Validator` whose pattern positions are bounded.
 - `Validator compile(JsonObject schema, JsonSchemaOptions options)` — rewrites and compiles in one
   step; the guard is the compiled copy's format validator.
 - `Window openWindow()` — opens the calling thread's per-validation window; `Window.close()` ends it.
-  Open one around each validation and close it in `finally`.
+  Open one around each validation, on the guard that compiled the validator, and close it in
+  `finally`. Never nest windows: opening a window while one is open on the same thread returns a
+  no-op window, so the outer window's total keeps running and the inner close does nothing. A window
+  removes its own tally only, and only from the thread that opened it; closing it twice, after a
+  newer window opened, or from another thread removes nothing else. With no window open only the
+  per-string limit applies.
 - `PatternInputGuard.PatternInputTooLong` (`maxChars()`) and
   `PatternInputGuard.PatternInputTotalExceeded` (`maxTotalChars()`) — thrown out of
   `Validator.validate` when a bound is exceeded.
@@ -144,7 +157,7 @@ Validator validator = guard.compile(schema, JsonSchemaValidationOptions.draft202
 try (PatternInputGuard.Window window = guard.openWindow()) {
     OutputUnit result = validator.validate(payload);
     List<ViolationDetail> details = ViolationDetails.collect(result, schema, false, PathForm.RFC6901);
-} catch (PatternInputGuard.PatternInputTooLong e) {
+} catch (PatternInputGuard.PatternInputTooLong | PatternInputGuard.PatternInputTotalExceeded e) {
     ViolationDetail detail = ViolationDetails.patternInputBound(e).orElseThrow();
 }
 ```
@@ -180,9 +193,11 @@ per call to `ViolationDetails.collect`.
   non-structural violation.
 - `valueFree(String path)` — a detail with the fixed message and `null` `type` and `args`.
 - `safeDetail(String keyword, Map<String, Object> args, String rawMessage)` — the keyword-canonical,
-  value-free message for a violated keyword.
-- `patternInputBound(Throwable)` — an `Optional<ViolationDetail>` for a guard exception found in the
-  throwable or its cause chain, empty for anything else.
+  value-free message for a violated keyword. It fails closed: a keyword whose constraint is missing
+  from `args` yields `<keyword> constraint violated`, never the engine's message; only `required`
+  uses the engine's message, and a `null` keyword yields the fixed `is invalid`.
+- `patternInputBound(Throwable)` — an `Optional<ViolationDetail>` for a guard exception that is the
+  exception itself or its direct cause, empty for anything else.
 - `rfc6901(String)` — the conversion described above.
 - Constants `VALUE_FREE_MESSAGE`, `PATTERN_INPUT_LENGTH_TYPE`, and `PATTERN_INPUT_TOTAL_LENGTH_TYPE`.
 

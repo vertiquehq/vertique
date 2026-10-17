@@ -76,7 +76,7 @@ class ModuleStructureTest {
     }
 
     @Test
-    @DisplayName("the four reused format checks are package-private and nothing outside the guard reaches them")
+    @DisplayName("the four reused format checks are not public types")
     void theFormatChecksArePackagePrivate() throws ClassNotFoundException {
         for (String name : List.of("UriFormatChecks", "PointerFormatChecks", "UrlFormatCheck", "UriTemplateSyntax")) {
             Class<?> check = Class.forName("dev.vertique.json.schema.validation." + name);

@@ -6,9 +6,10 @@ package dev.vertique.json.schema.validation;
 /**
  * One regular expression a schema declares that the regex engine cannot compile, located by JSON pointer.
  *
- * <p>The record never carries the pattern text: the pattern is untrusted schema content, and the engine's own
+ * <p>The record never carries the complete pattern: the pattern is untrusted schema content, and the engine's own
  * exception message quotes it in full. Only the engine's description of the defect and the index it reports are
- * kept, so the value is safe to log or to place in a diagnostic.
+ * kept. The description may still quote a fragment of the pattern, or of a {@code patternProperties} key, so
+ * treat it as schema-author content rather than as a constant.
  *
  * <p>INTERNAL framework seam: this type is shared by framework modules and is not an application contract.
  *
