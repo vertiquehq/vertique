@@ -1,0 +1,1341 @@
+public <C> C dev.vertique.workflow.client.WorkflowClientFactory.create(java.lang.Class<C>)
+public <P> dev.vertique.workflow.dsl.WorkflowBuilder<S> dev.vertique.workflow.dsl.WorkflowBuilder.init(java.lang.Class<P>,java.util.function.Function<P, S>)
+public <P> dev.vertique.workflow.dsl.WorkflowBuilder<S> dev.vertique.workflow.dsl.WorkflowBuilder.waitFor(java.lang.String,java.lang.String,java.lang.Class<P>,java.util.function.BiFunction<S, P, S>,java.lang.String)
+public <P> dev.vertique.workflow.dsl.WorkflowBuilder<S>$SignalWaitBuilder<P> dev.vertique.workflow.dsl.WorkflowBuilder.waitForSignal(java.lang.String,java.lang.String,java.lang.Class<P>)
+public <P> dev.vertique.workflow.dsl.WorkflowBuilder<S>$TaskDecisionBuilder<P> dev.vertique.workflow.dsl.WorkflowBuilder$TaskBuilder.decision(java.lang.String,java.lang.Class<P>)
+public T dev.vertique.workflow.migration.MigrationResult$AnchorAtInitial.newState()
+public T dev.vertique.workflow.migration.MigrationResult$ContinueAt.newState()
+public abstract <S> java.util.function.BiFunction<S, java.lang.Object, S> dev.vertique.workflow.registry.WorkflowCallbackRegistry.stateUpdater(dev.vertique.workflow.registry.CallbackId)
+public abstract <S> java.util.function.Function<S, java.lang.Object> dev.vertique.workflow.registry.WorkflowCallbackRegistry.payloadFactory(dev.vertique.workflow.registry.CallbackId)
+public abstract <S> java.util.function.Function<S, java.lang.String> dev.vertique.workflow.registry.WorkflowCallbackRegistry.decisionResolver(dev.vertique.workflow.registry.CallbackId)
+public abstract <S> java.util.function.Function<S, java.lang.String> dev.vertique.workflow.registry.WorkflowCallbackRegistry.failMessageFactory(dev.vertique.workflow.registry.CallbackId)
+public abstract @interface dev.vertique.workflow.contract.BusinessKey
+public abstract @interface dev.vertique.workflow.contract.IdempotencyKey
+public abstract @interface dev.vertique.workflow.contract.SignalDedupKey
+public abstract @interface dev.vertique.workflow.contract.SubjectRef
+public abstract @interface dev.vertique.workflow.contract.WorkflowContract
+public abstract @interface dev.vertique.workflow.contract.WorkflowQuery
+public abstract @interface dev.vertique.workflow.contract.WorkflowSignal
+public abstract @interface dev.vertique.workflow.contract.WorkflowStart
+public abstract @interface dev.vertique.workflow.sideeffect.WorkflowRecorders
+public abstract T dev.vertique.workflow.migration.MigrationResult.newState()
+public abstract class dev.vertique.workflow.di.WorkflowCoreModule
+public abstract class dev.vertique.workflow.migration.WorkflowMigrationModule
+public abstract dev.vertique.workflow.actor.WorkflowActor dev.vertique.workflow.actor.WorkflowActorMapper.toWorkflowActor(dev.vertique.security.SecurityIdentity)
+public abstract dev.vertique.workflow.contract.WorkflowContractMetadata dev.vertique.workflow.registry.WorkflowRegistry.contractMetadata(java.lang.Class<?>)
+public abstract dev.vertique.workflow.migration.MigrationResult<T> dev.vertique.workflow.migration.WorkflowMigrationHandler.migrate(S,dev.vertique.workflow.migration.MigrationContext)
+public abstract dev.vertique.workflow.plan.RaceSafety dev.vertique.workflow.plan.RaceSafetyTargetRegistry.lookup(java.lang.String)
+public abstract dev.vertique.workflow.plan.RaceSafetyTargetRegistry$Builder dev.vertique.workflow.plan.RaceSafetyTargetRegistry$Builder.register(java.lang.String,dev.vertique.workflow.plan.RaceSafety)
+public abstract dev.vertique.workflow.registry.RuntimeWorkflow dev.vertique.workflow.registry.WorkflowRegistry.resolveCurrent(java.lang.String)
+public abstract dev.vertique.workflow.registry.RuntimeWorkflow dev.vertique.workflow.registry.WorkflowRegistry.resolvePinned(java.lang.String,long)
+public abstract dev.vertique.workflow.sideeffect.IntentKind dev.vertique.workflow.sideeffect.WorkflowSideEffectRecorder.kind()
+public abstract dev.vertique.workflow.subject.WorkflowSubjectRef dev.vertique.workflow.contract.SubjectReferenced.subjectRef()
+public abstract interface dev.vertique.workflow.actor.WorkflowActor
+public abstract interface dev.vertique.workflow.actor.WorkflowActorMapper
+public abstract interface dev.vertique.workflow.contract.BusinessKeyed
+public abstract interface dev.vertique.workflow.contract.IdempotencyKeyed
+public abstract interface dev.vertique.workflow.contract.SignalDedupKeyed
+public abstract interface dev.vertique.workflow.contract.SubjectReferenced
+public abstract interface dev.vertique.workflow.dsl.WorkflowDefinition<S,C>
+public abstract interface dev.vertique.workflow.migration.MigrationResult<T>
+public abstract interface dev.vertique.workflow.migration.WorkflowMigrationHandler<S,T>
+public abstract interface dev.vertique.workflow.migration.WorkflowMigrationRegistry
+public abstract interface dev.vertique.workflow.ops.TransactionalTaskCallbacks<TX>
+public abstract interface dev.vertique.workflow.ops.TransactionalTimerCallbacks<TX>
+public abstract interface dev.vertique.workflow.ops.TransactionalWorkflowOperations<TX>
+public abstract interface dev.vertique.workflow.ops.WorkflowOperations
+public abstract interface dev.vertique.workflow.plan.JoinPolicy
+public abstract interface dev.vertique.workflow.plan.RaceSafetyTargetContributor
+public abstract interface dev.vertique.workflow.plan.RaceSafetyTargetRegistry
+public abstract interface dev.vertique.workflow.plan.ReminderSpec
+public abstract interface dev.vertique.workflow.plan.TimerSpec
+public abstract interface dev.vertique.workflow.plan.WorkflowNode
+public abstract interface dev.vertique.workflow.query.WorkflowInstanceQueryService
+public abstract interface dev.vertique.workflow.registry.WorkflowCallbackRegistry
+public abstract interface dev.vertique.workflow.registry.WorkflowContributor
+public abstract interface dev.vertique.workflow.registry.WorkflowRegistry
+public abstract interface dev.vertique.workflow.retention.WorkflowRetentionService
+public abstract interface dev.vertique.workflow.sideeffect.RecorderResult
+public abstract interface dev.vertique.workflow.sideeffect.WorkflowSideEffectRecorder<TX>
+public abstract interface dev.vertique.workflow.state.WaitReason
+public abstract interface dev.vertique.workflow.tasks.TaskAssignment
+public abstract interface dev.vertique.workflow.tasks.TaskReassignmentResult
+public abstract interface dev.vertique.workflow.tasks.TaskStore<TX>
+public abstract interface dev.vertique.workflow.timer.TimerStore<TX>
+public abstract io.vertx.core.Future<dev.vertique.db.query.PagedResult<dev.vertique.workflow.state.WorkflowInstance>> dev.vertique.workflow.query.WorkflowInstanceQueryService.list(dev.vertique.workflow.query.WorkflowInstanceQuery,dev.vertique.db.query.PageCursor)
+public abstract io.vertx.core.Future<dev.vertique.db.query.PagedResult<dev.vertique.workflow.tasks.TaskRecord>> dev.vertique.workflow.tasks.TaskStore.findByFilter(dev.vertique.workflow.tasks.TaskFilter,dev.vertique.db.query.PageCursor,TX)
+public abstract io.vertx.core.Future<dev.vertique.workflow.ops.TaskMutationResult> dev.vertique.workflow.ops.TransactionalTaskCallbacks.taskCompleted(dev.vertique.workflow.ops.TaskCompletionCommand,TX)
+public abstract io.vertx.core.Future<dev.vertique.workflow.ops.TaskMutationResult> dev.vertique.workflow.ops.TransactionalTaskCallbacks.taskDueFired(dev.vertique.workflow.ops.WorkflowInstanceId,java.util.UUID,TX)
+public abstract io.vertx.core.Future<dev.vertique.workflow.ops.TaskMutationResult> dev.vertique.workflow.ops.TransactionalTaskCallbacks.taskReassigned(dev.vertique.workflow.ops.TaskReassignmentCommand,TX)
+public abstract io.vertx.core.Future<dev.vertique.workflow.ops.TimerFiringResult> dev.vertique.workflow.ops.TransactionalTimerCallbacks.timerFired(dev.vertique.workflow.ops.WorkflowInstanceId,java.util.UUID,TX)
+public abstract io.vertx.core.Future<dev.vertique.workflow.ops.TimerFiringResult> dev.vertique.workflow.ops.TransactionalTimerCallbacks.timerFiringFailed(dev.vertique.workflow.ops.WorkflowInstanceId,java.util.UUID,java.lang.String,java.lang.String,TX)
+public abstract io.vertx.core.Future<dev.vertique.workflow.ops.WorkflowInstanceId> dev.vertique.workflow.ops.TransactionalWorkflowOperations.start(dev.vertique.workflow.ops.StartCommand,TX)
+public abstract io.vertx.core.Future<dev.vertique.workflow.ops.WorkflowInstanceId> dev.vertique.workflow.ops.WorkflowOperations.start(dev.vertique.workflow.ops.StartCommand)
+public abstract io.vertx.core.Future<dev.vertique.workflow.ops.WorkflowView> dev.vertique.workflow.ops.WorkflowOperations.query(dev.vertique.workflow.ops.WorkflowInstanceId)
+public abstract io.vertx.core.Future<dev.vertique.workflow.retention.WorkflowRetentionService$PurgeResult> dev.vertique.workflow.retention.WorkflowRetentionService.purgeArchivedBefore(java.time.Instant,java.lang.String,int)
+public abstract io.vertx.core.Future<dev.vertique.workflow.retention.WorkflowRetentionService$RetentionResult> dev.vertique.workflow.retention.WorkflowRetentionService.archiveCancelledBefore(java.time.Instant,java.lang.String,int)
+public abstract io.vertx.core.Future<dev.vertique.workflow.retention.WorkflowRetentionService$RetentionResult> dev.vertique.workflow.retention.WorkflowRetentionService.archiveCompensatedBefore(java.time.Instant,java.lang.String,int)
+public abstract io.vertx.core.Future<dev.vertique.workflow.retention.WorkflowRetentionService$RetentionResult> dev.vertique.workflow.retention.WorkflowRetentionService.archiveCompletedBefore(java.time.Instant,java.lang.String,int)
+public abstract io.vertx.core.Future<dev.vertique.workflow.retention.WorkflowRetentionService$RetentionResult> dev.vertique.workflow.retention.WorkflowRetentionService.archiveExpiredBefore(java.time.Instant,java.lang.String,int)
+public abstract io.vertx.core.Future<dev.vertique.workflow.retention.WorkflowRetentionService$RetentionResult> dev.vertique.workflow.retention.WorkflowRetentionService.archiveFailedBefore(java.time.Instant,java.lang.String,int)
+public abstract io.vertx.core.Future<dev.vertique.workflow.sideeffect.RecorderResult> dev.vertique.workflow.sideeffect.WorkflowSideEffectRecorder.record(dev.vertique.workflow.sideeffect.WorkflowSideEffectIntent,TX)
+public abstract io.vertx.core.Future<dev.vertique.workflow.tasks.TaskReassignmentResult> dev.vertique.workflow.tasks.TaskStore.reassign(java.util.UUID,dev.vertique.workflow.tasks.TaskAssignment,dev.vertique.workflow.actor.WorkflowActor,java.lang.String,java.time.Instant,TX)
+public abstract io.vertx.core.Future<dev.vertique.workflow.tasks.TaskTransition> dev.vertique.workflow.tasks.TaskStore.markCancelled(java.util.UUID,java.lang.String,java.time.Instant,dev.vertique.workflow.actor.WorkflowActor,TX)
+public abstract io.vertx.core.Future<dev.vertique.workflow.tasks.TaskTransition> dev.vertique.workflow.tasks.TaskStore.markCompleted(java.util.UUID,java.lang.String,java.lang.String,java.time.Instant,dev.vertique.workflow.actor.WorkflowActor,TX)
+public abstract io.vertx.core.Future<dev.vertique.workflow.tasks.TaskTransition> dev.vertique.workflow.tasks.TaskStore.markExpired(java.util.UUID,java.time.Instant,TX)
+public abstract io.vertx.core.Future<dev.vertique.workflow.timer.TimerStatusTransition> dev.vertique.workflow.timer.TimerStore.markCancelled(java.util.UUID,java.time.Instant,TX)
+public abstract io.vertx.core.Future<dev.vertique.workflow.timer.TimerStatusTransition> dev.vertique.workflow.timer.TimerStore.markFailed(java.util.UUID,java.time.Instant,java.lang.String,TX)
+public abstract io.vertx.core.Future<dev.vertique.workflow.timer.TimerStatusTransition> dev.vertique.workflow.timer.TimerStore.markFired(java.util.UUID,java.time.Instant,TX)
+public abstract io.vertx.core.Future<java.lang.Void> dev.vertique.workflow.ops.TransactionalTaskCallbacks.taskReminderFired(dev.vertique.workflow.ops.WorkflowInstanceId,java.util.UUID,java.util.UUID,java.time.Instant,TX)
+public abstract io.vertx.core.Future<java.lang.Void> dev.vertique.workflow.ops.TransactionalWorkflowOperations.cancel(dev.vertique.workflow.ops.WorkflowInstanceId,java.lang.String,TX)
+public abstract io.vertx.core.Future<java.lang.Void> dev.vertique.workflow.ops.TransactionalWorkflowOperations.retry(dev.vertique.workflow.ops.WorkflowInstanceId,TX)
+public abstract io.vertx.core.Future<java.lang.Void> dev.vertique.workflow.ops.TransactionalWorkflowOperations.signal(dev.vertique.workflow.ops.WorkflowInstanceId,java.lang.String,java.lang.Object,java.lang.String,TX)
+public abstract io.vertx.core.Future<java.lang.Void> dev.vertique.workflow.ops.WorkflowOperations.cancel(dev.vertique.workflow.ops.WorkflowInstanceId,java.lang.String)
+public abstract io.vertx.core.Future<java.lang.Void> dev.vertique.workflow.ops.WorkflowOperations.retry(dev.vertique.workflow.ops.WorkflowInstanceId)
+public abstract io.vertx.core.Future<java.lang.Void> dev.vertique.workflow.ops.WorkflowOperations.signal(dev.vertique.workflow.ops.WorkflowInstanceId,java.lang.String,java.lang.Object,java.lang.String)
+public abstract io.vertx.core.Future<java.lang.Void> dev.vertique.workflow.tasks.TaskStore.insertOpen(dev.vertique.workflow.tasks.TaskRecord,TX)
+public abstract io.vertx.core.Future<java.lang.Void> dev.vertique.workflow.timer.TimerStore.insertScheduled(dev.vertique.workflow.timer.TimerRecord,TX)
+public abstract io.vertx.core.Future<java.lang.Void> dev.vertique.workflow.timer.TimerStore.updateExecutionId(java.util.UUID,java.util.UUID,TX)
+public abstract io.vertx.core.Future<java.util.List<dev.vertique.workflow.tasks.TaskRecord>> dev.vertique.workflow.tasks.TaskStore.findOpenByBranchToken(java.util.UUID,TX)
+public abstract io.vertx.core.Future<java.util.List<dev.vertique.workflow.timer.TimerRecord>> dev.vertique.workflow.timer.TimerStore.findRecoverableScheduled(java.time.Instant,int,TX)
+public abstract io.vertx.core.Future<java.util.List<dev.vertique.workflow.timer.TimerRecord>> dev.vertique.workflow.timer.TimerStore.findScheduledByBranchToken(java.util.UUID,TX)
+public abstract io.vertx.core.Future<java.util.List<java.util.UUID>> dev.vertique.workflow.timer.TimerStore.findScheduledRemindersForTask(java.util.UUID,TX)
+public abstract io.vertx.core.Future<java.util.Optional<dev.vertique.workflow.state.WorkflowInstance>> dev.vertique.workflow.query.WorkflowInstanceQueryService.getById(dev.vertique.workflow.ops.WorkflowInstanceId)
+public abstract io.vertx.core.Future<java.util.Optional<dev.vertique.workflow.tasks.TaskRecord>> dev.vertique.workflow.tasks.TaskStore.findById(java.util.UUID,TX)
+public abstract io.vertx.core.Future<java.util.Optional<dev.vertique.workflow.tasks.TaskRecord>> dev.vertique.workflow.tasks.TaskStore.lockForCompletion(java.util.UUID,TX)
+public abstract io.vertx.core.Future<java.util.Optional<dev.vertique.workflow.timer.TimerRecord>> dev.vertique.workflow.timer.TimerStore.findById(java.util.UUID,TX)
+public abstract io.vertx.core.Future<java.util.Optional<dev.vertique.workflow.timer.TimerRecord>> dev.vertique.workflow.timer.TimerStore.lockForFiring(java.util.UUID,TX)
+public abstract io.vertx.core.Future<java.util.Optional<java.lang.Integer>> dev.vertique.workflow.tasks.TaskStore.incrementRemindersFiredCount(java.util.UUID,TX)
+public abstract java.lang.Class<C> dev.vertique.workflow.dsl.WorkflowDefinition.contract()
+public abstract java.lang.Class<S> dev.vertique.workflow.dsl.WorkflowDefinition.stateType()
+public abstract java.lang.Class<S> dev.vertique.workflow.migration.WorkflowMigrationHandler.sourceStateType()
+public abstract java.lang.Class<T> dev.vertique.workflow.migration.WorkflowMigrationHandler.targetStateType()
+public abstract java.lang.String dev.vertique.workflow.contract.BusinessKeyed.businessKey()
+public abstract java.lang.String dev.vertique.workflow.contract.IdempotencyKeyed.idempotencyKey()
+public abstract java.lang.String dev.vertique.workflow.contract.SignalDedupKeyed.dedupKey()
+public abstract java.lang.String dev.vertique.workflow.contract.WorkflowContract.definitionId()
+public abstract java.lang.String dev.vertique.workflow.contract.WorkflowQuery.value()
+public abstract java.lang.String dev.vertique.workflow.contract.WorkflowSignal.value()
+public abstract java.lang.String dev.vertique.workflow.dsl.WorkflowDefinition.definitionId()
+public abstract java.lang.String dev.vertique.workflow.migration.WorkflowMigrationHandler.definitionId()
+public abstract java.lang.String dev.vertique.workflow.plan.WorkflowNode.stepId()
+public abstract java.util.Collection<dev.vertique.workflow.migration.WorkflowMigrationHandler<?, ?>> dev.vertique.workflow.migration.WorkflowMigrationRegistry.all()
+public abstract java.util.Collection<dev.vertique.workflow.registry.RuntimeWorkflow> dev.vertique.workflow.registry.WorkflowRegistry.allRegistered()
+public abstract java.util.Optional<dev.vertique.workflow.migration.WorkflowMigrationHandler<?, ?>> dev.vertique.workflow.migration.WorkflowMigrationRegistry.find(java.lang.String,long,long)
+public abstract long dev.vertique.workflow.contract.WorkflowContract.definitionVersion()
+public abstract long dev.vertique.workflow.dsl.WorkflowDefinition.definitionVersion()
+public abstract long dev.vertique.workflow.migration.WorkflowMigrationHandler.fromDefinitionVersion()
+public abstract long dev.vertique.workflow.migration.WorkflowMigrationHandler.targetDefinitionVersion()
+public abstract static interface dev.vertique.workflow.plan.HumanTaskNode$AssignmentSpec
+public abstract static interface dev.vertique.workflow.plan.RaceSafetyTargetRegistry$Builder
+public abstract void dev.vertique.workflow.dsl.WorkflowDefinition.define(dev.vertique.workflow.dsl.WorkflowBuilder<S>)
+public abstract void dev.vertique.workflow.plan.RaceSafetyTargetContributor.contribute(dev.vertique.workflow.plan.RaceSafetyTargetRegistry$Builder)
+public abstract void dev.vertique.workflow.registry.WorkflowContributor.contribute(dev.vertique.workflow.registry.WorkflowRegistry)
+public abstract void dev.vertique.workflow.registry.WorkflowRegistry.register(dev.vertique.workflow.dsl.WorkflowDefinition<?, ?>)
+public boolean dev.vertique.workflow.exception.WorkflowPersistenceException.retryable()
+public boolean dev.vertique.workflow.plan.HumanTaskNode.requireVersionStability()
+public boolean dev.vertique.workflow.query.WorkflowInstanceQuery.includeArchived()
+public boolean dev.vertique.workflow.retention.WorkflowRetentionService$PurgeResult.moreRowsRemaining()
+public boolean dev.vertique.workflow.retention.WorkflowRetentionService$RetentionResult.moreRowsRemaining()
+public boolean dev.vertique.workflow.tasks.TaskFilter.includeArchived()
+public class dev.vertique.workflow.exception.WorkflowClientProxyLinkageException
+public class dev.vertique.workflow.exception.WorkflowConfigurationException
+public class dev.vertique.workflow.exception.WorkflowConflictException
+public class dev.vertique.workflow.exception.WorkflowDefinitionException
+public class dev.vertique.workflow.exception.WorkflowDefinitionMissingException
+public class dev.vertique.workflow.exception.WorkflowException
+public class dev.vertique.workflow.exception.WorkflowIdempotencyConflictException
+public class dev.vertique.workflow.exception.WorkflowInstanceNotFoundException
+public class dev.vertique.workflow.exception.WorkflowMigrationStateTypeMismatchException
+public class dev.vertique.workflow.exception.WorkflowNotFoundException
+public class dev.vertique.workflow.exception.WorkflowPersistenceException
+public class dev.vertique.workflow.exception.WorkflowPlanHashDriftException
+public class dev.vertique.workflow.exception.WorkflowProxyContractException
+public class dev.vertique.workflow.exception.WorkflowSignalRejectedException
+public class dev.vertique.workflow.exception.WorkflowStaleAssignmentException
+public class dev.vertique.workflow.exception.WorkflowStaleSubjectVersionException
+public class dev.vertique.workflow.exception.WorkflowSubjectVersionUnavailableException
+public class dev.vertique.workflow.exception.WorkflowTaskNotFoundException
+public class dev.vertique.workflow.exception.WorkflowTaskNotWaitingException
+public class dev.vertique.workflow.exception.WorkflowTechnicalException
+public class dev.vertique.workflow.exception.WorkflowUnavailableException
+public class dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException
+public class dev.vertique.workflow.migration.DefaultWorkflowMigrationRegistry
+public default <S,P> java.util.function.BiFunction<S, P, S> dev.vertique.workflow.registry.WorkflowCallbackRegistry.decisionApplicator(dev.vertique.workflow.registry.CallbackId)
+public default <S,P> java.util.function.BiFunction<S, P, S> dev.vertique.workflow.registry.WorkflowCallbackRegistry.signalApplicator(dev.vertique.workflow.registry.CallbackId)
+public default <S> java.util.function.BiFunction<S, java.util.Map<java.lang.String, dev.vertique.workflow.plan.BranchResult>, S> dev.vertique.workflow.registry.WorkflowCallbackRegistry.branchResultReducer(dev.vertique.workflow.registry.CallbackId)
+public default <S> java.util.function.Function<S, S> dev.vertique.workflow.registry.WorkflowCallbackRegistry.stateMutator(dev.vertique.workflow.registry.CallbackId)
+public default <S> java.util.function.Function<S, dev.vertique.workflow.subject.WorkflowSubjectRef> dev.vertique.workflow.registry.WorkflowCallbackRegistry.subjectResolver(dev.vertique.workflow.registry.CallbackId)
+public default <S> java.util.function.Function<S, dev.vertique.workflow.tasks.TaskAssignment> dev.vertique.workflow.registry.WorkflowCallbackRegistry.taskAssignmentResolver(dev.vertique.workflow.registry.CallbackId)
+public default <S> java.util.function.Function<S, java.time.Instant> dev.vertique.workflow.registry.WorkflowCallbackRegistry.timerResolver(dev.vertique.workflow.registry.CallbackId)
+public default io.vertx.core.Future<java.lang.Void> dev.vertique.workflow.ops.TransactionalWorkflowOperations.migrate(dev.vertique.workflow.ops.WorkflowInstanceId,long,TX)
+public default io.vertx.core.Future<java.lang.Void> dev.vertique.workflow.ops.TransactionalWorkflowOperations.signal(dev.vertique.workflow.ops.WorkflowInstanceId,java.lang.String,java.lang.Object,java.lang.String,java.lang.String,java.lang.String,TX)
+public default io.vertx.core.Future<java.lang.Void> dev.vertique.workflow.ops.TransactionalWorkflowOperations.signal(dev.vertique.workflow.ops.WorkflowInstanceId,java.lang.String,java.lang.Object,java.lang.String,java.lang.String,java.lang.String,dev.vertique.core.context.DurableMetadata,TX)
+public default io.vertx.core.Future<java.lang.Void> dev.vertique.workflow.ops.WorkflowOperations.migrate(dev.vertique.workflow.ops.WorkflowInstanceId,long)
+public dev.vertique.core.context.DurableMetadata dev.vertique.workflow.state.BranchToken.metadata()
+public dev.vertique.core.context.DurableMetadata dev.vertique.workflow.state.WorkflowInstance.metadata()
+public dev.vertique.core.context.DurableMetadata dev.vertique.workflow.timer.TimerRecord.metadata()
+public dev.vertique.workflow.actor.DefaultWorkflowActorMapper()
+public dev.vertique.workflow.actor.WorkflowActor dev.vertique.workflow.actor.DefaultWorkflowActorMapper.toWorkflowActor(dev.vertique.security.SecurityIdentity)
+public dev.vertique.workflow.actor.WorkflowActor dev.vertique.workflow.ops.TaskCompletionCommand.completedBy()
+public dev.vertique.workflow.actor.WorkflowActor dev.vertique.workflow.ops.TaskReassignmentCommand.reassignedBy()
+public dev.vertique.workflow.actor.WorkflowActor dev.vertique.workflow.state.payload.TaskCancelledHistoryPayload.cancelledBy()
+public dev.vertique.workflow.actor.WorkflowActor dev.vertique.workflow.state.payload.TaskCompletedHistoryPayload.completedBy()
+public dev.vertique.workflow.actor.WorkflowActor dev.vertique.workflow.state.payload.TaskExpiredHistoryPayload.expiredBy()
+public dev.vertique.workflow.actor.WorkflowActor dev.vertique.workflow.state.payload.TaskReassignedHistoryPayload.reassignedBy()
+public dev.vertique.workflow.actor.WorkflowActor dev.vertique.workflow.tasks.TaskReassignmentResult$Applied.reassignedBy()
+public dev.vertique.workflow.actor.WorkflowActor dev.vertique.workflow.tasks.TaskRecord.cancelledBy()
+public dev.vertique.workflow.actor.WorkflowActor dev.vertique.workflow.tasks.TaskRecord.completedBy()
+public dev.vertique.workflow.actor.WorkflowActor dev.vertique.workflow.tasks.TaskRecord.reassignedBy()
+public dev.vertique.workflow.actor.WorkflowActor$Service(java.lang.String)
+public dev.vertique.workflow.actor.WorkflowActor$System(java.lang.String)
+public dev.vertique.workflow.actor.WorkflowActor$User(java.lang.String)
+public dev.vertique.workflow.client.WorkflowClientFactory(dev.vertique.workflow.ops.WorkflowOperations,dev.vertique.workflow.registry.WorkflowRegistry)
+public dev.vertique.workflow.contract.WorkflowContractMetadata dev.vertique.workflow.registry.DefaultWorkflowRegistry.contractMetadata(java.lang.Class<?>)
+public dev.vertique.workflow.contract.WorkflowContractMetadata(java.lang.Class<?>,java.lang.String,long)
+public dev.vertique.workflow.di.WorkflowCoreModule()
+public dev.vertique.workflow.dsl.ForkScope<S> dev.vertique.workflow.dsl.ForkScope.branch(java.lang.String,java.lang.String)
+public dev.vertique.workflow.dsl.ForkScope<S> dev.vertique.workflow.dsl.ForkScope.branch(java.lang.String,java.lang.String,dev.vertique.workflow.plan.RaceSafety)
+public dev.vertique.workflow.dsl.ForkScope<S> dev.vertique.workflow.dsl.ForkScope.retry(dev.vertique.workflow.plan.BranchRetryPolicy)
+public dev.vertique.workflow.dsl.ForkScope<S> dev.vertique.workflow.dsl.WorkflowBuilder.fork(java.lang.String)
+public dev.vertique.workflow.dsl.JoinScope<S> dev.vertique.workflow.dsl.JoinScope.allRequired(java.util.function.BiFunction<S, java.util.Map<java.lang.String, dev.vertique.workflow.plan.BranchResult>, S>)
+public dev.vertique.workflow.dsl.JoinScope<S> dev.vertique.workflow.dsl.JoinScope.firstFailure(java.util.function.BiFunction<S, java.util.Map<java.lang.String, dev.vertique.workflow.plan.BranchResult>, S>)
+public dev.vertique.workflow.dsl.JoinScope<S> dev.vertique.workflow.dsl.JoinScope.firstSuccess(java.util.function.BiFunction<S, java.util.Map<java.lang.String, dev.vertique.workflow.plan.BranchResult>, S>)
+public dev.vertique.workflow.dsl.JoinScope<S> dev.vertique.workflow.dsl.JoinScope.onFailure(java.lang.String)
+public dev.vertique.workflow.dsl.JoinScope<S> dev.vertique.workflow.dsl.JoinScope.toStep(java.lang.String)
+public dev.vertique.workflow.dsl.JoinScope<S> dev.vertique.workflow.dsl.WorkflowBuilder.join(java.lang.String)
+public dev.vertique.workflow.dsl.WorkflowBuilder()
+public dev.vertique.workflow.dsl.WorkflowBuilder<S> dev.vertique.workflow.dsl.ForkScope.join(java.lang.String)
+public dev.vertique.workflow.dsl.WorkflowBuilder<S> dev.vertique.workflow.dsl.JoinScope.endJoin()
+public dev.vertique.workflow.dsl.WorkflowBuilder<S> dev.vertique.workflow.dsl.WorkflowBuilder$SignalWaitWithNextStep.build()
+public dev.vertique.workflow.dsl.WorkflowBuilder<S> dev.vertique.workflow.dsl.WorkflowBuilder$SignalWaitWithTimeout.toStepOnTimeout(java.lang.String)
+public dev.vertique.workflow.dsl.WorkflowBuilder<S> dev.vertique.workflow.dsl.WorkflowBuilder$SignalWaitWithTimeoutMutator.toStepOnTimeout(java.lang.String)
+public dev.vertique.workflow.dsl.WorkflowBuilder<S> dev.vertique.workflow.dsl.WorkflowBuilder$TaskBuilder.build()
+public dev.vertique.workflow.dsl.WorkflowBuilder<S> dev.vertique.workflow.dsl.WorkflowBuilder$TimerStepBuilder.toStep(java.lang.String)
+public dev.vertique.workflow.dsl.WorkflowBuilder<S> dev.vertique.workflow.dsl.WorkflowBuilder.compensate(java.lang.String,java.lang.String,java.lang.String,java.util.function.Function<S, java.lang.Object>)
+public dev.vertique.workflow.dsl.WorkflowBuilder<S> dev.vertique.workflow.dsl.WorkflowBuilder.complete(java.lang.String)
+public dev.vertique.workflow.dsl.WorkflowBuilder<S> dev.vertique.workflow.dsl.WorkflowBuilder.decide(java.lang.String,java.util.function.Function<S, java.lang.String>)
+public dev.vertique.workflow.dsl.WorkflowBuilder<S> dev.vertique.workflow.dsl.WorkflowBuilder.decideWithCallbackId(java.lang.String,java.util.function.Function<S, java.lang.String>,dev.vertique.workflow.registry.CallbackId)
+public dev.vertique.workflow.dsl.WorkflowBuilder<S> dev.vertique.workflow.dsl.WorkflowBuilder.dispatch(java.lang.String,java.lang.String,java.util.function.Function<S, java.lang.Object>,java.lang.String)
+public dev.vertique.workflow.dsl.WorkflowBuilder<S> dev.vertique.workflow.dsl.WorkflowBuilder.dispatchWithCompensation(java.lang.String,java.lang.String,java.util.function.Function<S, java.lang.Object>,java.lang.String,java.lang.String)
+public dev.vertique.workflow.dsl.WorkflowBuilder<S> dev.vertique.workflow.dsl.WorkflowBuilder.fail(java.lang.String,java.lang.String,java.util.function.Function<S, java.lang.String>)
+public dev.vertique.workflow.dsl.WorkflowBuilder<S> dev.vertique.workflow.dsl.WorkflowBuilder.initialStep(java.lang.String)
+public dev.vertique.workflow.dsl.WorkflowBuilder<S> dev.vertique.workflow.dsl.WorkflowBuilder.subject(java.util.function.Function<S, dev.vertique.workflow.subject.WorkflowSubjectRef>)
+public dev.vertique.workflow.dsl.WorkflowBuilder<S>$SignalWaitTerminator dev.vertique.workflow.dsl.WorkflowBuilder$SignalWaitBuilder.onSignal(java.util.function.BiFunction<S, P, S>)
+public dev.vertique.workflow.dsl.WorkflowBuilder<S>$SignalWaitWithNextStep dev.vertique.workflow.dsl.WorkflowBuilder$SignalWaitTerminator.toStepOnSignal(java.lang.String)
+public dev.vertique.workflow.dsl.WorkflowBuilder<S>$SignalWaitWithTimeout dev.vertique.workflow.dsl.WorkflowBuilder$SignalWaitWithNextStep.timeoutAfter(java.time.Duration)
+public dev.vertique.workflow.dsl.WorkflowBuilder<S>$SignalWaitWithTimeout dev.vertique.workflow.dsl.WorkflowBuilder$SignalWaitWithNextStep.timeoutAt(java.time.Instant)
+public dev.vertique.workflow.dsl.WorkflowBuilder<S>$SignalWaitWithTimeout dev.vertique.workflow.dsl.WorkflowBuilder$SignalWaitWithNextStep.timeoutFromState(java.util.function.Function<S, java.time.Instant>)
+public dev.vertique.workflow.dsl.WorkflowBuilder<S>$SignalWaitWithTimeoutMutator dev.vertique.workflow.dsl.WorkflowBuilder$SignalWaitWithTimeout.onTimeout(java.util.function.Function<S, S>)
+public dev.vertique.workflow.dsl.WorkflowBuilder<S>$TaskBuilder dev.vertique.workflow.dsl.WorkflowBuilder$TaskBuilder.assignToQueue(java.lang.String)
+public dev.vertique.workflow.dsl.WorkflowBuilder<S>$TaskBuilder dev.vertique.workflow.dsl.WorkflowBuilder$TaskBuilder.assignToQueue(java.util.function.Function<S, java.lang.String>)
+public dev.vertique.workflow.dsl.WorkflowBuilder<S>$TaskBuilder dev.vertique.workflow.dsl.WorkflowBuilder$TaskBuilder.assignToRole(java.lang.String)
+public dev.vertique.workflow.dsl.WorkflowBuilder<S>$TaskBuilder dev.vertique.workflow.dsl.WorkflowBuilder$TaskBuilder.assignToRole(java.util.function.Function<S, java.lang.String>)
+public dev.vertique.workflow.dsl.WorkflowBuilder<S>$TaskBuilder dev.vertique.workflow.dsl.WorkflowBuilder$TaskBuilder.assignToUser(java.lang.String)
+public dev.vertique.workflow.dsl.WorkflowBuilder<S>$TaskBuilder dev.vertique.workflow.dsl.WorkflowBuilder$TaskBuilder.assignToUser(java.util.function.Function<S, java.lang.String>)
+public dev.vertique.workflow.dsl.WorkflowBuilder<S>$TaskBuilder dev.vertique.workflow.dsl.WorkflowBuilder$TaskBuilder.dueAt(java.time.Instant)
+public dev.vertique.workflow.dsl.WorkflowBuilder<S>$TaskBuilder dev.vertique.workflow.dsl.WorkflowBuilder$TaskBuilder.dueFromState(java.util.function.Function<S, java.time.Instant>)
+public dev.vertique.workflow.dsl.WorkflowBuilder<S>$TaskBuilder dev.vertique.workflow.dsl.WorkflowBuilder$TaskBuilder.dueIn(java.time.Duration)
+public dev.vertique.workflow.dsl.WorkflowBuilder<S>$TaskBuilder dev.vertique.workflow.dsl.WorkflowBuilder$TaskBuilder.onDue(java.util.function.Function<S, S>)
+public dev.vertique.workflow.dsl.WorkflowBuilder<S>$TaskBuilder dev.vertique.workflow.dsl.WorkflowBuilder$TaskBuilder.reminderAt(java.time.Duration,java.time.Duration...)
+public dev.vertique.workflow.dsl.WorkflowBuilder<S>$TaskBuilder dev.vertique.workflow.dsl.WorkflowBuilder$TaskBuilder.reminderEvery(java.time.Duration)
+public dev.vertique.workflow.dsl.WorkflowBuilder<S>$TaskBuilder dev.vertique.workflow.dsl.WorkflowBuilder$TaskBuilder.reminderEvery(java.time.Duration,int)
+public dev.vertique.workflow.dsl.WorkflowBuilder<S>$TaskBuilder dev.vertique.workflow.dsl.WorkflowBuilder$TaskBuilder.requireVersionStability()
+public dev.vertique.workflow.dsl.WorkflowBuilder<S>$TaskBuilder dev.vertique.workflow.dsl.WorkflowBuilder$TaskBuilder.toStepOnDue(java.lang.String)
+public dev.vertique.workflow.dsl.WorkflowBuilder<S>$TaskBuilder dev.vertique.workflow.dsl.WorkflowBuilder$TaskDecisionBuilder.toStep(java.lang.String)
+public dev.vertique.workflow.dsl.WorkflowBuilder<S>$TaskBuilder dev.vertique.workflow.dsl.WorkflowBuilder.task(java.lang.String)
+public dev.vertique.workflow.dsl.WorkflowBuilder<S>$TaskDecisionBuilder<P> dev.vertique.workflow.dsl.WorkflowBuilder$TaskDecisionBuilder.onDecision(java.util.function.BiFunction<S, P, S>)
+public dev.vertique.workflow.dsl.WorkflowBuilder<S>$TimerStepBuilder dev.vertique.workflow.dsl.WorkflowBuilder.expireAt(java.lang.String,java.time.Instant)
+public dev.vertique.workflow.dsl.WorkflowBuilder<S>$TimerStepBuilder dev.vertique.workflow.dsl.WorkflowBuilder.expireAt(java.lang.String,java.util.function.Function<S, java.time.Instant>)
+public dev.vertique.workflow.dsl.WorkflowBuilder<S>$TimerStepBuilder dev.vertique.workflow.dsl.WorkflowBuilder.publishAt(java.lang.String,java.time.Instant)
+public dev.vertique.workflow.dsl.WorkflowBuilder<S>$TimerStepBuilder dev.vertique.workflow.dsl.WorkflowBuilder.publishAt(java.lang.String,java.util.function.Function<S, java.time.Instant>)
+public dev.vertique.workflow.dsl.WorkflowBuilder<S>$TimerStepBuilder dev.vertique.workflow.dsl.WorkflowBuilder.timer(java.lang.String,java.time.Duration)
+public dev.vertique.workflow.dsl.WorkflowBuilder<S>$TimerStepBuilder dev.vertique.workflow.dsl.WorkflowBuilder.timer(java.lang.String,java.time.Instant)
+public dev.vertique.workflow.dsl.WorkflowBuilder<S>$TimerStepBuilder dev.vertique.workflow.dsl.WorkflowBuilder.timerAt(java.lang.String,java.util.function.Function<S, java.time.Instant>)
+public dev.vertique.workflow.events.WorkflowEventEnvelope dev.vertique.workflow.events.WorkflowEventEnvelope$WorkflowEventEnvelopeBuilder.build()
+public dev.vertique.workflow.events.WorkflowEventEnvelope$WorkflowEventEnvelopeBuilder dev.vertique.workflow.events.WorkflowEventEnvelope$WorkflowEventEnvelopeBuilder.attributes(java.util.Map<java.lang.String, java.lang.Object>)
+public dev.vertique.workflow.events.WorkflowEventEnvelope$WorkflowEventEnvelopeBuilder dev.vertique.workflow.events.WorkflowEventEnvelope$WorkflowEventEnvelopeBuilder.businessKey(java.lang.String)
+public dev.vertique.workflow.events.WorkflowEventEnvelope$WorkflowEventEnvelopeBuilder dev.vertique.workflow.events.WorkflowEventEnvelope$WorkflowEventEnvelopeBuilder.causationId(java.lang.String)
+public dev.vertique.workflow.events.WorkflowEventEnvelope$WorkflowEventEnvelopeBuilder dev.vertique.workflow.events.WorkflowEventEnvelope$WorkflowEventEnvelopeBuilder.correlationId(java.lang.String)
+public dev.vertique.workflow.events.WorkflowEventEnvelope$WorkflowEventEnvelopeBuilder dev.vertique.workflow.events.WorkflowEventEnvelope$WorkflowEventEnvelopeBuilder.definitionId(java.lang.String)
+public dev.vertique.workflow.events.WorkflowEventEnvelope$WorkflowEventEnvelopeBuilder dev.vertique.workflow.events.WorkflowEventEnvelope$WorkflowEventEnvelopeBuilder.definitionVersion(long)
+public dev.vertique.workflow.events.WorkflowEventEnvelope$WorkflowEventEnvelopeBuilder dev.vertique.workflow.events.WorkflowEventEnvelope$WorkflowEventEnvelopeBuilder.eventType(java.lang.String)
+public dev.vertique.workflow.events.WorkflowEventEnvelope$WorkflowEventEnvelopeBuilder dev.vertique.workflow.events.WorkflowEventEnvelope$WorkflowEventEnvelopeBuilder.occurredAt(java.time.Instant)
+public dev.vertique.workflow.events.WorkflowEventEnvelope$WorkflowEventEnvelopeBuilder dev.vertique.workflow.events.WorkflowEventEnvelope$WorkflowEventEnvelopeBuilder.schemaVersion(int)
+public dev.vertique.workflow.events.WorkflowEventEnvelope$WorkflowEventEnvelopeBuilder dev.vertique.workflow.events.WorkflowEventEnvelope$WorkflowEventEnvelopeBuilder.sequence(long)
+public dev.vertique.workflow.events.WorkflowEventEnvelope$WorkflowEventEnvelopeBuilder dev.vertique.workflow.events.WorkflowEventEnvelope$WorkflowEventEnvelopeBuilder.stepId(java.lang.String)
+public dev.vertique.workflow.events.WorkflowEventEnvelope$WorkflowEventEnvelopeBuilder dev.vertique.workflow.events.WorkflowEventEnvelope$WorkflowEventEnvelopeBuilder.subjectRef(dev.vertique.workflow.subject.WorkflowSubjectRef)
+public dev.vertique.workflow.events.WorkflowEventEnvelope$WorkflowEventEnvelopeBuilder dev.vertique.workflow.events.WorkflowEventEnvelope$WorkflowEventEnvelopeBuilder.taskId(java.util.UUID)
+public dev.vertique.workflow.events.WorkflowEventEnvelope$WorkflowEventEnvelopeBuilder dev.vertique.workflow.events.WorkflowEventEnvelope$WorkflowEventEnvelopeBuilder.workflowId(java.util.UUID)
+public dev.vertique.workflow.events.WorkflowEventIntent(dev.vertique.workflow.events.WorkflowEventType,dev.vertique.workflow.ops.WorkflowInstanceId,java.lang.String,long,dev.vertique.workflow.subject.WorkflowSubjectRef,java.lang.String,java.time.Instant,long,java.util.UUID,java.lang.String,java.util.Map<java.lang.String, java.lang.Object>,java.lang.String,java.lang.String)
+public dev.vertique.workflow.events.WorkflowEventType dev.vertique.workflow.events.WorkflowEventIntent.eventType()
+public dev.vertique.workflow.exception.WorkflowClientProxyLinkageException(java.lang.String)
+public dev.vertique.workflow.exception.WorkflowClientProxyLinkageException(java.lang.String,java.lang.Throwable)
+public dev.vertique.workflow.exception.WorkflowConfigurationException(java.lang.String)
+public dev.vertique.workflow.exception.WorkflowConfigurationException(java.lang.String,java.lang.Throwable)
+public dev.vertique.workflow.exception.WorkflowConflictException(java.lang.String)
+public dev.vertique.workflow.exception.WorkflowConflictException(java.lang.String,java.lang.Throwable)
+public dev.vertique.workflow.exception.WorkflowDefinitionException(java.lang.String)
+public dev.vertique.workflow.exception.WorkflowDefinitionException(java.lang.String,java.lang.Throwable)
+public dev.vertique.workflow.exception.WorkflowDefinitionMissingException(java.lang.String)
+public dev.vertique.workflow.exception.WorkflowException(java.lang.String)
+public dev.vertique.workflow.exception.WorkflowException(java.lang.String,java.lang.Throwable)
+public dev.vertique.workflow.exception.WorkflowIdempotencyConflictException(java.lang.String,java.lang.String,java.lang.String,java.lang.String)
+public dev.vertique.workflow.exception.WorkflowInstanceNotFoundException(dev.vertique.workflow.ops.WorkflowInstanceId)
+public dev.vertique.workflow.exception.WorkflowMigrationStateTypeMismatchException(java.lang.String,long,long,java.lang.String,java.lang.String,java.lang.Class<?>,java.lang.Class<?>)
+public dev.vertique.workflow.exception.WorkflowNotFoundException(java.lang.String)
+public dev.vertique.workflow.exception.WorkflowNotFoundException(java.lang.String,java.lang.Throwable)
+public dev.vertique.workflow.exception.WorkflowPersistenceException(java.lang.String,java.lang.Throwable,boolean)
+public dev.vertique.workflow.exception.WorkflowPlanHashDriftException(java.lang.String,long,dev.vertique.workflow.ops.WorkflowInstanceId,java.lang.String,java.lang.String)
+public dev.vertique.workflow.exception.WorkflowProxyContractException(java.lang.String)
+public dev.vertique.workflow.exception.WorkflowProxyContractException(java.lang.String,java.lang.Throwable)
+public dev.vertique.workflow.exception.WorkflowSignalRejectedException(java.lang.String)
+public dev.vertique.workflow.exception.WorkflowStaleAssignmentException(java.util.UUID,dev.vertique.workflow.tasks.TaskAssignment,dev.vertique.workflow.tasks.TaskAssignment)
+public dev.vertique.workflow.exception.WorkflowStaleSubjectVersionException(java.lang.String)
+public dev.vertique.workflow.exception.WorkflowSubjectVersionUnavailableException(java.lang.String)
+public dev.vertique.workflow.exception.WorkflowTaskNotFoundException(java.util.UUID)
+public dev.vertique.workflow.exception.WorkflowTaskNotWaitingException(java.util.UUID)
+public dev.vertique.workflow.exception.WorkflowTechnicalException(java.lang.String)
+public dev.vertique.workflow.exception.WorkflowTechnicalException(java.lang.String,java.lang.Throwable)
+public dev.vertique.workflow.exception.WorkflowUnavailableException(java.lang.String)
+public dev.vertique.workflow.exception.WorkflowUnavailableException(java.lang.String,java.lang.Throwable)
+public dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException(java.lang.String,long,dev.vertique.workflow.ops.WorkflowInstanceId)
+public dev.vertique.workflow.migration.DefaultWorkflowMigrationRegistry(java.util.Set<dev.vertique.workflow.migration.WorkflowMigrationHandler<?, ?>>,dev.vertique.workflow.registry.WorkflowRegistry)
+public dev.vertique.workflow.migration.MigrationContext(dev.vertique.workflow.ops.WorkflowInstanceId,java.lang.String,long,long,java.lang.String,java.lang.String,java.util.List<dev.vertique.workflow.state.WorkflowHistoryEntrySummary>)
+public dev.vertique.workflow.migration.MigrationResult$AnchorAtInitial(T)
+public dev.vertique.workflow.migration.MigrationResult$ContinueAt(T,java.lang.String)
+public dev.vertique.workflow.migration.WorkflowMigrationHandlerMissingException(dev.vertique.workflow.ops.WorkflowInstanceId,java.lang.String,long,long)
+public dev.vertique.workflow.migration.WorkflowMigrationIllegalStateException(dev.vertique.workflow.ops.WorkflowInstanceId,java.lang.String)
+public dev.vertique.workflow.migration.WorkflowMigrationModule()
+public dev.vertique.workflow.ops.StartCommand(java.lang.String,java.lang.Object,java.lang.String,java.lang.String,dev.vertique.workflow.subject.WorkflowSubjectRef)
+public dev.vertique.workflow.ops.StartCommand(java.lang.String,java.lang.Object,java.lang.String,java.lang.String,dev.vertique.workflow.subject.WorkflowSubjectRef,java.lang.Long)
+public dev.vertique.workflow.ops.TaskCompletionCommand(java.util.UUID,java.lang.String,java.lang.Object,java.lang.String,dev.vertique.workflow.actor.WorkflowActor,java.lang.String)
+public dev.vertique.workflow.ops.TaskCompletionCommand(java.util.UUID,java.lang.String,java.lang.Object,java.lang.String,dev.vertique.workflow.actor.WorkflowActor,java.lang.String,dev.vertique.workflow.tasks.TaskAssignment)
+public dev.vertique.workflow.ops.TaskReassignmentCommand(java.util.UUID,dev.vertique.workflow.tasks.TaskAssignment,dev.vertique.workflow.actor.WorkflowActor,java.lang.String,java.lang.String)
+public dev.vertique.workflow.ops.TaskReassignmentCommand(java.util.UUID,dev.vertique.workflow.tasks.TaskAssignment,dev.vertique.workflow.actor.WorkflowActor,java.lang.String,java.lang.String,dev.vertique.workflow.tasks.TaskAssignment)
+public dev.vertique.workflow.ops.WorkflowInstanceId dev.vertique.workflow.events.WorkflowEventIntent.workflowId()
+public dev.vertique.workflow.ops.WorkflowInstanceId dev.vertique.workflow.exception.WorkflowPlanHashDriftException.instanceId()
+public dev.vertique.workflow.ops.WorkflowInstanceId dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException.instanceId()
+public dev.vertique.workflow.ops.WorkflowInstanceId dev.vertique.workflow.migration.MigrationContext.workflowId()
+public dev.vertique.workflow.ops.WorkflowInstanceId dev.vertique.workflow.migration.WorkflowMigrationHandlerMissingException.workflowId()
+public dev.vertique.workflow.ops.WorkflowInstanceId dev.vertique.workflow.migration.WorkflowMigrationIllegalStateException.workflowId()
+public dev.vertique.workflow.ops.WorkflowInstanceId dev.vertique.workflow.sideeffect.WorkflowSideEffectIntent$Correlation.workflowId()
+public dev.vertique.workflow.ops.WorkflowInstanceId dev.vertique.workflow.state.BranchToken.workflowId()
+public dev.vertique.workflow.ops.WorkflowInstanceId dev.vertique.workflow.state.JoinState.workflowId()
+public dev.vertique.workflow.ops.WorkflowInstanceId dev.vertique.workflow.state.WorkflowHistoryEntry.instanceId()
+public dev.vertique.workflow.ops.WorkflowInstanceId dev.vertique.workflow.state.WorkflowInstance.id()
+public dev.vertique.workflow.ops.WorkflowInstanceId dev.vertique.workflow.tasks.TaskFilter.workflowId()
+public dev.vertique.workflow.ops.WorkflowInstanceId dev.vertique.workflow.tasks.TaskReassignmentResult$Applied.workflowId()
+public dev.vertique.workflow.ops.WorkflowInstanceId dev.vertique.workflow.tasks.TaskRecord.workflowId()
+public dev.vertique.workflow.ops.WorkflowInstanceId dev.vertique.workflow.timer.TimerRecord.workflowId()
+public dev.vertique.workflow.ops.WorkflowInstanceId(java.util.UUID)
+public dev.vertique.workflow.ops.WorkflowView(dev.vertique.workflow.state.WorkflowInstance,java.util.List<dev.vertique.workflow.state.WorkflowHistoryEntry>)
+public dev.vertique.workflow.plan.AllRequiredJoinPolicy()
+public dev.vertique.workflow.plan.BranchResult(java.lang.String,dev.vertique.workflow.state.BranchStatus,io.vertx.core.json.JsonObject,java.lang.String,java.lang.String)
+public dev.vertique.workflow.plan.BranchRetryPolicy dev.vertique.workflow.plan.BranchRetryPolicy$Builder.build()
+public dev.vertique.workflow.plan.BranchRetryPolicy dev.vertique.workflow.plan.ForkNode.retryPolicy()
+public dev.vertique.workflow.plan.BranchRetryPolicy$BackoffStrategy dev.vertique.workflow.plan.BranchRetryPolicy.backoff()
+public dev.vertique.workflow.plan.BranchRetryPolicy$Builder dev.vertique.workflow.plan.BranchRetryPolicy$Builder.backoff(dev.vertique.workflow.plan.BranchRetryPolicy$BackoffStrategy)
+public dev.vertique.workflow.plan.BranchRetryPolicy$Builder dev.vertique.workflow.plan.BranchRetryPolicy$Builder.initialDelay(java.time.Duration)
+public dev.vertique.workflow.plan.BranchRetryPolicy(int,java.time.Duration,dev.vertique.workflow.plan.BranchRetryPolicy$BackoffStrategy)
+public dev.vertique.workflow.plan.BranchStart(java.lang.String,java.lang.String,dev.vertique.workflow.plan.RaceSafety)
+public dev.vertique.workflow.plan.CompensationNode(java.lang.String,java.lang.String,java.lang.String,dev.vertique.workflow.registry.CallbackId)
+public dev.vertique.workflow.plan.CompleteNode(java.lang.String)
+public dev.vertique.workflow.plan.DecisionNode(java.lang.String,dev.vertique.workflow.registry.CallbackId)
+public dev.vertique.workflow.plan.DefaultRaceSafetyTargetRegistry(java.util.Set<dev.vertique.workflow.plan.RaceSafetyTargetContributor>)
+public dev.vertique.workflow.plan.FailNode(java.lang.String,java.lang.String,dev.vertique.workflow.registry.CallbackId)
+public dev.vertique.workflow.plan.FirstFailureJoinPolicy()
+public dev.vertique.workflow.plan.FirstSuccessJoinPolicy()
+public dev.vertique.workflow.plan.ForkNode(java.lang.String,java.util.List<dev.vertique.workflow.plan.BranchStart>,java.lang.String,dev.vertique.workflow.plan.BranchRetryPolicy)
+public dev.vertique.workflow.plan.HumanTaskNode$AssignmentSpec dev.vertique.workflow.plan.HumanTaskNode.assignment()
+public dev.vertique.workflow.plan.HumanTaskNode$AssignmentSpec$Queue(java.lang.String)
+public dev.vertique.workflow.plan.HumanTaskNode$AssignmentSpec$QueueFromState(dev.vertique.workflow.registry.CallbackId)
+public dev.vertique.workflow.plan.HumanTaskNode$AssignmentSpec$Role(java.lang.String)
+public dev.vertique.workflow.plan.HumanTaskNode$AssignmentSpec$RoleFromState(dev.vertique.workflow.registry.CallbackId)
+public dev.vertique.workflow.plan.HumanTaskNode$AssignmentSpec$User(java.lang.String)
+public dev.vertique.workflow.plan.HumanTaskNode$AssignmentSpec$UserFromState(dev.vertique.workflow.registry.CallbackId)
+public dev.vertique.workflow.plan.HumanTaskNode$TaskDecision(java.lang.String,java.lang.String,dev.vertique.workflow.registry.CallbackId,java.lang.String)
+public dev.vertique.workflow.plan.HumanTaskNode(java.lang.String,dev.vertique.workflow.plan.HumanTaskNode$AssignmentSpec,java.util.List<dev.vertique.workflow.plan.HumanTaskNode$TaskDecision>,dev.vertique.workflow.plan.TimerSpec,dev.vertique.workflow.registry.CallbackId,java.lang.String,dev.vertique.workflow.plan.ReminderSpec,boolean)
+public dev.vertique.workflow.plan.JoinNode(java.lang.String,dev.vertique.workflow.plan.JoinPolicy,dev.vertique.workflow.registry.CallbackId,java.lang.String,java.lang.String)
+public dev.vertique.workflow.plan.JoinPolicy dev.vertique.workflow.plan.JoinNode.policy()
+public dev.vertique.workflow.plan.RaceSafety dev.vertique.workflow.plan.BranchStart.raceSafety()
+public dev.vertique.workflow.plan.RaceSafety dev.vertique.workflow.plan.DefaultRaceSafetyTargetRegistry.lookup(java.lang.String)
+public dev.vertique.workflow.plan.ReminderSpec dev.vertique.workflow.plan.HumanTaskNode.reminders()
+public dev.vertique.workflow.plan.ReminderSpec$OneShotOffsets(java.util.List<java.time.Duration>)
+public dev.vertique.workflow.plan.ReminderSpec$RecurringInterval(java.time.Duration,java.lang.Integer)
+public dev.vertique.workflow.plan.ServiceDispatchNode(java.lang.String,java.lang.String,dev.vertique.workflow.registry.CallbackId,java.lang.String,java.lang.String)
+public dev.vertique.workflow.plan.TimerNode(java.lang.String,java.lang.String,dev.vertique.workflow.plan.TimerSpec)
+public dev.vertique.workflow.plan.TimerSpec dev.vertique.workflow.plan.HumanTaskNode.dueDate()
+public dev.vertique.workflow.plan.TimerSpec dev.vertique.workflow.plan.TimerNode.spec()
+public dev.vertique.workflow.plan.TimerSpec dev.vertique.workflow.plan.WaitSignalNode$TimeoutBranch.timeout()
+public dev.vertique.workflow.plan.TimerSpec$After(java.time.Duration)
+public dev.vertique.workflow.plan.TimerSpec$At(java.time.Instant)
+public dev.vertique.workflow.plan.TimerSpec$FromState(dev.vertique.workflow.registry.CallbackId)
+public dev.vertique.workflow.plan.WaitSignalNode$TimeoutBranch dev.vertique.workflow.plan.WaitSignalNode.timeout()
+public dev.vertique.workflow.plan.WaitSignalNode$TimeoutBranch(dev.vertique.workflow.plan.TimerSpec,dev.vertique.workflow.registry.CallbackId,java.lang.String)
+public dev.vertique.workflow.plan.WaitSignalNode(java.lang.String,java.lang.String,java.lang.String,dev.vertique.workflow.registry.CallbackId,java.lang.String,dev.vertique.workflow.plan.WaitSignalNode$TimeoutBranch)
+public dev.vertique.workflow.plan.WorkflowPlan dev.vertique.workflow.dsl.WorkflowBuilder.build(java.lang.String,long,java.lang.String)
+public dev.vertique.workflow.plan.WorkflowPlan dev.vertique.workflow.registry.RuntimeWorkflow.plan()
+public dev.vertique.workflow.plan.WorkflowPlan(java.lang.String,long,java.lang.String,java.lang.String,java.lang.String,java.util.List<dev.vertique.workflow.plan.WorkflowNode>,dev.vertique.workflow.registry.CallbackId)
+public dev.vertique.workflow.plan.WorkflowPlanValidator(dev.vertique.workflow.plan.RaceSafetyTargetRegistry)
+public dev.vertique.workflow.query.WorkflowInstanceQuery dev.vertique.workflow.query.WorkflowInstanceQuery.withBusinessKey(java.lang.String)
+public dev.vertique.workflow.query.WorkflowInstanceQuery dev.vertique.workflow.query.WorkflowInstanceQuery.withDefinitionId(java.lang.String)
+public dev.vertique.workflow.query.WorkflowInstanceQuery dev.vertique.workflow.query.WorkflowInstanceQuery.withIncludeArchived(boolean)
+public dev.vertique.workflow.query.WorkflowInstanceQuery dev.vertique.workflow.query.WorkflowInstanceQuery.withStatus(dev.vertique.workflow.state.WorkflowStatus)
+public dev.vertique.workflow.query.WorkflowInstanceQuery dev.vertique.workflow.query.WorkflowInstanceQuery.withSubjectId(java.lang.String)
+public dev.vertique.workflow.query.WorkflowInstanceQuery dev.vertique.workflow.query.WorkflowInstanceQuery.withSubjectType(java.lang.String)
+public dev.vertique.workflow.query.WorkflowInstanceQuery dev.vertique.workflow.query.WorkflowInstanceQuery.withSubjectVersion(java.lang.String)
+public dev.vertique.workflow.query.WorkflowInstanceQuery(dev.vertique.workflow.state.WorkflowStatus,java.lang.String,java.lang.String,java.lang.String,java.lang.String,java.lang.String,boolean)
+public dev.vertique.workflow.registry.CallbackId dev.vertique.workflow.plan.CompensationNode.payloadCallbackId()
+public dev.vertique.workflow.registry.CallbackId dev.vertique.workflow.plan.DecisionNode.nextStepResolverCallbackId()
+public dev.vertique.workflow.registry.CallbackId dev.vertique.workflow.plan.FailNode.messageFactoryCallbackId()
+public dev.vertique.workflow.registry.CallbackId dev.vertique.workflow.plan.HumanTaskNode$AssignmentSpec$QueueFromState.resolverCallbackId()
+public dev.vertique.workflow.registry.CallbackId dev.vertique.workflow.plan.HumanTaskNode$AssignmentSpec$RoleFromState.resolverCallbackId()
+public dev.vertique.workflow.registry.CallbackId dev.vertique.workflow.plan.HumanTaskNode$AssignmentSpec$UserFromState.resolverCallbackId()
+public dev.vertique.workflow.registry.CallbackId dev.vertique.workflow.plan.HumanTaskNode$TaskDecision.applicatorCallbackId()
+public dev.vertique.workflow.registry.CallbackId dev.vertique.workflow.plan.HumanTaskNode.onDueMutatorCallbackId()
+public dev.vertique.workflow.registry.CallbackId dev.vertique.workflow.plan.JoinNode.branchResultReducerCallbackId()
+public dev.vertique.workflow.registry.CallbackId dev.vertique.workflow.plan.ServiceDispatchNode.payloadCallbackId()
+public dev.vertique.workflow.registry.CallbackId dev.vertique.workflow.plan.TimerSpec$FromState.resolverCallbackId()
+public dev.vertique.workflow.registry.CallbackId dev.vertique.workflow.plan.WaitSignalNode$TimeoutBranch.onTimeoutMutatorCallbackId()
+public dev.vertique.workflow.registry.CallbackId dev.vertique.workflow.plan.WaitSignalNode.stateUpdaterCallbackId()
+public dev.vertique.workflow.registry.CallbackId dev.vertique.workflow.plan.WorkflowPlan.subjectResolverCallbackId()
+public dev.vertique.workflow.registry.CallbackId(java.lang.String)
+public dev.vertique.workflow.registry.DefaultWorkflowRegistry()
+public dev.vertique.workflow.registry.DefaultWorkflowRegistry(dev.vertique.workflow.plan.WorkflowPlanValidator)
+public dev.vertique.workflow.registry.RuntimeWorkflow dev.vertique.workflow.registry.DefaultWorkflowRegistry.resolveCurrent(java.lang.String)
+public dev.vertique.workflow.registry.RuntimeWorkflow dev.vertique.workflow.registry.DefaultWorkflowRegistry.resolvePinned(java.lang.String,long)
+public dev.vertique.workflow.registry.RuntimeWorkflow(dev.vertique.workflow.plan.WorkflowPlan,java.lang.Class<?>,java.lang.Class<?>,java.util.function.Function<java.lang.Object, java.lang.Object>,java.util.Map<java.lang.String, java.lang.Class<?>>,dev.vertique.workflow.registry.WorkflowCallbackRegistry,java.util.Map<java.lang.String, dev.vertique.workflow.plan.WorkflowNode>,java.util.Map<java.lang.String, dev.vertique.workflow.plan.CompensationNode>)
+public dev.vertique.workflow.registry.WorkflowCallbackRegistry dev.vertique.workflow.dsl.WorkflowBuilder.callbackRegistry()
+public dev.vertique.workflow.registry.WorkflowCallbackRegistry dev.vertique.workflow.registry.RuntimeWorkflow.callbacks()
+public dev.vertique.workflow.retention.WorkflowRetentionService$PurgeResult(int,boolean)
+public dev.vertique.workflow.retention.WorkflowRetentionService$RetentionResult(int,boolean)
+public dev.vertique.workflow.sideeffect.IntentKind dev.vertique.workflow.sideeffect.WorkflowSideEffectIntent.kind()
+public dev.vertique.workflow.sideeffect.RecorderResult$Empty()
+public dev.vertique.workflow.sideeffect.RecorderResult$Timer(java.util.UUID)
+public dev.vertique.workflow.sideeffect.WorkflowSideEffectIntent$Correlation dev.vertique.workflow.sideeffect.WorkflowSideEffectIntent.correlation()
+public dev.vertique.workflow.sideeffect.WorkflowSideEffectIntent$Correlation(dev.vertique.workflow.ops.WorkflowInstanceId,long,java.lang.String,java.lang.String,java.util.UUID,java.lang.String,java.lang.String)
+public dev.vertique.workflow.sideeffect.WorkflowSideEffectIntent(dev.vertique.workflow.sideeffect.IntentKind,java.lang.String,java.lang.Object,java.util.Map<java.lang.String, java.lang.String>,dev.vertique.workflow.sideeffect.WorkflowSideEffectIntent$Correlation)
+public dev.vertique.workflow.state.BranchStatus dev.vertique.workflow.plan.BranchResult.status()
+public dev.vertique.workflow.state.BranchStatus dev.vertique.workflow.state.BranchToken.status()
+public dev.vertique.workflow.state.BranchStatus dev.vertique.workflow.state.BranchTokenFilter.status()
+public dev.vertique.workflow.state.BranchToken dev.vertique.workflow.state.BranchToken.withClearedWait(dev.vertique.workflow.state.BranchStatus,java.lang.String,java.time.Instant)
+public dev.vertique.workflow.state.BranchToken dev.vertique.workflow.state.BranchToken.withStatus(dev.vertique.workflow.state.BranchStatus,long,java.time.Instant)
+public dev.vertique.workflow.state.BranchToken dev.vertique.workflow.state.BranchToken.withStep(java.lang.String,long,java.time.Instant)
+public dev.vertique.workflow.state.BranchToken dev.vertique.workflow.state.BranchToken.withWait(dev.vertique.workflow.state.WaitType,java.lang.String,java.util.UUID,long,java.time.Instant)
+public dev.vertique.workflow.state.BranchToken(java.util.UUID,dev.vertique.workflow.ops.WorkflowInstanceId,java.lang.String,java.lang.String,java.lang.String,dev.vertique.workflow.state.BranchStatus,dev.vertique.workflow.state.WaitType,java.lang.String,java.util.UUID,java.lang.String,java.lang.String,java.lang.String,int,int,java.time.Instant,java.lang.String,java.lang.String,java.time.Instant,long,java.time.Instant,java.time.Instant,dev.vertique.core.context.DurableMetadata)
+public dev.vertique.workflow.state.BranchTokenFilter(dev.vertique.workflow.state.BranchStatus,dev.vertique.workflow.state.WaitType,java.lang.String)
+public dev.vertique.workflow.state.JoinPolicyType dev.vertique.workflow.state.JoinState.policy()
+public dev.vertique.workflow.state.JoinState(dev.vertique.workflow.ops.WorkflowInstanceId,java.lang.String,java.lang.String,dev.vertique.workflow.state.JoinPolicyType,dev.vertique.workflow.state.JoinStateStatus,java.lang.String,java.time.Instant,long,java.time.Instant,java.time.Instant)
+public dev.vertique.workflow.state.JoinStateStatus dev.vertique.workflow.state.JoinState.status()
+public dev.vertique.workflow.state.WaitReason$WaitForSignal(java.lang.String,java.lang.String,java.util.UUID,java.time.Instant)
+public dev.vertique.workflow.state.WaitReason$WaitForTask(java.lang.String,java.util.UUID,java.util.UUID,java.time.Instant)
+public dev.vertique.workflow.state.WaitReason$WaitForTimer(java.lang.String,java.util.UUID,java.time.Instant)
+public dev.vertique.workflow.state.WaitType dev.vertique.workflow.state.BranchToken.waitType()
+public dev.vertique.workflow.state.WaitType dev.vertique.workflow.state.BranchTokenFilter.waitType()
+public dev.vertique.workflow.state.WaitType dev.vertique.workflow.state.WorkflowInstance.waitType()
+public dev.vertique.workflow.state.WorkflowEntryType dev.vertique.workflow.state.WorkflowHistoryEntry.entryType()
+public dev.vertique.workflow.state.WorkflowEntryType dev.vertique.workflow.state.WorkflowHistoryEntrySummary.entryType()
+public dev.vertique.workflow.state.WorkflowHistoryEntry(dev.vertique.workflow.ops.WorkflowInstanceId,long,dev.vertique.workflow.state.WorkflowEntryType,java.lang.String,java.time.Instant)
+public dev.vertique.workflow.state.WorkflowHistoryEntrySummary(long,dev.vertique.workflow.state.WorkflowEntryType,java.time.Instant)
+public dev.vertique.workflow.state.WorkflowInstance dev.vertique.workflow.ops.WorkflowView.instance()
+public dev.vertique.workflow.state.WorkflowInstance dev.vertique.workflow.state.WorkflowInstance.withCurrentStepId(java.lang.String)
+public dev.vertique.workflow.state.WorkflowInstance dev.vertique.workflow.state.WorkflowInstance.withError(java.lang.String,java.lang.String)
+public dev.vertique.workflow.state.WorkflowInstance dev.vertique.workflow.state.WorkflowInstance.withState(java.lang.String)
+public dev.vertique.workflow.state.WorkflowInstance dev.vertique.workflow.state.WorkflowInstance.withStatus(dev.vertique.workflow.state.WorkflowStatus)
+public dev.vertique.workflow.state.WorkflowInstance dev.vertique.workflow.state.WorkflowInstance.withUpdatedAt(java.time.Instant)
+public dev.vertique.workflow.state.WorkflowInstance dev.vertique.workflow.state.WorkflowInstance.withVersion(long)
+public dev.vertique.workflow.state.WorkflowInstance dev.vertique.workflow.state.WorkflowInstance.withWait(dev.vertique.workflow.state.WaitType,java.lang.String)
+public dev.vertique.workflow.state.WorkflowInstance dev.vertique.workflow.state.WorkflowInstance.withWait(dev.vertique.workflow.state.WaitType,java.lang.String,java.util.UUID)
+public dev.vertique.workflow.state.WorkflowInstance(dev.vertique.workflow.ops.WorkflowInstanceId,java.lang.String,long,java.lang.String,long,dev.vertique.workflow.state.WorkflowStatus,java.lang.String,dev.vertique.workflow.subject.WorkflowSubjectRef,java.lang.String,dev.vertique.workflow.state.WaitType,java.lang.String,java.util.UUID,java.lang.String,java.lang.String,java.lang.String,java.time.Instant,java.time.Instant,dev.vertique.core.context.DurableMetadata)
+public dev.vertique.workflow.state.WorkflowStatus dev.vertique.workflow.query.WorkflowInstanceQuery.status()
+public dev.vertique.workflow.state.WorkflowStatus dev.vertique.workflow.state.WorkflowInstance.status()
+public dev.vertique.workflow.state.payload.TaskCancelledHistoryPayload(java.lang.String,java.util.UUID,java.time.Instant,java.lang.String,dev.vertique.workflow.actor.WorkflowActor,java.lang.String)
+public dev.vertique.workflow.state.payload.TaskCompletedHistoryPayload(java.lang.String,java.util.UUID,java.lang.String,dev.vertique.workflow.actor.WorkflowActor,java.time.Instant,java.lang.String,java.lang.String)
+public dev.vertique.workflow.state.payload.TaskCreatedHistoryPayload(java.lang.String,java.util.UUID,dev.vertique.workflow.tasks.TaskAssignment,java.time.Instant)
+public dev.vertique.workflow.state.payload.TaskExpiredHistoryPayload(java.lang.String,java.util.UUID,java.time.Instant,dev.vertique.workflow.actor.WorkflowActor)
+public dev.vertique.workflow.state.payload.TaskReassignedHistoryPayload(java.lang.String,java.util.UUID,dev.vertique.workflow.tasks.TaskAssignment,dev.vertique.workflow.tasks.TaskAssignment,dev.vertique.workflow.actor.WorkflowActor,java.lang.String,java.time.Instant,java.lang.String)
+public dev.vertique.workflow.state.payload.TaskReminderFiredHistoryPayload(java.lang.String,java.util.UUID,java.util.UUID,int,java.time.Instant)
+public dev.vertique.workflow.subject.WorkflowSubjectRef dev.vertique.workflow.events.WorkflowEventEnvelope.subjectRef()
+public dev.vertique.workflow.subject.WorkflowSubjectRef dev.vertique.workflow.events.WorkflowEventIntent.subjectRef()
+public dev.vertique.workflow.subject.WorkflowSubjectRef dev.vertique.workflow.ops.StartCommand.subjectRef()
+public dev.vertique.workflow.subject.WorkflowSubjectRef dev.vertique.workflow.state.WorkflowInstance.subjectRef()
+public dev.vertique.workflow.subject.WorkflowSubjectRef(java.lang.String,java.lang.String,java.lang.String)
+public dev.vertique.workflow.tasks.TaskAssignment dev.vertique.workflow.exception.WorkflowStaleAssignmentException.actualAssignment()
+public dev.vertique.workflow.tasks.TaskAssignment dev.vertique.workflow.exception.WorkflowStaleAssignmentException.expectedAssignment()
+public dev.vertique.workflow.tasks.TaskAssignment dev.vertique.workflow.ops.TaskCompletionCommand.expectedAssignment()
+public dev.vertique.workflow.tasks.TaskAssignment dev.vertique.workflow.ops.TaskReassignmentCommand.expectedAssignment()
+public dev.vertique.workflow.tasks.TaskAssignment dev.vertique.workflow.ops.TaskReassignmentCommand.newAssignment()
+public dev.vertique.workflow.tasks.TaskAssignment dev.vertique.workflow.state.payload.TaskCreatedHistoryPayload.assignment()
+public dev.vertique.workflow.tasks.TaskAssignment dev.vertique.workflow.state.payload.TaskReassignedHistoryPayload.newAssignment()
+public dev.vertique.workflow.tasks.TaskAssignment dev.vertique.workflow.state.payload.TaskReassignedHistoryPayload.oldAssignment()
+public dev.vertique.workflow.tasks.TaskAssignment dev.vertique.workflow.tasks.TaskReassignmentResult$Applied.newAssignment()
+public dev.vertique.workflow.tasks.TaskAssignment dev.vertique.workflow.tasks.TaskReassignmentResult$Applied.oldAssignment()
+public dev.vertique.workflow.tasks.TaskAssignment dev.vertique.workflow.tasks.TaskRecord.assignment()
+public dev.vertique.workflow.tasks.TaskAssignment$Queue(java.lang.String)
+public dev.vertique.workflow.tasks.TaskAssignment$Role(java.lang.String)
+public dev.vertique.workflow.tasks.TaskAssignment$User(java.lang.String)
+public dev.vertique.workflow.tasks.TaskDecisionDescriptor(java.lang.String,java.lang.String,java.lang.String)
+public dev.vertique.workflow.tasks.TaskFilter dev.vertique.workflow.tasks.TaskFilter.withAssigneeQueue(java.lang.String)
+public dev.vertique.workflow.tasks.TaskFilter dev.vertique.workflow.tasks.TaskFilter.withAssigneeRole(java.lang.String)
+public dev.vertique.workflow.tasks.TaskFilter dev.vertique.workflow.tasks.TaskFilter.withAssigneeUser(java.lang.String)
+public dev.vertique.workflow.tasks.TaskFilter dev.vertique.workflow.tasks.TaskFilter.withDueBefore(java.time.Instant)
+public dev.vertique.workflow.tasks.TaskFilter dev.vertique.workflow.tasks.TaskFilter.withIncludeArchived(boolean)
+public dev.vertique.workflow.tasks.TaskFilter dev.vertique.workflow.tasks.TaskFilter.withStatus(dev.vertique.workflow.tasks.TaskStatus)
+public dev.vertique.workflow.tasks.TaskFilter dev.vertique.workflow.tasks.TaskFilter.withSubjectId(java.lang.String)
+public dev.vertique.workflow.tasks.TaskFilter dev.vertique.workflow.tasks.TaskFilter.withSubjectType(java.lang.String)
+public dev.vertique.workflow.tasks.TaskFilter dev.vertique.workflow.tasks.TaskFilter.withWorkflowId(dev.vertique.workflow.ops.WorkflowInstanceId)
+public dev.vertique.workflow.tasks.TaskFilter(java.lang.String,java.lang.String,java.lang.String,dev.vertique.workflow.ops.WorkflowInstanceId,dev.vertique.workflow.tasks.TaskStatus,java.time.Instant,java.lang.String,java.lang.String,boolean)
+public dev.vertique.workflow.tasks.TaskReassignmentResult$Applied(java.util.UUID,dev.vertique.workflow.ops.WorkflowInstanceId,java.lang.String,dev.vertique.workflow.tasks.TaskAssignment,dev.vertique.workflow.tasks.TaskAssignment,dev.vertique.workflow.actor.WorkflowActor,java.lang.String,java.time.Instant)
+public dev.vertique.workflow.tasks.TaskReassignmentResult$LostToTerminal(dev.vertique.workflow.tasks.TaskTransition)
+public dev.vertique.workflow.tasks.TaskRecord(java.util.UUID,dev.vertique.workflow.ops.WorkflowInstanceId,java.lang.String,dev.vertique.workflow.tasks.TaskAssignment,dev.vertique.workflow.tasks.TaskStatus,java.util.List<dev.vertique.workflow.tasks.TaskDecisionDescriptor>,java.time.Instant,java.util.UUID,java.time.Instant,java.time.Instant,java.time.Instant,java.time.Instant,java.lang.String,java.lang.String,dev.vertique.workflow.actor.WorkflowActor,dev.vertique.workflow.actor.WorkflowActor,dev.vertique.workflow.actor.WorkflowActor,java.lang.String,java.lang.String,java.lang.String,java.util.UUID,java.lang.String,java.lang.String)
+public dev.vertique.workflow.tasks.TaskStatus dev.vertique.workflow.tasks.TaskFilter.status()
+public dev.vertique.workflow.tasks.TaskStatus dev.vertique.workflow.tasks.TaskRecord.status()
+public dev.vertique.workflow.tasks.TaskTransition dev.vertique.workflow.tasks.TaskReassignmentResult$LostToTerminal.transition()
+public dev.vertique.workflow.timer.TimerIntentPayload(java.time.Instant,dev.vertique.workflow.timer.TimerPurpose,java.util.UUID)
+public dev.vertique.workflow.timer.TimerPurpose dev.vertique.workflow.timer.TimerIntentPayload.purpose()
+public dev.vertique.workflow.timer.TimerPurpose dev.vertique.workflow.timer.TimerRecord.purpose()
+public dev.vertique.workflow.timer.TimerRecord(java.util.UUID,dev.vertique.workflow.ops.WorkflowInstanceId,java.lang.String,java.time.Instant,dev.vertique.workflow.timer.TimerStatus,java.util.UUID,java.time.Instant,java.time.Instant,java.time.Instant,java.time.Instant,java.lang.String,dev.vertique.workflow.timer.TimerPurpose,java.util.UUID,java.util.UUID,java.lang.String,java.lang.String,dev.vertique.core.context.DurableMetadata)
+public dev.vertique.workflow.timer.TimerStatus dev.vertique.workflow.timer.TimerRecord.status()
+public final boolean dev.vertique.workflow.actor.WorkflowActor$Service.equals(java.lang.Object)
+public final boolean dev.vertique.workflow.actor.WorkflowActor$System.equals(java.lang.Object)
+public final boolean dev.vertique.workflow.actor.WorkflowActor$User.equals(java.lang.Object)
+public final boolean dev.vertique.workflow.contract.WorkflowContractMetadata.equals(java.lang.Object)
+public final boolean dev.vertique.workflow.events.WorkflowEventIntent.equals(java.lang.Object)
+public final boolean dev.vertique.workflow.migration.MigrationContext.equals(java.lang.Object)
+public final boolean dev.vertique.workflow.migration.MigrationResult$AnchorAtInitial.equals(java.lang.Object)
+public final boolean dev.vertique.workflow.migration.MigrationResult$ContinueAt.equals(java.lang.Object)
+public final boolean dev.vertique.workflow.ops.StartCommand.equals(java.lang.Object)
+public final boolean dev.vertique.workflow.ops.TaskCompletionCommand.equals(java.lang.Object)
+public final boolean dev.vertique.workflow.ops.TaskReassignmentCommand.equals(java.lang.Object)
+public final boolean dev.vertique.workflow.ops.WorkflowInstanceId.equals(java.lang.Object)
+public final boolean dev.vertique.workflow.ops.WorkflowView.equals(java.lang.Object)
+public final boolean dev.vertique.workflow.plan.AllRequiredJoinPolicy.equals(java.lang.Object)
+public final boolean dev.vertique.workflow.plan.BranchResult.equals(java.lang.Object)
+public final boolean dev.vertique.workflow.plan.BranchRetryPolicy.equals(java.lang.Object)
+public final boolean dev.vertique.workflow.plan.BranchStart.equals(java.lang.Object)
+public final boolean dev.vertique.workflow.plan.CompensationNode.equals(java.lang.Object)
+public final boolean dev.vertique.workflow.plan.CompleteNode.equals(java.lang.Object)
+public final boolean dev.vertique.workflow.plan.DecisionNode.equals(java.lang.Object)
+public final boolean dev.vertique.workflow.plan.FailNode.equals(java.lang.Object)
+public final boolean dev.vertique.workflow.plan.FirstFailureJoinPolicy.equals(java.lang.Object)
+public final boolean dev.vertique.workflow.plan.FirstSuccessJoinPolicy.equals(java.lang.Object)
+public final boolean dev.vertique.workflow.plan.ForkNode.equals(java.lang.Object)
+public final boolean dev.vertique.workflow.plan.HumanTaskNode$AssignmentSpec$Queue.equals(java.lang.Object)
+public final boolean dev.vertique.workflow.plan.HumanTaskNode$AssignmentSpec$QueueFromState.equals(java.lang.Object)
+public final boolean dev.vertique.workflow.plan.HumanTaskNode$AssignmentSpec$Role.equals(java.lang.Object)
+public final boolean dev.vertique.workflow.plan.HumanTaskNode$AssignmentSpec$RoleFromState.equals(java.lang.Object)
+public final boolean dev.vertique.workflow.plan.HumanTaskNode$AssignmentSpec$User.equals(java.lang.Object)
+public final boolean dev.vertique.workflow.plan.HumanTaskNode$AssignmentSpec$UserFromState.equals(java.lang.Object)
+public final boolean dev.vertique.workflow.plan.HumanTaskNode$TaskDecision.equals(java.lang.Object)
+public final boolean dev.vertique.workflow.plan.HumanTaskNode.equals(java.lang.Object)
+public final boolean dev.vertique.workflow.plan.JoinNode.equals(java.lang.Object)
+public final boolean dev.vertique.workflow.plan.ReminderSpec$OneShotOffsets.equals(java.lang.Object)
+public final boolean dev.vertique.workflow.plan.ReminderSpec$RecurringInterval.equals(java.lang.Object)
+public final boolean dev.vertique.workflow.plan.ServiceDispatchNode.equals(java.lang.Object)
+public final boolean dev.vertique.workflow.plan.TimerNode.equals(java.lang.Object)
+public final boolean dev.vertique.workflow.plan.TimerSpec$After.equals(java.lang.Object)
+public final boolean dev.vertique.workflow.plan.TimerSpec$At.equals(java.lang.Object)
+public final boolean dev.vertique.workflow.plan.TimerSpec$FromState.equals(java.lang.Object)
+public final boolean dev.vertique.workflow.plan.WaitSignalNode$TimeoutBranch.equals(java.lang.Object)
+public final boolean dev.vertique.workflow.plan.WaitSignalNode.equals(java.lang.Object)
+public final boolean dev.vertique.workflow.plan.WorkflowPlan.equals(java.lang.Object)
+public final boolean dev.vertique.workflow.query.WorkflowInstanceQuery.equals(java.lang.Object)
+public final boolean dev.vertique.workflow.registry.CallbackId.equals(java.lang.Object)
+public final boolean dev.vertique.workflow.registry.RuntimeWorkflow.equals(java.lang.Object)
+public final boolean dev.vertique.workflow.retention.WorkflowRetentionService$PurgeResult.equals(java.lang.Object)
+public final boolean dev.vertique.workflow.retention.WorkflowRetentionService$RetentionResult.equals(java.lang.Object)
+public final boolean dev.vertique.workflow.sideeffect.RecorderResult$Empty.equals(java.lang.Object)
+public final boolean dev.vertique.workflow.sideeffect.RecorderResult$Timer.equals(java.lang.Object)
+public final boolean dev.vertique.workflow.sideeffect.WorkflowSideEffectIntent$Correlation.equals(java.lang.Object)
+public final boolean dev.vertique.workflow.sideeffect.WorkflowSideEffectIntent.equals(java.lang.Object)
+public final boolean dev.vertique.workflow.state.BranchToken.equals(java.lang.Object)
+public final boolean dev.vertique.workflow.state.BranchTokenFilter.equals(java.lang.Object)
+public final boolean dev.vertique.workflow.state.JoinState.equals(java.lang.Object)
+public final boolean dev.vertique.workflow.state.WaitReason$WaitForSignal.equals(java.lang.Object)
+public final boolean dev.vertique.workflow.state.WaitReason$WaitForTask.equals(java.lang.Object)
+public final boolean dev.vertique.workflow.state.WaitReason$WaitForTimer.equals(java.lang.Object)
+public final boolean dev.vertique.workflow.state.WorkflowHistoryEntry.equals(java.lang.Object)
+public final boolean dev.vertique.workflow.state.WorkflowHistoryEntrySummary.equals(java.lang.Object)
+public final boolean dev.vertique.workflow.state.WorkflowInstance.equals(java.lang.Object)
+public final boolean dev.vertique.workflow.state.payload.TaskCancelledHistoryPayload.equals(java.lang.Object)
+public final boolean dev.vertique.workflow.state.payload.TaskCompletedHistoryPayload.equals(java.lang.Object)
+public final boolean dev.vertique.workflow.state.payload.TaskCreatedHistoryPayload.equals(java.lang.Object)
+public final boolean dev.vertique.workflow.state.payload.TaskExpiredHistoryPayload.equals(java.lang.Object)
+public final boolean dev.vertique.workflow.state.payload.TaskReassignedHistoryPayload.equals(java.lang.Object)
+public final boolean dev.vertique.workflow.state.payload.TaskReminderFiredHistoryPayload.equals(java.lang.Object)
+public final boolean dev.vertique.workflow.subject.WorkflowSubjectRef.equals(java.lang.Object)
+public final boolean dev.vertique.workflow.tasks.TaskAssignment$Queue.equals(java.lang.Object)
+public final boolean dev.vertique.workflow.tasks.TaskAssignment$Role.equals(java.lang.Object)
+public final boolean dev.vertique.workflow.tasks.TaskAssignment$User.equals(java.lang.Object)
+public final boolean dev.vertique.workflow.tasks.TaskDecisionDescriptor.equals(java.lang.Object)
+public final boolean dev.vertique.workflow.tasks.TaskFilter.equals(java.lang.Object)
+public final boolean dev.vertique.workflow.tasks.TaskReassignmentResult$Applied.equals(java.lang.Object)
+public final boolean dev.vertique.workflow.tasks.TaskReassignmentResult$LostToTerminal.equals(java.lang.Object)
+public final boolean dev.vertique.workflow.tasks.TaskRecord.equals(java.lang.Object)
+public final boolean dev.vertique.workflow.timer.TimerIntentPayload.equals(java.lang.Object)
+public final boolean dev.vertique.workflow.timer.TimerRecord.equals(java.lang.Object)
+public final class dev.vertique.workflow.actor.DefaultWorkflowActorMapper
+public final class dev.vertique.workflow.actor.WorkflowActorMaps
+public final class dev.vertique.workflow.client.WorkflowClientFactory
+public final class dev.vertique.workflow.client.WorkflowProxyValidator
+public final class dev.vertique.workflow.dedup.WorkflowDedupScopes
+public final class dev.vertique.workflow.dsl.ForkScope<S>
+public final class dev.vertique.workflow.dsl.JoinScope<S>
+public final class dev.vertique.workflow.dsl.WorkflowBuilder$SignalWaitBuilder<P>
+public final class dev.vertique.workflow.dsl.WorkflowBuilder$SignalWaitTerminator
+public final class dev.vertique.workflow.dsl.WorkflowBuilder$SignalWaitWithNextStep
+public final class dev.vertique.workflow.dsl.WorkflowBuilder$SignalWaitWithTimeout
+public final class dev.vertique.workflow.dsl.WorkflowBuilder$SignalWaitWithTimeoutMutator
+public final class dev.vertique.workflow.dsl.WorkflowBuilder$TaskBuilder
+public final class dev.vertique.workflow.dsl.WorkflowBuilder$TaskDecisionBuilder<P>
+public final class dev.vertique.workflow.dsl.WorkflowBuilder$TimerStepBuilder
+public final class dev.vertique.workflow.dsl.WorkflowBuilder<S>
+public final class dev.vertique.workflow.events.WorkflowEventEnvelope
+public final class dev.vertique.workflow.migration.WorkflowMigrationHandlerMissingException
+public final class dev.vertique.workflow.migration.WorkflowMigrationIllegalStateException
+public final class dev.vertique.workflow.plan.DefaultRaceSafetyTargetRegistry
+public final class dev.vertique.workflow.plan.WorkflowPlanValidator
+public final class dev.vertique.workflow.registry.DefaultWorkflowRegistry
+public final enum dev.vertique.workflow.events.WorkflowEventType
+public final enum dev.vertique.workflow.ops.TaskMutationResult
+public final enum dev.vertique.workflow.ops.TimerFiringResult
+public final enum dev.vertique.workflow.plan.RaceSafety
+public final enum dev.vertique.workflow.sideeffect.IntentKind
+public final enum dev.vertique.workflow.state.BranchStatus
+public final enum dev.vertique.workflow.state.JoinPolicyType
+public final enum dev.vertique.workflow.state.JoinStateStatus
+public final enum dev.vertique.workflow.state.WaitType
+public final enum dev.vertique.workflow.state.WorkflowEntryType
+public final enum dev.vertique.workflow.state.WorkflowStatus
+public final enum dev.vertique.workflow.tasks.TaskStatus
+public final enum dev.vertique.workflow.tasks.TaskTransition
+public final enum dev.vertique.workflow.timer.TimerPurpose
+public final enum dev.vertique.workflow.timer.TimerStatus
+public final enum dev.vertique.workflow.timer.TimerStatusTransition
+public final int dev.vertique.workflow.actor.WorkflowActor$Service.hashCode()
+public final int dev.vertique.workflow.actor.WorkflowActor$System.hashCode()
+public final int dev.vertique.workflow.actor.WorkflowActor$User.hashCode()
+public final int dev.vertique.workflow.contract.WorkflowContractMetadata.hashCode()
+public final int dev.vertique.workflow.events.WorkflowEventIntent.hashCode()
+public final int dev.vertique.workflow.migration.MigrationContext.hashCode()
+public final int dev.vertique.workflow.migration.MigrationResult$AnchorAtInitial.hashCode()
+public final int dev.vertique.workflow.migration.MigrationResult$ContinueAt.hashCode()
+public final int dev.vertique.workflow.ops.StartCommand.hashCode()
+public final int dev.vertique.workflow.ops.TaskCompletionCommand.hashCode()
+public final int dev.vertique.workflow.ops.TaskReassignmentCommand.hashCode()
+public final int dev.vertique.workflow.ops.WorkflowInstanceId.hashCode()
+public final int dev.vertique.workflow.ops.WorkflowView.hashCode()
+public final int dev.vertique.workflow.plan.AllRequiredJoinPolicy.hashCode()
+public final int dev.vertique.workflow.plan.BranchResult.hashCode()
+public final int dev.vertique.workflow.plan.BranchRetryPolicy.hashCode()
+public final int dev.vertique.workflow.plan.BranchStart.hashCode()
+public final int dev.vertique.workflow.plan.CompensationNode.hashCode()
+public final int dev.vertique.workflow.plan.CompleteNode.hashCode()
+public final int dev.vertique.workflow.plan.DecisionNode.hashCode()
+public final int dev.vertique.workflow.plan.FailNode.hashCode()
+public final int dev.vertique.workflow.plan.FirstFailureJoinPolicy.hashCode()
+public final int dev.vertique.workflow.plan.FirstSuccessJoinPolicy.hashCode()
+public final int dev.vertique.workflow.plan.ForkNode.hashCode()
+public final int dev.vertique.workflow.plan.HumanTaskNode$AssignmentSpec$Queue.hashCode()
+public final int dev.vertique.workflow.plan.HumanTaskNode$AssignmentSpec$QueueFromState.hashCode()
+public final int dev.vertique.workflow.plan.HumanTaskNode$AssignmentSpec$Role.hashCode()
+public final int dev.vertique.workflow.plan.HumanTaskNode$AssignmentSpec$RoleFromState.hashCode()
+public final int dev.vertique.workflow.plan.HumanTaskNode$AssignmentSpec$User.hashCode()
+public final int dev.vertique.workflow.plan.HumanTaskNode$AssignmentSpec$UserFromState.hashCode()
+public final int dev.vertique.workflow.plan.HumanTaskNode$TaskDecision.hashCode()
+public final int dev.vertique.workflow.plan.HumanTaskNode.hashCode()
+public final int dev.vertique.workflow.plan.JoinNode.hashCode()
+public final int dev.vertique.workflow.plan.ReminderSpec$OneShotOffsets.hashCode()
+public final int dev.vertique.workflow.plan.ReminderSpec$RecurringInterval.hashCode()
+public final int dev.vertique.workflow.plan.ServiceDispatchNode.hashCode()
+public final int dev.vertique.workflow.plan.TimerNode.hashCode()
+public final int dev.vertique.workflow.plan.TimerSpec$After.hashCode()
+public final int dev.vertique.workflow.plan.TimerSpec$At.hashCode()
+public final int dev.vertique.workflow.plan.TimerSpec$FromState.hashCode()
+public final int dev.vertique.workflow.plan.WaitSignalNode$TimeoutBranch.hashCode()
+public final int dev.vertique.workflow.plan.WaitSignalNode.hashCode()
+public final int dev.vertique.workflow.plan.WorkflowPlan.hashCode()
+public final int dev.vertique.workflow.query.WorkflowInstanceQuery.hashCode()
+public final int dev.vertique.workflow.registry.CallbackId.hashCode()
+public final int dev.vertique.workflow.registry.RuntimeWorkflow.hashCode()
+public final int dev.vertique.workflow.retention.WorkflowRetentionService$PurgeResult.hashCode()
+public final int dev.vertique.workflow.retention.WorkflowRetentionService$RetentionResult.hashCode()
+public final int dev.vertique.workflow.sideeffect.RecorderResult$Empty.hashCode()
+public final int dev.vertique.workflow.sideeffect.RecorderResult$Timer.hashCode()
+public final int dev.vertique.workflow.sideeffect.WorkflowSideEffectIntent$Correlation.hashCode()
+public final int dev.vertique.workflow.sideeffect.WorkflowSideEffectIntent.hashCode()
+public final int dev.vertique.workflow.state.BranchToken.hashCode()
+public final int dev.vertique.workflow.state.BranchTokenFilter.hashCode()
+public final int dev.vertique.workflow.state.JoinState.hashCode()
+public final int dev.vertique.workflow.state.WaitReason$WaitForSignal.hashCode()
+public final int dev.vertique.workflow.state.WaitReason$WaitForTask.hashCode()
+public final int dev.vertique.workflow.state.WaitReason$WaitForTimer.hashCode()
+public final int dev.vertique.workflow.state.WorkflowHistoryEntry.hashCode()
+public final int dev.vertique.workflow.state.WorkflowHistoryEntrySummary.hashCode()
+public final int dev.vertique.workflow.state.WorkflowInstance.hashCode()
+public final int dev.vertique.workflow.state.payload.TaskCancelledHistoryPayload.hashCode()
+public final int dev.vertique.workflow.state.payload.TaskCompletedHistoryPayload.hashCode()
+public final int dev.vertique.workflow.state.payload.TaskCreatedHistoryPayload.hashCode()
+public final int dev.vertique.workflow.state.payload.TaskExpiredHistoryPayload.hashCode()
+public final int dev.vertique.workflow.state.payload.TaskReassignedHistoryPayload.hashCode()
+public final int dev.vertique.workflow.state.payload.TaskReminderFiredHistoryPayload.hashCode()
+public final int dev.vertique.workflow.subject.WorkflowSubjectRef.hashCode()
+public final int dev.vertique.workflow.tasks.TaskAssignment$Queue.hashCode()
+public final int dev.vertique.workflow.tasks.TaskAssignment$Role.hashCode()
+public final int dev.vertique.workflow.tasks.TaskAssignment$User.hashCode()
+public final int dev.vertique.workflow.tasks.TaskDecisionDescriptor.hashCode()
+public final int dev.vertique.workflow.tasks.TaskFilter.hashCode()
+public final int dev.vertique.workflow.tasks.TaskReassignmentResult$Applied.hashCode()
+public final int dev.vertique.workflow.tasks.TaskReassignmentResult$LostToTerminal.hashCode()
+public final int dev.vertique.workflow.tasks.TaskRecord.hashCode()
+public final int dev.vertique.workflow.timer.TimerIntentPayload.hashCode()
+public final int dev.vertique.workflow.timer.TimerRecord.hashCode()
+public final java.lang.String dev.vertique.workflow.actor.WorkflowActor$Service.toString()
+public final java.lang.String dev.vertique.workflow.actor.WorkflowActor$System.toString()
+public final java.lang.String dev.vertique.workflow.actor.WorkflowActor$User.toString()
+public final java.lang.String dev.vertique.workflow.contract.WorkflowContractMetadata.toString()
+public final java.lang.String dev.vertique.workflow.events.WorkflowEventIntent.toString()
+public final java.lang.String dev.vertique.workflow.migration.MigrationContext.toString()
+public final java.lang.String dev.vertique.workflow.migration.MigrationResult$AnchorAtInitial.toString()
+public final java.lang.String dev.vertique.workflow.migration.MigrationResult$ContinueAt.toString()
+public final java.lang.String dev.vertique.workflow.ops.StartCommand.toString()
+public final java.lang.String dev.vertique.workflow.ops.TaskCompletionCommand.toString()
+public final java.lang.String dev.vertique.workflow.ops.TaskReassignmentCommand.toString()
+public final java.lang.String dev.vertique.workflow.ops.WorkflowInstanceId.toString()
+public final java.lang.String dev.vertique.workflow.ops.WorkflowView.toString()
+public final java.lang.String dev.vertique.workflow.plan.AllRequiredJoinPolicy.toString()
+public final java.lang.String dev.vertique.workflow.plan.BranchResult.toString()
+public final java.lang.String dev.vertique.workflow.plan.BranchRetryPolicy.toString()
+public final java.lang.String dev.vertique.workflow.plan.BranchStart.toString()
+public final java.lang.String dev.vertique.workflow.plan.CompensationNode.toString()
+public final java.lang.String dev.vertique.workflow.plan.CompleteNode.toString()
+public final java.lang.String dev.vertique.workflow.plan.DecisionNode.toString()
+public final java.lang.String dev.vertique.workflow.plan.FailNode.toString()
+public final java.lang.String dev.vertique.workflow.plan.FirstFailureJoinPolicy.toString()
+public final java.lang.String dev.vertique.workflow.plan.FirstSuccessJoinPolicy.toString()
+public final java.lang.String dev.vertique.workflow.plan.ForkNode.toString()
+public final java.lang.String dev.vertique.workflow.plan.HumanTaskNode$AssignmentSpec$Queue.toString()
+public final java.lang.String dev.vertique.workflow.plan.HumanTaskNode$AssignmentSpec$QueueFromState.toString()
+public final java.lang.String dev.vertique.workflow.plan.HumanTaskNode$AssignmentSpec$Role.toString()
+public final java.lang.String dev.vertique.workflow.plan.HumanTaskNode$AssignmentSpec$RoleFromState.toString()
+public final java.lang.String dev.vertique.workflow.plan.HumanTaskNode$AssignmentSpec$User.toString()
+public final java.lang.String dev.vertique.workflow.plan.HumanTaskNode$AssignmentSpec$UserFromState.toString()
+public final java.lang.String dev.vertique.workflow.plan.HumanTaskNode$TaskDecision.toString()
+public final java.lang.String dev.vertique.workflow.plan.HumanTaskNode.toString()
+public final java.lang.String dev.vertique.workflow.plan.JoinNode.toString()
+public final java.lang.String dev.vertique.workflow.plan.ReminderSpec$OneShotOffsets.toString()
+public final java.lang.String dev.vertique.workflow.plan.ReminderSpec$RecurringInterval.toString()
+public final java.lang.String dev.vertique.workflow.plan.ServiceDispatchNode.toString()
+public final java.lang.String dev.vertique.workflow.plan.TimerNode.toString()
+public final java.lang.String dev.vertique.workflow.plan.TimerSpec$After.toString()
+public final java.lang.String dev.vertique.workflow.plan.TimerSpec$At.toString()
+public final java.lang.String dev.vertique.workflow.plan.TimerSpec$FromState.toString()
+public final java.lang.String dev.vertique.workflow.plan.WaitSignalNode$TimeoutBranch.toString()
+public final java.lang.String dev.vertique.workflow.plan.WaitSignalNode.toString()
+public final java.lang.String dev.vertique.workflow.plan.WorkflowPlan.toString()
+public final java.lang.String dev.vertique.workflow.query.WorkflowInstanceQuery.toString()
+public final java.lang.String dev.vertique.workflow.registry.CallbackId.toString()
+public final java.lang.String dev.vertique.workflow.registry.RuntimeWorkflow.toString()
+public final java.lang.String dev.vertique.workflow.retention.WorkflowRetentionService$PurgeResult.toString()
+public final java.lang.String dev.vertique.workflow.retention.WorkflowRetentionService$RetentionResult.toString()
+public final java.lang.String dev.vertique.workflow.sideeffect.RecorderResult$Empty.toString()
+public final java.lang.String dev.vertique.workflow.sideeffect.RecorderResult$Timer.toString()
+public final java.lang.String dev.vertique.workflow.sideeffect.WorkflowSideEffectIntent$Correlation.toString()
+public final java.lang.String dev.vertique.workflow.sideeffect.WorkflowSideEffectIntent.toString()
+public final java.lang.String dev.vertique.workflow.state.BranchToken.toString()
+public final java.lang.String dev.vertique.workflow.state.BranchTokenFilter.toString()
+public final java.lang.String dev.vertique.workflow.state.JoinState.toString()
+public final java.lang.String dev.vertique.workflow.state.WaitReason$WaitForSignal.toString()
+public final java.lang.String dev.vertique.workflow.state.WaitReason$WaitForTask.toString()
+public final java.lang.String dev.vertique.workflow.state.WaitReason$WaitForTimer.toString()
+public final java.lang.String dev.vertique.workflow.state.WorkflowHistoryEntry.toString()
+public final java.lang.String dev.vertique.workflow.state.WorkflowHistoryEntrySummary.toString()
+public final java.lang.String dev.vertique.workflow.state.WorkflowInstance.toString()
+public final java.lang.String dev.vertique.workflow.state.payload.TaskCancelledHistoryPayload.toString()
+public final java.lang.String dev.vertique.workflow.state.payload.TaskCompletedHistoryPayload.toString()
+public final java.lang.String dev.vertique.workflow.state.payload.TaskCreatedHistoryPayload.toString()
+public final java.lang.String dev.vertique.workflow.state.payload.TaskExpiredHistoryPayload.toString()
+public final java.lang.String dev.vertique.workflow.state.payload.TaskReassignedHistoryPayload.toString()
+public final java.lang.String dev.vertique.workflow.state.payload.TaskReminderFiredHistoryPayload.toString()
+public final java.lang.String dev.vertique.workflow.subject.WorkflowSubjectRef.toString()
+public final java.lang.String dev.vertique.workflow.tasks.TaskAssignment$Queue.toString()
+public final java.lang.String dev.vertique.workflow.tasks.TaskAssignment$Role.toString()
+public final java.lang.String dev.vertique.workflow.tasks.TaskAssignment$User.toString()
+public final java.lang.String dev.vertique.workflow.tasks.TaskDecisionDescriptor.toString()
+public final java.lang.String dev.vertique.workflow.tasks.TaskFilter.toString()
+public final java.lang.String dev.vertique.workflow.tasks.TaskReassignmentResult$Applied.toString()
+public final java.lang.String dev.vertique.workflow.tasks.TaskReassignmentResult$LostToTerminal.toString()
+public final java.lang.String dev.vertique.workflow.tasks.TaskRecord.toString()
+public final java.lang.String dev.vertique.workflow.timer.TimerIntentPayload.toString()
+public final java.lang.String dev.vertique.workflow.timer.TimerRecord.toString()
+public final record dev.vertique.workflow.contract.WorkflowContractMetadata
+public final record dev.vertique.workflow.events.WorkflowEventIntent
+public final record dev.vertique.workflow.migration.MigrationContext
+public final record dev.vertique.workflow.ops.StartCommand
+public final record dev.vertique.workflow.ops.TaskCompletionCommand
+public final record dev.vertique.workflow.ops.TaskReassignmentCommand
+public final record dev.vertique.workflow.ops.WorkflowInstanceId
+public final record dev.vertique.workflow.ops.WorkflowView
+public final record dev.vertique.workflow.plan.AllRequiredJoinPolicy
+public final record dev.vertique.workflow.plan.BranchResult
+public final record dev.vertique.workflow.plan.BranchRetryPolicy
+public final record dev.vertique.workflow.plan.BranchStart
+public final record dev.vertique.workflow.plan.CompensationNode
+public final record dev.vertique.workflow.plan.CompleteNode
+public final record dev.vertique.workflow.plan.DecisionNode
+public final record dev.vertique.workflow.plan.FailNode
+public final record dev.vertique.workflow.plan.FirstFailureJoinPolicy
+public final record dev.vertique.workflow.plan.FirstSuccessJoinPolicy
+public final record dev.vertique.workflow.plan.ForkNode
+public final record dev.vertique.workflow.plan.HumanTaskNode
+public final record dev.vertique.workflow.plan.JoinNode
+public final record dev.vertique.workflow.plan.ServiceDispatchNode
+public final record dev.vertique.workflow.plan.TimerNode
+public final record dev.vertique.workflow.plan.WaitSignalNode
+public final record dev.vertique.workflow.plan.WorkflowPlan
+public final record dev.vertique.workflow.query.WorkflowInstanceQuery
+public final record dev.vertique.workflow.registry.CallbackId
+public final record dev.vertique.workflow.registry.RuntimeWorkflow
+public final record dev.vertique.workflow.sideeffect.WorkflowSideEffectIntent
+public final record dev.vertique.workflow.state.BranchToken
+public final record dev.vertique.workflow.state.BranchTokenFilter
+public final record dev.vertique.workflow.state.JoinState
+public final record dev.vertique.workflow.state.WorkflowHistoryEntry
+public final record dev.vertique.workflow.state.WorkflowHistoryEntrySummary
+public final record dev.vertique.workflow.state.WorkflowInstance
+public final record dev.vertique.workflow.state.payload.TaskCancelledHistoryPayload
+public final record dev.vertique.workflow.state.payload.TaskCompletedHistoryPayload
+public final record dev.vertique.workflow.state.payload.TaskCreatedHistoryPayload
+public final record dev.vertique.workflow.state.payload.TaskExpiredHistoryPayload
+public final record dev.vertique.workflow.state.payload.TaskReassignedHistoryPayload
+public final record dev.vertique.workflow.state.payload.TaskReminderFiredHistoryPayload
+public final record dev.vertique.workflow.subject.WorkflowSubjectRef
+public final record dev.vertique.workflow.tasks.TaskDecisionDescriptor
+public final record dev.vertique.workflow.tasks.TaskFilter
+public final record dev.vertique.workflow.tasks.TaskRecord
+public final record dev.vertique.workflow.timer.TimerIntentPayload
+public final record dev.vertique.workflow.timer.TimerRecord
+public int dev.vertique.workflow.events.WorkflowEventEnvelope.schemaVersion()
+public int dev.vertique.workflow.plan.BranchRetryPolicy.maxAttempts()
+public int dev.vertique.workflow.retention.WorkflowRetentionService$PurgeResult.purgedCount()
+public int dev.vertique.workflow.retention.WorkflowRetentionService$RetentionResult.archivedCount()
+public int dev.vertique.workflow.state.BranchToken.attemptCount()
+public int dev.vertique.workflow.state.BranchToken.maxAttempts()
+public int dev.vertique.workflow.state.payload.TaskReminderFiredHistoryPayload.reminderIndex()
+public io.vertx.core.json.JsonObject dev.vertique.workflow.plan.BranchResult.result()
+public java.lang.Class<?> dev.vertique.workflow.contract.WorkflowContractMetadata.contractType()
+public java.lang.Class<?> dev.vertique.workflow.dsl.WorkflowBuilder.startPayloadType()
+public java.lang.Class<?> dev.vertique.workflow.exception.WorkflowMigrationStateTypeMismatchException.actualStateType()
+public java.lang.Class<?> dev.vertique.workflow.exception.WorkflowMigrationStateTypeMismatchException.expectedStateType()
+public java.lang.Class<?> dev.vertique.workflow.registry.RuntimeWorkflow.startPayloadType()
+public java.lang.Class<?> dev.vertique.workflow.registry.RuntimeWorkflow.stateType()
+public java.lang.Integer dev.vertique.workflow.plan.ReminderSpec$RecurringInterval.maxFires()
+public java.lang.Long dev.vertique.workflow.ops.StartCommand.requestedDefinitionVersion()
+public java.lang.Object dev.vertique.workflow.ops.StartCommand.payload()
+public java.lang.Object dev.vertique.workflow.ops.TaskCompletionCommand.payload()
+public java.lang.Object dev.vertique.workflow.sideeffect.WorkflowSideEffectIntent.payload()
+public java.lang.String dev.vertique.workflow.actor.WorkflowActor$Service.serviceId()
+public java.lang.String dev.vertique.workflow.actor.WorkflowActor$System.reason()
+public java.lang.String dev.vertique.workflow.actor.WorkflowActor$User.userId()
+public java.lang.String dev.vertique.workflow.contract.WorkflowContractMetadata.definitionId()
+public java.lang.String dev.vertique.workflow.events.WorkflowEventEnvelope$WorkflowEventEnvelopeBuilder.toString()
+public java.lang.String dev.vertique.workflow.events.WorkflowEventEnvelope.businessKey()
+public java.lang.String dev.vertique.workflow.events.WorkflowEventEnvelope.causationId()
+public java.lang.String dev.vertique.workflow.events.WorkflowEventEnvelope.correlationId()
+public java.lang.String dev.vertique.workflow.events.WorkflowEventEnvelope.definitionId()
+public java.lang.String dev.vertique.workflow.events.WorkflowEventEnvelope.eventType()
+public java.lang.String dev.vertique.workflow.events.WorkflowEventEnvelope.stepId()
+public java.lang.String dev.vertique.workflow.events.WorkflowEventIntent.businessKey()
+public java.lang.String dev.vertique.workflow.events.WorkflowEventIntent.causationId()
+public java.lang.String dev.vertique.workflow.events.WorkflowEventIntent.correlationId()
+public java.lang.String dev.vertique.workflow.events.WorkflowEventIntent.definitionId()
+public java.lang.String dev.vertique.workflow.events.WorkflowEventIntent.stepId()
+public java.lang.String dev.vertique.workflow.exception.WorkflowIdempotencyConflictException.existingFingerprint()
+public java.lang.String dev.vertique.workflow.exception.WorkflowIdempotencyConflictException.idempotencyKey()
+public java.lang.String dev.vertique.workflow.exception.WorkflowIdempotencyConflictException.incomingFingerprint()
+public java.lang.String dev.vertique.workflow.exception.WorkflowIdempotencyConflictException.kind()
+public java.lang.String dev.vertique.workflow.exception.WorkflowMigrationStateTypeMismatchException.definitionId()
+public java.lang.String dev.vertique.workflow.exception.WorkflowPlanHashDriftException.currentHash()
+public java.lang.String dev.vertique.workflow.exception.WorkflowPlanHashDriftException.definitionId()
+public java.lang.String dev.vertique.workflow.exception.WorkflowPlanHashDriftException.storedHash()
+public java.lang.String dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException.definitionId()
+public java.lang.String dev.vertique.workflow.migration.MigrationContext.currentStepId()
+public java.lang.String dev.vertique.workflow.migration.MigrationContext.sourcePlanHash()
+public java.lang.String dev.vertique.workflow.migration.MigrationContext.targetPlanHash()
+public java.lang.String dev.vertique.workflow.migration.MigrationResult$ContinueAt.stepId()
+public java.lang.String dev.vertique.workflow.migration.WorkflowMigrationHandlerMissingException.definitionId()
+public java.lang.String dev.vertique.workflow.migration.WorkflowMigrationIllegalStateException.reason()
+public java.lang.String dev.vertique.workflow.ops.StartCommand.businessKey()
+public java.lang.String dev.vertique.workflow.ops.StartCommand.definitionId()
+public java.lang.String dev.vertique.workflow.ops.StartCommand.idempotencyKey()
+public java.lang.String dev.vertique.workflow.ops.TaskCompletionCommand.decisionName()
+public java.lang.String dev.vertique.workflow.ops.TaskCompletionCommand.idempotencyKey()
+public java.lang.String dev.vertique.workflow.ops.TaskCompletionCommand.reviewedSubjectVersion()
+public java.lang.String dev.vertique.workflow.ops.TaskReassignmentCommand.idempotencyKey()
+public java.lang.String dev.vertique.workflow.ops.TaskReassignmentCommand.reason()
+public java.lang.String dev.vertique.workflow.plan.BranchResult.branchId()
+public java.lang.String dev.vertique.workflow.plan.BranchResult.errorMessage()
+public java.lang.String dev.vertique.workflow.plan.BranchResult.errorType()
+public java.lang.String dev.vertique.workflow.plan.BranchStart.branchId()
+public java.lang.String dev.vertique.workflow.plan.BranchStart.startStepId()
+public java.lang.String dev.vertique.workflow.plan.CompensationNode.forwardStepId()
+public java.lang.String dev.vertique.workflow.plan.CompensationNode.stepId()
+public java.lang.String dev.vertique.workflow.plan.CompensationNode.targetId()
+public java.lang.String dev.vertique.workflow.plan.CompleteNode.stepId()
+public java.lang.String dev.vertique.workflow.plan.DecisionNode.stepId()
+public java.lang.String dev.vertique.workflow.plan.FailNode.errorType()
+public java.lang.String dev.vertique.workflow.plan.FailNode.stepId()
+public java.lang.String dev.vertique.workflow.plan.ForkNode.joinStepId()
+public java.lang.String dev.vertique.workflow.plan.ForkNode.stepId()
+public java.lang.String dev.vertique.workflow.plan.HumanTaskNode$AssignmentSpec$Queue.queueName()
+public java.lang.String dev.vertique.workflow.plan.HumanTaskNode$AssignmentSpec$Role.roleId()
+public java.lang.String dev.vertique.workflow.plan.HumanTaskNode$AssignmentSpec$User.userId()
+public java.lang.String dev.vertique.workflow.plan.HumanTaskNode$TaskDecision.name()
+public java.lang.String dev.vertique.workflow.plan.HumanTaskNode$TaskDecision.nextStepId()
+public java.lang.String dev.vertique.workflow.plan.HumanTaskNode$TaskDecision.payloadTypeName()
+public java.lang.String dev.vertique.workflow.plan.HumanTaskNode.dueNextStepId()
+public java.lang.String dev.vertique.workflow.plan.HumanTaskNode.stepId()
+public java.lang.String dev.vertique.workflow.plan.JoinNode.failureStepId()
+public java.lang.String dev.vertique.workflow.plan.JoinNode.nextStepId()
+public java.lang.String dev.vertique.workflow.plan.JoinNode.stepId()
+public java.lang.String dev.vertique.workflow.plan.ServiceDispatchNode.compensationStepId()
+public java.lang.String dev.vertique.workflow.plan.ServiceDispatchNode.nextStepId()
+public java.lang.String dev.vertique.workflow.plan.ServiceDispatchNode.stepId()
+public java.lang.String dev.vertique.workflow.plan.ServiceDispatchNode.targetId()
+public java.lang.String dev.vertique.workflow.plan.TimerNode.nextStepId()
+public java.lang.String dev.vertique.workflow.plan.TimerNode.stepId()
+public java.lang.String dev.vertique.workflow.plan.WaitSignalNode$TimeoutBranch.timeoutNextStepId()
+public java.lang.String dev.vertique.workflow.plan.WaitSignalNode.nextStepId()
+public java.lang.String dev.vertique.workflow.plan.WaitSignalNode.payloadTypeName()
+public java.lang.String dev.vertique.workflow.plan.WaitSignalNode.signalName()
+public java.lang.String dev.vertique.workflow.plan.WaitSignalNode.stepId()
+public java.lang.String dev.vertique.workflow.plan.WorkflowPlan.definitionId()
+public java.lang.String dev.vertique.workflow.plan.WorkflowPlan.initialStepId()
+public java.lang.String dev.vertique.workflow.plan.WorkflowPlan.planHash()
+public java.lang.String dev.vertique.workflow.plan.WorkflowPlan.stateTypeName()
+public java.lang.String dev.vertique.workflow.query.WorkflowInstanceQuery.businessKey()
+public java.lang.String dev.vertique.workflow.query.WorkflowInstanceQuery.definitionId()
+public java.lang.String dev.vertique.workflow.query.WorkflowInstanceQuery.subjectId()
+public java.lang.String dev.vertique.workflow.query.WorkflowInstanceQuery.subjectType()
+public java.lang.String dev.vertique.workflow.query.WorkflowInstanceQuery.subjectVersion()
+public java.lang.String dev.vertique.workflow.registry.CallbackId.value()
+public java.lang.String dev.vertique.workflow.sideeffect.WorkflowSideEffectIntent$Correlation.branchId()
+public java.lang.String dev.vertique.workflow.sideeffect.WorkflowSideEffectIntent$Correlation.definitionId()
+public java.lang.String dev.vertique.workflow.sideeffect.WorkflowSideEffectIntent$Correlation.forkStepId()
+public java.lang.String dev.vertique.workflow.sideeffect.WorkflowSideEffectIntent$Correlation.stepId()
+public java.lang.String dev.vertique.workflow.sideeffect.WorkflowSideEffectIntent.targetId()
+public java.lang.String dev.vertique.workflow.state.BranchToken.branchId()
+public java.lang.String dev.vertique.workflow.state.BranchToken.currentStepId()
+public java.lang.String dev.vertique.workflow.state.BranchToken.errorMessage()
+public java.lang.String dev.vertique.workflow.state.BranchToken.errorType()
+public java.lang.String dev.vertique.workflow.state.BranchToken.forkStepId()
+public java.lang.String dev.vertique.workflow.state.BranchToken.lastErrorMessage()
+public java.lang.String dev.vertique.workflow.state.BranchToken.lastErrorType()
+public java.lang.String dev.vertique.workflow.state.BranchToken.resultJson()
+public java.lang.String dev.vertique.workflow.state.BranchToken.waitKey()
+public java.lang.String dev.vertique.workflow.state.BranchTokenFilter.forkStepId()
+public java.lang.String dev.vertique.workflow.state.JoinState.forkStepId()
+public java.lang.String dev.vertique.workflow.state.JoinState.joinStepId()
+public java.lang.String dev.vertique.workflow.state.JoinState.winningBranchId()
+public java.lang.String dev.vertique.workflow.state.WaitReason$WaitForSignal.correlationKey()
+public java.lang.String dev.vertique.workflow.state.WaitReason$WaitForSignal.signalName()
+public java.lang.String dev.vertique.workflow.state.WaitReason$WaitForTask.stepId()
+public java.lang.String dev.vertique.workflow.state.WaitReason$WaitForTimer.stepId()
+public java.lang.String dev.vertique.workflow.state.WorkflowHistoryEntry.payloadJson()
+public java.lang.String dev.vertique.workflow.state.WorkflowInstance.businessKey()
+public java.lang.String dev.vertique.workflow.state.WorkflowInstance.currentStepId()
+public java.lang.String dev.vertique.workflow.state.WorkflowInstance.definitionId()
+public java.lang.String dev.vertique.workflow.state.WorkflowInstance.errorMessage()
+public java.lang.String dev.vertique.workflow.state.WorkflowInstance.errorType()
+public java.lang.String dev.vertique.workflow.state.WorkflowInstance.planHash()
+public java.lang.String dev.vertique.workflow.state.WorkflowInstance.stateJson()
+public java.lang.String dev.vertique.workflow.state.WorkflowInstance.waitKey()
+public java.lang.String dev.vertique.workflow.state.payload.TaskCancelledHistoryPayload.cause()
+public java.lang.String dev.vertique.workflow.state.payload.TaskCancelledHistoryPayload.commandCorrelationId()
+public java.lang.String dev.vertique.workflow.state.payload.TaskCancelledHistoryPayload.stepId()
+public java.lang.String dev.vertique.workflow.state.payload.TaskCompletedHistoryPayload.commandCorrelationId()
+public java.lang.String dev.vertique.workflow.state.payload.TaskCompletedHistoryPayload.decisionName()
+public java.lang.String dev.vertique.workflow.state.payload.TaskCompletedHistoryPayload.reviewedSubjectVersion()
+public java.lang.String dev.vertique.workflow.state.payload.TaskCompletedHistoryPayload.stepId()
+public java.lang.String dev.vertique.workflow.state.payload.TaskCreatedHistoryPayload.stepId()
+public java.lang.String dev.vertique.workflow.state.payload.TaskExpiredHistoryPayload.stepId()
+public java.lang.String dev.vertique.workflow.state.payload.TaskReassignedHistoryPayload.commandCorrelationId()
+public java.lang.String dev.vertique.workflow.state.payload.TaskReassignedHistoryPayload.reason()
+public java.lang.String dev.vertique.workflow.state.payload.TaskReassignedHistoryPayload.stepId()
+public java.lang.String dev.vertique.workflow.state.payload.TaskReminderFiredHistoryPayload.stepId()
+public java.lang.String dev.vertique.workflow.subject.WorkflowSubjectRef.id()
+public java.lang.String dev.vertique.workflow.subject.WorkflowSubjectRef.type()
+public java.lang.String dev.vertique.workflow.subject.WorkflowSubjectRef.version()
+public java.lang.String dev.vertique.workflow.tasks.TaskAssignment$Queue.queueName()
+public java.lang.String dev.vertique.workflow.tasks.TaskAssignment$Role.roleId()
+public java.lang.String dev.vertique.workflow.tasks.TaskAssignment$User.userId()
+public java.lang.String dev.vertique.workflow.tasks.TaskDecisionDescriptor.name()
+public java.lang.String dev.vertique.workflow.tasks.TaskDecisionDescriptor.nextStepId()
+public java.lang.String dev.vertique.workflow.tasks.TaskDecisionDescriptor.payloadTypeName()
+public java.lang.String dev.vertique.workflow.tasks.TaskFilter.assigneeQueue()
+public java.lang.String dev.vertique.workflow.tasks.TaskFilter.assigneeRole()
+public java.lang.String dev.vertique.workflow.tasks.TaskFilter.assigneeUser()
+public java.lang.String dev.vertique.workflow.tasks.TaskFilter.subjectId()
+public java.lang.String dev.vertique.workflow.tasks.TaskFilter.subjectType()
+public java.lang.String dev.vertique.workflow.tasks.TaskReassignmentResult$Applied.reason()
+public java.lang.String dev.vertique.workflow.tasks.TaskReassignmentResult$Applied.stepId()
+public java.lang.String dev.vertique.workflow.tasks.TaskRecord.branchId()
+public java.lang.String dev.vertique.workflow.tasks.TaskRecord.cancellationReason()
+public java.lang.String dev.vertique.workflow.tasks.TaskRecord.decisionName()
+public java.lang.String dev.vertique.workflow.tasks.TaskRecord.decisionPayloadJson()
+public java.lang.String dev.vertique.workflow.tasks.TaskRecord.forkStepId()
+public java.lang.String dev.vertique.workflow.tasks.TaskRecord.reassignmentReason()
+public java.lang.String dev.vertique.workflow.tasks.TaskRecord.stepId()
+public java.lang.String dev.vertique.workflow.tasks.TaskRecord.subjectVersionAtCreation()
+public java.lang.String dev.vertique.workflow.timer.TimerRecord.branchId()
+public java.lang.String dev.vertique.workflow.timer.TimerRecord.failureReason()
+public java.lang.String dev.vertique.workflow.timer.TimerRecord.forkStepId()
+public java.lang.String dev.vertique.workflow.timer.TimerRecord.stepId()
+public java.time.Duration dev.vertique.workflow.plan.BranchRetryPolicy.initialDelay()
+public java.time.Duration dev.vertique.workflow.plan.ReminderSpec$RecurringInterval.interval()
+public java.time.Duration dev.vertique.workflow.plan.TimerSpec$After.delay()
+public java.time.Instant dev.vertique.workflow.events.WorkflowEventEnvelope.occurredAt()
+public java.time.Instant dev.vertique.workflow.events.WorkflowEventIntent.occurredAt()
+public java.time.Instant dev.vertique.workflow.plan.TimerSpec$At.fireAt()
+public java.time.Instant dev.vertique.workflow.state.BranchToken.createdAt()
+public java.time.Instant dev.vertique.workflow.state.BranchToken.lastErrorAt()
+public java.time.Instant dev.vertique.workflow.state.BranchToken.nextRetryAt()
+public java.time.Instant dev.vertique.workflow.state.BranchToken.updatedAt()
+public java.time.Instant dev.vertique.workflow.state.JoinState.createdAt()
+public java.time.Instant dev.vertique.workflow.state.JoinState.decidedAt()
+public java.time.Instant dev.vertique.workflow.state.JoinState.updatedAt()
+public java.time.Instant dev.vertique.workflow.state.WaitReason$WaitForSignal.timeoutAt()
+public java.time.Instant dev.vertique.workflow.state.WaitReason$WaitForTask.dueAt()
+public java.time.Instant dev.vertique.workflow.state.WaitReason$WaitForTimer.fireAt()
+public java.time.Instant dev.vertique.workflow.state.WorkflowHistoryEntry.recordedAt()
+public java.time.Instant dev.vertique.workflow.state.WorkflowHistoryEntrySummary.occurredAt()
+public java.time.Instant dev.vertique.workflow.state.WorkflowInstance.createdAt()
+public java.time.Instant dev.vertique.workflow.state.WorkflowInstance.updatedAt()
+public java.time.Instant dev.vertique.workflow.state.payload.TaskCancelledHistoryPayload.cancelledAt()
+public java.time.Instant dev.vertique.workflow.state.payload.TaskCompletedHistoryPayload.completedAt()
+public java.time.Instant dev.vertique.workflow.state.payload.TaskCreatedHistoryPayload.dueAt()
+public java.time.Instant dev.vertique.workflow.state.payload.TaskExpiredHistoryPayload.expiredAt()
+public java.time.Instant dev.vertique.workflow.state.payload.TaskReassignedHistoryPayload.reassignedAt()
+public java.time.Instant dev.vertique.workflow.state.payload.TaskReminderFiredHistoryPayload.scheduledAt()
+public java.time.Instant dev.vertique.workflow.tasks.TaskFilter.dueBefore()
+public java.time.Instant dev.vertique.workflow.tasks.TaskReassignmentResult$Applied.reassignedAt()
+public java.time.Instant dev.vertique.workflow.tasks.TaskRecord.cancelledAt()
+public java.time.Instant dev.vertique.workflow.tasks.TaskRecord.completedAt()
+public java.time.Instant dev.vertique.workflow.tasks.TaskRecord.dueAt()
+public java.time.Instant dev.vertique.workflow.tasks.TaskRecord.expiredAt()
+public java.time.Instant dev.vertique.workflow.tasks.TaskRecord.updatedAt()
+public java.time.Instant dev.vertique.workflow.timer.TimerIntentPayload.fireAt()
+public java.time.Instant dev.vertique.workflow.timer.TimerRecord.cancelledAt()
+public java.time.Instant dev.vertique.workflow.timer.TimerRecord.failedAt()
+public java.time.Instant dev.vertique.workflow.timer.TimerRecord.fireAt()
+public java.time.Instant dev.vertique.workflow.timer.TimerRecord.firedAt()
+public java.time.Instant dev.vertique.workflow.timer.TimerRecord.scheduledAt()
+public java.util.Collection<dev.vertique.workflow.migration.WorkflowMigrationHandler<?, ?>> dev.vertique.workflow.migration.DefaultWorkflowMigrationRegistry.all()
+public java.util.Collection<dev.vertique.workflow.registry.RuntimeWorkflow> dev.vertique.workflow.registry.DefaultWorkflowRegistry.allRegistered()
+public java.util.List<dev.vertique.workflow.plan.BranchStart> dev.vertique.workflow.plan.ForkNode.branches()
+public java.util.List<dev.vertique.workflow.plan.HumanTaskNode$TaskDecision> dev.vertique.workflow.plan.HumanTaskNode.decisions()
+public java.util.List<dev.vertique.workflow.plan.WorkflowNode> dev.vertique.workflow.plan.WorkflowPlan.nodes()
+public java.util.List<dev.vertique.workflow.state.WorkflowHistoryEntry> dev.vertique.workflow.ops.WorkflowView.recentHistory()
+public java.util.List<dev.vertique.workflow.state.WorkflowHistoryEntrySummary> dev.vertique.workflow.migration.MigrationContext.recentHistory()
+public java.util.List<dev.vertique.workflow.tasks.TaskDecisionDescriptor> dev.vertique.workflow.tasks.TaskRecord.decisions()
+public java.util.List<java.time.Duration> dev.vertique.workflow.plan.ReminderSpec$OneShotOffsets.offsetsFromTaskCreation()
+public java.util.Map<java.lang.String, dev.vertique.workflow.plan.CompensationNode> dev.vertique.workflow.registry.RuntimeWorkflow.compensationByForwardStepId()
+public java.util.Map<java.lang.String, dev.vertique.workflow.plan.WorkflowNode> dev.vertique.workflow.registry.RuntimeWorkflow.nodeById()
+public java.util.Map<java.lang.String, java.lang.Class<?>> dev.vertique.workflow.dsl.WorkflowBuilder.signalPayloadTypes()
+public java.util.Map<java.lang.String, java.lang.Class<?>> dev.vertique.workflow.registry.RuntimeWorkflow.signalPayloadTypes()
+public java.util.Map<java.lang.String, java.lang.Object> dev.vertique.workflow.events.WorkflowEventEnvelope.attributes()
+public java.util.Map<java.lang.String, java.lang.Object> dev.vertique.workflow.events.WorkflowEventIntent.attributes()
+public java.util.Map<java.lang.String, java.lang.String> dev.vertique.workflow.sideeffect.WorkflowSideEffectIntent.headers()
+public java.util.Map<java.lang.String, java.util.function.BiFunction<java.lang.Object, java.lang.Object, java.lang.Object>> dev.vertique.workflow.dsl.WorkflowBuilder.stateUpdaterMap()
+public java.util.Map<java.lang.String, java.util.function.Function<java.lang.Object, java.lang.Object>> dev.vertique.workflow.dsl.WorkflowBuilder.payloadFactoryMap()
+public java.util.Map<java.lang.String, java.util.function.Function<java.lang.Object, java.lang.Object>> dev.vertique.workflow.dsl.WorkflowBuilder.stateMutatorMap()
+public java.util.Map<java.lang.String, java.util.function.Function<java.lang.Object, java.lang.String>> dev.vertique.workflow.dsl.WorkflowBuilder.decisionResolverMap()
+public java.util.Map<java.lang.String, java.util.function.Function<java.lang.Object, java.lang.String>> dev.vertique.workflow.dsl.WorkflowBuilder.failMessageFactoryMap()
+public java.util.Map<java.lang.String, java.util.function.Function<java.lang.Object, java.time.Instant>> dev.vertique.workflow.dsl.WorkflowBuilder.timerResolverMap()
+public java.util.Optional<dev.vertique.workflow.migration.WorkflowMigrationHandler<?, ?>> dev.vertique.workflow.migration.DefaultWorkflowMigrationRegistry.find(java.lang.String,long,long)
+public java.util.UUID dev.vertique.workflow.events.WorkflowEventEnvelope.taskId()
+public java.util.UUID dev.vertique.workflow.events.WorkflowEventEnvelope.workflowId()
+public java.util.UUID dev.vertique.workflow.events.WorkflowEventIntent.taskId()
+public java.util.UUID dev.vertique.workflow.exception.WorkflowStaleAssignmentException.taskId()
+public java.util.UUID dev.vertique.workflow.exception.WorkflowTaskNotFoundException.taskId()
+public java.util.UUID dev.vertique.workflow.exception.WorkflowTaskNotWaitingException.taskId()
+public java.util.UUID dev.vertique.workflow.ops.TaskCompletionCommand.taskId()
+public java.util.UUID dev.vertique.workflow.ops.TaskReassignmentCommand.taskId()
+public java.util.UUID dev.vertique.workflow.ops.WorkflowInstanceId.value()
+public java.util.UUID dev.vertique.workflow.sideeffect.RecorderResult$Timer.timerId()
+public java.util.UUID dev.vertique.workflow.sideeffect.WorkflowSideEffectIntent$Correlation.branchTokenId()
+public java.util.UUID dev.vertique.workflow.state.BranchToken.id()
+public java.util.UUID dev.vertique.workflow.state.BranchToken.waitAuxId()
+public java.util.UUID dev.vertique.workflow.state.WaitReason$WaitForSignal.timeoutTimerId()
+public java.util.UUID dev.vertique.workflow.state.WaitReason$WaitForTask.dueDateTimerId()
+public java.util.UUID dev.vertique.workflow.state.WaitReason$WaitForTask.taskId()
+public java.util.UUID dev.vertique.workflow.state.WaitReason$WaitForTimer.timerId()
+public java.util.UUID dev.vertique.workflow.state.WorkflowInstance.waitAuxId()
+public java.util.UUID dev.vertique.workflow.state.payload.TaskCancelledHistoryPayload.taskId()
+public java.util.UUID dev.vertique.workflow.state.payload.TaskCompletedHistoryPayload.taskId()
+public java.util.UUID dev.vertique.workflow.state.payload.TaskCreatedHistoryPayload.taskId()
+public java.util.UUID dev.vertique.workflow.state.payload.TaskExpiredHistoryPayload.taskId()
+public java.util.UUID dev.vertique.workflow.state.payload.TaskReassignedHistoryPayload.taskId()
+public java.util.UUID dev.vertique.workflow.state.payload.TaskReminderFiredHistoryPayload.taskId()
+public java.util.UUID dev.vertique.workflow.state.payload.TaskReminderFiredHistoryPayload.timerId()
+public java.util.UUID dev.vertique.workflow.tasks.TaskReassignmentResult$Applied.taskId()
+public java.util.UUID dev.vertique.workflow.tasks.TaskRecord.branchTokenId()
+public java.util.UUID dev.vertique.workflow.tasks.TaskRecord.dueDateTimerId()
+public java.util.UUID dev.vertique.workflow.tasks.TaskRecord.taskId()
+public java.util.UUID dev.vertique.workflow.timer.TimerIntentPayload.taskId()
+public java.util.UUID dev.vertique.workflow.timer.TimerRecord.branchTokenId()
+public java.util.UUID dev.vertique.workflow.timer.TimerRecord.delayedJobExecutionId()
+public java.util.UUID dev.vertique.workflow.timer.TimerRecord.taskId()
+public java.util.UUID dev.vertique.workflow.timer.TimerRecord.timerId()
+public java.util.function.Function<java.lang.Object, java.lang.Object> dev.vertique.workflow.dsl.WorkflowBuilder.initialState()
+public java.util.function.Function<java.lang.Object, java.lang.Object> dev.vertique.workflow.registry.RuntimeWorkflow.initialState()
+public long dev.vertique.workflow.contract.WorkflowContractMetadata.definitionVersion()
+public long dev.vertique.workflow.events.WorkflowEventEnvelope.definitionVersion()
+public long dev.vertique.workflow.events.WorkflowEventEnvelope.sequence()
+public long dev.vertique.workflow.events.WorkflowEventIntent.definitionVersion()
+public long dev.vertique.workflow.events.WorkflowEventIntent.sequence()
+public long dev.vertique.workflow.exception.WorkflowMigrationStateTypeMismatchException.fromVersion()
+public long dev.vertique.workflow.exception.WorkflowMigrationStateTypeMismatchException.targetVersion()
+public long dev.vertique.workflow.exception.WorkflowPlanHashDriftException.version()
+public long dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException.version()
+public long dev.vertique.workflow.migration.MigrationContext.sourceVersion()
+public long dev.vertique.workflow.migration.MigrationContext.targetVersion()
+public long dev.vertique.workflow.migration.WorkflowMigrationHandlerMissingException.fromVersion()
+public long dev.vertique.workflow.migration.WorkflowMigrationHandlerMissingException.targetVersion()
+public long dev.vertique.workflow.plan.WorkflowPlan.definitionVersion()
+public long dev.vertique.workflow.sideeffect.WorkflowSideEffectIntent$Correlation.sequence()
+public long dev.vertique.workflow.state.BranchToken.version()
+public long dev.vertique.workflow.state.JoinState.version()
+public long dev.vertique.workflow.state.WorkflowHistoryEntry.sequence()
+public long dev.vertique.workflow.state.WorkflowHistoryEntrySummary.sequence()
+public long dev.vertique.workflow.state.WorkflowInstance.definitionVersion()
+public long dev.vertique.workflow.state.WorkflowInstance.version()
+public static <T> dev.vertique.workflow.migration.MigrationResult<T> dev.vertique.workflow.migration.MigrationResult.anchorAtInitial(T)
+public static <T> dev.vertique.workflow.migration.MigrationResult<T> dev.vertique.workflow.migration.MigrationResult.continueAt(T,java.lang.String)
+public static class dev.vertique.workflow.events.WorkflowEventEnvelope$WorkflowEventEnvelopeBuilder
+public static dev.vertique.workflow.events.WorkflowEventEnvelope$WorkflowEventEnvelopeBuilder dev.vertique.workflow.events.WorkflowEventEnvelope.builder()
+public static dev.vertique.workflow.events.WorkflowEventType dev.vertique.workflow.events.WorkflowEventType.valueOf(java.lang.String)
+public static dev.vertique.workflow.events.WorkflowEventType[] dev.vertique.workflow.events.WorkflowEventType.values()
+public static dev.vertique.workflow.ops.TaskMutationResult dev.vertique.workflow.ops.TaskMutationResult.valueOf(java.lang.String)
+public static dev.vertique.workflow.ops.TaskMutationResult[] dev.vertique.workflow.ops.TaskMutationResult.values()
+public static dev.vertique.workflow.ops.TimerFiringResult dev.vertique.workflow.ops.TimerFiringResult.valueOf(java.lang.String)
+public static dev.vertique.workflow.ops.TimerFiringResult[] dev.vertique.workflow.ops.TimerFiringResult.values()
+public static dev.vertique.workflow.plan.BranchRetryPolicy dev.vertique.workflow.plan.BranchRetryPolicy.none()
+public static dev.vertique.workflow.plan.BranchRetryPolicy$BackoffStrategy dev.vertique.workflow.plan.BranchRetryPolicy$BackoffStrategy.valueOf(java.lang.String)
+public static dev.vertique.workflow.plan.BranchRetryPolicy$BackoffStrategy[] dev.vertique.workflow.plan.BranchRetryPolicy$BackoffStrategy.values()
+public static dev.vertique.workflow.plan.BranchRetryPolicy$Builder dev.vertique.workflow.plan.BranchRetryPolicy.maxAttempts(int)
+public static dev.vertique.workflow.plan.BranchStart dev.vertique.workflow.plan.BranchStart.of(java.lang.String,java.lang.String)
+public static dev.vertique.workflow.plan.RaceSafety dev.vertique.workflow.plan.RaceSafety.valueOf(java.lang.String)
+public static dev.vertique.workflow.plan.RaceSafety[] dev.vertique.workflow.plan.RaceSafety.values()
+public static dev.vertique.workflow.query.WorkflowInstanceQuery dev.vertique.workflow.query.WorkflowInstanceQuery.byDefinitionId(java.lang.String)
+public static dev.vertique.workflow.query.WorkflowInstanceQuery dev.vertique.workflow.query.WorkflowInstanceQuery.byStatus(dev.vertique.workflow.state.WorkflowStatus)
+public static dev.vertique.workflow.query.WorkflowInstanceQuery dev.vertique.workflow.query.WorkflowInstanceQuery.bySubject(dev.vertique.workflow.subject.WorkflowSubjectRef)
+public static dev.vertique.workflow.query.WorkflowInstanceQuery dev.vertique.workflow.query.WorkflowInstanceQuery.bySubjectType(java.lang.String)
+public static dev.vertique.workflow.query.WorkflowInstanceQuery dev.vertique.workflow.query.WorkflowInstanceQuery.none()
+public static dev.vertique.workflow.registry.RuntimeWorkflow dev.vertique.workflow.registry.RuntimeWorkflow.of(dev.vertique.workflow.plan.WorkflowPlan,java.lang.Class<?>,java.lang.Class<?>,java.util.function.Function<java.lang.Object, java.lang.Object>,java.util.Map<java.lang.String, java.lang.Class<?>>,dev.vertique.workflow.registry.WorkflowCallbackRegistry)
+public static dev.vertique.workflow.sideeffect.IntentKind dev.vertique.workflow.sideeffect.IntentKind.valueOf(java.lang.String)
+public static dev.vertique.workflow.sideeffect.IntentKind[] dev.vertique.workflow.sideeffect.IntentKind.values()
+public static dev.vertique.workflow.sideeffect.RecorderResult dev.vertique.workflow.sideeffect.RecorderResult.empty()
+public static dev.vertique.workflow.sideeffect.RecorderResult dev.vertique.workflow.sideeffect.RecorderResult.ofTimer(java.util.UUID)
+public static dev.vertique.workflow.sideeffect.WorkflowSideEffectIntent$Correlation dev.vertique.workflow.sideeffect.WorkflowSideEffectIntent$Correlation.singlePath(dev.vertique.workflow.ops.WorkflowInstanceId,long,java.lang.String,java.lang.String)
+public static dev.vertique.workflow.state.BranchStatus dev.vertique.workflow.state.BranchStatus.valueOf(java.lang.String)
+public static dev.vertique.workflow.state.BranchStatus[] dev.vertique.workflow.state.BranchStatus.values()
+public static dev.vertique.workflow.state.BranchTokenFilter dev.vertique.workflow.state.BranchTokenFilter.all()
+public static dev.vertique.workflow.state.JoinPolicyType dev.vertique.workflow.state.JoinPolicyType.valueOf(java.lang.String)
+public static dev.vertique.workflow.state.JoinPolicyType[] dev.vertique.workflow.state.JoinPolicyType.values()
+public static dev.vertique.workflow.state.JoinStateStatus dev.vertique.workflow.state.JoinStateStatus.valueOf(java.lang.String)
+public static dev.vertique.workflow.state.JoinStateStatus[] dev.vertique.workflow.state.JoinStateStatus.values()
+public static dev.vertique.workflow.state.WaitType dev.vertique.workflow.state.WaitType.valueOf(java.lang.String)
+public static dev.vertique.workflow.state.WaitType[] dev.vertique.workflow.state.WaitType.values()
+public static dev.vertique.workflow.state.WorkflowEntryType dev.vertique.workflow.state.WorkflowEntryType.valueOf(java.lang.String)
+public static dev.vertique.workflow.state.WorkflowEntryType[] dev.vertique.workflow.state.WorkflowEntryType.values()
+public static dev.vertique.workflow.state.WorkflowStatus dev.vertique.workflow.state.WorkflowStatus.valueOf(java.lang.String)
+public static dev.vertique.workflow.state.WorkflowStatus[] dev.vertique.workflow.state.WorkflowStatus.values()
+public static dev.vertique.workflow.tasks.TaskFilter dev.vertique.workflow.tasks.TaskFilter.empty()
+public static dev.vertique.workflow.tasks.TaskStatus dev.vertique.workflow.tasks.TaskStatus.valueOf(java.lang.String)
+public static dev.vertique.workflow.tasks.TaskStatus[] dev.vertique.workflow.tasks.TaskStatus.values()
+public static dev.vertique.workflow.tasks.TaskTransition dev.vertique.workflow.tasks.TaskTransition.valueOf(java.lang.String)
+public static dev.vertique.workflow.tasks.TaskTransition[] dev.vertique.workflow.tasks.TaskTransition.values()
+public static dev.vertique.workflow.timer.TimerPurpose dev.vertique.workflow.timer.TimerPurpose.valueOf(java.lang.String)
+public static dev.vertique.workflow.timer.TimerPurpose[] dev.vertique.workflow.timer.TimerPurpose.values()
+public static dev.vertique.workflow.timer.TimerStatus dev.vertique.workflow.timer.TimerStatus.valueOf(java.lang.String)
+public static dev.vertique.workflow.timer.TimerStatusTransition dev.vertique.workflow.timer.TimerStatusTransition.valueOf(java.lang.String)
+public static dev.vertique.workflow.timer.TimerStatusTransition[] dev.vertique.workflow.timer.TimerStatusTransition.values()
+public static dev.vertique.workflow.timer.TimerStatus[] dev.vertique.workflow.timer.TimerStatus.values()
+public static final class dev.vertique.workflow.plan.BranchRetryPolicy$Builder
+public static final dev.vertique.workflow.events.WorkflowEventType dev.vertique.workflow.events.WorkflowEventType.TASK_CANCELLED
+public static final dev.vertique.workflow.events.WorkflowEventType dev.vertique.workflow.events.WorkflowEventType.TASK_COMPLETED
+public static final dev.vertique.workflow.events.WorkflowEventType dev.vertique.workflow.events.WorkflowEventType.TASK_CREATED
+public static final dev.vertique.workflow.events.WorkflowEventType dev.vertique.workflow.events.WorkflowEventType.TASK_EXPIRED
+public static final dev.vertique.workflow.events.WorkflowEventType dev.vertique.workflow.events.WorkflowEventType.TASK_REASSIGNED
+public static final dev.vertique.workflow.events.WorkflowEventType dev.vertique.workflow.events.WorkflowEventType.TASK_REMINDER
+public static final dev.vertique.workflow.events.WorkflowEventType dev.vertique.workflow.events.WorkflowEventType.WORKFLOW_CANCELLED
+public static final dev.vertique.workflow.events.WorkflowEventType dev.vertique.workflow.events.WorkflowEventType.WORKFLOW_COMPENSATED
+public static final dev.vertique.workflow.events.WorkflowEventType dev.vertique.workflow.events.WorkflowEventType.WORKFLOW_COMPENSATING
+public static final dev.vertique.workflow.events.WorkflowEventType dev.vertique.workflow.events.WorkflowEventType.WORKFLOW_COMPLETED
+public static final dev.vertique.workflow.events.WorkflowEventType dev.vertique.workflow.events.WorkflowEventType.WORKFLOW_EXPIRED
+public static final dev.vertique.workflow.events.WorkflowEventType dev.vertique.workflow.events.WorkflowEventType.WORKFLOW_FAILED
+public static final dev.vertique.workflow.events.WorkflowEventType dev.vertique.workflow.events.WorkflowEventType.WORKFLOW_STARTED
+public static final dev.vertique.workflow.ops.TaskMutationResult dev.vertique.workflow.ops.TaskMutationResult.APPLIED
+public static final dev.vertique.workflow.ops.TaskMutationResult dev.vertique.workflow.ops.TaskMutationResult.LOST_TO_RACE
+public static final dev.vertique.workflow.ops.TaskMutationResult dev.vertique.workflow.ops.TaskMutationResult.STALE_NOOP
+public static final dev.vertique.workflow.ops.TimerFiringResult dev.vertique.workflow.ops.TimerFiringResult.APPLIED
+public static final dev.vertique.workflow.ops.TimerFiringResult dev.vertique.workflow.ops.TimerFiringResult.STALE_NOOP
+public static final dev.vertique.workflow.plan.AllRequiredJoinPolicy dev.vertique.workflow.plan.AllRequiredJoinPolicy.INSTANCE
+public static final dev.vertique.workflow.plan.BranchRetryPolicy$BackoffStrategy dev.vertique.workflow.plan.BranchRetryPolicy$BackoffStrategy.EXPONENTIAL
+public static final dev.vertique.workflow.plan.BranchRetryPolicy$BackoffStrategy dev.vertique.workflow.plan.BranchRetryPolicy$BackoffStrategy.FIXED
+public static final dev.vertique.workflow.plan.FirstFailureJoinPolicy dev.vertique.workflow.plan.FirstFailureJoinPolicy.INSTANCE
+public static final dev.vertique.workflow.plan.FirstSuccessJoinPolicy dev.vertique.workflow.plan.FirstSuccessJoinPolicy.INSTANCE
+public static final dev.vertique.workflow.plan.RaceSafety dev.vertique.workflow.plan.RaceSafety.CANCEL_SAFE
+public static final dev.vertique.workflow.plan.RaceSafety dev.vertique.workflow.plan.RaceSafety.IGNORE_LATE_RESULT_SAFE
+public static final dev.vertique.workflow.plan.RaceSafety dev.vertique.workflow.plan.RaceSafety.NORMAL
+public static final dev.vertique.workflow.sideeffect.IntentKind dev.vertique.workflow.sideeffect.IntentKind.DELAYED_JOB
+public static final dev.vertique.workflow.sideeffect.IntentKind dev.vertique.workflow.sideeffect.IntentKind.KAFKA
+public static final dev.vertique.workflow.sideeffect.IntentKind dev.vertique.workflow.sideeffect.IntentKind.SERVICE
+public static final dev.vertique.workflow.sideeffect.IntentKind dev.vertique.workflow.sideeffect.IntentKind.WORKFLOW_EVENT
+public static final dev.vertique.workflow.sideeffect.IntentKind dev.vertique.workflow.sideeffect.IntentKind.WORKFLOW_TIMER
+public static final dev.vertique.workflow.sideeffect.RecorderResult dev.vertique.workflow.sideeffect.RecorderResult.EMPTY
+public static final dev.vertique.workflow.state.BranchStatus dev.vertique.workflow.state.BranchStatus.CANCELLED
+public static final dev.vertique.workflow.state.BranchStatus dev.vertique.workflow.state.BranchStatus.COMPENSATED
+public static final dev.vertique.workflow.state.BranchStatus dev.vertique.workflow.state.BranchStatus.COMPENSATING
+public static final dev.vertique.workflow.state.BranchStatus dev.vertique.workflow.state.BranchStatus.COMPLETED
+public static final dev.vertique.workflow.state.BranchStatus dev.vertique.workflow.state.BranchStatus.EXPIRED
+public static final dev.vertique.workflow.state.BranchStatus dev.vertique.workflow.state.BranchStatus.FAILED
+public static final dev.vertique.workflow.state.BranchStatus dev.vertique.workflow.state.BranchStatus.RETRY_SCHEDULED
+public static final dev.vertique.workflow.state.BranchStatus dev.vertique.workflow.state.BranchStatus.RUNNING
+public static final dev.vertique.workflow.state.BranchStatus dev.vertique.workflow.state.BranchStatus.SUPERSEDED
+public static final dev.vertique.workflow.state.BranchStatus dev.vertique.workflow.state.BranchStatus.WAITING
+public static final dev.vertique.workflow.state.JoinPolicyType dev.vertique.workflow.state.JoinPolicyType.ALL_REQUIRED
+public static final dev.vertique.workflow.state.JoinPolicyType dev.vertique.workflow.state.JoinPolicyType.FIRST_FAILURE
+public static final dev.vertique.workflow.state.JoinPolicyType dev.vertique.workflow.state.JoinPolicyType.FIRST_SUCCESS
+public static final dev.vertique.workflow.state.JoinStateStatus dev.vertique.workflow.state.JoinStateStatus.COMPLETED
+public static final dev.vertique.workflow.state.JoinStateStatus dev.vertique.workflow.state.JoinStateStatus.FAILED
+public static final dev.vertique.workflow.state.JoinStateStatus dev.vertique.workflow.state.JoinStateStatus.OPEN
+public static final dev.vertique.workflow.state.WaitType dev.vertique.workflow.state.WaitType.JOIN
+public static final dev.vertique.workflow.state.WaitType dev.vertique.workflow.state.WaitType.SIGNAL
+public static final dev.vertique.workflow.state.WaitType dev.vertique.workflow.state.WaitType.TASK
+public static final dev.vertique.workflow.state.WaitType dev.vertique.workflow.state.WaitType.TIMER
+public static final dev.vertique.workflow.state.WorkflowEntryType dev.vertique.workflow.state.WorkflowEntryType.BRANCH_CANCELLED
+public static final dev.vertique.workflow.state.WorkflowEntryType dev.vertique.workflow.state.WorkflowEntryType.BRANCH_COMPENSATED
+public static final dev.vertique.workflow.state.WorkflowEntryType dev.vertique.workflow.state.WorkflowEntryType.BRANCH_COMPENSATING_START
+public static final dev.vertique.workflow.state.WorkflowEntryType dev.vertique.workflow.state.WorkflowEntryType.BRANCH_COMPENSATING_STEP
+public static final dev.vertique.workflow.state.WorkflowEntryType dev.vertique.workflow.state.WorkflowEntryType.BRANCH_COMPLETED
+public static final dev.vertique.workflow.state.WorkflowEntryType dev.vertique.workflow.state.WorkflowEntryType.BRANCH_CREATED
+public static final dev.vertique.workflow.state.WorkflowEntryType dev.vertique.workflow.state.WorkflowEntryType.BRANCH_EXPIRED
+public static final dev.vertique.workflow.state.WorkflowEntryType dev.vertique.workflow.state.WorkflowEntryType.BRANCH_FAILED
+public static final dev.vertique.workflow.state.WorkflowEntryType dev.vertique.workflow.state.WorkflowEntryType.BRANCH_LATE_CALLBACK_IGNORED
+public static final dev.vertique.workflow.state.WorkflowEntryType dev.vertique.workflow.state.WorkflowEntryType.BRANCH_LATE_RESULT_IGNORED
+public static final dev.vertique.workflow.state.WorkflowEntryType dev.vertique.workflow.state.WorkflowEntryType.BRANCH_RESUMED
+public static final dev.vertique.workflow.state.WorkflowEntryType dev.vertique.workflow.state.WorkflowEntryType.BRANCH_RETRY_SCHEDULED
+public static final dev.vertique.workflow.state.WorkflowEntryType dev.vertique.workflow.state.WorkflowEntryType.BRANCH_SIGNAL_TIMEOUT_SCHEDULED
+public static final dev.vertique.workflow.state.WorkflowEntryType dev.vertique.workflow.state.WorkflowEntryType.BRANCH_SUPERSEDED
+public static final dev.vertique.workflow.state.WorkflowEntryType dev.vertique.workflow.state.WorkflowEntryType.BRANCH_TASK_COMPLETED
+public static final dev.vertique.workflow.state.WorkflowEntryType dev.vertique.workflow.state.WorkflowEntryType.BRANCH_TASK_CREATED
+public static final dev.vertique.workflow.state.WorkflowEntryType dev.vertique.workflow.state.WorkflowEntryType.BRANCH_TASK_DUE_EXPIRED
+public static final dev.vertique.workflow.state.WorkflowEntryType dev.vertique.workflow.state.WorkflowEntryType.BRANCH_TASK_REMINDER_FIRED
+public static final dev.vertique.workflow.state.WorkflowEntryType dev.vertique.workflow.state.WorkflowEntryType.BRANCH_TIMER_FIRED
+public static final dev.vertique.workflow.state.WorkflowEntryType dev.vertique.workflow.state.WorkflowEntryType.BRANCH_TIMER_SCHEDULED
+public static final dev.vertique.workflow.state.WorkflowEntryType dev.vertique.workflow.state.WorkflowEntryType.BRANCH_TIMER_TIMEOUT_FIRED
+public static final dev.vertique.workflow.state.WorkflowEntryType dev.vertique.workflow.state.WorkflowEntryType.BRANCH_WAIT
+public static final dev.vertique.workflow.state.WorkflowEntryType dev.vertique.workflow.state.WorkflowEntryType.CANCELLED
+public static final dev.vertique.workflow.state.WorkflowEntryType dev.vertique.workflow.state.WorkflowEntryType.COMPENSATED
+public static final dev.vertique.workflow.state.WorkflowEntryType dev.vertique.workflow.state.WorkflowEntryType.COMPENSATING_START
+public static final dev.vertique.workflow.state.WorkflowEntryType dev.vertique.workflow.state.WorkflowEntryType.COMPENSATING_STEP
+public static final dev.vertique.workflow.state.WorkflowEntryType dev.vertique.workflow.state.WorkflowEntryType.COMPLETED
+public static final dev.vertique.workflow.state.WorkflowEntryType dev.vertique.workflow.state.WorkflowEntryType.FAILED
+public static final dev.vertique.workflow.state.WorkflowEntryType dev.vertique.workflow.state.WorkflowEntryType.FAN_IN_COMPLETED
+public static final dev.vertique.workflow.state.WorkflowEntryType dev.vertique.workflow.state.WorkflowEntryType.FAN_IN_EVALUATED
+public static final dev.vertique.workflow.state.WorkflowEntryType dev.vertique.workflow.state.WorkflowEntryType.FAN_IN_FAILED
+public static final dev.vertique.workflow.state.WorkflowEntryType dev.vertique.workflow.state.WorkflowEntryType.FORK_DISPATCHED
+public static final dev.vertique.workflow.state.WorkflowEntryType dev.vertique.workflow.state.WorkflowEntryType.RETRIED
+public static final dev.vertique.workflow.state.WorkflowEntryType dev.vertique.workflow.state.WorkflowEntryType.SIDE_EFFECT_RECORDED
+public static final dev.vertique.workflow.state.WorkflowEntryType dev.vertique.workflow.state.WorkflowEntryType.SIGNAL_RECEIVED
+public static final dev.vertique.workflow.state.WorkflowEntryType dev.vertique.workflow.state.WorkflowEntryType.START
+public static final dev.vertique.workflow.state.WorkflowEntryType dev.vertique.workflow.state.WorkflowEntryType.TASK_CANCELLED
+public static final dev.vertique.workflow.state.WorkflowEntryType dev.vertique.workflow.state.WorkflowEntryType.TASK_COMPLETED
+public static final dev.vertique.workflow.state.WorkflowEntryType dev.vertique.workflow.state.WorkflowEntryType.TASK_CREATED
+public static final dev.vertique.workflow.state.WorkflowEntryType dev.vertique.workflow.state.WorkflowEntryType.TASK_EXPIRED
+public static final dev.vertique.workflow.state.WorkflowEntryType dev.vertique.workflow.state.WorkflowEntryType.TASK_REASSIGNED
+public static final dev.vertique.workflow.state.WorkflowEntryType dev.vertique.workflow.state.WorkflowEntryType.TASK_REMINDER_FIRED
+public static final dev.vertique.workflow.state.WorkflowEntryType dev.vertique.workflow.state.WorkflowEntryType.TIMEOUT
+public static final dev.vertique.workflow.state.WorkflowEntryType dev.vertique.workflow.state.WorkflowEntryType.TIMER_CANCELLED
+public static final dev.vertique.workflow.state.WorkflowEntryType dev.vertique.workflow.state.WorkflowEntryType.TIMER_FAILED
+public static final dev.vertique.workflow.state.WorkflowEntryType dev.vertique.workflow.state.WorkflowEntryType.TIMER_FIRED
+public static final dev.vertique.workflow.state.WorkflowEntryType dev.vertique.workflow.state.WorkflowEntryType.TIMER_SCHEDULED
+public static final dev.vertique.workflow.state.WorkflowEntryType dev.vertique.workflow.state.WorkflowEntryType.WORKFLOW_MIGRATED
+public static final dev.vertique.workflow.state.WorkflowStatus dev.vertique.workflow.state.WorkflowStatus.CANCELLED
+public static final dev.vertique.workflow.state.WorkflowStatus dev.vertique.workflow.state.WorkflowStatus.COMPENSATED
+public static final dev.vertique.workflow.state.WorkflowStatus dev.vertique.workflow.state.WorkflowStatus.COMPENSATING
+public static final dev.vertique.workflow.state.WorkflowStatus dev.vertique.workflow.state.WorkflowStatus.COMPLETED
+public static final dev.vertique.workflow.state.WorkflowStatus dev.vertique.workflow.state.WorkflowStatus.EXPIRED
+public static final dev.vertique.workflow.state.WorkflowStatus dev.vertique.workflow.state.WorkflowStatus.FAILED
+public static final dev.vertique.workflow.state.WorkflowStatus dev.vertique.workflow.state.WorkflowStatus.RUNNING
+public static final dev.vertique.workflow.state.WorkflowStatus dev.vertique.workflow.state.WorkflowStatus.WAITING
+public static final dev.vertique.workflow.tasks.TaskStatus dev.vertique.workflow.tasks.TaskStatus.CANCELLED
+public static final dev.vertique.workflow.tasks.TaskStatus dev.vertique.workflow.tasks.TaskStatus.COMPLETED
+public static final dev.vertique.workflow.tasks.TaskStatus dev.vertique.workflow.tasks.TaskStatus.EXPIRED
+public static final dev.vertique.workflow.tasks.TaskStatus dev.vertique.workflow.tasks.TaskStatus.OPEN
+public static final dev.vertique.workflow.tasks.TaskTransition dev.vertique.workflow.tasks.TaskTransition.APPLIED
+public static final dev.vertique.workflow.tasks.TaskTransition dev.vertique.workflow.tasks.TaskTransition.LOST_TO_CANCELLED
+public static final dev.vertique.workflow.tasks.TaskTransition dev.vertique.workflow.tasks.TaskTransition.LOST_TO_COMPLETED
+public static final dev.vertique.workflow.tasks.TaskTransition dev.vertique.workflow.tasks.TaskTransition.LOST_TO_EXPIRED
+public static final dev.vertique.workflow.timer.TimerPurpose dev.vertique.workflow.timer.TimerPurpose.SIGNAL_TIMEOUT
+public static final dev.vertique.workflow.timer.TimerPurpose dev.vertique.workflow.timer.TimerPurpose.STANDALONE
+public static final dev.vertique.workflow.timer.TimerPurpose dev.vertique.workflow.timer.TimerPurpose.TASK_DUE
+public static final dev.vertique.workflow.timer.TimerPurpose dev.vertique.workflow.timer.TimerPurpose.TASK_REMINDER
+public static final dev.vertique.workflow.timer.TimerStatus dev.vertique.workflow.timer.TimerStatus.CANCELLED
+public static final dev.vertique.workflow.timer.TimerStatus dev.vertique.workflow.timer.TimerStatus.FAILED
+public static final dev.vertique.workflow.timer.TimerStatus dev.vertique.workflow.timer.TimerStatus.FIRED
+public static final dev.vertique.workflow.timer.TimerStatus dev.vertique.workflow.timer.TimerStatus.SCHEDULED
+public static final dev.vertique.workflow.timer.TimerStatusTransition dev.vertique.workflow.timer.TimerStatusTransition.APPLIED
+public static final dev.vertique.workflow.timer.TimerStatusTransition dev.vertique.workflow.timer.TimerStatusTransition.LOST_TO_CANCELLED
+public static final dev.vertique.workflow.timer.TimerStatusTransition dev.vertique.workflow.timer.TimerStatusTransition.LOST_TO_FAILED
+public static final dev.vertique.workflow.timer.TimerStatusTransition dev.vertique.workflow.timer.TimerStatusTransition.LOST_TO_FIRED
+public static final enum dev.vertique.workflow.plan.BranchRetryPolicy$BackoffStrategy
+public static final int dev.vertique.workflow.dedup.WorkflowDedupScopes.INBOX_MESSAGE_ID_MAX_LENGTH
+public static final int dev.vertique.workflow.plan.WorkflowPlanValidator.MAX_BRANCHES_V1
+public static final java.lang.String dev.vertique.workflow.dedup.WorkflowDedupScopes.DISPATCH_KIND
+public static final record dev.vertique.workflow.actor.WorkflowActor$Service
+public static final record dev.vertique.workflow.actor.WorkflowActor$System
+public static final record dev.vertique.workflow.actor.WorkflowActor$User
+public static final record dev.vertique.workflow.migration.MigrationResult$AnchorAtInitial<T>
+public static final record dev.vertique.workflow.migration.MigrationResult$ContinueAt<T>
+public static final record dev.vertique.workflow.plan.HumanTaskNode$AssignmentSpec$Queue
+public static final record dev.vertique.workflow.plan.HumanTaskNode$AssignmentSpec$QueueFromState
+public static final record dev.vertique.workflow.plan.HumanTaskNode$AssignmentSpec$Role
+public static final record dev.vertique.workflow.plan.HumanTaskNode$AssignmentSpec$RoleFromState
+public static final record dev.vertique.workflow.plan.HumanTaskNode$AssignmentSpec$User
+public static final record dev.vertique.workflow.plan.HumanTaskNode$AssignmentSpec$UserFromState
+public static final record dev.vertique.workflow.plan.HumanTaskNode$TaskDecision
+public static final record dev.vertique.workflow.plan.ReminderSpec$OneShotOffsets
+public static final record dev.vertique.workflow.plan.ReminderSpec$RecurringInterval
+public static final record dev.vertique.workflow.plan.TimerSpec$After
+public static final record dev.vertique.workflow.plan.TimerSpec$At
+public static final record dev.vertique.workflow.plan.TimerSpec$FromState
+public static final record dev.vertique.workflow.plan.WaitSignalNode$TimeoutBranch
+public static final record dev.vertique.workflow.retention.WorkflowRetentionService$PurgeResult
+public static final record dev.vertique.workflow.retention.WorkflowRetentionService$RetentionResult
+public static final record dev.vertique.workflow.sideeffect.RecorderResult$Empty
+public static final record dev.vertique.workflow.sideeffect.RecorderResult$Timer
+public static final record dev.vertique.workflow.sideeffect.WorkflowSideEffectIntent$Correlation
+public static final record dev.vertique.workflow.state.WaitReason$WaitForSignal
+public static final record dev.vertique.workflow.state.WaitReason$WaitForTask
+public static final record dev.vertique.workflow.state.WaitReason$WaitForTimer
+public static final record dev.vertique.workflow.tasks.TaskAssignment$Queue
+public static final record dev.vertique.workflow.tasks.TaskAssignment$Role
+public static final record dev.vertique.workflow.tasks.TaskAssignment$User
+public static final record dev.vertique.workflow.tasks.TaskReassignmentResult$Applied
+public static final record dev.vertique.workflow.tasks.TaskReassignmentResult$LostToTerminal
+public static java.lang.String dev.vertique.workflow.dedup.WorkflowDedupScopes.dispatchKey(java.lang.String,java.lang.String,java.lang.String,java.lang.String,java.lang.String)
+public static java.lang.String dev.vertique.workflow.dedup.WorkflowDedupScopes.dispatchScope(dev.vertique.workflow.ops.WorkflowInstanceId)
+public static java.lang.String dev.vertique.workflow.dedup.WorkflowDedupScopes.signalInboxId(dev.vertique.workflow.ops.WorkflowInstanceId,java.lang.String,java.lang.String,java.lang.String)
+public static java.lang.String dev.vertique.workflow.dedup.WorkflowDedupScopes.signalKey(java.lang.String,java.lang.String,java.lang.String)
+public static java.lang.String dev.vertique.workflow.dedup.WorkflowDedupScopes.signalScope(dev.vertique.workflow.ops.WorkflowInstanceId)
+public static java.lang.String dev.vertique.workflow.dsl.WorkflowBuilder.computePlanHashForTesting(dev.vertique.workflow.plan.WorkflowPlan)
+public static java.util.Map<java.lang.String, java.lang.String> dev.vertique.workflow.actor.WorkflowActorMaps.toMap(dev.vertique.workflow.actor.WorkflowActor)
+public static java.util.Map<java.lang.String, java.lang.String> dev.vertique.workflow.actor.WorkflowActorMaps.toMap(dev.vertique.workflow.tasks.TaskAssignment)
+public static java.util.Map<java.lang.reflect.Method, dev.vertique.workflow.client.OperationHandler> dev.vertique.workflow.client.WorkflowProxyValidator.precompileHandlers(java.lang.Class<?>,dev.vertique.workflow.ops.WorkflowOperations,dev.vertique.workflow.registry.WorkflowRegistry)
+public static void dev.vertique.workflow.client.WorkflowProxyValidator.validate(java.lang.Class<?>,dev.vertique.workflow.registry.WorkflowRegistry)
+public void dev.vertique.workflow.plan.WorkflowPlanValidator.validate(dev.vertique.workflow.plan.WorkflowPlan)
+public void dev.vertique.workflow.registry.DefaultWorkflowRegistry.register(dev.vertique.workflow.dsl.WorkflowDefinition<?, ?>)

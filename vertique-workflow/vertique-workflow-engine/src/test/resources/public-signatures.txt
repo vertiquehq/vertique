@@ -1,0 +1,90 @@
+public abstract <R> io.vertx.core.Future<R> dev.vertique.workflow.engine.spi.WorkflowTransactionRunner.inTransaction(dev.vertique.db.IsolationLevel,java.util.function.Function<TX, io.vertx.core.Future<R>>)
+public abstract @interface dev.vertique.workflow.engine.OptionalIntentKinds
+public abstract class dev.vertique.workflow.engine.WorkflowEngineModule
+public abstract interface dev.vertique.workflow.engine.WorkflowEngineHandle
+public abstract interface dev.vertique.workflow.engine.WorkflowRecoveryBridge
+public abstract interface dev.vertique.workflow.engine.spi.BranchTokenRepository<TX>
+public abstract interface dev.vertique.workflow.engine.spi.JoinStateRepository<TX>
+public abstract interface dev.vertique.workflow.engine.spi.WorkflowDedupRepository<TX>
+public abstract interface dev.vertique.workflow.engine.spi.WorkflowHistoryRepository<TX>
+public abstract interface dev.vertique.workflow.engine.spi.WorkflowInstanceRepository<TX>
+public abstract interface dev.vertique.workflow.engine.spi.WorkflowTransactionRunner<TX>
+public abstract io.vertx.core.Future<dev.vertique.db.query.PagedResult<dev.vertique.workflow.state.WorkflowInstance>> dev.vertique.workflow.engine.spi.WorkflowInstanceRepository.findFiltered(dev.vertique.workflow.query.WorkflowInstanceQuery,dev.vertique.db.query.PageCursor)
+public abstract io.vertx.core.Future<dev.vertique.workflow.engine.spi.DedupClaim> dev.vertique.workflow.engine.spi.WorkflowDedupRepository.claimOrResolveTaskCompletion(java.util.UUID,java.lang.String,dev.vertique.workflow.ops.WorkflowInstanceId,java.lang.String,TX)
+public abstract io.vertx.core.Future<dev.vertique.workflow.engine.spi.DedupClaim> dev.vertique.workflow.engine.spi.WorkflowDedupRepository.claimOrResolveTaskReassignment(java.util.UUID,java.lang.String,dev.vertique.workflow.ops.WorkflowInstanceId,java.lang.String,TX)
+public abstract io.vertx.core.Future<dev.vertique.workflow.engine.spi.StartDedupResult> dev.vertique.workflow.engine.spi.WorkflowDedupRepository.claimOrResolveStart(java.lang.String,java.lang.String,dev.vertique.workflow.ops.WorkflowInstanceId,java.lang.String,TX)
+public abstract io.vertx.core.Future<dev.vertique.workflow.state.BranchToken> dev.vertique.workflow.engine.WorkflowRecoveryBridge.driveRecoveredBranch(dev.vertique.workflow.state.BranchToken,java.lang.String,java.lang.String,dev.vertique.workflow.registry.RuntimeWorkflow,io.vertx.sqlclient.SqlClient,dev.vertique.core.context.DurableMetadata)
+public abstract io.vertx.core.Future<java.lang.Boolean> dev.vertique.workflow.engine.spi.WorkflowDedupRepository.claimOrResolveDispatch(dev.vertique.workflow.ops.WorkflowInstanceId,java.lang.String,java.lang.String,TX)
+public abstract io.vertx.core.Future<java.lang.Boolean> dev.vertique.workflow.engine.spi.WorkflowDedupRepository.claimOrResolveSignal(dev.vertique.workflow.ops.WorkflowInstanceId,java.lang.String,TX)
+public abstract io.vertx.core.Future<java.lang.Boolean> dev.vertique.workflow.engine.spi.WorkflowDedupRepository.claimOrResolveSignalScoped(java.lang.String,java.lang.String,dev.vertique.workflow.ops.WorkflowInstanceId,TX)
+public abstract io.vertx.core.Future<java.lang.Integer> dev.vertique.workflow.engine.spi.BranchTokenRepository.updateOptimistic(dev.vertique.workflow.state.BranchToken,long,TX)
+public abstract io.vertx.core.Future<java.lang.Integer> dev.vertique.workflow.engine.spi.JoinStateRepository.decide(dev.vertique.workflow.ops.WorkflowInstanceId,java.lang.String,java.lang.String,dev.vertique.workflow.state.JoinStateStatus,java.lang.String,java.time.Instant,long,long,TX)
+public abstract io.vertx.core.Future<java.lang.Integer> dev.vertique.workflow.engine.spi.WorkflowInstanceRepository.migratePinAndState(dev.vertique.workflow.state.WorkflowInstance,long,TX)
+public abstract io.vertx.core.Future<java.lang.Integer> dev.vertique.workflow.engine.spi.WorkflowInstanceRepository.updateOptimistic(dev.vertique.workflow.state.WorkflowInstance,long,TX)
+public abstract io.vertx.core.Future<java.lang.Long> dev.vertique.workflow.engine.spi.WorkflowHistoryRepository.nextSequence(dev.vertique.workflow.ops.WorkflowInstanceId,TX)
+public abstract io.vertx.core.Future<java.lang.Void> dev.vertique.workflow.engine.WorkflowRecoveryBridge.evaluateRecoveredBranchIfTerminal(dev.vertique.workflow.state.WorkflowInstance,dev.vertique.workflow.state.BranchToken,dev.vertique.workflow.registry.RuntimeWorkflow,io.vertx.sqlclient.SqlClient)
+public abstract io.vertx.core.Future<java.lang.Void> dev.vertique.workflow.engine.spi.BranchTokenRepository.insert(dev.vertique.workflow.state.BranchToken,TX)
+public abstract io.vertx.core.Future<java.lang.Void> dev.vertique.workflow.engine.spi.JoinStateRepository.insert(dev.vertique.workflow.state.JoinState,TX)
+public abstract io.vertx.core.Future<java.lang.Void> dev.vertique.workflow.engine.spi.WorkflowDedupRepository.insertSignal(dev.vertique.workflow.ops.WorkflowInstanceId,java.lang.String,TX)
+public abstract io.vertx.core.Future<java.lang.Void> dev.vertique.workflow.engine.spi.WorkflowHistoryRepository.append(dev.vertique.workflow.state.WorkflowHistoryEntry,TX)
+public abstract io.vertx.core.Future<java.lang.Void> dev.vertique.workflow.engine.spi.WorkflowInstanceRepository.insert(dev.vertique.workflow.state.WorkflowInstance,TX)
+public abstract io.vertx.core.Future<java.util.List<dev.vertique.workflow.state.BranchToken>> dev.vertique.workflow.engine.spi.BranchTokenRepository.findActiveByWorkflow(dev.vertique.workflow.ops.WorkflowInstanceId,TX)
+public abstract io.vertx.core.Future<java.util.List<dev.vertique.workflow.state.BranchToken>> dev.vertique.workflow.engine.spi.BranchTokenRepository.findByStatus(dev.vertique.workflow.state.BranchStatus,int,TX)
+public abstract io.vertx.core.Future<java.util.List<dev.vertique.workflow.state.BranchToken>> dev.vertique.workflow.engine.spi.BranchTokenRepository.findByWorkflow(dev.vertique.workflow.ops.WorkflowInstanceId,TX)
+public abstract io.vertx.core.Future<java.util.List<dev.vertique.workflow.state.BranchToken>> dev.vertique.workflow.engine.spi.BranchTokenRepository.findByWorkflowAndFork(dev.vertique.workflow.ops.WorkflowInstanceId,java.lang.String,TX)
+public abstract io.vertx.core.Future<java.util.List<dev.vertique.workflow.state.BranchToken>> dev.vertique.workflow.engine.spi.BranchTokenRepository.findRecoverable(java.time.Instant,int,TX)
+public abstract io.vertx.core.Future<java.util.List<dev.vertique.workflow.state.BranchToken>> dev.vertique.workflow.engine.spi.BranchTokenRepository.findStaleRunning(java.time.Instant,int,TX)
+public abstract io.vertx.core.Future<java.util.List<dev.vertique.workflow.state.JoinState>> dev.vertique.workflow.engine.spi.JoinStateRepository.findOpenForWorkflow(dev.vertique.workflow.ops.WorkflowInstanceId,TX)
+public abstract io.vertx.core.Future<java.util.List<dev.vertique.workflow.state.WorkflowHistoryEntry>> dev.vertique.workflow.engine.spi.WorkflowHistoryRepository.listByInstance(dev.vertique.workflow.ops.WorkflowInstanceId)
+public abstract io.vertx.core.Future<java.util.List<dev.vertique.workflow.state.WorkflowHistoryEntry>> dev.vertique.workflow.engine.spi.WorkflowHistoryRepository.listByInstance(dev.vertique.workflow.ops.WorkflowInstanceId,TX)
+public abstract io.vertx.core.Future<java.util.List<dev.vertique.workflow.state.WorkflowHistoryEntry>> dev.vertique.workflow.engine.spi.WorkflowHistoryRepository.listRecentByInstance(dev.vertique.workflow.ops.WorkflowInstanceId,int,TX)
+public abstract io.vertx.core.Future<java.util.Optional<dev.vertique.workflow.state.BranchToken>> dev.vertique.workflow.engine.spi.BranchTokenRepository.findById(java.util.UUID,TX)
+public abstract io.vertx.core.Future<java.util.Optional<dev.vertique.workflow.state.BranchToken>> dev.vertique.workflow.engine.spi.BranchTokenRepository.findByIdForUpdate(java.util.UUID,TX)
+public abstract io.vertx.core.Future<java.util.Optional<dev.vertique.workflow.state.BranchToken>> dev.vertique.workflow.engine.spi.BranchTokenRepository.findByWaitForBranch(dev.vertique.workflow.ops.WorkflowInstanceId,java.lang.String,java.lang.String,java.lang.String,java.lang.String,TX)
+public abstract io.vertx.core.Future<java.util.Optional<dev.vertique.workflow.state.JoinState>> dev.vertique.workflow.engine.spi.JoinStateRepository.findByKey(dev.vertique.workflow.ops.WorkflowInstanceId,java.lang.String,java.lang.String,TX)
+public abstract io.vertx.core.Future<java.util.Optional<dev.vertique.workflow.state.JoinState>> dev.vertique.workflow.engine.spi.JoinStateRepository.findForUpdate(dev.vertique.workflow.ops.WorkflowInstanceId,java.lang.String,java.lang.String,TX)
+public abstract io.vertx.core.Future<java.util.Optional<dev.vertique.workflow.state.WorkflowInstance>> dev.vertique.workflow.engine.spi.WorkflowInstanceRepository.findByBusinessKey(java.lang.String,java.lang.String,TX)
+public abstract io.vertx.core.Future<java.util.Optional<dev.vertique.workflow.state.WorkflowInstance>> dev.vertique.workflow.engine.spi.WorkflowInstanceRepository.findById(dev.vertique.workflow.ops.WorkflowInstanceId)
+public abstract io.vertx.core.Future<java.util.Optional<dev.vertique.workflow.state.WorkflowInstance>> dev.vertique.workflow.engine.spi.WorkflowInstanceRepository.findById(dev.vertique.workflow.ops.WorkflowInstanceId,TX)
+public abstract io.vertx.core.Future<java.util.Optional<dev.vertique.workflow.state.WorkflowInstance>> dev.vertique.workflow.engine.spi.WorkflowInstanceRepository.findByIdForUpdate(dev.vertique.workflow.ops.WorkflowInstanceId,TX)
+public abstract io.vertx.core.Future<java.util.Optional<java.util.UUID>> dev.vertique.workflow.engine.spi.WorkflowDedupRepository.findSignal(dev.vertique.workflow.ops.WorkflowInstanceId,java.lang.String,TX)
+public abstract void dev.vertique.workflow.engine.WorkflowRecoveryBridge.validateRecoveryPlan(dev.vertique.workflow.state.WorkflowInstance,dev.vertique.workflow.registry.RuntimeWorkflow)
+public boolean dev.vertique.workflow.engine.spi.DedupClaim.inserted()
+public boolean dev.vertique.workflow.engine.spi.StartDedupResult.didInsert()
+public class dev.vertique.workflow.engine.WorkflowExceptionMapper
+public dev.vertique.workflow.engine.WorkflowEngineModule()
+public dev.vertique.workflow.engine.WorkflowExceptionMapper()
+public dev.vertique.workflow.engine.WorkflowMigratedHistoryPayload(long,java.lang.String,long,java.lang.String,java.lang.String,java.lang.String,java.lang.String,java.time.Instant,java.lang.String)
+public dev.vertique.workflow.engine.WorkflowReminderComposeValidator(dev.vertique.workflow.registry.WorkflowRegistry,java.util.Set<dev.vertique.workflow.sideeffect.WorkflowSideEffectRecorder<io.vertx.sqlclient.SqlClient>>)
+public dev.vertique.workflow.engine.spi.DedupClaim(boolean,java.lang.String)
+public dev.vertique.workflow.engine.spi.StartDedupResult(dev.vertique.workflow.ops.WorkflowInstanceId,boolean,java.lang.String)
+public dev.vertique.workflow.ops.WorkflowInstanceId dev.vertique.workflow.engine.spi.StartDedupResult.workflowId()
+public final boolean dev.vertique.workflow.engine.WorkflowMigratedHistoryPayload.equals(java.lang.Object)
+public final boolean dev.vertique.workflow.engine.spi.DedupClaim.equals(java.lang.Object)
+public final boolean dev.vertique.workflow.engine.spi.StartDedupResult.equals(java.lang.Object)
+public final class dev.vertique.workflow.engine.WorkflowEngineFactory
+public final class dev.vertique.workflow.engine.WorkflowReminderComposeValidator
+public final int dev.vertique.workflow.engine.WorkflowMigratedHistoryPayload.hashCode()
+public final int dev.vertique.workflow.engine.spi.DedupClaim.hashCode()
+public final int dev.vertique.workflow.engine.spi.StartDedupResult.hashCode()
+public final java.lang.String dev.vertique.workflow.engine.WorkflowMigratedHistoryPayload.toString()
+public final java.lang.String dev.vertique.workflow.engine.spi.DedupClaim.toString()
+public final java.lang.String dev.vertique.workflow.engine.spi.StartDedupResult.toString()
+public final record dev.vertique.workflow.engine.WorkflowMigratedHistoryPayload
+public final record dev.vertique.workflow.engine.spi.DedupClaim
+public final record dev.vertique.workflow.engine.spi.StartDedupResult
+public java.lang.String dev.vertique.workflow.engine.WorkflowMigratedHistoryPayload.commandCorrelationId()
+public java.lang.String dev.vertique.workflow.engine.WorkflowMigratedHistoryPayload.handlerClassName()
+public java.lang.String dev.vertique.workflow.engine.WorkflowMigratedHistoryPayload.sourcePlanHash()
+public java.lang.String dev.vertique.workflow.engine.WorkflowMigratedHistoryPayload.sourceStepId()
+public java.lang.String dev.vertique.workflow.engine.WorkflowMigratedHistoryPayload.targetPlanHash()
+public java.lang.String dev.vertique.workflow.engine.WorkflowMigratedHistoryPayload.targetStepId()
+public java.lang.String dev.vertique.workflow.engine.spi.DedupClaim.existingFingerprint()
+public java.lang.String dev.vertique.workflow.engine.spi.StartDedupResult.existingFingerprint()
+public java.lang.Throwable dev.vertique.workflow.engine.WorkflowExceptionMapper.translate(java.lang.Throwable,java.lang.String)
+public java.time.Instant dev.vertique.workflow.engine.WorkflowMigratedHistoryPayload.migratedAt()
+public long dev.vertique.workflow.engine.WorkflowMigratedHistoryPayload.sourceVersion()
+public long dev.vertique.workflow.engine.WorkflowMigratedHistoryPayload.targetVersion()
+public static dev.vertique.workflow.engine.WorkflowEngineHandle dev.vertique.workflow.engine.WorkflowEngineFactory.create(dev.vertique.workflow.engine.spi.WorkflowTransactionRunner<io.vertx.sqlclient.SqlClient>,dev.vertique.workflow.registry.WorkflowRegistry,dev.vertique.workflow.engine.spi.WorkflowInstanceRepository<io.vertx.sqlclient.SqlClient>,dev.vertique.workflow.engine.spi.WorkflowHistoryRepository<io.vertx.sqlclient.SqlClient>,dev.vertique.workflow.engine.spi.WorkflowDedupRepository<io.vertx.sqlclient.SqlClient>,dev.vertique.workflow.engine.spi.BranchTokenRepository<io.vertx.sqlclient.SqlClient>,dev.vertique.workflow.engine.spi.JoinStateRepository<io.vertx.sqlclient.SqlClient>,dev.vertique.workflow.timer.TimerStore<io.vertx.sqlclient.SqlClient>,dev.vertique.workflow.tasks.TaskStore<io.vertx.sqlclient.SqlClient>,java.time.Clock,java.util.Set<dev.vertique.workflow.sideeffect.WorkflowSideEffectRecorder<io.vertx.sqlclient.SqlClient>>,java.util.Set<dev.vertique.workflow.sideeffect.IntentKind>,java.util.Optional<dev.vertique.workflow.migration.WorkflowMigrationRegistry>,dev.vertique.context.DurableContextPropagator)
+public static dev.vertique.workflow.engine.WorkflowEngineHandle dev.vertique.workflow.engine.WorkflowEngineFactory.create(dev.vertique.workflow.engine.spi.WorkflowTransactionRunner<io.vertx.sqlclient.SqlClient>,dev.vertique.workflow.registry.WorkflowRegistry,dev.vertique.workflow.engine.spi.WorkflowInstanceRepository<io.vertx.sqlclient.SqlClient>,dev.vertique.workflow.engine.spi.WorkflowHistoryRepository<io.vertx.sqlclient.SqlClient>,dev.vertique.workflow.engine.spi.WorkflowDedupRepository<io.vertx.sqlclient.SqlClient>,dev.vertique.workflow.engine.spi.BranchTokenRepository<io.vertx.sqlclient.SqlClient>,dev.vertique.workflow.engine.spi.JoinStateRepository<io.vertx.sqlclient.SqlClient>,dev.vertique.workflow.timer.TimerStore<io.vertx.sqlclient.SqlClient>,dev.vertique.workflow.tasks.TaskStore<io.vertx.sqlclient.SqlClient>,java.time.Clock,java.util.Set<dev.vertique.workflow.sideeffect.WorkflowSideEffectRecorder<io.vertx.sqlclient.SqlClient>>,java.util.Set<dev.vertique.workflow.sideeffect.IntentKind>,java.util.Optional<dev.vertique.workflow.migration.WorkflowMigrationRegistry>,dev.vertique.context.DurableContextPropagator,java.util.Set<dev.vertique.core.context.InboundContextInitializer>)
+public static final java.util.Set<dev.vertique.workflow.sideeffect.IntentKind> dev.vertique.workflow.engine.WorkflowEngineFactory.DEFAULT_OPTIONAL_INTENT_KINDS
