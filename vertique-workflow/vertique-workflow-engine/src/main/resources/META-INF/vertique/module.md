@@ -248,16 +248,39 @@ compensation; a matching live row preserves the local publication. Loader cache-
 without undoing a committed activation.
 
 `WorkflowDefinitionRegistryBootstrapStep` runs in `BOOTSTRAP` with priority `Integer.MIN_VALUE / 2`,
-after schema migration and before any `BOOTSTRAP` verticle deploys. With a store it reconciles global
-static document origins, then restores global DOCUMENT rows in ACTIVE or SUPERSEDED state through the
-same local queue. Matching static registrations are retained without duplicate registration. Required
-rows with no unique loader or a mismatching compiled hash fail startup with the key and diagnostic;
-traffic is not deployed. After all eligible sources have been verified and restored, the step recomputes
-global active membership per definition id and rereads committed metadata for each verified registration.
-It sends that fresh promoted/demoted metadata through the existing `onRestored` callback under the same
-per-id queue, so the definition cache agrees with the registry before BOOTSTRAP traffic starts. Callback
-failures remain fatal. Candidate/retired document metadata can refresh an installed loader's cache
-without compilation. CODE registration continues through application contributors.
+after schema migration and before any `BOOTSTRAP` verticle deploys. With a store it works in this order, all
+through the shared per-definition queue, and fails startup (nothing deploys) on any violation:
+1. It attributes the registrations that already exist (packaged documents and application-contributed
+   definitions) to the global owner and snapshots the code definitions available in the deployed code.
+2. It records every definition: packaged document origins are DOCUMENT rows (an equal plan hash AND an equal
+   text digest reconcile; a different hash, or the same hash with different text, is drift), every other
+   registered definition is a global CODE row. A changed code hash is rehashed only while no RUNNING, WAITING
+   or COMPENSATING instance is pinned to that exact version (decided inside the store transaction, WARN logs both
+   hashes); with a live pin startup fails naming both hashes. A kind conflict, or an id held by another
+   owner, fails naming both rows or owners; a CODE row in ACTIVE, SUPERSEDED or DEPRECATED state whose code is no
+   longer deployed fails with `CODE_UNAVAILABLE`.
+3. It restores every live DOCUMENT row of every owner (ACTIVE, SUPERSEDED and DEPRECATED, global and tenant)
+   through its loader, verifying the compiled hash and the stored text digest, before traffic.
+4. It recomputes active membership per owner and id.
+5. It marks DEPRECATED rows (CODE and DOCUMENT, including packaged documents deprecated in the database) and
+   removes RETIRED runtimes only when the runtime is attributed to that row's owner; another owner's runtime, or
+   a replacement, is never removed because id, version and hash match, and an unattributed runtime fails startup.
+6. It resets stale ACTIVATING claims (older than twice the staleness bound) to CANDIDATE, then re-reads
+   committed metadata and sends it through the loaders' `onRestored` and `onMetadata` callbacks so caches reflect
+   persisted state.
+Required rows with no unique loader fail startup with the key and diagnostic. Callback failures remain fatal.
+Compose validators ran in VALIDATE and do not re-run for restored definitions.
+
+Changing the compiled shape of a code definition without changing its version is a rolling-deploy hazard: the first
+new-code node that finds no live instance pinned to that version rewrites the stored hash (a WARN names both hashes), and
+from then on every old-code node refuses new starts, migrations and failed-instance retries of that version with
+`WorkflowDefinitionLifecycleException` reason `DRIFT` until it restarts on the new code. A node that restarts on old
+code, including a rollback, then fails startup with `CODE_UNAVAILABLE` or drift for a row its code does not carry.
+Prefer a new version over editing a deployed version; to remove a version, deprecate it, wait out the cooling window and
+retire it while no live instance is pinned, before removing its code. A packaged document registered over a CANDIDATE row of
+the same id, version, plan hash and text stays CANDIDATE while its runtime is registered: activate or retire it explicitly.
+Do not register definitions directly at runtime, from other threads or startup steps, while the bootstrap step runs; a
+runtime it did not attribute fails the apply with `INVALID_TRANSITION` for DEPRECATED and RETIRED rows.
 
 `WorkflowDefinitionLifecycle.deprecate` first commits ACTIVE or SUPERSEDED to DEPRECATED in the store,
 then marks the version deprecated in the local registry through the same per-id queue; a failed mark
@@ -266,8 +289,8 @@ current resolution, and an explicit-version start or a migration whose target is
 `WorkflowDefinitionLifecycleException` reason `DEPRECATED` before any instance row is written. Signals,
 timers and resumption of instances already pinned to the version, and migration away from it, are
 unaffected. These checks use the node's own registry: this call does not tell other nodes, and a freshly
-started node does not yet restore deprecation (see the definition reference for the restart consequences), so do not rely on them alone to stop starts elsewhere
-or to prove that nothing still runs the version. Marking is a no-op for a version not registered on the
+started node restores deprecation from the database, but other running nodes learn of it only when they restart, so do not rely on these
+checks alone to stop starts elsewhere or to prove that nothing still runs the version. Marking is a no-op for a version not registered on the
 node, and a registry without deprecation support fails the call after the durable commit, leaving the
 committed status in place.
 

@@ -26,6 +26,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.NavigableMap;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentSkipListMap;
@@ -85,6 +86,12 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
     /** Keyed by definitionId → (version → RuntimeWorkflow). */
     private final ConcurrentHashMap<String, ConcurrentSkipListMap<Long, RuntimeWorkflow>> byDefinition =
             new ConcurrentHashMap<>();
+
+    /**
+     * Keyed by definitionId → (version → the definition that was registered). Guarded by {@link #rwLock}
+     * together with {@link #byDefinition}; it holds exactly the registered versions.
+     */
+    private final HashMap<String, HashMap<Long, WorkflowDefinition<?, ?>>> sources = new HashMap<>();
 
     /** Keyed by contract interface class → contract metadata. */
     private final ConcurrentHashMap<Class<?>, WorkflowContractMetadata> byContract = new ConcurrentHashMap<>();
@@ -253,6 +260,7 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
                                 + existingContract.definitionVersion() + "'; cannot rebind to '" + definitionId + "' v"
                                 + definitionVersion + "'");
             }
+            sources.computeIfAbsent(definitionId, k -> new HashMap<>()).put(definitionVersion, def);
         } finally {
             rwLock.writeLock().unlock();
         }
@@ -614,6 +622,24 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
         }
     }
 
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Returns the definition object passed to {@link #register}, read under the same lock as the
+     * registration, so it is empty for a version that was never registered and again after
+     * {@link #unregister(String, long)}.
+     */
+    @Override
+    public Optional<WorkflowDefinition<?, ?>> registeredDefinition(String definitionId, long version) {
+        rwLock.readLock().lock();
+        try {
+            var registered = sources.get(definitionId);
+            return registered == null ? Optional.empty() : Optional.ofNullable(registered.get(version));
+        } finally {
+            rwLock.readLock().unlock();
+        }
+    }
+
     /** Removes the version, its deprecation mark and matching contract mapping under the publication lock. */
     @Override
     public void unregister(String definitionId, long version) {
@@ -622,6 +648,10 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
             var versions = byDefinition.get(definitionId);
             if (versions == null || versions.remove(version) == null) return;
             if (versions.isEmpty()) byDefinition.remove(definitionId, versions);
+            sources.computeIfPresent(definitionId, (k, registered) -> {
+                registered.remove(version);
+                return registered.isEmpty() ? null : registered;
+            });
             deprecated.computeIfPresent(definitionId, (k, marked) -> {
                 marked.remove(version);
                 return marked.isEmpty() ? null : marked;

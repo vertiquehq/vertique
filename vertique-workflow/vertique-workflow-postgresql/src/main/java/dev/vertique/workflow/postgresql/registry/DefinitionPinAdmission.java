@@ -45,8 +45,10 @@ import java.util.Set;
  * the id (rows ACTIVE, SUPERSEDED or DEPRECATED), and that owner's row for the pinned version must carry the
  * pinned plan hash and an allowed status. New pins accept ACTIVE and SUPERSEDED; the resurrection of a
  * finished instance additionally accepts DEPRECATED. Refusals fail the returned future with
- * {@link WorkflowDefinitionLifecycleException} (reason {@code INVALID_TRANSITION}) so that the caller's
- * transaction can be rolled back; they are never swallowed.
+ * {@link WorkflowDefinitionLifecycleException} so that the caller's transaction can be rolled back; they are
+ * never swallowed. A pinned plan hash that differs from the stored one is reason {@code DRIFT}, because the
+ * node's compiled definition no longer matches the committed one; every other refusal is reason
+ * {@code INVALID_TRANSITION}.
  *
  * <p>The client must be a connection whose transaction was begun through Vert.x and has not completed. Any
  * other client (a pool, a bare or completed connection, a connection with a raw SQL {@code BEGIN}, or a
@@ -163,6 +165,7 @@ public final class DefinitionPinAdmission {
         if (rows.isEmpty()) {
             if (!snapshot) return Future.succeededFuture();
             return refused(
+                    Reason.INVALID_TRANSITION,
                     null,
                     definitionId,
                     version,
@@ -177,6 +180,7 @@ public final class DefinitionPinAdmission {
         }
         if (holders.size() != 1) {
             return refused(
+                    Reason.INVALID_TRANSITION,
                     null,
                     definitionId,
                     version,
@@ -192,21 +196,39 @@ public final class DefinitionPinAdmission {
                 continue;
             }
             if (!allowed.contains(row.getString("status"))) {
-                return refused(ownerKey, definitionId, version, "the version is " + row.getString("status"));
+                return refused(
+                        Reason.INVALID_TRANSITION,
+                        ownerKey,
+                        definitionId,
+                        version,
+                        "the version is " + row.getString("status"));
             }
             if (planHash != null && !planHash.equals(row.getString("plan_hash"))) {
-                return refused(ownerKey, definitionId, version, "the pinned plan hash is not the stored plan hash");
+                return refused(
+                        Reason.DRIFT,
+                        ownerKey,
+                        definitionId,
+                        version,
+                        "the pinned plan hash " + planHash + " is not the stored plan hash "
+                                + row.getString("plan_hash")
+                                + ", so the code or document of this node differs from the committed definition");
             }
             return Future.succeededFuture();
         }
-        return refused(ownerKey, definitionId, version, "the version is not held by the owner of the definition");
+        return refused(
+                Reason.INVALID_TRANSITION,
+                ownerKey,
+                definitionId,
+                version,
+                "the version is not held by the owner of the definition");
     }
 
-    private static Future<Void> refused(String tenantKey, String definitionId, long version, String detail) {
+    private static Future<Void> refused(
+            Reason reason, String tenantKey, String definitionId, long version, String detail) {
         try {
             DefinitionKey key = new DefinitionKey(tenantKey, definitionId, version);
             return Future.failedFuture(new WorkflowDefinitionLifecycleException(
-                    Reason.INVALID_TRANSITION, key, "Definition " + key + " does not admit this instance: " + detail));
+                    reason, key, "Definition " + key + " does not admit this instance: " + detail));
         } catch (IllegalArgumentException invalidKey) {
             return Future.failedFuture(invalidKey);
         }

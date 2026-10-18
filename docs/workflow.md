@@ -244,12 +244,15 @@ Future<CompiledDefinitionRef> activated = definitionService
                 null, ref.definitionId(), ref.definitionVersion())).map(ref));
 ```
 
-With PostgreSQL and the document loader installed, an activated global definition is restored from
-its stored source before BOOTSTRAP verticles deploy. Startup verifies and restores eligible documents,
-recomputes active membership for each global definition id, then refreshes the cache from committed
-metadata through the existing restore callback. The registry and document cache therefore agree on the
-promoted and demoted versions before traffic starts. Missing loaders, callback failures, and compiled-
-hash mismatches abort startup. Each document version uses a distinct contract interface, and every node
+With PostgreSQL and the document loader installed, activated definitions of every owner are restored from
+their stored source before BOOTSTRAP verticles deploy. Startup first records packaged documents and
+application-contributed code as rows (a changed document text or code hash is drift; a code hash may be
+re-accepted only while no live instance is pinned to that version), then verifies and restores eligible
+documents including deprecated ones, recomputes active membership per owner and id, marks deprecated
+versions, resets stale activation claims, and refreshes the cache from committed metadata through the
+existing restore callback. The registry and document cache therefore agree on the promoted, demoted and
+deprecated versions before traffic starts. Missing loaders, missing code, callback failures, compiled-hash
+mismatches and text-digest mismatches abort startup. Each document version uses a distinct contract interface, and every node
 sharing live sources carries the same callback/type catalog. Without a store, the service keeps its local
 in-memory behavior through the same Future signatures.
 

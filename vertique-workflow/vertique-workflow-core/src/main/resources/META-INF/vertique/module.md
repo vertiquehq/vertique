@@ -388,6 +388,10 @@ optional informational count whose default fails with `UnsupportedOperationExcep
 implementations backed by the Vert.x SQL engine receive a `SqlConnection` with a pending Vert.x transaction. Publishing
 a runtime directly through `WorkflowRegistry` is not seen as managed by the durable lifecycle: a managed deprecate or retire
 of such a version fails with `INVALID_TRANSITION` rather than taking it over.
+The store also adds `upsertCode` (startup record of deployed code: rehash only while no live instance is pinned to
+that exact version, decided inside the store transaction) and `resetStaleActivating` (claims older than twice the
+staleness bound return to CANDIDATE). `WorkflowRegistry.registeredDefinition(id, version)` is an internal default-empty
+hook that the default registry fills with the source definition it registered; it is empty after `unregister`.
 Candidates of different owners (tenant keys or global) may coexist for one id, but only one owner holds
 the id's executable membership; a claim, completion or static reconciliation by another owner fails with
 `OWNER_CONFLICT`.

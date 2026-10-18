@@ -208,6 +208,25 @@ public final class ManagedDefinitionDatabase {
                 .build();
     }
 
+    /** Builds a graph whose application contributes the given code-first definitions to the registry. */
+    static AppComponent appWithCode(
+            Vertx vertx,
+            Pool pool,
+            JsonObject config,
+            BootObservation observation,
+            WorkflowDefinitionSource source,
+            List<WorkflowDefinition<?, ?>> codeDefinitions) {
+        return DaggerManagedDefinitionDatabase_AppComponent.builder()
+                .vertxModule(new VertxModule(vertx, config))
+                .postgresInfrastructureModule(new PostgresInfrastructureModule(pool))
+                .bootObservationModule(new BootObservationModule(observation))
+                .definitionSourceModule(new DefinitionSourceModule(source))
+                .codeCatalogModule(new CodeCatalogModule(false, codeDefinitions))
+                .largeUnicodeMapperModule(new LargeUnicodeMapperModule(false))
+                .parserModule(new WorkflowDefinitionParserProbe().module())
+                .build();
+    }
+
     static NoLoaderAppComponent appWithoutLoader(Vertx vertx, Pool pool, BootObservation observation) {
         return DaggerManagedDefinitionDatabase_NoLoaderAppComponent.builder()
                 .vertxModule(new VertxModule(vertx, new JsonObject()))
@@ -296,9 +315,15 @@ public final class ManagedDefinitionDatabase {
     static class CodeCatalogModule {
 
         private final boolean enabled;
+        private final List<WorkflowDefinition<?, ?>> contributed;
 
         CodeCatalogModule(boolean enabled) {
+            this(enabled, List.of());
+        }
+
+        CodeCatalogModule(boolean enabled, List<WorkflowDefinition<?, ?>> contributed) {
             this.enabled = enabled;
+            this.contributed = List.copyOf(contributed);
         }
 
         @Provides
@@ -308,6 +333,7 @@ public final class ManagedDefinitionDatabase {
                 if (enabled) {
                     registry.register(new RegistryProbeWorkflow());
                 }
+                contributed.forEach(registry::register);
             };
         }
     }

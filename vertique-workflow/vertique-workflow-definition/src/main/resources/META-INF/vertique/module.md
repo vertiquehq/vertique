@@ -269,7 +269,7 @@ Future<List<WorkflowDefinitionRecord>> definitions = service.list(
 `load` parses, validates, and compiles a candidate without registering it. `activate` publishes it;
 a failed load leaves the prior active version untouched. With PostgreSQL installed, source and
 metadata are durable and activation recompiles the stored text rather than trusting a local cache.
-The managed application lifecycle restores activated global documents before any BOOTSTRAP verticle
+The managed application lifecycle restores activated documents of every owner before any BOOTSTRAP verticle
 deploys. After source verification and active-membership recomputation, it rereads committed status and
 provenance and delivers fresh metadata to each already-verified registration through `onRestored`; the
 cache therefore reflects the promoted and demoted versions before traffic starts. The callback is
@@ -282,11 +282,9 @@ through the asynchronous signatures.
 local registry and reports DEPRECATED in service metadata and lists. New starts of that version and
 migrations to it are refused with reason `DEPRECATED`, including a retry of an explicit start under an
 idempotency key used before the deprecation; instances already pinned to it keep running on the node that
-marked it. A restart does not yet restore deprecation: a deprecated version that was loaded at runtime is
-not registered again, so an instance pinned to it cannot resume until restoration is available, and a
-deprecated version that is also registered from a packaged source comes back registered and unmarked, so
-it is served and startable again and startup recomputation may then disagree with the registry about the
-current version. Deprecating the active version does not promote
+marked it. A restart restores the deprecated version (including a packaged document deprecated in the
+database), registers it, marks it and lets pinned instances resume, while new starts of it stay refused.
+Other running nodes learn of the deprecation when they restart. Deprecating the active version does not promote
 another, so a durable listing can show no ACTIVE version until the next startup recomputation, while
 current resolution already serves the next lower version. It requires the durable registry: without one,
 the returned Future fails.
@@ -296,11 +294,13 @@ instance, and reports RETIRED in service metadata and lists; the returned Future
 `PINNED_INSTANCES` or `INVALID_TRANSITION`. Retiring a candidate of one owner never removes another owner's runtime,
 even when id, version and hash are equal.
 
-Startup restores global documents only; a document activated under a tenant key stays in the database,
-holding its id against other owners, but is not registered again after a restart. `load`, `activate` and
-`deprecate` perform no authorization: restrict them to authorized callers. Exclusivity of an id between a
-document and a code-first definition is not enforced by the registry yet, so do not load a document under an
-id that code already registers.
+Startup restores the live documents of every owner, global and tenant. An id that deployed code registers is a
+global CODE row, so activating a tenant document under that id fails with `OWNER_CONFLICT` naming both owners.
+`load`, `activate`, `deprecate` and `retire` perform no authorization: restrict them to authorized callers. The
+public `currentStatus` of a version that is only persisted metadata (a candidate or retired row that startup did
+not compile) reports the persisted status instead of failing. An equal plan hash no longer proves equal text: a
+packaged document whose text differs (even by a comment, whitespace or line endings) from the stored text of the
+same id and version fails startup, so bump the version or retire the old row.
 
 `sourceMetadata(DefinitionKey)` reads attribution without fetching source text. Lists contain immutable,
 key-bearing metadata. Definition id (255), source type (64) and revision, author and upload id (255)

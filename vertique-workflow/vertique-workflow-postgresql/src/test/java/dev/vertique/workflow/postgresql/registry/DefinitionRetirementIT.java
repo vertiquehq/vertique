@@ -542,40 +542,63 @@ public class DefinitionRetirementIT {
                             .noneMatch(runtime -> runtime.plan().definitionId().equals(id));
                 }
                 case CONTRIBUTED_CODE_ORIGIN -> {
-                    // The store cannot yet create a CODE row, because nothing reconciles contributed code into
-                    // durable rows, so retiring a CODE row itself cannot be reached through supported operations.
-                    // Instead a DOCUMENT row of a later version of the same id is retired, which proves that the
-                    // runtime registered by the application contributor is not removed on its behalf.
-                    DefinitionKey key = new DefinitionKey(null, id, version);
+                    DefinitionKey codeKey = new DefinitionKey(null, id, 1);
+                    DefinitionKey documentKey = new DefinitionKey(null, id, version);
+                    Class<?> codeContract = fixtureContract("RegistryProbeContract");
 
-                    // Given a code-first definition that an application contributor registered at startup
+                    // Given a code-first definition that an application contributor registered at startup, whose
+                    // global CODE row startup recorded
                     AppComponent app = fixture.node(List::of, true).app();
                     long coolingSeconds = app.workflowDefinitionsConfig().maxStalenessSeconds();
                     RuntimeWorkflow contributed = app.workflowRegistry().resolvePinned(id, 1);
-                    assertThat(fixture.findStored(id, 1)).isEmpty();
+                    WorkflowContractMetadata codeMapping =
+                            app.workflowRegistry().contractMetadata(codeContract);
+                    Stored codeRecorded = fixture.stored(id, 1);
+                    assertThat(codeRecorded.sourceType()).isEqualTo("code");
+                    assertThat(codeRecorded.status()).isIn("ACTIVE", "SUPERSEDED");
 
-                    // And a document of version 2 under the same id, activated, deprecated and cooled
+                    // And a document of version 2 under the same id, published by the managed lifecycle
                     await(app.definitionService()
                             .load(document(id, version, contract), DocumentFormat.YAML, source("code-sibling"), null));
-                    await(app.definitionService().activate(key));
+                    await(app.definitionService().activate(documentKey));
                     RuntimeWorkflow documentRuntime = app.workflowRegistry().resolvePinned(id, version);
-                    await(app.definitionService().deprecate(key));
-                    fixture.ageStatus(key, coolingSeconds + 60);
-                    Stored cooledBefore = fixture.stored(id, version);
+                    WorkflowContractMetadata documentMapping =
+                            app.workflowRegistry().contractMetadata(contract);
+                    Stored documentBefore = fixture.stored(id, version);
+                    assertThat(documentBefore.status()).isEqualTo("ACTIVE");
+
+                    // When the CODE row is deprecated through the service, cooled by the database clock and retired
+                    await(app.definitionService().deprecate(codeKey));
+                    fixture.ageStatus(codeKey, coolingSeconds + 60);
+                    Stored cooledBefore = fixture.stored(id, 1);
                     assertThat(cooledBefore.status()).isEqualTo("DEPRECATED");
+                    await(app.definitionService().retire(codeKey));
 
-                    // When the document row is retired through the service
-                    await(app.definitionService().retire(key));
+                    // Then the CODE row is RETIRED with its hash and provenance intact
+                    Stored retired = fixture.stored(id, 1);
+                    assertThat(retired.status()).isEqualTo("RETIRED");
+                    assertThat(retired)
+                            .usingRecursiveComparison()
+                            .ignoringFields("status", "changedAt")
+                            .isEqualTo(cooledBefore);
 
-                    // Then the document row is RETIRED and its runtime and contract mapping are gone
-                    assertThat(fixture.stored(id, version).status()).isEqualTo("RETIRED");
-                    assertThat(app.workflowRegistry().allRegistered()).doesNotContain(documentRuntime);
-                    assertThatThrownBy(() -> app.workflowRegistry().contractMetadata(contract))
+                    // And the contributed runtime and its contract mapping are removed
+                    assertThatThrownBy(() -> app.workflowRegistry().resolvePinned(id, 1))
+                            .isInstanceOf(WorkflowVersionPinUnavailableException.class);
+                    assertThatThrownBy(() -> app.workflowRegistry().contractMetadata(codeContract))
                             .isInstanceOf(WorkflowProxyContractException.class);
+                    assertThat(app.workflowRegistry().allRegistered()).doesNotContain(contributed);
 
-                    // And the contributor's code-first runtime is the same registered object and still resolves
-                    assertThat(app.workflowRegistry().resolvePinned(id, 1)).isSameAs(contributed);
-                    assertThat(app.workflowRegistry().resolveCurrent(id)).isSameAs(contributed);
+                    // And the document of the same id, which the removal must not take with it, is untouched
+                    assertThat(app.workflowRegistry().resolvePinned(id, version))
+                            .isSameAs(documentRuntime);
+                    assertThat(app.workflowRegistry().resolveCurrent(id)).isSameAs(documentRuntime);
+                    assertThat(app.workflowRegistry().contractMetadata(contract))
+                            .isEqualTo(documentMapping);
+                    assertThat(codeMapping.definitionId()).isEqualTo(id);
+                    assertThat(codeMapping.definitionVersion()).isEqualTo(1);
+                    assertThat(codeMapping.contractType()).isEqualTo(codeContract);
+                    assertThat(fixture.stored(id, version)).isEqualTo(documentBefore);
                 }
                 case FRESH_GLOBAL_DOCUMENT_RESTORE -> {
                     DefinitionKey key = new DefinitionKey(null, id, version);
@@ -728,6 +751,9 @@ public class DefinitionRetirementIT {
 
     @WorkflowContract(definitionId = "retirement-it-snapshot-migrate-doc", definitionVersion = 2)
     public interface SnapshotMigrateCaseV2 {}
+
+    @WorkflowContract(definitionId = "retirement-it-snapshot-eligible-doc", definitionVersion = 1)
+    public interface SnapshotEligibleCaseV1 {}
 
     @WorkflowContract(definitionId = "retirement-it-concurrent-doc", definitionVersion = 1)
     public interface ConcurrentCaseV1 {}
@@ -1079,8 +1105,15 @@ public class DefinitionRetirementIT {
             long coolingSeconds = nodeA.workflowDefinitionsConfig().maxStalenessSeconds();
             PgWorkflowInstanceRepository repository = fixture.instances();
 
-            // Given an eligible managed row and an instance pinned to an unmanaged version, both committed
-            fixture.seedDefinition(eligibleId, 1, seededHash, "ACTIVE");
+            // Given an eligible managed document, activated through the service, and an instance pinned to an
+            // unmanaged version, both committed
+            CompiledDefinitionRef eligibleLoaded = await(nodeA.definitionService()
+                    .load(
+                            document(eligibleId, 1, SnapshotEligibleCaseV1.class),
+                            DocumentFormat.YAML,
+                            source("snapshot-eligible"),
+                            null));
+            await(nodeA.definitionService().activate(new DefinitionKey(null, eligibleId, 1)));
             UUID sourcePin = fixture.insertInstance(migrateId, 1, "old-hash", "RUNNING", false);
             Instance sourceBefore = fixture.instance(sourcePin);
 
@@ -1089,10 +1122,6 @@ public class DefinitionRetirementIT {
             fixture.snapshot(startSnapshot);
             Tx migrateSnapshot = fixture.begin("REPEATABLE READ");
             fixture.snapshot(migrateSnapshot);
-            Tx eligibleSnapshot = fixture.begin("REPEATABLE READ");
-            fixture.snapshot(eligibleSnapshot);
-            Tx emptySnapshot = fixture.begin("REPEATABLE READ");
-            fixture.snapshot(emptySnapshot);
 
             // And another connection then creates and activates both ids, and a second node propagates them
             await(nodeA.definitionService()
@@ -1161,6 +1190,8 @@ public class DefinitionRetirementIT {
             assertThat(fixture.instanceCount(unmanagedId)).isEqualTo(1);
 
             // When the same unmanaged id is started from an empty REPEATABLE READ snapshot
+            Tx emptySnapshot = fixture.begin("REPEATABLE READ");
+            fixture.snapshot(emptySnapshot);
             Throwable emptyRefusal = failureOf(repository.insert(
                     instanceRow(UUID.randomUUID(), unmanagedId, 1, seededHash, 0, WorkflowStatus.RUNNING),
                     emptySnapshot.connection()));
@@ -1172,9 +1203,12 @@ public class DefinitionRetirementIT {
             });
             assertThat(fixture.instanceCount(unmanagedId)).isEqualTo(1);
 
-            // When an instance is created from a snapshot that sees the unchanged eligible managed row
+            // When an instance is created from a snapshot, taken after every node settled, that sees the unchanged
+            // eligible managed row
+            Tx eligibleSnapshot = fixture.begin("REPEATABLE READ");
+            fixture.snapshot(eligibleSnapshot);
             await(repository.insert(
-                    instanceRow(UUID.randomUUID(), eligibleId, 1, seededHash, 0, WorkflowStatus.RUNNING),
+                    instanceRow(UUID.randomUUID(), eligibleId, 1, eligibleLoaded.planHash(), 0, WorkflowStatus.RUNNING),
                     eligibleSnapshot.connection()));
             eligibleSnapshot.commit();
 
@@ -1314,9 +1348,9 @@ public class DefinitionRetirementIT {
                     oldHashRetry.connection()));
             oldHashRetry.rollback();
 
-            // Then the hash mismatch refuses it
+            // Then the hash mismatch refuses it as drift between this node and the committed definition
             assertThat(hashRefusal).isInstanceOfSatisfying(WorkflowDefinitionLifecycleException.class, failure -> {
-                assertThat(failure.reason()).isEqualTo(Reason.INVALID_TRANSITION);
+                assertThat(failure.reason()).isEqualTo(Reason.DRIFT);
                 assertThat(failure.key()).isEqualTo(new DefinitionKey(null, oldHashId, 1));
             });
             assertThat(fixture.instance(oldHashed).status()).isEqualTo("FAILED");
@@ -1991,6 +2025,15 @@ public class DefinitionRetirementIT {
                     .as("a changed visible row must fail serialization: %s", staleFailure)
                     .isNotNull();
             assertThat(fixture.instanceCount(changedId)).isZero();
+        }
+    }
+
+    /** Loads a contract interface that the shared fixture declares privately. */
+    private static Class<?> fixtureContract(String simpleName) {
+        try {
+            return Class.forName(ManagedDefinitionDatabase.class.getName() + "$" + simpleName);
+        } catch (ClassNotFoundException e) {
+            throw new IllegalStateException("The fixture contract " + simpleName + " is not available", e);
         }
     }
 

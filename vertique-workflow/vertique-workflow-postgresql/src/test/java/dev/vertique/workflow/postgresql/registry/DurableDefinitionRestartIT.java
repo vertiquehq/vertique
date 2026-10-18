@@ -187,7 +187,9 @@ public class DurableDefinitionRestartIT {
                                     assertThat(changedCompiled.planHash()).isNotEqualTo(originalCompiled.planHash());
                                     return firstPool
                                             .preparedQuery("""
-                                                UPDATE workflow_definitions SET document = $1
+                                                UPDATE workflow_definitions
+                                                SET document = $1,
+                                                    document_digest = encode(sha256(convert_to($1::text, 'UTF8')), 'hex')
                                                 WHERE tenant_key IS NULL AND definition_id = $2
                                                   AND definition_version = $3
                                                 """)

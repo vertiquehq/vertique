@@ -6,6 +6,7 @@ package dev.vertique.workflow.registry;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException;
 import java.util.Collection;
+import java.util.Optional;
 
 /**
  * Central registry for workflow definitions and their runtime metadata.
@@ -118,5 +119,22 @@ public interface WorkflowRegistry {
      */
     default boolean isDeprecated(String definitionId, long version) {
         return false;
+    }
+
+    /**
+     * Returns the definition that was passed to {@link #register} for one version.
+     *
+     * <p>This is an internal framework seam: the engine uses it to keep the source of the definitions
+     * that the deployed code provides, so it can publish them again after the registry dropped them.
+     * Applications do not call it. The default implementation returns an empty result, which preserves
+     * the behavior of existing registries that do not retain their sources.
+     *
+     * @param definitionId id of the workflow definition
+     * @param version the exact plan version
+     * @return the definition registered for this version, or empty when none is registered or this
+     *     registry does not retain sources
+     */
+    default Optional<WorkflowDefinition<?, ?>> registeredDefinition(String definitionId, long version) {
+        return Optional.empty();
     }
 }

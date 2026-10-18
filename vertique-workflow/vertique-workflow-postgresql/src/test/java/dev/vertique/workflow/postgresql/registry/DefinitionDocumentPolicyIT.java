@@ -578,9 +578,10 @@ public class DefinitionDocumentPolicyIT {
         return pool.preparedQuery("""
                         INSERT INTO workflow_definitions
                             (tenant_key, definition_id, definition_version, kind, plan_hash, status,
-                             document, document_format, source_type, loaded_at)
+                             document, document_format, document_digest, source_type, loaded_at)
                         VALUES (NULL, $1, 1, 'DOCUMENT', repeat('a', 64), $2, repeat('x', $3),
-                                'JSON', 'policy-test', now())
+                                'JSON', encode(sha256(convert_to(repeat('x', $3), 'UTF8')), 'hex'),
+                                'policy-test', now())
                         """)
                 .execute(Tuple.of(definitionId, status, size))
                 .mapEmpty();
@@ -590,9 +591,10 @@ public class DefinitionDocumentPolicyIT {
         return pool.preparedQuery("""
                         INSERT INTO workflow_definitions
                             (tenant_key, definition_id, definition_version, kind, plan_hash, status,
-                             document, document_format, source_type, loaded_at)
+                             document, document_format, document_digest, source_type, loaded_at)
                         VALUES (NULL, $1, 1, 'DOCUMENT', repeat('a', 64), $2, repeat('é', $3),
-                                'JSON', 'policy-test', now())
+                                'JSON', encode(sha256(convert_to(repeat('é', $3), 'UTF8')), 'hex'),
+                                'policy-test', now())
                         """)
                 .execute(Tuple.of(definitionId, status, codePoints))
                 .mapEmpty();
@@ -756,11 +758,14 @@ public class DefinitionDocumentPolicyIT {
         return pool.preparedQuery("""
                         INSERT INTO workflow_definitions
                             (tenant_key, definition_id, definition_version, kind, plan_hash, status,
-                             document, document_format, source_type, loaded_at)
+                             document, document_format, document_digest, source_type, loaded_at)
                         VALUES (NULL, $1, 1, 'DOCUMENT', repeat('a', 64), 'CANDIDATE', '{}',
-                                'JSON', 'non-utf8-test', now()),
+                                'JSON',
+                                -- SHA-256 of the two-character text {}, spelled out because this database is SQL_ASCII
+                                '44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a',
+                                'non-utf8-test', now()),
                                (NULL, 'definition-policy-code', 1, 'CODE', repeat('b', 64), 'ACTIVE',
-                                NULL, NULL, 'fixture-code', now())
+                                NULL, NULL, NULL, 'fixture-code', now())
                         """)
                 .execute(Tuple.of(documentKey.definitionId()))
                 .compose(ignored -> VertiqueApplicationBootstrap.start(

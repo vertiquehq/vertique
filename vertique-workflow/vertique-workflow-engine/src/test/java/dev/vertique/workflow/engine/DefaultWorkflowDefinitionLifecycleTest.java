@@ -614,6 +614,16 @@ class DefaultWorkflowDefinitionLifecycleTest {
         }
 
         @Override
+        public Future<ReconcileOutcome> upsertCode(WorkflowDefinitionRecord record) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public Future<Void> resetStaleActivating(String definitionId) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
         public Future<ReconcileOutcome> upsertDocument(
                 WorkflowDefinitionRecord record, WorkflowDefinitionDocument document) {
             throw new UnsupportedOperationException();
@@ -787,6 +797,16 @@ class DefaultWorkflowDefinitionLifecycleTest {
         }
 
         @Override
+        public Future<ReconcileOutcome> upsertCode(WorkflowDefinitionRecord record) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public Future<Void> resetStaleActivating(String definitionId) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
         public Future<ReconcileOutcome> upsertDocument(
                 WorkflowDefinitionRecord record, WorkflowDefinitionDocument document) {
             throw new UnsupportedOperationException();
@@ -907,6 +927,16 @@ class DefaultWorkflowDefinitionLifecycleTest {
 
         @Override
         public Future<List<WorkflowDefinitionRecord>> list(DefinitionFilter filter) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public Future<ReconcileOutcome> upsertCode(WorkflowDefinitionRecord record) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public Future<Void> resetStaleActivating(String definitionId) {
             throw new UnsupportedOperationException();
         }
 

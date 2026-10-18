@@ -131,8 +131,11 @@ public class DefinitionActivationIT {
                                                             v2Metadata));
                                             assertThat(driftedDefinition.planHash())
                                                     .isNotEqualTo(loaded.planHash());
+                                            // Text and digest change together, so only the plan hash can differ
                                             return pool.preparedQuery("""
-                                                            UPDATE workflow_definitions SET document = $1
+                                                            UPDATE workflow_definitions
+                                                            SET document = $1,
+                                                                document_digest = encode(sha256(convert_to($1::text, 'UTF8')), 'hex')
                                                             WHERE tenant_key IS NULL AND definition_id = $2
                                                               AND definition_version = $3
                                                             """)
@@ -151,6 +154,18 @@ public class DefinitionActivationIT {
                                                             .isEqualTo(
                                                                     WorkflowDefinitionLifecycleException.Reason.DRIFT);
                                                     assertThat(failure.key()).isEqualTo(v2);
+                                                    assertThat(failure.getMessage())
+                                                            .contains(
+                                                                    loaded.planHash(),
+                                                                    app.definitionPipeline()
+                                                                            .load(new DefinitionResource(
+                                                                                    driftedJson(original)
+                                                                                            .getBytes(
+                                                                                                    StandardCharsets
+                                                                                                            .UTF_8),
+                                                                                    DocumentFormat.JSON,
+                                                                                    v2Metadata))
+                                                                            .planHash());
                                                     assertThat(app.workflowRegistry()
                                                                     .allRegistered())
                                                             .extracting(runtime -> runtime.plan()
@@ -171,7 +186,9 @@ public class DefinitionActivationIT {
                                                     return (Void) null;
                                                 }))
                                         .compose(ignored -> pool.preparedQuery("""
-                                                        UPDATE workflow_definitions SET document = $1
+                                                        UPDATE workflow_definitions
+                                                        SET document = $1,
+                                                            document_digest = encode(sha256(convert_to($1::text, 'UTF8')), 'hex')
                                                         WHERE tenant_key IS NULL AND definition_id = $2
                                                           AND definition_version = $3
                                                         """)

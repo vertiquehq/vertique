@@ -31,6 +31,9 @@ import io.vertx.sqlclient.Tuple;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -45,6 +48,7 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
     private static final String COLUMNS =
             "tenant_key, definition_id, definition_version, kind, plan_hash, status, document_format, "
                     + "source_type, source_uri, source_revision, source_author, source_upload_id, loaded_at, created_at, status_changed_at";
+    private static final String LOCKED_COLUMNS = COLUMNS + ", document_digest";
     private static final String KEY =
             "tenant_key IS NOT DISTINCT FROM $1 AND definition_id = $2 AND definition_version = $3";
     private final WorkflowDefinitionsConfig config;
@@ -90,7 +94,7 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
             Objects.requireNonNull(key, "key");
             return transaction(key.definitionId(), tx -> encoding(tx).compose(ignored -> tx.preparedQuery(
                             """
-                    SELECT tenant_key, definition_id, definition_version, document_format,
+                    SELECT tenant_key, definition_id, definition_version, document_format, document_digest,
                         octet_length(convert_to(document, 'UTF8')) AS document_size_bytes,
                         char_length(document) AS document_code_points,
                         CASE WHEN octet_length(convert_to(document, 'UTF8')) <= $4 AND char_length(document) <= $5
@@ -109,8 +113,14 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
                                     "Stored document " + key + " exceeds source envelope: UTF8 bytes " + bytes + "/"
                                             + config.maxStoredDocumentSizeBytes() + ", code points " + points + "/"
                                             + config.maxDocumentSizeBytes());
-                        return Optional.of(new WorkflowDefinitionDocument(
-                                key, r.getString("document"), r.getString("document_format")));
+                        String text = r.getString("document");
+                        if (!sha256Hex(text).equals(r.getString("document_digest")))
+                            throw new WorkflowDefinitionLifecycleException(
+                                    Reason.DRIFT,
+                                    key,
+                                    "Definition " + key
+                                            + ": stored text digest differs from the recorded digest, so the stored text was changed after it was recorded");
+                        return Optional.of(new WorkflowDefinitionDocument(key, text, r.getString("document_format")));
                     })));
         });
     }
@@ -150,6 +160,8 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
                     return Future.succeededFuture(ReconcileOutcome.KIND_CONFLICT);
                 if (!record.planHash().equals(old.getString("plan_hash")))
                     return Future.succeededFuture(ReconcileOutcome.DRIFT);
+                if (!sha256Hex(document.document()).equals(old.getString("document_digest")))
+                    return Future.succeededFuture(ReconcileOutcome.DRIFT);
                 var p = record.provenance();
                 return tx.preparedQuery(
                                 "UPDATE workflow_definitions SET source_type=$4, source_uri=$5, source_revision=$6, source_author=$7, source_upload_id=$8, loaded_at=$9 WHERE "
@@ -163,6 +175,44 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
                                 .addValue(p.loadedAt().atOffset(java.time.ZoneOffset.UTC)))
                         .map(ReconcileOutcome.UNCHANGED);
             }));
+        });
+    }
+
+    @Override
+    public Future<ReconcileOutcome> upsertCode(WorkflowDefinitionRecord record) {
+        return attempt(() -> {
+            validateCode(record);
+            DefinitionKey key = record.key();
+            // Read committed, so that the pinned count taken after the lock wait sees everything committed meanwhile.
+            return mutateReadCommitted(key.definitionId(), (tx, rows) -> {
+                if (ownerConflict(rows, key)) return Future.succeededFuture(ReconcileOutcome.OWNER_CONFLICT);
+                Optional<Row> current = row(rows, key);
+                if (current.isEmpty())
+                    return insertCode(tx, record, DefinitionStatus.SUPERSEDED).map(ReconcileOutcome.INSERTED);
+                Row old = current.orElseThrow();
+                if (!"CODE".equals(old.getString("kind")))
+                    return Future.succeededFuture(ReconcileOutcome.KIND_CONFLICT);
+                if (record.planHash().equals(old.getString("plan_hash")))
+                    return updateCodeProvenance(tx, record, false).map(ReconcileOutcome.UNCHANGED);
+                // The hash differs: only an exact version without a live pinned instance may take the new hash.
+                return countNonTerminal(tx, key)
+                        .compose(pinned -> pinned > 0
+                                ? Future.succeededFuture(ReconcileOutcome.DRIFT)
+                                : updateCodeProvenance(tx, record, true).map(ReconcileOutcome.REHASHED));
+            });
+        });
+    }
+
+    @Override
+    public Future<Void> resetStaleActivating(String definitionId) {
+        return attempt(() -> {
+            Objects.requireNonNull(definitionId, "definitionId");
+            // DefinitionKey enforces the id constraints; the owner and version are irrelevant here.
+            new DefinitionKey(null, definitionId, 1);
+            return mutate(definitionId, (tx, rows) -> tx.preparedQuery(
+                            "UPDATE workflow_definitions SET status='CANDIDATE', activation_token=NULL, status_changed_at=clock_timestamp() WHERE definition_id=$1 AND status='ACTIVATING' AND extract(epoch from (clock_timestamp() - status_changed_at)) >= ($2::numeric * 2)")
+                    .execute(Tuple.of(definitionId, config.maxStalenessSeconds()))
+                    .mapEmpty());
         });
     }
 
@@ -310,17 +360,26 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
                                 key,
                                 "deprecated less than " + config.maxStalenessSeconds()
                                         + " seconds ago, so it is still cooling");
-                    return tx.preparedQuery(
-                                    "SELECT count(*) AS total FROM workflow_instances WHERE definition_id = $1 AND definition_version = $2 AND status IN ('RUNNING','WAITING','COMPENSATING')")
-                            .execute(Tuple.of(key.definitionId(), key.definitionVersion()));
+                    return countNonTerminal(tx, key);
                 })
-                .map(result -> {
-                    long pinned = result.iterator().next().getLong("total");
+                .map(pinned -> {
                     if (pinned > 0)
                         throw conflict(
                                 Reason.PINNED_INSTANCES, key, "pinned by " + pinned + " non-terminal instance(s)");
                     return (Void) null;
                 });
+    }
+
+    /**
+     * Counts the instances pinned to exactly this definition id and version that are still running, waiting or
+     * compensating, archived ones included. It runs on the caller's locked transaction, after the lock was
+     * granted, so it sees every pin committed while the lock was awaited.
+     */
+    private static Future<Long> countNonTerminal(SqlConnection tx, DefinitionKey key) {
+        return tx.preparedQuery(
+                        "SELECT count(*) AS total FROM workflow_instances WHERE definition_id = $1 AND definition_version = $2 AND status IN ('RUNNING','WAITING','COMPENSATING')")
+                .execute(Tuple.of(key.definitionId(), key.definitionVersion()))
+                .map(result -> result.iterator().next().getLong("total"));
     }
 
     @Override
@@ -390,19 +449,20 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
                     + ", code points " + points + "/" + config.maxDocumentSizeBytes());
     }
 
-    private Future<Void> insert(
-            SqlConnection tx,
-            WorkflowDefinitionRecord record,
-            WorkflowDefinitionDocument document,
-            DefinitionStatus status) {
+    private static void validateCode(WorkflowDefinitionRecord record) {
+        Objects.requireNonNull(record, "record");
+        if (record.kind() != DefinitionKind.CODE || record.key().tenantKey() != null || record.documentFormat() != null)
+            throw new WorkflowDefinitionException(
+                    "Code metadata for " + record.key() + " must be a global CODE record without a document format");
+    }
+
+    private static Future<Void> insertCode(SqlConnection tx, WorkflowDefinitionRecord record, DefinitionStatus status) {
         var p = record.provenance();
         return tx.preparedQuery(
-                        "INSERT INTO workflow_definitions (tenant_key, definition_id, definition_version, kind, plan_hash, status, document, document_format, source_type, source_uri, source_revision, source_author, source_upload_id, loaded_at) VALUES ($1,$2,$3,'DOCUMENT',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)")
+                        "INSERT INTO workflow_definitions (tenant_key, definition_id, definition_version, kind, plan_hash, status, source_type, source_uri, source_revision, source_author, source_upload_id, loaded_at) VALUES ($1,$2,$3,'CODE',$4,$5,$6,$7,$8,$9,$10,$11)")
                 .execute(parameters(record.key())
                         .addString(record.planHash())
                         .addString(status.name())
-                        .addString(document.document())
-                        .addString(document.documentFormat())
                         .addString(p.sourceType())
                         .addString(p.uri())
                         .addString(p.revision())
@@ -410,6 +470,58 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
                         .addString(p.uploadId())
                         .addValue(p.loadedAt().atOffset(java.time.ZoneOffset.UTC)))
                 .mapEmpty();
+    }
+
+    /** Refreshes the provenance of a code row and, when asked, replaces its plan hash; the status is kept. */
+    private static Future<Void> updateCodeProvenance(
+            SqlConnection tx, WorkflowDefinitionRecord record, boolean replaceHash) {
+        var p = record.provenance();
+        return tx.preparedQuery(
+                        "UPDATE workflow_definitions SET plan_hash=CASE WHEN $9::boolean THEN $10 ELSE plan_hash END, source_type=$4, source_uri=$5, source_revision=$6, source_author=$7, source_upload_id=$8, loaded_at=$11 WHERE "
+                                + KEY + " AND kind='CODE'")
+                .execute(parameters(record.key())
+                        .addString(p.sourceType())
+                        .addString(p.uri())
+                        .addString(p.revision())
+                        .addString(p.author())
+                        .addString(p.uploadId())
+                        .addBoolean(replaceHash)
+                        .addString(record.planHash())
+                        .addValue(p.loadedAt().atOffset(java.time.ZoneOffset.UTC)))
+                .mapEmpty();
+    }
+
+    private Future<Void> insert(
+            SqlConnection tx,
+            WorkflowDefinitionRecord record,
+            WorkflowDefinitionDocument document,
+            DefinitionStatus status) {
+        var p = record.provenance();
+        return tx.preparedQuery(
+                        "INSERT INTO workflow_definitions (tenant_key, definition_id, definition_version, kind, plan_hash, status, document, document_format, document_digest, source_type, source_uri, source_revision, source_author, source_upload_id, loaded_at) VALUES ($1,$2,$3,'DOCUMENT',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)")
+                .execute(parameters(record.key())
+                        .addString(record.planHash())
+                        .addString(status.name())
+                        .addString(document.document())
+                        .addString(document.documentFormat())
+                        .addString(sha256Hex(document.document()))
+                        .addString(p.sourceType())
+                        .addString(p.uri())
+                        .addString(p.revision())
+                        .addString(p.author())
+                        .addString(p.uploadId())
+                        .addValue(p.loadedAt().atOffset(java.time.ZoneOffset.UTC)))
+                .mapEmpty();
+    }
+
+    /** Returns the lowercase hexadecimal SHA-256 of the UTF-8 bytes of the text. */
+    private static String sha256Hex(String text) {
+        try {
+            return HexFormat.of()
+                    .formatHex(MessageDigest.getInstance("SHA-256").digest(text.getBytes(StandardCharsets.UTF_8)));
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 is unavailable", e);
+        }
     }
 
     private <T> Future<T> mutate(DefinitionKey key, LockedOperation<T> action) {
@@ -434,7 +546,7 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
 
     private Future<RowSet<Row>> lockedRows(SqlConnection tx, String definitionId) {
         return DefinitionIdLock.acquire(tx, definitionId).compose(ignored -> tx.preparedQuery(
-                        "SELECT " + COLUMNS
+                        "SELECT " + LOCKED_COLUMNS
                                 + ", activation_token, extract(epoch from (clock_timestamp() - status_changed_at)) >= ($2::numeric * 2) AS stale FROM workflow_definitions WHERE definition_id=$1 ORDER BY tenant_key NULLS FIRST, definition_version FOR UPDATE")
                 .execute(Tuple.of(definitionId, config.maxStalenessSeconds())));
     }

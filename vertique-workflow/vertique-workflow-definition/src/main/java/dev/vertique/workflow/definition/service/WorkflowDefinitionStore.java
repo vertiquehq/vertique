@@ -211,7 +211,9 @@ public final class WorkflowDefinitionStore {
      * {@code (definitionId, definitionVersion)}, or {@code null} if not found.
      *
      * <p>Used by callers after a failed {@link #tryClaimForActivation} to determine why the CAS
-     * did not succeed (already ACTIVE, SUPERSEDED, or ACTIVATING by another thread).
+     * did not succeed (already ACTIVE, SUPERSEDED, or ACTIVATING by another thread). A version that
+     * the store holds only as persisted metadata, because it was not compiled on this node, reports
+     * its persisted status.
      *
      * @param definitionId the definition id; must not be {@code null}
      * @param definitionVersion the version to query
@@ -227,7 +229,12 @@ public final class WorkflowDefinitionStore {
         String definitionId = key.definitionId();
         Objects.requireNonNull(definitionId, "definitionId");
         StoredEntry entry = byKey.get(key);
-        return entry != null ? entry.status().get() : null;
+        if (entry != null) return entry.status().get();
+        // A row the node holds only as metadata, such as a candidate that was never compiled here.
+        WorkflowDefinitionRecord metadataOnly = metadataByKey.get(key);
+        return metadataOnly != null
+                ? ActivationStatus.valueOf(metadataOnly.status().name())
+                : null;
     }
 
     /**

@@ -55,6 +55,24 @@ public interface WorkflowDefinitionRegistryStore {
     Future<ReconcileOutcome> upsertDocument(WorkflowDefinitionRecord record, WorkflowDefinitionDocument document);
 
     /**
+     * Reconciles a definition that the deployed code provides with the persisted registry, as startup does. The
+     * record must be a global {@code CODE} record without document text. An absent key is inserted as a
+     * superseded definition, so that the active membership is decided afterwards by
+     * {@link #recomputeActive}. For an existing code definition with the same plan hash, provenance is refreshed
+     * and the outcome is {@code UNCHANGED}. When the plan hash differs, the store decides inside its own
+     * transaction, under the definition id lock, whether any instance pinned to exactly this version is still
+     * running, waiting or compensating, archived instances included: with none the stored hash is replaced
+     * ({@code REHASHED}), otherwise the outcome is {@code DRIFT} and nothing changes. There is no way for the
+     * caller to force a replacement. A row of the same key that is a document definition is reported as
+     * {@code KIND_CONFLICT}, and another owner that holds the definition id as {@code OWNER_CONFLICT}. The
+     * status of an existing row is never changed.
+     *
+     * @param record metadata and provenance for the code definition
+     * @return a future containing the reconciliation outcome after the transaction completes
+     */
+    Future<ReconcileOutcome> upsertCode(WorkflowDefinitionRecord record);
+
+    /**
      * Claims an eligible candidate for activation, or reclaims this key's stale activation attempt, and
      * returns a unique token identifying the attempt.
      *
@@ -115,6 +133,18 @@ public interface WorkflowDefinitionRegistryStore {
      * @return a future completed after the store-owned transaction commits
      */
     Future<Void> retire(DefinitionKey key);
+
+    /**
+     * Resets the stale activation attempts of one definition id to candidate status, as startup does. Under the
+     * definition id lock, every row of the id, whatever its owner, that is {@code ACTIVATING} and whose last
+     * status change is older than twice the configured staleness bound, measured by the database clock after the
+     * lock is held, becomes {@code CANDIDATE} with its activation token cleared and its status change time
+     * refreshed. Younger activation attempts and rows in other statuses are not touched.
+     *
+     * @param definitionId the definition id whose stale activation attempts are reset
+     * @return a future completed after the store-owned transaction commits
+     */
+    Future<Void> resetStaleActivating(String definitionId);
 
     /**
      * Recomputes active membership for one exact tenant owner and definition id. Only ACTIVE and

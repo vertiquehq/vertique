@@ -31,7 +31,7 @@ Install this module when workflows must survive process restarts, run across mor
 | Retention service | `PgWorkflowRetentionService` — SKIP LOCKED archive + purge sweep; the application drives the batch loop and cadence, there is no built-in scheduler |
 | Recovery service | `PgWorkflowBranchRecoveryService` — opt-in cluster-singleton branch recovery cron |
 | Migration support | Optional in-flight workflow definition migration (`WorkflowMigrationModule`) |
-| Flyway schema | Shipped `V1__create_workflow_tables.sql` plus additive `V002__create_workflow_definitions.sql` |
+| Flyway schema | Shipped `V1__create_workflow_tables.sql` plus additive `V002__create_workflow_definitions.sql` and `V003__add_workflow_definition_digest.sql` |
 
 The module `includes WorkflowEngineModule`, which provides the `WorkflowOperations` binding and recorder-router wiring. It does not deliver downstream service calls or execute delayed jobs by itself; those are separate modules.
 
@@ -133,7 +133,7 @@ resurrects a terminal instance (FAILED retry or FAILED to COMPENSATING), the rep
 statement. Starts share the lock, so they do not serialize each other, but a queued deprecate or retire waits for them and
 PostgreSQL queues later admissions behind that waiting writer, so long caller transactions can delay lifecycle and startup
 mutations. The caller's pin transaction must therefore end before it awaits any store-owned lifecycle call for the same
-id. At READ COMMITTED an id with no definition rows is admitted (code-first definitions have none yet); otherwise the sole
+id. At READ COMMITTED an id with no definition rows is admitted (a definition registered only by direct runtime registration after startup, or an engine built without the registry bootstrap, has none); otherwise the sole
 holding owner must have the exact version and plan hash ACTIVE or SUPERSEDED, and a resurrection also accepts DEPRECATED.
 Under REPEATABLE READ or SERIALIZABLE the rows are read `FOR SHARE`, a changed row raises a serialization failure, and an id
 with no visible row is refused with `INVALID_TRANSITION` (a snapshot taken before the first row cannot tell absence from a
@@ -152,12 +152,16 @@ UTF-8 byte length and code-point count in the same SQL statement that conditiona
 Oversized rows return identity/counts with no body transfer, then fail with a sanitized key/limit
 message; they are not treated as absent. Metadata listing never selects the source body.
 
-The stored plan hash covers the compiled plan structure. Restore recompiles the stored text and compares
-that hash, which detects drift between the text and its recorded identity; it is not tamper evidence and
-does not cover callback bodies, so restrict write access to the table.
+The stored plan hash covers the compiled plan structure, not callback bodies. `V003` adds `document_digest`,
+the lowercase hex SHA-256 of the stored UTF-8 text (backfilled for existing DOCUMENT rows; present exactly on
+DOCUMENT rows). The adapter writes it with every document, treats an equal plan hash with a different text
+digest as drift when a packaged document is reconciled, and verifies it on every guarded source read (after the
+size-envelope check): altered stored text is never returned and fails as drift. This detects accidental or
+concurrent change of stored text; it does not authenticate the writer, so restrict write access to the table.
+Any other writer of DOCUMENT rows must supply the digest. On first boot after upgrading, every application that uses the PostgreSQL module writes a global CODE row per code-first definition even if it never touches documents; the `V003` migration must have run.
 
-With `WorkflowDefinitionModule` installed, the engine restores activated global documents after
-Flyway migration, recomputes global active membership, and refreshes verified definition-cache entries
+With a durable registry store bound (the PostgreSQL module binds one), the engine records every code definition, and with `WorkflowDefinitionModule` installed also the packaged documents, and restores activated documents of every owner after
+Flyway migration, recomputes active membership per owner, and refreshes verified definition-cache entries
 from committed metadata before BOOTSTRAP verticle deployment. Every node sharing live document rows must
 carry their loaders and callback/type catalogs. Source locations are attribution, never remote fetch
 instructions. Configure the same policy on every node; raising the input limit increases memory and

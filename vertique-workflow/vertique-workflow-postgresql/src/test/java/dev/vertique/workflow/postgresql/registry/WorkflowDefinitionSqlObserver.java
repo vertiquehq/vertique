@@ -28,6 +28,7 @@ final class WorkflowDefinitionSqlObserver {
     private final List<String> statements = new CopyOnWriteArrayList<>();
     private final AtomicBoolean shortenDefinitionLockTimeout = new AtomicBoolean();
     private volatile long shortenedLockTimeoutMillis = 500;
+    private volatile long stickyShortenedLockTimeoutMillis;
     private final java.util.concurrent.atomic.AtomicInteger shortenedDefinitionLockTimeouts =
             new java.util.concurrent.atomic.AtomicInteger();
     private final AtomicBoolean failNextEncodingLookup = new AtomicBoolean();
@@ -59,6 +60,11 @@ final class WorkflowDefinitionSqlObserver {
     void shortenNextDefinitionLockTimeout(long millis) {
         shortenedLockTimeoutMillis = millis;
         shortenDefinitionLockTimeout.set(true);
+    }
+
+    /** Shortens every definition lock timeout issued from now on to the given wait. */
+    void shortenEveryDefinitionLockTimeout(long millis) {
+        stickyShortenedLockTimeoutMillis = millis;
     }
 
     int shortenedDefinitionLockTimeouts() {
@@ -117,10 +123,12 @@ final class WorkflowDefinitionSqlObserver {
         String sql = sqlArgument(method, forwarded);
         if (sql != null) {
             statements.add(sql);
-            if (isDefinitionLockTimeout(sql) && shortenDefinitionLockTimeout.compareAndSet(true, false)) {
+            long sticky = stickyShortenedLockTimeoutMillis;
+            if (isDefinitionLockTimeout(sql)
+                    && (sticky > 0 || shortenDefinitionLockTimeout.compareAndSet(true, false))) {
+                long wait = sticky > 0 ? sticky : shortenedLockTimeoutMillis;
                 for (int i = 0; i < forwarded.length; i++) {
-                    if (sql.equals(forwarded[i]))
-                        forwarded[i] = "SET LOCAL lock_timeout = '" + shortenedLockTimeoutMillis + "ms'";
+                    if (sql.equals(forwarded[i])) forwarded[i] = "SET LOCAL lock_timeout = '" + wait + "ms'";
                 }
                 shortenedDefinitionLockTimeouts.incrementAndGet();
             }

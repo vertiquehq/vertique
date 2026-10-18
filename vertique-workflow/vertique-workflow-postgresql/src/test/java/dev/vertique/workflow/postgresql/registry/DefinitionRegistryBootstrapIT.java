@@ -852,9 +852,13 @@ public class DefinitionRegistryBootstrapIT {
             inserted = inserted.compose(ignored -> pool.preparedQuery("""
                             INSERT INTO workflow_definitions (
                                 tenant_key, definition_id, definition_version, kind, plan_hash, status,
-                                document, document_format, source_type, source_uri, source_revision, source_author,
-                                source_upload_id, loaded_at, created_at, status_changed_at, activation_token)
-                            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+                                document, document_format, document_digest, source_type, source_uri,
+                                source_revision, source_author, source_upload_id, loaded_at, created_at,
+                                status_changed_at, activation_token)
+                            VALUES ($1, $2, $3, $4, $5, $6, $7, $8,
+                                    CASE WHEN $4 = 'DOCUMENT'
+                                         THEN encode(sha256(convert_to($7::text, 'UTF8')), 'hex') END,
+                                    $9, $10, $11, $12, $13, $14, $15, $16, $17)
                             """)
                     .execute(Tuple.tuple()
                             .addString(seed.tenantKey())
