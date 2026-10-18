@@ -83,6 +83,8 @@ start payload type first, then the decision payload types of every human task in
 including tasks inside fork branches. For each distinct type name it does this once:
 
 1. **Skip `void`.** A `void` or `java.lang.Void` payload means no payload and needs no schema.
+   A primitive decision type other than `void`, such as `int`, is not skipped: it is rejected with
+   the message "cannot be loaded", the same wording the engine's class lookup gives.
 2. **Reuse the cache.** A type already resolved under the same profile is not generated again.
 3. **Load the class.** The payload type name is loaded without initializing the class.
 4. **Generate the schema.** The canonical Draft 2020-12 document is produced with the input-profile
@@ -135,6 +137,10 @@ them. If you tuned `jaxrs.validationPatternMaxChars` for REST, that value does n
 
 The bound applies to keyed validation (see Validating Payloads). The engine's own bean-validation
 path is not bounded this way.
+
+The bound caps input length only. It is not a defence against catastrophic backtracking: a pattern
+that backtracks badly can still take long on an input within the limit. Write patterns that are
+linear-safe, or review them before they enter a payload type.
 
 ### Threading and class loading
 
@@ -242,14 +248,23 @@ Each `ViolationDetail` has a `path`, a `message`, a `type` and `args`:
 
 | Field | Content |
 |---|---|
-| `path` | An RFC 6901 JSON Pointer such as `/comment` or `/items/0/name`; the root is the empty string |
-| `type` | The failing schema keyword, or one of `definition`, `decision`, `payload`, `patternInputLength`, `patternInputTotalLength` |
+| `path` | An RFC 6901 JSON Pointer such as `/comment` or `/items/0/name`; the root is the empty string. A segment uses the payload's wire name where it resolves and the declared member name otherwise; it is never a map key or other caller data |
+| `type` | The failing schema keyword, or one of `definition`, `decision`, `payload`, `patternInputLength`, `patternInputTotalLength`, `truncated` |
 | `message` | The canonical message for the violation |
 | `args` | The keyword's constraint arguments, such as a limit |
 
 **No submitted value is ever returned.** A detail never carries a submitted value, and never the name
 or value of an unknown property; a location the schema does not declare is cut back to its declared
 parent.
+
+### Violation cap
+
+At most 100 violations are returned, in the order they were produced. When more were produced, one
+final detail follows with an empty `path`, the message `further violations omitted` and the type
+`truncated`, so a result has at most 101 entries. Exactly 100 violations carry no truncation detail; 101
+carry the first 100 and the truncation detail. The cap bounds the answer, not the request: the
+transport must still cap the request body before it calls the validation methods. A single
+bounded-input violation is unaffected.
 
 ### Fixed answers
 
@@ -269,9 +284,13 @@ distinct from them, which matters for Security below.
 
 ### Void payloads
 
-A `void` decision accepts only null; so does a `void` start. Any non-null payload, an empty object
-included, is one `payload` violation. A start type declared absent is treated as `void`. A decision or
-start with a payload type rejects null as required.
+A `void` decision accepts only null; so does a start declared `void` or `java.lang.Void`. Any non-null
+payload, an empty object included, is one `payload` violation. A decision or start with a payload type
+rejects null as required.
+
+A definition that declares no start type at all has nothing to validate: `validateStart` accepts any
+payload, null, an empty object or a filled one, without a violation. The engine passes the payload
+through for such a definition, so the two agree.
 
 ### Bounded input
 
@@ -291,7 +310,8 @@ engine, and the two are not identical:
 - **An undeclared key passes the schema and fails binding.** The generated schema does not forbid
   extra keys, but the strict process profile rejects them when the engine binds the payload, and the
   engine answers that with a binding 400. A profile that disables the strict feature would bind such
-  a key instead.
+  a key instead. The engine logs the decode cause at DEBUG unsanitized; it can quote submitted text, so
+  keep DEBUG off for the engine loggers in production or sanitize at the log sink.
 - **The engine may still reject a payload the schema accepts.** Class-level and custom constraints
   that a schema cannot express are enforced only by the engine.
 - **Document payload types accept any object.** A `JsonObject` or `ObjectNode` payload type has the

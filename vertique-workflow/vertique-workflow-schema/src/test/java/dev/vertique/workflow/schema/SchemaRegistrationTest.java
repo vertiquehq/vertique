@@ -11,6 +11,8 @@ import dev.vertique.workflow.exception.WorkflowDefinitionException;
 import dev.vertique.workflow.exception.WorkflowDefinitionMissingException;
 import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
 import dev.vertique.workflow.schema.fixtures.Payloads;
+import io.vertx.core.json.JsonObject;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import org.junit.jupiter.api.DisplayName;
@@ -109,6 +111,32 @@ class SchemaRegistrationTest {
                 .isInstanceOf(WorkflowDefinitionMissingException.class);
         assertThat(cache.find(new SchemaKey(Payloads.Comment.class.getName(), JsonProfileId.of("vertique"))))
                 .isPresent();
+    }
+
+    @Test
+    @DisplayName("a raw Map decision type registers as an open object and accepts any object payload")
+    void aRawMapDecisionTypeRegistersAsAnOpenObjectAndAcceptsAnyObjectPayload() {
+        // Given: a registry with the schema validator and a definition whose decision type is the raw java.util.Map
+        var registry = registry();
+
+        // When: it is registered
+        registry.register(Definitions.withDecision("map-saga", 1L, Map.class));
+
+        // Then: it resolves
+        assertThat(registry.resolveCurrent("map-saga").plan().definitionId()).isEqualTo("map-saga");
+
+        // And: the cached document is an object schema
+        assertThat(cache.findByTypeName(Map.class.getName())
+                        .orElseThrow()
+                        .document()
+                        .getString("type"))
+                .isEqualTo("object");
+
+        // And: any object payload is accepted by the cached schema
+        var schemas = new DefaultWorkflowPayloadSchemas(registry, cache);
+        assertThat(schemas.validateDecision("map-saga", 1L, "review", "note", new JsonObject().put("anything", 1))
+                        .valid())
+                .isTrue();
     }
 
     private DefaultWorkflowRegistry registry() {

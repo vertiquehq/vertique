@@ -83,8 +83,10 @@ public interface WorkflowPayloadSchemas {
      * Validates a start payload against the schema registered for the start type of one definition version.
      *
      * <p>The rules are those of
-     * {@link #validateDecision(String, long, String, String, JsonObject)}. A definition without a start payload type
-     * accepts only {@code null}; any other payload, an empty object included, is one {@code payload} violation.
+     * {@link #validateDecision(String, long, String, String, JsonObject)}. A definition that declares no start payload
+     * type has nothing to validate and accepts any payload, {@code null} and an empty object included, matching the
+     * engine, which passes the payload through. A start type declared as {@code void} or {@link Void} accepts only
+     * {@code null}; any other payload is one {@code payload} violation.
      *
      * @param definitionId the definition id
      * @param definitionVersion the definition version

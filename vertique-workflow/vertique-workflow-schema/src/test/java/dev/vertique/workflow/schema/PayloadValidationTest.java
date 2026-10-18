@@ -13,6 +13,7 @@ import dev.vertique.workflow.schema.fixtures.ValidationPayloads;
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -36,6 +37,7 @@ class PayloadValidationTest {
         decisions.put("closed", ValidationPayloads.Closed.class);
         decisions.put("coded", ValidationPayloads.Coded.class);
         decisions.put("codes", ValidationPayloads.CodedList.class);
+        decisions.put("items", ValidationPayloads.ShortItems.class);
         decisions.put("labels", ValidationPayloads.Labelled.class);
         decisions.put("nested", ValidationPayloads.Nested.class);
         decisions.put("reject", void.class);
@@ -222,6 +224,128 @@ class PayloadValidationTest {
                         "exceeds the maximum total length of 262144 characters for pattern validation",
                         "patternInputTotalLength",
                         Map.of("limit", 262_144)));
+    }
+
+    private static final ViolationDetail TRUNCATED =
+            new ViolationDetail("", "further violations omitted", "truncated", null);
+
+    private static JsonObject itemsOfWhichTheFirstAreTooLong(int total, int tooLong) {
+        JsonArray items = new JsonArray();
+        for (int index = 0; index < total; index++) {
+            items.add(index < tooLong ? SENTINEL : "ok");
+        }
+        return new JsonObject().put("items", items);
+    }
+
+    @Test
+    @DisplayName("a payload with many violations is capped at 100 followed by one truncation detail")
+    void aPayloadWithManyViolationsIsCappedWithOneTruncationDetail() {
+        // Given: a list of 150 items of which every one is longer than the three characters allowed
+        JsonObject payload = itemsOfWhichTheFirstAreTooLong(150, 150);
+
+        // When: the payload is validated
+        PayloadValidationResult result = validate("items", payload);
+
+        // Then: it is invalid with exactly 101 details
+        assertThat(result.valid()).isFalse();
+        assertThat(result.violations()).hasSize(101);
+
+        // And: the last one is the fixed truncation detail and the 100 before it are real violations of the list
+        List<ViolationDetail> real = result.violations().subList(0, 100);
+        assertThat(result.violations().get(100)).isEqualTo(TRUNCATED);
+        assertThat(real)
+                .allSatisfy(detail -> {
+                    assertThat(detail.path()).startsWith("/items/");
+                    assertThat(detail.type()).isEqualTo("maxLength");
+                })
+                .extracting(ViolationDetail::path)
+                .doesNotHaveDuplicates();
+        assertThat(result.violations().stream().filter(TRUNCATED::equals)).hasSize(1);
+
+        // And: no submitted value appears in any field
+        Validations.assertNoValueIn(result, SENTINEL);
+    }
+
+    @Test
+    @DisplayName("the violation cap is exact: 100 violations carry no truncation detail and 101 carry one")
+    void theViolationCapIsExactAtTheBoundary() {
+        // Given: payloads with exactly 100 and exactly 101 violating items
+        JsonObject atCap = itemsOfWhichTheFirstAreTooLong(100, 100);
+        JsonObject overCap = itemsOfWhichTheFirstAreTooLong(101, 101);
+
+        // When: both are validated
+        PayloadValidationResult atCapResult = validate("items", atCap);
+        PayloadValidationResult overCapResult = validate("items", overCap);
+
+        // Then: 100 violations are all real and none is the truncation detail
+        assertThat(atCapResult.violations()).hasSize(100).doesNotContain(TRUNCATED);
+        assertThat(atCapResult.violations())
+                .allSatisfy(detail -> assertThat(detail.path()).startsWith("/items/"));
+
+        // And: 101 violations are 100 real ones followed by exactly one truncation detail
+        assertThat(overCapResult.violations()).hasSize(101);
+        assertThat(overCapResult.violations().get(100)).isEqualTo(TRUNCATED);
+        assertThat(overCapResult.violations().subList(0, 100))
+                .allSatisfy(detail -> assertThat(detail.path()).startsWith("/items/"));
+        Validations.assertNoValueIn(atCapResult, SENTINEL);
+        Validations.assertNoValueIn(overCapResult, SENTINEL);
+    }
+
+    @Test
+    @DisplayName("validating the largest accepted pattern payload twice in a row stays valid")
+    void validatingTheLargestAcceptedPatternPayloadTwiceInARowStaysValid() {
+        // Given: a list of 64 codes of 4,096 characters, which is exactly the accepted total
+        JsonArray atLimit = new JsonArray();
+        for (int index = 0; index < 64; index++) {
+            atLimit.add(repeated('a', 4096));
+        }
+        JsonArray overLimit = atLimit.copy().add(repeated('a', 4096));
+        ViolationDetail totalLength = new ViolationDetail(
+                "",
+                "exceeds the maximum total length of 262144 characters for pattern validation",
+                "patternInputTotalLength",
+                Map.of("limit", 262_144));
+
+        // When: it is validated twice back to back on the same thread
+        PayloadValidationResult first = validate("codes", new JsonObject().put("codes", atLimit));
+        PayloadValidationResult second = validate("codes", new JsonObject().put("codes", atLimit));
+
+        // Then: both are valid, so the first call left no accumulated length behind
+        assertThat(first.valid()).isTrue();
+        assertThat(second.valid()).isTrue();
+
+        // And: a payload one item larger still yields the total-length violation exactly once
+        PayloadValidationResult rejected = validate("codes", new JsonObject().put("codes", overLimit));
+        assertThat(rejected.violations()).containsExactly(totalLength);
+
+        // And: after the rejection the accepted payload is valid again
+        assertThat(validate("codes", new JsonObject().put("codes", atLimit)).valid())
+                .isTrue();
+    }
+
+    @Test
+    @DisplayName("a definition without a start payload type accepts any start payload")
+    void aDefinitionWithoutAStartTypeAcceptsAnyStartPayload() {
+        // Given: a definition registered with no start payload type at all, as the engine passes any payload through
+        PayloadSchemaCache nullStartCache = new PayloadSchemaCache();
+        DefaultWorkflowRegistry nullStartRegistry = Registries.withSchemaValidator(nullStartCache);
+        nullStartRegistry.register(Definitions.withStart("null-start", 1L, null));
+        assertThat(nullStartRegistry.resolveCurrent("null-start").startPayloadType())
+                .isNull();
+        WorkflowPayloadSchemas nullStartSchemas = new DefaultWorkflowPayloadSchemas(nullStartRegistry, nullStartCache);
+
+        // When: a missing, an empty and a non-empty start payload are validated
+        PayloadValidationResult missing = nullStartSchemas.validateStart("null-start", 1L, null);
+        PayloadValidationResult empty = nullStartSchemas.validateStart("null-start", 1L, new JsonObject());
+        PayloadValidationResult filled =
+                nullStartSchemas.validateStart("null-start", 1L, new JsonObject().put("anything", 1));
+
+        // Then: all three are valid without a violation
+        assertThat(missing.valid()).isTrue();
+        assertThat(empty.valid()).isTrue();
+        assertThat(empty.violations()).isEmpty();
+        assertThat(filled.valid()).isTrue();
+        assertThat(filled.violations()).isEmpty();
     }
 
     @Test

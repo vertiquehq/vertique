@@ -45,6 +45,9 @@ public final class ValidationPayloads {
     /** A list whose every item is limited to lower case letters. */
     public record CodedList(List<@Pattern(regexp = "^[a-z]+$") String> codes) {}
 
+    /** A list whose every item is limited to three characters, to produce one violation per long item. */
+    public record ShortItems(List<@Size(max = 3) String> items) {}
+
     /** Two numeric constraints on one property. */
     public record Bounded(@Positive @Max(100) Integer amount) {}
 

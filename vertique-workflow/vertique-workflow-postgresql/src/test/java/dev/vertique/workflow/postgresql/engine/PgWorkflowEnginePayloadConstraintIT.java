@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
@@ -466,6 +467,41 @@ public class PgWorkflowEnginePayloadConstraintIT {
                     definitionId + ": no detail field may carry the key");
             assertEquals("OPEN", taskStatus(mapTask), definitionId);
         }
+    }
+
+    @Test
+    @DisplayName("a completion with many violations is capped at 100 followed by one truncation detail")
+    void aCompletionWithManyViolationsIsCappedWithOneTruncationDetail() {
+        // Given: a validator-bound engine and an open task whose decision holds a list of constrained items
+        UUID taskId = startAndFindOpenTask(INSTANCE_DEFINITION_ID);
+        List<Map<String, String>> blankItems = new ArrayList<>();
+        for (int index = 0; index < 150; index++) {
+            blankItems.add(Map.of("name", ""));
+        }
+
+        // When: it is completed with 150 items that each violate their constraint
+        WorkflowInvalidPayloadException rejection = completeExpectingViolations(
+                taskId, "nested", Map.of("items", blankItems, "byKey", Map.of()), "idem-" + UUID.randomUUID());
+
+        // Then: the rejection carries 101 details
+        assertEquals(DECISION_REJECTION, rejection.getMessage());
+        List<ViolationDetail> details = rejection.violations();
+        assertEquals(101, details.size(), "100 real details and one truncation detail expected");
+
+        // And: the last one is the fixed truncation detail
+        assertEquals(new ViolationDetail("", "further violations omitted", "truncated", null), details.get(100));
+
+        // And: the 100 before it are real violations of list items, each at its own pointer
+        List<ViolationDetail> real = details.subList(0, 100);
+        for (ViolationDetail detail : real) {
+            assertEquals("required", detail.type());
+            assertTrue(detail.path().startsWith("/items/"), "a real detail addresses a list item: " + detail.path());
+        }
+        assertEquals(
+                100L,
+                real.stream().map(ViolationDetail::path).distinct().count(),
+                "the real details address distinct items");
+        assertEquals("OPEN", taskStatus(taskId), "a rejected completion must leave the task OPEN");
     }
 
     @Test

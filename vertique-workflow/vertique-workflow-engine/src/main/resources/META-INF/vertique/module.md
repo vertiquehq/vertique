@@ -79,16 +79,21 @@ pointer details):
 Messages and details built by the engine are value-free: they carry no payload value, decision name,
 class name, decode message or map key. The cause is logged at DEBUG level only, but it stays on the
 exception and can carry submitted text, so applications must not log the cause of a
-`WorkflowInvalidPayloadException` at INFO or above. A payload class that cannot be resolved remains a
+`WorkflowInvalidPayloadException` at INFO or above. The engine logs the cause at DEBUG unsanitized: it can
+quote submitted text, including line breaks. Keep DEBUG off for the `dev.vertique.workflow.engine` loggers in
+production, or sanitize at the log sink. A payload class that cannot be resolved remains a
 definition error (`WorkflowDefinitionException`), not a caller error. A failure thrown by an application
 decision applicator is also reported as a definition error, with the applicator exception as its cause
 and without its message.
 
 The rejection happens inside the completion transaction, so the idempotency claim rolls back with it, and
 so does any earlier side effect of the same transaction (on the branch path the timer cancel, locks and
-history work run first). A retry with the same idempotency key and a corrected payload completes the task. A caller that uses a
-transactional task service owns that rollback and must roll the transaction back when the completion
-future fails.
+history work run first). A retry with the same idempotency key and a corrected payload completes the task.
+
+**On the transactional entry points, rollback of a rejected payload is the caller's.** A caller that uses a
+transactional task service owns the transaction and must roll it back when the completion future fails. If
+the caller maps the 400 and still commits, the deduplication claim and any earlier side effect of that
+transaction are kept.
 
 Starting an instance validates the start payload the same way and rejects caller-caused problems with
 `WorkflowInvalidPayloadException` (HTTP 400 class, message `invalid start payload`, structured details with
@@ -115,10 +120,17 @@ violation:
 - **path** is an RFC 6901 pointer over the payload's wire (JSON) names, for example `items[0].name`
   becomes `/items/0/name`. Index segments are numeric, container-element nodes are dropped, and `~` and `/`
   are escaped as `~0` and `~1`. A map entry ends the pointer at the map property, so the caller's key never
-  appears in the path.
+  appears in the path. A segment uses the payload's wire name where it resolves and the declared member
+  name otherwise; neither is a map key or other caller data.
 - **type** is the validation module's mapped name: `size`, `required`, `min`, `max`, `pattern`, `email`.
   An unmapped constraint keeps the annotation simple name.
 - **message** is exactly what the validator produced.
+
+At most 100 violations are returned, in the order the validator produced them. When more were produced, one
+final detail follows with an empty path, the message `further violations omitted` and the type `truncated`,
+so an exception carries at most 101 details; exactly 100 violations carry no truncation detail. Pointers are
+converted only for the retained violations. The cap bounds the response, not the request: the transport must
+still cap the request body before calling the engine.
 
 The rejection happens inside the transaction, so any earlier side effect of the same transaction rolls
 back together with the deduplication claim. An idempotent replay or a stale or already-completed task
