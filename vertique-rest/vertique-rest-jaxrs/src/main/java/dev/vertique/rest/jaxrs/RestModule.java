@@ -22,6 +22,8 @@ import dev.vertique.core.extension.OrderedExtension;
 import dev.vertique.core.lifecycle.ComposeValidator;
 import dev.vertique.core.validation.BeanValidationException;
 import dev.vertique.core.validation.BeanValidator;
+import dev.vertique.core.validation.ViolationCarrier;
+import dev.vertique.core.validation.ViolationDetail;
 import dev.vertique.input.processing.InputObjectProcessor;
 import dev.vertique.rest.core.ProblemDetail;
 import dev.vertique.rest.core.RestValidationException;
@@ -339,7 +341,9 @@ public abstract class RestModule {
      * <ul>
      *   <li>{@link WebApplicationException} — preserves an existing response entity if present,
      *       otherwise produces a {@link ProblemDetail} body with the embedded status code</li>
-     *   <li>{@link ValidationException} (400) — framework input validation failures</li>
+     *   <li>{@link ValidationException} (400) — framework input validation failures; a
+     *       {@link ViolationCarrier} is rendered as a {@link ValidationProblemDetail} with one error
+     *       per violation, any other validation exception as a message-only {@link ProblemDetail}</li>
      *   <li>{@link TooManyRequestsException} (429) — rate/quota limit exceeded, with a
      *       {@code Retry-After} header when the exception carries one; registered explicitly so it
      *       outranks the inherited {@code BusinessRuleException}/{@link ValidationException} → 400
@@ -392,19 +396,19 @@ public abstract class RestModule {
                         .entity(ValidationProblemDetail.of(ex.getMessage(), ex.errors()))
                         .type("application/problem+json")
                         .build())
-                .on(BeanValidationException.class, ex -> {
-                    List<ValidationErrorDetail> errors = ex.violations().stream()
-                            .map(v -> new ValidationErrorDetail(v.path(), v.message(), null, v.type(), v.args()))
-                            .toList();
+                .on(BeanValidationException.class, ex -> Response.status(400)
+                        .entity(ValidationProblemDetail.of(ex.getMessage(), toErrors(ex.violations())))
+                        .type("application/problem+json")
+                        .build())
+                .on(ValidationException.class, ex -> {
+                    Object body = ex instanceof ViolationCarrier carrier
+                            ? ValidationProblemDetail.of(ex.getMessage(), toErrors(carrier.violations()))
+                            : ProblemDetail.of(400, ex.getMessage());
                     return Response.status(400)
-                            .entity(ValidationProblemDetail.of(ex.getMessage(), errors))
+                            .entity(body)
                             .type("application/problem+json")
                             .build();
                 })
-                .on(ValidationException.class, ex -> Response.status(400)
-                        .entity(ProblemDetail.of(400, ex.getMessage()))
-                        .type("application/problem+json")
-                        .build())
                 .on(TooManyRequestsException.class, ex -> {
                     Response.ResponseBuilder builder = Response.status(429)
                             .entity(ProblemDetail.of(429, ex.getMessage()))
@@ -465,6 +469,12 @@ public abstract class RestModule {
                                         .entity(ProblemDetail.of(500, "Internal Server Error"))
                                         .type("application/problem+json")
                                         .build());
+    }
+
+    private static List<ValidationErrorDetail> toErrors(List<ViolationDetail> violations) {
+        return violations.stream()
+                .map(v -> new ValidationErrorDetail(v.path(), v.message(), null, v.type(), v.args()))
+                .toList();
     }
 
     /**

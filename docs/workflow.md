@@ -98,6 +98,7 @@ Common side effects are service dispatch, timer scheduling, and workflow events.
 | [workflow-tasks.md](../vertique-workflow/vertique-workflow-tasks/src/main/resources/META-INF/vertique/module.md) | `vertique-workflow-tasks` | Application-facing task list/get/complete/reassign API |
 | [workflow-events.md](../vertique-workflow/vertique-workflow-events/src/main/resources/META-INF/vertique/module.md) | `vertique-workflow-events` | Durable external workflow event stream |
 | [workflow-definition.md](../vertique-workflow/vertique-workflow-definition/src/main/resources/META-INF/vertique/module.md) | `vertique-workflow-definition` | Typed YAML/JSON workflow definition authoring |
+| [workflow-schema.md](../vertique-workflow/vertique-workflow-schema/src/main/resources/META-INF/vertique/module.md) | `vertique-workflow-schema` | Payload schemas for decision and start payloads, checked at definition registration |
 
 ---
 
@@ -112,6 +113,7 @@ Common side effects are service dispatch, timer scheduling, and workflow events.
 | Human task inbox/actions | `WorkflowTasksModule` |
 | Emit workflow lifecycle events | `WorkflowEventsModule` plus an outbox destination binding |
 | Load YAML/JSON definitions | `WorkflowDefinitionModule` |
+| Describe and pre-validate decision and start payloads | `WorkflowSchemaModule` |
 | Migrate in-flight instances between versions | `WorkflowMigrationModule` with migration handlers |
 
 Most production workflow apps install core, postgresql, services, transactional messaging, database modules, and then add delayed/tasks/events/definition based on the workflow features they use.

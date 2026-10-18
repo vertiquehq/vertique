@@ -15,7 +15,7 @@ import java.util.List;
  * <p>This exception extends {@link ValidationException} and maps to HTTP 400 by default
  * when caught by the REST error pipeline.
  */
-public class BeanValidationException extends ValidationException {
+public class BeanValidationException extends ValidationException implements ViolationCarrier {
 
     private final List<ViolationDetail> violations;
 
@@ -46,6 +46,7 @@ public class BeanValidationException extends ValidationException {
      *
      * @return an unmodifiable list of {@link ViolationDetail} records
      */
+    @Override
     public List<ViolationDetail> violations() {
         return violations;
     }

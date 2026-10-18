@@ -66,6 +66,91 @@ The engine performs no transaction management of its own. Public operation metho
 and pass the resulting `SqlClient` handle into their transactional variants. Callers that already own a
 transaction use `TransactionalWorkflowOperations<SqlClient>` directly.
 
+Task completion validates the caller's decision and payload inside the completion transaction and
+rejects caller-caused problems with `WorkflowInvalidPayloadException` (HTTP 400 class, structured
+pointer details):
+
+- an unknown decision name is reported with type `decision`;
+- a non-null payload for a decision without a payload type, or a missing payload for a decision that
+  declares one, is reported with type `payload`;
+- a payload that does not bind to the declared payload type is reported with type `binding`, and the
+  decode exception is the cause.
+
+Messages and details built by the engine are value-free: they carry no payload value, decision name,
+class name, decode message or map key. The cause is logged at DEBUG level only, but it stays on the
+exception and can carry submitted text, so applications must not log the cause of a
+`WorkflowInvalidPayloadException` at INFO or above. The engine logs the cause at DEBUG unsanitized: it can
+quote submitted text, including line breaks. Keep DEBUG off for the `dev.vertique.workflow.engine` loggers in
+production, or sanitize at the log sink. A payload class that cannot be resolved remains a
+definition error (`WorkflowDefinitionException`), not a caller error. A failure thrown by an application
+decision applicator is also reported as a definition error, with the applicator exception as its cause
+and without its message.
+
+The rejection happens inside the completion transaction, so the idempotency claim rolls back with it, and
+so does any earlier side effect of the same transaction (on the branch path the timer cancel, locks and
+history work run first). A retry with the same idempotency key and a corrected payload completes the task.
+
+**On the transactional entry points, rollback of a rejected payload is the caller's.** A caller that uses a
+transactional task service owns the transaction and must roll it back when the completion future fails. If
+the caller maps the 400 and still commits, the deduplication claim and any earlier side effect of that
+transaction are kept.
+
+Starting an instance validates the start payload the same way and rejects caller-caused problems with
+`WorkflowInvalidPayloadException` (HTTP 400 class, message `invalid start payload`, structured details with
+a root pointer path):
+
+- a missing payload for a start type that needs one, or a payload for a start type without one (`void`),
+  is reported with type `payload`;
+- a payload that does not bind to the declared start type is reported with type `binding`.
+
+The details the engine builds are value-free: they carry no payload value, class name, decode message or map
+key. The decode cause is logged at DEBUG level only, and the same caution applies: do not log it at INFO or
+above. The rejection happens before the instance is started and rolls the start transaction back, so no
+instance row, history entry or deduplication claim is kept; a retry with the same idempotency key and a corrected
+payload starts the instance. An application initial-state function that throws is still reported as
+`WorkflowDefinitionException`, now with the thrown exception as its cause and without its message.
+
+#### Payload Constraint Enforcement
+
+When a `BeanValidator` is bound, the engine also checks the coerced payload against its Bean Validation
+constraints: the decision payload (instance and branch tasks) and the start payload. The check runs after
+coercion and before the task is completed or the instance started, inside the same transaction, and fails with `WorkflowInvalidPayloadException` carrying one detail per
+violation:
+
+- **path** is an RFC 6901 pointer over the payload's wire (JSON) names, for example `items[0].name`
+  becomes `/items/0/name`. Index segments are numeric, container-element nodes are dropped, and `~` and `/`
+  are escaped as `~0` and `~1`. A map entry ends the pointer at the map property, so the caller's key never
+  appears in the path. A segment uses the payload's wire name where it resolves and the declared member
+  name otherwise; neither is a map key or other caller data.
+- **type** is the validation module's mapped name: `size`, `required`, `min`, `max`, `pattern`, `email`.
+  An unmapped constraint keeps the annotation simple name.
+- **message** is exactly what the validator produced.
+
+At most 100 violations are returned, in the order the validator produced them. When more were produced, one
+final detail follows with an empty path, the message `further violations omitted` and the type `truncated`,
+so an exception carries at most 101 details; exactly 100 violations carry no truncation detail. Pointers are
+converted only for the retained violations. The cap bounds the response, not the request: the transport must
+still cap the request body before calling the engine.
+
+The rejection happens inside the transaction, so any earlier side effect of the same transaction rolls
+back together with the deduplication claim. An idempotent replay or a stale or already-completed task
+is answered before payload validation.
+
+Installing the validation module (`ValidationModule`) switches enforcement on. With no `BeanValidator`
+bound, behavior is unchanged and the payload is checked for binding only. The engine logs one INFO line at
+construction saying whether payload constraint enforcement is enabled or disabled. The rejection rolls back
+the completion or start transaction like the binding checks above.
+
+Details built by the engine are value-free. Constraint messages produced by an application's constraints
+pass through unchanged, so applications must not interpolate the validated value:
+
+- Do not interpolate the validated value into a constraint message.
+- Do not build custom violations from untrusted text through the template-building API
+  (`buildConstraintViolationWithTemplate`).
+
+Residual: a `@Pattern` constraint on this path runs on unbounded strings, the same posture as REST bean
+validation. Keyed validation is the bounded path.
+
 ---
 
 ## Key Classes
@@ -88,10 +173,12 @@ the engine package can hold a fully wired engine without depending on the packag
 
 Static factory that is the non-Dagger parallel to `WorkflowEngineModule`. Accepts the repository SPIs,
 task/timer stores, workflow registry, `Clock`, side-effect recorders, optional intent kinds, optional
-`WorkflowMigrationRegistry`, and optional `DurableContextPropagator`, and assembles the entire
-package-private collaborator graph — including hand-wiring the `WorkflowTransitionDriver` ↔
+`WorkflowMigrationRegistry`, optional `DurableContextPropagator`, and optional `BeanValidator`, and
+assembles the entire package-private collaborator graph — including hand-wiring the `WorkflowTransitionDriver` ↔
 `ForkJoinCoordinator` mutual-recursion cycle using a one-element holder array. Returns the assembled
-engine as a `WorkflowEngineHandle`.
+engine as a `WorkflowEngineHandle`. The 16-argument overload takes the `Optional<BeanValidator>` that
+enables payload constraint enforcement; the shorter overloads delegate with an empty optional, so
+enforcement stays off.
 
 Key members:
 
@@ -124,6 +211,7 @@ Dagger module owning the engine-internal bindings:
 - Declares the `@WorkflowRecorders`-qualified `Set<WorkflowSideEffectRecorder<SqlClient>>` multibinding.
 - Provides the `@OptionalIntentKinds Set<IntentKind>` (delegates to `WorkflowEngineFactory.DEFAULT_OPTIONAL_INTENT_KINDS`).
 - Declares `WorkflowMigrationRegistry` as `@BindsOptionalOf` (opt-in migration support).
+- Declares `BeanValidator` as `@BindsOptionalOf` (opt-in payload constraint enforcement; bound by installing the validation module).
 - Includes `WorkflowCoreModule` and `ContextRuntimeModule`.
 
 Adapter modules (`WorkflowPostgresqlModule`) include this module, so applications installing only the

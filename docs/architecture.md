@@ -58,6 +58,11 @@ builder. It depends only on `vertique-core` and `vertx-json-schema` — it has n
 REST, MCP, Vert.x Web, or Dagger — and `vertique-json-schema` does not depend on it. `vertique-rest-validation` consumes it
 for the pattern-input bound, the regular-expression check and the violation translation.
 
+`vertique-workflow-schema` owns the schemas of workflow decision and start payloads. It consumes
+`vertique-workflow-core`, `vertique-json-schema` and `vertique-json-schema-validation`, and plugs
+into definition registration through the core validator set. The workflow engine, tasks,
+PostgreSQL and definition modules never depend on it.
+
 `vertique-rest-openapi-docs` is the opt-in runtime OpenAPI documentation module: it depends on
 `vertique-rest-jaxrs`, `vertique-rest-core`, `vertique-security-core`, `vertique-core`, and
 `vertique-json-schema`, while

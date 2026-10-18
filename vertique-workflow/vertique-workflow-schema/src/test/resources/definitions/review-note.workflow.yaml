@@ -1,0 +1,25 @@
+# SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
+# SPDX-License-Identifier: EUPL-1.2
+
+# A review workflow whose payload types are filled in by the test that loads it.
+definitionId: review-note
+definitionVersion: 1
+stateType: dev.vertique.workflow.schema.fixtures.ReviewState
+contract: dev.vertique.workflow.schema.fixtures.ReviewNoteWorkflowV1
+startPayloadType: START_PAYLOAD_TYPE
+initialStateMapper: INITIAL_STATE_MAPPER
+initialStep: review
+steps:
+  - id: review
+    type: human-task
+    taskType: approval
+    assignment:
+      mode: role
+      value: reviewers
+    decisions:
+      - name: note
+        payloadType: DECISION_PAYLOAD_TYPE
+        applicator: review.apply
+        next: done
+  - id: done
+    type: complete

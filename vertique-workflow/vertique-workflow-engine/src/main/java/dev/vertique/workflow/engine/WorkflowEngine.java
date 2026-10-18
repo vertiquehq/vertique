@@ -21,6 +21,7 @@ import dev.vertique.workflow.exception.WorkflowConflictException;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
 import dev.vertique.workflow.exception.WorkflowIdempotencyConflictException;
 import dev.vertique.workflow.exception.WorkflowInstanceNotFoundException;
+import dev.vertique.workflow.exception.WorkflowInvalidPayloadException;
 import dev.vertique.workflow.exception.WorkflowPlanHashDriftException;
 import dev.vertique.workflow.exception.WorkflowSignalRejectedException;
 import dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException;
@@ -61,6 +62,8 @@ import java.time.Instant;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Dialect-neutral implementation of {@link WorkflowOperations} and
@@ -90,6 +93,8 @@ import java.util.UUID;
  */
 @Singleton
 final class WorkflowEngine implements WorkflowEngineHandle {
+
+    private static final Logger log = LoggerFactory.getLogger(WorkflowEngine.class);
 
     // --- Dependencies ---
 
@@ -192,6 +197,12 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      */
     private final WorkflowContextBinder contextBinder;
 
+    /**
+     * Opt-in constraint check applied to the coerced start payload before the instance is created.
+     * A no-op when the application binds no bean validator.
+     */
+    private final PayloadConstraintCheck payloadConstraintCheck;
+
     @Inject
     WorkflowEngine(
             WorkflowTransactionRunner<SqlClient> txRunner,
@@ -214,7 +225,8 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             TimerLifecycleService timerLifecycle,
             MigrationExecutor migrationExecutor,
             DurableContextPropagator propagator,
-            WorkflowContextBinder contextBinder) {
+            WorkflowContextBinder contextBinder,
+            PayloadConstraintCheck payloadConstraintCheck) {
         this.txRunner = txRunner;
         this.registry = registry;
         this.instances = instances;
@@ -236,6 +248,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
         this.migrationExecutor = migrationExecutor;
         this.propagator = propagator;
         this.contextBinder = contextBinder;
+        this.payloadConstraintCheck = payloadConstraintCheck;
     }
 
     /**
@@ -277,6 +290,10 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      * {@link WorkflowContextBinder#noop()}, matching {@code branchEngine}'s own null-propagator
      * fallback.
      *
+     * <p>The {@code payloadConstraintCheck} parameter is the opt-in constraint check for coerced
+     * payloads; the factory builds exactly one and passes that same instance here and into the
+     * task-lifecycle service built below.
+     *
      * <p>Package-visible (not {@code private}) so the test-scope factory in the same package can
      * invoke it; it is not part of any production API and is unused outside test code.
      */
@@ -301,7 +318,9 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             WorkflowHistoryRecorder historyRecorder,
             ReminderScheduler reminderScheduler,
             CompensationService compensationService,
-            @Nullable dev.vertique.context.InboundExecutionContextScope inboundExecScope) {
+            @Nullable dev.vertique.context.InboundExecutionContextScope inboundExecScope,
+            PayloadConstraintCheck payloadConstraintCheck) {
+        this.payloadConstraintCheck = payloadConstraintCheck;
         this.txRunner = txRunner;
         this.registry = registry;
         this.instances = instances;
@@ -381,7 +400,8 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                 this.driver,
                 clock,
                 () -> timerLifecycleHolder[0],
-                builtContextBinder);
+                builtContextBinder,
+                payloadConstraintCheck);
         taskLifecycleHolder[0] = this.taskLifecycle;
         // TimerLifecycleService needs the driver, coordinator, and task service eagerly; all three
         // are now built. The driver reaches resolveFireAt through the lazy Provider above
@@ -579,8 +599,17 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      */
     private Future<WorkflowInstanceId> doCreateInstance(
             StartCommand cmd, RuntimeWorkflow rw, WorkflowInstanceId id, SqlClient tx) {
-        // Coerce payload to the declared start payload type.
-        Object coercedPayload = coercePayload(cmd.payload(), rw.startPayloadType());
+        // Validate and coerce the payload to the declared start payload type.
+        Object coercedPayload;
+        try {
+            coercedPayload = WorkflowPayloads.validateAndCoerceStartPayload(cmd.payload(), rw.startPayloadType());
+            payloadConstraintCheck.check(coercedPayload, WorkflowPayloads.START_REJECTION);
+        } catch (WorkflowInvalidPayloadException e) {
+            if (e.getCause() != null) {
+                log.debug("Start payload rejected", e.getCause());
+            }
+            return Future.failedFuture(e);
+        }
 
         // Derive initial state via the init function.
         Object initialState;
@@ -588,7 +617,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             initialState = rw.initialState().apply(coercedPayload);
         } catch (Exception e) {
             return Future.failedFuture(new WorkflowDefinitionException(
-                    "initialState function threw for definition '" + cmd.definitionId() + "': " + e.getMessage()));
+                    "initialState function threw for definition '" + cmd.definitionId() + "'", e));
         }
         String stateJson = Json.encode(initialState);
 
@@ -1500,20 +1529,6 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      */
     private static Future<Void> requireRowUpdated(int rowCount, String context) {
         return WorkflowPayloads.requireRowUpdated(rowCount, context);
-    }
-
-    /**
-     * Coerces {@code payload} to {@code targetType} using {@code Json.encode → Json.decodeValue}
-     * when the payload is not already an instance of the target type.
-     *
-     * <p>Delegates to {@link WorkflowPayloads#coercePayload}.
-     *
-     * @param payload the incoming payload; may be null
-     * @param targetType the target class to coerce to; if null, returns payload unchanged
-     * @return the coerced payload, or the original payload if no coercion is needed
-     */
-    private static Object coercePayload(Object payload, Class<?> targetType) {
-        return WorkflowPayloads.coercePayload(payload, targetType);
     }
 
     /**

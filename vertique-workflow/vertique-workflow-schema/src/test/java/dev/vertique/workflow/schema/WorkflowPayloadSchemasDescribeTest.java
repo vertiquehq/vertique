@@ -1,0 +1,266 @@
+// SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
+// SPDX-License-Identifier: EUPL-1.2
+
+package dev.vertique.workflow.schema;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+import dev.vertique.workflow.exception.WorkflowDefinitionException;
+import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
+import dev.vertique.workflow.schema.fixtures.ExpensePayloads;
+import dev.vertique.workflow.schema.fixtures.Payloads;
+import io.vertx.core.json.JsonObject;
+import java.util.List;
+import java.util.Optional;
+import java.util.concurrent.atomic.AtomicInteger;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+
+/** Verifies the descriptors assembled from a registered definition and the schema cache. */
+class WorkflowPayloadSchemasDescribeTest {
+
+    private static final String EXPENSE = "expense";
+
+    private final PayloadSchemaCache cache = new PayloadSchemaCache();
+
+    @Test
+    @DisplayName("describe returns start and decision schemas equal to the generator's document")
+    void describeReturnsStartAndDecisionSchemasEqualToTheGeneratorsDocument() {
+        // Given: a registry with the validator and the expense definition
+        DefaultWorkflowRegistry registry = Registries.withSchemaValidator(cache);
+        registry.register(Definitions.expense());
+        WorkflowPayloadSchemas schemas = new DefaultWorkflowPayloadSchemas(registry, cache);
+
+        // When: the definition is described
+        Optional<WorkflowDefinitionDescriptor> described = schemas.describe(EXPENSE, 1L);
+
+        // Then: the descriptor is present and names the definition
+        assertThat(described).isPresent();
+        WorkflowDefinitionDescriptor descriptor = described.get();
+        assertThat(descriptor.definitionId()).isEqualTo(EXPENSE);
+        assertThat(descriptor.definitionVersion()).isEqualTo(1L);
+
+        // And: the start payload document equals the generator's document for the start type
+        assertThat(descriptor.startPayload()).isNotNull();
+        assertThat(descriptor.startPayload().document())
+                .isEqualTo(Registries.generated(ExpensePayloads.ExpenseStart.class));
+
+        // And: one step review carries approve with the described comment property and reject without a payload
+        assertThat(descriptor.humanTasks()).hasSize(1);
+        HumanTaskStepDescriptor review = descriptor.humanTasks().get(0);
+        assertThat(review.stepId()).isEqualTo("review");
+        assertThat(review.decisions()).extracting(DecisionDescriptor::name).containsExactly("approve", "reject");
+
+        DecisionDescriptor approve = review.decisions().get(0);
+        assertThat(approve.nextStepId()).isEqualTo("done");
+        JsonObject document = approve.payload().document();
+        assertThat(document).isEqualTo(Registries.generated(ExpensePayloads.ApprovalComment.class));
+        assertThat(document.getString("type")).isEqualTo("object");
+        JsonObject comment = document.getJsonObject("properties").getJsonObject("comment");
+        assertThat(comment.getInteger("maxLength")).isEqualTo(200);
+        assertThat(comment.getString("description")).isEqualTo("Why");
+
+        DecisionDescriptor reject = review.decisions().get(1);
+        assertThat(reject.nextStepId()).isEqualTo("done");
+        assertThat(reject.payload()).isNull();
+    }
+
+    @Test
+    @DisplayName("an unknown definition id, version, step or decision is empty and never throws")
+    void unknownIdOrVersionReturnsEmpty() {
+        // Given: the registry of the expense definition
+        DefaultWorkflowRegistry registry = Registries.withSchemaValidator(cache);
+        registry.register(Definitions.expense());
+        WorkflowPayloadSchemas schemas = new DefaultWorkflowPayloadSchemas(registry, cache);
+
+        // When: an unknown id, an unknown version, an unknown step and an unknown decision are asked for
+        // Then: every result is empty and nothing is thrown
+        assertThat(schemas.describe("nope", 1L)).isEmpty();
+        assertThat(schemas.describe(EXPENSE, 99L)).isEmpty();
+        assertThat(schemas.decision(EXPENSE, 1L, "nope", "approve")).isEmpty();
+        assertThat(schemas.decision(EXPENSE, 1L, "review", "nope")).isEmpty();
+
+        // And: the known coordinates still resolve
+        assertThat(schemas.decision(EXPENSE, 1L, "review", "approve")).isPresent();
+        assertThat(schemas.decision(EXPENSE, 1L, "review", "reject")).isPresent();
+    }
+
+    @Test
+    @DisplayName("reads never load a class through the registration class loader")
+    void readsNeverLoadClasses() {
+        // Given: a validator constructed through the class loader seam with a counting loader, and a registered
+        // definition whose registration loaded the decision payload class through that loader
+        CountingClassLoader loader = new CountingClassLoader(getClass().getClassLoader());
+        DefaultWorkflowRegistry registry = Registries.withSchemaValidator(cache, loader);
+        registry.register(Definitions.expense());
+        assertThat(loader.loads.get()).isPositive();
+        loader.loads.set(0);
+        WorkflowPayloadSchemas schemas = new DefaultWorkflowPayloadSchemas(registry, cache);
+
+        // When: describe and decision run for the registered key and for unknown keys, with the counting loader as
+        // the thread's context loader as well
+        ClassLoader original = Thread.currentThread().getContextClassLoader();
+        Thread.currentThread().setContextClassLoader(loader);
+        try {
+            assertThat(schemas.describe(EXPENSE, 1L)).isPresent();
+            assertThat(schemas.decision(EXPENSE, 1L, "review", "approve")).isPresent();
+            assertThat(schemas.decision(EXPENSE, 1L, "review", "reject")).isPresent();
+            assertThat(schemas.describe("nope", 1L)).isEmpty();
+            assertThat(schemas.describe(EXPENSE, 99L)).isEmpty();
+            assertThat(schemas.decision(EXPENSE, 1L, "review", "nope")).isEmpty();
+        } finally {
+            Thread.currentThread().setContextClassLoader(original);
+        }
+
+        // Then: the loader was asked for no class
+        assertThat(loader.loads.get()).isZero();
+    }
+
+    @Test
+    @DisplayName("a void decision has a null payload and documents are defensive copies")
+    void voidDecisionHasNullPayloadAndDocumentsAreDefensiveCopies() {
+        // Given: the expense descriptor
+        DefaultWorkflowRegistry registry = Registries.withSchemaValidator(cache);
+        registry.register(Definitions.expense());
+        WorkflowPayloadSchemas schemas = new DefaultWorkflowPayloadSchemas(registry, cache);
+        List<DecisionDescriptor> decisions =
+                schemas.describe(EXPENSE, 1L).orElseThrow().humanTasks().get(0).decisions();
+        DecisionDescriptor approve = decisions.get(0);
+        DecisionDescriptor reject = decisions.get(1);
+        JsonObject original = approve.payload().document().copy();
+
+        // When: the reject decision is read and the caller mutates approve's document and its start document
+        // Then: reject has no payload
+        assertThat(reject.name()).isEqualTo("reject");
+        assertThat(reject.payload()).isNull();
+        approve.payload().document().put("mutated", true);
+        approve.payload().document().getJsonObject("properties").clear();
+
+        // And: neither the same descriptor nor a second describe shows the mutation
+        assertThat(approve.payload().document()).isEqualTo(original);
+        DecisionDescriptor again = schemas.describe(EXPENSE, 1L)
+                .orElseThrow()
+                .humanTasks()
+                .get(0)
+                .decisions()
+                .get(0);
+        assertThat(again.name()).isEqualTo("approve");
+        assertThat(again.payload().document()).isEqualTo(original);
+        assertThat(schemas.decision(EXPENSE, 1L, "review", "approve")
+                        .orElseThrow()
+                        .payload()
+                        .document())
+                .isEqualTo(original);
+    }
+
+    @Test
+    @DisplayName("human tasks follow plan order and decisions follow declaration order")
+    void humanTasksFollowPlanOrderAndDecisionsFollowDeclarationOrder() {
+        // Given: a definition whose tasks and decisions are declared against alphabetical order
+        DefaultWorkflowRegistry registry = Registries.withSchemaValidator(cache);
+        registry.register(Definitions.expenseWithAudit());
+        WorkflowPayloadSchemas schemas = new DefaultWorkflowPayloadSchemas(registry, cache);
+
+        // When: it is described
+        WorkflowDefinitionDescriptor descriptor =
+                schemas.describe("expense-audited", 1L).orElseThrow();
+
+        // Then: tasks come in plan order and each task's decisions in declaration order, with their next steps
+        assertThat(descriptor.humanTasks())
+                .extracting(HumanTaskStepDescriptor::stepId)
+                .containsExactly("review", "audit");
+        HumanTaskStepDescriptor review = descriptor.humanTasks().get(0);
+        assertThat(review.decisions()).extracting(DecisionDescriptor::name).containsExactly("reject", "approve");
+        assertThat(review.decisions())
+                .extracting(DecisionDescriptor::nextStepId)
+                .containsExactly("done", "audit");
+        assertThat(review.decisions().get(0).payload()).isNull();
+        HumanTaskStepDescriptor audit = descriptor.humanTasks().get(1);
+        assertThat(audit.decisions()).extracting(DecisionDescriptor::name).containsExactly("flag", "confirm");
+        assertThat(audit.decisions().get(1).payload().document())
+                .isEqualTo(Registries.generated(ExpensePayloads.AuditNote.class));
+
+        // And: the keyed lookup finds a decision of the second task
+        assertThat(schemas.decision("expense-audited", 1L, "audit", "confirm"))
+                .hasValueSatisfying(
+                        decision -> assertThat(decision.nextStepId()).isEqualTo("done"));
+    }
+
+    @Test
+    @DisplayName("a void start has a null start payload and a void decision has a null payload")
+    void voidStartAndVoidDecisionHaveNullPayloads() {
+        // Given: a definition with a void start and an object decision, and another with only void payloads
+        DefaultWorkflowRegistry registry = Registries.withSchemaValidator(cache);
+        registry.register(Definitions.withDecision("void-start", 1L, Payloads.PlainRecord.class));
+        registry.register(Definitions.withDecisionUnderSecondContract("all-void", 1L, void.class));
+        WorkflowPayloadSchemas schemas = new DefaultWorkflowPayloadSchemas(registry, cache);
+
+        // When / Then: the void start has no payload while its decision does
+        WorkflowDefinitionDescriptor voidStart =
+                schemas.describe("void-start", 1L).orElseThrow();
+        assertThat(voidStart.startPayload()).isNull();
+        assertThat(voidStart.humanTasks().get(0).decisions().get(0).payload()).isNotNull();
+
+        // And: the all-void definition has no payload anywhere
+        WorkflowDefinitionDescriptor voidOnly = schemas.describe("all-void", 1L).orElseThrow();
+        assertThat(voidOnly.startPayload()).isNull();
+        assertThat(voidOnly.humanTasks().get(0).decisions().get(0).payload()).isNull();
+    }
+
+    @Test
+    @DisplayName("a definition the registry rejected is not described")
+    void aRejectedDefinitionIsNotDescribed() {
+        // Given: a registry that rejects a definition with a scalar decision payload
+        DefaultWorkflowRegistry registry = Registries.withSchemaValidator(cache);
+        assertThatThrownBy(() -> registry.register(Definitions.withDecision("scalar", 1L, String.class)))
+                .isInstanceOf(WorkflowDefinitionException.class);
+        WorkflowPayloadSchemas schemas = new DefaultWorkflowPayloadSchemas(registry, cache);
+
+        // When / Then: neither the definition nor its decision can be read
+        assertThat(schemas.describe("scalar", 1L)).isEmpty();
+        assertThat(schemas.decision("scalar", 1L, "review", "note")).isEmpty();
+    }
+
+    @Test
+    @DisplayName("a registered definition without a cache entry is an invariant violation that names the remedy")
+    void registeredDefinitionWithoutCacheEntryFailsWithAnActionableMessage() {
+        // Given: a registry without the schema validator, so no entry was ever generated, and a registered definition
+        DefaultWorkflowRegistry registry = Registries.withoutSchemaValidator();
+        registry.register(Definitions.expense());
+        WorkflowPayloadSchemas schemas = new DefaultWorkflowPayloadSchemas(registry, cache);
+        String remedy = "the schema module's registration validator did not run for this registry:"
+                + " install WorkflowSchemaModule in the component that provides WorkflowRegistry";
+
+        // When / Then: describe fails with the remedy and the missing type name
+        assertThatThrownBy(() -> schemas.describe(EXPENSE, 1L))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining(remedy)
+                .hasMessageContaining(ExpensePayloads.ExpenseStart.class.getName());
+
+        // And: so does the keyed decision lookup, naming the decision's type
+        assertThatThrownBy(() -> schemas.decision(EXPENSE, 1L, "review", "approve"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining(remedy)
+                .hasMessageContaining(ExpensePayloads.ApprovalComment.class.getName());
+
+        // And: unknown coordinates are still empty rather than a violation
+        assertThat(schemas.describe("nope", 1L)).isEmpty();
+    }
+
+    /** A class loader that delegates to its parent and counts every class it is asked to load. */
+    static final class CountingClassLoader extends ClassLoader {
+
+        final AtomicInteger loads = new AtomicInteger();
+
+        CountingClassLoader(ClassLoader parent) {
+            super(parent);
+        }
+
+        @Override
+        protected Class<?> loadClass(String name, boolean resolve) throws ClassNotFoundException {
+            loads.incrementAndGet();
+            return super.loadClass(name, resolve);
+        }
+    }
+}
