@@ -26,15 +26,25 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import java.util.function.Supplier;
 
-/** Publishes durable document activations and compensates only the captured local publication. */
+/**
+ * Publishes durable document activations and compensates only the captured local publication.
+ *
+ * <p>When the outcome of a completion stays unknown, the runtime this lifecycle published is remembered per
+ * key. A later activation of the same key adopts exactly that runtime, and only while the registry still holds
+ * that same instance; a registration the lifecycle did not publish is never adopted or removed.
+ */
 @Singleton
 final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLifecycle {
     private final Optional<WorkflowDefinitionRegistryStore> store;
     private final Provider<WorkflowRegistry> registry;
     private final Set<PersistedDefinitionLoader> loaders;
     private final DefinitionApplyQueue queue;
+    /** Runtimes this lifecycle published whose completion outcome is still unknown, by key. */
+    private final ConcurrentMap<DefinitionKey, RuntimeWorkflow> uncertain = new ConcurrentHashMap<>();
 
     @Inject
     DefaultWorkflowDefinitionLifecycle(
@@ -117,7 +127,10 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
                 .<Void>compose(found -> {
                     WorkflowDefinitionRecord record =
                             found.orElseThrow(() -> failure(Reason.INVALID_TRANSITION, key, "definition not found"));
-                    if (record.status() == DefinitionStatus.ACTIVE) return Future.succeededFuture();
+                    if (record.status() == DefinitionStatus.ACTIVE) {
+                        uncertain.remove(key);
+                        return Future.succeededFuture();
+                    }
                     if (record.kind() != DefinitionKind.DOCUMENT)
                         throw failure(
                                 Reason.INVALID_TRANSITION, key, "CODE definitions register from deployed sources");
@@ -155,12 +168,23 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
                                             "stored hash " + attempt.record.planHash() + " differs from compiled hash "
                                                     + hash);
                                 WorkflowRegistry local = registry.get();
+                                RuntimeWorkflow remembered = uncertain.get(key);
+                                if (remembered != null && isRegistered(local, remembered)) {
+                                    // The registry still holds the runtime this lifecycle published earlier.
+                                    attempt.publication = remembered;
+                                    return (Void) null;
+                                }
+                                // Stale: whatever the registry holds now is not the remembered runtime.
+                                if (remembered != null) uncertain.remove(key, remembered);
                                 local.register(attempt.definition);
                                 attempt.publication = local.resolvePinned(key.definitionId(), key.definitionVersion());
                                 return (Void) null;
                             }))
                             .compose(ignored -> complete(attempt))
-                            .mapEmpty();
+                            .map(ignored -> {
+                                uncertain.remove(key);
+                                return (Void) null;
+                            });
                 })
                 .recover(original -> recover(attempt, original));
         // Hook failures fail the operation, but cannot undo a committed activation.
@@ -184,7 +208,9 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
         return durable.find(attempt.key).transform(read -> {
             if (read.failed()) {
                 if (read.cause() != original) original.addSuppressed(read.cause());
-                // The commit outcome remains unknown: preserve the publication for reconciliation.
+                // The commit outcome remains unknown: preserve the publication for reconciliation, and
+                // remember it so a retry adopts it instead of registering the same version again.
+                uncertain.put(attempt.key, attempt.publication);
                 return Future.failedFuture(original);
             }
             Optional<WorkflowDefinitionRecord> current = read.result();
@@ -192,7 +218,10 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
                     && current.filter(r ->
                                     (r.status() == DefinitionStatus.ACTIVE || r.status() == DefinitionStatus.SUPERSEDED)
                                             && r.planHash().equals(attempt.record.planHash()))
-                            .isPresent()) return Future.succeededFuture();
+                            .isPresent()) {
+                uncertain.remove(attempt.key);
+                return Future.succeededFuture();
+            }
             return compensate(attempt, original);
         });
     }
@@ -226,14 +255,21 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
             if (attempt.publication != null) {
                 try {
                     WorkflowRegistry local = registry.get();
-                    if (local.allRegistered().stream().anyMatch(runtime -> runtime == attempt.publication))
+                    if (isRegistered(local, attempt.publication))
                         local.unregister(attempt.key.definitionId(), attempt.key.definitionVersion());
+                    // Forget the runtime only once it is gone; a failed removal leaves it to be adopted by a retry.
+                    uncertain.remove(attempt.key, attempt.publication);
                 } catch (RuntimeException compensation) {
                     if (compensation != original) original.addSuppressed(compensation);
                 }
             }
             return Future.failedFuture(original);
         });
+    }
+
+    /** Whether the registry holds exactly this runtime instance. */
+    private static boolean isRegistered(WorkflowRegistry local, RuntimeWorkflow runtime) {
+        return local.allRegistered().stream().anyMatch(registered -> registered == runtime);
     }
 
     private static <T> Future<T> work(Supplier<T> action) {

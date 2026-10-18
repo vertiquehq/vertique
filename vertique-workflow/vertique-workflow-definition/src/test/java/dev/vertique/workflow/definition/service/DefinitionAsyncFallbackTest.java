@@ -167,6 +167,46 @@ class DefinitionAsyncFallbackTest {
         assertThat(component.workflowRegistry().allRegistered()).isEmpty();
     }
 
+    @Test
+    @DisplayName("without a durable store a 2049-code-point uri fails the load and registers nothing")
+    void rejectsOverLongUriBeforeAnyState() {
+        // Given a no-store service and metadata whose uri exceeds the 2048 code point bound
+        NoStoreComponent component = DaggerDefinitionAsyncFallbackTest_NoStoreComponent.create();
+        WorkflowDefinitionService service = component.definitionService();
+        SourceMetadata overLong = new SourceMetadata("test", "u".repeat(2049), "rev-1", null, null, Instant.now());
+
+        // When the document is loaded
+        Future<CompiledDefinitionRef> loaded =
+                service.load(yamlFor("fallback-order", 1, FallbackOrderV1.class), DocumentFormat.YAML, overLong, null);
+
+        // Then the Future fails with IllegalArgumentException and nothing was stored or published
+        assertThatThrownBy(() -> ServiceTestHelpers.await(loaded)).isInstanceOf(IllegalArgumentException.class);
+        DefinitionFilter all = new DefinitionFilter(DefinitionFilter.TenantScope.ALL, null, null);
+        assertThat(ServiceTestHelpers.await(service.list(all))).isEmpty();
+        assertThat(component.workflowRegistry().allRegistered()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("without a durable store a 2048-code-point uri loads as a candidate")
+    void acceptsUriAtTheBound() {
+        // Given a no-store service and metadata whose uri is exactly 2048 supplementary characters
+        NoStoreComponent component = DaggerDefinitionAsyncFallbackTest_NoStoreComponent.create();
+        WorkflowDefinitionService service = component.definitionService();
+        String atBound = "\uD83D\uDE00".repeat(2048);
+        SourceMetadata provenance = new SourceMetadata("test", atBound, "rev-1", null, null, Instant.now());
+
+        // When the document is loaded
+        CompiledDefinitionRef loaded = ServiceTestHelpers.await(service.load(
+                yamlFor("fallback-order", 1, FallbackOrderV1.class), DocumentFormat.YAML, provenance, null));
+
+        // Then it is a candidate that keeps the full uri, and it is listed but not published
+        assertThat(loaded.status()).isEqualTo(ActivationStatus.CANDIDATE);
+        assertThat(loaded.source().uri()).isEqualTo(atBound);
+        DefinitionFilter all = new DefinitionFilter(DefinitionFilter.TenantScope.ALL, null, null);
+        assertThat(ServiceTestHelpers.await(service.list(all))).hasSize(1);
+        assertThat(component.workflowRegistry().allRegistered()).isEmpty();
+    }
+
     private static byte[] yamlFor(String id, long version, Class<?> contract) {
         return ("""
                 definitionId: %s

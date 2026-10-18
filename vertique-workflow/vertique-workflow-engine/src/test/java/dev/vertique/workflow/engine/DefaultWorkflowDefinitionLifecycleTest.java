@@ -5,9 +5,12 @@ package dev.vertique.workflow.engine;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import dev.vertique.workflow.contract.WorkflowContractMetadata;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
+import dev.vertique.workflow.exception.WorkflowDefinitionException;
 import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException;
 import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException.Reason;
+import dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowRegistry;
 import dev.vertique.workflow.registry.store.ActivationClaim;
@@ -26,8 +29,11 @@ import io.vertx.core.Future;
 import java.time.Instant;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Deque;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -488,6 +494,90 @@ class DefaultWorkflowDefinitionLifecycleTest {
         }
     }
 
+    @Test
+    @DisplayName("a retried activation adopts the runtime its unresolved earlier attempt published")
+    void retryAfterUnresolvedCompletionAdoptsItsOwnPublication() {
+        // Given a first activation that publishes locally, then fails to complete with an unknown outcome
+        // while the follow-up reread fails as well
+        ActivationStore store = new ActivationStore();
+        store.completions.add(Future.failedFuture(new IllegalStateException("commit outcome unknown")));
+        store.failReadsAfterFirstCompletion = true;
+        store.completions.add(Future.succeededFuture(ActivationOutcome.ACTIVE));
+        RecordingRegistry registry = new RecordingRegistry();
+        DefaultWorkflowDefinitionLifecycle lifecycle = new DefaultWorkflowDefinitionLifecycle(
+                Optional.of(store), () -> registry, Set.of(publishingLoader()), new DefinitionApplyQueue());
+
+        Future<Void> first = lifecycle.activate(KEY);
+
+        assertThat(first.failed()).isTrue();
+        RuntimeWorkflow published = registry.resolvePinned("wf", 1);
+        assertThat(registry.allRegistered()).containsExactly(published);
+        assertThat(registry.unregistered).isEmpty();
+
+        // When the same key is activated again after the claim became claimable again and reads work
+        store.readsFail = false;
+        Future<Void> second = lifecycle.activate(KEY);
+
+        // Then the activation succeeds, the registry still holds exactly the first runtime, and it was never removed
+        assertThat(second.succeeded())
+                .as("second activation: %s", second.cause())
+                .isTrue();
+        assertThat(store.completes).isEqualTo(2);
+        assertThat(registry.allRegistered()).hasSize(1);
+        assertThat(registry.resolvePinned("wf", 1)).isSameAs(published);
+        assertThat(registry.unregistered).isEmpty();
+    }
+
+    @Test
+    @DisplayName("a registration made by someone else is never adopted and survives the failed activation")
+    void doesNotAdoptForeignRegistration() {
+        // Given a runtime for the key registered directly in the registry, and a lifecycle that never published it
+        ActivationStore store = new ActivationStore();
+        store.completions.add(Future.succeededFuture(ActivationOutcome.ACTIVE));
+        RecordingRegistry registry = new RecordingRegistry();
+        WorkflowDefinition<?, ?> foreignDefinition = Mockito.mock(WorkflowDefinition.class);
+        Mockito.when(foreignDefinition.definitionId()).thenReturn("wf");
+        Mockito.when(foreignDefinition.definitionVersion()).thenReturn(1L);
+        registry.register(foreignDefinition);
+        RuntimeWorkflow foreign = registry.resolvePinned("wf", 1);
+        DefaultWorkflowDefinitionLifecycle lifecycle = new DefaultWorkflowDefinitionLifecycle(
+                Optional.of(store), () -> registry, Set.of(publishingLoader()), new DefinitionApplyQueue());
+
+        // When the key is activated
+        Future<Void> result = lifecycle.activate(KEY);
+
+        // Then the activation fails on the existing registration, which stays registered, and the claim is released
+        assertThat(result.failed()).isTrue();
+        assertThat(result.cause()).isInstanceOf(WorkflowDefinitionException.class);
+        assertThat(registry.allRegistered()).containsExactly(foreign);
+        assertThat(registry.unregistered).isEmpty();
+        assertThat(store.completes).isZero();
+        assertThat(store.releases).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("activating a key whose earlier activation succeeded changes nothing")
+    void secondActivationOfActiveKeyIsANoOp() {
+        // Given a key that was activated successfully
+        ActivationStore store = new ActivationStore();
+        store.completions.add(Future.succeededFuture(ActivationOutcome.ACTIVE));
+        RecordingRegistry registry = new RecordingRegistry();
+        DefaultWorkflowDefinitionLifecycle lifecycle = new DefaultWorkflowDefinitionLifecycle(
+                Optional.of(store), () -> registry, Set.of(publishingLoader()), new DefinitionApplyQueue());
+        assertThat(lifecycle.activate(KEY).succeeded()).isTrue();
+        RuntimeWorkflow published = registry.resolvePinned("wf", 1);
+
+        // When it is activated again
+        Future<Void> again = lifecycle.activate(KEY);
+
+        // Then it succeeds without another claim or completion, and the registration is unchanged
+        assertThat(again.succeeded()).isTrue();
+        assertThat(store.claims).isEqualTo(1);
+        assertThat(store.completes).isEqualTo(1);
+        assertThat(registry.allRegistered()).containsExactly(published);
+        assertThat(registry.unregistered).isEmpty();
+    }
+
     private static DefaultWorkflowDefinitionLifecycle lifecycle(
             FakeStore store, Set<PersistedDefinitionLoader> loaders, WorkflowRegistry registry) {
         return new DefaultWorkflowDefinitionLifecycle(
@@ -503,6 +593,122 @@ class DefaultWorkflowDefinitionLifecycleTest {
         Mockito.doReturn(definition).when(loader).load(Mockito.any(), Mockito.any());
         Mockito.when(loader.planHash(definition)).thenReturn(PLAN_HASH);
         return loader;
+    }
+
+    /** Behaves like a registry table for one key: reads reflect the committed status and can be made to fail. */
+    private static final class ActivationStore implements WorkflowDefinitionRegistryStore {
+        final Deque<Future<ActivationOutcome>> completions = new ArrayDeque<>();
+        DefinitionStatus status = DefinitionStatus.CANDIDATE;
+        boolean readsFail;
+        boolean failReadsAfterFirstCompletion;
+        int claims;
+        int completes;
+        int releases;
+
+        @Override
+        public Future<Optional<WorkflowDefinitionRecord>> find(DefinitionKey key) {
+            if (readsFail) return Future.failedFuture(new IllegalStateException("read failed"));
+            return Future.succeededFuture(Optional.of(row(status)));
+        }
+
+        @Override
+        public Future<ActivationClaim> claim(DefinitionKey key) {
+            claims++;
+            return Future.succeededFuture(new ActivationClaim(key, UUID.randomUUID()));
+        }
+
+        @Override
+        public Future<Optional<WorkflowDefinitionDocument>> findDocument(DefinitionKey key) {
+            return Future.succeededFuture(Optional.of(new WorkflowDefinitionDocument(key, "{}", "YAML")));
+        }
+
+        @Override
+        public Future<ActivationOutcome> complete(ActivationClaim claim) {
+            completes++;
+            if (completes == 1 && failReadsAfterFirstCompletion) readsFail = true;
+            Future<ActivationOutcome> next = completions.poll();
+            if (next == null) return Future.failedFuture(new IllegalStateException("unscripted completion"));
+            if (next.succeeded()) status = DefinitionStatus.ACTIVE;
+            return next;
+        }
+
+        @Override
+        public Future<Void> release(ActivationClaim claim) {
+            releases++;
+            return Future.succeededFuture();
+        }
+
+        @Override
+        public Future<Void> insertCandidate(WorkflowDefinitionRecord record, WorkflowDefinitionDocument document) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public Future<List<WorkflowDefinitionRecord>> list(DefinitionFilter filter) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public Future<ReconcileOutcome> upsertDocument(
+                WorkflowDefinitionRecord record, WorkflowDefinitionDocument document) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public Future<Void> recomputeActive(String tenantKey, String definitionId) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public Future<Void> transition(DefinitionKey key, DefinitionStatus from, DefinitionStatus to) {
+            throw new UnsupportedOperationException();
+        }
+    }
+
+    /**
+     * Rejects a second registration of an id and version like the default registry does, creates a new
+     * runtime per registration, and logs every removal.
+     */
+    private static final class RecordingRegistry implements WorkflowRegistry {
+        private final Map<String, RuntimeWorkflow> registrations = new LinkedHashMap<>();
+        final List<String> unregistered = new ArrayList<>();
+
+        @Override
+        public void register(WorkflowDefinition<?, ?> def) {
+            String name = def.definitionId() + "@" + def.definitionVersion();
+            if (registrations.containsKey(name))
+                throw new WorkflowDefinitionException("definition '" + def.definitionId() + "' v"
+                        + def.definitionVersion() + " is already registered");
+            registrations.put(name, Mockito.mock(RuntimeWorkflow.class));
+        }
+
+        @Override
+        public RuntimeWorkflow resolveCurrent(String definitionId) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public RuntimeWorkflow resolvePinned(String definitionId, long version) {
+            RuntimeWorkflow found = registrations.get(definitionId + "@" + version);
+            if (found == null) throw new WorkflowVersionPinUnavailableException(definitionId, version, null);
+            return found;
+        }
+
+        @Override
+        public WorkflowContractMetadata contractMetadata(Class<?> contractInterface) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public Collection<RuntimeWorkflow> allRegistered() {
+            return List.copyOf(registrations.values());
+        }
+
+        @Override
+        public void unregister(String definitionId, long version) {
+            unregistered.add(definitionId + "@" + version);
+            registrations.remove(definitionId + "@" + version);
+        }
     }
 
     /** Serves the candidate row for the first two reads, fails every later read, counts releases. */

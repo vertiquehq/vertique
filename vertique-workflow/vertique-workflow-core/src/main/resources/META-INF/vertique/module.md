@@ -358,7 +358,7 @@ become SUPERSEDED; CANDIDATE, ACTIVATING, DEPRECATED, and RETIRED rows remain un
 `WorkflowRegistry` gains `markDeprecated(definitionId, version)` (default throws
 `UnsupportedOperationException`) and `isDeprecated` (default `false`) so existing third-party registries are
 unaffected. `DefaultWorkflowRegistry` keeps the mark under its lock: current resolution skips deprecated
-versions and fails as unknown when all are deprecated, pinned resolution still serves them, and
+versions and fails with the same unknown-definition exception when all are deprecated, pinned resolution still serves them, and
 `unregister` clears the mark. Marking an unregistered version is a no-op. The store SPI adds the
 conditional `transition(key, from, to)` operation and the lifecycle adds `deprecate(DefinitionKey)`.
 Candidates of different owners (tenant keys or global) may coexist for one id, but only one owner holds

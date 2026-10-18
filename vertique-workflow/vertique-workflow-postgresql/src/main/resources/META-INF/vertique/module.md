@@ -124,6 +124,10 @@ UTF-8 byte length and code-point count in the same SQL statement that conditiona
 Oversized rows return identity/counts with no body transfer, then fail with a sanitized key/limit
 message; they are not treated as absent. Metadata listing never selects the source body.
 
+The stored plan hash covers the compiled plan structure. Restore recompiles the stored text and compares
+that hash, which detects drift between the text and its recorded identity; it is not tamper evidence and
+does not cover callback bodies, so restrict write access to the table.
+
 With `WorkflowDefinitionModule` installed, the engine restores activated global documents after
 Flyway migration, recomputes global active membership, and refreshes verified definition-cache entries
 from committed metadata before BOOTSTRAP verticle deployment. Every node sharing live document rows must

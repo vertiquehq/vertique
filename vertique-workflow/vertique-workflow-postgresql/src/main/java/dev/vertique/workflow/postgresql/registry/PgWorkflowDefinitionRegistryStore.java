@@ -208,7 +208,8 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
                             "another owner holds this definition id: " + heldOwners(rows, key));
                 boolean higher = java.util.stream.StreamSupport.stream(rows.spliterator(), false)
                         .anyMatch(r -> Objects.equals(key.tenantKey(), r.getString("tenant_key"))
-                                && "ACTIVE".equals(r.getString("status"))
+                                && ("ACTIVE".equals(r.getString("status"))
+                                        || "SUPERSEDED".equals(r.getString("status")))
                                 && r.getLong("definition_version") > key.definitionVersion());
                 Future<Void> demote = higher
                         ? Future.succeededFuture()

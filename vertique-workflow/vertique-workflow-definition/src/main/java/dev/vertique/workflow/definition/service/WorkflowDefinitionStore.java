@@ -52,15 +52,6 @@ import java.util.concurrent.atomic.AtomicReference;
 @Singleton
 public final class WorkflowDefinitionStore {
 
-    // --- Internal key ---
-
-    /**
-     * Composite key for the {@code byKey} map: {@code (definitionId, definitionVersion)}.
-     *
-     * @param definitionId the workflow definition id; non-null
-     * @param definitionVersion the definition version
-     */
-
     // --- Internal entry ---
 
     /**
@@ -171,7 +162,6 @@ public final class WorkflowDefinitionStore {
 
     Optional<StoredEntry> get(DefinitionKey key) {
         String definitionId = key.definitionId();
-        long definitionVersion = key.definitionVersion();
         Objects.requireNonNull(definitionId, "definitionId");
         return Optional.ofNullable(byKey.get(key));
     }
@@ -235,7 +225,6 @@ public final class WorkflowDefinitionStore {
 
     ActivationStatus currentStatus(DefinitionKey key) {
         String definitionId = key.definitionId();
-        long definitionVersion = key.definitionVersion();
         Objects.requireNonNull(definitionId, "definitionId");
         StoredEntry entry = byKey.get(key);
         return entry != null ? entry.status().get() : null;
@@ -258,7 +247,6 @@ public final class WorkflowDefinitionStore {
 
     void resetToCandidate(DefinitionKey key) {
         String definitionId = key.definitionId();
-        long definitionVersion = key.definitionVersion();
         Objects.requireNonNull(definitionId, "definitionId");
         StoredEntry entry = byKey.get(key);
         if (entry != null) {

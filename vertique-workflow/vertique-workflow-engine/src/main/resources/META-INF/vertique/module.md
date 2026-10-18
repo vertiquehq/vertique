@@ -178,7 +178,7 @@ current resolution, and an explicit-version start or a migration whose target is
 `WorkflowDefinitionLifecycleException` reason `DEPRECATED` before any instance row is written. Signals,
 timers and resumption of instances already pinned to the version, and migration away from it, are
 unaffected. These checks use the node's own registry: this call does not tell other nodes, and a freshly
-started node does not yet restore deprecated versions, so do not rely on them alone to stop starts elsewhere
+started node does not yet restore deprecation (see the definition reference for the restart consequences), so do not rely on them alone to stop starts elsewhere
 or to prove that nothing still runs the version. Marking is a no-op for a version not registered on the
 node, and a registry without deprecation support fails the call after the durable commit, leaving the
 committed status in place.

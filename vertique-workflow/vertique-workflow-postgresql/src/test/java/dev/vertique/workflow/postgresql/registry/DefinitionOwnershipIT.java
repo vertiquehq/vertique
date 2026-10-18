@@ -26,6 +26,8 @@ import dev.vertique.workflow.postgresql.registry.ManagedDefinitionDatabase.AppCo
 import dev.vertique.workflow.postgresql.registry.ManagedDefinitionDatabase.BootObservation;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowRegistry;
+import dev.vertique.workflow.registry.store.ActivationClaim;
+import dev.vertique.workflow.registry.store.ActivationOutcome;
 import dev.vertique.workflow.registry.store.DefinitionFilter;
 import dev.vertique.workflow.registry.store.DefinitionFilter.TenantScope;
 import dev.vertique.workflow.registry.store.DefinitionKey;
@@ -761,6 +763,77 @@ public class DefinitionOwnershipIT {
                         .as("statements issued for a %s", entry.getKey())
                         .isZero();
             }
+        }
+    }
+
+    @Test
+    @DisplayName("completing a lower version never becomes active while a higher version of the owner stays eligible")
+    void demotesCompletingVersionBelowSupersededHigherVersion(Vertx vertx) {
+        String supersededHigherId = "ownership-higher-superseded-doc";
+        String deprecatedHigherId = "ownership-higher-deprecated-doc";
+        String activeHigherId = "ownership-higher-active-doc";
+        DefinitionKey supersededV1 = new DefinitionKey(null, supersededHigherId, 1);
+        DefinitionKey supersededV2 = new DefinitionKey(null, supersededHigherId, 2);
+        DefinitionKey supersededV3 = new DefinitionKey(null, supersededHigherId, 3);
+        DefinitionKey deprecatedV1 = new DefinitionKey(null, deprecatedHigherId, 1);
+        DefinitionKey deprecatedV3 = new DefinitionKey(null, deprecatedHigherId, 3);
+        DefinitionKey activeV1 = new DefinitionKey(null, activeHigherId, 1);
+        DefinitionKey activeV2 = new DefinitionKey(null, activeHigherId, 2);
+
+        try (Fixture fixture = new Fixture(vertx)) {
+            fixture.ownRows(supersededHigherId, deprecatedHigherId, activeHigherId);
+            Node node = fixture.node();
+
+            // Given version 2 SUPERSEDED, version 3 DEPRECATED and a version 1 candidate of one owner
+            // (the higher statuses are seeded by SQL because the public operations cannot reach this state)
+            await(node.store().insertCandidate(candidate(supersededV1), documentCarrier(supersededV1)));
+            await(node.store().insertCandidate(candidate(supersededV2), documentCarrier(supersededV2)));
+            await(node.store().insertCandidate(candidate(supersededV3), documentCarrier(supersededV3)));
+            fixture.forceStatus(supersededV2, DefinitionStatus.SUPERSEDED);
+            fixture.forceStatus(supersededV3, DefinitionStatus.DEPRECATED);
+
+            // When version 1 is claimed and completed
+            ActivationClaim supersededClaim = await(node.store().claim(supersededV1));
+            ActivationOutcome supersededOutcome = await(node.store().complete(supersededClaim));
+
+            // Then it is SUPERSEDED, the higher rows are untouched, and the owner has no ACTIVE row
+            assertThat(supersededOutcome).isEqualTo(ActivationOutcome.SUPERSEDED);
+            assertThat(fixture.stored(supersededHigherId))
+                    .extracting(Stored::version, Stored::status, Stored::token)
+                    .containsExactly(
+                            tuple(1L, "SUPERSEDED", null),
+                            tuple(2L, "SUPERSEDED", null),
+                            tuple(3L, "DEPRECATED", null));
+
+            // Given only a DEPRECATED version 3 above a version 1 candidate
+            await(node.store().insertCandidate(candidate(deprecatedV1), documentCarrier(deprecatedV1)));
+            await(node.store().insertCandidate(candidate(deprecatedV3), documentCarrier(deprecatedV3)));
+            fixture.forceStatus(deprecatedV3, DefinitionStatus.DEPRECATED);
+
+            // When version 1 is claimed and completed
+            ActivationClaim deprecatedClaim = await(node.store().claim(deprecatedV1));
+            ActivationOutcome deprecatedOutcome = await(node.store().complete(deprecatedClaim));
+
+            // Then nothing eligible is higher, so version 1 becomes ACTIVE and version 3 stays DEPRECATED
+            assertThat(deprecatedOutcome).isEqualTo(ActivationOutcome.ACTIVE);
+            assertThat(fixture.stored(deprecatedHigherId))
+                    .extracting(Stored::version, Stored::status, Stored::token)
+                    .containsExactly(tuple(1L, "ACTIVE", null), tuple(3L, "DEPRECATED", null));
+
+            // Given an ACTIVE version 2 above a version 1 candidate
+            await(node.store().insertCandidate(candidate(activeV1), documentCarrier(activeV1)));
+            await(node.store().insertCandidate(candidate(activeV2), documentCarrier(activeV2)));
+            fixture.forceStatus(activeV2, DefinitionStatus.ACTIVE);
+
+            // When version 1 is claimed and completed
+            ActivationClaim activeClaim = await(node.store().claim(activeV1));
+            ActivationOutcome activeOutcome = await(node.store().complete(activeClaim));
+
+            // Then version 1 is SUPERSEDED and version 2 stays the only ACTIVE row
+            assertThat(activeOutcome).isEqualTo(ActivationOutcome.SUPERSEDED);
+            assertThat(fixture.stored(activeHigherId))
+                    .extracting(Stored::version, Stored::status, Stored::token)
+                    .containsExactly(tuple(1L, "SUPERSEDED", null), tuple(2L, "ACTIVE", null));
         }
     }
 
