@@ -4,6 +4,8 @@
 package dev.vertique.json.schema.validation;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.tuple;
+import static org.junit.jupiter.api.Assertions.assertAll;
 
 import dev.vertique.core.validation.ViolationDetail;
 import io.vertx.core.json.JsonArray;
@@ -126,11 +128,66 @@ class ViolationDetailsTest {
     @ParameterizedTest(name = "{0} -> {1}")
     @CsvSource(
             nullValues = "NULL",
-            value = {"'#/a%20b/0/a~1b', '/a b/0/a~1b'", "'#/%C3%A9', '/é'", "'#', ''", "'', ''", "'/', ''", "NULL, ''"})
-    @DisplayName("a fragment pointer is percent-decoded into an RFC 6901 pointer and every root form maps to empty")
+            value = {
+                "'#/a%20b/0/a~1b', '/a b/0/a~1b'",
+                "'#/%C3%A9', '/é'",
+                "'#', ''",
+                "'', ''",
+                "'/', '/'",
+                "'#/', '/'",
+                "NULL, ''"
+            })
+    @DisplayName("a fragment pointer is percent-decoded into an RFC 6901 pointer, the root forms map to empty and"
+            + " a lone slash is the member with the empty name")
     void rfc6901DecodesFragmentPointersAndMapsRootToEmpty(String engineLocation, String expected) {
         // Given an engine location, When it is converted, Then the pointer is decoded and root is empty
         assertThat(ViolationDetails.rfc6901(engineLocation)).isEqualTo(expected);
+    }
+
+    @Test
+    @DisplayName("a member with the empty name keeps its place in a cut-back location, and an undeclared one ends"
+            + " the run")
+    void emptyNamedMemberKeepsItsPlaceInTheDeclaredLocation() {
+        // Given a schema that declares the member "" holding a name, and a schema that reaches the member ""
+        // only through additionalProperties while declaring a root name of its own
+        JsonObject declared = Schemas.json("{'properties':{'':{'properties':{'name':{'minLength':1}}}}}");
+        JsonObject undeclared = Schemas.json("{'properties':{'name':{'type':'string'}},"
+                + "'additionalProperties':{'properties':{'name':{'minLength':1}}}}");
+        JsonObject body = Schemas.json("{'':{'name':''}}");
+
+        // When each body is validated and collected in the RFC 6901 form
+        List<ViolationDetail> throughDeclared =
+                ViolationDetails.collect(Validators.validate(declared, body), declared, false, PathForm.RFC6901);
+        List<ViolationDetail> throughUndeclared =
+                ViolationDetails.collect(Validators.validate(undeclared, body), undeclared, false, PathForm.RFC6901);
+
+        // Then the declared one is located at the empty-named member's name, and the undeclared one stops at the
+        // root, never at the different location /name
+        assertAll(
+                () -> assertThat(throughDeclared)
+                        .extracting(ViolationDetail::path, ViolationDetail::type)
+                        .containsExactly(tuple("//name", "minLength")),
+                () -> assertThat(throughUndeclared)
+                        .extracting(ViolationDetail::path, ViolationDetail::type)
+                        .containsExactly(tuple("", "minLength")));
+    }
+
+    @Test
+    @DisplayName("a violation at an undeclared empty-named member stops at the object that holds it")
+    void violationAtAnUndeclaredEmptyNamedMemberStopsAtTheObject() {
+        // Given a schema that reaches the member "" only through additionalProperties, and a body whose only
+        // member is named ""
+        JsonObject schema = Schemas.json("{'type':'object','additionalProperties':{'type':'string','minLength':2}}");
+        JsonObject body = Schemas.json("{'':'x'}");
+
+        // When the body is validated and collected in the RFC 6901 form
+        List<ViolationDetail> details =
+                ViolationDetails.collect(Validators.validate(schema, body), schema, false, PathForm.RFC6901);
+
+        // Then the violation is located at the object, never at the client-named location /
+        assertThat(details)
+                .extracting(ViolationDetail::path, ViolationDetail::type)
+                .containsExactly(tuple("", "minLength"));
     }
 
     @Test

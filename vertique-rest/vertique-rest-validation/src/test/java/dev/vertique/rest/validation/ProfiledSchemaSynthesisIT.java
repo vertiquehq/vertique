@@ -689,8 +689,8 @@ public class ProfiledSchemaSynthesisIT {
                         1,
                         errors == null ? -1 : errors.size(),
                         "one structural rejection must contribute exactly one detail; body: " + rejectionBody),
-                () -> assertFalse(
-                        detail(errors).getString("path", "").isBlank(),
+                () -> assertTrue(
+                        detail(errors).containsKey("pointer"),
                         "the value-free detail must still identify a failing location; detail: "
                                 + detail(errors).encode()),
                 () -> assertFalse(
@@ -1203,18 +1203,18 @@ public class ProfiledSchemaSynthesisIT {
         assertAll(
                 () -> assertEquals(400, nullable.statusCode(), "body: " + nullableBody),
                 () -> assertEquals(
-                        List.of("#/pet/name"),
+                        List.of("/pet/name"),
                         paths(problemErrors(nullableBody), "maxLength"),
                         "a violation inside the nullable nested object must name the declared field; body: "
                                 + nullableBody),
                 () -> assertEquals(400, plain.statusCode(), "body: " + plainBody),
                 () -> assertEquals(
-                        List.of("#/plain/name"),
+                        List.of("/plain/name"),
                         paths(problemErrors(plainBody), "maxLength"),
                         "a declared plain nested location is named unchanged; body: " + plainBody),
                 () -> assertEquals(400, clientKey.statusCode(), "body: " + clientKeyBody),
                 () -> assertEquals(
-                        List.of("#/pet", "#/pet"),
+                        List.of("/pet", "/pet"),
                         paths(problemErrors(clientKeyBody), "type"),
                         "the null branch's type failure and the extra's, under an undeclared client key, both"
                                 + " name the nullable object: the key is cut back; body: " + clientKeyBody),
@@ -1223,7 +1223,7 @@ public class ProfiledSchemaSynthesisIT {
                         "the client's undeclared key must not be echoed in the response; body: " + clientKeyBody),
                 () -> assertEquals(400, plainClientKey.statusCode(), "body: " + plainClientKeyBody),
                 () -> assertEquals(
-                        List.of("#/plain"),
+                        List.of("/plain"),
                         paths(problemErrors(plainClientKeyBody), "type"),
                         "an undeclared client key under the plain nested object is cut back to it; body: "
                                 + plainClientKeyBody),
@@ -1234,7 +1234,7 @@ public class ProfiledSchemaSynthesisIT {
     }
 
     /**
-     * Returns the {@code path} of every detail carrying {@code keyword} as its {@code type}.
+     * Returns the {@code pointer} of every detail carrying {@code keyword} as its {@code type}.
      *
      * @param errors  the decoded {@code errors} array, possibly {@code null}
      * @param keyword the failed keyword
@@ -1246,7 +1246,7 @@ public class ProfiledSchemaSynthesisIT {
             for (int index = 0; index < errors.size(); index++) {
                 JsonObject error = errors.getJsonObject(index);
                 if (keyword.equals(error.getString("type"))) {
-                    paths.add(error.getString("path"));
+                    paths.add(error.getString("pointer"));
                 }
             }
         }
@@ -1686,7 +1686,7 @@ public class ProfiledSchemaSynthesisIT {
         JsonArray errors = problemErrors(rejectionBody);
         String longKeyBody = longKeyRejected.bodyAsString();
         JsonArray longKeyErrors = problemErrors(longKeyBody);
-        String longKeyPath = detail(longKeyErrors).getString("path");
+        String longKeyPath = detail(longKeyErrors).getString("pointer");
 
         assertAll(
                 () -> assertEquals(
@@ -1715,15 +1715,15 @@ public class ProfiledSchemaSynthesisIT {
                 // segment is not a name the schema declares — so this row asserts the property both
                 // choices must have, not one of their two literals.
                 () -> assertNotNull(
-                        detail(errors).getString("path"),
-                        "the value-free detail must still identify a failing location; detail: "
-                                + detail(errors).encode()),
-                () -> assertFalse(
-                        detail(errors).getString("path", "").isBlank(),
+                        detail(errors).getString("pointer"),
                         "the value-free detail must still identify a failing location; detail: "
                                 + detail(errors).encode()),
                 () -> assertTrue(
-                        detail(errors).getString("path", "").length() <= VALUE_FREE_PATH_BOUND,
+                        detail(errors).containsKey("pointer"),
+                        "the value-free detail must still identify a failing location; detail: "
+                                + detail(errors).encode()),
+                () -> assertTrue(
+                        detail(errors).getString("pointer", "").length() <= VALUE_FREE_PATH_BOUND,
                         "the value-free detail's path is bounded; detail: "
                                 + detail(errors).encode()),
                 () -> assertFalse(
@@ -1791,7 +1791,7 @@ public class ProfiledSchemaSynthesisIT {
                                 + " chosen length and does not satisfy this; path length: "
                                 + (longKeyPath == null ? -1 : longKeyPath.length())),
                 () -> assertTrue(
-                        longKeyPath != null && !longKeyPath.isBlank(),
+                        longKeyPath != null && detail(longKeyErrors).containsKey("pointer"),
                         "the bounded detail must still identify a failing location, so bounding it does not"
                                 + " empty it; detail: " + detail(longKeyErrors).encode()),
                 () -> assertFalse(

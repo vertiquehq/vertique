@@ -298,7 +298,8 @@ class FormatCheckReuseTest {
             ValidationErrorDetail actual = details.get(0);
             assertAll(
                     "(" + format + ") the invalid value's detail must match its short invalid value's detail",
-                    () -> assertEquals(oracle.path(), actual.path(), "path"),
+                    () -> assertEquals(oracle.pointer(), actual.pointer(), "pointer"),
+                    () -> assertEquals(oracle.parameter(), actual.parameter(), "parameter"),
                     () -> assertEquals(oracle.location(), actual.location(), "location"),
                     () -> assertEquals(oracle.type(), actual.type(), "type"),
                     () -> assertEquals(oracle.detail(), actual.detail(), "detail"));
@@ -1990,7 +1991,9 @@ class FormatCheckReuseTest {
     }
 
     private static List<String> types(List<ValidationErrorDetail> details) {
-        return details.stream().map(d -> d.type() + "@" + abbreviate(d.path())).toList();
+        return details.stream()
+                .map(d -> d.type() + "@" + abbreviate(d.pointer() != null ? d.pointer() : d.parameter()))
+                .toList();
     }
 
     private static String abbreviate(String text) {

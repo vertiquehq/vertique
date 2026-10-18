@@ -216,12 +216,10 @@ public class MultipartFilePartValidationIT {
                 assertEquals(1, errors.size(), "the request has exactly one text-form violation");
                 ValidationErrorDetail actual = errors.getJsonObject(0).mapTo(ValidationErrorDetail.class);
                 assertEquals(
-                        new ValidationErrorDetail(
-                                "caption",
-                                "must have a minimum length of 3",
-                                "form",
-                                "minLength",
-                                Map.of("minLength", 3)),
+                        ValidationErrorDetail.ofParameter("caption", "must have a minimum length of 3")
+                                .withLocation("form")
+                                .withType("minLength")
+                                .withArgs(Map.of("minLength", 3)),
                         actual);
                 assertFalse(INVOKED.get(), "the resource must not run after text-form validation fails");
             });

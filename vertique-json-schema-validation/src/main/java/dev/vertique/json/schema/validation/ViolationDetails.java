@@ -257,10 +257,11 @@ public final class ViolationDetails {
     /**
      * Converts an engine instance location into an RFC 6901 JSON pointer.
      *
-     * <p>A leading {@code #} is removed and each segment is percent-decoded as UTF-8; an escape that is not
+     * <p>One leading {@code #} is removed and each segment is percent-decoded as UTF-8; an escape that is not
      * well formed, including one written with a non-ASCII digit, is left as written. The pointer escapes
      * {@code ~0} and {@code ~1} are kept. The root, in any
-     * spelling ({@code #}, the empty string, {@code /}, or {@code null}), becomes the empty string.
+     * spelling ({@code #}, the empty string, or {@code null}), becomes the empty string; {@code /} and
+     * {@code #/} are the member with the empty name and become {@code /}.
      *
      * @param engineLocation the engine's instance location, for example {@code #/a%20b/0/a~1b}; may be
      *     {@code null}
@@ -271,7 +272,7 @@ public final class ViolationDetails {
             return "";
         }
         String pointer = engineLocation.startsWith("#") ? engineLocation.substring(1) : engineLocation;
-        if (pointer.isEmpty() || "/".equals(pointer)) {
+        if (pointer.isEmpty()) {
             return "";
         }
         StringBuilder converted = new StringBuilder(pointer.length());
@@ -453,7 +454,8 @@ public final class ViolationDetails {
      * {@code items} schema at that point names it, at the subschema reached so far or in any {@code allOf},
      * {@code anyOf} or {@code oneOf} branch of it. The engine reports each segment escaped and percent-encoded,
      * so a segment is decoded before it is looked up, and the reported spelling is what the path keeps. A segment
-     * counts as an array index only when it is a plausible one.
+     * counts as an array index only when it is a plausible one. Only the empty element before the first
+     * {@code /} is skipped: a later empty segment is the member named {@code ""}, looked up like any other name.
      *
      * <p>Resolution fails closed: a segment that cannot be shown to be declared, under an unresolvable
      * {@code $ref}, a composition past the subschema bound, a malformed encoding, or a {@code null} schema, ends
@@ -465,13 +467,15 @@ public final class ViolationDetails {
         }
         String anchor = instanceLocation.startsWith("#") ? "#" : "";
         String pointer = instanceLocation.substring(anchor.length());
-        if (pointer.isEmpty() || "/".equals(pointer)) {
+        if (pointer.isEmpty()) {
             return instanceLocation;
         }
         StringBuilder declared = new StringBuilder(anchor);
         List<JsonObject> nodes = schema == null ? List.of() : List.of(schema);
-        for (String segment : pointer.split("/", -1)) {
-            if (segment.isEmpty()) {
+        String[] segments = pointer.split("/", -1);
+        for (int position = 0; position < segments.length; position++) {
+            String segment = segments[position];
+            if (position == 0 && segment.isEmpty()) {
                 continue;
             }
             String name = decodeSegment(segment);

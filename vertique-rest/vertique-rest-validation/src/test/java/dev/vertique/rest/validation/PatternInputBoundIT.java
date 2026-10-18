@@ -98,11 +98,11 @@ public class PatternInputBoundIT {
     /**
      * TP-009's 4,096 half, pinned from the baseline gate (open-core {@code 2f54d2d9}): the {@code errors}
      * the unmodified gate answers {@code {"text": worst(4096)}} with, a single {@code pattern} detail,
-     * so the pattern ran.
+     * so the pattern ran. The location is the one the gate reports in {@code pointer}.
      */
     private static final JsonArray BASELINE_WORST_CASE_ERRORS = new JsonArray()
             .add(new JsonObject()
-                    .put("path", "#/text")
+                    .put("pointer", "/text")
                     .put("detail", "must match pattern: " + QUADRATIC)
                     .put("location", "body")
                     .put("type", "pattern")
@@ -416,24 +416,37 @@ public class PatternInputBoundIT {
     /**
      * Asserts a 400 whose {@code errors} array holds exactly one bound detail with the given fields.
      *
+     * <p>A body detail carries {@code pointer} {@code ""} and no {@code parameter}; any other location
+     * carries {@code parameter} and no {@code pointer}; no detail carries both, and none carries the
+     * retired {@code path}.
+     *
      * @param reply    the reply
-     * @param path     the expected {@code path}, or {@code null} when the proof does not name it
+     * @param name     the expected {@code parameter} for a non-body location (the empty string for the
+     *                 body), or {@code null} when the proof does not name it
      * @param location the expected {@code location}, or {@code null} when the proof does not name it
      * @param type     the expected {@code type}
      * @param argName  the name of the detail's single argument
      * @param limit    the configured limit the argument carries
      */
     private static void assertSingleBoundDetail(
-            Reply reply, String path, String location, String type, String argName, int limit) {
+            Reply reply, String name, String location, String type, String argName, int limit) {
         JsonArray errors = reply.errors();
         JsonObject detail = errors == null || errors.isEmpty() ? new JsonObject() : errors.getJsonObject(0);
         assertAll(
                 () -> assertEquals(400, reply.status(), "status; body: " + abbreviate(reply.body())),
                 () -> assertEquals(
                         1, errors == null ? -1 : errors.size(), "detail count; body: " + abbreviate(reply.body())),
+                () -> assertFalse(detail.containsKey("path"), "the retired path member must be absent: " + detail),
+                () -> assertFalse(
+                        detail.containsKey("pointer") && detail.containsKey("parameter"),
+                        "pointer and parameter are never both present: " + detail),
                 () -> {
-                    if (path != null) {
-                        assertEquals(path, detail.getString("path"), "path");
+                    if (name != null && name.isEmpty()) {
+                        assertEquals("", detail.getString("pointer"), "pointer");
+                        assertFalse(detail.containsKey("parameter"), "a body detail names no parameter: " + detail);
+                    } else if (name != null) {
+                        assertEquals(name, detail.getString("parameter"), "parameter");
+                        assertFalse(detail.containsKey("pointer"), "a parameter detail has no pointer: " + detail);
                     }
                 },
                 () -> {

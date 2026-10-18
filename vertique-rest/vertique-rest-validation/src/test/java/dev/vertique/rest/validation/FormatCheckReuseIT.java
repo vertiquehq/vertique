@@ -312,7 +312,9 @@ public class FormatCheckReuseIT {
                         1,
                         oracleErrors == null ? -1 : oracleErrors.size(),
                         "oracle detail count; body: " + abbreviate(oracle.body())),
-                () -> assertEquals(oracleDetail.getString("path"), actualDetail.getString("path"), "path"),
+                () -> assertEquals(oracleDetail.getString("pointer"), actualDetail.getString("pointer"), "pointer"),
+                () -> assertEquals(
+                        oracleDetail.getString("parameter"), actualDetail.getString("parameter"), "parameter"),
                 () -> assertEquals(oracleDetail.getString("location"), actualDetail.getString("location"), "location"),
                 () -> assertEquals(oracleDetail.getString("type"), actualDetail.getString("type"), "type"),
                 () -> assertEquals(oracleDetail.getString("detail"), actualDetail.getString("detail"), "detail"));
@@ -321,7 +323,7 @@ public class FormatCheckReuseIT {
     /**
      * Asserts a 400 whose {@code errors} array holds exactly one value-free {@code
      * patternInputLength} detail bounding the body at {@code jaxrs.validationPatternMaxChars}'s
-     * default (4,096 characters): {@code path} {@code ""}, {@code location} {@code "body"}, {@code
+     * default (4,096 characters): {@code pointer} {@code ""}, {@code location} {@code "body"}, {@code
      * type} {@code patternInputLength}, and {@code args} {@code {"maxChars": 4096}} — T004's
      * per-string bound detail (helper copied from {@code PatternInputBoundIT#assertSingleBoundDetail},
      * private there, per E5).
@@ -337,7 +339,7 @@ public class FormatCheckReuseIT {
                 () -> assertEquals(400, reply.status(), "status; body: " + abbreviate(reply.body())),
                 () -> assertEquals(
                         1, errors == null ? -1 : errors.size(), "detail count; body: " + abbreviate(reply.body())),
-                () -> assertEquals("", detail.getString("path"), "path"),
+                () -> assertEquals("", detail.getString("pointer"), "pointer"),
                 () -> assertEquals("body", detail.getString("location"), "location"),
                 () -> assertEquals("patternInputLength", detail.getString("type"), "type"),
                 () -> assertEquals(new JsonObject().put("maxChars", 4096), detail.getJsonObject("args"), "args"));

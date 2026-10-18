@@ -315,7 +315,7 @@ class WebValidationGateFilePartTest {
         assertEquals(
                 List.of(
                         new ValidationErrorDetail(
-                                "limit", "must be at most 100", "query", "maximum", Map.of("maximum", 100)),
+                                null, "limit", null, "must be at most 100", "query", "maximum", Map.of("maximum", 100)),
                         fileError("avatar", "file part content type is not allowed", "fileContentTypeNotAllowed")),
                 captureFailure(ctx).errors());
     }

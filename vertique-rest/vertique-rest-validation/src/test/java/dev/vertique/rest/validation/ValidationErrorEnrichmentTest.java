@@ -48,7 +48,7 @@ import org.mockito.ArgumentCaptor;
  *
  * <p>Tests cover:
  * <ul>
- *   <li>{@code minLength} violation carries the JSON pointer as {@code path}, the keyword
+ *   <li>{@code minLength} violation carries the JSON pointer as {@code pointer}, the keyword
  *       {@code "minLength"} in {@code type}, and {@code {minLength: 3}} in {@code args}</li>
  *   <li>No submitted/actual value leaks into the serialized error response</li>
  *   <li>Aggregate mode (default) collects all three violations before failing</li>
@@ -123,7 +123,7 @@ class ValidationErrorEnrichmentTest {
 
     @Test
     @DisplayName(
-            "MinLengthViolationCarriesPointerAndKeyword: minLength:3 violation has path=/code, type=minLength, args={minLength:3}")
+            "MinLengthViolationCarriesPointerAndKeyword: minLength:3 violation has pointer=/code, type=minLength, args={minLength:3}")
     void minLengthViolationCarriesPointerAndKeyword() {
         JsonObject bodySchema = new JsonObject()
                 .put("type", "object")
@@ -146,9 +146,10 @@ class ValidationErrorEnrichmentTest {
         assertFalse(ex.errors().isEmpty(), "should have at least one error");
 
         ValidationErrorDetail error = ex.errors().get(0);
-        // path must be a JSON Pointer identifying the failing field
-        assertNotNull(error.path(), "path must not be null");
-        assertTrue(error.path().contains("code"), "path must reference the 'code' field; was: " + error.path());
+        // pointer must be a JSON Pointer identifying the failing field
+        assertNotNull(error.pointer(), "pointer must not be null");
+        assertTrue(
+                error.pointer().contains("code"), "pointer must reference the 'code' field; was: " + error.pointer());
 
         // type must be the failed keyword
         assertEquals("minLength", error.type(), "type must be the failed keyword 'minLength'");
@@ -242,7 +243,7 @@ class ValidationErrorEnrichmentTest {
     }
 
     @Test
-    @DisplayName("GoldenStructureTest: status 400, errors array with path/detail/location/type fields")
+    @DisplayName("GoldenStructureTest: status 400, errors array with pointer/detail/location/type fields")
     void goldenStructureTest() throws Exception {
         JsonObject bodySchema = new JsonObject()
                 .put("type", "object")
@@ -264,8 +265,8 @@ class ValidationErrorEnrichmentTest {
         assertFalse(ex.errors().isEmpty(), "must have at least one error");
 
         ValidationErrorDetail error = ex.errors().get(0);
-        // path is present
-        assertNotNull(error.path(), "path must be non-null");
+        // pointer is present
+        assertNotNull(error.pointer(), "pointer must be non-null");
         // detail is present
         assertNotNull(error.detail(), "detail must be non-null");
         // location is present (body)
@@ -279,7 +280,7 @@ class ValidationErrorEnrichmentTest {
 
         assertTrue(json.contains("\"status\":400"), "must have status 400");
         assertTrue(json.contains("\"errors\""), "must have errors array");
-        assertTrue(json.contains("\"path\""), "error entry must have 'path'");
+        assertTrue(json.contains("\"pointer\""), "error entry must have 'pointer'");
         assertTrue(json.contains("\"detail\""), "error entry must have 'detail'");
         assertTrue(json.contains("\"location\""), "error entry must have 'location'");
         assertTrue(json.contains("\"type\""), "error entry must have 'type' (enriched keyword)");
@@ -319,8 +320,9 @@ class ValidationErrorEnrichmentTest {
         // The error must not echo the submitted value "Alice"
         boolean leaksValue = ex.errors().stream()
                 .anyMatch(e -> (e.detail() != null && e.detail().contains("Alice"))
-                        || (e.path() != null && e.path().contains("Alice")));
-        assertFalse(leaksValue, "submitted value 'Alice' must not appear in any error detail or path");
+                        || (e.pointer() != null && e.pointer().contains("Alice"))
+                        || (e.parameter() != null && e.parameter().contains("Alice")));
+        assertFalse(leaksValue, "submitted value 'Alice' must not appear in any error detail or location");
     }
 
     @Test
@@ -367,7 +369,8 @@ class ValidationErrorEnrichmentTest {
         // submitted value "500" must not appear
         boolean leaksValue = ex.errors().stream()
                 .anyMatch(e -> (e.detail() != null && e.detail().contains("500"))
-                        || (e.path() != null && e.path().contains("500")));
-        assertFalse(leaksValue, "submitted value '500' must not appear in any error detail or path");
+                        || (e.pointer() != null && e.pointer().contains("500"))
+                        || (e.parameter() != null && e.parameter().contains("500")));
+        assertFalse(leaksValue, "submitted value '500' must not appear in any error detail or location");
     }
 }

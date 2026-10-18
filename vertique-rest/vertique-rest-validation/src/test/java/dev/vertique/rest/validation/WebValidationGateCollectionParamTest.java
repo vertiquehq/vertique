@@ -89,9 +89,9 @@ class WebValidationGateCollectionParamTest {
 
     private static boolean references(RestValidationException ex, String token) {
         for (ValidationErrorDetail e : ex.errors()) {
-            String path = e.path() == null ? "" : e.path();
+            String location = e.pointer() != null ? e.pointer() : (e.parameter() == null ? "" : e.parameter());
             String detail = e.detail() == null ? "" : e.detail();
-            if (path.contains(token) || detail.contains(token)) {
+            if (location.contains(token) || detail.contains(token)) {
                 return true;
             }
         }

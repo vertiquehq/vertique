@@ -454,13 +454,18 @@ class CaseInsensitiveRecheckTest {
 
     private static final String MAX_LENGTH_3_MESSAGE = "must have a maximum length of 3";
 
-    private static ValidationErrorDetail patternPropertiesRejected(String path) {
-        return new ValidationErrorDetail(
-                path, "does not satisfy the schema", "body", "patternProperties", Map.of("patternProperties", true));
+    private static ValidationErrorDetail patternPropertiesRejected(String pointer) {
+        return ValidationErrorDetail.ofPointer(pointer, "does not satisfy the schema")
+                .withLocation("body")
+                .withType("patternProperties")
+                .withArgs(Map.of("patternProperties", true));
     }
 
-    private static ValidationErrorDetail nameTooLong(String path) {
-        return new ValidationErrorDetail(path, MAX_LENGTH_3_MESSAGE, "body", "maxLength", MAX_LENGTH_3);
+    private static ValidationErrorDetail nameTooLong(String pointer) {
+        return ValidationErrorDetail.ofPointer(pointer, MAX_LENGTH_3_MESSAGE)
+                .withLocation("body")
+                .withType("maxLength")
+                .withArgs(MAX_LENGTH_3);
     }
 
     // ---------------------------------------------------------------- schema generation
@@ -905,19 +910,19 @@ class CaseInsensitiveRecheckTest {
         // When / Then: the body's violations equal the literal list, entry for entry
         assertAll(
                 () -> assertEquals(
-                        List.of(nameTooLong("#/name")),
+                        List.of(nameTooLong("/name")),
                         violations(gate, new JsonObject().put("name", "abcd")),
                         "exact name at the root"),
                 () -> assertEquals(
-                        List.of(nameTooLong("#/child/name")),
+                        List.of(nameTooLong("/child/name")),
                         violations(gate, new JsonObject().put("child", new JsonObject().put("name", "abcd"))),
                         "exact name under the exact child"),
                 () -> assertEquals(
-                        List.of(patternPropertiesRejected("#/child"), nameTooLong("#/child")),
+                        List.of(patternPropertiesRejected("/child"), nameTooLong("/child")),
                         violations(gate, new JsonObject().put("child", new JsonObject().put("NAME", "abcd"))),
                         "upper-case name under the exact child"),
                 () -> assertEquals(
-                        List.of(patternPropertiesRejected("#"), nameTooLong("#")),
+                        List.of(patternPropertiesRejected(""), nameTooLong("")),
                         violations(gate, new JsonObject().put("NAME", "abcd")),
                         "upper-case name at the root"));
     }

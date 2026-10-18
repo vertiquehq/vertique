@@ -358,14 +358,15 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
 
     /**
      * Converts a pattern-input guard exception, thrown directly or as the cause of the thrown exception, into
-     * the one value-free detail of the rejected validator call: {@code path} {@code ""} for the body and the
-     * parameter name otherwise; the location token; {@code type} {@code patternInputLength} or {@code
-     * patternInputTotalLength}; the fixed detail naming the configured limit; and {@code args} {@code
-     * {"maxChars": N}} or {@code {"maxTotalChars": N}}. The value, the key, and the pattern never appear.
+     * the one value-free detail of the rejected validator call: {@code pointer} {@code ""} for the body and
+     * {@code parameter} with the parameter name otherwise; the location token; {@code type} {@code
+     * patternInputLength} or {@code patternInputTotalLength}; the fixed detail naming the configured limit; and
+     * {@code args} {@code {"maxChars": N}} or {@code {"maxTotalChars": N}}. The value, the key, and the pattern
+     * never appear.
      *
      * <p>The type, the message and the limit come from the shared {@link
-     * ViolationDetails#patternInputBound(Throwable)}; the path and the argument name are the response
-     * shape this strategy has always reported.
+     * ViolationDetails#patternInputBound(Throwable)}; the location member and the argument name are the
+     * response shape this strategy has always reported.
      *
      * @param thrown        the exception a validator call threw
      * @param location      the call's location token ({@code body}, {@code path}, {@code query}, {@code
@@ -377,13 +378,61 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
     static Optional<ValidationErrorDetail> patternInputBoundDetail(
             Throwable thrown, String location, @Nullable String parameterName) {
         return ViolationDetails.patternInputBound(thrown).map(detail -> {
-            String path = parameterName == null ? "" : parameterName;
             Object limit = detail.args().get("limit");
             String argumentName =
                     ViolationDetails.PATTERN_INPUT_LENGTH_TYPE.equals(detail.type()) ? "maxChars" : "maxTotalChars";
             return new ValidationErrorDetail(
-                    path, detail.message(), location, detail.type(), Map.of(argumentName, limit));
+                    parameterName == null ? "" : null,
+                    parameterName,
+                    null,
+                    detail.message(),
+                    location,
+                    detail.type(),
+                    Map.of(argumentName, limit));
         });
+    }
+
+    /**
+     * Names the parameter a violation inside a parameter's value belongs to: the declared name followed by
+     * {@code [n]} for each leading segment of the violation's pointer that is an array index, and nothing
+     * after the first segment that is not one. A member name inside an object-valued parameter is never
+     * rendered, because the client chooses it.
+     *
+     * @param name    the declared parameter name
+     * @param pointer the violation's location inside the value as an RFC 6901 pointer; {@code ""} for the
+     *     value itself
+     * @return the parameter name, for example {@code ids} or {@code ids[1]}
+     */
+    static String parameterName(String name, String pointer) {
+        StringBuilder parameter = new StringBuilder(name);
+        int start = 0;
+        while (start < pointer.length() && pointer.charAt(start) == '/') {
+            int end = pointer.indexOf('/', start + 1);
+            String segment = pointer.substring(start + 1, end < 0 ? pointer.length() : end);
+            if (!isArrayIndex(segment)) {
+                break;
+            }
+            parameter.append('[').append(segment).append(']');
+            if (end < 0) {
+                break;
+            }
+            start = end;
+        }
+        return parameter.toString();
+    }
+
+    /** Whether a segment is the canonical spelling of an array index: {@code 0}, or digits with no leading zero. */
+    private static boolean isArrayIndex(String segment) {
+        if (segment.isEmpty() || (segment.length() > 1 && segment.charAt(0) == '0')) {
+            return false;
+        }
+        for (int index = 0; index < segment.length(); index++) {
+            char c = segment.charAt(index);
+            if (c < '0' || c > '9') {
+                return false;
+            }
+        }
+        return true;
     }
 
     // --- Regex precompilation diagnostic ---
@@ -1059,25 +1108,31 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
                 failures.add(rejection.get());
                 return true;
             }
-            for (ViolationDetail detail : ViolationDetails.collect(result, schema, failFast, PathForm.URI_FRAGMENT)) {
+            for (ViolationDetail detail : ViolationDetails.collect(result, schema, failFast, PathForm.RFC6901)) {
                 failures.add(toValidationErrorDetail(detail, location, fallbackPath));
             }
             return false;
         }
 
         /**
-         * Turns one shared violation detail into the response detail for a location, naming the parameter
-         * for a violation at the document root.
+         * Turns one shared violation detail into the response detail for a location: a body violation is
+         * reported in {@code pointer}, any other in {@code parameter}.
          *
-         * @param detail       the shared detail
+         * @param detail       the shared detail, with its path as an RFC 6901 pointer
          * @param location     the location token for the error ({@code body}, {@code query}, etc.)
-         * @param fallbackPath the parameter-name fallback, or {@code null} for a body error
+         * @param fallbackPath the parameter name, or {@code null} for a body error
          * @return the response detail
          */
         private static ValidationErrorDetail toValidationErrorDetail(
                 ViolationDetail detail, String location, String fallbackPath) {
             return new ValidationErrorDetail(
-                    pathFor(detail.path(), fallbackPath), detail.message(), location, detail.type(), detail.args());
+                    fallbackPath == null ? detail.path() : null,
+                    fallbackPath == null ? null : parameterName(fallbackPath, detail.path()),
+                    null,
+                    detail.message(),
+                    location,
+                    detail.type(),
+                    detail.args());
         }
 
         /**
@@ -1209,26 +1264,6 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
                 }
             }
             return null;
-        }
-
-        /**
-         * Chooses the {@code path} for an error: the schema instance location when it points inside the
-         * instance, otherwise the parameter-name fallback (for a root-level scalar parameter violation
-         * the instance location is the document root, e.g. {@code "#"} or {@code ""}).
-         *
-         * @param instanceLocation the schema error's instance location, possibly {@code null}
-         * @param fallbackPath     the parameter-name fallback, or {@code null} for a body error
-         * @return the chosen path string
-         */
-        private static String pathFor(String instanceLocation, String fallbackPath) {
-            boolean rootLocation = instanceLocation == null
-                    || instanceLocation.isEmpty()
-                    || "#".equals(instanceLocation)
-                    || "/".equals(instanceLocation);
-            if (rootLocation) {
-                return fallbackPath != null ? fallbackPath : (instanceLocation != null ? instanceLocation : "");
-            }
-            return instanceLocation;
         }
     }
 }

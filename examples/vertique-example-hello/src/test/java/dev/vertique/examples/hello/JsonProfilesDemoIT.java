@@ -227,7 +227,7 @@ class JsonProfilesDemoIT {
      * Proves the <em>server-side</em> rejection of a JSON number for a {@code vertique-strict}
      * {@code BigDecimal} property. Under the {@code openapi-contract} strategy the rejecting gate is
      * the contract validator — the response is the sanitized {@code "Request validation failed"}
-     * problem with {@code #/amount … "type": "type"}, not the strict deserializer's
+     * problem with {@code /amount … "type": "type"}, not the strict deserializer's
      * {@code "Request body rejected by JSON profile"}, because the contract gate runs before the
      * body is bound. The strict deserializer remains the second line of defence on paths that do not
      * validate against the contract.

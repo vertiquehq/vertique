@@ -89,14 +89,16 @@ entries:
 - **`path`** — the engine's instance location after cut-back to a declared location, in the
   `PathForm` the caller requests: `URI_FRAGMENT` is the engine's own form, verbatim, including its
   percent-encoding (`#/a%20b`); `RFC6901` is the JSON Pointer form (`/a b`), with the document root as
-  the empty string. A missing location is the empty string.
+  the empty string and the member named `""` as `/`. A missing location is the empty string.
 - **`type`** — the violated constraint keyword (`maxLength`, `minimum`, `required`, ...), or `null`
   when no actionable keyword exists.
 - **`message`** — a value-free message for that keyword, rendered from the schema's own arguments.
 - **`args`** — the constraint arguments resolved from the schema (for example `{maxLength: 3}`), or
   `null` when there are none. Resolution reads at most 10 index digits in an array-index segment;
   beyond that it returns no arguments rather than guessing. The cut-back to a declared location
-  follows at most 16 `$ref` hops and 64 composed subschemas, and shares the 10-digit index bound.
+  follows at most 16 `$ref` hops and 64 composed subschemas, and shares the 10-digit index bound. A
+  segment with the empty name after the first is the member `""`: it is kept when the schema declares
+  it and otherwise ends the location there, so a cut-back location is shorter, never different.
 
 A keyword that only traverses structure (`properties`, `items`, `allOf`, `anyOf`, `additionalProperties`,
 and the like — `SchemaKeywords.STRUCTURAL_KEYWORDS`) is a wrapper, not a violation: `collect` looks
@@ -110,9 +112,10 @@ Pattern-bound rejections have their own two types, `patternInputLength` and
 
 ### `rfc6901` conversion
 
-`ViolationDetails.rfc6901` converts an engine location to RFC 6901 form: it strips a leading `#`,
+`ViolationDetails.rfc6901` converts an engine location to RFC 6901 form: it strips one leading `#`,
 splits on `/`, percent-decodes each segment as UTF-8 (an invalid escape is left as it is), and keeps
-`~0` and `~1` untouched. `#`, the empty string, `/`, and `null` all become the empty string.
+`~0` and `~1` untouched. `#`, the empty string, and `null` become the empty string (the document
+root); `/` and `#/` stay `/`, the member with the empty name.
 
 ### No configuration
 

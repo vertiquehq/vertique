@@ -795,7 +795,7 @@ class PatternInputGuardTest {
 
         assertEquals(2, details.size(), () -> "exactly z's detail and then a's: " + types(details));
         assertAll(
-                () -> assertEquals("z", details.get(0).path(), "the earlier detail comes first"),
+                () -> assertEquals("z", details.get(0).parameter(), "the earlier detail comes first"),
                 () -> assertEquals("query", details.get(0).location()),
                 () -> assertEquals("minLength", details.get(0).type()),
                 () -> assertPerStringDetail(details.get(1), "a", "query", MAX_CHARS),
@@ -1847,6 +1847,12 @@ class PatternInputGuardTest {
         assertTrue(fromBare.isPresent(), "a bare guard exception must convert to the detail");
         assertAll(
                 () -> assertPerStringDetail(fromBare.get(), "", "body", MAX_CHARS),
+                () -> assertPerStringDetail(
+                        WebValidationStrategy.patternInputBoundDetail(bare, "query", "tags")
+                                .orElseThrow(),
+                        "tags",
+                        "query",
+                        MAX_CHARS),
                 () -> assertEquals(
                         fromBare, fromWrapped, "a wrapped guard exception must convert to the same single detail"),
                 () -> assertEquals(Optional.empty(), fromUnrelated, "an unrelated exception must be left unconverted"));
@@ -2567,7 +2573,8 @@ class PatternInputGuardTest {
      * Asserts every field of a bound detail; {@code args} is compared as JSON numbers.
      *
      * @param detail  the detail
-     * @param path    the expected path
+     * @param path    the expected location: {@code ""} for the body, reported in {@code pointer}, else the
+     *                parameter name, reported in {@code parameter}
      * @param location the expected location token
      * @param type    the expected type
      * @param text    the expected detail text
@@ -2584,7 +2591,9 @@ class PatternInputGuardTest {
             int limit) {
         assertAll(
                 "the " + type + " detail",
-                () -> assertEquals(path, abbreviate(detail.path()), "path"),
+                () -> assertEquals(path.isEmpty() ? path : null, detail.pointer(), "pointer"),
+                () -> assertEquals(path.isEmpty() ? null : path, abbreviate(detail.parameter()), "parameter"),
+                () -> assertNull(detail.path(), "the retired path member"),
                 () -> assertEquals(location, detail.location(), "location"),
                 () -> assertEquals(type, detail.type(), "type"),
                 () -> assertEquals(text, abbreviate(detail.detail()), "detail"),
@@ -2697,7 +2706,8 @@ class PatternInputGuardTest {
      */
     private static List<String> types(List<ValidationErrorDetail> details) {
         return details.stream()
-                .map(detail -> detail.type() + "@" + abbreviate(detail.path()))
+                .map(detail -> detail.type() + "@"
+                        + abbreviate(detail.pointer() != null ? detail.pointer() : detail.parameter()))
                 .toList();
     }
 

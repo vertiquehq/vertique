@@ -286,6 +286,13 @@ fail-fast. Each physical `FileUpload` instance is checked and verified at most o
 than one resource parameter exposes it. Same-name duplicate uploads are distinct and use error
 paths `name`, `name[1]`, and so on.
 
+**Where a schema failure is located.** A body failure carries its location in `pointer`, an RFC 6901
+JSON Pointer over the schema's own names: `/pet/name`, `""` for the whole body, `/` for the member
+named `""`. A failure of any other request location carries `parameter`: the declared name followed by
+`[n]` for each leading array index of the location inside the value (`ids[1]`, `grid[0][2]`) and
+nothing after the first other segment, because the member names of an object-valued parameter are the
+client's. An entry never carries both.
+
 **A schema failure is always a rejection.** A validation call — the body, and each declared
 parameter independently — whose result the validator does not report valid is rejected with 400,
 whatever keywords the reported errors carry. Each reported error normally becomes one error detail
@@ -310,20 +317,22 @@ generation exists to prevent. Every other keyword this method does not explicitl
 value-free `"<keyword> constraint violated"` too — the raw validator message is never used as a
 silent fallback for an unreviewed keyword. When every error a call reported is
 structural, that call instead contributes exactly one value-free detail: it names the failing
-instance location as its `path` and carries no `type` and no `args`. That location is cut back to the
+instance location and carries no `type` and no `args`. That location is cut back to the
 part the schema declares, so it names no text the client chose: an undeclared property under a closed
-object is reported at `#/<the client's own key>`, and the detail names the containing location `#`
+object is reported at `/<the client's own key>`, and the detail names the containing location `""`
 instead, while a failure under a declared property keeps that property's location. Its message is a
 fixed literal, so no submitted value and no raw validator message reaches the response through it.
-A concrete detail's `path` is cut back by the same rule: a wrong-typed value under an undeclared key
-— an extra an any-setter type describes, say — is reported at `#/<the client's own key>`, and its
+A concrete detail's location is cut back by the same rule: a wrong-typed value under an undeclared key
+— an extra an any-setter type describes, say — is reported at `/<the client's own key>`, and its
 detail names the containing location instead, so the key never reaches the response. The location
 is kept segment by segment, up to the first segment the schema does not declare: a segment is kept
 when it is a name a `properties` entry spells, or an array index a `prefixItems` position or an
 `items` schema covers, at that point or in any `allOf`, `anyOf`, or `oneOf` branch there, following
 local `$ref`s. A field inside a nullable nested object, published as `anyOf: [null, $ref]`, is
-therefore named, and so is a tuple index. A declared name is kept in the spelling the validator
-reports, RFC 6901-escaped and percent-encoded (`a b` as `a%20b`, `a/b` as `a~1b`). A key only
+therefore named, and so is a tuple index. A member named `""` is looked up like any other name, so
+the location keeps it when the schema declares it and ends before it otherwise. A declared name is
+reported as an RFC 6901 segment (`a b` as `a b`, `a/b` as `a~1b`, the empty name as the segment
+between two slashes). A key only
 `additionalProperties` or `patternProperties` admits is never kept, and neither is anything under a
 reference or composition that cannot be resolved within a fixed bound. An all-digit segment is kept
 as an index only when it is a plausible one — at most ten digits, no leading zero other than `0`
@@ -452,7 +461,7 @@ rejected validation call:
 
 | Field | Per-string limit | Per-request limit |
 |---|---|---|
-| `path` | `""` for the body, else the parameter name | same |
+| `pointer` / `parameter` | `pointer` `""` for the body, else `parameter` with the parameter name | same |
 | `location` | `body`, `path`, `query`, `header`, `cookie`, or `form` | same |
 | `type` | `patternInputLength` | `patternInputTotalLength` |
 | `detail` | `exceeds the maximum length of <N> characters for pattern validation` | `exceeds the maximum total length of <N> characters for pattern validation` |
