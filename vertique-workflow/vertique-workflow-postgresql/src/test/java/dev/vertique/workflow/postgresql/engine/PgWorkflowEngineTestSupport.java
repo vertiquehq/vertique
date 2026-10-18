@@ -4,6 +4,7 @@
 package dev.vertique.workflow.postgresql.engine;
 
 import dev.vertique.context.DurableContextPropagator;
+import dev.vertique.core.validation.BeanValidator;
 import dev.vertique.workflow.engine.WorkflowEngineFactory;
 import dev.vertique.workflow.engine.WorkflowEngineHandle;
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
@@ -55,6 +56,10 @@ import java.util.Set;
  *       WorkflowDedupRepository, Set, Set, TimerStore, TaskStore, Clock, BranchTokenRepository,
  *       JoinStateRepository, DurableContextPropagator, Optional)} — includes the fork/join
  *       repositories, an optional durable-context propagator, and the migration registry.</li>
+ *   <li>{@link #create(Pool, WorkflowRegistry, WorkflowInstanceRepository, WorkflowHistoryRepository,
+ *       WorkflowDedupRepository, Set, Set, TimerStore, TaskStore, Clock, BranchTokenRepository,
+ *       JoinStateRepository, DurableContextPropagator, Optional, Optional)} — additionally binds an
+ *       optional {@link BeanValidator} that switches payload constraint enforcement on.</li>
  * </ul>
  */
 final class PgWorkflowEngineTestSupport {
@@ -213,6 +218,63 @@ final class PgWorkflowEngineTestSupport {
                 optionalIntentKinds,
                 migrationRegistryOpt,
                 propagator);
+    }
+
+    /**
+     * Builds an engine like the overload with the migration registry, additionally taking the optional
+     * {@link BeanValidator} that switches payload constraint enforcement on. An empty optional keeps
+     * enforcement off. No inbound context initializers are registered.
+     *
+     * @param pool                 the connection pool the runner transacts on
+     * @param registry             the workflow registry
+     * @param instances            the instance repository
+     * @param history              the history repository
+     * @param dedup                the dedup repository
+     * @param recorders            the side-effect recorders contributed by the test
+     * @param optionalIntentKinds  the intent kinds the recorder router treats as optional
+     * @param timerStore           the timer store
+     * @param taskStore            the task store
+     * @param clock                the clock
+     * @param branchTokens         the branch token repository
+     * @param joinStates           the join state repository
+     * @param propagator           the durable-context propagator; may be {@code null}
+     * @param migrationRegistryOpt the optional migration registry
+     * @param beanValidator        the optional bean validator enforcing payload constraints
+     * @return a fully wired {@link WorkflowEngineHandle}
+     */
+    static WorkflowEngineHandle create(
+            Pool pool,
+            WorkflowRegistry registry,
+            WorkflowInstanceRepository<SqlClient> instances,
+            WorkflowHistoryRepository<SqlClient> history,
+            WorkflowDedupRepository<SqlClient> dedup,
+            Set<WorkflowSideEffectRecorder<SqlClient>> recorders,
+            Set<IntentKind> optionalIntentKinds,
+            TimerStore<SqlClient> timerStore,
+            TaskStore<SqlClient> taskStore,
+            Clock clock,
+            BranchTokenRepository<SqlClient> branchTokens,
+            JoinStateRepository<SqlClient> joinStates,
+            DurableContextPropagator propagator,
+            Optional<WorkflowMigrationRegistry> migrationRegistryOpt,
+            Optional<BeanValidator> beanValidator) {
+        return WorkflowEngineFactory.create(
+                runnerFor(pool),
+                registry,
+                instances,
+                history,
+                dedup,
+                branchTokens,
+                joinStates,
+                timerStore,
+                taskStore,
+                clock,
+                recorders,
+                optionalIntentKinds,
+                migrationRegistryOpt,
+                propagator,
+                Set.of(),
+                beanValidator);
     }
 
     // --- dialect-specific runner construction (stays in postgresql) ---

@@ -6,21 +6,23 @@ package dev.vertique.workflow.engine;
 import dev.vertique.context.ContextValues;
 import dev.vertique.core.context.DurableMetadata;
 import dev.vertique.core.correlation.CorrelationContext;
+import dev.vertique.core.validation.ViolationDetail;
 import dev.vertique.workflow.exception.WorkflowConflictException;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
+import dev.vertique.workflow.exception.WorkflowInvalidPayloadException;
 import dev.vertique.workflow.exception.WorkflowPlanHashDriftException;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.state.BranchStatus;
 import dev.vertique.workflow.state.BranchToken;
 import dev.vertique.workflow.state.WorkflowHistoryEntry;
 import dev.vertique.workflow.state.WorkflowInstance;
-import dev.vertique.workflow.tasks.TaskDecisionDescriptor;
-import dev.vertique.workflow.tasks.TaskRecord;
 import io.vertx.core.Future;
+import io.vertx.core.json.DecodeException;
 import io.vertx.core.json.Json;
 import io.vertx.core.json.JsonObject;
 import jakarta.annotation.Nullable;
 import java.time.Instant;
+import java.util.List;
 
 /**
  * Package-private collection of static payload and guard utilities used by {@link WorkflowEngine}
@@ -35,6 +37,12 @@ import java.time.Instant;
  * {@code WorkflowPayloads.} prefix.
  */
 final class WorkflowPayloads {
+
+    /** Rejection message for a decision payload. */
+    static final String DECISION_REJECTION = "invalid decision payload";
+
+    /** Rejection message for a start payload. */
+    static final String START_REJECTION = "invalid start payload";
 
     /** Utility class — no instances. */
     private WorkflowPayloads() {}
@@ -69,10 +77,16 @@ final class WorkflowPayloads {
      *       already an instance of the declared class.</li>
      * </ul>
      *
+     * <p>Caller mistakes are reported as {@link WorkflowInvalidPayloadException} whose message and
+     * details never carry a payload value, a payload type name, or a binder message. A payload
+     * that cannot bind to the declared class retains the {@link DecodeException} as the cause.
+     *
      * @param payload the raw payload from the command
      * @param payloadTypeName the fully-qualified class name declared in the plan decision
      * @return the coerced payload (may be {@code null} for Void decisions)
-     * @throws WorkflowDefinitionException if the payload violates the nullability rule
+     * @throws WorkflowInvalidPayloadException if the payload violates the nullability rule or does
+     *     not bind to the declared class
+     * @throws WorkflowDefinitionException if the declared class cannot be resolved
      */
     static Object validateAndCoerceTaskPayload(Object payload, String payloadTypeName) {
         // Special-case the Void / void markers BEFORE Class.forName: the primitive `void.class`
@@ -83,8 +97,11 @@ final class WorkflowPayloads {
         // ("java.lang.Void") are accepted as no-payload decisions.
         if ("void".equals(payloadTypeName) || "java.lang.Void".equals(payloadTypeName)) {
             if (payload != null) {
-                throw new WorkflowDefinitionException(
-                        "Decision declared payloadType Void but a non-null payload was provided");
+                throw invalidPayload(
+                        DECISION_REJECTION,
+                        "payload is not accepted for a decision without a payload type",
+                        "payload",
+                        null);
             }
             return null;
         }
@@ -98,28 +115,87 @@ final class WorkflowPayloads {
         }
 
         if (payload == null) {
-            throw new WorkflowDefinitionException(
-                    "Decision declared payloadType '" + payloadTypeName + "' but payload is null");
+            throw invalidPayload(DECISION_REJECTION, "payload is required", "payload", null);
         }
-        return coercePayload(payload, payloadClass);
+        try {
+            return coercePayload(payload, payloadClass);
+        } catch (DecodeException e) {
+            throw bindingFailure(e);
+        }
     }
 
     /**
-     * Resolves the declared payload type name for a named decision on a task record.
+     * Validates the start payload against the definition's declared start payload type and coerces
+     * it if necessary.
      *
-     * @param task the task record whose decisions list is searched
-     * @param decisionName the name of the decision to look up
-     * @return the payload type name declared for the matching decision
-     * @throws WorkflowDefinitionException if no decision with {@code decisionName} exists on
-     *     {@code task}
+     * <p>Payload-nullability rule:
+     * <ul>
+     *   <li>If {@code startPayloadType} is {@code void.class} or {@code Void.class}, the payload
+     *       MUST be {@code null}.</li>
+     *   <li>If {@code startPayloadType} is {@code null}, the payload is handled exactly as
+     *       {@link #coercePayload(Object, Class)} does.</li>
+     *   <li>Otherwise the payload MUST be non-null and is coerced via JSON round-trip if it is not
+     *       already an instance of the declared class.</li>
+     * </ul>
+     *
+     * <p>Caller mistakes are reported as {@link WorkflowInvalidPayloadException} whose message and
+     * details never carry a payload value, a payload type name, or a binder message. A payload that
+     * cannot bind to the declared class retains the {@link DecodeException} as the cause.
+     *
+     * @param payload the raw payload from the start command; may be null
+     * @param startPayloadType the declared start payload type; may be null
+     * @return the coerced payload (may be {@code null} for void start types)
+     * @throws WorkflowInvalidPayloadException if the payload violates the nullability rule or does
+     *     not bind to the declared class
      */
-    static String resolveDecisionPayloadType(TaskRecord task, String decisionName) {
-        return task.decisions().stream()
-                .filter(d -> d.name().equals(decisionName))
-                .map(TaskDecisionDescriptor::payloadTypeName)
-                .findFirst()
-                .orElseThrow(() -> new WorkflowDefinitionException(
-                        "Unknown decision '" + decisionName + "' for branch task '" + task.taskId() + "'"));
+    static Object validateAndCoerceStartPayload(Object payload, Class<?> startPayloadType) {
+        if (startPayloadType == null) {
+            return coercePayload(payload, null);
+        }
+        if (startPayloadType == void.class || startPayloadType == Void.class) {
+            if (payload != null) {
+                throw invalidPayload(
+                        START_REJECTION, "payload is not accepted for a start type without a payload", "payload", null);
+            }
+            return null;
+        }
+        if (payload == null) {
+            throw invalidPayload(START_REJECTION, "payload is required", "payload", null);
+        }
+        try {
+            return coercePayload(payload, startPayloadType);
+        } catch (DecodeException e) {
+            throw invalidPayload(START_REJECTION, "payload does not bind to the declared type", "binding", e);
+        }
+    }
+
+    /**
+     * Builds the value-free rejection for a decision name that the pinned plan does not declare for
+     * the task step. Neither the message nor the detail carries the decision name.
+     *
+     * @return the exception to fail the completion with
+     */
+    static WorkflowInvalidPayloadException unknownDecision() {
+        return invalidPayload(DECISION_REJECTION, "decision is not declared for this task step", "decision", null);
+    }
+
+    /**
+     * Builds the value-free rejection for a payload that does not bind to its declared class. The
+     * binder's exception is retained as the cause only; its message never reaches the result.
+     *
+     * @param cause the binder failure
+     * @return the exception to fail the command with
+     */
+    static WorkflowInvalidPayloadException bindingFailure(DecodeException cause) {
+        return invalidPayload(DECISION_REJECTION, "payload does not bind to the declared type", "binding", cause);
+    }
+
+    private static WorkflowInvalidPayloadException invalidPayload(
+            String message, String detailMessage, String detailType, @Nullable Throwable cause) {
+        List<ViolationDetail> details = List.of(new ViolationDetail("", detailMessage, detailType, null));
+        return cause == null
+                ? new WorkflowInvalidPayloadException(message, details)
+                : new WorkflowInvalidPayloadException(message, details, cause);
     }
 
     // --- History payload decoding guards ---

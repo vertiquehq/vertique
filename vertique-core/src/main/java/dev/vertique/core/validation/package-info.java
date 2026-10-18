@@ -10,6 +10,8 @@
  *   <li>{@link dev.vertique.core.validation.BeanValidator} — programmatic validation SPI</li>
  *   <li>{@link dev.vertique.core.validation.ViolationDetail} — HTTP-agnostic violation record</li>
  *   <li>{@link dev.vertique.core.validation.BeanValidationException} — exception carrying violations</li>
+ *   <li>{@link dev.vertique.core.validation.ViolationCarrier} — implemented by validation exceptions whose
+ *       violations a transport may render</li>
  *   <li>{@link dev.vertique.core.validation.ParameterViolation} — violation scoped to a method parameter</li>
  *   <li>{@link dev.vertique.core.validation.ValidateWith} — annotation for specifying validation groups</li>
  *   <li>{@link dev.vertique.core.validation.CharacterPolicy} — character-set validation policy SPI</li>

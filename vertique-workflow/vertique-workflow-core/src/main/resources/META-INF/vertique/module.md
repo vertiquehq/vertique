@@ -108,6 +108,11 @@ static WorkflowContributor orderFulfillment(OrderFulfillmentDefinition definitio
 
 The registry validates definitions at registration time. Invalid graphs fail before they can serve traffic.
 
+Registration runs the plan checks and the callback consistency check, then every contributed
+`WorkflowDefinitionValidator`, and only then publishes the definition. The validator step applies to
+bootstrap and runtime registrations alike. A validator exception propagates unchanged to the caller
+of `register` or `activate` and leaves the `(definitionId, version)` pair unresolvable.
+
 ### Workflow Operations
 
 `WorkflowOperations` is the SQL-free application facade:
@@ -300,6 +305,22 @@ Add `WorkflowDelayedModule`, `WorkflowTasksModule`, `WorkflowEventsModule`, or `
 
 Application code should normally depend on the high-level services first and implement these SPIs only when replacing a storage or delivery backend.
 
+### Internal Registration Seam
+
+`WorkflowDefinitionValidator` and `RegisteredWorkflowDefinition` (the read-only plan plus start
+payload type handed to a validator) are an internal framework seam. They are not an application
+contract and sit outside this module's maturity promise; sibling framework modules use them to check
+a definition before it is published. Applications should not implement them.
+
+- **Internal wiring.** The `DefaultWorkflowRegistry` constructor that takes a
+  `Set<WorkflowDefinitionValidator>` and the `Set<WorkflowDefinitionValidator>` multibinding declared
+  by `WorkflowCoreModule` are internal for the same reason. The existing constructors delegate with an
+  empty set.
+- **Unordered.** The validator set has no defined order; a validator must not depend on another one
+  having run.
+- **Synchronous.** Validators run on the thread that calls `register` or `activate`, so call
+  `activate` off the event loop.
+
 ### WorkflowActorMapper
 
 SPI (`dev.vertique.workflow.actor`) that maps a `SecurityIdentity` to a `WorkflowActor`. Provides the
@@ -348,6 +369,7 @@ WorkflowActorMapper customActorMapper() {
 | Exception | Core root | HTTP |
 |---|---|---|
 | `WorkflowException` | `BusinessRuleException` | 400 |
+| `WorkflowInvalidPayloadException` | leaf of `WorkflowException`; implements `ViolationCarrier` | 400 |
 | `WorkflowConflictException` | `ConflictException` | 409 |
 | `WorkflowNotFoundException` | `NotFoundException` | 404 |
 | `WorkflowConfigurationException` | `ConfigurationException` | — |
@@ -356,6 +378,16 @@ WorkflowActorMapper customActorMapper() {
 | `WorkflowPersistenceException` | extends `WorkflowTechnicalException` (carries a `retryable` flag) | 500 |
 
 `WorkflowException` is the business-rule root only, not the superclass of every workflow failure — missing resources, state conflicts, configuration problems, unavailable capabilities, and technical failures use their own roots above instead.
+
+`WorkflowInvalidPayloadException` reports a caller-supplied payload that is not acceptable. It is a
+`ViolationCarrier`, so the default REST mapping renders it as a structured validation problem with one
+error per violation instead of a message-only 400. `violations()` returns an unmodifiable list of
+`ViolationDetail` (`path`, `message`, `type`, `args`) and is never `null`. Each `path` is an RFC 6901
+JSON pointer. Details built by the engine are value-free (no payload value, decision name, class name,
+decode message or map key). Constraint messages produced by an application's constraints pass through
+unchanged, so applications must not interpolate the validated value. A binding failure keeps the decode
+exception as the cause, and it can carry submitted text, so applications must not log the cause of a
+`WorkflowInvalidPayloadException` at INFO or above.
 
 `vertique-workflow-engine` translates DB-origin failures into this hierarchy at the persistence boundary; see `dev.vertique:vertique-workflow-engine` for the translation table.
 
