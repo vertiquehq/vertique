@@ -102,6 +102,16 @@ one-ACTIVE index, and leaves other statuses and owners untouched. Both status ch
 a failed promotion rolls back its preceding demotion. Rows whose status already matches the result keep
 their original `status_changed_at`.
 
+Candidates for the same id and version may coexist under different tenant keys (or the global owner), and
+`list` returns them by exact tenant scope and status set without reading document bodies. Executable
+membership is stricter: one owner at a time holds a definition id. Rows of another owner in ACTIVE,
+SUPERSEDED or DEPRECATED, or holding a fresh ACTIVATING claim, hold the id; a stale claim does not.
+`claim` and `complete` (with a current token; an obsolete token fails as a stale claim first) for a
+different owner fail with `OWNER_CONFLICT` naming the holders, and `upsertDocument` reports `OWNER_CONFLICT`. The check runs under the id lock, so concurrent activations
+by different owners, including for an id with no rows yet, admit exactly one. Within one owner,
+completion demotes lower ACTIVE versions before promotion, and a lower version completing after a higher
+one becomes SUPERSEDED, so the one-ACTIVE index is never violated.
+
 DOCUMENT bodies require `server_encoding = UTF8`. The adapter checks this before its first body
 read/write, caches only a successful capability result, and retries a failed lookup on the next
 operation. Metadata and CODE-only operations do not require that capability. Every source read checks

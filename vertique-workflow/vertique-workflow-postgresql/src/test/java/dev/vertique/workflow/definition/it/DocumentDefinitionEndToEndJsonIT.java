@@ -7,13 +7,13 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import dev.vertique.application.VertiqueApplicationBootstrap;
-import dev.vertique.application.VertiqueApplicationHandle;
-import dev.vertique.core.VertiqueRuntime;
 import dagger.Component;
 import dagger.Module;
 import dagger.Provides;
 import dagger.multibindings.IntoSet;
+import dev.vertique.application.VertiqueApplicationBootstrap;
+import dev.vertique.application.VertiqueApplicationHandle;
+import dev.vertique.core.VertiqueRuntime;
 import dev.vertique.db.DbPoolConfig;
 import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.test.DatabaseExtension;

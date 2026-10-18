@@ -355,6 +355,9 @@ reconciliation, fenced claim/complete/release operations, and
 `recomputeActive(@Nullable String tenantKey, String definitionId)`. Recompute is scoped to that exact
 owner and id: the highest ACTIVE or SUPERSEDED version becomes ACTIVE and lower eligible versions
 become SUPERSEDED; CANDIDATE, ACTIVATING, DEPRECATED, and RETIRED rows remain unchanged.
+Candidates of different owners (tenant keys or global) may coexist for one id, but only one owner holds
+the id's executable membership; a claim, completion or static reconciliation by another owner fails with
+`OWNER_CONFLICT`.
 `WorkflowCoreModule` declares optional
 store, lifecycle, and configuration bindings plus the loader multibinding. Without persistence, the
 standalone definition graph needs neither a database nor a configuration parser. `WorkflowRegistry.unregister`

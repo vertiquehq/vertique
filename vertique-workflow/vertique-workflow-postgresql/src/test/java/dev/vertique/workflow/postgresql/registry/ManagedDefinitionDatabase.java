@@ -33,28 +33,28 @@ import dev.vertique.workflow.definition.it.fixture.PlaceOrderDoc;
 import dev.vertique.workflow.definition.it.fixture.ShipmentCreatedDoc;
 import dev.vertique.workflow.definition.parser.WorkflowDefinitionParserProbe;
 import dev.vertique.workflow.definition.pipeline.WorkflowDefinitionPipeline;
-import dev.vertique.workflow.definition.service.WorkflowDefinitionService;
-import dev.vertique.workflow.definition.service.WorkflowDefinitionStore;
 import dev.vertique.workflow.definition.service.ActivationStatus;
 import dev.vertique.workflow.definition.service.CompiledDefinitionRef;
-import dev.vertique.workflow.definition.source.WorkflowDefinitionSource;
+import dev.vertique.workflow.definition.service.WorkflowDefinitionService;
+import dev.vertique.workflow.definition.service.WorkflowDefinitionStore;
 import dev.vertique.workflow.definition.source.SourceMetadata;
+import dev.vertique.workflow.definition.source.WorkflowDefinitionSource;
 import dev.vertique.workflow.di.WorkflowDefinitionsConfigModule;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.plan.DefaultRaceSafetyTargetRegistry;
 import dev.vertique.workflow.plan.WorkflowPlanValidator;
 import dev.vertique.workflow.postgresql.engine.WorkflowPostgresqlModule;
+import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowContributor;
 import dev.vertique.workflow.registry.WorkflowRegistry;
-import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.store.DefinitionFilter;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.DefinitionKind;
 import dev.vertique.workflow.registry.store.DefinitionProvenance;
 import dev.vertique.workflow.registry.store.DefinitionStatus;
-import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
+import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionsConfig;
 import dev.vertique.workflow.sideeffect.IntentKind;
 import dev.vertique.workflow.sideeffect.RecorderResult;
@@ -70,19 +70,19 @@ import io.vertx.pgclient.PgBuilder;
 import io.vertx.pgclient.PgConnectOptions;
 import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.PoolOptions;
-import io.vertx.sqlclient.SqlClient;
 import io.vertx.sqlclient.Row;
+import io.vertx.sqlclient.SqlClient;
 import jakarta.inject.Singleton;
 import java.io.IOException;
 import java.io.InputStream;
 import java.time.Clock;
-import java.util.List;
-import java.util.Set;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 /** Real PostgreSQL, generated application graph and the full callbacks for the workflow fixture. */
@@ -653,7 +653,10 @@ public final class ManagedDefinitionDatabase {
         }
 
         Future<Void> observeMetadataBeforeDeployment(
-                Pool pool, WorkflowDefinitionService service, WorkflowDefinitionStore cache, WorkflowRegistry registry) {
+                Pool pool,
+                WorkflowDefinitionService service,
+                WorkflowDefinitionStore cache,
+                WorkflowRegistry registry) {
             if (expectedDefinitions.isEmpty()) return Future.succeededFuture();
             return pool.preparedQuery("""
                             SELECT tenant_key, definition_id, definition_version, kind, plan_hash, status,
@@ -668,11 +671,12 @@ public final class ManagedDefinitionDatabase {
                         for (Row row : rows) durable.add(metadata(row));
                         return List.copyOf(durable);
                     })
-                    .compose(durable -> service.list(new DefinitionFilter(
-                                    DefinitionFilter.TenantScope.GLOBAL, null, null))
+                    .compose(durable -> service.list(
+                                    new DefinitionFilter(DefinitionFilter.TenantScope.GLOBAL, null, null))
                             .map(serviceRows -> {
                                 List<WorkflowDefinitionRecord> scopedServiceRows = serviceRows.stream()
-                                        .filter(record -> record.key().definitionId().equals(definitionId))
+                                        .filter(record ->
+                                                record.key().definitionId().equals(definitionId))
                                         .sorted(Comparator.comparingLong(
                                                 record -> record.key().definitionVersion()))
                                         .toList();
@@ -681,7 +685,8 @@ public final class ManagedDefinitionDatabase {
                                         .sorted(Comparator.comparingLong(CompiledDefinitionRef::definitionVersion))
                                         .toList();
                                 List<RuntimeWorkflow> registered = registry.allRegistered().stream()
-                                        .filter(runtime -> runtime.plan().definitionId().equals(definitionId))
+                                        .filter(runtime ->
+                                                runtime.plan().definitionId().equals(definitionId))
                                         .toList();
                                 MetadataObservation snapshot = new MetadataObservation(
                                         List.copyOf(durable),
@@ -721,17 +726,21 @@ public final class ManagedDefinitionDatabase {
                 WorkflowRegistry registry,
                 String definitionId,
                 List<ExpectedDefinition> expected) {
-            require(observation.durable().size() == expected.size(), "durable definition rows differ from input versions");
+            require(
+                    observation.durable().size() == expected.size(),
+                    "durable definition rows differ from input versions");
             require(observation.service().size() == expected.size(), "service metadata differs from input versions");
             require(observation.compiled().size() == expected.size(), "compiled cache differs from input versions");
-            require(observation.registeredCount() == expected.size(), "compiled registry contains duplicate or missing versions");
+            require(
+                    observation.registeredCount() == expected.size(),
+                    "compiled registry contains duplicate or missing versions");
 
-            Map<Long, WorkflowDefinitionRecord> durableByVersion = byVersion(
-                    observation.durable(), record -> record.key().definitionVersion(), "durable metadata");
-            Map<Long, WorkflowDefinitionRecord> serviceByVersion = byVersion(
-                    observation.service(), record -> record.key().definitionVersion(), "service metadata");
-            Map<Long, CompiledDefinitionRef> cacheByVersion = byVersion(
-                    observation.compiled(), CompiledDefinitionRef::definitionVersion, "compiled cache");
+            Map<Long, WorkflowDefinitionRecord> durableByVersion =
+                    byVersion(observation.durable(), record -> record.key().definitionVersion(), "durable metadata");
+            Map<Long, WorkflowDefinitionRecord> serviceByVersion =
+                    byVersion(observation.service(), record -> record.key().definitionVersion(), "service metadata");
+            Map<Long, CompiledDefinitionRef> cacheByVersion =
+                    byVersion(observation.compiled(), CompiledDefinitionRef::definitionVersion, "compiled cache");
             Map<Long, Long> registryVersions = new HashMap<>();
             for (RuntimeWorkflow runtime : registry.allRegistered()) {
                 if (runtime.plan().definitionId().equals(definitionId)) {
@@ -739,7 +748,9 @@ public final class ManagedDefinitionDatabase {
                 }
             }
             require(registryVersions.size() == expected.size(), "compiled registry has missing or duplicate versions");
-            require(registryVersions.values().stream().allMatch(count -> count == 1L), "compiled registry has duplicate versions");
+            require(
+                    registryVersions.values().stream().allMatch(count -> count == 1L),
+                    "compiled registry has duplicate versions");
 
             String previousHash = null;
             for (ExpectedDefinition item : expected) {
@@ -754,25 +765,59 @@ public final class ManagedDefinitionDatabase {
                 require(durable.kind() == DefinitionKind.DOCUMENT, "startup row is not DOCUMENT");
                 require(durable.status() == item.status(), "durable status differs for version " + version);
                 require(service.status() == item.status(), "service status differs for version " + version);
-                require(compiled.status() == ActivationStatus.valueOf(item.status().name()), "cache status differs for version " + version);
-                require(item.documentFormat().equals(durable.documentFormat()), "durable format differs for version " + version);
-                require(item.documentFormat().equals(service.documentFormat()), "service format differs for version " + version);
+                require(
+                        compiled.status()
+                                == ActivationStatus.valueOf(item.status().name()),
+                        "cache status differs for version " + version);
+                require(
+                        item.documentFormat().equals(durable.documentFormat()),
+                        "durable format differs for version " + version);
+                require(
+                        item.documentFormat().equals(service.documentFormat()),
+                        "service format differs for version " + version);
                 require(durable.planHash().matches("[0-9a-f]{64}"), "durable hash is missing for version " + version);
                 require(durable.planHash().equals(service.planHash()), "service hash differs for version " + version);
                 require(durable.planHash().equals(compiled.planHash()), "cache hash differs for version " + version);
-                require(item.metadata().sourceType().equals(durable.provenance().sourceType()), "durable source type differs for version " + version);
-                require(item.metadata().uri().equals(durable.provenance().uri()), "durable source URI differs for version " + version);
-                require(item.metadata().revision().equals(durable.provenance().revision()), "durable source revision differs for version " + version);
-                require(item.metadata().author().equals(durable.provenance().author()), "durable source author differs for version " + version);
-                require(Objects.equals(item.metadata().uploadId(), durable.provenance().uploadId()), "durable upload id differs for version " + version);
-                require(item.metadata().loadedAt().equals(durable.provenance().loadedAt()), "durable load time differs for version " + version);
-                require(item.metadata().sourceType().equals(compiled.source().sourceType()), "cache source type differs for version " + version);
-                require(item.metadata().uri().equals(compiled.source().uri()), "cache source URI differs for version " + version);
-                require(item.metadata().revision().equals(compiled.source().revision()), "cache source revision differs for version " + version);
-                require(item.metadata().author().equals(compiled.source().author()), "cache source author differs for version " + version);
-                require(Objects.equals(item.metadata().uploadId(), compiled.source().uploadId()), "cache upload id differs for version " + version);
-                require(item.metadata().loadedAt().equals(compiled.source().loadedAt()), "cache load time differs for version " + version);
-                if (previousHash != null) require(!previousHash.equals(durable.planHash()), "versions unexpectedly share a plan hash");
+                require(
+                        item.metadata().sourceType().equals(durable.provenance().sourceType()),
+                        "durable source type differs for version " + version);
+                require(
+                        item.metadata().uri().equals(durable.provenance().uri()),
+                        "durable source URI differs for version " + version);
+                require(
+                        item.metadata().revision().equals(durable.provenance().revision()),
+                        "durable source revision differs for version " + version);
+                require(
+                        item.metadata().author().equals(durable.provenance().author()),
+                        "durable source author differs for version " + version);
+                require(
+                        Objects.equals(
+                                item.metadata().uploadId(), durable.provenance().uploadId()),
+                        "durable upload id differs for version " + version);
+                require(
+                        item.metadata().loadedAt().equals(durable.provenance().loadedAt()),
+                        "durable load time differs for version " + version);
+                require(
+                        item.metadata().sourceType().equals(compiled.source().sourceType()),
+                        "cache source type differs for version " + version);
+                require(
+                        item.metadata().uri().equals(compiled.source().uri()),
+                        "cache source URI differs for version " + version);
+                require(
+                        item.metadata().revision().equals(compiled.source().revision()),
+                        "cache source revision differs for version " + version);
+                require(
+                        item.metadata().author().equals(compiled.source().author()),
+                        "cache source author differs for version " + version);
+                require(
+                        Objects.equals(
+                                item.metadata().uploadId(), compiled.source().uploadId()),
+                        "cache upload id differs for version " + version);
+                require(
+                        item.metadata().loadedAt().equals(compiled.source().loadedAt()),
+                        "cache load time differs for version " + version);
+                if (previousHash != null)
+                    require(!previousHash.equals(durable.planHash()), "versions unexpectedly share a plan hash");
                 previousHash = durable.planHash();
             }
         }
@@ -830,7 +875,8 @@ public final class ManagedDefinitionDatabase {
             } catch (RuntimeException | AssertionError failure) {
                 return Future.failedFuture(failure);
             }
-            return observation.observeMetadataBeforeDeployment(pool, service, cache, registry)
+            return observation
+                    .observeMetadataBeforeDeployment(pool, service, cache, registry)
                     .map(ignored -> {
                         if (observation.enabled) observation.events.add("bootstrap-complete");
                         return (Void) null;

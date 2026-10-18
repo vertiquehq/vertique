@@ -9,9 +9,9 @@ import dev.vertique.application.VertiqueApplicationBootstrap;
 import dev.vertique.application.VertiqueApplicationHandle;
 import dev.vertique.core.VertiqueRuntime;
 import dev.vertique.db.exception.DataIntegrityViolationException;
+import dev.vertique.db.exception.PessimisticLockingFailureException;
 import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
-import dev.vertique.db.exception.PessimisticLockingFailureException;
 import dev.vertique.workflow.definition.parser.DocumentFormat;
 import dev.vertique.workflow.definition.source.DefinitionResource;
 import dev.vertique.workflow.definition.source.SourceMetadata;
@@ -20,7 +20,6 @@ import dev.vertique.workflow.exception.WorkflowPersistenceException;
 import dev.vertique.workflow.postgresql.registry.ManagedDefinitionDatabase.AppComponent;
 import dev.vertique.workflow.postgresql.registry.ManagedDefinitionDatabase.BootObservation;
 import dev.vertique.workflow.postgresql.registry.ManagedDefinitionDatabase.ExpectedDefinition;
-import dev.vertique.workflow.postgresql.registry.WorkflowDefinitionSqlObserver;
 import dev.vertique.workflow.registry.store.ActivationClaim;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.DefinitionKind;
@@ -51,8 +50,8 @@ import java.util.List;
 import java.util.Locale;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
-import java.util.stream.Stream;
 import java.util.function.Supplier;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
@@ -103,17 +102,19 @@ public class DefinitionRegistryBootstrapIT {
                 List.of(
                         new ExpectedDefinition(1, DefinitionStatus.SUPERSEDED, "YAML", YAML_METADATA),
                         new ExpectedDefinition(2, DefinitionStatus.ACTIVE, "JSON", JSON_METADATA)));
-        AppComponent app = ManagedDefinitionDatabase.app(
-                vertx, pool, new JsonObject(), observation, staticDocuments(), false);
+        AppComponent app =
+                ManagedDefinitionDatabase.app(vertx, pool, new JsonObject(), observation, staticDocuments(), false);
 
-        Future<Void> work = pool.preparedQuery("SELECT count(*) AS row_count FROM workflow_definitions WHERE definition_id = $1")
+        Future<Void> work = pool.preparedQuery(
+                        "SELECT count(*) AS row_count FROM workflow_definitions WHERE definition_id = $1")
                 .execute(Tuple.of(DEFINITION_ID))
                 .compose(rows -> {
                     Row row = rows.iterator().next();
                     assertThat(row.getLong("row_count"))
                             .as("the isolated database starts without preinserted definition rows")
                             .isZero();
-                    return VertiqueApplicationBootstrap.start(VertiqueRuntime.of(vertx, new JsonObject()), ignored -> app);
+                    return VertiqueApplicationBootstrap.start(
+                            VertiqueRuntime.of(vertx, new JsonObject()), ignored -> app);
                 })
                 .compose(handle -> {
                     handles.add(handle);
@@ -162,19 +163,9 @@ public class DefinitionRegistryBootstrapIT {
                 definitionSeed(null, CODE_RECOMPUTE_ID, 6, DefinitionKind.CODE, DefinitionStatus.RETIRED, null),
                 definitionSeed(null, DOCUMENT_RECOMPUTE_ID, 1, DefinitionKind.DOCUMENT, DefinitionStatus.ACTIVE, null),
                 definitionSeed(
-                        null,
-                        DOCUMENT_RECOMPUTE_ID,
-                        2,
-                        DefinitionKind.DOCUMENT,
-                        DefinitionStatus.SUPERSEDED,
-                        null),
+                        null, DOCUMENT_RECOMPUTE_ID, 2, DefinitionKind.DOCUMENT, DefinitionStatus.SUPERSEDED, null),
                 definitionSeed(
-                        null,
-                        DOCUMENT_RECOMPUTE_ID,
-                        3,
-                        DefinitionKind.DOCUMENT,
-                        DefinitionStatus.CANDIDATE,
-                        null),
+                        null, DOCUMENT_RECOMPUTE_ID, 3, DefinitionKind.DOCUMENT, DefinitionStatus.CANDIDATE, null),
                 definitionSeed(
                         null,
                         DOCUMENT_RECOMPUTE_ID,
@@ -183,43 +174,21 @@ public class DefinitionRegistryBootstrapIT {
                         DefinitionStatus.ACTIVATING,
                         UUID.fromString("20000000-0000-0000-0000-000000000004")),
                 definitionSeed(
-                        null,
-                        DOCUMENT_RECOMPUTE_ID,
-                        5,
-                        DefinitionKind.DOCUMENT,
-                        DefinitionStatus.DEPRECATED,
-                        null),
+                        null, DOCUMENT_RECOMPUTE_ID, 5, DefinitionKind.DOCUMENT, DefinitionStatus.DEPRECATED, null),
+                definitionSeed(null, DOCUMENT_RECOMPUTE_ID, 6, DefinitionKind.DOCUMENT, DefinitionStatus.RETIRED, null),
                 definitionSeed(
-                        null,
-                        DOCUMENT_RECOMPUTE_ID,
-                        6,
+                        "tenant-target",
+                        TENANT_RECOMPUTE_ID,
+                        7,
                         DefinitionKind.DOCUMENT,
-                        DefinitionStatus.RETIRED,
+                        DefinitionStatus.CANDIDATE,
                         null),
-                definitionSeed("tenant-target", TENANT_RECOMPUTE_ID, 7, DefinitionKind.DOCUMENT, DefinitionStatus.CANDIDATE, null),
                 definitionSeed(null, TENANT_RECOMPUTE_ID, 1, DefinitionKind.DOCUMENT, DefinitionStatus.ACTIVE, null),
                 definitionSeed(
-                        null,
-                        TENANT_RECOMPUTE_ID,
-                        2,
-                        DefinitionKind.DOCUMENT,
-                        DefinitionStatus.SUPERSEDED,
-                        null),
+                        null, TENANT_RECOMPUTE_ID, 2, DefinitionKind.DOCUMENT, DefinitionStatus.SUPERSEDED, null),
                 definitionSeed(null, OTHER_DEFINITION_ID, 1, DefinitionKind.CODE, DefinitionStatus.ACTIVE, null),
-                definitionSeed(
-                        null,
-                        ROLLBACK_RECOMPUTE_ID,
-                        1,
-                        DefinitionKind.CODE,
-                        DefinitionStatus.ACTIVE,
-                        null),
-                definitionSeed(
-                        null,
-                        ROLLBACK_RECOMPUTE_ID,
-                        2,
-                        DefinitionKind.CODE,
-                        DefinitionStatus.SUPERSEDED,
-                        null));
+                definitionSeed(null, ROLLBACK_RECOMPUTE_ID, 1, DefinitionKind.CODE, DefinitionStatus.ACTIVE, null),
+                definitionSeed(null, ROLLBACK_RECOMPUTE_ID, 2, DefinitionKind.CODE, DefinitionStatus.SUPERSEDED, null));
 
         Future<Void> proof = deleteDefinitions(
                         pool,
@@ -232,24 +201,27 @@ public class DefinitionRegistryBootstrapIT {
                 .compose(ignored -> readSnapshots(pool, OTHER_DEFINITION_ID))
                 .compose(otherIdBefore -> assertRecomputedOwner(
                                 app.definitionRegistryStore(), pool, CODE_RECOMPUTE_ID, null)
-                        .compose(ignored -> assertRecomputedOwner(
-                                app.definitionRegistryStore(), pool, DOCUMENT_RECOMPUTE_ID, null))
+                        .compose(ignored ->
+                                assertRecomputedOwner(app.definitionRegistryStore(), pool, DOCUMENT_RECOMPUTE_ID, null))
                         .compose(ignored -> readSnapshots(pool, OTHER_DEFINITION_ID))
                         .map(otherIdAfter -> {
                             assertThat(otherIdAfter)
-                                    .as("recompute leaves the other definition id unchanged from its original fixture state")
+                                    .as(
+                                            "recompute leaves the other definition id unchanged from its original fixture state")
                                     .isEqualTo(otherIdBefore);
                             return (Void) null;
                         }))
                 .compose(ignored -> assertNoEligibleTenantOwnerIsNoOp(app.definitionRegistryStore(), pool))
                 .compose(ignored -> assertPromotionFailureRollsBack(app.definitionRegistryStore(), pool));
-        Future<Void> work = withCleanup(proof, () -> deleteDefinitions(
-                pool,
-                CODE_RECOMPUTE_ID,
-                DOCUMENT_RECOMPUTE_ID,
-                TENANT_RECOMPUTE_ID,
-                OTHER_DEFINITION_ID,
-                ROLLBACK_RECOMPUTE_ID));
+        Future<Void> work = withCleanup(
+                proof,
+                () -> deleteDefinitions(
+                        pool,
+                        CODE_RECOMPUTE_ID,
+                        DOCUMENT_RECOMPUTE_ID,
+                        TENANT_RECOMPUTE_ID,
+                        OTHER_DEFINITION_ID,
+                        ROLLBACK_RECOMPUTE_ID));
 
         finish(context, work, List.of(), pools);
     }
@@ -292,9 +264,11 @@ public class DefinitionRegistryBootstrapIT {
                 new BootObservation(definitionId, 1, "unused", false),
                 List::of);
 
-        Future<Void> work = mutationPool.preparedQuery("DELETE FROM workflow_definitions WHERE definition_id = $1")
+        Future<Void> work = mutationPool
+                .preparedQuery("DELETE FROM workflow_definitions WHERE definition_id = $1")
                 .execute(Tuple.of(definitionId))
-                .compose(ignored -> VertiqueApplicationBootstrap.start(VertiqueRuntime.of(vertx, new JsonObject()), r -> app))
+                .compose(ignored ->
+                        VertiqueApplicationBootstrap.start(VertiqueRuntime.of(vertx, new JsonObject()), r -> app))
                 .compose(handle -> {
                     resources.handle = handle;
                     SourceMetadata metadata = new SourceMetadata(
@@ -309,7 +283,8 @@ public class DefinitionRegistryBootstrapIT {
                             .map(loaded -> {
                                 assertThat(loaded.definitionId()).isEqualTo(definitionId);
                                 assertThat(loaded.definitionVersion()).isEqualTo(1L);
-                                assertThat(loaded.status()).isEqualTo(dev.vertique.workflow.definition.service.ActivationStatus.CANDIDATE);
+                                assertThat(loaded.status())
+                                        .isEqualTo(dev.vertique.workflow.definition.service.ActivationStatus.CANDIDATE);
                                 return loaded;
                             });
                 })
@@ -328,7 +303,8 @@ public class DefinitionRegistryBootstrapIT {
                     return awaitLockWait(observerPool, vertx, writerPid, lockCase.kind())
                             .compose(wait -> {
                                 resources.writerWait = wait;
-                                return startQueuedSharedLock(contenderPool, observerPool, vertx, definitionId, resources);
+                                return startQueuedSharedLock(
+                                        contenderPool, observerPool, vertx, definitionId, resources);
                             })
                             .compose(ignored -> awaitOperation(resources.mutation, vertx, 35_000))
                             .compose(outcome -> {
@@ -339,26 +315,26 @@ public class DefinitionRegistryBootstrapIT {
                                 assertThat(sqlObserver.shortenedDefinitionLockTimeouts())
                                         .as("the observer may shorten only an issued production lock timeout")
                                         .isEqualTo(1);
-                                assertThat(sqlObserver.statements())
-                                        .anySatisfy(sql -> assertThat(normalized(sql))
-                                                .isEqualTo("set local lock_timeout = '30000ms'"));
+                                assertThat(sqlObserver.statements()).anySatisfy(sql -> assertThat(normalized(sql))
+                                        .isEqualTo("set local lock_timeout = '30000ms'"));
                                 assertMappedLockTimeout(outcome.failure(), definitionId);
                                 return assertCandidateWasNotPartiallyClaimed(observedMutationPool, key)
-                                        .compose(ignored -> assertMutationConnectionWasReused(
-                                                observedMutationPool, writerPid));
+                                        .compose(ignored ->
+                                                assertMutationConnectionWasReused(observedMutationPool, writerPid));
                             })
                             .compose(ignored -> {
                                 if (resources.queuedSharedLock == null) return Future.succeededFuture();
                                 return awaitFuture(resources.queuedSharedLock.acquisition(), vertx, 2_000)
                                         .map(acquired -> {
                                             assertThat(acquired)
-                                                    .as("compatible shared work queued behind the writer must progress after its timeout")
+                                                    .as(
+                                                            "compatible shared work queued behind the writer must progress after its timeout")
                                                     .isTrue();
                                             return (Void) null;
                                         });
                             })
-                            .compose(ignored -> assertLockTimeoutPrecedesWait(
-                                    sqlObserver.statements(), lockCase.kind()));
+                            .compose(ignored ->
+                                    assertLockTimeoutPrecedesWait(sqlObserver.statements(), lockCase.kind()));
                 });
 
         finish(context, work, resources);
@@ -375,11 +351,14 @@ public class DefinitionRegistryBootstrapIT {
                 MutationKind.RELEASE,
                 MutationKind.RECOMPUTE_ACTIVE)) {
             for (WaitKind waitKind : WaitKind.values()) {
-                cases.add(new LockWaitCase(mutation.displayName() + " behind " + waitKind.displayName(), waitKind, mutation));
+                cases.add(new LockWaitCase(
+                        mutation.displayName() + " behind " + waitKind.displayName(), waitKind, mutation));
             }
         }
         cases.add(new LockWaitCase(
-                "startup reconciliation behind shared advisory holder", WaitKind.SHARED_ADVISORY, MutationKind.STARTUP));
+                "startup reconciliation behind shared advisory holder",
+                WaitKind.SHARED_ADVISORY,
+                MutationKind.STARTUP));
         return cases.stream();
     }
 
@@ -423,7 +402,8 @@ public class DefinitionRegistryBootstrapIT {
                                     .compose(ignoredQueued -> awaitOperation(resources.mutation, vertx, 5_000))
                                     .compose(outcome -> {
                                         assertThat(outcome.completed())
-                                                .as("the actual bounded " + lockCase.mutation().displayName()
+                                                .as("the actual bounded "
+                                                        + lockCase.mutation().displayName()
                                                         + " wait completes after the observed PostgreSQL timeout")
                                                 .isTrue();
                                         assertThat(outcome.succeeded()).isFalse();
@@ -434,26 +414,31 @@ public class DefinitionRegistryBootstrapIT {
                                                 .anySatisfy(sql -> assertThat(normalized(sql))
                                                         .isEqualTo("set local lock_timeout = '30000ms'"));
                                         assertMappedLockTimeout(outcome.failure(), definitionId);
-                                        return readSnapshots(mutationPool, definitionId).map(after -> {
-                                            assertThat(after)
-                                                    .as("a failed " + lockCase.mutation().displayName()
-                                                            + " leaves all definition rows and claim tokens unchanged")
-                                                    .isEqualTo(setup.before());
-                                            return (Void) null;
-                                        });
+                                        return readSnapshots(mutationPool, definitionId)
+                                                .map(after -> {
+                                                    assertThat(after)
+                                                            .as(
+                                                                    "a failed "
+                                                                            + lockCase.mutation()
+                                                                                    .displayName()
+                                                                            + " leaves all definition rows and claim tokens unchanged")
+                                                            .isEqualTo(setup.before());
+                                                    return (Void) null;
+                                                });
                                     })
-                                    .compose(ignoredOutcome -> assertMutationConnectionWasReused(
-                                            observedMutationPool, setup.writerPid()))
-                                    .compose(ignoredReuse -> awaitFuture(
-                                            resources.queuedSharedLock.acquisition(), vertx, 2_000))
+                                    .compose(ignoredOutcome ->
+                                            assertMutationConnectionWasReused(observedMutationPool, setup.writerPid()))
+                                    .compose(ignoredReuse ->
+                                            awaitFuture(resources.queuedSharedLock.acquisition(), vertx, 2_000))
                                     .map(progressed -> {
                                         assertThat(progressed)
-                                                .as("compatible shared work queued behind the writer progresses after timeout")
+                                                .as(
+                                                        "compatible shared work queued behind the writer progresses after timeout")
                                                 .isTrue();
                                         return (Void) null;
                                     })
-                                    .compose(ignoredProgress -> assertLockTimeoutPrecedesWait(
-                                            sqlObserver.statements(), lockCase.kind()));
+                                    .compose(ignoredProgress ->
+                                            assertLockTimeoutPrecedesWait(sqlObserver.statements(), lockCase.kind()));
                         }));
 
         finish(context, work, resources);
@@ -483,8 +468,9 @@ public class DefinitionRegistryBootstrapIT {
                 .compose(writerPid -> acquireLockHolder(lockCase, definitionId, holderPool, lockKey, resources)
                         .compose(ignored -> {
                             sqlObserver.shortenNextDefinitionLockTimeout();
-                            Future<VertiqueApplicationHandle<AppComponent>> starting = VertiqueApplicationBootstrap.start(
-                                    VertiqueRuntime.of(vertx, new JsonObject()), runtime -> app);
+                            Future<VertiqueApplicationHandle<AppComponent>> starting =
+                                    VertiqueApplicationBootstrap.start(
+                                            VertiqueRuntime.of(vertx, new JsonObject()), runtime -> app);
                             resources.mutation = starting;
                             starting.onSuccess(handle -> resources.handle = handle);
                             return awaitLockWait(observerPool, vertx, writerPid, WaitKind.SHARED_ADVISORY)
@@ -500,23 +486,24 @@ public class DefinitionRegistryBootstrapIT {
                                                 .isTrue();
                                         assertThat(outcome.succeeded()).isFalse();
                                         assertMappedLockTimeoutInCauseChain(outcome.failure(), definitionId);
-                                        assertThat(sqlObserver.shortenedDefinitionLockTimeouts()).isEqualTo(1);
+                                        assertThat(sqlObserver.shortenedDefinitionLockTimeouts())
+                                                .isEqualTo(1);
                                         assertThat(sqlObserver.statements())
                                                 .anySatisfy(sql -> assertThat(normalized(sql))
                                                         .isEqualTo("set local lock_timeout = '30000ms'"));
-                                        assertThat(observation.events())
-                                                .doesNotContain("bootstrap-verticle-deployed");
-                                        return readSnapshots(mutationPool, definitionId).map(rows -> {
-                                            assertThat(rows)
-                                                    .as("failed reconciliation commits no static metadata")
-                                                    .isEmpty();
-                                            return (Void) null;
-                                        });
+                                        assertThat(observation.events()).doesNotContain("bootstrap-verticle-deployed");
+                                        return readSnapshots(mutationPool, definitionId)
+                                                .map(rows -> {
+                                                    assertThat(rows)
+                                                            .as("failed reconciliation commits no static metadata")
+                                                            .isEmpty();
+                                                    return (Void) null;
+                                                });
                                     })
-                                    .compose(ignoredOutcome -> assertMutationConnectionWasReused(
-                                            observedMutationPool, writerPid))
-                                    .compose(ignoredReuse -> awaitFuture(
-                                            resources.queuedSharedLock.acquisition(), vertx, 2_000))
+                                    .compose(ignoredOutcome ->
+                                            assertMutationConnectionWasReused(observedMutationPool, writerPid))
+                                    .compose(ignoredReuse ->
+                                            awaitFuture(resources.queuedSharedLock.acquisition(), vertx, 2_000))
                                     .map(progressed -> {
                                         assertThat(progressed)
                                                 .as("compatible queued shared work progresses after startup abort")
@@ -532,21 +519,33 @@ public class DefinitionRegistryBootstrapIT {
 
     private static Future<Void> seedMutationState(Pool pool, LockWaitCase lockCase) {
         String definitionId = lockCase.definitionId();
-        List<DefinitionSeed> seeds = switch (lockCase.mutation()) {
-            case INSERT_CANDIDATE, UPSERT_DOCUMENT -> List.of(definitionSeed(
-                    null, definitionId, 1, DefinitionKind.DOCUMENT, DefinitionStatus.RETIRED, null));
-            case COMPLETE, RELEASE -> List.of(definitionSeed(
-                    null,
-                    definitionId,
-                    1,
-                    DefinitionKind.DOCUMENT,
-                    DefinitionStatus.ACTIVATING,
-                    UUID.fromString("30000000-0000-0000-0000-000000000001")));
-            case RECOMPUTE_ACTIVE -> List.of(
-                    definitionSeed(null, definitionId, 1, DefinitionKind.DOCUMENT, DefinitionStatus.ACTIVE, null),
-                    definitionSeed(null, definitionId, 2, DefinitionKind.DOCUMENT, DefinitionStatus.SUPERSEDED, null));
-            case CLAIM, STARTUP -> throw new IllegalArgumentException("the mutation state is not directly seeded");
-        };
+        List<DefinitionSeed> seeds =
+                switch (lockCase.mutation()) {
+                    case INSERT_CANDIDATE, UPSERT_DOCUMENT ->
+                        List.of(definitionSeed(
+                                null, definitionId, 1, DefinitionKind.DOCUMENT, DefinitionStatus.RETIRED, null));
+                    case COMPLETE, RELEASE ->
+                        List.of(definitionSeed(
+                                null,
+                                definitionId,
+                                1,
+                                DefinitionKind.DOCUMENT,
+                                DefinitionStatus.ACTIVATING,
+                                UUID.fromString("30000000-0000-0000-0000-000000000001")));
+                    case RECOMPUTE_ACTIVE ->
+                        List.of(
+                                definitionSeed(
+                                        null, definitionId, 1, DefinitionKind.DOCUMENT, DefinitionStatus.ACTIVE, null),
+                                definitionSeed(
+                                        null,
+                                        definitionId,
+                                        2,
+                                        DefinitionKind.DOCUMENT,
+                                        DefinitionStatus.SUPERSEDED,
+                                        null));
+                    case CLAIM, STARTUP ->
+                        throw new IllegalArgumentException("the mutation state is not directly seeded");
+                };
         return insertDefinitionSeeds(pool, seeds);
     }
 
@@ -558,13 +557,15 @@ public class DefinitionRegistryBootstrapIT {
                 : 1;
         DefinitionKey key = new DefinitionKey(null, definitionId, mutationVersion);
         return switch (lockCase.mutation()) {
-            case INSERT_CANDIDATE -> store.insertCandidate(mutationRecord(key, DefinitionStatus.CANDIDATE), mutationDocument(key));
-            case UPSERT_DOCUMENT -> store.upsertDocument(mutationRecord(key, DefinitionStatus.SUPERSEDED), mutationDocument(key));
+            case INSERT_CANDIDATE ->
+                store.insertCandidate(mutationRecord(key, DefinitionStatus.CANDIDATE), mutationDocument(key));
+            case UPSERT_DOCUMENT ->
+                store.upsertDocument(mutationRecord(key, DefinitionStatus.SUPERSEDED), mutationDocument(key));
             case CLAIM -> store.claim(key);
-            case COMPLETE -> store.complete(new ActivationClaim(
-                    key, UUID.fromString("30000000-0000-0000-0000-000000000001")));
-            case RELEASE -> store.release(new ActivationClaim(
-                    key, UUID.fromString("30000000-0000-0000-0000-000000000001")));
+            case COMPLETE ->
+                store.complete(new ActivationClaim(key, UUID.fromString("30000000-0000-0000-0000-000000000001")));
+            case RELEASE ->
+                store.release(new ActivationClaim(key, UUID.fromString("30000000-0000-0000-0000-000000000001")));
             case RECOMPUTE_ACTIVE -> recomputeActive(store, null, definitionId);
             case STARTUP -> throw new IllegalArgumentException("startup is exercised through the managed application");
         };
@@ -577,51 +578,48 @@ public class DefinitionRegistryBootstrapIT {
             DefinitionKey key,
             LockWaitResources resources) {
         if (lockCase.kind() == WaitKind.SHARED_ADVISORY) {
-            return beginTransaction(holderPool)
-                    .compose(connection -> {
-                        resources.primaryHolder = connection;
-                        return connection.preparedQuery("SELECT pg_advisory_xact_lock_shared($1)")
-                                .execute(Tuple.of(advisoryLockKey(definitionId)))
-                                .mapEmpty();
-                    });
+            return beginTransaction(holderPool).compose(connection -> {
+                resources.primaryHolder = connection;
+                return connection
+                        .preparedQuery("SELECT pg_advisory_xact_lock_shared($1)")
+                        .execute(Tuple.of(advisoryLockKey(definitionId)))
+                        .mapEmpty();
+            });
         }
-        return beginTransaction(holderPool)
-                .compose(connection -> {
-                    resources.primaryHolder = connection;
-                    return connection.preparedQuery("""
+        return beginTransaction(holderPool).compose(connection -> {
+            resources.primaryHolder = connection;
+            return connection
+                    .preparedQuery("""
                                     SELECT definition_id FROM workflow_definitions
                                     WHERE tenant_key IS NULL AND definition_id = $1 AND definition_version = $2
                                     FOR UPDATE
                                     """)
-                            .execute(Tuple.of(key.definitionId(), key.definitionVersion()))
-                            .map(rows -> {
-                                assertThat(rows.rowCount()).isEqualTo(1);
-                                return (Void) null;
-                            });
-                });
+                    .execute(Tuple.of(key.definitionId(), key.definitionVersion()))
+                    .map(rows -> {
+                        assertThat(rows.rowCount()).isEqualTo(1);
+                        return (Void) null;
+                    });
+        });
     }
 
     private static Future<Void> startQueuedSharedLock(
-            Pool contenderPool,
-            Pool observerPool,
-            Vertx vertx,
-            String definitionId,
-            LockWaitResources resources) {
-        return beginTransaction(contenderPool)
-                .compose(connection -> {
-                    resources.queuedSharedConnection = connection;
-                    return backendPid(connection).compose(pid -> {
-                        resources.queuedSharedLock = new QueuedSharedLock(connection
-                                .preparedQuery("SELECT pg_advisory_xact_lock_shared($1)")
-                                .execute(Tuple.of(advisoryLockKey(definitionId)))
-                                .mapEmpty());
-                        return awaitLockWait(observerPool, vertx, pid, WaitKind.SHARED_ADVISORY).mapEmpty();
-                    });
-                });
+            Pool contenderPool, Pool observerPool, Vertx vertx, String definitionId, LockWaitResources resources) {
+        return beginTransaction(contenderPool).compose(connection -> {
+            resources.queuedSharedConnection = connection;
+            return backendPid(connection).compose(pid -> {
+                resources.queuedSharedLock = new QueuedSharedLock(connection
+                        .preparedQuery("SELECT pg_advisory_xact_lock_shared($1)")
+                        .execute(Tuple.of(advisoryLockKey(definitionId)))
+                        .mapEmpty());
+                return awaitLockWait(observerPool, vertx, pid, WaitKind.SHARED_ADVISORY)
+                        .mapEmpty();
+            });
+        });
     }
 
     private static Future<SqlConnection> beginTransaction(Pool pool) {
-        return pool.getConnection().compose(connection -> connection.query("BEGIN")
+        return pool.getConnection().compose(connection -> connection
+                .query("BEGIN")
                 .execute()
                 .map(connection)
                 .recover(failure -> connection.close().compose(ignored -> Future.failedFuture(failure))));
@@ -634,7 +632,8 @@ public class DefinitionRegistryBootstrapIT {
     }
 
     private static Future<Integer> backendPid(SqlConnection connection) {
-        return connection.query("SELECT pg_backend_pid() AS backend_pid")
+        return connection
+                .query("SELECT pg_backend_pid() AS backend_pid")
                 .execute()
                 .map(rows -> rows.iterator().next().getInteger("backend_pid"));
     }
@@ -652,32 +651,31 @@ public class DefinitionRegistryBootstrapIT {
                         SELECT l.locktype, a.wait_event_type, a.wait_event
                         FROM pg_locks l JOIN pg_stat_activity a ON a.pid = l.pid
                         WHERE l.pid = $1 AND NOT l.granted
-                        """)
-                .execute(Tuple.of(pid))
-                .onComplete(query -> {
-                    if (query.failed()) {
-                        result.tryFail(query.cause());
-                        return;
-                    }
-                    for (Row row : query.result()) {
-                        String lockType = row.getString("locktype");
-                        if (expected.matches(lockType)) {
-                            result.tryComplete(new ObservedLock(
-                                    lockType, row.getString("wait_event_type"), row.getString("wait_event")));
-                            return;
-                        }
-                    }
-                    if (System.nanoTime() >= deadline) {
-                        result.tryFail("mutation backend did not enter the expected PostgreSQL lock wait: " + expected);
-                    } else {
-                        vertx.setTimer(20, ignored -> pollLockWait(observerPool, vertx, pid, expected, deadline, result));
-                    }
-                });
+                        """).execute(Tuple.of(pid)).onComplete(query -> {
+            if (query.failed()) {
+                result.tryFail(query.cause());
+                return;
+            }
+            for (Row row : query.result()) {
+                String lockType = row.getString("locktype");
+                if (expected.matches(lockType)) {
+                    result.tryComplete(
+                            new ObservedLock(lockType, row.getString("wait_event_type"), row.getString("wait_event")));
+                    return;
+                }
+            }
+            if (System.nanoTime() >= deadline) {
+                result.tryFail("mutation backend did not enter the expected PostgreSQL lock wait: " + expected);
+            } else {
+                vertx.setTimer(20, ignored -> pollLockWait(observerPool, vertx, pid, expected, deadline, result));
+            }
+        });
     }
 
     private static Future<OperationObservation> awaitOperation(Future<?> operation, Vertx vertx, long timeoutMs) {
         Promise<OperationObservation> observed = Promise.promise();
-        long timerId = vertx.setTimer(timeoutMs, ignored -> observed.tryComplete(new OperationObservation(false, false, null)));
+        long timerId = vertx.setTimer(
+                timeoutMs, ignored -> observed.tryComplete(new OperationObservation(false, false, null)));
         operation.onComplete(result -> {
             vertx.cancelTimer(timerId);
             observed.tryComplete(new OperationObservation(true, result.succeeded(), result.cause()));
@@ -697,56 +695,52 @@ public class DefinitionRegistryBootstrapIT {
 
     private static Future<Void> assertRecomputedOwner(
             WorkflowDefinitionRegistryStore store, Pool pool, String definitionId, String tenantKey) {
-        return readSnapshots(pool, definitionId)
-                .compose(before -> recomputeActive(store, tenantKey, definitionId)
-                        .compose(ignored -> readSnapshots(pool, definitionId))
-                        .compose(after -> {
-                            List<DefinitionSnapshot> ownerBefore = before.stream()
-                                    .filter(row -> java.util.Objects.equals(row.tenantKey(), tenantKey))
-                                    .toList();
-                            List<DefinitionSnapshot> ownerAfter = after.stream()
-                                    .filter(row -> java.util.Objects.equals(row.tenantKey(), tenantKey))
-                                    .toList();
-                            assertThat(ownerBefore).hasSize(6);
-                            assertThat(ownerBefore)
-                                    .extracting(DefinitionSnapshot::definitionVersion)
-                                    .containsExactly(1L, 2L, 3L, 4L, 5L, 6L);
-                            assertThat(snapshot(ownerBefore, 1).status()).isEqualTo("ACTIVE");
-                            assertThat(snapshot(ownerBefore, 2).status()).isEqualTo("SUPERSEDED");
-                            assertThat(ownerAfter)
-                                    .extracting(DefinitionSnapshot::definitionVersion)
-                                    .containsExactly(1L, 2L, 3L, 4L, 5L, 6L);
-                            assertThat(snapshot(ownerAfter, 1).status()).isEqualTo("SUPERSEDED");
-                            assertThat(snapshot(ownerAfter, 2).status()).isEqualTo("ACTIVE");
-                            assertThat(ownerAfter.stream()
-                                            .filter(row -> List.of(
-                                                            "CANDIDATE", "ACTIVATING", "DEPRECATED", "RETIRED")
-                                                    .contains(row.status()))
-                                            .toList())
-                                    .containsExactlyElementsOf(ownerBefore.stream()
-                                            .filter(row -> List.of(
-                                                            "CANDIDATE", "ACTIVATING", "DEPRECATED", "RETIRED")
-                                                    .contains(row.status()))
-                                            .toList());
-                            assertThat(after.stream()
-                                            .filter(row -> !java.util.Objects.equals(row.tenantKey(), tenantKey))
-                                            .toList())
-                                    .containsExactlyElementsOf(before.stream()
-                                            .filter(row -> !java.util.Objects.equals(row.tenantKey(), tenantKey))
-                                            .toList());
-                            return recomputeActive(store, tenantKey, definitionId)
-                                    .compose(ignoredAgain -> readSnapshots(pool, definitionId))
-                                    .map(repeated -> {
-                                        assertThat(repeated)
-                                                .as("repeating recompute leaves statuses and timestamps unchanged")
-                                                .isEqualTo(after);
-                                        return (Void) null;
-                                    });
-                        }));
+        return readSnapshots(pool, definitionId).compose(before -> recomputeActive(store, tenantKey, definitionId)
+                .compose(ignored -> readSnapshots(pool, definitionId))
+                .compose(after -> {
+                    List<DefinitionSnapshot> ownerBefore = before.stream()
+                            .filter(row -> java.util.Objects.equals(row.tenantKey(), tenantKey))
+                            .toList();
+                    List<DefinitionSnapshot> ownerAfter = after.stream()
+                            .filter(row -> java.util.Objects.equals(row.tenantKey(), tenantKey))
+                            .toList();
+                    assertThat(ownerBefore).hasSize(6);
+                    assertThat(ownerBefore)
+                            .extracting(DefinitionSnapshot::definitionVersion)
+                            .containsExactly(1L, 2L, 3L, 4L, 5L, 6L);
+                    assertThat(snapshot(ownerBefore, 1).status()).isEqualTo("ACTIVE");
+                    assertThat(snapshot(ownerBefore, 2).status()).isEqualTo("SUPERSEDED");
+                    assertThat(ownerAfter)
+                            .extracting(DefinitionSnapshot::definitionVersion)
+                            .containsExactly(1L, 2L, 3L, 4L, 5L, 6L);
+                    assertThat(snapshot(ownerAfter, 1).status()).isEqualTo("SUPERSEDED");
+                    assertThat(snapshot(ownerAfter, 2).status()).isEqualTo("ACTIVE");
+                    assertThat(ownerAfter.stream()
+                                    .filter(row -> List.of("CANDIDATE", "ACTIVATING", "DEPRECATED", "RETIRED")
+                                            .contains(row.status()))
+                                    .toList())
+                            .containsExactlyElementsOf(ownerBefore.stream()
+                                    .filter(row -> List.of("CANDIDATE", "ACTIVATING", "DEPRECATED", "RETIRED")
+                                            .contains(row.status()))
+                                    .toList());
+                    assertThat(after.stream()
+                                    .filter(row -> !java.util.Objects.equals(row.tenantKey(), tenantKey))
+                                    .toList())
+                            .containsExactlyElementsOf(before.stream()
+                                    .filter(row -> !java.util.Objects.equals(row.tenantKey(), tenantKey))
+                                    .toList());
+                    return recomputeActive(store, tenantKey, definitionId)
+                            .compose(ignoredAgain -> readSnapshots(pool, definitionId))
+                            .map(repeated -> {
+                                assertThat(repeated)
+                                        .as("repeating recompute leaves statuses and timestamps unchanged")
+                                        .isEqualTo(after);
+                                return (Void) null;
+                            });
+                }));
     }
 
-    private static Future<Void> assertNoEligibleTenantOwnerIsNoOp(
-            WorkflowDefinitionRegistryStore store, Pool pool) {
+    private static Future<Void> assertNoEligibleTenantOwnerIsNoOp(WorkflowDefinitionRegistryStore store, Pool pool) {
         return readSnapshots(pool, TENANT_RECOMPUTE_ID)
                 .compose(before -> recomputeActive(store, "tenant-target", TENANT_RECOMPUTE_ID)
                         .compose(ignored -> readSnapshots(pool, TENANT_RECOMPUTE_ID))
@@ -756,14 +750,14 @@ public class DefinitionRegistryBootstrapIT {
                                     .extracting(DefinitionSnapshot::status)
                                     .containsExactly("CANDIDATE");
                             assertThat(after)
-                                    .as("no eligible target-owner rows are a no-op even when another owner has an eligible pair")
+                                    .as(
+                                            "no eligible target-owner rows are a no-op even when another owner has an eligible pair")
                                     .isEqualTo(before);
                             return (Void) null;
                         }));
     }
 
-    private static Future<Void> assertPromotionFailureRollsBack(
-            WorkflowDefinitionRegistryStore store, Pool pool) {
+    private static Future<Void> assertPromotionFailureRollsBack(WorkflowDefinitionRegistryStore store, Pool pool) {
         Future<Void> proof = installRecomputePromotionFailure(pool)
                 .compose(ignored -> readSnapshots(pool, ROLLBACK_RECOMPUTE_ID))
                 .compose(before -> recomputeActive(store, null, ROLLBACK_RECOMPUTE_ID)
@@ -774,17 +768,18 @@ public class DefinitionRegistryBootstrapIT {
                                     (WorkflowPersistenceException) operation.cause();
                             assertThat(persistenceFailure.getMessage()).contains(ROLLBACK_RECOMPUTE_ID);
                             assertThat(persistenceFailure.retryable()).isFalse();
-                            assertThat(persistenceFailure.getCause()).isInstanceOf(DataIntegrityViolationException.class);
+                            assertThat(persistenceFailure.getCause())
+                                    .isInstanceOf(DataIntegrityViolationException.class);
                             DataIntegrityViolationException databaseFailure =
                                     (DataIntegrityViolationException) persistenceFailure.getCause();
                             assertThat(databaseFailure.sqlState()).isEqualTo("23514");
-                            assertThat(causeContainsMessage(
-                                            databaseFailure, "controlled recompute promotion failure"))
+                            assertThat(causeContainsMessage(databaseFailure, "controlled recompute promotion failure"))
                                     .as("the database raised the expected fault only after observing v1 demoted")
                                     .isTrue();
                             return readSnapshots(pool, ROLLBACK_RECOMPUTE_ID).map(after -> {
                                 assertThat(after)
-                                        .as("the promotion trigger fails after demotion, and the transaction restores both rows")
+                                        .as(
+                                                "the promotion trigger fails after demotion, and the transaction restores both rows")
                                         .isEqualTo(before);
                                 return (Void) null;
                             });
@@ -816,14 +811,12 @@ public class DefinitionRegistryBootstrapIT {
                                     RETURN NEW;
                                 END;
                                 $$ LANGUAGE plpgsql
-                                """)
-                        .execute())
+                                """).execute())
                 .compose(ignored -> pool.query("""
                                 CREATE TRIGGER fail_test_recompute_promotion
                                 BEFORE UPDATE ON workflow_definitions
                                 FOR EACH ROW EXECUTE FUNCTION fail_test_recompute_promotion()
-                                """)
-                        .execute())
+                                """).execute())
                 .mapEmpty();
     }
 
@@ -917,40 +910,39 @@ public class DefinitionRegistryBootstrapIT {
                         FROM workflow_definitions
                         WHERE definition_id = $1
                         ORDER BY tenant_key NULLS FIRST, definition_version
-                        """)
-                .execute(Tuple.of(definitionId))
-                .map(rows -> {
-                    List<DefinitionSnapshot> snapshots = new ArrayList<>();
-                    for (Row row : rows) {
-                        snapshots.add(new DefinitionSnapshot(
-                                row.getString("tenant_key"),
-                                row.getString("definition_id"),
-                                row.getLong("definition_version"),
-                                row.getString("kind"),
-                                row.getString("plan_hash"),
-                                row.getString("status"),
-                                row.getString("document"),
-                                row.getString("document_format"),
-                                row.getString("source_type"),
-                                row.getString("source_uri"),
-                                row.getString("source_revision"),
-                                row.getString("source_author"),
-                                row.getString("source_upload_id"),
-                                row.getOffsetDateTime("loaded_at"),
-                                row.getOffsetDateTime("created_at"),
-                                row.getOffsetDateTime("status_changed_at"),
-                                row.getUUID("activation_token")));
-                    }
-                    return List.copyOf(snapshots);
-                });
+                        """).execute(Tuple.of(definitionId)).map(rows -> {
+            List<DefinitionSnapshot> snapshots = new ArrayList<>();
+            for (Row row : rows) {
+                snapshots.add(new DefinitionSnapshot(
+                        row.getString("tenant_key"),
+                        row.getString("definition_id"),
+                        row.getLong("definition_version"),
+                        row.getString("kind"),
+                        row.getString("plan_hash"),
+                        row.getString("status"),
+                        row.getString("document"),
+                        row.getString("document_format"),
+                        row.getString("source_type"),
+                        row.getString("source_uri"),
+                        row.getString("source_revision"),
+                        row.getString("source_author"),
+                        row.getString("source_upload_id"),
+                        row.getOffsetDateTime("loaded_at"),
+                        row.getOffsetDateTime("created_at"),
+                        row.getOffsetDateTime("status_changed_at"),
+                        row.getUUID("activation_token")));
+            }
+            return List.copyOf(snapshots);
+        });
     }
 
     private static Future<Void> deleteDefinitions(Pool pool, String... definitionIds) {
         Future<Void> deleted = Future.succeededFuture();
         for (String definitionId : definitionIds) {
-            deleted = deleted.compose(ignored -> pool.preparedQuery("DELETE FROM workflow_definitions WHERE definition_id = $1")
-                    .execute(Tuple.of(definitionId))
-                    .mapEmpty());
+            deleted = deleted.compose(
+                    ignored -> pool.preparedQuery("DELETE FROM workflow_definitions WHERE definition_id = $1")
+                            .execute(Tuple.of(definitionId))
+                            .mapEmpty());
         }
         return deleted;
     }
@@ -962,7 +954,8 @@ public class DefinitionRegistryBootstrapIT {
                 DefinitionKind.DOCUMENT,
                 "c".repeat(64),
                 status,
-                new DefinitionProvenance("author-test", "test://workflow-definition", "mutation-r1", "test-suite", null, now),
+                new DefinitionProvenance(
+                        "author-test", "test://workflow-definition", "mutation-r1", "test-suite", null, now),
                 "YAML",
                 now,
                 now);
@@ -1038,7 +1031,9 @@ public class DefinitionRegistryBootstrapIT {
     }
 
     private static Future<Void> assertLockTimeoutPrecedesWait(List<String> statements, WaitKind kind) {
-        List<String> normalized = statements.stream().map(DefinitionRegistryBootstrapIT::normalized).toList();
+        List<String> normalized = statements.stream()
+                .map(DefinitionRegistryBootstrapIT::normalized)
+                .toList();
         int timeout = normalized.indexOf("set local lock_timeout = '30000ms'");
         assertThat(timeout).isGreaterThanOrEqualTo(0);
         int wait = -1;
@@ -1049,7 +1044,9 @@ public class DefinitionRegistryBootstrapIT {
                 break;
             }
         }
-        assertThat(wait).as("the actual production timeout precedes the lock acquisition").isGreaterThan(timeout);
+        assertThat(wait)
+                .as("the actual production timeout precedes the lock acquisition")
+                .isGreaterThan(timeout);
         return Future.succeededFuture();
     }
 
@@ -1076,7 +1073,8 @@ public class DefinitionRegistryBootstrapIT {
                 cleanup = cleanup.compose(ignored -> quietly(resources.handle.shutdown(), cleanupFailures));
             }
             if (resources.mutationPool != null) {
-                Future<Void> deleteOwnedRow = resources.mutationPool
+                Future<Void> deleteOwnedRow = resources
+                        .mutationPool
                         .preparedQuery("DELETE FROM workflow_definitions WHERE definition_id = $1")
                         .execute(Tuple.of(resources.definitionId))
                         .map(ignored -> (Void) null);
@@ -1238,15 +1236,15 @@ public class DefinitionRegistryBootstrapIT {
                 release = release.compose(ignored -> rollback(primaryHolder, cleanupFailures));
             }
             if (queuedSharedConnection != null && queuedSharedLock != null) {
-                release = release.compose(ignored -> quietly(
-                                queuedSharedLock.acquisition().mapEmpty(), cleanupFailures)
-                        .compose(ignoredAcquired -> rollback(queuedSharedConnection, cleanupFailures)));
+                release = release.compose(
+                        ignored -> quietly(queuedSharedLock.acquisition().mapEmpty(), cleanupFailures)
+                                .compose(ignoredAcquired -> rollback(queuedSharedConnection, cleanupFailures)));
             } else if (queuedSharedConnection != null) {
                 release = release.compose(ignored -> rollback(queuedSharedConnection, cleanupFailures));
             }
             if (mutation != null) {
-                release = release.compose(ignored -> mutation.transform(
-                        ignoredResult -> Future.succeededFuture((Void) null)));
+                release = release.compose(
+                        ignored -> mutation.transform(ignoredResult -> Future.succeededFuture((Void) null)));
             }
             return release;
         }

@@ -85,7 +85,9 @@ public interface WorkflowDefinitionRegistryStore {
     /**
      * Recomputes active membership for one exact tenant owner and definition id. Only ACTIVE and
      * SUPERSEDED rows participate; the highest version becomes ACTIVE and lower eligible versions
-     * become SUPERSEDED. Other statuses, owners, and definition ids are left unchanged.
+     * become SUPERSEDED. Other statuses, owners, and definition ids are left unchanged. The
+     * returned future fails with {@link IllegalArgumentException} for an invalid tenant key or
+     * definition id, before any storage access.
      *
      * @param tenantKey the exact owner, or {@code null} for the global owner
      * @param definitionId the definition id to recompute

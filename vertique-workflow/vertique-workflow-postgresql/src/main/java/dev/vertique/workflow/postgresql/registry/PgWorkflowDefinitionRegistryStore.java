@@ -242,6 +242,8 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
     public Future<Void> recomputeActive(@jakarta.annotation.Nullable String tenantKey, String definitionId) {
         return attempt(() -> {
             Objects.requireNonNull(definitionId, "definitionId");
+            // DefinitionKey enforces the key constraints; the version is irrelevant here.
+            new DefinitionKey(tenantKey, definitionId, 1);
             return mutate(definitionId, (tx, rows) -> {
                 List<Row> eligible = java.util.stream.StreamSupport.stream(rows.spliterator(), false)
                         .filter(row -> Objects.equals(tenantKey, row.getString("tenant_key")))
