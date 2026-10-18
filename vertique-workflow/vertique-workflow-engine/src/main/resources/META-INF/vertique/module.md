@@ -118,10 +118,13 @@ coercion and before the task is completed or the instance started, inside the sa
 violation:
 
 - **path** is an RFC 6901 pointer over the payload's wire (JSON) names, for example `items[0].name`
-  becomes `/items/0/name`. Index segments are numeric, container-element nodes are dropped, and `~` and `/`
-  are escaped as `~0` and `~1`. A map entry ends the pointer at the map property, so the caller's key never
-  appears in the path. A segment uses the payload's wire name where it resolves and the declared member
-  name otherwise; neither is a map key or other caller data.
+  becomes `/items/0/name`. Index segments are numeric, a container-element node contributes only its index
+  (nested lists give `/lists/0/1`), and `~` and `/` are escaped as `~0` and `~1`. A map entry or set member
+  ends the pointer at the map or set property, so the caller's key never appears in the path. A segment
+  uses the payload's primary wire name; a segment that cannot be verified against the payload type (an
+  unknown member, a member the mapper does not bind, a position on anything but a list or array) ends the
+  pointer at the deepest verified ancestor, so a pointer may be shorter than the violated location but
+  never names a different one. The path is never a map key or other caller data.
 - **type** is the validation module's mapped name: `size`, `required`, `min`, `max`, `pattern`, `email`.
   An unmapped constraint keeps the annotation simple name.
 - **message** is exactly what the validator produced.
