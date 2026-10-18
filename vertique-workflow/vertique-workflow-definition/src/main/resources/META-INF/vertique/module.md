@@ -253,18 +253,67 @@ static PayloadMapperContributor reserveInventoryPayload() {
 
 ## Runtime Loading And Activation
 
-`WorkflowDefinitionService` supports management-style loading:
+`WorkflowDefinitionService` returns Futures for loading, activation, metadata listing, and source
+attribution. For a global definition, compose activation after the candidate load completes:
 
 ```java
-CompiledDefinitionRef ref = service.load(content, DocumentFormat.YAML, metadata);
-service.activate(ref.definitionId(), ref.definitionVersion());
+Future<CompiledDefinitionRef> activated = service
+        .load(content, DocumentFormat.YAML, metadata, null)
+        .compose(ref -> service.activate(new DefinitionKey(
+                null, ref.definitionId(), ref.definitionVersion())).map(ref));
+
+Future<List<WorkflowDefinitionRecord>> definitions = service.list(
+        new DefinitionFilter(DefinitionFilter.TenantScope.GLOBAL, null, null));
 ```
 
-`load` parses, validates, and compiles the document into a candidate. `activate` registers it with the workflow registry. A failed load leaves the previous active version untouched. A failed activation leaves the candidate inactive.
+`load` parses, validates, and compiles a candidate without registering it. `activate` publishes it;
+a failed load leaves the prior active version untouched. With PostgreSQL installed, source and
+metadata are durable and activation recompiles the stored text rather than trusting a local cache.
+The managed application lifecycle restores activated global documents before any BOOTSTRAP verticle
+deploys. After source verification and active-membership recomputation, it rereads committed status and
+provenance and delivers fresh metadata to each already-verified registration through `onRestored`; the
+cache therefore reflects the promoted and demoted versions before traffic starts. The callback is
+idempotent and a failure aborts startup. A missing loader or stored/compiled hash mismatch also aborts
+startup. All nodes sharing live documents must have the appropriate loader and application callback/type
+catalog. Source URIs are never fetched. Without a store, these operations retain their in-memory outcomes
+through the asynchronous signatures.
 
-Previously started workflow instances remain pinned to the version they started with. New starts use the current version unless `StartCommand.requestedDefinitionVersion` asks for a specific version.
+`sourceMetadata(DefinitionKey)` reads attribution without fetching source text. Lists contain immutable,
+key-bearing metadata. Definition id (255), source type (64) and revision, author and upload id (255)
+code-point limits apply in every mode, including when no store is installed, and over-limit input is
+rejected before anything is registered. Invalid asynchronous
+arguments are failed Futures. Previously started instances keep their pinned version. Each coexisting
+document version needs its own contract interface class because registry contract mappings use that class.
 
-Current v1 constraint: coexisting versions of the same document-backed workflow must use distinct contract interface classes because contract metadata is keyed by Java class.
+### Source Text And Size Policy
+
+`WorkflowDefinitionsConfig` supplies runtime input limit L (default 262144 bytes). Install the opt-in
+`WorkflowDefinitionsConfigModule` with the canonical `ConfigParsingModule` to parse
+`workflow.definitions.maxDocumentSizeBytes` and `maxStalenessSeconds`, or bind the typed config directly.
+The default applies without a parser binding. The YAML scanner's code-point limit is L; nesting,
+expression limits, and collection-alias settings remain independent.
+
+| Source path | Admission |
+|---|---|
+| Runtime `load`, with or without a store | Original input at most L bytes, checked before parsing |
+| Static source without a store | Existing byte parser; YAML code-point guard L, no added JSON byte cap or source decoder |
+| Static source with a store | Existing pipeline first, then strict whole-source conversion and stored-text envelope; no runtime raw-byte cap |
+| Durable restore | Guarded stored text, at most floor(3L/2) UTF-8 bytes and L Unicode code points; no raw-L restore cap |
+
+Durable storage preserves decoded source characters, comments, whitespace, and line endings, rather
+than original encoded bytes or a reserialized document. JSON retains the existing UTF-8/16/32 reader
+support and consumes its recognized leading encoding marker; YAML remains UTF-8 and preserves its
+reader's leading marker character. Strict conversion checks the whole durable source after the
+ordinary pipeline succeeds: malformed encoding, actual decoded NUL, and unpaired surrogates fail
+before persistence. Escaped source sequences remain source text. No additional trailing-token policy
+is enabled, so this representation check can reject malformed trailing bytes that a no-store parser
+previously ignored.
+
+PostgreSQL DOCUMENT bodies require server encoding UTF8. All nodes sharing the table use the same
+limits. Raise L everywhere before admitting larger sources; increased limits increase memory and
+parsing costs. Lowering L below a required stored row's envelope makes restoration fail explicitly.
+A changed catalogue lookup alias alone need not change the existing plan hash: the hash includes
+builder-generated plan callback identities and structure. Keep the required callback behavior deployed.
 
 ---
 

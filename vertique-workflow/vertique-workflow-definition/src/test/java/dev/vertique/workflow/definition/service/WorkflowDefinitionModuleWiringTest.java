@@ -15,6 +15,7 @@ import dev.vertique.workflow.definition.source.WorkflowDefinitionSource;
 import dev.vertique.workflow.di.WorkflowCoreModule;
 import dev.vertique.workflow.plan.WorkflowPlanValidator;
 import dev.vertique.workflow.registry.WorkflowRegistry;
+import dev.vertique.workflow.registry.store.DefinitionFilter;
 import jakarta.inject.Singleton;
 import java.util.List;
 import org.junit.jupiter.api.DisplayName;
@@ -26,7 +27,7 @@ import org.junit.jupiter.api.Test;
  * in a Dagger component:
  * <ul>
  *   <li>The graph builds with zero {@link WorkflowDefinitionSource} contributions;
- *       {@link WorkflowDefinitionService#list()} returns empty.</li>
+ *       {@link WorkflowDefinitionService#list(DefinitionFilter)} returns an empty Future.</li>
  *   <li>{@link WorkflowDefinitionService} resolves to an instance of
  *       {@link DefaultWorkflowDefinitionService}.</li>
  * </ul>
@@ -73,7 +74,11 @@ class WorkflowDefinitionModuleWiringTest {
             WorkflowDefinitionService service = component.workflowDefinitionService();
 
             assertThat(service).isInstanceOf(DefaultWorkflowDefinitionService.class);
-            assertThat(service.list()).isEmpty();
+            assertThat(service.list(globalFilter())
+                            .toCompletionStage()
+                            .toCompletableFuture()
+                            .join())
+                    .isEmpty();
         }
     }
 
@@ -115,7 +120,17 @@ class WorkflowDefinitionModuleWiringTest {
         @DisplayName("graph builds with a contributor that provides zero resources; list() returns empty")
         void graphBuildsWithEmptyContributorAndListIsEmpty() {
             SingleSourceComponent component = DaggerWorkflowDefinitionModuleWiringTest_SingleSourceComponent.create();
-            assertThat(component.workflowDefinitionService().list()).isEmpty();
+            assertThat(component
+                            .workflowDefinitionService()
+                            .list(globalFilter())
+                            .toCompletionStage()
+                            .toCompletableFuture()
+                            .join())
+                    .isEmpty();
         }
+    }
+
+    private static DefinitionFilter globalFilter() {
+        return new DefinitionFilter(DefinitionFilter.TenantScope.GLOBAL, null, null);
     }
 }

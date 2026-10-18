@@ -79,4 +79,8 @@ public interface WorkflowRegistry {
      * @return immutable collection of all registered runtime workflows; never null, may be empty
      */
     Collection<RuntimeWorkflow> allRegistered();
+    /** Removes a version and its contract mapping. Unsupported registries fail explicitly. */
+    default void unregister(String definitionId, long version) {
+        throw new UnsupportedOperationException("unregister is not supported");
+    }
 }

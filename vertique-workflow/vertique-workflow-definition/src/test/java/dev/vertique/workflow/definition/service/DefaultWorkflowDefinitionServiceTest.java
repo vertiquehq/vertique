@@ -35,10 +35,14 @@ import dev.vertique.workflow.definition.validator.WorkflowDefinitionDocumentVali
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
 import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
+import dev.vertique.workflow.registry.store.DefinitionFilter;
+import dev.vertique.workflow.registry.store.DefinitionKey;
+import dev.vertique.workflow.registry.store.DefinitionStatus;
+import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
+import dev.vertique.workflow.registry.store.WorkflowDefinitionsConfig;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
@@ -54,12 +58,12 @@ import org.mockito.Mockito;
 /**
  * Verifies {@link DefaultWorkflowDefinitionService}:
  * <ul>
- *   <li>{@link DefaultWorkflowDefinitionService#load} then
- *       {@link DefaultWorkflowDefinitionService#activate} succeeds and makes the definition
+ *   <li>{@link WorkflowDefinitionService#load} then
+ *       {@link WorkflowDefinitionService#activate} succeeds and makes the definition
  *       resolvable via the registry.</li>
  *   <li>A load failure with invalid YAML leaves the store untouched; a prior active version
  *       remains accessible.</li>
- *   <li>{@link DefaultWorkflowDefinitionService#activate} without prior load throws.</li>
+ *   <li>{@link WorkflowDefinitionService#activate} without prior load fails its Future.</li>
  *   <li>Two distinct definitionIds loaded and activated concurrently both appear in the
  *       registry.</li>
  *   <li>A {@link RuntimeException} from {@code registry.register()} resets the ACTIVATING claim
@@ -203,17 +207,27 @@ class DefaultWorkflowDefinitionServiceTest {
         @Test
         @DisplayName("load then activate makes the definition resolvable via the registry")
         void loadThenActivateSucceeds() {
-            service.load(yamlFor("svc-order", 1, SvcOrderV1Contract.class), DocumentFormat.YAML, testMeta());
-            service.activate("svc-order", 1);
+            ServiceTestHelpers.await(service.load(
+                    yamlFor("svc-order", 1, SvcOrderV1Contract.class), DocumentFormat.YAML, testMeta(), null));
+            ServiceTestHelpers.await(service.activate(key("svc-order", 1)));
 
             RuntimeWorkflow rw = registry.resolveCurrent("svc-order");
             assertThat(rw.plan().definitionId()).isEqualTo("svc-order");
             assertThat(rw.plan().definitionVersion()).isEqualTo(1L);
 
             // list() reflects the activation
-            Collection<CompiledDefinitionRef> refs = service.list();
-            assertThat(refs).hasSize(1);
-            assertThat(refs.iterator().next().status()).isEqualTo(ActivationStatus.ACTIVE);
+            List<WorkflowDefinitionRecord> records = ServiceTestHelpers.await(service.list(globalFilter()));
+            assertThat(records).hasSize(1);
+            assertThat(records.get(0).key()).isEqualTo(key("svc-order", 1));
+            assertThat(records.get(0).status()).isEqualTo(DefinitionStatus.ACTIVE);
+            assertThatThrownBy(records::clear).isInstanceOf(UnsupportedOperationException.class);
+
+            ServiceTestHelpers.await(service.load(
+                    yamlFor("svc-item", 1, SvcItemV1Contract.class), DocumentFormat.YAML, testMeta(), null));
+            assertThat(records)
+                    .hasSize(1)
+                    .extracting(WorkflowDefinitionRecord::key)
+                    .containsExactly(key("svc-order", 1));
         }
     }
 
@@ -225,21 +239,23 @@ class DefaultWorkflowDefinitionServiceTest {
         @DisplayName("invalid YAML load failure leaves store untouched; prior active v1 remains accessible")
         void invalidYamlDoesNotAffectPriorActive() {
             // Establish v1 as active
-            service.load(yamlFor("svc-order", 1, SvcOrderV1Contract.class), DocumentFormat.YAML, testMeta());
-            service.activate("svc-order", 1);
+            ServiceTestHelpers.await(service.load(
+                    yamlFor("svc-order", 1, SvcOrderV1Contract.class), DocumentFormat.YAML, testMeta(), null));
+            ServiceTestHelpers.await(service.activate(key("svc-order", 1)));
             assertThat(registry.resolveCurrent("svc-order").plan().definitionVersion())
                     .isEqualTo(1L);
 
             // Attempt to load bad YAML for v2 — must fail
             byte[] badYaml = "this: is: not valid yaml: for: workflow".getBytes(StandardCharsets.UTF_8);
-            assertThatThrownBy(() -> service.load(badYaml, DocumentFormat.YAML, testMeta()))
+            assertThatThrownBy(() ->
+                            ServiceTestHelpers.await(service.load(badYaml, DocumentFormat.YAML, testMeta(), null)))
                     .isInstanceOf(WorkflowDefinitionParseException.class);
 
             // v1 still active in registry
             assertThat(registry.resolveCurrent("svc-order").plan().definitionVersion())
                     .isEqualTo(1L);
             // list still shows only 1 entry
-            assertThat(service.list()).hasSize(1);
+            assertThat(ServiceTestHelpers.await(service.list(globalFilter()))).hasSize(1);
         }
     }
 
@@ -250,7 +266,7 @@ class DefaultWorkflowDefinitionServiceTest {
         @Test
         @DisplayName("activate without prior load throws WorkflowDefinitionException")
         void activateWithoutLoadThrows() {
-            assertThatThrownBy(() -> service.activate("svc-order", 99))
+            assertThatThrownBy(() -> ServiceTestHelpers.await(service.activate(key("svc-order", 99))))
                     .isInstanceOf(WorkflowDefinitionException.class)
                     .hasMessageContaining("not found in the store");
         }
@@ -264,29 +280,31 @@ class DefaultWorkflowDefinitionServiceTest {
         @DisplayName(
                 "load+activate v2, then load+activate v1 — registry resolves v2, store shows v2 ACTIVE v1 SUPERSEDED")
         void activateLowerVersionAfterHigherIsSuperseded() {
-            service.load(yamlFor("svc-order", 2, SvcOrderV2Contract.class), DocumentFormat.YAML, testMeta());
-            service.activate("svc-order", 2);
+            ServiceTestHelpers.await(service.load(
+                    yamlFor("svc-order", 2, SvcOrderV2Contract.class), DocumentFormat.YAML, testMeta(), null));
+            ServiceTestHelpers.await(service.activate(key("svc-order", 2)));
 
-            service.load(yamlFor("svc-order", 1, SvcOrderV1Contract.class), DocumentFormat.YAML, testMeta());
-            service.activate("svc-order", 1);
+            ServiceTestHelpers.await(service.load(
+                    yamlFor("svc-order", 1, SvcOrderV1Contract.class), DocumentFormat.YAML, testMeta(), null));
+            ServiceTestHelpers.await(service.activate(key("svc-order", 1)));
 
             // Registry must return the higher (v2) version
             assertThat(registry.resolveCurrent("svc-order").plan().definitionVersion())
                     .isEqualTo(2L);
 
             // Store must reflect: v2 ACTIVE, v1 SUPERSEDED
-            Collection<CompiledDefinitionRef> refs = service.list();
-            assertThat(refs).hasSize(2);
-            CompiledDefinitionRef v2Ref = refs.stream()
-                    .filter(r -> r.definitionVersion() == 2)
+            List<WorkflowDefinitionRecord> records = ServiceTestHelpers.await(service.list(globalFilter()));
+            assertThat(records).hasSize(2);
+            WorkflowDefinitionRecord v2Ref = records.stream()
+                    .filter(r -> r.key().definitionVersion() == 2)
                     .findFirst()
                     .orElseThrow();
-            CompiledDefinitionRef v1Ref = refs.stream()
-                    .filter(r -> r.definitionVersion() == 1)
+            WorkflowDefinitionRecord v1Ref = records.stream()
+                    .filter(r -> r.key().definitionVersion() == 1)
                     .findFirst()
                     .orElseThrow();
-            assertThat(v2Ref.status()).isEqualTo(ActivationStatus.ACTIVE);
-            assertThat(v1Ref.status()).isEqualTo(ActivationStatus.SUPERSEDED);
+            assertThat(v2Ref.status()).isEqualTo(DefinitionStatus.ACTIVE);
+            assertThat(v1Ref.status()).isEqualTo(DefinitionStatus.SUPERSEDED);
         }
     }
 
@@ -301,13 +319,15 @@ class DefaultWorkflowDefinitionServiceTest {
             List<Future<Void>> futures = new ArrayList<>();
 
             futures.add(pool.submit(() -> {
-                service.load(yamlFor("svc-order", 1, SvcOrderV1Contract.class), DocumentFormat.YAML, testMeta());
-                service.activate("svc-order", 1);
+                ServiceTestHelpers.await(service.load(
+                        yamlFor("svc-order", 1, SvcOrderV1Contract.class), DocumentFormat.YAML, testMeta(), null));
+                ServiceTestHelpers.await(service.activate(key("svc-order", 1)));
                 return null;
             }));
             futures.add(pool.submit(() -> {
-                service.load(yamlFor("svc-item", 1, SvcItemV1Contract.class), DocumentFormat.YAML, testMeta());
-                service.activate("svc-item", 1);
+                ServiceTestHelpers.await(service.load(
+                        yamlFor("svc-item", 1, SvcItemV1Contract.class), DocumentFormat.YAML, testMeta(), null));
+                ServiceTestHelpers.await(service.activate(key("svc-item", 1)));
                 return null;
             }));
 
@@ -322,7 +342,7 @@ class DefaultWorkflowDefinitionServiceTest {
                     .isEqualTo("svc-order");
             assertThat(registry.resolveCurrent("svc-item").plan().definitionId())
                     .isEqualTo("svc-item");
-            assertThat(service.list()).hasSize(2);
+            assertThat(ServiceTestHelpers.await(service.list(globalFilter()))).hasSize(2);
         }
     }
 
@@ -335,7 +355,8 @@ class DefaultWorkflowDefinitionServiceTest {
                 "8 threads calling activate for same key — exactly one wins; final state is ACTIVE in registry and store")
         void concurrentActivateSameKeySerialized() throws Exception {
             // Load the candidate once
-            service.load(yamlFor("svc-order", 1, SvcOrderV1Contract.class), DocumentFormat.YAML, testMeta());
+            ServiceTestHelpers.await(service.load(
+                    yamlFor("svc-order", 1, SvcOrderV1Contract.class), DocumentFormat.YAML, testMeta(), null));
 
             int numThreads = 8;
             ExecutorService pool = Executors.newFixedThreadPool(numThreads);
@@ -344,7 +365,7 @@ class DefaultWorkflowDefinitionServiceTest {
             for (int i = 0; i < numThreads; i++) {
                 outcomes.add(pool.submit(() -> {
                     try {
-                        service.activate("svc-order", 1);
+                        ServiceTestHelpers.await(service.activate(key("svc-order", 1)));
                         return "ok";
                     } catch (Exception ex) {
                         return "err:" + ex.getMessage();
@@ -374,8 +395,8 @@ class DefaultWorkflowDefinitionServiceTest {
             // Final state: exactly one ACTIVE in store; registry resolves the definition
             assertThat(registry.resolveCurrent("svc-order").plan().definitionId())
                     .isEqualTo("svc-order");
-            long activeCount = service.list().stream()
-                    .filter(r -> r.status() == ActivationStatus.ACTIVE)
+            long activeCount = ServiceTestHelpers.await(service.list(globalFilter())).stream()
+                    .filter(r -> r.status() == DefinitionStatus.ACTIVE)
                     .count();
             assertThat(activeCount).isEqualTo(1);
         }
@@ -425,10 +446,11 @@ class DefaultWorkflowDefinitionServiceTest {
             DefaultWorkflowDefinitionService svc =
                     new DefaultWorkflowDefinitionService(buildPipeline(), errorStore, () -> throwingRegistry);
 
-            svc.load(yamlFor("svc-order", 1, SvcOrderV1Contract.class), DocumentFormat.YAML, testMeta());
+            ServiceTestHelpers.await(
+                    svc.load(yamlFor("svc-order", 1, SvcOrderV1Contract.class), DocumentFormat.YAML, testMeta(), null));
 
             // activate() must propagate the RuntimeException (not swallow it)
-            assertThatThrownBy(() -> svc.activate("svc-order", 1))
+            assertThatThrownBy(() -> ServiceTestHelpers.await(svc.activate(key("svc-order", 1))))
                     .isInstanceOf(WorkflowDefinitionException.class)
                     .hasMessageContaining("simulated registration failure");
 
@@ -447,24 +469,28 @@ class DefaultWorkflowDefinitionServiceTest {
         @Test
         @DisplayName("document exceeding 256 KiB is rejected before parsing")
         void oversizedDocumentIsRejected() {
-            byte[] oversized = new byte[DefaultWorkflowDefinitionService.MAX_DEFINITION_SIZE + 1];
-            assertThatThrownBy(() -> service.load(oversized, DocumentFormat.YAML, testMeta()))
+            byte[] oversized = new byte[WorkflowDefinitionsConfig.defaults().maxDocumentSizeBytes() + 1];
+            assertThatThrownBy(() ->
+                            ServiceTestHelpers.await(service.load(oversized, DocumentFormat.YAML, testMeta(), null)))
                     .isInstanceOf(WorkflowDefinitionException.class)
-                    .hasMessageContaining("size cap");
+                    .hasMessageContaining("maxDocumentSizeBytes");
         }
 
         @Test
         @DisplayName("document exactly at the size cap is not rejected by the guard (may fail for other reasons)")
         void documentAtCapNotRejectedBySizeGuard() {
-            byte[] atCap = new byte[DefaultWorkflowDefinitionService.MAX_DEFINITION_SIZE];
-            // Must not throw WorkflowDefinitionException with "size cap" — may throw for other reasons
-            try {
-                service.load(atCap, DocumentFormat.YAML, testMeta());
-            } catch (WorkflowDefinitionException ex) {
-                assertThat(ex.getMessage()).doesNotContain("size cap");
-            } catch (Exception ignored) {
-                // parse/validation failure is expected for all-zero content
-            }
+            byte[] atCap = new byte[WorkflowDefinitionsConfig.defaults().maxDocumentSizeBytes()];
+            assertThatThrownBy(
+                            () -> ServiceTestHelpers.await(service.load(atCap, DocumentFormat.YAML, testMeta(), null)))
+                    .isInstanceOf(WorkflowDefinitionParseException.class);
         }
+    }
+
+    private DefinitionKey key(String id, long version) {
+        return new DefinitionKey(null, id, version);
+    }
+
+    private DefinitionFilter globalFilter() {
+        return new DefinitionFilter(DefinitionFilter.TenantScope.GLOBAL, null, null);
     }
 }

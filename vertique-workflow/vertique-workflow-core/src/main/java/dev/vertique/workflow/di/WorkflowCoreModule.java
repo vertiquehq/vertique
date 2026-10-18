@@ -4,6 +4,7 @@
 package dev.vertique.workflow.di;
 
 import dagger.Binds;
+import dagger.BindsOptionalOf;
 import dagger.Module;
 import dagger.Provides;
 import dagger.multibindings.Multibinds;
@@ -16,6 +17,10 @@ import dev.vertique.workflow.plan.WorkflowPlanValidator;
 import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
 import dev.vertique.workflow.registry.WorkflowContributor;
 import dev.vertique.workflow.registry.WorkflowRegistry;
+import dev.vertique.workflow.registry.store.PersistedDefinitionLoader;
+import dev.vertique.workflow.registry.store.WorkflowDefinitionLifecycle;
+import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
+import dev.vertique.workflow.registry.store.WorkflowDefinitionsConfig;
 import jakarta.inject.Singleton;
 import java.util.Set;
 
@@ -40,6 +45,18 @@ import java.util.Set;
  */
 @Module
 public abstract class WorkflowCoreModule {
+    /** Optional persistence and lifecycle bindings keep standalone definition graphs usable. */
+    @BindsOptionalOf
+    abstract WorkflowDefinitionRegistryStore definitionRegistryStore();
+
+    @BindsOptionalOf
+    abstract WorkflowDefinitionLifecycle definitionLifecycle();
+
+    @BindsOptionalOf
+    abstract WorkflowDefinitionsConfig definitionsConfig();
+
+    @Multibinds
+    abstract Set<PersistedDefinitionLoader> persistedDefinitionLoaders();
 
     /**
      * Provides the {@link WorkflowRegistry} populated with all contributed definitions.

@@ -323,4 +323,9 @@ public abstract class WorkflowDefinitionModule {
     static WorkflowContributor definitionBootstrapContributor(WorkflowDefinitionBootstrap bootstrap) {
         return bootstrap;
     }
+    /** Contributes the internal durable document compiler without requiring a store binding. */
+    @Binds
+    @IntoSet
+    abstract dev.vertique.workflow.registry.store.PersistedDefinitionLoader persistedDefinitionLoader(
+            dev.vertique.workflow.definition.service.DocumentDefinitionLoader loader);
 }

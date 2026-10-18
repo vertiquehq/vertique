@@ -158,4 +158,17 @@ public abstract class WorkflowEngineModule {
     static ComposeValidator reminderComposeValidator(WorkflowReminderComposeValidator impl) {
         return impl;
     }
+    /** Provides durable activation without changing standalone registry construction. */
+    @Binds
+    @Singleton
+    abstract dev.vertique.workflow.registry.store.WorkflowDefinitionLifecycle definitionLifecycle(
+            DefaultWorkflowDefinitionLifecycle lifecycle);
+    /** Restores durable document membership before any BOOTSTRAP verticle deploys. */
+    @Provides
+    @Singleton
+    @IntoSet
+    static dev.vertique.core.lifecycle.ApplicationStartupStep definitionRegistryBootstrapStep(
+            WorkflowDefinitionRegistryBootstrapStep step) {
+        return step;
+    }
 }

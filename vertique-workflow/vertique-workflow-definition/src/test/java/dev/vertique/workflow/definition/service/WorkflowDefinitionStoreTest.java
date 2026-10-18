@@ -4,6 +4,7 @@
 package dev.vertique.workflow.definition.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import dev.vertique.workflow.contract.WorkflowContract;
@@ -12,6 +13,11 @@ import dev.vertique.workflow.definition.source.SourceMetadata;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
+import dev.vertique.workflow.registry.store.DefinitionKey;
+import dev.vertique.workflow.registry.store.DefinitionKind;
+import dev.vertique.workflow.registry.store.DefinitionProvenance;
+import dev.vertique.workflow.registry.store.DefinitionStatus;
+import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -515,6 +521,76 @@ class WorkflowDefinitionStoreTest {
         @DisplayName("sourceMetadata returns empty for unknown key")
         void sourceMetadataReturnsEmptyForUnknown() {
             assertThat(store.sourceMetadata("nonexistent", 99)).isEmpty();
+        }
+    }
+
+    // --- Durable metadata delivery ---
+
+    @Nested
+    @DisplayName("delivered ACTIVE metadata")
+    class DeliveredMetadataTests {
+
+        @Test
+        @DisplayName("an ACTIVE version 2 supersedes the cached ACTIVE version 1")
+        void activeSuccessorSupersedesCachedPredecessor() {
+            // Given versions 1 and 2 of one id, version 1 delivered as ACTIVE
+            store.storeCandidate(compiled("order", 1, OrderV1Contract.class));
+            store.storeCandidate(compiled("order", 2, OrderV2Contract.class));
+            store.metadata(activeRecord("order", 1));
+            assertThat(store.currentStatus("order", 1)).isEqualTo(ActivationStatus.ACTIVE);
+
+            // When version 2 is delivered as ACTIVE
+            store.metadata(activeRecord("order", 2));
+
+            // Then version 1 is SUPERSEDED and version 2 is ACTIVE
+            assertThat(store.currentStatus("order", 1)).isEqualTo(ActivationStatus.SUPERSEDED);
+            assertThat(store.currentStatus("order", 2)).isEqualTo(ActivationStatus.ACTIVE);
+        }
+
+        private WorkflowDefinitionRecord activeRecord(String id, long version) {
+            Instant now = Instant.parse("2026-01-01T00:00:00Z");
+            return new WorkflowDefinitionRecord(
+                    new DefinitionKey(null, id, version),
+                    DefinitionKind.DOCUMENT,
+                    "a".repeat(64),
+                    DefinitionStatus.ACTIVE,
+                    new DefinitionProvenance("test", null, null, null, null, now),
+                    "YAML",
+                    now,
+                    now);
+        }
+    }
+
+    // --- Legacy public methods keep their pre-existing outcomes for invalid input ---
+
+    @Nested
+    @DisplayName("legacy string and long methods with ids or versions the key type rejects")
+    class LegacyInvalidInputTests {
+
+        @Test
+        @DisplayName("get with a blank id is empty")
+        void getWithBlankIdIsEmpty() {
+            assertThat(store.get("", 1)).isEmpty();
+        }
+
+        @Test
+        @DisplayName("currentStatus with version 0 is null")
+        void currentStatusWithVersionZeroIsNull() {
+            assertThat(store.currentStatus("x", 0)).isNull();
+        }
+
+        @Test
+        @DisplayName("tryClaimForActivation with version 0 reports the definition as not found")
+        void tryClaimWithVersionZeroReportsNotFound() {
+            assertThatThrownBy(() -> store.tryClaimForActivation("x", 0))
+                    .isExactlyInstanceOf(WorkflowDefinitionException.class)
+                    .hasMessageContaining("not found");
+        }
+
+        @Test
+        @DisplayName("resetToCandidate with version 0 does nothing")
+        void resetToCandidateWithVersionZeroDoesNothing() {
+            assertThatCode(() -> store.resetToCandidate("x", 0)).doesNotThrowAnyException();
         }
     }
 }

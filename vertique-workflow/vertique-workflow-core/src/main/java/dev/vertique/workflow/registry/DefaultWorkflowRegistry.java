@@ -519,4 +519,20 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
             rwLock.readLock().unlock();
         }
     }
+    /** Removes the version and matching contract mapping under the publication lock. */
+    @Override
+    public void unregister(String definitionId, long version) {
+        rwLock.writeLock().lock();
+        try {
+            var versions = byDefinition.get(definitionId);
+            if (versions == null || versions.remove(version) == null) return;
+            if (versions.isEmpty()) byDefinition.remove(definitionId, versions);
+            byContract
+                    .entrySet()
+                    .removeIf(e -> e.getValue().definitionId().equals(definitionId)
+                            && e.getValue().definitionVersion() == version);
+        } finally {
+            rwLock.writeLock().unlock();
+        }
+    }
 }

@@ -183,6 +183,17 @@ SPDX-License-Identifier: EUPL-1.2
             <scope>test</scope>
         </dependency>
 
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-workflow-definition</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-application</artifactId>
+            <scope>test</scope>
+        </dependency>
+
         <!-- Compile-testing guard: prove CronPersistenceMarker fails Dagger code-gen
              when WorkflowBranchRecoveryModule is composed with CronModule (in-memory)
              instead of CronPersistenceModule. -->

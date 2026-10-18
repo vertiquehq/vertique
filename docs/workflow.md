@@ -233,6 +233,30 @@ steps:
 
 Document definitions are not currently no-code object schemas. They still reference Java classes and named callbacks.
 
+Runtime management uses Futures. Load a global candidate, then activate its durable key:
+
+```java
+Future<CompiledDefinitionRef> activated = definitionService
+        .load(content, DocumentFormat.YAML, sourceMetadata, null)
+        .compose(ref -> definitionService.activate(new DefinitionKey(
+                null, ref.definitionId(), ref.definitionVersion())).map(ref));
+```
+
+With PostgreSQL and the document loader installed, an activated global definition is restored from
+its stored source before BOOTSTRAP verticles deploy. Startup verifies and restores eligible documents,
+recomputes active membership for each global definition id, then refreshes the cache from committed
+metadata through the existing restore callback. The registry and document cache therefore agree on the
+promoted and demoted versions before traffic starts. Missing loaders, callback failures, and compiled-
+hash mismatches abort startup. Each document version uses a distinct contract interface, and every node
+sharing live sources carries the same callback/type catalog. Without a store, the service keeps its local
+in-memory behavior through the same Future signatures.
+
+The default runtime input limit is 262144 bytes. Optional typed configuration can raise it; durable
+normalized source additionally fits floor(3L/2) UTF-8 bytes and L code points. Original encoded bytes
+are not archived. See the [workflow definition module reference](../vertique-workflow/vertique-workflow-definition/src/main/resources/META-INF/vertique/module.md)
+for configuration wiring, source encoding, bootstrap-path differences, and rolling limit changes.
+
+
 ---
 
 ## Durable Context Propagation

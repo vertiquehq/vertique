@@ -121,6 +121,7 @@ Dagger module owning the engine-internal bindings:
 - Binds `WorkflowEngine` as `WorkflowOperations`, `TransactionalWorkflowOperations<SqlClient>`,
   `TransactionalTimerCallbacks<SqlClient>`, and `TransactionalTaskCallbacks<SqlClient>`.
 - Binds `WorkflowRecoveryBridgeImpl` as `WorkflowRecoveryBridge`.
+- Binds `WorkflowDefinitionLifecycle` for durable document activation and contributes the document registry startup step.
 - Declares the `@WorkflowRecorders`-qualified `Set<WorkflowSideEffectRecorder<SqlClient>>` multibinding.
 - Provides the `@OptionalIntentKinds Set<IntentKind>` (delegates to `WorkflowEngineFactory.DEFAULT_OPTIONAL_INTENT_KINDS`).
 - Declares `WorkflowMigrationRegistry` as `@BindsOptionalOf` (opt-in migration support).
@@ -143,6 +144,38 @@ public interface AppComponent {
     WorkflowOperations workflowOperations();
 }
 ```
+
+### Document Activation And Startup Restoration
+
+The engine orchestrates `WorkflowDefinitionLifecycle.activate` through the optional SQL-free registry
+store and format-specific loaders. Parsing remains in the loader module. Activation claims a durable
+candidate, recompiles its stored source, verifies its key and plan hash, registers it locally, and
+completes the fenced claim. JVM fatal errors are not ordinary recovery cases.
+
+Local publication and cleanup share a per-definition-id queue. A definitive stale-claim or ownership
+refusal from completion preserves the original error, releases only its own claim token, and removes
+only the exact local runtime it published. A failed authoritative reread cannot prevent that known
+refusal's cleanup. For an uncertain completion response, the engine rereads committed metadata before
+compensation; a matching live row preserves the local publication. Loader cache-hook failures propagate
+without undoing a committed activation.
+
+`WorkflowDefinitionRegistryBootstrapStep` runs in `BOOTSTRAP` with priority `Integer.MIN_VALUE / 2`,
+after schema migration and before any `BOOTSTRAP` verticle deploys. With a store it reconciles global
+static document origins, then restores global DOCUMENT rows in ACTIVE or SUPERSEDED state through the
+same local queue. Matching static registrations are retained without duplicate registration. Required
+rows with no unique loader or a mismatching compiled hash fail startup with the key and diagnostic;
+traffic is not deployed. After all eligible sources have been verified and restored, the step recomputes
+global active membership per definition id and rereads committed metadata for each verified registration.
+It sends that fresh promoted/demoted metadata through the existing `onRestored` callback under the same
+per-id queue, so the definition cache agrees with the registry before BOOTSTRAP traffic starts. Callback
+failures remain fatal. Candidate/retired document metadata can refresh an installed loader's cache
+without compilation. CODE registration continues through application contributors.
+
+Every node sharing live document rows must install the corresponding loader, normally
+`WorkflowDefinitionModule`. Loading and compilation use the Vert.x worker executor when startup runs
+on a Vert.x context. Compose validators already ran in VALIDATE and do not rerun for these restored
+registrations or runtime activation. With no registry store, this startup step performs no I/O and
+creates no timer.
 
 ### WorkflowRecoveryBridge
 

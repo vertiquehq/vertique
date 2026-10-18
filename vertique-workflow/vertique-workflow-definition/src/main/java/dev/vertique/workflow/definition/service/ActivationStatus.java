@@ -52,5 +52,11 @@ public enum ActivationStatus {
      * version for in-flight instances (FR-WF-DEF-061), but new instances will use the higher
      * version.
      */
-    SUPERSEDED
+    SUPERSEDED,
+
+    /** New starts are refused while pinned resumes remain available. */
+    DEPRECATED,
+
+    /** Retained metadata with no executable membership. */
+    RETIRED
 }

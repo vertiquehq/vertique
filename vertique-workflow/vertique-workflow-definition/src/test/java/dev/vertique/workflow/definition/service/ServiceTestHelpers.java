@@ -11,7 +11,12 @@ import dev.vertique.workflow.definition.parser.DocumentFormat;
 import dev.vertique.workflow.definition.parser.WorkflowDefinitionParseException;
 import dev.vertique.workflow.definition.parser.WorkflowDefinitionParser;
 import dev.vertique.workflow.definition.schema.WorkflowDefinitionDocument;
+import io.vertx.core.Future;
 import java.io.IOException;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import org.mockito.Mockito;
 
 /**
@@ -59,5 +64,33 @@ final class ServiceTestHelpers {
                 .when(parser)
                 .parse(Mockito.any(), Mockito.any());
         return parser;
+    }
+
+    /**
+     * Awaits a completed service Future from a JUnit thread, preserving its underlying runtime
+     * failure for the original assertion.
+     *
+     * @param future the service result
+     * @param <T> the result type
+     * @return the successful result
+     */
+    static <T> T await(Future<T> future) {
+        try {
+            return future.toCompletionStage().toCompletableFuture().get(5, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new AssertionError("Interrupted while awaiting a workflow definition service result", e);
+        } catch (ExecutionException e) {
+            Throwable cause = e.getCause();
+            if (cause instanceof RuntimeException runtimeException) {
+                throw runtimeException;
+            }
+            if (cause instanceof Error error) {
+                throw error;
+            }
+            throw new CompletionException(cause);
+        } catch (TimeoutException e) {
+            throw new AssertionError("Workflow definition service Future did not complete within five seconds", e);
+        }
     }
 }

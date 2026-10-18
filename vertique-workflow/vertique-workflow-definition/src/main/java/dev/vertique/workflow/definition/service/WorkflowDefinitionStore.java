@@ -6,8 +6,13 @@ package dev.vertique.workflow.definition.service;
 import dev.vertique.workflow.definition.pipeline.CompiledDefinition;
 import dev.vertique.workflow.definition.source.SourceMetadata;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
+import dev.vertique.workflow.registry.store.DefinitionFilter;
+import dev.vertique.workflow.registry.store.DefinitionKey;
+import dev.vertique.workflow.registry.store.DefinitionStatus;
+import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
+import java.time.Instant;
 import java.util.Collection;
 import java.util.List;
 import java.util.Objects;
@@ -22,8 +27,8 @@ import java.util.concurrent.atomic.AtomicReference;
  * that is separate from the {@link dev.vertique.workflow.registry.WorkflowRegistry}'s version
  * ordering. The store's status is informational — it never overrides registry semantics.
  *
- * <p>Internal storage: a {@link ConcurrentHashMap} keyed on {@link DefinitionKey} (definitionId
- * + definitionVersion). Each entry is a {@link StoredEntry} holding the compiled definition and
+ * <p>Internal storage: a {@link ConcurrentHashMap} keyed on {@link DefinitionKey} (tenant, id
+ * and version). Public legacy methods address only global entries; internal paths retain tenant scope. Each entry is a {@link StoredEntry} holding the compiled definition and
  * an {@link AtomicReference} to the current status.
  *
  * <p>Thread-safety contract:
@@ -55,7 +60,6 @@ public final class WorkflowDefinitionStore {
      * @param definitionId the workflow definition id; non-null
      * @param definitionVersion the definition version
      */
-    private record DefinitionKey(String definitionId, long definitionVersion) {}
 
     // --- Internal entry ---
 
@@ -116,12 +120,22 @@ public final class WorkflowDefinitionStore {
      * @param compiled the compiled definition to store; must not be {@code null}
      * @throws WorkflowDefinitionException if the {@code (definitionId, definitionVersion)} pair
      *     is already present in the store
+     * @throws IllegalArgumentException if the definition id exceeds 255 code points or the
+     *     version is not positive
      */
     public void storeCandidate(CompiledDefinition compiled) {
+        storeCandidate(
+                new DefinitionKey(
+                        null,
+                        compiled.definition().definitionId(),
+                        compiled.definition().definitionVersion()),
+                compiled);
+    }
+
+    void storeCandidate(DefinitionKey key, CompiledDefinition compiled) {
         Objects.requireNonNull(compiled, "compiled");
-        String id = compiled.definition().definitionId();
-        long version = compiled.definition().definitionVersion();
-        DefinitionKey key = new DefinitionKey(id, version);
+        String id = key.definitionId();
+        long version = key.definitionVersion();
         StoredEntry existing = byKey.putIfAbsent(key, new StoredEntry(compiled));
         if (existing != null) {
             throw new WorkflowDefinitionException("definition '" + id + "' v" + version
@@ -139,8 +153,27 @@ public final class WorkflowDefinitionStore {
      * @return the stored entry, or empty if not found
      */
     public Optional<StoredEntry> get(String definitionId, long definitionVersion) {
+        return legacyKey(definitionId, definitionVersion).flatMap(this::get);
+    }
+
+    /**
+     * Maps legacy id/version arguments to a global key; input the key rejects maps to empty so each
+     * legacy method can keep its original outcome for ids and versions that can never be stored.
+     */
+    private static Optional<DefinitionKey> legacyKey(String definitionId, long definitionVersion) {
         Objects.requireNonNull(definitionId, "definitionId");
-        return Optional.ofNullable(byKey.get(new DefinitionKey(definitionId, definitionVersion)));
+        try {
+            return Optional.of(new DefinitionKey(null, definitionId, definitionVersion));
+        } catch (IllegalArgumentException e) {
+            return Optional.empty();
+        }
+    }
+
+    Optional<StoredEntry> get(DefinitionKey key) {
+        String definitionId = key.definitionId();
+        long definitionVersion = key.definitionVersion();
+        Objects.requireNonNull(definitionId, "definitionId");
+        return Optional.ofNullable(byKey.get(key));
     }
 
     /**
@@ -160,15 +193,27 @@ public final class WorkflowDefinitionStore {
      * @throws WorkflowDefinitionException if no entry is found for the given id/version
      */
     public boolean tryClaimForActivation(String definitionId, long definitionVersion) {
+        Optional<DefinitionKey> key = legacyKey(definitionId, definitionVersion);
+        if (key.isEmpty()) {
+            throw new WorkflowDefinitionException("cannot activate definition '" + definitionId + "' v"
+                    + definitionVersion + ": not found in the store; call load() first");
+        }
+        return tryClaimForActivation(key.get());
+    }
+
+    boolean tryClaimForActivation(DefinitionKey key) {
+        String definitionId = key.definitionId();
+        long definitionVersion = key.definitionVersion();
         Objects.requireNonNull(definitionId, "definitionId");
-        DefinitionKey key = new DefinitionKey(definitionId, definitionVersion);
         StoredEntry entry = byKey.get(key);
         if (entry == null) {
             throw new WorkflowDefinitionException("cannot activate definition '" + definitionId + "' v"
                     + definitionVersion + ": not found in the store; call load() first");
         }
         // Attempt atomic CANDIDATE -> ACTIVATING flip; return true only if this caller won
-        return entry.status().compareAndSet(ActivationStatus.CANDIDATE, ActivationStatus.ACTIVATING);
+        boolean claimed = entry.status().compareAndSet(ActivationStatus.CANDIDATE, ActivationStatus.ACTIVATING);
+        if (claimed) refreshCachedStatus(key);
+        return claimed;
     }
 
     /**
@@ -183,8 +228,15 @@ public final class WorkflowDefinitionStore {
      * @return the current status, or {@code null} if the entry is not found
      */
     public ActivationStatus currentStatus(String definitionId, long definitionVersion) {
+        return legacyKey(definitionId, definitionVersion)
+                .map(this::currentStatus)
+                .orElse(null);
+    }
+
+    ActivationStatus currentStatus(DefinitionKey key) {
+        String definitionId = key.definitionId();
+        long definitionVersion = key.definitionVersion();
         Objects.requireNonNull(definitionId, "definitionId");
-        DefinitionKey key = new DefinitionKey(definitionId, definitionVersion);
         StoredEntry entry = byKey.get(key);
         return entry != null ? entry.status().get() : null;
     }
@@ -201,11 +253,17 @@ public final class WorkflowDefinitionStore {
      * @param definitionVersion the version to reset
      */
     public void resetToCandidate(String definitionId, long definitionVersion) {
+        legacyKey(definitionId, definitionVersion).ifPresent(this::resetToCandidate);
+    }
+
+    void resetToCandidate(DefinitionKey key) {
+        String definitionId = key.definitionId();
+        long definitionVersion = key.definitionVersion();
         Objects.requireNonNull(definitionId, "definitionId");
-        DefinitionKey key = new DefinitionKey(definitionId, definitionVersion);
         StoredEntry entry = byKey.get(key);
         if (entry != null) {
             entry.status().compareAndSet(ActivationStatus.ACTIVATING, ActivationStatus.CANDIDATE);
+            refreshCachedStatus(key);
         }
     }
 
@@ -256,8 +314,18 @@ public final class WorkflowDefinitionStore {
      * @throws WorkflowDefinitionException if no entry is found for the given id/version
      */
     public boolean markActive(String definitionId, long definitionVersion) {
+        Optional<DefinitionKey> key = legacyKey(definitionId, definitionVersion);
+        if (key.isEmpty()) {
+            throw new WorkflowDefinitionException("cannot activate definition '" + definitionId + "' v"
+                    + definitionVersion + ": no entry found in the store");
+        }
+        return markActive(key.get());
+    }
+
+    boolean markActive(DefinitionKey key) {
+        String definitionId = key.definitionId();
+        long definitionVersion = key.definitionVersion();
         Objects.requireNonNull(definitionId, "definitionId");
-        DefinitionKey key = new DefinitionKey(definitionId, definitionVersion);
         StoredEntry entry = byKey.get(key);
         if (entry == null) {
             throw new WorkflowDefinitionException("cannot activate definition '" + definitionId + "' v"
@@ -267,13 +335,15 @@ public final class WorkflowDefinitionStore {
         // Step 1 — Pre-CAS scan: if a higher-version ACTIVE entry already exists, supersede
         // immediately without attempting the CAS.
         boolean higherActiveExists = byKey.entrySet().stream()
-                .anyMatch(e -> e.getKey().definitionId().equals(definitionId)
+                .anyMatch(e -> Objects.equals(e.getKey().tenantKey(), key.tenantKey())
+                        && e.getKey().definitionId().equals(definitionId)
                         && e.getKey().definitionVersion() > definitionVersion
                         && e.getValue().status().get() == ActivationStatus.ACTIVE);
 
         if (higherActiveExists) {
             // Transition ACTIVATING -> SUPERSEDED: registry resolves the higher-version active.
             entry.status().compareAndSet(ActivationStatus.ACTIVATING, ActivationStatus.SUPERSEDED);
+            refreshCachedStatus(key);
             return false;
         }
 
@@ -289,13 +359,16 @@ public final class WorkflowDefinitionStore {
         if (!flipped) {
             return false;
         }
+        refreshCachedStatus(key);
 
         // Step 3 — Post-CAS re-scan (W2 fix): a concurrent thread for a different version may
         // have raced through steps 1-2 simultaneously (both saw "no higher ACTIVE" before either
         // flipped). Re-scan now that we hold ACTIVE and reconcile.
         for (ConcurrentHashMap.Entry<DefinitionKey, StoredEntry> e : byKey.entrySet()) {
             DefinitionKey k = e.getKey();
-            if (!k.definitionId().equals(definitionId) || k.definitionVersion() == definitionVersion) {
+            if (!Objects.equals(k.tenantKey(), key.tenantKey())
+                    || !k.definitionId().equals(definitionId)
+                    || k.definitionVersion() == definitionVersion) {
                 continue;
             }
             ActivationStatus peerStatus = e.getValue().status().get();
@@ -307,12 +380,14 @@ public final class WorkflowDefinitionStore {
                 // SUPERSEDED and return false. The higher-version peer will sweep us on its own
                 // post-CAS pass (or already has), but we must not leave two ACTIVE entries.
                 entry.status().compareAndSet(ActivationStatus.ACTIVE, ActivationStatus.SUPERSEDED);
+                refreshCachedStatus(key);
                 return false;
             } else {
                 // A lower-version peer is still ACTIVE (its ACTIVATING->ACTIVE CAS beat the
                 // supersession sweep from its own markActive call, or it raced in concurrently).
                 // CAS it to SUPERSEDED — we are the higher version.
                 e.getValue().status().compareAndSet(ActivationStatus.ACTIVE, ActivationStatus.SUPERSEDED);
+                refreshCachedStatus(k);
             }
         }
         return true;
@@ -324,7 +399,9 @@ public final class WorkflowDefinitionStore {
      * @return an immutable collection of refs; never {@code null}; may be empty
      */
     public Collection<CompiledDefinitionRef> list() {
-        return List.copyOf(byKey.values().stream()
+        return List.copyOf(byKey.entrySet().stream()
+                .filter(e -> e.getKey().tenantKey() == null)
+                .map(java.util.Map.Entry::getValue)
                 .map(entry -> new CompiledDefinitionRef(
                         entry.compiled().definition().definitionId(),
                         entry.compiled().definition().definitionVersion(),
@@ -346,5 +423,91 @@ public final class WorkflowDefinitionStore {
         Objects.requireNonNull(definitionId, "definitionId");
         return get(definitionId, definitionVersion)
                 .map(entry -> entry.compiled().source());
+    }
+
+    private final ConcurrentHashMap<DefinitionKey, WorkflowDefinitionRecord> metadataByKey = new ConcurrentHashMap<>();
+
+    void metadata(WorkflowDefinitionRecord record) {
+        metadataByKey.put(record.key(), record);
+        get(record.key()).ifPresent(entry -> entry.status()
+                .set(ActivationStatus.valueOf(record.status().name())));
+        if (record.status() == DefinitionStatus.ACTIVE) {
+            supersedeLowerActive(record.key());
+        }
+    }
+
+    /** Marks lower versions of the same tenant and id that the cache holds as ACTIVE as SUPERSEDED. */
+    private void supersedeLowerActive(DefinitionKey active) {
+        for (ConcurrentHashMap.Entry<DefinitionKey, StoredEntry> e : byKey.entrySet()) {
+            DefinitionKey k = e.getKey();
+            if (Objects.equals(k.tenantKey(), active.tenantKey())
+                    && k.definitionId().equals(active.definitionId())
+                    && k.definitionVersion() < active.definitionVersion()
+                    && e.getValue().status().compareAndSet(ActivationStatus.ACTIVE, ActivationStatus.SUPERSEDED)) {
+                refreshCachedStatus(k);
+            }
+        }
+    }
+
+    void candidate(DefinitionKey key, CompiledDefinition compiled, String format) {
+        candidate(DefaultWorkflowDefinitionService.record(key, compiled, format), compiled);
+    }
+
+    void candidate(WorkflowDefinitionRecord record, CompiledDefinition compiled) {
+        DefinitionKey key = record.key();
+        // Validate all metadata before publishing the candidate; metadata must not reset a concurrent claim.
+        storeCandidate(key, compiled);
+        metadataByKey.put(key, record);
+        refreshCachedStatus(key);
+    }
+
+    private void refreshCachedStatus(DefinitionKey key) {
+        metadataByKey.computeIfPresent(key, (ignored, previous) -> {
+            DefinitionStatus status =
+                    DefinitionStatus.valueOf(currentStatus(key).name());
+            return previous.status() == status
+                    ? previous
+                    : new WorkflowDefinitionRecord(
+                            previous.key(),
+                            previous.kind(),
+                            previous.planHash(),
+                            status,
+                            previous.provenance(),
+                            previous.documentFormat(),
+                            previous.createdAt(),
+                            Instant.now());
+        });
+    }
+
+    List<WorkflowDefinitionRecord> records(DefinitionFilter filter) {
+        return metadataByKey.values().stream()
+                .filter(r -> filter.scope() == DefinitionFilter.TenantScope.ALL
+                        || Objects.equals(r.key().tenantKey(), filter.tenantKey()))
+                .map(r -> get(r.key())
+                        .map(e -> new WorkflowDefinitionRecord(
+                                r.key(),
+                                r.kind(),
+                                r.planHash(),
+                                DefinitionStatus.valueOf(e.status().get().name()),
+                                r.provenance(),
+                                r.documentFormat(),
+                                r.createdAt(),
+                                r.statusChangedAt()))
+                        .orElse(r))
+                .filter(r -> filter.statuses() == null || filter.statuses().contains(r.status()))
+                .sorted(java.util.Comparator.comparing(
+                                (WorkflowDefinitionRecord r) -> r.key().definitionId())
+                        .thenComparingLong(r -> r.key().definitionVersion()))
+                .toList();
+    }
+
+    Optional<SourceMetadata> sourceMetadata(DefinitionKey key) {
+        return Optional.ofNullable(metadataByKey.get(key))
+                .map(r -> {
+                    var p = r.provenance();
+                    return new SourceMetadata(
+                            p.sourceType(), p.uri(), p.revision(), p.author(), p.uploadId(), p.loadedAt());
+                })
+                .or(() -> get(key).map(e -> e.compiled().source()));
     }
 }

@@ -52,7 +52,7 @@ import java.util.Objects;
  * <p>After compilation, the pipeline computes the plan hash by building a fresh
  * {@link WorkflowBuilder}, calling {@code definition.define(builder)}, and reading
  * {@code plan.planHash()}. This extra builder pass is cheap (the definition is deterministic)
- * and makes the plan hash available to management surfaces ({@code WorkflowDefinitionService.list()})
+ * and makes the plan hash available to management surfaces ({@code WorkflowDefinitionService.list(filter)})
  * before the definition is registered.
  *
  * <p>The pipeline is stateless and thread-safe after construction.

@@ -25,12 +25,13 @@ Install this module when workflows must survive process restarts, run across mor
 | Pg repo impls | `PgWorkflowInstanceRepository`, `PgWorkflowHistoryRepository`, `PgWorkflowDedupRepository`, `PgBranchTokenRepository`, `PgJoinStateRepository` — implement the engine SPIs |
 | `TaskStore<SqlClient>` | Human task persistence (`PgTaskStore`) |
 | `TimerStore<SqlClient>` | Workflow timer persistence (`PgTimerStore`) |
+| `WorkflowDefinitionRegistryStore` | Durable definition metadata, TEXT sources, and fenced activation (`PgWorkflowDefinitionRegistryStore`) |
 | `WorkflowTransactionRunner<SqlClient>` | Pg implementation of the engine's transaction seam |
 | Query services | `PgWorkflowInstanceQueryService` — read model for workflow instances and branch state |
 | Retention service | `PgWorkflowRetentionService` — SKIP LOCKED archive + purge sweep; the application drives the batch loop and cadence, there is no built-in scheduler |
 | Recovery service | `PgWorkflowBranchRecoveryService` — opt-in cluster-singleton branch recovery cron |
 | Migration support | Optional in-flight workflow definition migration (`WorkflowMigrationModule`) |
-| Flyway schema | `V1__create_workflow_tables.sql` — all workflow tables and indexes |
+| Flyway schema | Shipped `V1__create_workflow_tables.sql` plus additive `V002__create_workflow_definitions.sql` |
 
 The module `includes WorkflowEngineModule`, which provides the `WorkflowOperations` binding and recorder-router wiring. It does not deliver downstream service calls or execute delayed jobs by itself; those are separate modules.
 
@@ -72,7 +73,49 @@ The module owns workflow persistence tables, including:
 | `workflow_branch_tokens` | Active branch execution state; includes `metadata JSONB` for durable context |
 | `workflow_join_states` | Fan-in state for fork/join workflows |
 
-The migration files live with the module under `db/migration/workflow`. The whole schema is defined in a single migration, `V1__create_workflow_tables.sql` — including the `workflow_branch_tokens` table and the `metadata` columns on both `workflow_timers` and `workflow_branch_tokens`. Schema changes from here are additive Flyway migrations.
+The migration files live with the module under `db/migration/workflow`. The shipped `V1__create_workflow_tables.sql` contains the instance/runtime tables, including branch tokens and durable metadata. The additive `V002__create_workflow_definitions.sql` adds the definition registry; V1 is unchanged.
+
+---
+
+## Definition Registry And Source Storage
+
+The definition registry requires **PostgreSQL 15 or later** for null-tenant uniqueness using
+`NULLS NOT DISTINCT`. `workflow_definitions` stores CODE metadata and DOCUMENT source text separately
+from compiled plans. DOCUMENT source uses TEXT with kind/nullability constraints and no fixed database
+size cap. The adapter enforces the shared `WorkflowDefinitionsConfig` policy at document boundaries.
+
+Runtime document load writes a CANDIDATE. Activation uses a fresh UUID claim, local registration, then
+a fenced completion; obsolete completions fail and obsolete releases are no-ops. Every definition
+mutation takes an id-derived transaction advisory lock followed by ordered locks on all rows of that
+id. Claim ages use PostgreSQL wall clock after lock acquisition, with twice `maxStalenessSeconds`
+(default 30 seconds) as the stale age. These locks serialize each store transaction, not the whole
+cross-node compilation operation. Before every mutating lock acquisition, the store sets transaction-
+local `lock_timeout` to `30000ms`; this bounds each advisory or row-lock wait independently. A timeout
+rolls back the transaction, releases its locks, and clears the local setting when the connection is
+reused. SQLSTATE `55P03` is surfaced as a retryable `WorkflowPersistenceException` with the exact
+definition id in its context and the pessimistic-locking database failure preserved as its cause. The
+store does not retry inside the aborted transaction.
+
+`recomputeActive` operates on one exact tenant owner and id. It chooses the highest version whose status
+is ACTIVE or SUPERSEDED, demotes an older ACTIVE row before promotion to satisfy the immediate
+one-ACTIVE index, and leaves other statuses and owners untouched. Both status changes commit together;
+a failed promotion rolls back its preceding demotion. Rows whose status already matches the result keep
+their original `status_changed_at`.
+
+DOCUMENT bodies require `server_encoding = UTF8`. The adapter checks this before its first body
+read/write, caches only a successful capability result, and retries a failed lookup on the next
+operation. Metadata and CODE-only operations do not require that capability. Every source read checks
+UTF-8 byte length and code-point count in the same SQL statement that conditionally projects the body.
+Oversized rows return identity/counts with no body transfer, then fail with a sanitized key/limit
+message; they are not treated as absent. Metadata listing never selects the source body.
+
+With `WorkflowDefinitionModule` installed, the engine restores activated global documents after
+Flyway migration, recomputes global active membership, and refreshes verified definition-cache entries
+from committed metadata before BOOTSTRAP verticle deployment. Every node sharing live document rows must
+carry their loaders and callback/type catalogs. Source locations are attribution, never remote fetch
+instructions. Configure the same policy on every node; raising the input limit increases memory and
+parse cost, and lowering it below required stored sources makes startup fail. The stored envelope is
+floor(3L/2) UTF-8 bytes and L code points for configured raw input limit L (default 262144 bytes).
 
 ---
 

@@ -7,6 +7,13 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import dev.vertique.application.VertiqueApplicationBootstrap;
+import dev.vertique.application.VertiqueApplicationComponent;
+import dev.vertique.application.VertiqueApplicationHandle;
+import dev.vertique.config.parser.ConfigParsingModule;
+import dev.vertique.core.VertiqueRuntime;
+import dev.vertique.core.VertxModule;
+import dev.vertique.core.lifecycle.CoreLifecycleStepsModule;
 import dagger.Component;
 import dagger.Module;
 import dagger.Provides;
@@ -15,6 +22,7 @@ import dev.vertique.db.DbPoolConfig;
 import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
+import dev.vertique.deploy.DeployerModule;
 import dev.vertique.logging.LoggingContextModule;
 import dev.vertique.workflow.definition.callbacks.BranchResultReducerContributor;
 import dev.vertique.workflow.definition.callbacks.FailMessageFactoryContributor;
@@ -27,14 +35,13 @@ import dev.vertique.workflow.definition.callbacks.PayloadMapperContributor;
 import dev.vertique.workflow.definition.callbacks.StartStateMapperContributor;
 import dev.vertique.workflow.definition.callbacks.StateReducerContributor;
 import dev.vertique.workflow.definition.di.WorkflowDefinitionModule;
+import dev.vertique.workflow.di.WorkflowDefinitionsConfigModule;
 import dev.vertique.workflow.definition.it.fixture.FraudScreenedDoc;
 import dev.vertique.workflow.definition.it.fixture.InventoryReservedDoc;
 import dev.vertique.workflow.definition.it.fixture.OrderFanOutState;
 import dev.vertique.workflow.definition.it.fixture.PaymentAuthorizedDoc;
 import dev.vertique.workflow.definition.it.fixture.PlaceFanOutOrder;
 import dev.vertique.workflow.definition.parser.DocumentFormat;
-import dev.vertique.workflow.definition.service.ActivationStatus;
-import dev.vertique.workflow.definition.service.CompiledDefinitionRef;
 import dev.vertique.workflow.definition.service.WorkflowDefinitionService;
 import dev.vertique.workflow.definition.source.DefinitionResource;
 import dev.vertique.workflow.definition.source.SourceMetadata;
@@ -47,6 +54,9 @@ import dev.vertique.workflow.ops.WorkflowView;
 import dev.vertique.workflow.plan.DefaultRaceSafetyTargetRegistry;
 import dev.vertique.workflow.plan.WorkflowPlanValidator;
 import dev.vertique.workflow.postgresql.engine.WorkflowPostgresqlModule;
+import dev.vertique.workflow.registry.store.DefinitionFilter;
+import dev.vertique.workflow.registry.store.DefinitionStatus;
+import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
 import dev.vertique.workflow.sideeffect.IntentKind;
 import dev.vertique.workflow.sideeffect.RecorderResult;
 import dev.vertique.workflow.sideeffect.WorkflowRecorders;
@@ -56,6 +66,7 @@ import dev.vertique.workflow.state.WorkflowStatus;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.json.Json;
+import io.vertx.core.json.JsonObject;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
 import io.vertx.pgclient.PgBuilder;
@@ -69,7 +80,6 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.time.Clock;
 import java.time.Instant;
-import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -132,6 +142,7 @@ public class DocumentDefinitionFanOutIT {
     static WorkflowOperations engine;
     static TransactionalWorkflowOperations<SqlClient> txEngine;
     static WorkflowDefinitionService definitionService;
+    static VertiqueApplicationHandle<?> application;
 
     // --- Dagger modules ---
 
@@ -376,6 +387,11 @@ public class DocumentDefinitionFanOutIT {
     @Singleton
     @Component(
             modules = {
+                VertxModule.class,
+                ConfigParsingModule.class,
+                WorkflowDefinitionsConfigModule.class,
+                DeployerModule.class,
+                CoreLifecycleStepsModule.class,
                 WorkflowDefinitionModule.class,
                 dev.vertique.context.ContextRuntimeModule.class,
                 LoggingContextModule.class,
@@ -384,7 +400,17 @@ public class DocumentDefinitionFanOutIT {
                 FanOutCallbackModule.class,
                 FanOutInfrastructureModule.class
             })
-    interface FanOutTestComponent {
+    interface FanOutTestComponent extends VertiqueApplicationComponent {
+
+        @Component.Builder
+        interface Builder {
+
+            Builder vertxModule(VertxModule module);
+
+            Builder fanOutInfrastructureModule(FanOutInfrastructureModule module);
+
+            FanOutTestComponent build();
+        }
 
         /**
          * Returns the workflow operations facade backed by the PostgreSQL engine.
@@ -434,14 +460,22 @@ public class DocumentDefinitionFanOutIT {
                 .build();
 
         FanOutTestComponent component = DaggerDocumentDefinitionFanOutIT_FanOutTestComponent.builder()
+                .vertxModule(new VertxModule(vertx, new JsonObject()))
                 .fanOutInfrastructureModule(new FanOutInfrastructureModule(pool))
                 .build();
 
-        engine = component.workflowOperations();
-        txEngine = component.transactionalWorkflowOperations();
-        definitionService = component.workflowDefinitionService();
-
-        ctx.completeNow();
+        VertiqueApplicationBootstrap.start(VertiqueRuntime.of(vertx, new JsonObject()), ignored -> component)
+                .onComplete(started -> {
+                    if (started.failed()) {
+                        ctx.failNow(started.cause());
+                        return;
+                    }
+                    application = started.result();
+                    engine = component.workflowOperations();
+                    txEngine = component.transactionalWorkflowOperations();
+                    definitionService = component.workflowDefinitionService();
+                    ctx.completeNow();
+                });
     }
 
     /** Truncates all workflow tables before each test so tests are isolated. */
@@ -455,10 +489,13 @@ public class DocumentDefinitionFanOutIT {
     }
 
     @AfterAll
-    static void tearDown() {
-        if (pool != null) {
-            pool.close();
-        }
+    static void tearDown(VertxTestContext ctx) {
+        Future<Void> shutdown = application == null ? Future.succeededFuture() : application.shutdown();
+        Future<Void> cleanup = shutdown.eventually(() -> pool == null ? Future.succeededFuture() : pool.close());
+        cleanup.onComplete(result -> {
+            if (result.failed()) ctx.failNow(result.cause());
+            else ctx.completeNow();
+        });
     }
 
     // --- Tests ---
@@ -583,22 +620,25 @@ public class DocumentDefinitionFanOutIT {
 
     /**
      * Verifies that the compiled {@code planHash} for the YAML-defined fan-out workflow is
-     * queryable via {@link WorkflowDefinitionService#list()} after bootstrap.
+     * queryable via {@link WorkflowDefinitionService#list(DefinitionFilter)} after bootstrap.
      */
     @Test
     @DisplayName("planHash is accessible via WorkflowDefinitionService.list() after fan-out bootstrap")
     void fanOutDefinitionPlanHashIsAccessibleViaService(VertxTestContext ctx) {
-        Collection<CompiledDefinitionRef> refs = definitionService.list();
-        ctx.verify(() -> {
-            assertEquals(1, refs.size(), "exactly one definition must be in the fan-out component's service");
-            CompiledDefinitionRef ref = refs.iterator().next();
-            assertEquals("order-fulfillment-fanout-doc", ref.definitionId());
-            assertEquals(1L, ref.definitionVersion());
-            assertEquals(ActivationStatus.ACTIVE, ref.status());
-            assertNotNull(ref.planHash(), "planHash must not be null");
-            assertTrue(!ref.planHash().isBlank(), "planHash must not be blank");
-            ctx.completeNow();
-        });
+        definitionService
+                .list(new DefinitionFilter(DefinitionFilter.TenantScope.GLOBAL, null, null))
+                .onComplete(ar -> ctx.verify(() -> {
+                    assertTrue(ar.succeeded(), "definition metadata query must succeed: " + ar.cause());
+                    List<WorkflowDefinitionRecord> refs = ar.result();
+                    assertEquals(1, refs.size(), "exactly one definition must be in the fan-out component's service");
+                    WorkflowDefinitionRecord ref = refs.get(0);
+                    assertEquals("order-fulfillment-fanout-doc", ref.key().definitionId());
+                    assertEquals(1L, ref.key().definitionVersion());
+                    assertEquals(DefinitionStatus.ACTIVE, ref.status());
+                    assertNotNull(ref.planHash(), "planHash must not be null");
+                    assertTrue(!ref.planHash().isBlank(), "planHash must not be blank");
+                    ctx.completeNow();
+                }));
     }
 
     // --- Private helpers ---

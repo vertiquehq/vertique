@@ -178,4 +178,9 @@ public abstract class WorkflowPostgresqlModule {
     @Binds
     @Singleton
     abstract WorkflowRetentionService bindRetentionService(PgWorkflowRetentionService impl);
+    /** Binds the durable definition registry using the existing application pool. */
+    @Binds
+    @Singleton
+    abstract dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore definitionRegistryStore(
+            dev.vertique.workflow.postgresql.registry.PgWorkflowDefinitionRegistryStore store);
 }

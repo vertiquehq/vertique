@@ -341,6 +341,50 @@ WorkflowActorMapper customActorMapper() {
 
 ---
 
+## Durable Definition Registry
+
+`dev.vertique.workflow.registry.store` supplies SQL-free metadata and source values, the
+`WorkflowDefinitionRegistryStore` persistence SPI, and `WorkflowDefinitionLifecycle.activate(DefinitionKey)`.
+A `DefinitionKey` carries nullable tenant scope, definition id, and positive version. A
+`DefinitionFilter` selects ALL, GLOBAL, or one TENANT explicitly; it does not authorize tenant access.
+`WorkflowDefinitionRecord` contains immutable metadata and provenance; source text is fetched separately
+as `WorkflowDefinitionDocument`. Source URIs are opaque attribution and are never fetched on restore.
+
+The store provides candidate insertion, metadata lookup/list, guarded source lookup, static document
+reconciliation, fenced claim/complete/release operations, and
+`recomputeActive(@Nullable String tenantKey, String definitionId)`. Recompute is scoped to that exact
+owner and id: the highest ACTIVE or SUPERSEDED version becomes ACTIVE and lower eligible versions
+become SUPERSEDED; CANDIDATE, ACTIVATING, DEPRECATED, and RETIRED rows remain unchanged.
+`WorkflowCoreModule` declares optional
+store, lifecycle, and configuration bindings plus the loader multibinding. Without persistence, the
+standalone definition graph needs neither a database nor a configuration parser. `WorkflowRegistry.unregister`
+removes a version and its contract mapping; third-party registries must implement it to support durable
+activation compensation. Its default throws explicitly.
+
+### Document Policy Configuration
+
+Bind `WorkflowDefinitionsConfig` directly, or install `WorkflowDefinitionsConfigModule` together with
+`dev.vertique.config.parser.ConfigParsingModule` and the existing `@VertxConfig` input. The opt-in module
+parses and validates `workflow.definitions` before the first document parse. Omitting that module keeps
+the defaults and introduces no parser dependency into the graph.
+
+| Property | Default | Meaning |
+|---|---|---|
+| `workflow.definitions.maxStalenessSeconds` | `30` | Positive registry timing bound; activation claims become reclaimable after twice this age |
+| `workflow.definitions.maxDocumentSizeBytes` | `262144` | Positive runtime input-byte limit L; L + floor(L/2) must fit an integer |
+
+`maxStoredDocumentSizeBytes()` derives floor(3L/2). Durable source text must fit both that UTF-8 byte
+bound and L Unicode code points. These bounds describe normalized text, not its original encoding.
+All nodes sharing the table must use the same policy. Raising L increases parsing and memory costs;
+raise it on every node before admitting larger documents. Before lowering it, ensure documents
+required for restoration fit the new envelope; otherwise startup fails explicitly.
+
+`WorkflowDefinitionLifecycleException` reports a typed `reason()` and `key()` for lifecycle refusals,
+including stale claims, ownership conflicts, missing loaders, and plan drift. Asynchronous entrypoints
+report invalid arguments through failed Futures.
+
+---
+
 ## Exceptions
 
 `workflow-core` defines the semantic exception hierarchy applications catch when workflow operations fail. Each root maps to the matching core framework exception root and its default HTTP status:
