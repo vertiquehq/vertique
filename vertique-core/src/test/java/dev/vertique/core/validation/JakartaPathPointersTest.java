@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
 // SPDX-License-Identifier: EUPL-1.2
 
-package dev.vertique.workflow.engine;
+package dev.vertique.core.validation;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -9,6 +9,7 @@ import static org.junit.jupiter.params.provider.Arguments.arguments;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import dev.vertique.core.json.VertiqueJson;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -21,14 +22,14 @@ import org.junit.jupiter.params.provider.ValueSource;
 
 /**
  * Unit tests for {@link JakartaPathPointers}: the conversion of a Jakarta property-path string into
- * an RFC 6901 pointer over the wire names of the process mapper.
+ * an RFC 6901 pointer over the wire names of the supplied mapper.
  *
  * <p>The input grammar is the one the violation detail mapper produces from a property path:
  * nodes joined by {@code .}, each node a property name with an optional {@code <...>} marker and an
  * optional {@code [index]} or {@code [key]} suffix. A map entry ends the pointer at the map
  * property, so the caller's key never reaches the output. Container-element nodes are dropped.
  *
- * <p>No database, Vert.x context or validator is required.
+ * <p>No validator or Vert.x context is required.
  */
 class JakartaPathPointersTest {
 
@@ -162,7 +163,7 @@ class JakartaPathPointersTest {
         // Given: a type tree and a Jakarta property path (the row)
 
         // When: the path is converted against the root type
-        String pointer = JakartaPathPointers.toPointer(path, rootType);
+        String pointer = JakartaPathPointers.toPointer(path, rootType, VertiqueJson.mapper());
 
         // Then: the pointer is exactly the expected wire-name pointer, and no sentinel key leaked
         assertEquals(expected, pointer, "pointer for row '" + row + "'");
@@ -177,7 +178,7 @@ class JakartaPathPointersTest {
         String path = "byKey[" + key + "].name";
 
         // When: the path is converted
-        String pointer = JakartaPathPointers.toPointer(path, Root.class);
+        String pointer = JakartaPathPointers.toPointer(path, Root.class, VertiqueJson.mapper());
 
         // Then: the pointer ends at the map property and holds no part of the key
         assertEquals("/byKey", pointer);

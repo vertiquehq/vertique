@@ -22,8 +22,8 @@ class PayloadSchemaGeneratorTest {
     @DisplayName("describe returns the canonical document the schema generator emits under the configured profile")
     void describeReturnsTheCanonicalDocumentUnderTheConfiguredProfile() {
         // Given: a generator for the reserved vertique profile
-        PayloadSchemaGenerator generator =
-                new PayloadSchemaGenerator(Profiles.builtIn(), Profiles.VERTIQUE, Optional.empty());
+        PayloadSchemaGenerator generator = new PayloadSchemaGenerator(
+                PayloadSchemaTestProfiles.builtIn(), PayloadSchemaTestProfiles.VERTIQUE, Optional.empty());
 
         // When / Then: it describes exactly what the schema generator emits for that profile
         assertThat(generator.profileId()).isEqualTo(JsonProfileId.of("vertique"));
@@ -37,7 +37,9 @@ class PayloadSchemaGeneratorTest {
     void describeFollowsTheConfiguredProfilesMapper() {
         // Given: a generator for a profile with snake case naming
         PayloadSchemaGenerator generator = new PayloadSchemaGenerator(
-                Profiles.with(Profiles.snakeCase("p1")), Profiles.systemProfile("p1"), Optional.empty());
+                PayloadSchemaTestProfiles.with(PayloadSchemaTestProfiles.snakeCase("p1")),
+                PayloadSchemaTestProfiles.systemProfile("p1"),
+                Optional.empty());
 
         // When / Then: the wire names are the profile's
         assertThat(generator.profileId()).isEqualTo(JsonProfileId.of("p1"));
@@ -53,7 +55,7 @@ class PayloadSchemaGeneratorTest {
     void theDefaultSystemProfileIsUsedWhenTheConfigurationNamesNone() {
         // Given: the default configuration
         PayloadSchemaGenerator generator = new PayloadSchemaGenerator(
-                Profiles.builtIn(), dev.vertique.json.JsonConfig.defaults(), Optional.empty());
+                PayloadSchemaTestProfiles.builtIn(), dev.vertique.json.JsonConfig.defaults(), Optional.empty());
 
         // Then: the profile id is the system profile
         assertThat(generator.profileId()).isEqualTo(JsonProfileId.SYSTEM);
@@ -65,7 +67,9 @@ class PayloadSchemaGeneratorTest {
         // Given: a generator that also reads bean validation metadata
         try (var factory = Validation.buildDefaultValidatorFactory()) {
             PayloadSchemaGenerator generator = new PayloadSchemaGenerator(
-                    Profiles.builtIn(), Profiles.VERTIQUE, Optional.of(factory.getValidator()));
+                    PayloadSchemaTestProfiles.builtIn(),
+                    PayloadSchemaTestProfiles.VERTIQUE,
+                    Optional.of(factory.getValidator()));
 
             // When / Then: constraints appear in the document
             assertThat(generator
@@ -85,7 +89,9 @@ class PayloadSchemaGeneratorTest {
 
         // When / Then: construction and the id succeed
         assertThatCode(() -> holder[0] = new PayloadSchemaGenerator(
-                        Profiles.builtIn(), Profiles.systemProfile("nope"), Optional.empty()))
+                        PayloadSchemaTestProfiles.builtIn(),
+                        PayloadSchemaTestProfiles.systemProfile("nope"),
+                        Optional.empty()))
                 .doesNotThrowAnyException();
         assertThat(holder[0].profileId()).isEqualTo(JsonProfileId.of("nope"));
 
@@ -102,7 +108,9 @@ class PayloadSchemaGeneratorTest {
     void aRefusedProfileFailsTheDescription() {
         // Given: a profile that declares a null type override
         PayloadSchemaGenerator generator = new PayloadSchemaGenerator(
-                Profiles.with(Profiles.withNullOverride("bad")), Profiles.systemProfile("bad"), Optional.empty());
+                PayloadSchemaTestProfiles.with(PayloadSchemaTestProfiles.withNullOverride("bad")),
+                PayloadSchemaTestProfiles.systemProfile("bad"),
+                Optional.empty());
 
         // When / Then: describing fails with a runtime exception naming the profile
         assertThatThrownBy(() -> generator.describe(Payloads.PlainRecord.class))

@@ -319,6 +319,7 @@ public interface BeanValidator {
 | `ParameterViolation` | `record (int parameterIndex, ViolationDetail detail)` |
 | `ViolationCarrier` | `interface { List<ViolationDetail> violations(); }`, implemented by validation exceptions whose violations a transport may render; the list is unmodifiable and never `null` |
 | `BeanValidationException` | extends `ValidationException`, implements `ViolationCarrier`; `violations()` is defensively copied and unmodifiable |
+| `JakartaPathPointers` | INTERNAL. `static String toPointer(String jakartaPath, Type rootType, ObjectMapper mapper)` converts a Jakarta property path into an RFC 6901 pointer over the mapper's wire names, with list indexes; a map entry ends the pointer at the map property and the conversion never throws. Not an application extension point |
 
 `ViolationDetail` deliberately excludes the invalid value so a violation can be serialized without
 leaking input. `type` and `args` are populated by the validation module and are `null` when it is

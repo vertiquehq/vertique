@@ -18,12 +18,12 @@ import java.util.Set;
 import java.util.UUID;
 
 /** JSON profiles, registries and configurations the registration tests run under. */
-final class Profiles {
+final class PayloadSchemaTestProfiles {
 
     /** The reserved profile the generic tests run under. */
     static final JsonConfig VERTIQUE = new JsonConfig(null, "vertique");
 
-    private Profiles() {}
+    private PayloadSchemaTestProfiles() {}
 
     /**
      * A registry holding only the built-in profiles.
