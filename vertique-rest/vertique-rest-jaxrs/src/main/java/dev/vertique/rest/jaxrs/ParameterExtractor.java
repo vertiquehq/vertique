@@ -1171,8 +1171,10 @@ final class ParameterExtractor {
                         Map<String, Object> typedMap = (Map<String, Object>) processedMap;
                         // Both paths run through the same rejection translation, so a body the binder
                         // rejects is the frozen value-free 400 whether or not a profile was stashed.
-                        return ProfileBodyMaterialization.convertValue(
-                                profileMapper != null ? profileMapper : VertiqueJson.mapper(), typedMap, targetType);
+                        ObjectMapper mapper = profileMapper != null ? profileMapper : VertiqueJson.mapper();
+                        Object bound = ProfileBodyMaterialization.convertValue(mapper, typedMap, targetType);
+                        BodyBindingMark.record(ctx, BodyBindingMark.Kind.JSON, mapper);
+                        return bound;
                     }
                 }
                 // JSON array — List<T>, Set<T>, T[] — intercept before decoder chain
@@ -1183,12 +1185,18 @@ final class ParameterExtractor {
                         Object processed = objectProcessor.processInput(
                                 jsonArray.getList(), resolvedType, policies, InputLocation.BODY, bodyNameResolver);
                         if (processed instanceof List<?> processedList) {
+                            ObjectMapper processMapper = VertiqueJson.mapper();
                             com.fasterxml.jackson.databind.JavaType javaType =
-                                    VertiqueJson.mapper().getTypeFactory().constructType(resolvedType);
+                                    processMapper.getTypeFactory().constructType(resolvedType);
                             if (profileMapper != null) {
-                                return ProfileBodyMaterialization.convertValue(profileMapper, processedList, javaType);
+                                Object bound =
+                                        ProfileBodyMaterialization.convertValue(profileMapper, processedList, javaType);
+                                BodyBindingMark.record(ctx, BodyBindingMark.Kind.JSON, profileMapper);
+                                return bound;
                             }
-                            return VertiqueJson.mapper().convertValue(processedList, javaType);
+                            Object bound = processMapper.convertValue(processedList, javaType);
+                            BodyBindingMark.record(ctx, BodyBindingMark.Kind.JSON, processMapper);
+                            return bound;
                         }
                     }
                 }
@@ -1223,8 +1231,10 @@ final class ParameterExtractor {
                         @SuppressWarnings("unchecked")
                         Map<String, Object> typedMap = (Map<String, Object>) processedMap;
                         // Same rejection translation as the JSON path: a value-free 400 on both mappers.
-                        return ProfileBodyMaterialization.convertValue(
-                                profileMapper != null ? profileMapper : VertiqueJson.mapper(), typedMap, targetType);
+                        ObjectMapper mapper = profileMapper != null ? profileMapper : VertiqueJson.mapper();
+                        Object bound = ProfileBodyMaterialization.convertValue(mapper, typedMap, targetType);
+                        BodyBindingMark.record(ctx, BodyBindingMark.Kind.FORM, mapper);
+                        return bound;
                     }
                 }
                 return null;

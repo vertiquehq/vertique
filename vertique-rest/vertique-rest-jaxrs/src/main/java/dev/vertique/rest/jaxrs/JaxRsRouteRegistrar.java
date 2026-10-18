@@ -702,9 +702,9 @@ public class JaxRsRouteRegistrar {
             // here is an EDGE-phase capture, after CONFIGURE installed the process mapper, and the
             // built-in registry hands out one stable instance per profile, so routes sharing a profile
             // share one entry.
-            JacksonFieldNameResolver bodyNameResolver = bodyNameResolvers.computeIfAbsent(
-                    resolvedBodyMapper != null ? resolvedBodyMapper : VertiqueJson.mapper(),
-                    JacksonFieldNameResolver::forMapper);
+            ObjectMapper projectionMapper = resolvedBodyMapper != null ? resolvedBodyMapper : VertiqueJson.mapper();
+            JacksonFieldNameResolver bodyNameResolver =
+                    bodyNameResolvers.computeIfAbsent(projectionMapper, JacksonFieldNameResolver::forMapper);
             if (objectProcessor != null) {
                 warmBodyNameProjection(meta, objectProcessor, bodyNameResolver);
             }
@@ -725,7 +725,8 @@ public class JaxRsRouteRegistrar {
                     resolvedBodyMapper,
                     paramConversionResolver,
                     bodyNameResolver,
-                    descriptor));
+                    descriptor,
+                    projectionMapper));
 
             // (e) Per-route ERROR-body profile decision. This closes the error-path
             // profiling asymmetry: a failure that fires BEFORE the request-path stash at (a-2) runs

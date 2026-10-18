@@ -1128,6 +1128,63 @@ Violations become a 400 `ValidationProblemDetail`. Each `ValidationErrorDetail` 
 or, for a `@BeanParam`, the location of the JAX-RS annotation on the violated field or record
 component; anything else is `null`.
 
+A violation on the request body is reported in `pointer`: an RFC 6901 JSON Pointer into the request
+document, over the wire names the route's body mapper reads (`@JsonProperty`, a naming strategy and the
+route's JSON profile all apply), when a framework binder materialized a JSON body with that mapper. The
+pointer is verified against the bound body and is shorter than the violated position, never different,
+wherever the mapper or the document cannot confirm a segment: it then stops at the deepest ancestor that
+it can confirm, and `""` is the whole document, which is also what a class-level constraint on the body
+reports.
+
+- A renamed property is reported under its wire name (`/zip_code`), a list element by its position
+  (`/items/1/name`, `/1/name` for a list body), a nested object by its member names.
+- A map entry or a set member is reported as the map or set itself (`/byKey`): a key the client chose
+  never appears in an error.
+- A member the client sent under an alias or a case variant is reported under the spelling it sent.
+- Hidden bound required members are named on omission: when the client leaves out a member that a
+  constraint such as `@NotBlank` or `@NotNull` requires, the pointer names that member (`/name`,
+  `/items/1/name`) if its parent object is in the document and the mapper binds the member through a
+  setter, a creator parameter or a record component. A member the mapper binds only through a field is
+  named when the client sent it, and otherwise the pointer stops at its parent. A shape the resolver
+  cannot read (a custom deserializer, a builder, an unwrapped or any-setter member, a wrapper type id)
+  also stops at the holding property; a deserializer installed by a Jackson module is not detected.
+- A body bound by an application `RequestBodyDecoder`, a body bound with a mapper other than the one the
+  route's wire names come from, a body of which no readable JSON document is available, a violation a
+  validator reports without a structured path, and a body violation beyond the first 100 of a response
+  carry neither `pointer` nor `parameter` and keep `location: "body"`; the validator's Java path is
+  never offered in its place, and a path given only as text is not resolved. A violation without a
+  structured path counts toward the 100. The mappers are compared by identity, the route's mapper being the one in force for the
+  request. The route's name projection is built from its mapper when the router is built, so after the
+  process JSON mapper is re-installed under the same profile id, routes on the default profile report no
+  pointer until the router is rebuilt.
+- The `errors` of a response are sorted by parameter index, then by the lexicographic text of the
+  violation's loggable Java path (the path with control and format characters removed, compared
+  character by character, so `items[10]` precedes `items[2]`), then by constraint type, message and
+  arrival position. The cap counts body violations in that order, so the 100 that are resolved are the
+  same on every request with the same body.
+
+```json
+{ "pointer": "/items/1/name", "detail": "must not be blank", "location": "body", "type": "required" }
+```
+
+A form-urlencoded body bound to a POJO is a set of request parameters, so its violations are reported
+in `parameter`, never in `pointer`, with `location: "form"`: the form field's name followed by the
+leading `[n]` positions of the violation's path. The name is the primary wire name that the mapper
+which bound the body gives the first property of the path. `FormUrlencodedRequestBodyDecoder` binds with
+the process JSON mapper whatever the route's profile; the form branch that runs when an input object
+processor is bound uses the route's mapper. A property the mapper does not bind, or binds only through a
+field, carries neither member. Form entries are neither capped nor logged.
+
+At DEBUG the mapper logs one `body violation path=… pointer=… rootType=…` event for each of the first 100
+body violations of a response, in the sorted order: the Java path rendered without map keys, with
+control and format characters removed and cut to 512 characters; the pointer, likewise stripped and
+suffixed `(truncated)` when it stops before the end of the path, or `<omitted:unbound>` when no
+framework binder materialized the body or no readable document of it is available,
+`<omitted:mismatch>` for a mapper mismatch and `<omitted:unstructured>` for a violation a validator
+reports without a structured path, which gets no pointer; and the body's declared type. A violation
+beyond the 100th logs nothing, and a form-urlencoded body logs nothing. No message, argument, value or raw validator path is
+logged.
+
 A violation on a `query`, `path`, `header`, `cookie` or `form` parameter is reported in `parameter`
 and never in `pointer`: the declared parameter name, followed by the leading `[n]` run of list or
 array positions at the start of the violation's path (`@QueryParam("ids") List<@Min(1) Integer>`

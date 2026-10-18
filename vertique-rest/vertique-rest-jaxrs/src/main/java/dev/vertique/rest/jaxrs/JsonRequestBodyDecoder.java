@@ -92,7 +92,8 @@ class JsonRequestBodyDecoder implements RequestBodyDecoder {
      * <p>Handles both JSON objects and JSON arrays. For collection target types the full declared
      * generic type drives element binding (see {@link #decodeArray}).
      *
-     * @param ctx         the current routing context (unused by this decoder)
+     * @param ctx         the current routing context (source of the resolved profile mapper; the
+     *                    binding of an object or array body is recorded on it)
      * @param body        the request body value
      * @param targetType  the raw Java class for the result
      * @param genericType the full generic type (e.g. {@code List<MyPojo>}), or {@code null}
@@ -121,7 +122,7 @@ class JsonRequestBodyDecoder implements RequestBodyDecoder {
         if (Collection.class.isAssignableFrom(targetType) || targetType.isArray()) {
             JsonArray jsonArray = body.getJsonArray();
             if (jsonArray != null) {
-                return decodeArray(jsonArray, targetType, genericType, profileMapper);
+                return decodeArray(ctx, jsonArray, targetType, genericType, profileMapper);
             }
         }
 
@@ -133,8 +134,10 @@ class JsonRequestBodyDecoder implements RequestBodyDecoder {
         // Both paths run through the same rejection translation: the resolved profile mapper when one
         // was stashed, the process codec otherwise (the mapper JsonObject.mapTo would have used), so a
         // body the binder rejects is the frozen value-free 400 on the fast path as well.
-        return ProfileBodyMaterialization.convertValue(
-                profileMapper != null ? profileMapper : VertiqueJson.mapper(), jsonBody.getMap(), targetType);
+        ObjectMapper mapper = profileMapper != null ? profileMapper : VertiqueJson.mapper();
+        Object bound = ProfileBodyMaterialization.convertValue(mapper, jsonBody.getMap(), targetType);
+        BodyBindingMark.record(ctx, BodyBindingMark.Kind.JSON, mapper);
+        return bound;
     }
 
     /**
@@ -188,6 +191,8 @@ class JsonRequestBodyDecoder implements RequestBodyDecoder {
      * {@code null} (the process-codec path). A profile-mapper rejection is translated to a
      * {@link dev.vertique.core.exception.ValidationException} (HTTP 400).
      *
+     * @param ctx           the current routing context; the binding is recorded on it once an element
+     *     type has been materialized by a mapper
      * @param jsonArray     the JSON array to decode
      * @param targetType    the raw target class (e.g. {@code List.class}, {@code Set.class}, or array)
      * @param genericType   the full generic type for element type resolution
@@ -195,7 +200,12 @@ class JsonRequestBodyDecoder implements RequestBodyDecoder {
      *     process codec's own mapper ({@code VertiqueJson.mapper()})
      * @return the decoded collection or array
      */
-    private Object decodeArray(JsonArray jsonArray, Class<?> targetType, Type genericType, ObjectMapper profileMapper) {
+    private Object decodeArray(
+            RoutingContext ctx,
+            JsonArray jsonArray,
+            Class<?> targetType,
+            Type genericType,
+            ObjectMapper profileMapper) {
         // The JavaType is constructed from the process codec's TypeFactory in both branches (a JavaType
         // is assumed mapper-independent); only the binding call differs (profile vs process codec).
         TypeFactory tf = VertiqueJson.mapper().getTypeFactory();
@@ -204,7 +214,7 @@ class JsonRequestBodyDecoder implements RequestBodyDecoder {
         if (targetType.isArray()) {
             Class<?> componentType = targetType.getComponentType();
             JavaType arrayType = tf.constructArrayType(componentType);
-            return convertList(jsonArray.getList(), arrayType, profileMapper);
+            return convertList(ctx, jsonArray.getList(), arrayType, profileMapper);
         }
 
         // List<T>, Set<T>, or other Collection<T> with declared type info. The full declared type
@@ -225,7 +235,7 @@ class JsonRequestBodyDecoder implements RequestBodyDecoder {
             rejectOwnerBoundInnerCollection(genericType);
             JavaType declaredType = declaredCollectionTypes.computeIfAbsent(genericType, tf::constructType);
             if (isConvertibleCollectionType(declaredType)) {
-                return convertList(jsonArray.getList(), declaredType, profileMapper);
+                return convertList(ctx, jsonArray.getList(), declaredType, profileMapper);
             }
         }
 
@@ -283,15 +293,20 @@ class JsonRequestBodyDecoder implements RequestBodyDecoder {
      * {@link dev.vertique.core.exception.ValidationException}), else the process codec's own mapper
      * ({@code VertiqueJson.mapper()}).
      *
+     * @param ctx           the current routing context; the binding is recorded on it after the
+     *     materialization succeeds
      * @param list          the raw element list from the JSON array
      * @param javaType      the target collection/array {@link JavaType}
      * @param profileMapper the resolved profile mapper, or {@code null} for the process codec
      * @return the materialized collection or array
      * @throws ValidationException when {@code profileMapper} rejects the body (HTTP 400)
      */
-    private static Object convertList(java.util.List<?> list, JavaType javaType, ObjectMapper profileMapper) {
+    private static Object convertList(
+            RoutingContext ctx, java.util.List<?> list, JavaType javaType, ObjectMapper profileMapper) {
         // Same rejection translation on both paths: a value-free 400 whether or not a profile was stashed.
-        return ProfileBodyMaterialization.convertValue(
-                profileMapper != null ? profileMapper : VertiqueJson.mapper(), list, javaType);
+        ObjectMapper mapper = profileMapper != null ? profileMapper : VertiqueJson.mapper();
+        Object bound = ProfileBodyMaterialization.convertValue(mapper, list, javaType);
+        BodyBindingMark.record(ctx, BodyBindingMark.Kind.JSON, mapper);
+        return bound;
     }
 }

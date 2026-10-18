@@ -439,8 +439,10 @@ Per request, the resource-method invoker extracts the arguments, calls
 is non-empty — throws `RestValidationException`. Each `ParameterViolation` is enriched with an HTTP
 location taken from the parameter's JAX-RS source (`body`, `query`, `path`, `header`, `cookie`,
 `form`); for a `@BeanParam`, the violated field's own JAX-RS annotation supplies both the location
-and the reported parameter name. The error pipeline renders the exception as HTTP 400 with a
-`ValidationProblemDetail` body:
+and the reported parameter name. A violation on a JSON request body is reported in `pointer`, an RFC
+6901 JSON Pointer over the wire names the route's body mapper reads; any other request location is
+reported in `parameter`. The REST module's document lists when a body violation carries neither member.
+The error pipeline renders the exception as HTTP 400 with a `ValidationProblemDetail` body:
 
 ```json
 {
@@ -449,8 +451,8 @@ and the reported parameter name. The error pipeline renders the exception as HTT
   "status": 400,
   "detail": "Validation failed",
   "errors": [
-    { "path": "name", "detail": "must not be blank", "location": "body", "type": "required" },
-    { "path": "page", "detail": "must be greater than 0", "location": "query", "type": "min" }
+    { "pointer": "/name", "detail": "must not be blank", "location": "body", "type": "required" },
+    { "parameter": "page", "detail": "must be greater than 0", "location": "query", "type": "min" }
   ]
 }
 ```

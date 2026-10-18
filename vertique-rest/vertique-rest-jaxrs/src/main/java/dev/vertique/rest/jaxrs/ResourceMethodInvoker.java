@@ -4,6 +4,7 @@
 package dev.vertique.rest.jaxrs;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.vertique.core.json.VertiqueJson;
 import dev.vertique.core.sanitization.InputFieldNameResolver;
 import dev.vertique.core.validation.BeanValidator;
 import dev.vertique.core.validation.ParameterViolation;
@@ -76,6 +77,20 @@ public class ResourceMethodInvoker implements Handler<RoutingContext> {
      * selected profile mapper; when {@code null} the existing default body path runs unchanged.
      */
     private final @Nullable ObjectMapper resolvedBodyMapper;
+
+    /**
+     * The route's wire &rarr; Java property-name projection for its bodies, handed to
+     * {@link ConstraintViolationMapper} to report a body violation under the wire names.
+     */
+    private final InputFieldNameResolver bodyNameResolver;
+
+    /**
+     * The mapper {@link #bodyNameResolver} was built from, captured when the route was registered:
+     * the resolved profile mapper, or the process codec's own mapper at that time when the route
+     * resolved to it. A body violation is reported as a pointer only when the mapper that bound the
+     * body is this one.
+     */
+    private final ObjectMapper projectionMapper;
 
     /**
      * Operation descriptor derived once from {@link #meta} via
@@ -186,6 +201,11 @@ public class ResourceMethodInvoker implements Handler<RoutingContext> {
      * carries, and the {@link OperationContext#operation()} every interceptor receives are one
      * instance.
      *
+     * <p><strong>The body-name resolver must have been built from the mapper this constructor uses for
+     * the projection</strong>: {@code resolvedBodyMapper}, or the process codec's mapper when that is
+     * {@code null}. A resolver built from another mapper cannot be detected here, and the pointers it
+     * yields would name the wrong properties.
+     *
      * @param meta                  metadata describing the JAX-RS resource method
      * @param interceptors          sorted list of operation interceptors
      * @param errorPipeline         shared error mapping pipeline
@@ -216,11 +236,65 @@ public class ResourceMethodInvoker implements Handler<RoutingContext> {
             ParamConversionResolver paramConversionResolver,
             InputFieldNameResolver bodyNameResolver,
             JaxRsOperationDescriptor descriptor) {
+        this(
+                meta,
+                interceptors,
+                errorPipeline,
+                responsePipeline,
+                restContextResolution,
+                decoders,
+                beanValidator,
+                objectProcessor,
+                resolvedBodyMapper,
+                paramConversionResolver,
+                bodyNameResolver,
+                descriptor,
+                resolvedBodyMapper != null ? resolvedBodyMapper : VertiqueJson.mapper());
+    }
+
+    /**
+     * Creates a new invoker that also names the mapper the body-name projection was built from.
+     *
+     * @param meta                  metadata describing the JAX-RS resource method
+     * @param interceptors          sorted list of operation interceptors
+     * @param errorPipeline         shared error mapping pipeline
+     * @param responsePipeline      unified response pipeline for producing and sending responses
+     * @param restContextResolution coordinator for the {@link RestContextResolution} resolver chain
+     * @param decoders              priority-sorted list of request body decoders
+     * @param beanValidator         optional Bean Validation implementation; {@code null} skips validation
+     * @param objectProcessor       optional input object processor; {@code null} skips input processing
+     * @param resolvedBodyMapper    effective request-body mapper, or {@code null} when the route's
+     *                              profile resolved to the process codec's own mapper
+     * @param paramConversionResolver the framework parameter-conversion resolver; must not be {@code null}
+     * @param bodyNameResolver      the wire &rarr; Java property-name projection for this route's OBJECT
+     *                              bodies
+     * @param descriptor            the route's operation descriptor, adapted from {@code meta}; must not
+     *                              be {@code null}
+     * @param projectionMapper      the mapper {@code bodyNameResolver} was built from, captured at
+     *                              registration
+     * @throws NullPointerException if {@code descriptor} is {@code null}
+     */
+    ResourceMethodInvoker(
+            ResourceMethodMeta meta,
+            List<OperationInterceptor> interceptors,
+            ErrorPipeline errorPipeline,
+            ResponsePipeline responsePipeline,
+            RestContextResolution restContextResolution,
+            List<RequestBodyDecoder> decoders,
+            @Nullable BeanValidator beanValidator,
+            @Nullable InputObjectProcessor objectProcessor,
+            @Nullable ObjectMapper resolvedBodyMapper,
+            ParamConversionResolver paramConversionResolver,
+            InputFieldNameResolver bodyNameResolver,
+            JaxRsOperationDescriptor descriptor,
+            ObjectMapper projectionMapper) {
         this.meta = meta;
         this.errorPipeline = errorPipeline;
         this.responsePipeline = responsePipeline;
         this.beanValidator = beanValidator;
         this.resolvedBodyMapper = resolvedBodyMapper;
+        this.bodyNameResolver = bodyNameResolver;
+        this.projectionMapper = projectionMapper;
         this.paramConversionResolver = paramConversionResolver;
         this.interceptorChain = new OperationInterceptorChain(interceptors != null ? interceptors : List.of());
         // The body-name projection comes from the mapper that actually materializes this route's body —
@@ -406,13 +480,13 @@ public class ResourceMethodInvoker implements Handler<RoutingContext> {
             if (plan != null && support != null) {
                 args = plan.extractArguments(ctx, boundRequest, support);
                 if (beanValidator != null) {
-                    validateArguments(args);
+                    validateArguments(ctx, args);
                 }
                 result = plan.invoke(meta.resourceInstance(), args);
             } else {
                 args = parameterExtractor.extractArguments(ctx, boundRequest);
                 if (beanValidator != null) {
-                    validateArguments(args);
+                    validateArguments(ctx, args);
                 }
                 result = meta.method().invoke(meta.resourceInstance(), args);
             }
@@ -435,15 +509,17 @@ public class ResourceMethodInvoker implements Handler<RoutingContext> {
      * Validates method arguments using Bean Validation when a validator is available.
      * Uses {@link ConstraintViolationMapper} to map violations to REST-specific error details.
      *
+     * @param ctx  the current routing context, which carries how the body was bound
      * @param args the extracted method arguments
      * @throws RestValidationException if any constraints are violated
      */
-    private void validateArguments(Object[] args) {
+    private void validateArguments(RoutingContext ctx, Object[] args) {
         List<ParameterViolation> violations = (meta.validationGroups() != null)
                 ? beanValidator.checkParameters(meta.resourceInstance(), meta.method(), args, meta.validationGroups())
                 : beanValidator.checkParameters(meta.resourceInstance(), meta.method(), args);
         if (!violations.isEmpty()) {
-            throw ConstraintViolationMapper.toRestValidationException(meta, violations);
+            throw ConstraintViolationMapper.toRestValidationException(
+                    meta, violations, ctx, bodyNameResolver, projectionMapper);
         }
     }
 }
