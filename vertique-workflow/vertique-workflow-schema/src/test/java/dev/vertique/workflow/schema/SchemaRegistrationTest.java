@@ -140,8 +140,8 @@ class SchemaRegistrationTest {
     }
 
     private DefaultWorkflowRegistry registry() {
-        PayloadSchemaRegistrationValidator validator =
-                new PayloadSchemaRegistrationValidator(Profiles.builtIn(), Profiles.VERTIQUE, Optional.empty(), cache);
+        PayloadSchemaRegistrationValidator validator = new PayloadSchemaRegistrationValidator(
+                PayloadSchemaTestProfiles.builtIn(), PayloadSchemaTestProfiles.VERTIQUE, Optional.empty(), cache);
         return new DefaultWorkflowRegistry(null, Set.of(validator));
     }
 }

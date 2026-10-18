@@ -44,8 +44,8 @@ class PayloadSchemaRegistrationValidatorTest {
     void generatesUnderTheProcessProfileAndCachesPerTypeNameAndProfile() {
         // Given: a registry with a custom profile p1 that names properties in snake case, a configuration whose
         // system profile is p1, and a validator over a generator that counts the types it describes
-        var registry = Profiles.with(Profiles.snakeCase("p1"));
-        CountingGenerator generator = new CountingGenerator(registry, Profiles.systemProfile("p1"));
+        var registry = PayloadSchemaTestProfiles.with(PayloadSchemaTestProfiles.snakeCase("p1"));
+        CountingGenerator generator = new CountingGenerator(registry, PayloadSchemaTestProfiles.systemProfile("p1"));
         PayloadSchemaRegistrationValidator validator = validatorOver(generator);
 
         // When: two definitions that share Comment as a decision type are validated
@@ -69,7 +69,8 @@ class PayloadSchemaRegistrationValidatorTest {
     @DisplayName("void types are no payload and unresolvable names fail registration")
     void voidTypesAreNoPayloadAndUnresolvableNamesFailRegistration() {
         // Given: a generator that counts descriptions and a validator over it
-        CountingGenerator generator = new CountingGenerator(Profiles.builtIn(), Profiles.VERTIQUE);
+        CountingGenerator generator =
+                new CountingGenerator(PayloadSchemaTestProfiles.builtIn(), PayloadSchemaTestProfiles.VERTIQUE);
         PayloadSchemaRegistrationValidator validator = validatorOver(generator);
         Map<String, Class<?>> voids = new LinkedHashMap<>();
         voids.put("ok", void.class);
@@ -133,7 +134,8 @@ class PayloadSchemaRegistrationValidatorTest {
     @DisplayName("the start type and a decision type of the same name share one description")
     void startAndDecisionTypesOfTheSameNameShareOneDescription() {
         // Given: a counting generator
-        CountingGenerator generator = new CountingGenerator(Profiles.builtIn(), Profiles.VERTIQUE);
+        CountingGenerator generator =
+                new CountingGenerator(PayloadSchemaTestProfiles.builtIn(), PayloadSchemaTestProfiles.VERTIQUE);
         PayloadSchemaRegistrationValidator validator = validatorOver(generator);
 
         // When: a definition starts with PlainRecord and also decides with PlainRecord
@@ -150,7 +152,10 @@ class PayloadSchemaRegistrationValidatorTest {
     void theInjectConstructorGeneratesUnderTheEffectiveSystemProfile() {
         // Given: the public constructor over a registry with the snake case profile
         PayloadSchemaRegistrationValidator validator = new PayloadSchemaRegistrationValidator(
-                Profiles.with(Profiles.snakeCase("p1")), Profiles.systemProfile("p1"), Optional.empty(), cache);
+                PayloadSchemaTestProfiles.with(PayloadSchemaTestProfiles.snakeCase("p1")),
+                PayloadSchemaTestProfiles.systemProfile("p1"),
+                Optional.empty(),
+                cache);
 
         // When: a definition is validated
         validator.validate(Definitions.candidate(Definitions.withDecision(Payloads.Comment.class)));
@@ -186,7 +191,8 @@ class PayloadSchemaRegistrationValidatorTest {
     @DisplayName("document objects skip generation, are cached with the fixed document and still compile")
     void documentObjectsSkipGenerationAndAreCachedWithTheFixedDocument() {
         // Given: a counting generator
-        CountingGenerator generator = new CountingGenerator(Profiles.builtIn(), Profiles.VERTIQUE);
+        CountingGenerator generator =
+                new CountingGenerator(PayloadSchemaTestProfiles.builtIn(), PayloadSchemaTestProfiles.VERTIQUE);
         PayloadSchemaRegistrationValidator validator = validatorOver(generator);
         Map<String, Class<?>> decisions = new LinkedHashMap<>();
         decisions.put("doc", JsonObject.class);
@@ -293,7 +299,10 @@ class PayloadSchemaRegistrationValidatorTest {
         // Given: a loader that records the names it is asked for
         RecordingLoader loader = new RecordingLoader(getClass().getClassLoader());
         PayloadSchemaRegistrationValidator validator = new PayloadSchemaRegistrationValidator(
-                cache, new PayloadSchemaGenerator(Profiles.builtIn(), Profiles.VERTIQUE, Optional.empty()), loader);
+                cache,
+                new PayloadSchemaGenerator(
+                        PayloadSchemaTestProfiles.builtIn(), PayloadSchemaTestProfiles.VERTIQUE, Optional.empty()),
+                loader);
 
         // When: a plan with a decision type is validated
         validator.validate(Definitions.candidate(Definitions.withDecision(Payloads.PlainRecord.class)));
@@ -311,7 +320,10 @@ class PayloadSchemaRegistrationValidatorTest {
         RecordingLoader loader = new RecordingLoader(getClass().getClassLoader());
         loader.failure = new NoClassDefFoundError("broken");
         PayloadSchemaRegistrationValidator validator = new PayloadSchemaRegistrationValidator(
-                cache, new PayloadSchemaGenerator(Profiles.builtIn(), Profiles.VERTIQUE, Optional.empty()), loader);
+                cache,
+                new PayloadSchemaGenerator(
+                        PayloadSchemaTestProfiles.builtIn(), PayloadSchemaTestProfiles.VERTIQUE, Optional.empty()),
+                loader);
 
         // When / Then: the registration fails as an unresolvable name
         assertThatThrownBy(() -> validator.validate(
@@ -328,8 +340,8 @@ class PayloadSchemaRegistrationValidatorTest {
     void generatorConstructionFailureIsReportedAsCannotBeDescribed() {
         // Given: a system profile that declares a null type override, which fails generator construction
         PayloadSchemaRegistrationValidator validator = new PayloadSchemaRegistrationValidator(
-                Profiles.with(Profiles.withNullOverride("bad")),
-                Profiles.systemProfile("bad"),
+                PayloadSchemaTestProfiles.with(PayloadSchemaTestProfiles.withNullOverride("bad")),
+                PayloadSchemaTestProfiles.systemProfile("bad"),
                 Optional.empty(),
                 cache);
 
@@ -348,7 +360,8 @@ class PayloadSchemaRegistrationValidatorTest {
     @DisplayName("a generation failure is reported as cannot be described with the generator's message")
     void generationFailureIsReportedAsCannotBeDescribed() {
         // Given: a generator that fails its next description
-        CountingGenerator generator = new CountingGenerator(Profiles.builtIn(), Profiles.VERTIQUE);
+        CountingGenerator generator =
+                new CountingGenerator(PayloadSchemaTestProfiles.builtIn(), PayloadSchemaTestProfiles.VERTIQUE);
         generator.failNext(new IllegalStateException("boom"));
 
         // When / Then: the failure carries the generator's message and the original cause
@@ -365,8 +378,8 @@ class PayloadSchemaRegistrationValidatorTest {
     void guardedCompileFailureIsReportedAsCannotBeDescribedWithConstantText() {
         // Given: a system profile whose UUID schema carries a keyword value the engine cannot compile
         PayloadSchemaRegistrationValidator validator = new PayloadSchemaRegistrationValidator(
-                Profiles.with(Profiles.withUncompilableUuidSchema("ov")),
-                Profiles.systemProfile("ov"),
+                PayloadSchemaTestProfiles.with(PayloadSchemaTestProfiles.withUncompilableUuidSchema("ov")),
+                PayloadSchemaTestProfiles.systemProfile("ov"),
                 Optional.empty(),
                 cache);
         String holder = Payloads.UuidHolder.class.getName();
@@ -387,7 +400,8 @@ class PayloadSchemaRegistrationValidatorTest {
     @DisplayName("a failed description is never cached")
     void failuresAreNeverCached() {
         // Given: a generator that fails its first description only
-        CountingGenerator generator = new CountingGenerator(Profiles.builtIn(), Profiles.VERTIQUE);
+        CountingGenerator generator =
+                new CountingGenerator(PayloadSchemaTestProfiles.builtIn(), PayloadSchemaTestProfiles.VERTIQUE);
         generator.failNext(new IllegalStateException("transient"));
         PayloadSchemaRegistrationValidator validator = validatorOver(generator);
         RegisteredWorkflowDefinition candidate =
@@ -408,10 +422,16 @@ class PayloadSchemaRegistrationValidatorTest {
     void anUnknownProfilePropagatesAsAConfigurationFault() {
         // Given: a configuration naming a profile the registry does not hold
         assertThatCode(() -> new PayloadSchemaRegistrationValidator(
-                        Profiles.builtIn(), Profiles.systemProfile("nope"), Optional.empty(), cache))
+                        PayloadSchemaTestProfiles.builtIn(),
+                        PayloadSchemaTestProfiles.systemProfile("nope"),
+                        Optional.empty(),
+                        cache))
                 .doesNotThrowAnyException();
         PayloadSchemaRegistrationValidator validator = new PayloadSchemaRegistrationValidator(
-                Profiles.builtIn(), Profiles.systemProfile("nope"), Optional.empty(), cache);
+                PayloadSchemaTestProfiles.builtIn(),
+                PayloadSchemaTestProfiles.systemProfile("nope"),
+                Optional.empty(),
+                cache);
 
         // When / Then: a definition without payload types never needs the profile
         assertThatCode(() -> validator.validate(Definitions.candidate(Definitions.withStart("d", 1L, Void.class))))
@@ -443,8 +463,8 @@ class PayloadSchemaRegistrationValidatorTest {
                 var factory = Validation.buildDefaultValidatorFactory()) {
             // Given / When: a validator with a bean validator describes two types
             PayloadSchemaRegistrationValidator with = new PayloadSchemaRegistrationValidator(
-                    Profiles.builtIn(),
-                    Profiles.VERTIQUE,
+                    PayloadSchemaTestProfiles.builtIn(),
+                    PayloadSchemaTestProfiles.VERTIQUE,
                     Optional.of(factory.getValidator()),
                     new PayloadSchemaCache());
             with.validate(Definitions.candidate(Definitions.withDecision("a", 1L, Payloads.PlainRecord.class)));
@@ -458,7 +478,8 @@ class PayloadSchemaRegistrationValidatorTest {
     // --- Helpers ---
 
     private PayloadSchemaRegistrationValidator validator() {
-        return new PayloadSchemaRegistrationValidator(Profiles.builtIn(), Profiles.VERTIQUE, Optional.empty(), cache);
+        return new PayloadSchemaRegistrationValidator(
+                PayloadSchemaTestProfiles.builtIn(), PayloadSchemaTestProfiles.VERTIQUE, Optional.empty(), cache);
     }
 
     private PayloadSchemaRegistrationValidator validatorOver(PayloadSchemaGenerator generator) {

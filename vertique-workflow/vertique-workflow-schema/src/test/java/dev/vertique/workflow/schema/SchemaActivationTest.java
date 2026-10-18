@@ -58,12 +58,12 @@ class SchemaActivationTest {
         @Provides
         @Singleton
         static JsonMapperProfileRegistry profileRegistry() {
-            return Profiles.builtIn();
+            return PayloadSchemaTestProfiles.builtIn();
         }
 
         @Provides
         static JsonConfig jsonConfig() {
-            return Profiles.VERTIQUE;
+            return PayloadSchemaTestProfiles.VERTIQUE;
         }
 
         @Provides
