@@ -278,6 +278,16 @@ startup. All nodes sharing live documents must have the appropriate loader and a
 catalog. Source URIs are never fetched. Without a store, these operations retain their in-memory outcomes
 through the asynchronous signatures.
 
+`deprecate(DefinitionKey)` moves an ACTIVE or SUPERSEDED version to DEPRECATED durably, marks it in the
+local registry and reports DEPRECATED in service metadata and lists. New starts of that version and
+migrations to it are refused with reason `DEPRECATED`, including a retry of an explicit start under an
+idempotency key used before the deprecation; instances already pinned to it keep running on the node that
+marked it. A freshly started node does not yet restore deprecated versions, so an instance pinned to one
+cannot resume there until restoration is available. Deprecating the active version does not promote
+another, so a durable listing can show no ACTIVE version until the next startup recomputation, while
+current resolution already serves the next lower version. It requires the durable registry: without one,
+the returned Future fails.
+
 `sourceMetadata(DefinitionKey)` reads attribution without fetching source text. Lists contain immutable,
 key-bearing metadata. Definition id (255), source type (64) and revision, author and upload id (255)
 code-point limits apply in every mode, including when no store is installed, and over-limit input is

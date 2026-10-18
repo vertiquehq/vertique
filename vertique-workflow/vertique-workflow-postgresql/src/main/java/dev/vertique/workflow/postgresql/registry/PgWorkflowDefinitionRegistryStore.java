@@ -239,6 +239,37 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
     }
 
     @Override
+    public Future<Void> transition(DefinitionKey key, DefinitionStatus from, DefinitionStatus to) {
+        return attempt(() -> {
+            Objects.requireNonNull(key, "key");
+            Objects.requireNonNull(from, "from");
+            Objects.requireNonNull(to, "to");
+            if (to != DefinitionStatus.DEPRECATED
+                    || (from != DefinitionStatus.ACTIVE && from != DefinitionStatus.SUPERSEDED))
+                throw invalid(key, "transition " + from + " to " + to + " is not supported");
+            return mutate(key, (tx, rows) -> {
+                Row current = row(rows, key).orElseThrow(() -> invalid(key, "definition not found"));
+                if (ownerConflict(rows, key))
+                    throw conflict(
+                            Reason.OWNER_CONFLICT,
+                            key,
+                            "another owner holds this definition id: " + heldOwners(rows, key));
+                String status = current.getString("status");
+                if (!from.name().equals(status)) throw invalid(key, "expected status " + from + " but found " + status);
+                return tx.preparedQuery(
+                                "UPDATE workflow_definitions SET status=$5, status_changed_at=clock_timestamp() WHERE "
+                                        + KEY + " AND status=$4")
+                        .execute(parameters(key).addString(from.name()).addString(to.name()))
+                        .map(updated -> {
+                            if (updated.rowCount() != 1)
+                                throw invalid(key, "expected status " + from + " but the row changed");
+                            return (Void) null;
+                        });
+            });
+        });
+    }
+
+    @Override
     public Future<Void> recomputeActive(@jakarta.annotation.Nullable String tenantKey, String definitionId) {
         return attempt(() -> {
             Objects.requireNonNull(definitionId, "definitionId");

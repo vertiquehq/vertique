@@ -19,6 +19,7 @@ import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
 import dev.vertique.workflow.events.WorkflowEventType;
 import dev.vertique.workflow.exception.WorkflowConflictException;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
+import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException;
 import dev.vertique.workflow.exception.WorkflowIdempotencyConflictException;
 import dev.vertique.workflow.exception.WorkflowInstanceNotFoundException;
 import dev.vertique.workflow.exception.WorkflowPlanHashDriftException;
@@ -38,6 +39,7 @@ import dev.vertique.workflow.registry.CallbackId;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowCallbackRegistry;
 import dev.vertique.workflow.registry.WorkflowRegistry;
+import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.state.BranchStatus;
 import dev.vertique.workflow.state.BranchToken;
 import dev.vertique.workflow.state.WaitType;
@@ -530,6 +532,10 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             if (cmd.requestedDefinitionVersion() != null) {
                 // Explicit version pin (FR-WF-DEF-069): resolve the requested version exactly.
                 rw = registry.resolvePinned(cmd.definitionId(), cmd.requestedDefinitionVersion());
+                // A deprecated version admits no new work; refuse before any dedup claim or write.
+                if (registry.isDeprecated(cmd.definitionId(), cmd.requestedDefinitionVersion())) {
+                    return Future.failedFuture(deprecatedRefusal(cmd.definitionId(), cmd.requestedDefinitionVersion()));
+                }
             } else {
                 // Default: resolve the current (highest registered) version.
                 rw = registry.resolveCurrent(cmd.definitionId());
@@ -565,6 +571,22 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                     // Winner: proceed with instance creation.
                     return doCreateInstance(cmd, rw, proposedId, tx);
                 });
+    }
+
+    /**
+     * Builds the typed refusal for admitting new work onto a deprecated definition version. Shared
+     * by explicit-version starts and migration targets.
+     *
+     * @param definitionId the deprecated definition's id
+     * @param version the deprecated version
+     * @return the lifecycle exception to fail the caller's future with
+     */
+    static WorkflowDefinitionLifecycleException deprecatedRefusal(String definitionId, long version) {
+        return new WorkflowDefinitionLifecycleException(
+                WorkflowDefinitionLifecycleException.Reason.DEPRECATED,
+                new DefinitionKey(null, definitionId, version),
+                "Definition '" + definitionId + "' version " + version
+                        + " is deprecated and does not accept new starts or migrations");
     }
 
     /**

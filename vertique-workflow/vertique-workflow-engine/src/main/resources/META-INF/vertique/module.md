@@ -171,6 +171,18 @@ per-id queue, so the definition cache agrees with the registry before BOOTSTRAP 
 failures remain fatal. Candidate/retired document metadata can refresh an installed loader's cache
 without compilation. CODE registration continues through application contributors.
 
+`WorkflowDefinitionLifecycle.deprecate` first commits ACTIVE or SUPERSEDED to DEPRECATED in the store,
+then marks the version deprecated in the local registry through the same per-id queue; a failed mark
+leaves the committed row, and repeating the call repairs the mark. A deprecated version is skipped by
+current resolution, and an explicit-version start or a migration whose target is deprecated fails with
+`WorkflowDefinitionLifecycleException` reason `DEPRECATED` before any instance row is written. Signals,
+timers and resumption of instances already pinned to the version, and migration away from it, are
+unaffected. These checks use the node's own registry: this call does not tell other nodes, and a freshly
+started node does not yet restore deprecated versions, so do not rely on them alone to stop starts elsewhere
+or to prove that nothing still runs the version. Marking is a no-op for a version not registered on the
+node, and a registry without deprecation support fails the call after the durable commit, leaving the
+committed status in place.
+
 Every node sharing live document rows must install the corresponding loader, normally
 `WorkflowDefinitionModule`. Loading and compilation use the Vert.x worker executor when startup runs
 on a Vert.x context. Compose validators already ran in VALIDATE and do not rerun for these restored

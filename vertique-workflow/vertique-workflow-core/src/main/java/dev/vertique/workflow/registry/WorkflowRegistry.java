@@ -33,12 +33,13 @@ public interface WorkflowRegistry {
     void register(WorkflowDefinition<?, ?> def);
 
     /**
-     * Returns the {@link RuntimeWorkflow} for the highest-version plan of the given definition.
+     * Returns the {@link RuntimeWorkflow} for the highest-version plan of the given definition that is
+     * not marked deprecated.
      *
      * @param definitionId id of the workflow definition
-     * @return the runtime workflow for the current (highest) version
+     * @return the runtime workflow for the current (highest non-deprecated) version
      * @throws dev.vertique.workflow.exception.WorkflowDefinitionMissingException if no definition with
-     *     the given id is registered
+     *     the given id is registered, or every registered version of it is deprecated
      */
     RuntimeWorkflow resolveCurrent(String definitionId);
 
@@ -82,5 +83,40 @@ public interface WorkflowRegistry {
     /** Removes a version and its contract mapping. Unsupported registries fail explicitly. */
     default void unregister(String definitionId, long version) {
         throw new UnsupportedOperationException("unregister is not supported");
+    }
+
+    /**
+     * Marks one registered version of a definition as deprecated. A deprecated version is skipped
+     * by current resolution and by explicit new starts and migration targets, yet remains available
+     * through pinned resolution so in-flight instances keep running. Unregistering the version
+     * clears the mark.
+     *
+     * <p>Implementations must make the mark atomic with registration changes, so that no caller
+     * observes a version that is registered but not yet marked after this method returns. The
+     * default implementation throws, so registries that do not support deprecation fail explicitly.
+     *
+     * @param definitionId id of the workflow definition
+     * @param version the exact plan version to mark as deprecated
+     * @throws UnsupportedOperationException if this registry does not support deprecation
+     */
+    default void markDeprecated(String definitionId, long version) {
+        throw new UnsupportedOperationException(
+                getClass().getName() + " does not support the markDeprecated operation");
+    }
+
+    /**
+     * Returns whether one registered version of a definition is marked deprecated.
+     *
+     * <p>Implementations must read the mark atomically with registration changes. The default
+     * implementation returns {@code false}, which preserves the behavior of existing registries
+     * that do not track deprecation.
+     *
+     * @param definitionId id of the workflow definition
+     * @param version the exact plan version to check
+     * @return {@code true} if the version is registered and marked deprecated; {@code false}
+     *     otherwise
+     */
+    default boolean isDeprecated(String definitionId, long version) {
+        return false;
     }
 }

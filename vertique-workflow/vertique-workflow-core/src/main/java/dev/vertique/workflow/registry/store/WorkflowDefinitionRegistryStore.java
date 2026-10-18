@@ -83,6 +83,23 @@ public interface WorkflowDefinitionRegistryStore {
     Future<Void> release(ActivationClaim claim);
 
     /**
+     * Conditionally moves one definition from an expected status to a new status under the definition id
+     * lock. The row must exist, be owned consistently with the other rows of the id, and currently have the
+     * expected {@code from} status; otherwise the returned future fails with a
+     * {@link dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException} naming the key and no row
+     * changes. Only the transitions the store supports are accepted: currently {@code ACTIVE} to
+     * {@code DEPRECATED} and {@code SUPERSEDED} to {@code DEPRECATED}. Any other pair is refused as an invalid
+     * transition, and activation changes use only the claim, complete and release operations. The change does
+     * not recompute or promote any other row, and it refreshes the status change time.
+     *
+     * @param key tenant-scoped definition key to change
+     * @param from the status the row is required to have
+     * @param to the status to store
+     * @return a future completed after the store-owned transaction commits
+     */
+    Future<Void> transition(DefinitionKey key, DefinitionStatus from, DefinitionStatus to);
+
+    /**
      * Recomputes active membership for one exact tenant owner and definition id. Only ACTIVE and
      * SUPERSEDED rows participate; the highest version becomes ACTIVE and lower eligible versions
      * become SUPERSEDED. Other statuses, owners, and definition ids are left unchanged. The

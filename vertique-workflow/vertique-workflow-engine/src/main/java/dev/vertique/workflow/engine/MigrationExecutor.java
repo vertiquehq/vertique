@@ -138,6 +138,8 @@ final class MigrationExecutor {
      *       with the instance id). Assert plan-hash matches.</li>
      *   <li>Resolve the target {@link RuntimeWorkflow} via
      *       {@code registry.resolvePinned(definitionId, targetVersion)}.</li>
+     *   <li>Reject a deprecated target version with a typed deprecated-version failure before any
+     *       handler call or write.</li>
      *   <li>Look up the migration handler from the registry; throw
      *       {@link dev.vertique.workflow.migration.WorkflowMigrationHandlerMissingException} if
      *       absent.</li>
@@ -212,6 +214,11 @@ final class MigrationExecutor {
                     e.definitionId(), e.version(), inst.id()));
         } catch (Exception e) {
             return Future.failedFuture(e);
+        }
+
+        // A deprecated target admits no new work; refuse before any handler call or write.
+        if (registry.isDeprecated(inst.definitionId(), targetVersion)) {
+            return Future.failedFuture(WorkflowEngine.deprecatedRefusal(inst.definitionId(), targetVersion));
         }
 
         // --- Step 4: Look up migration handler ---

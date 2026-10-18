@@ -112,6 +112,11 @@ by different owners, including for an id with no rows yet, admit exactly one. Wi
 completion demotes lower ACTIVE versions before promotion, and a lower version completing after a higher
 one becomes SUPERSEDED, so the one-ACTIVE index is never violated.
 
+`transition(key, from, to)` is a conditional status change under the same id lock: it checks the row,
+the owner and the expected current status, and updates only a row still in that status. The store
+currently accepts ACTIVE to DEPRECATED and SUPERSEDED to DEPRECATED; any other pair, a missing row or a
+changed status fails with `INVALID_TRANSITION`. It does not recompute or promote other versions.
+
 DOCUMENT bodies require `server_encoding = UTF8`. The adapter checks this before its first body
 read/write, caches only a successful capability result, and retries a failed lookup on the next
 operation. Metadata and CODE-only operations do not require that capability. Every source read checks

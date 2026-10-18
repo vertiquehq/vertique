@@ -60,6 +60,56 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
         }
     }
 
+    @Override
+    public Future<Void> deprecate(DefinitionKey key) {
+        try {
+            Objects.requireNonNull(key, "key");
+            if (store.isEmpty())
+                return Future.failedFuture(failure(Reason.INVALID_TRANSITION, key, "durable registry is unavailable"));
+            // Commit the durable status first; only a committed status is projected onto the local registry.
+            return queue.submit(
+                    key.definitionId(), () -> commitDeprecation(key, true).compose(ignored -> {
+                        registry.get().markDeprecated(key.definitionId(), key.definitionVersion());
+                        return Future.<Void>succeededFuture();
+                    }));
+        } catch (RuntimeException e) {
+            return Future.failedFuture(e);
+        }
+    }
+
+    /** Reads the current status, then moves an active or superseded row to deprecated; already deprecated is accepted. */
+    private Future<Void> commitDeprecation(DefinitionKey key, boolean retryOnConflict) {
+        WorkflowDefinitionRegistryStore durable = store.orElseThrow();
+        return durable.find(key).compose(found -> {
+            WorkflowDefinitionRecord record =
+                    found.orElseThrow(() -> failure(Reason.INVALID_TRANSITION, key, "definition not found"));
+            DefinitionStatus status = record.status();
+            if (status == DefinitionStatus.DEPRECATED) return Future.<Void>succeededFuture();
+            if (status != DefinitionStatus.ACTIVE && status != DefinitionStatus.SUPERSEDED)
+                throw failure(Reason.INVALID_TRANSITION, key, "cannot deprecate status " + status);
+            return durable.transition(key, status, DefinitionStatus.DEPRECATED).recover(original -> {
+                if (original instanceof Error) return Future.failedFuture(original);
+                // A failed transition may still have committed, so re-read before deciding.
+                return durable.find(key).transform(read -> {
+                    if (read.failed()) {
+                        if (read.cause() != original) original.addSuppressed(read.cause());
+                        return Future.<Void>failedFuture(original);
+                    }
+                    DefinitionStatus now =
+                            read.result().map(WorkflowDefinitionRecord::status).orElse(null);
+                    if (now == DefinitionStatus.DEPRECATED) return Future.<Void>succeededFuture();
+                    // The status moved between the read and the transition: decide again once.
+                    boolean moved = original instanceof WorkflowDefinitionLifecycleException refusal
+                            && refusal.reason() == Reason.INVALID_TRANSITION
+                            && (now == DefinitionStatus.ACTIVE || now == DefinitionStatus.SUPERSEDED);
+                    return retryOnConflict && moved
+                            ? commitDeprecation(key, false)
+                            : Future.<Void>failedFuture(original);
+                });
+            });
+        });
+    }
+
     private Future<Void> activateQueued(DefinitionKey key) {
         WorkflowDefinitionRegistryStore durable = store.orElseThrow();
         Attempt attempt = new Attempt(key);

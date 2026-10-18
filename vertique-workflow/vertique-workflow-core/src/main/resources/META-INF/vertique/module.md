@@ -355,6 +355,12 @@ reconciliation, fenced claim/complete/release operations, and
 `recomputeActive(@Nullable String tenantKey, String definitionId)`. Recompute is scoped to that exact
 owner and id: the highest ACTIVE or SUPERSEDED version becomes ACTIVE and lower eligible versions
 become SUPERSEDED; CANDIDATE, ACTIVATING, DEPRECATED, and RETIRED rows remain unchanged.
+`WorkflowRegistry` gains `markDeprecated(definitionId, version)` (default throws
+`UnsupportedOperationException`) and `isDeprecated` (default `false`) so existing third-party registries are
+unaffected. `DefaultWorkflowRegistry` keeps the mark under its lock: current resolution skips deprecated
+versions and fails as unknown when all are deprecated, pinned resolution still serves them, and
+`unregister` clears the mark. Marking an unregistered version is a no-op. The store SPI adds the
+conditional `transition(key, from, to)` operation and the lifecycle adds `deprecate(DefinitionKey)`.
 Candidates of different owners (tenant keys or global) may coexist for one id, but only one owner holds
 the id's executable membership; a claim, completion or static reconciliation by another owner fails with
 `OWNER_CONFLICT`.

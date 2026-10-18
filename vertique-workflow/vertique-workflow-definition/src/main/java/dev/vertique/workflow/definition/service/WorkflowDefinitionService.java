@@ -20,6 +20,13 @@ public interface WorkflowDefinitionService {
             byte[] content, DocumentFormat format, SourceMetadata metadata, @Nullable String tenantKey);
     /** Activates an existing candidate, preserving the prior publication when activation fails. */
     Future<Void> activate(DefinitionKey key);
+    /**
+     * Deprecates an active or superseded definition so it is skipped by current resolution and refused for new
+     * explicit starts and migration targets, while instances already pinned to it keep running. The status is
+     * committed durably before it is projected into the local cache and registry. A durable registry is
+     * required; without one the returned future fails.
+     */
+    Future<Void> deprecate(DefinitionKey key);
     /** Returns an immutable, source-free metadata snapshot in the selected scope. */
     Future<List<WorkflowDefinitionRecord>> list(DefinitionFilter filter);
     /** Returns the source attribution of a definition without reading its source body. */
