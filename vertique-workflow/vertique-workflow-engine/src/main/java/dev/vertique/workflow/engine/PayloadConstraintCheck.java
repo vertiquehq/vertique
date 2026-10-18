@@ -3,7 +3,9 @@
 
 package dev.vertique.workflow.engine;
 
+import dev.vertique.core.json.VertiqueJson;
 import dev.vertique.core.validation.BeanValidator;
+import dev.vertique.core.validation.JakartaPathPointers;
 import dev.vertique.core.validation.ViolationDetail;
 import dev.vertique.workflow.exception.WorkflowInvalidPayloadException;
 import jakarta.inject.Inject;
@@ -75,7 +77,7 @@ final class PayloadConstraintCheck {
         List<ViolationDetail> converted = new ArrayList<>(retained + 1);
         for (ViolationDetail detail : violations.subList(0, retained)) {
             converted.add(new ViolationDetail(
-                    JakartaPathPointers.toPointer(detail.path(), rootType),
+                    JakartaPathPointers.toPointer(detail.path(), rootType, VertiqueJson.mapper()),
                     detail.message(),
                     detail.type(),
                     detail.args()));

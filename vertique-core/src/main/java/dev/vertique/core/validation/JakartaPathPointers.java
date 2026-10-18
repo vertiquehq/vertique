@@ -1,16 +1,20 @@
 // SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
 // SPDX-License-Identifier: EUPL-1.2
 
-package dev.vertique.workflow.engine;
+package dev.vertique.core.validation;
 
 import com.fasterxml.jackson.databind.JavaType;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.introspect.BeanPropertyDefinition;
-import dev.vertique.core.json.VertiqueJson;
+import java.lang.reflect.Type;
+import java.util.Objects;
 
 /**
  * Converts a Jakarta property-path string into an RFC 6901 JSON pointer over the wire names of the
- * process mapper.
+ * supplied mapper.
+ *
+ * <p>INTERNAL framework seam for sibling framework modules that render constraint violations as JSON
+ * pointers. It is not an application extension point and may change without a deprecation cycle.
  *
  * <p>The input is the path text produced for a constraint violation: nodes joined by {@code .}, each
  * node a property name with an optional {@code <...>} marker and an optional {@code [index]} or
@@ -33,10 +37,11 @@ import dev.vertique.core.json.VertiqueJson;
  *       Java names too.
  * </ul>
  *
- * <p>The mapper is read at call time, never held in a static field. The conversion never throws:
- * odd input yields the pointer built so far.
+ * <p>The mapper is supplied by the caller and never held in a static field, so a route or a process can
+ * pass the one that binds its payloads. The conversion never throws for odd input: it yields the
+ * pointer built so far.
  */
-final class JakartaPathPointers {
+public final class JakartaPathPointers {
 
     private JakartaPathPointers() {}
 
@@ -45,15 +50,16 @@ final class JakartaPathPointers {
      *
      * @param jakartaPath the property-path string of a constraint violation; may be empty
      * @param rootType the type the path starts at; may be {@code null} when unknown
+     * @param mapper the mapper whose property naming decides the wire names
      * @return the RFC 6901 pointer, or the empty string for an empty path
      */
-    static String toPointer(String jakartaPath, Class<?> rootType) {
+    public static String toPointer(String jakartaPath, Type rootType, ObjectMapper mapper) {
+        Objects.requireNonNull(mapper, "mapper");
         if (jakartaPath == null || jakartaPath.isEmpty()) {
             return "";
         }
         StringBuilder pointer = new StringBuilder();
         try {
-            ObjectMapper mapper = VertiqueJson.mapper();
             JavaType current = rootType == null ? null : mapper.constructType(rootType);
             int length = jakartaPath.length();
             int pos = 0;
