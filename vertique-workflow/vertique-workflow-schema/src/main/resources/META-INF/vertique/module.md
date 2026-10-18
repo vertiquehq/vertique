@@ -11,7 +11,9 @@ SPDX-License-Identifier: EUPL-1.2
 > **Depends on:** workflow-core, json, json-schema, json-schema-validation, core
 
 `vertique-workflow-schema` generates a JSON Schema for the payload types a workflow definition
-declares for its decisions and start payload, and checks them when the definition is registered.
+declares for its decisions and start payload, checks them when the definition is registered, and
+validates a submitted decision or start payload against the registered schema before the engine sees
+it.
 
 Beta means the registration behavior described here is implemented and tested, but the module is new
 and its surface may still change in a minor release. Pin the version you test against.
@@ -29,12 +31,14 @@ Good fits:
   definition, where a typo or an unsuitable type would otherwise surface at the first decision.
 - Applications that activate definitions at runtime and want a bad definition refused before it
   becomes resolvable.
+- Endpoints that want to reject a malformed decision or start payload with value-free, pointer-based
+  violation details before submitting it to the engine.
 
 Not in this module:
 
 - **No persistence.** Nothing is stored; the cache lives in memory and is rebuilt after a restart.
 - **No REST.** The module adds no endpoint and no HTTP surface; an application exposes the descriptors
-  itself.
+  and maps validation results to responses itself.
 
 ---
 
@@ -124,10 +128,13 @@ that a definition is registered.
 
 ### Pattern bounds
 
-Patterns are compiled under a guard that limits each string checked by a pattern to 4,096
-characters and the total pattern input of one validation window to 262,144 characters. These are
+Patterns are compiled under a guard that limits each string checked by a pattern to 4,096 UTF-16 code
+units and the total pattern input of one validation window to 262,144 UTF-16 code units. These are
 the shared defaults of `vertique-json-schema-validation`; this module has no configuration key for
 them. If you tuned `jaxrs.validationPatternMaxChars` for REST, that value does not apply here.
+
+The bound applies to keyed validation (see Validating Payloads). The engine's own bean-validation
+path is not bounded this way.
 
 ### Threading and class loading
 
@@ -148,14 +155,16 @@ without knowing the Java types.
 
 | Class | Role |
 |---|---|
-| `WorkflowPayloadSchemas` | `describe(definitionId, version)` for the whole definition; `decision(definitionId, version, stepId, decisionName)` for one decision |
+| `WorkflowPayloadSchemas` | `describe(definitionId, version)` for the whole definition; `decision(definitionId, version, stepId, decisionName)` for one decision; `validateDecision` and `validateStart` to validate a submitted payload |
 | `WorkflowDefinitionDescriptor` | Definition id and version, the start payload schema (`null` for a `void` start) and the human task steps in plan order |
 | `HumanTaskStepDescriptor` | A step id and its decisions in declaration order |
 | `DecisionDescriptor` | Decision name, the step it leads to and the payload schema (`null` for a `void` decision) |
 | `PayloadSchema` | The canonical JSON Schema document and the `propertyOrder` list |
+| `PayloadValidationResult` | The outcome of a validation: `valid()` and the `violations()` list of `ViolationDetail` |
 
 The records are immutable. `PayloadSchema.document()` returns a copy on every call, so a caller can
-modify what it receives without affecting later reads.
+modify what it receives without affecting later reads. `PayloadValidationResult.violations()` is an
+unmodifiable copy.
 
 ### Property order
 
@@ -179,21 +188,22 @@ in the document's `properties` nor in `propertyOrder`; extra keys are described 
 
 ### Behavior of reads
 
-- **Unknown returns empty.** An unknown definition id, version, step or decision gives
-  `Optional.empty()`. Nothing throws for a caller's mistake.
+- **Unknown returns empty on `describe` and `decision`.** An unknown definition id, version, step or
+  decision gives `Optional.empty()`. The validation methods answer the same situation with a
+  violation instead (see Validating Payloads).
 - **No class loading on read.** Descriptors are assembled from the registry's stored plan and the
   cache filled at registration. A read loads no class, generates nothing and touches no storage.
 - **Non-blocking and event-loop safe.** `describe` and `decision` are plain in-memory reads and may
   run on the event loop.
 - **A missing schema is a wiring fault.** If a definition is registered but one of its payload
-  types has no cached schema, the registry was built without this module's validator. The read
-  then throws `IllegalStateException` naming the type and saying to install `WorkflowSchemaModule`
-  in the component that provides `WorkflowRegistry`.
+  types has no cached schema, the registry was built without this module's validator. `describe`,
+  `decision` and the validation methods then throw `IllegalStateException` naming the type and saying
+  to install `WorkflowSchemaModule` in the component that provides `WorkflowRegistry`.
 - **One profile per process.** Cache entries are keyed by type and profile, and a process has one
-  system profile. If entries for the same type exist under more than one profile, a read fails with
-  `IllegalStateException`.
+  system profile. If entries for the same type exist under more than one profile, a read or a
+  validation fails with `IllegalStateException`.
 - **No access control.** The service reports what a definition declares. Authorize access to the
-  definition before returning a descriptor to a client.
+  definition before returning a descriptor or a validation result to a client (see Security).
 
 ### Client path
 
@@ -204,6 +214,109 @@ a client needs two hops to reach the schema of a task's decisions:
 2. Query the instance through `WorkflowOperations.query`; the returned instance names the
    definition id and the pinned definition version.
 3. Call `describe` (or `decision`) with that id and version, and pick the step.
+
+---
+
+## Validating Payloads
+
+`WorkflowPayloadSchemas` validates a submitted payload against the schema registered for one pinned
+definition version:
+
+```java
+PayloadValidationResult result =
+    schemas.validateDecision("order-review", 2, "review", "approve", payload);
+if (!result.valid()) {
+  List<ViolationDetail> violations = result.violations();
+}
+PayloadValidationResult start = schemas.validateStart("order-review", 2, startPayload);
+```
+
+`validateDecision(definitionId, version, stepId, decisionName, payload)` and
+`validateStart(definitionId, version, payload)` take the payload as a nullable `JsonObject`.
+`PayloadValidationResult.valid()` is true when `violations()` is empty. A mistake by the caller, such
+as an unknown id or a payload that does not fit, is answered with a violation and never an exception.
+
+### Violation details
+
+Each `ViolationDetail` has a `path`, a `message`, a `type` and `args`:
+
+| Field | Content |
+|---|---|
+| `path` | An RFC 6901 JSON Pointer such as `/comment` or `/items/0/name`; the root is the empty string |
+| `type` | The failing schema keyword, or one of `definition`, `decision`, `payload`, `patternInputLength`, `patternInputTotalLength` |
+| `message` | The canonical message for the violation |
+| `args` | The keyword's constraint arguments, such as a limit |
+
+**No submitted value is ever returned.** A detail never carries a submitted value, and never the name
+or value of an unknown property; a location the schema does not declare is cut back to its declared
+parent.
+
+### Fixed answers
+
+Five situations produce one violation at the root with a fixed message. The caller's ids and names
+are never echoed:
+
+| Situation | `type` | `message` |
+|---|---|---|
+| The definition is unknown, or the version is not registered | `definition` | `definition is not registered` |
+| The step is unknown, or the decision is not declared on that step | `decision` | `decision is not declared for this task step` |
+| A payload is submitted for a payload-less decision | `payload` | `payload is not accepted for a decision without a payload type` |
+| A payload is submitted for a payload-less start | `payload` | `payload is not accepted for a start type without a payload` |
+| A required payload is null | `payload` | `payload is required` |
+
+An unknown step and an unknown decision give the same answer. The unknown definition answer is
+distinct from them, which matters for Security below.
+
+### Void payloads
+
+A `void` decision accepts only null; so does a `void` start. Any non-null payload, an empty object
+included, is one `payload` violation. A start type declared absent is treated as `void`. A decision or
+start with a payload type rejects null as required.
+
+### Bounded input
+
+Keyed validation limits the strings a pattern checks to 4,096 UTF-16 code units each and to 262,144
+UTF-16 code units per validation. These are the shared defaults; there is no configuration key. A
+payload over either limit produces one `patternInputLength` or `patternInputTotalLength` violation at
+the root with the argument `limit`, and no regular expression runs on the rejected input. The
+engine's own bean-validation path is not bounded this way.
+
+### Schema acceptance and binding
+
+Validation checks the payload against the schema. Binding to the Java type is a separate step in the
+engine, and the two are not identical:
+
+- **Declared keys bind.** A payload the schema accepts binds under the process profile mapper for
+  the declared properties.
+- **An undeclared key passes the schema and fails binding.** The generated schema does not forbid
+  extra keys, but the strict process profile rejects them when the engine binds the payload, and the
+  engine answers that with a binding 400. A profile that disables the strict feature would bind such
+  a key instead.
+- **The engine may still reject a payload the schema accepts.** Class-level and custom constraints
+  that a schema cannot express are enforced only by the engine.
+- **Document payload types accept any object.** A `JsonObject` or `ObjectNode` payload type has the
+  schema `{"type":"object"}`, so preflight accepts any JSON object and the decision applicator owns
+  its validation.
+
+### Behavior of validation
+
+- **No class loading, generation or compilation per call.** Validation runs the validator compiled at
+  registration, so it is non-blocking and may run on the event loop.
+- **Catalog coherence.** A definition rejected at registration, whether as a duplicate or by another
+  validator, is neither describable nor validatable.
+
+---
+
+## Security
+
+The descriptors and the validation answers reveal which definitions, steps and decisions exist: an
+unknown definition and an unknown decision produce different violations. Place every `describe`,
+`decision`, `validateDecision` and `validateStart` call behind a definition-read action, and answer an
+unknown definition and a definition the caller may not read with the same status. Otherwise a caller
+can enumerate definition, step and decision names from the difference.
+
+Validation details are value-free by construction, so they can be returned to the caller without
+echoing the submitted payload.
 
 ---
 
@@ -231,8 +344,9 @@ profile override; the original exception is chained as the cause. The start payl
 
 - `vertique-workflow-core` for the definition validator contract and the definition exception.
 - `vertique-json` and `vertique-json-schema` for the JSON profile registry and schema generation.
-- `vertique-json-schema-validation` for the bounded pattern input and the pattern walk.
-- `vertique-core` for the shared JSON and validation types.
+- `vertique-json-schema-validation` for the bounded pattern input, the pattern walk and the violation
+  details.
+- `vertique-core` for the shared JSON and validation types, including `ViolationDetail`.
 
 ---
 
@@ -242,8 +356,9 @@ profile override; the original exception is chained as the cause. The start payl
   and an unsuitable type surfaces only when a decision is submitted.
 - **Installing it without the JSON runtime module.** The validator needs `JsonMapperProfileRegistry`
   and `JsonConfig`; the component fails to build without them.
-- **Reading descriptors without the module in the registry's component.** `describe` then throws
-  `IllegalStateException` for any definition that declares a payload type.
+- **Reading descriptors without the module in the registry's component.** `describe` and the
+  validation methods then throw `IllegalStateException` for any definition that declares a payload
+  type.
 - **Leaving out `ValidationModule`.** The module works without it, but the schema then ignores
   bean-validation constraints that the engine still enforces.
 - **Declaring a scalar or array payload type.** `String`, `int`, `List<X>` and single-value records
@@ -251,5 +366,13 @@ profile override; the original exception is chained as the cause. The start payl
 - **Calling `activate` on the event loop.** Schema generation and pattern compilation block the
   calling thread.
 - **Expecting a pattern limit on the engine path.** A `@Pattern` constraint checked by the engine's
-  bean-validation path runs on strings of any length; only the schema path is bounded. Do not rely
+  bean-validation path runs on strings of any length; only keyed validation is bounded. Do not rely
   on this module to cap pattern input that the engine evaluates.
+- **Treating a valid result as proof the engine accepts the payload.** An undeclared key passes the
+  schema and fails binding, and class-level or custom constraints are enforced only by the engine.
+- **Sending an empty object for a payload-less decision.** A `void` decision or start accepts only
+  null; `{}` is a violation.
+- **Answering an unknown and a not-permitted definition differently.** The distinct statuses let a
+  caller enumerate definition, step and decision names.
+- **Returning violation text or paths built from the request.** Return the details as given; they
+  are value-free, and rebuilding them from the submitted payload would leak values.
