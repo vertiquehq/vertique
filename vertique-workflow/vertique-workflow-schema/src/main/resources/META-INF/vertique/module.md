@@ -248,7 +248,7 @@ Each `ViolationDetail` has a `path`, a `message`, a `type` and `args`:
 
 | Field | Content |
 |---|---|
-| `path` | An RFC 6901 JSON Pointer such as `/comment` or `/items/0/name`; the root is the empty string. A segment uses the payload's wire name where it resolves and the declared member name otherwise; it is never a map key or other caller data |
+| `path` | An RFC 6901 JSON Pointer such as `/comment` or `/items/0/name`; the root is the empty string. A segment uses the payload's wire name; it is never a map key or other caller data |
 | `type` | The failing schema keyword, or one of `definition`, `decision`, `payload`, `patternInputLength`, `patternInputTotalLength`, `truncated` |
 | `message` | The canonical message for the violation |
 | `args` | The keyword's constraint arguments, such as a limit |
