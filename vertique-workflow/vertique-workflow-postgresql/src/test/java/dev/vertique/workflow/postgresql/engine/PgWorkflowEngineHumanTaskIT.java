@@ -19,8 +19,8 @@ import dev.vertique.workflow.contract.IdempotencyKeyed;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.engine.WorkflowEngineHandle;
-import dev.vertique.workflow.exception.WorkflowDefinitionException;
 import dev.vertique.workflow.exception.WorkflowIdempotencyConflictException;
+import dev.vertique.workflow.exception.WorkflowInvalidPayloadException;
 import dev.vertique.workflow.exception.WorkflowStaleAssignmentException;
 import dev.vertique.workflow.ops.StartCommand;
 import dev.vertique.workflow.ops.TaskCompletionCommand;
@@ -1350,7 +1350,7 @@ public class PgWorkflowEngineHumanTaskIT {
 
         /**
          * Decision declared with {@code Void.class}: completing with {@code null} payload succeeds;
-         * completing with a non-null payload fails with {@link WorkflowDefinitionException}.
+         * completing with a non-null payload fails with {@link WorkflowInvalidPayloadException}.
          */
         @Nested
         @DisplayName("Void decision")
@@ -1380,7 +1380,7 @@ public class PgWorkflowEngineHumanTaskIT {
             }
 
             @Test
-            @DisplayName("Void decision with non-null payload fails with WorkflowDefinitionException")
+            @DisplayName("Void decision with non-null payload fails with WorkflowInvalidPayloadException")
             void voidDecisionNonNullPayloadFails(VertxTestContext ctx) {
                 TaskState state = TaskState.of("void-nonnull-" + UUID.randomUUID());
 
@@ -1395,13 +1395,13 @@ public class PgWorkflowEngineHumanTaskIT {
                                                 new WorkflowActor.User("alice"),
                                                 null),
                                         tx))))
-                        .onSuccess(r -> ctx.verify(() ->
-                                ctx.failNow(new AssertionError("Must have failed with WorkflowDefinitionException"))))
+                        .onSuccess(r -> ctx.verify(() -> ctx.failNow(
+                                new AssertionError("Must have failed with WorkflowInvalidPayloadException"))))
                         .onFailure(t -> ctx.verify(() -> {
                             assertInstanceOf(
-                                    WorkflowDefinitionException.class,
+                                    WorkflowInvalidPayloadException.class,
                                     t,
-                                    "must fail with WorkflowDefinitionException for Void decision with non-null payload");
+                                    "must fail with WorkflowInvalidPayloadException for Void decision with non-null payload");
                             ctx.completeNow();
                         }));
             }
@@ -1416,7 +1416,7 @@ public class PgWorkflowEngineHumanTaskIT {
         class StringDecision {
 
             @Test
-            @DisplayName("String decision with null payload fails with WorkflowDefinitionException")
+            @DisplayName("String decision with null payload fails with WorkflowInvalidPayloadException")
             void stringDecisionNullPayloadFails(VertxTestContext ctx) {
                 TaskState state = TaskState.of("str-null-" + UUID.randomUUID());
 
@@ -1431,13 +1431,13 @@ public class PgWorkflowEngineHumanTaskIT {
                                                 new WorkflowActor.User("alice"),
                                                 null),
                                         tx))))
-                        .onSuccess(r -> ctx.verify(() ->
-                                ctx.failNow(new AssertionError("Must have failed with WorkflowDefinitionException"))))
+                        .onSuccess(r -> ctx.verify(() -> ctx.failNow(
+                                new AssertionError("Must have failed with WorkflowInvalidPayloadException"))))
                         .onFailure(t -> ctx.verify(() -> {
                             assertInstanceOf(
-                                    WorkflowDefinitionException.class,
+                                    WorkflowInvalidPayloadException.class,
                                     t,
-                                    "must fail with WorkflowDefinitionException for String decision with null payload");
+                                    "must fail with WorkflowInvalidPayloadException for String decision with null payload");
                             ctx.completeNow();
                         }));
             }

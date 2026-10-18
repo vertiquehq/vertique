@@ -11,6 +11,7 @@ import dagger.multibindings.IntoSet;
 import dagger.multibindings.Multibinds;
 import dev.vertique.context.ContextRuntimeModule;
 import dev.vertique.core.lifecycle.ComposeValidator;
+import dev.vertique.core.validation.BeanValidator;
 import dev.vertique.workflow.di.WorkflowCoreModule;
 import dev.vertique.workflow.migration.WorkflowMigrationRegistry;
 import dev.vertique.workflow.ops.TransactionalTaskCallbacks;
@@ -32,8 +33,8 @@ import java.util.Set;
  * {@link WorkflowEngine}, binds the {@link WorkflowRecoveryBridge} SPI to its package-private
  * implementation, declares the {@code @WorkflowRecorders} multibinding, provides the engine-owned
  * default set of optional intent kinds, and declares the optional {@link WorkflowMigrationRegistry}
- * binding. Dialect modules {@code include} this module so they only contribute the
- * dialect-specific repository / store / runner bindings.
+ * and {@link BeanValidator} bindings. Dialect modules {@code include} this module so they only
+ * contribute the dialect-specific repository / store / runner bindings.
  *
  * <p>The module is {@code public} so a dialect module in another package can {@code include} it;
  * {@link WorkflowEngine} and the collaborators it binds stay package-private (Dagger generates the
@@ -125,6 +126,20 @@ public abstract class WorkflowEngineModule {
      */
     @BindsOptionalOf
     abstract WorkflowMigrationRegistry optionalMigrationRegistry();
+
+    /**
+     * Declares the optional {@link BeanValidator} binding.
+     *
+     * <p>When the application installs a module that binds a {@link BeanValidator} (for example the
+     * validation module), the engine validates coerced decision and start payloads against their
+     * declared constraints and rejects violations with {@code WorkflowInvalidPayloadException}.
+     * Without a binding the optional is empty and payloads are not constraint-checked, keeping the
+     * enforcement opt-in.
+     *
+     * @return the optional bean validator binding declaration
+     */
+    @BindsOptionalOf
+    abstract BeanValidator optionalBeanValidator();
 
     /**
      * Provides the set of {@link IntentKind} values that {@link RecorderRouter} treats as optional:

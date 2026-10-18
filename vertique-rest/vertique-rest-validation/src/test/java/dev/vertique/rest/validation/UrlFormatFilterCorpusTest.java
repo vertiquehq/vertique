@@ -6,6 +6,7 @@ package dev.vertique.rest.validation;
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
+import dev.vertique.json.schema.validation.PatternInputGuard;
 import io.vertx.core.json.JsonObject;
 import io.vertx.json.schema.Draft;
 import io.vertx.json.schema.JsonSchema;

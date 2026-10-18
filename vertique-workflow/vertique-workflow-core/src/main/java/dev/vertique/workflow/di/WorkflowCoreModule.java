@@ -16,6 +16,7 @@ import dev.vertique.workflow.plan.RaceSafetyTargetRegistry;
 import dev.vertique.workflow.plan.WorkflowPlanValidator;
 import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
 import dev.vertique.workflow.registry.WorkflowContributor;
+import dev.vertique.workflow.registry.WorkflowDefinitionValidator;
 import dev.vertique.workflow.registry.WorkflowRegistry;
 import dev.vertique.workflow.registry.store.PersistedDefinitionLoader;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionLifecycle;
@@ -66,12 +67,18 @@ public abstract class WorkflowCoreModule {
      * {@link dev.vertique.workflow.exception.WorkflowDefinitionException}.
      *
      * @param contributors the set of all contributed workflow definitions
+     * @param forkJoinValidator the plan validator consulted on each registered plan
+     * @param definitionValidators the contributed registration-time definition validators; may be
+     *     empty
      * @return a fully-populated, immutable-after-build registry
      */
     @Provides
     @Singleton
-    static WorkflowRegistry registry(Set<WorkflowContributor> contributors, WorkflowPlanValidator forkJoinValidator) {
-        DefaultWorkflowRegistry reg = new DefaultWorkflowRegistry(forkJoinValidator);
+    static WorkflowRegistry registry(
+            Set<WorkflowContributor> contributors,
+            WorkflowPlanValidator forkJoinValidator,
+            Set<WorkflowDefinitionValidator> definitionValidators) {
+        DefaultWorkflowRegistry reg = new DefaultWorkflowRegistry(forkJoinValidator, definitionValidators);
         contributors.forEach(c -> c.contribute(reg));
         return reg;
     }
@@ -87,6 +94,19 @@ public abstract class WorkflowCoreModule {
      */
     @Multibinds
     abstract Set<WorkflowContributor> contributors();
+
+    /**
+     * INTERNAL framework seam — the framework implementation behind a contract this module
+     * documents; not an application contract and outside the maturity promise.
+     *
+     * <p>Declares the empty {@code Set<WorkflowDefinitionValidator>} multibinding so that
+     * framework modules can contribute registration-time definition validators via
+     * {@code @IntoSet} without requiring at least one to be bound.
+     *
+     * @return the (initially empty) set of definition validators
+     */
+    @Multibinds
+    abstract Set<WorkflowDefinitionValidator> definitionValidators();
 
     /**
      * Declares the empty {@code Set<RaceSafetyTargetContributor>} multibinding so applications can

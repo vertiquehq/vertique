@@ -14,6 +14,7 @@ import dev.vertique.workflow.events.WorkflowEventType;
 import dev.vertique.workflow.exception.WorkflowConflictException;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
 import dev.vertique.workflow.exception.WorkflowIdempotencyConflictException;
+import dev.vertique.workflow.exception.WorkflowInvalidPayloadException;
 import dev.vertique.workflow.exception.WorkflowPlanHashDriftException;
 import dev.vertique.workflow.exception.WorkflowStaleAssignmentException;
 import dev.vertique.workflow.exception.WorkflowStaleSubjectVersionException;
@@ -62,6 +63,8 @@ import java.time.Instant;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Package-private collaborator owning the human-task lifecycle callback paths.
@@ -107,6 +110,8 @@ import java.util.UUID;
 @Singleton
 final class TaskLifecycleService {
 
+    private static final Logger log = LoggerFactory.getLogger(TaskLifecycleService.class);
+
     // --- Dependencies ---
 
     private final WorkflowRegistry registry;
@@ -145,6 +150,15 @@ final class TaskLifecycleService {
     private final WorkflowContextBinder contextBinder;
 
     /**
+     * Opt-in constraint check applied to coerced decision payloads right after coercion and before
+     * the task is completed. On the branch path the timer cancel, locks and history work run first,
+     * inside the same transaction; a rejection rolls that transaction back, so any earlier side
+     * effect and the deduplication claim roll back with it. A no-op when the application binds no
+     * bean validator.
+     */
+    private final PayloadConstraintCheck payloadConstraintCheck;
+
+    /**
      * Constructs a new task-lifecycle service.
      *
      * @param registry the workflow registry used to resolve the pinned {@link RuntimeWorkflow}
@@ -168,6 +182,7 @@ final class TaskLifecycleService {
      * @param contextBinder the binder-row seam for the instance-owned task drives; never
      *     {@code null} (the engine assembly seam substitutes {@link WorkflowContextBinder#noop()}
      *     when durable-context wiring is not exercised)
+     * @param payloadConstraintCheck the opt-in constraint check applied to coerced decision payloads
      */
     @Inject
     TaskLifecycleService(
@@ -185,7 +200,8 @@ final class TaskLifecycleService {
             WorkflowTransitionDriver driver,
             Clock clock,
             Provider<TimerLifecycleService> timerPvd,
-            WorkflowContextBinder contextBinder) {
+            WorkflowContextBinder contextBinder,
+            PayloadConstraintCheck payloadConstraintCheck) {
         this.registry = registry;
         this.instances = instances;
         this.history = history;
@@ -201,6 +217,7 @@ final class TaskLifecycleService {
         this.clock = clock;
         this.timerPvd = timerPvd;
         this.contextBinder = contextBinder;
+        this.payloadConstraintCheck = payloadConstraintCheck;
     }
 
     // --- Task-creation helpers (reached by the driver via Provider<TaskLifecycleService>) ---
@@ -540,8 +557,7 @@ final class TaskLifecycleService {
                 .findFirst()
                 .orElse(null);
         if (planDecision == null) {
-            return Future.failedFuture(new WorkflowDefinitionException(
-                    "Unknown decision '" + cmd.decisionName() + "' for task step '" + htn.stepId() + "'"));
+            return Future.failedFuture(WorkflowPayloads.unknownDecision());
         }
 
         // Step 3b: Payload-nullability validation + coercion.
@@ -549,7 +565,9 @@ final class TaskLifecycleService {
         try {
             coercedPayload =
                     WorkflowPayloads.validateAndCoerceTaskPayload(cmd.payload(), planDecision.payloadTypeName());
+            payloadConstraintCheck.check(coercedPayload, WorkflowPayloads.DECISION_REJECTION);
         } catch (Exception e) {
+            logRejectedPayloadCause(e);
             return Future.failedFuture(e);
         }
 
@@ -616,9 +634,8 @@ final class TaskLifecycleService {
                                                     .decisionApplicator(finalDecision.applicatorCallbackId());
                                     newState = applicator.apply(stateObj, finalCoercedPayload);
                                 } catch (Exception e) {
-                                    return Future.failedFuture(
-                                            new WorkflowDefinitionException("decisionApplicator threw for decision '"
-                                                    + cmd.decisionName() + "': " + e.getMessage()));
+                                    return Future.failedFuture(new WorkflowDefinitionException(
+                                            "decisionApplicator threw for decision '" + cmd.decisionName() + "'", e));
                                 }
 
                                 // Step 9: Optimistic UPDATE on workflow_instances.
@@ -795,8 +812,7 @@ final class TaskLifecycleService {
                                     .findFirst()
                                     .orElse(null);
                             if (planDecision == null) {
-                                return Future.failedFuture(new WorkflowDefinitionException("Unknown decision '"
-                                        + cmd.decisionName() + "' for branch task step '" + htn.stepId() + "'"));
+                                return Future.failedFuture(WorkflowPayloads.unknownDecision());
                             }
 
                             // Step 9: Payload-nullability validation + coercion.
@@ -804,7 +820,9 @@ final class TaskLifecycleService {
                             try {
                                 coercedPayload = WorkflowPayloads.validateAndCoerceTaskPayload(
                                         cmd.payload(), planDecision.payloadTypeName());
+                                payloadConstraintCheck.check(coercedPayload, WorkflowPayloads.DECISION_REJECTION);
                             } catch (Exception e) {
+                                logRejectedPayloadCause(e);
                                 return Future.failedFuture(e);
                             }
                             Object finalCoercedPayload = coercedPayload;
@@ -834,7 +852,8 @@ final class TaskLifecycleService {
                                         } catch (Exception e) {
                                             return Future.failedFuture(new WorkflowDefinitionException(
                                                     "decisionApplicator threw for branch decision '"
-                                                            + cmd.decisionName() + "': " + e.getMessage()));
+                                                            + cmd.decisionName() + "'",
+                                                    e));
                                         }
                                         String newStateJson = Json.encode(newState);
 
@@ -1810,5 +1829,16 @@ final class TaskLifecycleService {
     private Future<Void> appendTimerCancelledHistory(
             WorkflowInstance inst, UUID timerId, TimerCancelledCause cause, SqlClient tx) {
         return timerPvd.get().appendTimerCancelledHistory(inst, timerId, cause, tx);
+    }
+
+    /**
+     * Records the binder failure behind a rejected completion payload at DEBUG so an operator can
+     * diagnose it, while the rejection itself stays value-free. The log text is constant; the
+     * cause is attached for the logging backend only.
+     */
+    private static void logRejectedPayloadCause(Exception rejection) {
+        if (rejection instanceof WorkflowInvalidPayloadException && rejection.getCause() != null) {
+            log.debug("Task completion payload rejected", rejection.getCause());
+        }
     }
 }

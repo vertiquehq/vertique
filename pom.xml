@@ -52,6 +52,7 @@ SPDX-License-Identifier: EUPL-1.2
         <module>vertique-resilience</module>
         <module>vertique-json</module>
         <module>vertique-json-schema</module>
+        <module>vertique-json-schema-validation</module>
         <module>vertique-security</module>
         <module>vertique-config</module>
         <module>vertique-bootstrap</module>
@@ -107,7 +108,7 @@ SPDX-License-Identifier: EUPL-1.2
     </modules>
 
     <properties>
-        <revision>0.3.0-SNAPSHOT</revision>
+        <revision>0.4.0-SNAPSHOT</revision>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
 
@@ -317,6 +318,11 @@ SPDX-License-Identifier: EUPL-1.2
             <dependency>
                 <groupId>dev.vertique</groupId>
                 <artifactId>vertique-json-schema</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-json-schema-validation</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>
@@ -647,6 +653,11 @@ SPDX-License-Identifier: EUPL-1.2
             <dependency>
                 <groupId>dev.vertique</groupId>
                 <artifactId>vertique-workflow-definition</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>dev.vertique</groupId>
+                <artifactId>vertique-workflow-schema</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>

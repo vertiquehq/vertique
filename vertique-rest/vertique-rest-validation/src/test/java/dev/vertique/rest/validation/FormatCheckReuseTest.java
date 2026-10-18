@@ -18,6 +18,7 @@ import static org.mockito.Mockito.mockingDetails;
 import static org.mockito.Mockito.when;
 
 import com.sun.management.ThreadMXBean;
+import dev.vertique.json.schema.validation.PatternInputGuard;
 import dev.vertique.rest.core.RestValidationException;
 import dev.vertique.rest.core.ValidationErrorDetail;
 import dev.vertique.rest.core.config.JaxRsConfig;

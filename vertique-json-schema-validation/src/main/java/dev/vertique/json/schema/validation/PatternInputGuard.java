@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Koivisto Capital Oy
 // SPDX-License-Identifier: EUPL-1.2
 
-package dev.vertique.rest.validation;
+package dev.vertique.json.schema.validation;
 
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
@@ -14,19 +14,19 @@ import java.util.Set;
 import java.util.function.Predicate;
 
 /**
- * The {@code web-validation} gate's pattern-input guard: it bounds the input of pattern evaluation and of
+ * The pattern-input guard: it bounds the input of pattern evaluation and of
  * the three regex-backed formats not measured as linear-time ({@code idn-hostname}, {@code idn-email},
- * and {@code regex}), per string and per request.
+ * and {@code regex}), per string and per window.
  *
  * <p>The guard compiles a private, rewritten copy of each body and parameter schema. In the copy, every
  * node with a string {@code pattern} and every node whose {@code format} is a bounded format gains the
  * bound entry {@code {"format": "x-vertique-pattern-input-bound"}}, one per position, appended to its
  * {@code allOf}; every node with a non-empty {@code patternProperties} then gains {@code {"propertyNames":
  * <the bound entry>}}. The guard is the copy's {@link JsonFormatValidator}: at the bound entry it rejects a
- * string longer than the per-string limit and adds every other string's length to the request's running
- * total, rejecting once the total exceeds the per-request limit; every other format is delegated to
- * {@link JsonFormatValidator#DEFAULT_VALIDATOR}. The running total exists only inside a window the gate
- * opens around a request's validation.
+ * string longer than the per-string limit and adds every other string's length to the open window's running
+ * total, rejecting once the total exceeds the per-window limit; every other format is delegated to
+ * {@link JsonFormatValidator#DEFAULT_VALIDATOR}. The running total exists only inside a window the caller
+ * opens around one validation.
  *
  * <p>The ordering rests on vertx-json-schema behaviors: a node's {@code allOf} is evaluated before the
  * node's own {@code pattern}, its key regexes, and the engine's own check for its {@code format}; the
@@ -35,7 +35,7 @@ import java.util.function.Predicate;
  * {@link Validator#validate(Object)} unwrapped. Entries are appended, never prepended, so every existing
  * {@code allOf} index and every reported keyword location stays valid against the original schema.
  *
- * <p>The rewrite also renames every {@code format} value found among {@link #REUSED_FORMAT_CHECKS}'s keys
+ * <p>The rewrite also renames every {@code format} value found among {@code REUSED_FORMAT_CHECKS}'s keys
  * to {@code x-vertique-format-<name>}, in place, at every position the walk reaches as a schema node: the
  * engine does not know the renamed name, so its built-in check passes it, and this validator decides the
  * renamed name instead, with the reused check keyed by the standard name it was renamed from. A {@code
@@ -43,11 +43,19 @@ import java.util.function.Predicate;
  * instance itself. A non-{@code String} instance passes. The renamed set grows as later changes add
  * further reused formats; a format outside it, including one this class does not yet decide, is
  * unaffected by the rename.
+ *
+ * <p>INTERNAL framework seam: this type is shared by framework modules and is not an application contract.
  */
-final class PatternInputGuard implements JsonFormatValidator {
+public final class PatternInputGuard implements JsonFormatValidator {
 
     /** The format name of the bound entry the rewrite appends. */
-    static final String BOUND_FORMAT = "x-vertique-pattern-input-bound";
+    public static final String BOUND_FORMAT = "x-vertique-pattern-input-bound";
+
+    /** The default per-string limit, in UTF-16 code units. */
+    public static final int DEFAULT_MAX_CHARS = 4096;
+
+    /** The default per-window limit, in UTF-16 code units. */
+    public static final int DEFAULT_MAX_TOTAL_CHARS = 262_144;
 
     /**
      * The formats bounded and counted at a bound entry of their own: the regex-backed checks not measured
@@ -84,14 +92,17 @@ final class PatternInputGuard implements JsonFormatValidator {
     /** The applicator that carries the bound entry to every key of an object. */
     private static final String PROPERTY_NAMES_KEYWORD = "propertyNames";
 
+    /** The window returned when one is already open on the calling thread; closing it does nothing. */
+    private static final Window NESTED_WINDOW = () -> {};
+
     /** The per-string limit, in UTF-16 code units. */
     private final int maxChars;
 
-    /** The per-request limit, in UTF-16 code units. */
+    /** The per-window limit, in UTF-16 code units. */
     private final int maxTotalChars;
 
     /**
-     * The calling thread's running total for the request being validated, present only inside a window.
+     * The calling thread's running total for the window being validated, present only inside a window.
      * A one-element array so the bound entry adds to it without re-boxing.
      */
     private final ThreadLocal<long[]> tally = new ThreadLocal<>();
@@ -99,10 +110,16 @@ final class PatternInputGuard implements JsonFormatValidator {
     /**
      * Creates a guard with the configured limits.
      *
-     * @param maxChars      the per-string limit ({@code jaxrs.validationPatternMaxChars})
-     * @param maxTotalChars the per-request limit ({@code jaxrs.validationPatternMaxTotalChars})
+     * @param maxChars      the per-string limit, in UTF-16 code units (see {@link #DEFAULT_MAX_CHARS})
+     * @param maxTotalChars the per-window limit, in UTF-16 code units (see {@link #DEFAULT_MAX_TOTAL_CHARS})
+     * @throws IllegalArgumentException unless {@code 1 <= maxChars <= maxTotalChars}; the message does not
+     *     contain the configured values
      */
-    PatternInputGuard(int maxChars, int maxTotalChars) {
+    public PatternInputGuard(int maxChars, int maxTotalChars) {
+        if (maxChars < 1 || maxChars > maxTotalChars) {
+            throw new IllegalArgumentException(
+                    "the pattern-input limits must satisfy 1 <= per-string limit <= per-window total limit");
+        }
         this.maxChars = maxChars;
         this.maxTotalChars = maxTotalChars;
     }
@@ -115,7 +132,7 @@ final class PatternInputGuard implements JsonFormatValidator {
      * node yields a copy equal to it. A reused {@code format} is renamed in place even at a node that gains no
      * bound entry, so its presence alone breaks that equality.
      *
-     * <p>The walk follows the gate's regex precompilation: it never enters the value of a literal keyword
+     * <p>The walk follows the schema's regex precompilation: it never enters the value of a literal keyword
      * ({@code const}, {@code enum}, {@code default}, {@code examples}, {@code example}), it treats each member
      * of {@code properties}, {@code patternProperties}, {@code $defs}, and {@code dependentSchemas} as a
      * schema whatever its name, never the container itself, and it reads every other member name as a
@@ -129,7 +146,7 @@ final class PatternInputGuard implements JsonFormatValidator {
      * @param schema the schema, which stays untouched
      * @return the rewritten copy, always a new instance
      */
-    static JsonObject rewrite(JsonObject schema) {
+    public static JsonObject rewrite(JsonObject schema) {
         JsonObject copy = schema.copy();
         rewriteNode(copy, false);
         return copy;
@@ -147,12 +164,12 @@ final class PatternInputGuard implements JsonFormatValidator {
     private static void rewriteNode(Object value, boolean membersAreNames) {
         if (value instanceof JsonObject object) {
             for (String field : object.fieldNames()) {
-                if (!membersAreNames && WebValidationStrategy.LITERAL_KEYWORDS.contains(field)) {
+                if (!membersAreNames && SchemaKeywords.LITERAL_KEYWORDS.contains(field)) {
                     continue;
                 }
                 Object member = object.getValue(field);
                 boolean namedMembers = !membersAreNames
-                        && WebValidationStrategy.NAMED_MEMBER_KEYWORDS.contains(field)
+                        && SchemaKeywords.NAMED_MEMBER_KEYWORDS.contains(field)
                         && member instanceof JsonObject;
                 rewriteNode(member, namedMembers);
             }
@@ -180,7 +197,7 @@ final class PatternInputGuard implements JsonFormatValidator {
      */
     private static void guardSchemaNode(JsonObject node) {
         JsonArray entries = new JsonArray();
-        if (node.getValue(WebValidationStrategy.PATTERN_KEYWORD) instanceof String) {
+        if (node.getValue(SchemaKeywords.PATTERN) instanceof String) {
             entries.add(boundEntry());
         }
         if (node.getValue(FORMAT_KEYWORD) instanceof String format) {
@@ -190,8 +207,7 @@ final class PatternInputGuard implements JsonFormatValidator {
                 node.put(FORMAT_KEYWORD, REUSED_FORMAT_PREFIX + format);
             }
         }
-        if (node.getValue(WebValidationStrategy.PATTERN_PROPERTIES_KEYWORD) instanceof JsonObject byPattern
-                && !byPattern.isEmpty()) {
+        if (node.getValue(SchemaKeywords.PATTERN_PROPERTIES) instanceof JsonObject byPattern && !byPattern.isEmpty()) {
             entries.add(new JsonObject().put(PROPERTY_NAMES_KEYWORD, boundEntry()));
         }
         if (entries.isEmpty()) {
@@ -217,22 +233,22 @@ final class PatternInputGuard implements JsonFormatValidator {
      * Rewrites a copy of {@code schema} and compiles it with this guard as the format validator; {@code
      * schema} itself is never compiled or modified.
      *
-     * @param schema  the shared schema
-     * @param options the gate's schema options
+     * @param schema  the schema
+     * @param options the schema options
      * @return the guarded validator
      */
-    Validator compile(JsonObject schema, JsonSchemaOptions options) {
+    public Validator compile(JsonObject schema, JsonSchemaOptions options) {
         return Validator.create(JsonSchema.of(rewrite(schema)), options, this);
     }
 
     /**
-     * Applies the bound at {@link #BOUND_FORMAT}, decides a renamed reused format at {@link
-     * #REUSED_FORMAT_CHECKS}, and delegates every other format, {@code null} included, to
+     * Applies the bound at {@link #BOUND_FORMAT}, decides a renamed reused format at
+     * {@code REUSED_FORMAT_CHECKS}, and delegates every other format, {@code null} included, to
      * {@link JsonFormatValidator#DEFAULT_VALIDATOR}.
      *
      * <p>At the bound entry, a string of length {@code L} (UTF-16 code units) longer than the per-string limit
-     * is rejected; otherwise, inside a window, {@code L} is added to the request's running total, which is
-     * rejected once it exceeds the per-request limit. Outside a window only the per-string limit applies. A
+     * is rejected; otherwise, inside a window, {@code L} is added to the open window's running total, which is
+     * rejected once it exceeds the per-window limit. Outside a window only the per-string limit applies. A
      * non-string instance passes.
      *
      * <p>At a renamed reused format, a {@code String} instance runs the format's reused check; a non-{@code
@@ -244,8 +260,8 @@ final class PatternInputGuard implements JsonFormatValidator {
      * @return {@code null} when the instance passes, else the default validator's message or, for a
      *     renamed reused format, a fixed, value-free rejection message
      * @throws PatternInputTooLong        when a string at the bound entry is longer than the per-string limit
-     * @throws PatternInputTotalExceeded when a string at the bound entry takes the request's total past the
-     *     per-request limit
+     * @throws PatternInputTotalExceeded when a string at the bound entry takes the open window's total past the
+     *     per-window limit
      */
     @Override
     public String validateFormat(String instanceType, String format, Object instance) {
@@ -288,7 +304,7 @@ final class PatternInputGuard implements JsonFormatValidator {
      * @param length the string's length in UTF-16 code units
      * @throws PatternInputTooLong        when {@code length} exceeds the per-string limit
      * @throws PatternInputTotalExceeded when adding {@code length} takes the running total past the
-     *     per-request limit
+     *     per-window limit
      */
     private void bound(int length) {
         if (length > maxChars) {
@@ -305,22 +321,38 @@ final class PatternInputGuard implements JsonFormatValidator {
     }
 
     /**
-     * Opens the calling thread's per-request counting window; closing it removes the tally. Opening never
-     * resets a tally already present, so closing the window is the only reset.
+     * Opens the calling thread's counting window, which owns its running total. Windows never nest: when a
+     * window is already open on the calling thread, this call opens nothing and returns a window whose
+     * {@link Window#close()} does nothing, so the outer window's total is neither reset nor removed by the
+     * inner one.
+     *
+     * <p>Closing a window removes its tally only if that tally is still the calling thread's current one, so
+     * closing a window twice, closing a stale window after a newer one was opened, or closing a window from a
+     * different thread than the one that opened it never removes another window's tally.
+     *
+     * <p>Close a window on the thread that opened it, in a {@code finally} block (or try-with-resources). A
+     * window opened on one thread and closed on another, or never closed, leaves the opening thread's tally in
+     * place, so later windows on that thread are no-ops and share one growing total.
      *
      * @return the window
      */
-    Window openWindow() {
-        if (tally.get() == null) {
-            tally.set(new long[1]);
+    public Window openWindow() {
+        if (tally.get() != null) {
+            return NESTED_WINDOW;
         }
-        return tally::remove;
+        long[] own = new long[1];
+        tally.set(own);
+        return () -> {
+            if (tally.get() == own) {
+                tally.remove();
+            }
+        };
     }
 
-    /** A thread-confined per-request counting window; {@link #close()} removes the tally. */
-    interface Window extends AutoCloseable {
+    /** A thread-confined counting window; {@link #close()} removes the window's own tally, once. */
+    public interface Window extends AutoCloseable {
 
-        /** Removes the calling thread's tally. */
+        /** Removes this window's tally if it is still the calling thread's current one; otherwise does nothing. */
         @Override
         void close();
     }
@@ -329,7 +361,7 @@ final class PatternInputGuard implements JsonFormatValidator {
      * Thrown at the bound entry for a string longer than the per-string limit. Stack-trace-free; its message
      * names the limit only, never the value.
      */
-    static final class PatternInputTooLong extends RuntimeException {
+    public static final class PatternInputTooLong extends RuntimeException {
 
         private static final long serialVersionUID = 1L;
 
@@ -341,7 +373,7 @@ final class PatternInputGuard implements JsonFormatValidator {
          *
          * @param maxChars the per-string limit
          */
-        PatternInputTooLong(int maxChars) {
+        public PatternInputTooLong(int maxChars) {
             super("pattern input exceeds the maximum length of " + maxChars + " characters", null, false, false);
             this.maxChars = maxChars;
         }
@@ -351,28 +383,28 @@ final class PatternInputGuard implements JsonFormatValidator {
          *
          * @return the limit
          */
-        int maxChars() {
+        public int maxChars() {
             return maxChars;
         }
     }
 
     /**
-     * Thrown at the bound entry when a string takes the request's running total past the per-request limit.
+     * Thrown at the bound entry when a string takes the open window's running total past the per-window limit.
      * Stack-trace-free; its message names the limit only, never the value.
      */
-    static final class PatternInputTotalExceeded extends RuntimeException {
+    public static final class PatternInputTotalExceeded extends RuntimeException {
 
         private static final long serialVersionUID = 1L;
 
-        /** The per-request limit the total exceeded. */
+        /** The per-window limit the total exceeded. */
         private final int maxTotalChars;
 
         /**
          * Creates the exception.
          *
-         * @param maxTotalChars the per-request limit
+         * @param maxTotalChars the per-window limit
          */
-        PatternInputTotalExceeded(int maxTotalChars) {
+        public PatternInputTotalExceeded(int maxTotalChars) {
             super(
                     "pattern input exceeds the maximum total length of " + maxTotalChars + " characters",
                     null,
@@ -382,11 +414,11 @@ final class PatternInputGuard implements JsonFormatValidator {
         }
 
         /**
-         * Returns the per-request limit the total exceeded.
+         * Returns the per-window limit the total exceeded.
          *
          * @return the limit
          */
-        int maxTotalChars() {
+        public int maxTotalChars() {
             return maxTotalChars;
         }
     }

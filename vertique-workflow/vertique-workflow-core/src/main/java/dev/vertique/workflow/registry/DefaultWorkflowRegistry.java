@@ -25,6 +25,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.NavigableMap;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentSkipListMap;
@@ -35,7 +36,9 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
  *
  * <p>This class is instantiated by {@code WorkflowCoreModule.registry(...)} and is the single
  * in-process registry for all registered workflow definitions. It validates each definition at
- * registration time and rejects invalid plans.
+ * registration time and rejects invalid plans. After plan validation, and before the publish phase,
+ * it also runs every contributed {@link WorkflowDefinitionValidator} against the candidate
+ * definition.
  *
  * <p>Internal storage:
  * <ul>
@@ -101,6 +104,9 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
     /** Optional fork/join semantic validator; null when none is wired (legacy callers). */
     private final WorkflowPlanValidator forkJoinValidator;
 
+    /** Contributed registration-time definition validators; unordered and immutable. */
+    private final Set<WorkflowDefinitionValidator> definitionValidators;
+
     /**
      * Creates a new empty {@code DefaultWorkflowRegistry} with no fork/join validator.
      *
@@ -121,7 +127,28 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
      *     test contexts that intentionally skip fork/join semantic checks
      */
     public DefaultWorkflowRegistry(WorkflowPlanValidator forkJoinValidator) {
+        this(forkJoinValidator, Set.of());
+    }
+
+    /**
+     * INTERNAL framework seam — the framework implementation behind a contract this module
+     * documents; not an application contract and outside the maturity promise.
+     *
+     * <p>Creates a new empty {@code DefaultWorkflowRegistry} that, in addition to the fork/join
+     * validator, invokes every {@code definitionValidators} entry during
+     * {@link #register(dev.vertique.workflow.dsl.WorkflowDefinition)} after plan validation and
+     * before the publish phase. The validators are unordered.
+     *
+     * @param forkJoinValidator validator to invoke on each registered plan; may be null only in
+     *     test contexts that intentionally skip fork/join semantic checks
+     * @param definitionValidators validators to invoke on each candidate definition; copied
+     *     defensively, must not be {@code null}
+     */
+    public DefaultWorkflowRegistry(
+            WorkflowPlanValidator forkJoinValidator, Set<WorkflowDefinitionValidator> definitionValidators) {
+        Objects.requireNonNull(definitionValidators, "definitionValidators");
         this.forkJoinValidator = forkJoinValidator;
+        this.definitionValidators = Set.copyOf(definitionValidators);
     }
 
     // --- WorkflowRegistry ---
@@ -139,6 +166,9 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
      *   <li>Validates the plan graph shape via {@link #validatePlanGraph}.</li>
      *   <li>Verifies signal-name uniqueness across {@code WaitSignalNode}s.</li>
      *   <li>Computes {@code planHash}.</li>
+     *   <li>Runs every contributed {@link WorkflowDefinitionValidator} on the calling thread, in
+     *       no particular order; an exception it throws propagates unchanged and nothing is
+     *       published.</li>
      * </ol>
      *
      * <p>Publish phase (inside {@code writeLock}):
@@ -190,6 +220,13 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
                 builder.initialState(),
                 builder.signalPayloadTypes(),
                 perDefCallbacks);
+
+        // Contributed definition validators run last, before the publish phase; an exception
+        // propagates unchanged and the definition is never published.
+        RegisteredWorkflowDefinition candidate = new RegisteredWorkflowDefinition(plan, builder.startPayloadType());
+        for (WorkflowDefinitionValidator validator : definitionValidators) {
+            validator.validate(candidate);
+        }
 
         // --- Atomic publish phase (write-lock held for the entire multi-step publish) ---
 

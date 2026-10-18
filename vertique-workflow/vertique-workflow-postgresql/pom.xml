@@ -193,6 +193,26 @@ SPDX-License-Identifier: EUPL-1.2
             <artifactId>vertique-application</artifactId>
             <scope>test</scope>
         </dependency>
+        <!--
+          Test scope only: PgWorkflowEnginePayloadConstraintIT enforces payload constraints through
+          a real Hibernate Validator obtained from ValidationModule via a test Dagger component. No
+          production code in this module depends on bean validation.
+        -->
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-validation</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.hibernate.validator</groupId>
+            <artifactId>hibernate-validator</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.glassfish.expressly</groupId>
+            <artifactId>expressly</artifactId>
+            <scope>test</scope>
+        </dependency>
 
         <!-- Compile-testing guard: prove CronPersistenceMarker fails Dagger code-gen
              when WorkflowBranchRecoveryModule is composed with CronModule (in-memory)

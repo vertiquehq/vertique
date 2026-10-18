@@ -317,11 +317,21 @@ public interface BeanValidator {
 |---|---|
 | `ViolationDetail` | `record (String path, String message, @Nullable String type, @Nullable Map<String, Object> args)`, plus `of(path, message)` |
 | `ParameterViolation` | `record (int parameterIndex, ViolationDetail detail)` |
-| `BeanValidationException` | extends `ValidationException`; `violations()` is defensively copied and unmodifiable |
+| `ViolationCarrier` | `interface { List<ViolationDetail> violations(); }`, implemented by validation exceptions whose violations a transport may render; the list is unmodifiable and never `null` |
+| `BeanValidationException` | extends `ValidationException`, implements `ViolationCarrier`; `violations()` is defensively copied and unmodifiable |
+| `JakartaPathPointers` | INTERNAL. `static String toPointer(String jakartaPath, Type rootType, ObjectMapper mapper)` converts a Jakarta property path into an RFC 6901 pointer over the mapper's wire names, with list indexes; a map entry ends the pointer at the map property and the conversion never throws. Not an application extension point |
 
 `ViolationDetail` deliberately excludes the invalid value so a violation can be serialized without
 leaking input. `type` and `args` are populated by the validation module and are `null` when it is
 not configured to resolve them.
+
+`ViolationCarrier` is the seam a transport uses to render structured violations: the default REST
+mapping renders any `ValidationException` that implements it as a 400 with one error per
+violation. `BeanValidationException` implements it. Path, message, type and args reach clients
+verbatim, so an implementor builds every `ViolationDetail` it creates without a submitted value. A
+constraint message produced by an application's own constraints passes through unchanged, so
+applications must not interpolate the validated value into a message. The `path` form is producer-defined (for
+example Jakarta dotted paths from `BeanValidationException`).
 
 `@ValidateWith(Class<?>[] value)` selects Bean Validation groups for a single method; the default
 group applies when it is absent.
