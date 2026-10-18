@@ -7,6 +7,7 @@ import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonFormat;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonSetter;
+import com.fasterxml.jackson.annotation.JsonTypeInfo;
 import com.fasterxml.jackson.annotation.Nulls;
 import com.fasterxml.jackson.core.TreeNode;
 import com.fasterxml.jackson.databind.AnnotationIntrospector;
@@ -49,6 +50,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.RandomAccess;
 import java.util.Set;
 
 /**
@@ -94,8 +96,18 @@ import java.util.Set;
  *   <li>A map entry or set member ends the pointer at the map or set property; no key text is ever
  *       emitted. A segment kind the resolver does not recognize ends the pointer the same way.
  *   <li>{@code Optional} and other reference types are transparent.
- *   <li>The runtime owner class recorded on a property is used only when it is assignable to the
- *       declared type; otherwise the declared type decides.
+ *   <li>The runtime owner class recorded on a property is used only under flat type information on
+ *       the declared type or on the property holding the value ({@code @JsonTypeInfo} with a type id
+ *       included as a property, an existing property or an external property, or deduced from the
+ *       members): when it is assignable to the declared base and, with a name projection, the
+ *       projection lists it among the base's subtypes or cannot enumerate them. Otherwise the declared
+ *       type's names apply.
+ *   <li>A value whose members are not where its own names put them ends the pointer at the property
+ *       holding it ({@code ""} at the root); a list position holding such a value ends the pointer at
+ *       the list: a type id wrapping the value ({@code WRAPPER_OBJECT}, {@code WRAPPER_ARRAY}), object
+ *       identity ({@code @JsonIdentityInfo}, where an id may stand for the value), a mapper-wide default
+ *       typer, and, when the mapper enables {@code UNWRAP_SINGLE_VALUE_ARRAYS}, any bean below the
+ *       root.
  *   <li>Wire names are escaped {@code ~} to {@code ~0}, then {@code /} to {@code ~1}, with no percent
  *       encoding; a member whose wire name is empty gives the segment {@code ""} (the pointer
  *       {@code /}).
@@ -106,12 +118,29 @@ import java.util.Set;
  * wire name names every property and any document is ignored. With the route's name projection it
  * resolves in <em>projection</em> mode: a property must also be among the projection's bound Java names
  * of its owner (a type whose bindings the projection cannot enumerate ends the pointer at the property
- * holding it), and when the document object at that position holds exactly one key that is a declared
- * spelling of the property (its primary wire name or an alias, case-folded when the mapper matches keys
- * case-insensitively) that the projection maps back to the same property, that key is emitted as the
- * client sent it. Two or more such keys end the pointer at the parent. A property the projection
- * promotes members out of ends the pointer at its bean. A projection call that throws ends the pointer,
- * and the failure is remembered for the owner class for the rest of the session.
+ * holding it). A property the projection promotes members out of ends the pointer at its bean. A
+ * projection call that throws ends the pointer, and the failure is remembered for the owner class for
+ * the rest of the session. Without a document, projection mode names each property by its primary wire
+ * name.
+ *
+ * <p><strong>Document check.</strong> In projection mode with a document, every step is checked
+ * against the document the value was bound from:
+ *
+ * <ul>
+ *   <li>A member is looked up only inside an object the document holds at that position. A position
+ *       holding {@code null}, a scalar or an array ends the pointer there.
+ *   <li>A member is present when the document object holds exactly one key that is a declared spelling
+ *       of the property (its primary wire name or an alias, case-folded when the mapper matches keys
+ *       case-insensitively) and that the projection maps back to the same property; that key is
+ *       emitted as the client sent it. Two or more such keys end the pointer at the parent. Any other
+ *       key, such as the Java name on a renaming route, is never emitted.
+ *   <li>A list or array position is emitted only when the document's array holds it; a position past
+ *       its end ends the pointer at the list.
+ *   <li>An omitted member is named, by its primary wire name, only when it is the last segment of the
+ *       path, its parent object exists, and the violated property itself is written through a setter or
+ *       a creator parameter (record components included). An omitted member that only a field writes,
+ *       and any omitted member or position above the last segment, end the pointer at the parent.
+ * </ul>
  *
  * <p><strong>Detection limits.</strong> The checks read the mapper's public introspection only:
  * annotations, mix-ins and config overrides the introspection reports. A deserializer a registered
@@ -131,8 +160,11 @@ import java.util.Set;
  *
  * <p><strong>Bounds.</strong> A pointer holds at most {@link #MAX_SEGMENTS} segments. Resolution is
  * iterative and never throws: any failure, including a stack overflow inside the mapper's
- * introspection, yields the pointer verified so far. No mapper or projection is held statically; a
- * session keeps its per-class lookups only as long as the session object itself.
+ * introspection, yields the pointer verified so far. The document is never walked beyond the path: a
+ * list position is read directly (an array that does not offer constant-time positional access ends
+ * the pointer at the list), and each visited document object's keys are indexed, and asked of the
+ * projection, at most once per session. No mapper or projection is held statically; a session keeps
+ * its per-class lookups and key indexes only as long as the session object itself.
  */
 public final class JakartaPathPointers {
 
@@ -281,8 +313,17 @@ public final class JakartaPathPointers {
          */
         private final boolean globallyReordersPositions;
 
+        /** Whether the mapper reads a one-element array where a single value is declared. */
+        private final boolean unwrapsSingleValueArrays;
+
         /** What the introspection says about each owner type and its properties. */
         private final Map<JavaType, OwnerFacts> owners = new HashMap<>();
+
+        /** What each declared type's class says about type information. */
+        private final Map<JavaType, Typing> typings = new HashMap<>();
+
+        /** The projection's subtypes per polymorphic base class, or {@link #UNRESOLVED}. */
+        private final Map<Class<?>, Object> subtypes = new HashMap<>();
 
         /** The projection's bound Java names per owner class, or {@link #UNRESOLVED}. */
         private final Map<Class<?>, Object> boundNames = new HashMap<>();
@@ -296,8 +337,8 @@ public final class JakartaPathPointers {
         /** Owner classes for which a projection call threw during this session. */
         private final Set<Class<?>> failedProjections = new HashSet<>();
 
-        /** Each visited document object's keys, grouped by their (case-folded) spelling. */
-        private final Map<Map<?, ?>, Map<String, List<String>>> keyIndexes = new IdentityHashMap<>();
+        /** Each visited document object's key index, by the object's identity. */
+        private final Map<Map<?, ?>, KeyIndex> keyIndexes = new IdentityHashMap<>();
 
         private Resolver(ObjectMapper mapper, @Nullable InputFieldNameResolver names) {
             this.mapper = mapper;
@@ -307,6 +348,7 @@ public final class JakartaPathPointers {
             this.introspector = config.getAnnotationIntrospector();
             this.globallyReordersPositions = config.isEnabled(DeserializationFeature.ACCEPT_SINGLE_VALUE_AS_ARRAY)
                     || skipsContentNulls(config.getDefaultSetterInfo());
+            this.unwrapsSingleValueArrays = config.isEnabled(DeserializationFeature.UNWRAP_SINGLE_VALUE_ARRAYS);
         }
 
         /**
@@ -327,22 +369,37 @@ public final class JakartaPathPointers {
             }
             try {
                 JavaType current = rootType == null ? null : mapper.constructType(rootType);
-                Object node = names == null ? null : normalize(document);
+                // With a projection and a document, every step is checked against the document.
+                boolean checking = names != null && document != null;
+                Object node = checking ? normalize(document) : null;
                 // Set by the property just resolved and kept through the positions below it.
                 Set<String> ignoredByHolder = Set.of();
                 boolean holderReordersPositions = false;
+                Typing holderTyping = Typing.PLAIN;
+                List<Segment> segments = path.segments();
+                int count = segments.size();
                 int emitted = 0;
-                for (Segment segment : path.segments()) {
+                for (int i = 0; i < count; i++) {
                     if (emitted >= MAX_SEGMENTS) {
                         break;
                     }
+                    Segment segment = segments.get(i);
                     current = unwrapReferences(current);
                     if (current == null) {
                         break;
                     }
                     String token;
                     if (segment instanceof Property property) {
-                        Step step = property(current, property, node, ignoredByHolder);
+                        Typing typing = typing(current, holderTyping, i > 0);
+                        if (typing == Typing.MOVING) {
+                            // The value's members are not where its own names would put them.
+                            break;
+                        }
+                        if (checking && !(node instanceof Map)) {
+                            // A member exists only inside an object the document holds here.
+                            break;
+                        }
+                        Step step = property(current, typing, property, node, ignoredByHolder, i == count - 1);
                         if (step == null) {
                             break;
                         }
@@ -351,13 +408,24 @@ public final class JakartaPathPointers {
                         node = step.node();
                         ignoredByHolder = step.ignoredBelow();
                         holderReordersPositions = step.reordersPositions();
+                        holderTyping = step.heldTyping();
                     } else if (segment instanceof Index index
                             && isSequence(current)
                             && !holderReordersPositions
-                            && !reordersPositions(current)) {
+                            && !reordersPositions(current)
+                            && typing(unwrapReferences(current.getContentType()), holderTyping, true)
+                                    != Typing.MOVING) {
+                        if (checking) {
+                            // The position must exist in the document; a null element is present.
+                            if (!(node instanceof List<?> list)
+                                    || !(list instanceof RandomAccess)
+                                    || index.index() >= list.size()) {
+                                break;
+                            }
+                            node = normalize(list.get(index.index()));
+                        }
                         token = Integer.toString(index.index());
                         current = current.getContentType();
-                        node = element(node, index.index());
                     } else {
                         // An opaque marker, a position on a non-sequence or on a sequence whose bound
                         // positions may differ from the document's, or an unknown segment kind.
@@ -381,26 +449,36 @@ public final class JakartaPathPointers {
          * @param node              the document node at the property, or {@code null}
          * @param ignoredBelow      the names the property ignores in the bean it holds
          * @param reordersPositions whether the property's binding may move list positions
+         * @param heldTyping        the type information the property declares for the value it holds
          */
         private record Step(
                 String wireName,
                 @Nullable JavaType type,
                 @Nullable Object node,
                 Set<String> ignoredBelow,
-                boolean reordersPositions) {}
+                boolean reordersPositions,
+                Typing heldTyping) {}
 
         /**
          * Resolves one property against its owner, or returns {@code null} when it cannot be verified.
          *
          * @param declared        the declared type at this position
+         * @param typing          the type information that applies at this position; never moving
          * @param property        the property segment
-         * @param node            the document node at this position, or {@code null}
+         * @param node            the document node at this position, or {@code null}; an object when
+         *                        the document is checked
          * @param ignoredByHolder the names the property holding this bean ignores
+         * @param last            whether the property is the last segment of the path
          */
         @Nullable
         private Step property(
-                JavaType declared, Property property, @Nullable Object node, Set<String> ignoredByHolder) {
-            JavaType owner = owner(declared, property.ownerType());
+                JavaType declared,
+                Typing typing,
+                Property property,
+                @Nullable Object node,
+                Set<String> ignoredByHolder,
+                boolean last) {
+            JavaType owner = typing == Typing.FLAT ? polymorphicOwner(declared, property.ownerType()) : declared;
             if (owner == null || !isBeanCandidate(owner)) {
                 return null;
             }
@@ -437,6 +515,7 @@ public final class JakartaPathPointers {
                 return null;
             }
             if (!(node instanceof Map<?, ?> object)) {
+                // A projection without a document: the primary wire name, as the mapper reads it.
                 return fieldOnly ? null : step(primary, definition, facts, null);
             }
             Set<String> matches = declaredKeys(ownerClass, definition, object);
@@ -444,7 +523,9 @@ public final class JakartaPathPointers {
                 return null;
             }
             if (matches.isEmpty()) {
-                return fieldOnly ? null : step(primary, definition, facts, null);
+                // An omitted member is named only as the last segment, and only when the violated
+                // property itself is written through a setter or a creator parameter.
+                return last && !fieldOnly ? missingLeaf(primary) : null;
             }
             String sent = matches.iterator().next();
             return step(sent, definition, facts, normalize(object.get(sent)));
@@ -455,7 +536,106 @@ public final class JakartaPathPointers {
                 String wireName, BeanPropertyDefinition definition, PropertyFacts facts, @Nullable Object node) {
             JavaType type = facts.terminal() ? null : definition.getPrimaryType();
             return new Step(
-                    wireName, type, facts.terminal() ? null : node, facts.ignoredBelow(), facts.reordersPositions());
+                    wireName,
+                    type,
+                    facts.terminal() ? null : node,
+                    facts.ignoredBelow(),
+                    facts.reordersPositions(),
+                    facts.heldTyping());
+        }
+
+        /** The step naming an omitted member; nothing below it exists. */
+        private static Step missingLeaf(String wireName) {
+            return new Step(wireName, null, null, Set.of(), false, Typing.PLAIN);
+        }
+
+        /**
+         * The type information that applies at a value position: what the property holding the value
+         * declares for it, combined with what the declared type's class declares. Type information that
+         * moves the value's members (a wrapper object or array, object identity, a default typer)
+         * wins over flat type information. When the mapper unwraps single-element arrays, a bean held
+         * by a property or a list position may be sent inside an array, so it counts as moved too.
+         *
+         * @param type       the declared type at the position, or {@code null}
+         * @param held       the type information the holding property declares
+         * @param heldByStep whether a property or a list position holds the value (not the root)
+         */
+        private Typing typing(@Nullable JavaType type, Typing held, boolean heldByStep) {
+            if (type == null) {
+                return held;
+            }
+            Typing own = classTyping(type);
+            if (held == Typing.MOVING || own == Typing.MOVING) {
+                return Typing.MOVING;
+            }
+            if (heldByStep && unwrapsSingleValueArrays && isBeanCandidate(type)) {
+                return Typing.MOVING;
+            }
+            return held == Typing.FLAT || own == Typing.FLAT ? Typing.FLAT : Typing.PLAIN;
+        }
+
+        /** What a type's class declares about type information, computed once per session. */
+        private Typing classTyping(JavaType type) {
+            Typing typing = typings.get(type);
+            if (typing == null) {
+                try {
+                    AnnotatedClass classInfo =
+                            config.introspectClassAnnotations(type).getClassInfo();
+                    typing = combine(
+                            typingOf(introspector.findPolymorphicTypeInfo(config, classInfo)),
+                            introspector.findObjectIdInfo(classInfo) != null);
+                    if (typing == Typing.PLAIN && config.getDefaultTyper(type) != null) {
+                        typing = Typing.MOVING;
+                    }
+                } catch (RuntimeException | StackOverflowError e) {
+                    typing = Typing.MOVING;
+                }
+                typings.put(type, typing);
+            }
+            return typing;
+        }
+
+        /**
+         * The runtime owner class under flat type information: used when it is assignable to the
+         * declared base and, with a projection, the projection lists it among the base's subtypes or
+         * cannot enumerate them; otherwise the declared base.
+         */
+        private JavaType polymorphicOwner(JavaType declared, @Nullable Class<?> ownerType) {
+            Class<?> raw = declared.getRawClass();
+            if (ownerType == null
+                    || ownerType == raw
+                    || !raw.isAssignableFrom(ownerType)
+                    || !isListedSubtype(raw, ownerType)) {
+                return declared;
+            }
+            return mapper.getTypeFactory().constructSpecializedType(declared, ownerType);
+        }
+
+        /**
+         * Whether the projection lets a runtime class stand for a polymorphic base: its subtypes of
+         * the base are empty (it cannot enumerate them) or contain the class. Without a projection,
+         * any assignable class may. A failed projection call answers {@code false}.
+         */
+        private boolean isListedSubtype(Class<?> base, Class<?> runtime) {
+            if (names == null) {
+                return true;
+            }
+            Object memo = subtypes.get(base);
+            if (memo == null) {
+                memo = UNRESOLVED;
+                if (!failedProjections.contains(base)) {
+                    try {
+                        Set<Class<?>> listed = names.polymorphicSubtypes(base);
+                        if (listed != null) {
+                            memo = Set.copyOf(listed);
+                        }
+                    } catch (RuntimeException e) {
+                        failedProjections.add(base);
+                    }
+                }
+                subtypes.put(base, memo);
+            }
+            return memo instanceof Set<?> listed && (listed.isEmpty() || listed.contains(runtime));
         }
 
         /** Whether a name list holds the property's wire name or its Java name. */
@@ -527,7 +707,7 @@ public final class JakartaPathPointers {
          */
         @Nullable
         private Set<String> declaredKeys(Class<?> ownerClass, BeanPropertyDefinition definition, Map<?, ?> object) {
-            Map<String, List<String>> index = keyIndexes.computeIfAbsent(object, this::indexKeys);
+            KeyIndex index = keyIndexes.computeIfAbsent(object, this::indexKeys);
             List<String> spellings = new ArrayList<>(2);
             spellings.add(definition.getName());
             List<PropertyName> aliases = definition.findAliases();
@@ -540,7 +720,7 @@ public final class JakartaPathPointers {
             }
             Set<String> matches = new LinkedHashSet<>();
             for (String spelling : spellings) {
-                List<String> keys = index.get(foldsCase ? fold(spelling) : spelling);
+                List<String> keys = index.bySpelling().get(foldsCase ? fold(spelling) : spelling);
                 if (keys == null) {
                     continue;
                 }
@@ -548,7 +728,7 @@ public final class JakartaPathPointers {
                     if (matches.contains(key)) {
                         continue;
                     }
-                    String logical = logicalName(ownerClass, key);
+                    String logical = logicalName(ownerClass, key, index);
                     if (logical == null) {
                         return null;
                     }
@@ -561,25 +741,41 @@ public final class JakartaPathPointers {
         }
 
         /** Groups a document object's string keys by their spelling, case-folded when the mapper folds. */
-        private Map<String, List<String>> indexKeys(Map<?, ?> object) {
-            Map<String, List<String>> index = new HashMap<>();
+        private KeyIndex indexKeys(Map<?, ?> object) {
+            Map<String, List<String>> bySpelling = new HashMap<>();
             for (Object key : object.keySet()) {
                 if (key instanceof String text) {
-                    index.computeIfAbsent(foldsCase ? fold(text) : text, ignored -> new ArrayList<>(1))
+                    bySpelling
+                            .computeIfAbsent(foldsCase ? fold(text) : text, ignored -> new ArrayList<>(1))
                             .add(text);
                 }
             }
-            return index;
+            return new KeyIndex(bySpelling, new HashMap<>());
         }
 
-        /** The projection's logical name for a key, or {@code null} when the projection failed. */
+        /**
+         * The projection's logical name for a key of one document object, asked once per object,
+         * owner class and key in this session; {@code null} when the projection failed.
+         */
         @Nullable
-        private String logicalName(Class<?> ownerClass, String key) {
+        private String logicalName(Class<?> ownerClass, String key, KeyIndex index) {
             if (names == null || failedProjections.contains(ownerClass)) {
                 return null;
             }
+            Map<String, String> answers = index.logicalNames().computeIfAbsent(ownerClass, ignored -> new HashMap<>());
+            String memo = answers.get(key);
+            if (memo != null) {
+                return memo;
+            }
             try {
-                return names.logicalName(ownerClass, key);
+                String logical = names.logicalName(ownerClass, key);
+                if (logical == null) {
+                    // A projection that cannot answer is treated like one that failed.
+                    failedProjections.add(ownerClass);
+                } else {
+                    answers.put(key, logical);
+                }
+                return logical;
             } catch (RuntimeException e) {
                 failedProjections.add(ownerClass);
                 return null;
@@ -752,7 +948,16 @@ public final class JakartaPathPointers {
                             config.getConfigOverride(declared.getRawClass()).getSetterInfo())
                     || acceptsSingleValue(config.getDefaultPropertyFormat(declared.getRawClass()));
             Set<String> ignoredBelow = new HashSet<>();
+            Typing heldTyping = Typing.PLAIN;
             for (AnnotatedMember member : members) {
+                Typing memberTyping = combine(
+                        typingOf(introspector.findPolymorphicTypeInfo(config, member)),
+                        introspector.findObjectIdInfo(member) != null);
+                if (memberTyping == Typing.MOVING || heldTyping == Typing.MOVING) {
+                    heldTyping = Typing.MOVING;
+                } else if (memberTyping == Typing.FLAT) {
+                    heldTyping = Typing.FLAT;
+                }
                 collected |= introspector.findUnwrappingNameTransformer(member) != null;
                 JsonFormat.Value format = introspector.findFormat(member);
                 terminal |= introspector.findDeserializer(member) != null
@@ -764,7 +969,7 @@ public final class JakartaPathPointers {
                 reorders |= skipsContentNulls(introspector.findSetterInfo(member)) || acceptsSingleValue(format);
                 addIgnoredForInput(ignoredBelow, introspector.findPropertyIgnoralByName(config, member));
             }
-            return new PropertyFacts(binding, collected, terminal, reorders, Set.copyOf(ignoredBelow));
+            return new PropertyFacts(binding, collected, terminal, reorders, Set.copyOf(ignoredBelow), heldTyping);
         }
 
         /** Whether the member's annotations bind a type other than the declared one. */
@@ -782,20 +987,62 @@ public final class JakartaPathPointers {
                 into.addAll(ignoral.findIgnoredForDeserialization());
             }
         }
-
-        /**
-         * The type that hosts a property: the runtime owner class when it is assignable to the declared
-         * type, otherwise the declared type.
-         */
-        @Nullable
-        private JavaType owner(JavaType declared, @Nullable Class<?> ownerType) {
-            Class<?> raw = declared.getRawClass();
-            if (ownerType == null || ownerType == raw || !raw.isAssignableFrom(ownerType)) {
-                return declared;
-            }
-            return mapper.getTypeFactory().constructSpecializedType(declared, ownerType);
-        }
     }
+
+    /** What the type information at a value position means for the members below it. */
+    private enum Typing {
+        /** No type information: the declared type's names apply. */
+        PLAIN,
+        /**
+         * The type id is a plain member of the value or of its holder, or the subtype is deduced from
+         * the members: the value's members sit where its own names put them, so the runtime class may
+         * name them.
+         */
+        FLAT,
+        /**
+         * The value's members are not where its own names would put them: a wrapper object or array
+         * around the value, an object id that may stand for the value, a default typer, or a
+         * single-element array the mapper unwraps. Nothing below the position is verifiable.
+         */
+        MOVING
+    }
+
+    /**
+     * Classifies one {@code @JsonTypeInfo} value and object identity. Identity moves the value; a
+     * type id that is a member or deduced is flat; any other inclusion moves the value.
+     */
+    private static Typing combine(@Nullable Typing typeInfo, boolean identity) {
+        if (identity || typeInfo == Typing.MOVING) {
+            return Typing.MOVING;
+        }
+        return typeInfo == null ? Typing.PLAIN : typeInfo;
+    }
+
+    /** The typing a {@code @JsonTypeInfo} value declares, or {@code null} when it declares none. */
+    @Nullable
+    private static Typing typingOf(@Nullable JsonTypeInfo.Value typeInfo) {
+        if (typeInfo == null || typeInfo.getIdType() == null || typeInfo.getIdType() == JsonTypeInfo.Id.NONE) {
+            return null;
+        }
+        if (typeInfo.getIdType() == JsonTypeInfo.Id.DEDUCTION) {
+            return Typing.FLAT;
+        }
+        JsonTypeInfo.As inclusion = typeInfo.getInclusionType();
+        return inclusion == JsonTypeInfo.As.PROPERTY
+                        || inclusion == JsonTypeInfo.As.EXISTING_PROPERTY
+                        || inclusion == JsonTypeInfo.As.EXTERNAL_PROPERTY
+                ? Typing.FLAT
+                : Typing.MOVING;
+    }
+
+    /**
+     * Each visited document object's keys, indexed once per session.
+     *
+     * @param bySpelling   the object's string keys grouped by their spelling, case-folded when the
+     *                     mapper folds case
+     * @param logicalNames the projection's logical name of each key asked so far, per owner class
+     */
+    private record KeyIndex(Map<String, List<String>> bySpelling, Map<Class<?>, Map<String, String>> logicalNames) {}
 
     /** How the mapper writes a property. */
     private enum Binding {
@@ -841,12 +1088,20 @@ public final class JakartaPathPointers {
      * @param reordersPositions whether its binding skips null elements or reads a single value as a
      *                          one-element sequence
      * @param ignoredBelow      the names it ignores in the bean it holds
+     * @param heldTyping        the type information it declares for the value it holds (for a list,
+     *                          its elements)
      */
     private record PropertyFacts(
-            Binding binding, boolean collected, boolean terminal, boolean reordersPositions, Set<String> ignoredBelow) {
+            Binding binding,
+            boolean collected,
+            boolean terminal,
+            boolean reordersPositions,
+            Set<String> ignoredBelow,
+            Typing heldTyping) {
 
         /** The facts of a property that cannot be read: never emitted. */
-        static final PropertyFacts UNREADABLE = new PropertyFacts(Binding.NONE, true, true, true, Set.of());
+        static final PropertyFacts UNREADABLE =
+                new PropertyFacts(Binding.NONE, true, true, true, Set.of(), Typing.MOVING);
     }
 
     private static boolean isArrayShape(@Nullable JsonFormat.Value format) {
@@ -1023,15 +1278,6 @@ public final class JakartaPathPointers {
             return array.getList();
         }
         return node;
-    }
-
-    /** The element at a position of a document array, or {@code null} when there is none. */
-    @Nullable
-    private static Object element(@Nullable Object node, int index) {
-        if (node instanceof List<?> list && index < list.size()) {
-            return normalize(list.get(index));
-        }
-        return null;
     }
 
     private static String fold(String name) {
