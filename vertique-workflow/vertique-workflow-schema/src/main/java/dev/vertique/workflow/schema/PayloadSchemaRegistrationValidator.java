@@ -30,7 +30,7 @@ import java.util.function.Supplier;
  * distinct type name is resolved once per process JSON profile: {@code void} types mean no payload and are skipped; a
  * cached type is reused; the JSON object types are described by a fixed document; any other type is loaded with the
  * validator's class loader, described by the profile's schema generator, required to be object-shaped, checked for
- * patterns that do not compile, compiled into a guarded validator and cached. The first failure ends validation and
+ * patterns that do not compile, compiled into a guarded validator, given a property order and cached. The first failure ends validation and
  * is reported as a {@link WorkflowDefinitionException}; a failure is never cached, while entries resolved before it
  * stay cached. A configuration fault, an unknown system profile, propagates unchanged.
  *
@@ -101,14 +101,18 @@ final class PayloadSchemaRegistrationValidator implements WorkflowDefinitionVali
 
     private CachedPayloadSchema build(PayloadShapeRule.Context context, Supplier<Class<?>> type) {
         JsonObject document;
+        Class<?> payloadType = null;
         if (PayloadShapeRule.isObjectByDefinition(context.typeName())) {
             document = PayloadShapeRule.objectByDefinitionDocument();
         } else {
-            document = describe(context, type.get());
+            payloadType = type.get();
+            document = describe(context, payloadType);
             PayloadShapeRule.check(document, context);
         }
         failOnUncompilablePattern(document, context);
-        return compile(document, context);
+        CachedPayloadSchema compiled = compile(document, context);
+        List<String> propertyOrder = payloadType == null ? List.of() : propertyOrder(context, payloadType, document);
+        return new CachedPayloadSchema(compiled.document(), compiled.validator(), compiled.guard(), propertyOrder);
     }
 
     private Class<?> load(PayloadShapeRule.Context context) {
@@ -122,6 +126,17 @@ final class PayloadSchemaRegistrationValidator implements WorkflowDefinitionVali
     private JsonObject describe(PayloadShapeRule.Context context, Class<?> type) {
         try {
             return generator.describe(type);
+        } catch (JsonProfileConfigurationException e) {
+            throw e;
+        } catch (RuntimeException e) {
+            String reason = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
+            throw new WorkflowDefinitionException(context.subject() + " cannot be described: " + reason, e);
+        }
+    }
+
+    private List<String> propertyOrder(PayloadShapeRule.Context context, Class<?> type, JsonObject document) {
+        try {
+            return generator.propertyOrder(type, document);
         } catch (JsonProfileConfigurationException e) {
             throw e;
         } catch (RuntimeException e) {
@@ -144,7 +159,7 @@ final class PayloadSchemaRegistrationValidator implements WorkflowDefinitionVali
                 new PatternInputGuard(PatternInputGuard.DEFAULT_MAX_CHARS, PatternInputGuard.DEFAULT_MAX_TOTAL_CHARS);
         try {
             return new CachedPayloadSchema(
-                    document, guard.compile(document, JsonSchemaValidationOptions.draft202012()), guard);
+                    document, guard.compile(document, JsonSchemaValidationOptions.draft202012()), guard, List.of());
         } catch (RuntimeException e) {
             throw new WorkflowDefinitionException(
                     context.subject() + " cannot be described: the schema cannot be compiled", e);

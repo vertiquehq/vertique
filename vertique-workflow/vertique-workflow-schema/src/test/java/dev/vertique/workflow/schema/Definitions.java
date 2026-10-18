@@ -11,7 +11,9 @@ import dev.vertique.workflow.plan.WorkflowNode;
 import dev.vertique.workflow.plan.WorkflowPlan;
 import dev.vertique.workflow.registry.CallbackId;
 import dev.vertique.workflow.registry.RegisteredWorkflowDefinition;
+import dev.vertique.workflow.schema.fixtures.ExpensePayloads;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
@@ -122,6 +124,41 @@ final class Definitions {
     }
 
     /**
+     * The expense approval definition: start payload {@code ExpenseStart}, one human task {@code review} with the
+     * decisions {@code approve} (an {@code ApprovalComment}) and {@code reject} (no payload), both leading to
+     * {@code done}.
+     *
+     * @return the definition, id {@code expense}, version 1
+     */
+    static WorkflowDefinition<State, Primary> expense() {
+        Map<String, Class<?>> decisions = new LinkedHashMap<>();
+        decisions.put("approve", ExpensePayloads.ApprovalComment.class);
+        decisions.put("reject", void.class);
+        return build(Primary.class, "expense", 1L, ExpensePayloads.ExpenseStart.class, decisions);
+    }
+
+    /**
+     * The expense definition with a second human task: {@code review} declares {@code reject} (no payload) before
+     * {@code approve}, and {@code audit} declares {@code flag} before {@code confirm}, so that neither declaration
+     * order is the alphabetical one.
+     *
+     * @return the definition, id {@code expense-audited}, version 1
+     */
+    static WorkflowDefinition<State, Primary> expenseWithAudit() {
+        return definition(Primary.class, "expense-audited", 1L, wf -> {
+            initWith(wf, ExpensePayloads.ExpenseStart.class, "review");
+            WorkflowBuilder<State>.TaskBuilder review = wf.task("review").assignToRole("reviewers");
+            review = addDecision(review, "reject", void.class, "done");
+            review = addDecision(review, "approve", ExpensePayloads.ApprovalComment.class, "audit");
+            review.build();
+            WorkflowBuilder<State>.TaskBuilder audit = wf.task("audit").assignToRole("auditors");
+            audit = addDecision(audit, "flag", ExpensePayloads.ApprovalComment.class, "done");
+            audit = addDecision(audit, "confirm", ExpensePayloads.AuditNote.class, "done");
+            audit.build().complete("done");
+        });
+    }
+
+    /**
      * Builds the definition's plan the way the registry does, without registering it.
      *
      * @param definition the definition
@@ -192,6 +229,11 @@ final class Definitions {
     private static <P> WorkflowBuilder<State>.TaskBuilder addDecision(
             WorkflowBuilder<State>.TaskBuilder task, String name, Class<P> type) {
         return task.decision(name, type).onDecision((state, payload) -> state).toStep("done");
+    }
+
+    private static <P> WorkflowBuilder<State>.TaskBuilder addDecision(
+            WorkflowBuilder<State>.TaskBuilder task, String name, Class<P> type, String nextStepId) {
+        return task.decision(name, type).onDecision((state, payload) -> state).toStep(nextStepId);
     }
 
     private static <P> void initWith(WorkflowBuilder<State> wf, Class<P> startType, String initialStep) {

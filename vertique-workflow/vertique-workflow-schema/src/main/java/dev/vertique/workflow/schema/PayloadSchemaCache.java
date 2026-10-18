@@ -35,6 +35,35 @@ final class PayloadSchemaCache {
     }
 
     /**
+     * Looks up the entry of a payload type without naming the profile.
+     *
+     * <p>A process has one effective system profile, so the read side knows only the type name. The lookup scans the
+     * entries, which are few: one per distinct payload type.
+     *
+     * @param typeName the binary class name of the payload type
+     * @return the entry, or empty when none has been computed for the type
+     * @throws IllegalStateException if entries for the type exist under more than one profile
+     */
+    Optional<CachedPayloadSchema> findByTypeName(String typeName) {
+        SchemaKey found = null;
+        CachedPayloadSchema schema = null;
+        for (Map.Entry<SchemaKey, CachedPayloadSchema> entry : entries.entrySet()) {
+            if (!entry.getKey().typeName().equals(typeName)) {
+                continue;
+            }
+            if (found != null && !found.profileId().equals(entry.getKey().profileId())) {
+                throw new IllegalStateException("payload type '" + typeName + "' has schemas under more than one"
+                        + " JSON profile ('" + found.profileId().value() + "' and '"
+                        + entry.getKey().profileId().value()
+                        + "'); a process must use a single system profile for workflow payloads");
+            }
+            found = entry.getKey();
+            schema = entry.getValue();
+        }
+        return Optional.ofNullable(schema);
+    }
+
+    /**
      * Returns the entry for {@code key}, computing and storing it first when absent.
      *
      * @param key the key

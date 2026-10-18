@@ -33,7 +33,8 @@ Good fits:
 Not in this module:
 
 - **No persistence.** Nothing is stored; the cache lives in memory and is rebuilt after a restart.
-- **No REST.** The module adds no endpoint and no HTTP surface.
+- **No REST.** The module adds no endpoint and no HTTP surface; an application exposes the descriptors
+  itself.
 
 ---
 
@@ -45,7 +46,7 @@ modules it builds on:
 | Module | Required | Why |
 |---|---|---|
 | `WorkflowCoreModule` | yes | Owns the registry that collects definition validators |
-| `WorkflowSchemaModule` | yes | Contributes the payload validator to the registry |
+| `WorkflowSchemaModule` | yes | Contributes the payload validator to the registry and binds `WorkflowPayloadSchemas` |
 | `JsonRuntimeModule` | yes | Binds `JsonMapperProfileRegistry` and `JsonConfig`, which the validator injects |
 | `ValidationModule` | optional | Binds a `jakarta.validation.Validator` so schemas reflect bean-validation constraints |
 
@@ -137,6 +138,75 @@ them. If you tuned `jaxrs.validationPatternMaxChars` for REST, that value does n
 
 ---
 
+## Reading Payload Schemas
+
+`WorkflowPayloadSchemas` is bound by `WorkflowSchemaModule`. It returns the schemas generated at
+registration as plain descriptors, so a client can render a form for a decision or a start payload
+without knowing the Java types.
+
+### Key Classes
+
+| Class | Role |
+|---|---|
+| `WorkflowPayloadSchemas` | `describe(definitionId, version)` for the whole definition; `decision(definitionId, version, stepId, decisionName)` for one decision |
+| `WorkflowDefinitionDescriptor` | Definition id and version, the start payload schema (`null` for a `void` start) and the human task steps in plan order |
+| `HumanTaskStepDescriptor` | A step id and its decisions in declaration order |
+| `DecisionDescriptor` | Decision name, the step it leads to and the payload schema (`null` for a `void` decision) |
+| `PayloadSchema` | The canonical JSON Schema document and the `propertyOrder` list |
+
+The records are immutable. `PayloadSchema.document()` returns a copy on every call, so a caller can
+modify what it receives without affecting later reads.
+
+### Property order
+
+The canonical document lists `properties` alphabetically, which is rarely the order a form should
+show. `propertyOrder` gives the presentation order:
+
+1. The properties in the order the profile's JSON mapper deserializes them, under the wire names
+   the profile publishes. This honors `@JsonPropertyOrder` and creator order; a record's components
+   come in declaration order.
+2. Then every remaining key of the document's top-level `properties`, in the document's own
+   order. Alias spellings, such as a `@JsonAlias` name, are keys of the document that the mapper
+   does not list as properties, so they follow every primary name.
+
+Each key appears exactly once. A name the mapper knows but the document does not publish is
+dropped. The list is empty for `JsonObject` and `ObjectNode` payloads, which are objects by
+definition. Only the top-level properties are ordered; nested objects keep the document's order.
+
+An any-setter does not add an entry. Its storage is not published as a property key, so it is neither
+in the document's `properties` nor in `propertyOrder`; extra keys are described through
+`additionalProperties`, not listed.
+
+### Behavior of reads
+
+- **Unknown returns empty.** An unknown definition id, version, step or decision gives
+  `Optional.empty()`. Nothing throws for a caller's mistake.
+- **No class loading on read.** Descriptors are assembled from the registry's stored plan and the
+  cache filled at registration. A read loads no class, generates nothing and touches no storage.
+- **Non-blocking and event-loop safe.** `describe` and `decision` are plain in-memory reads and may
+  run on the event loop.
+- **A missing schema is a wiring fault.** If a definition is registered but one of its payload
+  types has no cached schema, the registry was built without this module's validator. The read
+  then throws `IllegalStateException` naming the type and saying to install `WorkflowSchemaModule`
+  in the component that provides `WorkflowRegistry`.
+- **One profile per process.** Cache entries are keyed by type and profile, and a process has one
+  system profile. If entries for the same type exist under more than one profile, a read fails with
+  `IllegalStateException`.
+- **No access control.** The service reports what a definition declares. Authorize access to the
+  definition before returning a descriptor to a client.
+
+### Client path
+
+A task record carries the workflow instance id and the step id but no definition id or version, so
+a client needs two hops to reach the schema of a task's decisions:
+
+1. Read the task record and take its workflow id and step id.
+2. Query the instance through `WorkflowOperations.query`; the returned instance names the
+   definition id and the pinned definition version.
+3. Call `describe` (or `decision`) with that id and version, and pick the step.
+
+---
+
 ## Failures
 
 A rejected definition throws `WorkflowDefinitionException` and is left unresolvable, at bootstrap and
@@ -172,6 +242,8 @@ profile override; the original exception is chained as the cause. The start payl
   and an unsuitable type surfaces only when a decision is submitted.
 - **Installing it without the JSON runtime module.** The validator needs `JsonMapperProfileRegistry`
   and `JsonConfig`; the component fails to build without them.
+- **Reading descriptors without the module in the registry's component.** `describe` then throws
+  `IllegalStateException` for any definition that declares a payload type.
 - **Leaving out `ValidationModule`.** The module works without it, but the schema then ignores
   bean-validation constraints that the engine still enforces.
 - **Declaring a scalar or array payload type.** `String`, `int`, `List<X>` and single-value records

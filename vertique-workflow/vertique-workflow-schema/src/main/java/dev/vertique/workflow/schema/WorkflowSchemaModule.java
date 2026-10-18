@@ -23,10 +23,21 @@ import dev.vertique.workflow.registry.WorkflowDefinitionValidator;
  * generated schemas also reflect the constraints it reports. Install the validation module alongside so that the
  * schema and the engine's payload enforcement agree.
  *
+ * <p>It also binds {@link WorkflowPayloadSchemas}, which reads the cached schemas back as descriptors for clients.
+ *
  * <p>Registration validators run synchronously on the registering thread; call {@code activate} off the event loop.
  */
 @Module
 public abstract class WorkflowSchemaModule {
+
+    /**
+     * Binds the read access to the payload schemas of registered definitions.
+     *
+     * @param schemas the default implementation
+     * @return the service as the public interface
+     */
+    @Binds
+    abstract WorkflowPayloadSchemas payloadSchemas(DefaultWorkflowPayloadSchemas schemas);
 
     /**
      * Contributes the payload registration validator to the workflow registry.

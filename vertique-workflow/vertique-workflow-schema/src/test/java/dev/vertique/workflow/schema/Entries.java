@@ -6,6 +6,7 @@ package dev.vertique.workflow.schema;
 import dev.vertique.json.schema.validation.JsonSchemaValidationOptions;
 import dev.vertique.json.schema.validation.PatternInputGuard;
 import io.vertx.core.json.JsonObject;
+import java.util.List;
 
 /** Builds and exercises cache entries the way a read of a cached validator does: guarded, in one window. */
 final class Entries {
@@ -22,7 +23,7 @@ final class Entries {
         PatternInputGuard guard =
                 new PatternInputGuard(PatternInputGuard.DEFAULT_MAX_CHARS, PatternInputGuard.DEFAULT_MAX_TOTAL_CHARS);
         return new CachedPayloadSchema(
-                document, guard.compile(document.copy(), JsonSchemaValidationOptions.draft202012()), guard);
+                document, guard.compile(document.copy(), JsonSchemaValidationOptions.draft202012()), guard, List.of());
     }
 
     /**
