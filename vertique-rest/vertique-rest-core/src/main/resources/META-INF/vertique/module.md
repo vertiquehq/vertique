@@ -312,18 +312,40 @@ public class QuotaProblemDetail extends ProblemDetail {
 
 ```java
 public record ValidationErrorDetail(
-        String path,                        // violated field path, e.g. "email"
+        @Nullable String pointer,           // RFC 6901 JSON Pointer into the request document, e.g. "/items/0/name"
+        @Nullable String parameter,         // non-body request location, e.g. "page", "X-Token"
+        @Nullable String path,              // replaced by pointer and parameter in this release
         String detail,                      // human-readable failure description
         @Nullable String location,          // "body", "query", "header", "path", "cookie", "form", "file"
         @Nullable String type,              // classification: "required", "size", "min", "pattern", …
         @Nullable Map<String, Object> args  // constraint arguments, e.g. {"min":1,"max":100}
 ) {
+    public static ValidationErrorDetail ofPointer(String pointer, String detail) { … }
+    public static ValidationErrorDetail ofParameter(String parameter, String detail) { … }
     public static ValidationErrorDetail of(String path, String detail) { … }
+    public ValidationErrorDetail withLocation(@Nullable String location) { … }
+    public ValidationErrorDetail withType(@Nullable String type) { … }
+    public ValidationErrorDetail withArgs(@Nullable Map<String, Object> args) { … }
 }
 ```
 
-`null` components are omitted from JSON. `args` is populated for standard Jakarta constraints by the
-`ViolationArgsInspector` SPI in `dev.vertique:vertique-validation`.
+- **`pointer`** is an RFC 6901 JSON Pointer into the request document over the wire names the
+  request was bound with. `""` is a valid pointer (the whole document) and is serialized, so test
+  for presence, not truthiness. A `pointer` without a `location` is relative to the document its
+  producer validated.
+- **`parameter`** names a non-body request location (query parameter, header, path variable,
+  cookie, form field).
+- **At most one** of `pointer` and `parameter` is set; the canonical constructor throws
+  `IllegalArgumentException` when both are present, which also rejects a malformed response body
+  read on the client side. An entry carries neither when the location cannot be stated.
+- **`path`** remains for now, with the five-argument constructor and `of(path, detail)`, but is
+  replaced by `pointer` and `parameter` in this release; new code uses `ofPointer` and
+  `ofParameter`.
+- The `with…` methods return a copy that carries every other member over.
+
+`null` components are omitted from JSON and unknown members are ignored when reading. `args` is
+populated for standard Jakarta constraints by the `ViolationArgsInspector` SPI in
+`dev.vertique:vertique-validation`.
 
 ### `RestValidationException`
 
