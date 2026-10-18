@@ -14,6 +14,7 @@ import jakarta.ws.rs.CookieParam;
 import jakarta.ws.rs.QueryParam;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -198,6 +199,91 @@ class ConstraintViolationMapperTest {
     }
 
     @Test
+    @DisplayName("Should render an indexed @BeanParam list member like the unindexed field")
+    void shouldRenderIndexedBeanParamListMemberLikeField() {
+        ValidationErrorDetail plain = beanParamError("ids");
+        ValidationErrorDetail indexed = beanParamError("ids[2]");
+
+        assertEquals("id", plain.path());
+        assertEquals("query", plain.location());
+        assertEquals("id", indexed.path());
+        assertEquals("query", indexed.location());
+        assertEquals(plain, indexed);
+    }
+
+    @Test
+    @DisplayName("Should render the same entry for every position of a @BeanParam list member")
+    void shouldRenderSameEntryForEveryBeanParamPosition() {
+        ValidationErrorDetail first = beanParamError("ids[0]");
+        ValidationErrorDetail later = beanParamError("ids[7]");
+
+        assertEquals("id", first.path());
+        assertEquals("query", first.location());
+        assertEquals(first, later);
+    }
+
+    @Test
+    @DisplayName("Should keep the nested suffix of an indexed @BeanParam member")
+    void shouldKeepNestedSuffixOfIndexedBeanParamMember() {
+        ValidationErrorDetail plain = beanParamError("addresses.city");
+        ValidationErrorDetail indexed = beanParamError("addresses[0].city");
+
+        assertEquals("addr.city", plain.path());
+        assertEquals("query", plain.location());
+        assertEquals("addr.city", indexed.path());
+        assertEquals("query", indexed.location());
+        assertEquals(plain, indexed);
+    }
+
+    @Test
+    @DisplayName("Should render an unkeyed map or set marker of a @BeanParam member like the plain path")
+    void shouldRenderBeanParamOpaqueMarkerLikePlainPath() {
+        ValidationErrorDetail plainMap = beanParamError("byKey.name");
+        ValidationErrorDetail markedMap = beanParamError("byKey[].name");
+        ValidationErrorDetail plainSet = beanParamError("codes");
+        ValidationErrorDetail markedSet = beanParamError("codes[]");
+
+        assertEquals("by.name", plainMap.path());
+        assertEquals("query", plainMap.location());
+        assertEquals(plainMap, markedMap);
+        assertEquals("code", plainSet.path());
+        assertEquals("query", plainSet.location());
+        assertEquals(plainSet, markedSet);
+    }
+
+    @Test
+    @DisplayName("Should remove position markers from the suffix of a @BeanParam path too")
+    void shouldRemovePositionMarkersFromBeanParamSuffix() {
+        ValidationErrorDetail plain = beanParamError("addresses.lines.text");
+        ValidationErrorDetail marked = beanParamError("addresses[0].lines[3].text");
+
+        assertEquals("addr.lines.text", plain.path());
+        assertEquals("query", plain.location());
+        assertEquals(plain, marked);
+    }
+
+    @Test
+    @DisplayName("Should drop position markers from the fallback path of an unannotated @BeanParam member")
+    void shouldDropPositionMarkersFromBeanParamFallbackPath() {
+        ValidationErrorDetail indexed = beanParamError("unmapped[1]");
+        ValidationErrorDetail marked = beanParamError("unmapped[].x");
+
+        assertEquals(new ValidationErrorDetail("unmapped", "must be positive", null, "min", null), indexed);
+        assertEquals(new ValidationErrorDetail("unmapped.x", "must be positive", null, "min", null), marked);
+    }
+
+    private static ValidationErrorDetail beanParamError(String path) {
+        ResourceMethodMeta meta = metaWithParams(new ResourceMethodMeta.ParamMeta(
+                null, ResourceMethodMeta.ParamSource.BEAN_PARAM, CollectionParamBean.class));
+        List<ParameterViolation> violations =
+                List.of(new ParameterViolation(0, new ViolationDetail(path, "must be positive", "min", null)));
+
+        return ConstraintViolationMapper.toRestValidationException(meta, violations)
+                .errors()
+                .get(0);
+    }
+
+    @Test
     @DisplayName("Should fall back to null location for unknown parameter index")
     void shouldFallBackForUnknownIndex() {
         ResourceMethodMeta meta = metaWithParams(
@@ -265,6 +351,23 @@ class ConstraintViolationMapperTest {
 
         @QueryParam("size")
         int size;
+    }
+
+    /** POJO bean whose JAX-RS names differ from its field names and whose members are collections. */
+    static class CollectionParamBean {
+        @QueryParam("id")
+        List<Integer> ids;
+
+        @QueryParam("addr")
+        List<Object> addresses;
+
+        @QueryParam("by")
+        Map<String, Object> byKey;
+
+        @QueryParam("code")
+        Set<String> codes;
+
+        String unmapped;
     }
 
     /** Record used to test {@code @BeanParam} record-component reflection for location inference. */

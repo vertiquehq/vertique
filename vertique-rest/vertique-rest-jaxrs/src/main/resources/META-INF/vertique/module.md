@@ -1126,7 +1126,8 @@ public class UserResource {
 Violations become a 400 `ValidationProblemDetail`. Each `ValidationErrorDetail` carries an HTTP
 `location` inferred from the parameter's source — `body`, `query`, `path`, `header`, `cookie`, `form`,
 or, for a `@BeanParam`, the location of the JAX-RS annotation on the violated field or record
-component; anything else is `null`.
+component; anything else is `null`. Position markers in the validator's path (`ids[2]`,
+`byKey[].name`) are ignored when looking that field up.
 
 ```json
 {

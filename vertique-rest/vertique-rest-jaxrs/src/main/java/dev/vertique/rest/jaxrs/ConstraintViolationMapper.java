@@ -94,7 +94,9 @@ final class ConstraintViolationMapper {
      */
     private static ValidationErrorDetail resolveBeanParamDetail(
             ResourceMethodMeta.ParamMeta pm, ViolationDetail detail) {
-        String fieldName = detail.path();
+        // Position markers ("ids[2]", "byKey[].name") are not part of a declared field name; removing
+        // them keeps the lookup and its cache keyed by declared names only.
+        String fieldName = stripPositionMarkers(detail.path());
         // For nested paths like "address.city", use the first segment to find the field
         int dotIdx = fieldName.indexOf('.');
         String rootField = (dotIdx > 0) ? fieldName.substring(0, dotIdx) : fieldName;
@@ -107,7 +109,37 @@ final class ConstraintViolationMapper {
             return new ValidationErrorDetail(path, detail.message(), loc.location(), detail.type(), detail.args());
         }
         // Fallback: no JAX-RS annotation found on the field
-        return new ValidationErrorDetail(detail.path(), detail.message(), null, detail.type(), detail.args());
+        return new ValidationErrorDetail(fieldName, detail.message(), null, detail.type(), detail.args());
+    }
+
+    /**
+     * Removes every position marker group ({@code [<digits>]} and {@code []}) from a violation path,
+     * so {@code addresses[0].lines[3].text} becomes {@code addresses.lines.text}. A single linear
+     * pass; brackets that do not form a marker group are kept as they are.
+     */
+    private static String stripPositionMarkers(String path) {
+        if (path.indexOf('[') < 0) {
+            return path;
+        }
+        int length = path.length();
+        StringBuilder out = new StringBuilder(length);
+        int i = 0;
+        while (i < length) {
+            char c = path.charAt(i);
+            if (c == '[') {
+                int j = i + 1;
+                while (j < length && path.charAt(j) >= '0' && path.charAt(j) <= '9') {
+                    j++;
+                }
+                if (j < length && path.charAt(j) == ']') {
+                    i = j + 1;
+                    continue;
+                }
+            }
+            out.append(c);
+            i++;
+        }
+        return out.toString();
     }
 
     /** Pairs a parameter name (from the JAX-RS annotation value) with its HTTP location string. */

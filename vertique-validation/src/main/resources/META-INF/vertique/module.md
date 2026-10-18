@@ -150,10 +150,28 @@ index of the offending method parameter, which is what lets the REST layer map a
 HTTP location.
 
 ```java
-public record ParameterViolation(int parameterIndex, ViolationDetail detail) {}
+public record ParameterViolation(
+        int parameterIndex, ViolationDetail detail, @Nullable PropertyPath propertyPath) {}
 ```
 
 `parameterIndex` is `-1` when the index could not be determined from the violation path.
+The two-argument constructor remains and leaves `propertyPath` null.
+
+`checkParameters` and `validateParameters` report `detail.path()` relative to the parameter value
+and with positions: `items[1].name`, `lists[0][2]`, `[0].bark` for a list argument. A map entry or
+set member renders as `[]` (`byKey[].name`, `codes[]`) and the map key is never part of the path.
+A violation of the parameter value itself (a scalar parameter, a class-level constraint) has the
+empty path. `check(Object)` and `validate(...)` keep Hibernate Validator's property-path string
+unchanged.
+
+`propertyPath` is an internal framework seam for sibling framework modules, outside the Stable
+promise like `PropertyPath` itself. It holds the same path as structured segments: property names,
+list and array positions, and opaque markers for map entries and set members. A property segment
+records the runtime class of the object hosting it (a `Dog` in a `List<Animal>`), or `null` when it
+cannot be derived: a root list that is not random-access (for example a `LinkedList`), or a
+validator other than Hibernate Validator. The path never holds a map key, a set member or a value.
+It is `null`, with `detail.path()` joining the property names with dots, only if the path could not
+be converted.
 
 ### `BeanValidationException`
 
