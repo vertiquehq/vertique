@@ -1126,8 +1126,20 @@ public class UserResource {
 Violations become a 400 `ValidationProblemDetail`. Each `ValidationErrorDetail` carries an HTTP
 `location` inferred from the parameter's source — `body`, `query`, `path`, `header`, `cookie`, `form`,
 or, for a `@BeanParam`, the location of the JAX-RS annotation on the violated field or record
-component; anything else is `null`. Position markers in the validator's path (`ids[2]`,
-`byKey[].name`) are ignored when looking that field up.
+component; anything else is `null`.
+
+A violation on a `query`, `path`, `header`, `cookie` or `form` parameter is reported in `parameter`
+and never in `pointer`: the declared parameter name, followed by the leading `[n]` run of list or
+array positions at the start of the violation's path (`@QueryParam("ids") List<@Min(1) Integer>`
+reports `ids[1]`). Nothing after the first segment that is not a position is rendered, so a nested
+property, a map entry or a set member adds nothing. For a `@BeanParam`, the violated member is the
+first property of the path; the entry carries that member's JAX-RS annotation name and location,
+then the position run that follows the member (`@FormParam("tag") List<@NotBlank String> tags`
+reports `tag[0]`). Without a structured path only the name is rendered, and the validator's path text
+is never echoed. A violation that cannot be tied to a parameter — a cross-parameter or return-value
+constraint, a `@BeanParam` member without a JAX-RS annotation or with an empty annotation name, or a
+parameter that is not a request location (`@Context`, preconditions, file uploads, entity parts) —
+carries neither `parameter` nor `pointer` and no `location`, only `detail` and `type`.
 
 ```json
 {
@@ -1136,8 +1148,8 @@ component; anything else is `null`. Position markers in the validator's path (`i
   "status": 400,
   "detail": "Validation failed",
   "errors": [
-    { "path": "email", "detail": "must be a well-formed email address", "location": "query", "type": "email" },
-    { "path": "limit", "detail": "must be less than or equal to 100", "location": "query", "type": "max", "args": { "value": 100 } }
+    { "parameter": "email", "detail": "must be a well-formed email address", "location": "query", "type": "email" },
+    { "parameter": "limit", "detail": "must be less than or equal to 100", "location": "query", "type": "max", "args": { "value": 100 } }
   ]
 }
 ```
