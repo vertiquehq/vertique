@@ -18,22 +18,28 @@ import dev.vertique.workflow.definition.callbacks.StartStateMapperContributor;
 import dev.vertique.workflow.definition.callbacks.StateReducerContributor;
 import dev.vertique.workflow.definition.di.WorkflowDefinitionModule;
 import dev.vertique.workflow.definition.parser.DocumentFormat;
-import dev.vertique.workflow.definition.service.ActivationStatus;
-import dev.vertique.workflow.definition.service.CompiledDefinitionRef;
 import dev.vertique.workflow.definition.service.WorkflowDefinitionService;
 import dev.vertique.workflow.definition.source.SourceMetadata;
 import dev.vertique.workflow.di.WorkflowCoreModule;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
 import dev.vertique.workflow.exception.WorkflowDefinitionMissingException;
 import dev.vertique.workflow.registry.WorkflowRegistry;
+import dev.vertique.workflow.registry.store.DefinitionFilter;
+import dev.vertique.workflow.registry.store.DefinitionKey;
+import dev.vertique.workflow.registry.store.DefinitionStatus;
+import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
 import dev.vertique.workflow.schema.fixtures.Payloads;
 import dev.vertique.workflow.schema.fixtures.ReviewState;
 import dev.vertique.workflow.schema.fixtures.StartReview;
+import io.vertx.core.Future;
 import jakarta.inject.Singleton;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -42,6 +48,11 @@ import org.junit.jupiter.api.Test;
  * candidate exactly as it does at registration, and the failed activation can be retried.
  */
 class SchemaActivationTest {
+
+    private static final DefinitionKey REVIEW_NOTE_V1 = new DefinitionKey(null, "review-note", 1L);
+
+    private static final DefinitionFilter GLOBAL =
+            new DefinitionFilter(DefinitionFilter.TenantScope.GLOBAL, null, null);
 
     private static final String SCALAR_DECISION_MESSAGE =
             "definition 'review-note' v1 step 'review' decision 'note' payload type 'java.lang.String'"
@@ -106,14 +117,15 @@ class SchemaActivationTest {
         // Given: a stored candidate whose human task declares payloadType java.lang.String
         Platform platform = DaggerSchemaActivationTest_Platform.create();
         WorkflowDefinitionService definitions = platform.definitions();
-        definitions.load(
+        await(definitions.load(
                 document(StartReview.class.getName(), "review.init", String.class.getName()),
                 DocumentFormat.YAML,
-                metadata());
+                metadata(),
+                null));
 
         // When: it is activated
         // Then: activation fails with the registration wording and the registry does not resolve the id
-        assertThatThrownBy(() -> definitions.activate("review-note", 1L))
+        assertThatThrownBy(() -> await(definitions.activate(REVIEW_NOTE_V1)))
                 .isInstanceOf(WorkflowDefinitionException.class)
                 .hasMessage(SCALAR_DECISION_MESSAGE);
         assertThatThrownBy(() -> platform.registry().resolveCurrent("review-note"))
@@ -126,20 +138,21 @@ class SchemaActivationTest {
         // Given: a stored candidate with a scalar decision type
         Platform platform = DaggerSchemaActivationTest_Platform.create();
         WorkflowDefinitionService definitions = platform.definitions();
-        definitions.load(
+        await(definitions.load(
                 document(StartReview.class.getName(), "review.init", String.class.getName()),
                 DocumentFormat.YAML,
-                metadata());
+                metadata(),
+                null));
 
         // When: activation fails once
-        assertThatThrownBy(() -> definitions.activate("review-note", 1L))
+        assertThatThrownBy(() -> await(definitions.activate(REVIEW_NOTE_V1)))
                 .isInstanceOf(WorkflowDefinitionException.class);
 
         // Then: the candidate is still a candidate, and a second activation fails the same way
-        assertThat(definitions.list())
-                .extracting(CompiledDefinitionRef::status)
-                .containsExactly(ActivationStatus.CANDIDATE);
-        assertThatThrownBy(() -> definitions.activate("review-note", 1L))
+        assertThat(await(definitions.list(GLOBAL)))
+                .extracting(WorkflowDefinitionRecord::status)
+                .containsExactly(DefinitionStatus.CANDIDATE);
+        assertThatThrownBy(() -> await(definitions.activate(REVIEW_NOTE_V1)))
                 .isInstanceOf(WorkflowDefinitionException.class)
                 .hasMessage(SCALAR_DECISION_MESSAGE);
     }
@@ -150,13 +163,14 @@ class SchemaActivationTest {
         // Given: a stored candidate that starts with a String
         Platform platform = DaggerSchemaActivationTest_Platform.create();
         WorkflowDefinitionService definitions = platform.definitions();
-        definitions.load(
+        await(definitions.load(
                 document(String.class.getName(), "review.initFromText", Payloads.PlainRecord.class.getName()),
                 DocumentFormat.YAML,
-                metadata());
+                metadata(),
+                null));
 
         // When / Then: activation fails naming the start payload
-        assertThatThrownBy(() -> definitions.activate("review-note", 1L))
+        assertThatThrownBy(() -> await(definitions.activate(REVIEW_NOTE_V1)))
                 .isInstanceOf(WorkflowDefinitionException.class)
                 .hasMessageStartingWith("definition 'review-note' v1 start payload")
                 .hasMessageContaining("payload type 'java.lang.String' is not object-shaped (root type string)");
@@ -168,23 +182,45 @@ class SchemaActivationTest {
         // Given: a stored candidate whose decision type is a record
         Platform platform = DaggerSchemaActivationTest_Platform.create();
         WorkflowDefinitionService definitions = platform.definitions();
-        definitions.load(
+        await(definitions.load(
                 document(StartReview.class.getName(), "review.init", Payloads.PlainRecord.class.getName()),
                 DocumentFormat.YAML,
-                metadata());
+                metadata(),
+                null));
 
         // When: it is activated
-        definitions.activate("review-note", 1L);
+        await(definitions.activate(REVIEW_NOTE_V1));
 
         // Then: the registry resolves it and the service reports it active
         assertThat(platform.registry().resolveCurrent("review-note").plan().definitionVersion())
                 .isEqualTo(1L);
-        assertThat(definitions.list())
-                .extracting(CompiledDefinitionRef::status)
-                .containsExactly(ActivationStatus.ACTIVE);
+        assertThat(await(definitions.list(GLOBAL)))
+                .extracting(WorkflowDefinitionRecord::status)
+                .containsExactly(DefinitionStatus.ACTIVE);
     }
 
     // --- Helpers ---
+
+    /** Blocks until the future completes and rethrows its original failure rather than a wrapper. */
+    private static <T> T await(Future<T> future) {
+        try {
+            return future.toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS);
+        } catch (ExecutionException e) {
+            Throwable cause = e.getCause();
+            if (cause instanceof RuntimeException runtime) {
+                throw runtime;
+            }
+            if (cause instanceof Error error) {
+                throw error;
+            }
+            throw new IllegalStateException(cause);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("interrupted while awaiting a definition operation", e);
+        } catch (TimeoutException e) {
+            throw new IllegalStateException("definition operation did not complete in time", e);
+        }
+    }
 
     private static SourceMetadata metadata() {
         return new SourceMetadata("test", null, null, null, null, Instant.now());
