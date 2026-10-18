@@ -9,7 +9,10 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.params.provider.Arguments.arguments;
 
+import com.fasterxml.jackson.annotation.JsonBackReference;
 import com.fasterxml.jackson.annotation.JsonFormat;
+import com.fasterxml.jackson.annotation.JsonIgnoreType;
+import com.fasterxml.jackson.annotation.JsonManagedReference;
 import com.fasterxml.jackson.annotation.JsonSetter;
 import com.fasterxml.jackson.annotation.Nulls;
 import com.fasterxml.jackson.databind.DeserializationFeature;
@@ -93,6 +96,104 @@ class JakartaPathPointersProjectionGuardsTest {
     private static final ObjectMapper ACCEPTS_SINGLE_VALUES = JsonMapper.builder()
             .enable(DeserializationFeature.ACCEPT_SINGLE_VALUE_AS_ARRAY)
             .build();
+
+    /** Reads a one-element array where a single value is declared. */
+    private static final ObjectMapper UNWRAPS_SINGLE_VALUE_ARRAYS = JsonMapper.builder()
+            .enable(DeserializationFeature.UNWRAP_SINGLE_VALUE_ARRAYS)
+            .build();
+
+    /** Ignores undeclared members. */
+    private static final ObjectMapper TOLERANT = JsonMapper.builder()
+            .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
+            .build();
+
+    /** Never binds {@link Hidden}, through a config override; ignores undeclared members. */
+    private static final ObjectMapper HIDES_TYPE = JsonMapper.builder()
+            .withConfigOverride(Hidden.class, o -> o.setIsIgnoredType(true))
+            .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
+            .build();
+
+    // --- Ignored-type and back-reference fixtures ---
+
+    /** A type the mapper never binds, by its own annotation. */
+    @JsonIgnoreType
+    public static class Secret {
+        public String x;
+    }
+
+    /** A plain type; one mapper above never binds it, through a config override. */
+    public static class Hidden {
+        public String x;
+    }
+
+    /** Setter-bound members whose types the mapper may ignore, beside a plain member. */
+    public static class IgnoredTypes {
+        private Secret secret;
+        private Hidden hidden;
+        private String name;
+
+        public Secret getSecret() {
+            return secret;
+        }
+
+        public void setSecret(Secret secret) {
+            this.secret = secret;
+        }
+
+        public Hidden getHidden() {
+            return hidden;
+        }
+
+        public void setHidden(Hidden hidden) {
+            this.hidden = hidden;
+        }
+
+        public String getName() {
+            return name;
+        }
+
+        public void setName(String name) {
+            this.name = name;
+        }
+    }
+
+    /** The parent side of a managed and back reference pair. */
+    public static class Parent {
+        @JsonManagedReference
+        private Kid kid;
+
+        public Kid getKid() {
+            return kid;
+        }
+
+        public void setKid(Kid kid) {
+            this.kid = kid;
+        }
+    }
+
+    /** The child side: the mapper sets {@code parent} to the holder and never reads it from input. */
+    public static class Kid {
+        private String name;
+
+        @JsonBackReference
+        private Parent parent;
+
+        public String getName() {
+            return name;
+        }
+
+        public void setName(String name) {
+            this.name = name;
+        }
+
+        public Parent getParent() {
+            return parent;
+        }
+
+        public void setParent(Parent parent) {
+            this.parent = parent;
+        }
+    }
 
     // --- Collection fixtures ---
 
@@ -417,7 +518,72 @@ class JakartaPathPointersProjectionGuardsTest {
                         Review.class,
                         path(property("name", Review.class)),
                         "{\"display_name\":\"\"}",
-                        "/display_name"));
+                        "/display_name"),
+                // --- members of a type the mapper never binds, and back references, stop at their bean ---
+                arguments(
+                        "member whose type is ignored by its annotation, key present, stops at its bean",
+                        TOLERANT,
+                        IgnoredTypes.class,
+                        path(property("secret", IgnoredTypes.class)),
+                        "{\"secret\":{\"x\":\"v\"}}",
+                        ""),
+                arguments(
+                        "member whose type is ignored by its annotation, key omitted, stops at its bean",
+                        TOLERANT,
+                        IgnoredTypes.class,
+                        path(property("secret", IgnoredTypes.class)),
+                        "{}",
+                        ""),
+                arguments(
+                        "member whose type a config override ignores, key present, stops at its bean",
+                        HIDES_TYPE,
+                        IgnoredTypes.class,
+                        path(property("hidden", IgnoredTypes.class)),
+                        "{\"hidden\":{\"x\":\"v\"}}",
+                        ""),
+                arguments(
+                        "member whose type a config override ignores, key omitted, stops at its bean",
+                        HIDES_TYPE,
+                        IgnoredTypes.class,
+                        path(property("hidden", IgnoredTypes.class)),
+                        "{}",
+                        ""),
+                arguments(
+                        "setter-bound sibling of members of ignored types resolves",
+                        HIDES_TYPE,
+                        IgnoredTypes.class,
+                        path(property("name", IgnoredTypes.class)),
+                        "{\"name\":\"\"}",
+                        "/name"),
+                arguments(
+                        "back reference, key present, stops at its bean",
+                        TOLERANT,
+                        Parent.class,
+                        path(property("kid", Parent.class), property("parent", Kid.class)),
+                        "{\"kid\":{\"name\":\"a\",\"parent\":{}}}",
+                        "/kid"),
+                arguments(
+                        "back reference, key omitted, stops at its bean",
+                        TOLERANT,
+                        Parent.class,
+                        path(property("kid", Parent.class), property("parent", Kid.class)),
+                        "{\"kid\":{\"name\":\"a\"}}",
+                        "/kid"),
+                arguments(
+                        "setter-bound sibling of a back reference resolves",
+                        TOLERANT,
+                        Parent.class,
+                        path(property("kid", Parent.class), property("name", Kid.class)),
+                        "{\"kid\":{\"name\":\"\"}}",
+                        "/kid/name"),
+                // --- a bean the document holds as a one-element array stops at its property ---
+                arguments(
+                        "nested bean read from a one-element array stops at its property",
+                        UNWRAPS_SINGLE_VALUE_ARRAYS,
+                        PairHolder.class,
+                        path(property("pair", PairHolder.class), property("left", Pair.class)),
+                        "{\"pair\":[{\"left\":\"\"}]}",
+                        "/pair"));
     }
 
     @ParameterizedTest(name = "{0}")

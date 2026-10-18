@@ -436,18 +436,25 @@ class JakartaPathPointersTest {
                 arguments("map key holding a line feed", "byKey[ZZ\nKEY].name", "byKey[]"),
                 arguments("map key marker node", "byKey<K>[k1].<map key>", "byKey[]"),
                 arguments("set member marker node", "tags[].<iterable element>", "tags[]"),
-                // --- indexes and container-element markers render through the grammar ---
-                arguments("indexed property", "items[0].name", "items[0].name"),
+                // --- a key shaped like an index is indistinguishable from one: the first bracket ends it ---
+                arguments("index after a key shaped like an index", "byKey[0].ZZKEY[1].name", "byKey[]"),
+                arguments("closing bracket after a key shaped like an index", "byKey[0].ZZKEY].name", "byKey[]"),
+                // --- a string path stops at its first bracket of any kind; indexes are not rendered ---
+                arguments("indexed property", "items[0].name", "items[]"),
                 arguments(
-                        "container-element markers contribute only their index",
+                        "container-element markers stop at the first bracket",
                         "lists[0].<list element>[1].<list element>",
-                        "lists[0][1]"),
-                // --- control and line-separator characters are removed ---
-                arguments("escape character", "items[0].na\u001Bme", "items[0].name"),
-                arguments("next-line character", "items[0].na\u0085me", "items[0].name"),
-                arguments("line separator", "items[0].na\u2028me", "items[0].name"),
-                arguments("paragraph separator", "items[0].na\u2029me", "items[0].name"),
-                arguments("carriage return and line feed", "items[0].na\r\nme", "items[0].name"),
+                        "lists[]"),
+                // --- control, line-separator and format characters are removed ---
+                arguments("escape character", "items[0].na\u001Bme", "items[]"),
+                arguments("next-line character", "items[0].na\u0085me", "items[]"),
+                arguments("line separator", "items[0].na\u2028me", "items[]"),
+                arguments("paragraph separator", "items[0].na\u2029me", "items[]"),
+                arguments("carriage return and line feed", "items[0].na\r\nme", "items[]"),
+                arguments("control characters in names before a bracket", "na\u001Bme.it\u0085ems[0]", "name.items[]"),
+                arguments("right-to-left override in a name", "na\u202Eme.items", "name.items"),
+                arguments("zero-width space and isolate in names", "na\u200Bme.x\u2066y", "name.xy"),
+                arguments("format characters inside a map key", "byKey[ZZ\u202EKEY\u200B\u2066].name", "byKey[]"),
                 // --- an unclosable bracket ends the rendering ---
                 arguments("unclosable bracket", "byKey[unclosed", "byKey"),
                 // --- length ---
@@ -458,7 +465,15 @@ class JakartaPathPointersTest {
                         "structured path past an opaque marker",
                         path(property("byKey"), opaque(), property("name")),
                         "byKey[].name"),
-                arguments("structured path with indexes", path(property("lists"), index(0), index(1)), "lists[0][1]"));
+                arguments("structured path with indexes", path(property("lists"), index(0), index(1)), "lists[0][1]"),
+                arguments(
+                        "structured path with format characters in its names",
+                        path(property("na\u202Eme"), index(0), property("x\u200By\u2066z")),
+                        "name[0].xyz"),
+                arguments(
+                        "structured path with a control character in a name",
+                        path(property("items"), index(0), property("na\u001Bme")),
+                        "items[0].name"));
     }
 
     @ParameterizedTest(name = "{0}")
@@ -472,13 +487,18 @@ class JakartaPathPointersTest {
                 ? JakartaPathPointers.loggablePath(structured)
                 : JakartaPathPointers.loggablePath((String) input);
 
-        // Then: the rendering is exact, holds no key text, no control or line-separator character, and is bounded
+        // Then: the rendering is exact, holds no key text, no control, line-separator or format character, and
+        // is bounded
         assertAll(
                 () -> assertEquals(expected, rendered, "rendering for row '" + row + "'"),
                 () -> assertFalse(rendered.contains("ZZ"), "key text reached the log path"),
                 () -> assertTrue(
-                        rendered.chars().noneMatch(c -> Character.isISOControl(c) || c == 0x2028 || c == 0x2029),
-                        "a control or line-separator character reached the log path"),
+                        rendered.chars()
+                                .noneMatch(c -> Character.isISOControl(c)
+                                        || c == 0x2028
+                                        || c == 0x2029
+                                        || Character.getType(c) == Character.FORMAT),
+                        "a control, line-separator or format character reached the log path"),
                 () -> assertTrue(rendered.length() <= 512, "log path longer than 512 characters"));
     }
 }

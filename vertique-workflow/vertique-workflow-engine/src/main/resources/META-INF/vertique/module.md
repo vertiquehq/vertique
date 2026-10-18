@@ -130,9 +130,11 @@ violation:
   deserializer or converter, `@JsonDeserialize(as)`, a builder, a delegating or single-argument scalar
   creator, an array shape, an any-setter or unwrapped member), a position on anything but a list or
   array, and a position in a list that skips null elements or accepts a single value as an array. A
-  pointer may therefore be shorter than the violated location but never names a different one; a
-  deserializer installed by a registered Jackson module is not detected. The path is never a map key or
-  other caller data.
+  polymorphic value (`@JsonTypeInfo` on its type or on the holding property) ends the pointer at the
+  property holding it: the check does not know which subtype the mapper bound, and a subtype may bind
+  even an inherited member under another name. A pointer may therefore be shorter than the violated
+  location but never names a different one for the shapes the check detects; a deserializer installed
+  by a registered Jackson module is not detected. The path is never a map key or other caller data.
 - **type** is the validation module's mapped name: `size`, `required`, `min`, `max`, `pattern`, `email`.
   An unmapped constraint keeps the annotation simple name.
 - **message** is exactly what the validator produced.

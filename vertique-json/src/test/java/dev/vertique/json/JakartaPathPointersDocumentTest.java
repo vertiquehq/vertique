@@ -13,6 +13,7 @@ import static org.junit.jupiter.params.provider.Arguments.arguments;
 import com.fasterxml.jackson.annotation.JsonAlias;
 import com.fasterxml.jackson.annotation.JsonAnySetter;
 import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonFormat;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.core.JsonPointer;
 import com.fasterxml.jackson.databind.DeserializationFeature;
@@ -30,6 +31,7 @@ import io.vertx.core.json.Json;
 import java.lang.reflect.Type;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Stream;
@@ -179,6 +181,76 @@ class JakartaPathPointersDocumentTest {
     /** A record component with a non-ASCII wire name. */
     public record Unicode(@JsonProperty("名前") String name) {}
 
+    /** A setter-bound property of a class that matches member names case-insensitively. */
+    @JsonFormat(with = JsonFormat.Feature.ACCEPT_CASE_INSENSITIVE_PROPERTIES)
+    public static class CaseInsensitiveZip {
+        private String zipCode;
+
+        public String getZipCode() {
+            return zipCode;
+        }
+
+        public void setZipCode(String zipCode) {
+            this.zipCode = zipCode;
+        }
+    }
+
+    /** A renamed setter-bound property of a class that matches member names case-insensitively. */
+    @JsonFormat(with = JsonFormat.Feature.ACCEPT_CASE_INSENSITIVE_PROPERTIES)
+    public static class CaseInsensitiveRenamedZip {
+        private String zipCode;
+
+        public String getZipCode() {
+            return zipCode;
+        }
+
+        @JsonProperty("zip_code")
+        public void setZipCode(String zipCode) {
+            this.zipCode = zipCode;
+        }
+    }
+
+    /** A renamed setter-bound property of a class with the mapper's case matching. */
+    public static class RenamedZip {
+        private String zipCode;
+
+        public String getZipCode() {
+            return zipCode;
+        }
+
+        @JsonProperty("zip_code")
+        public void setZipCode(String zipCode) {
+            this.zipCode = zipCode;
+        }
+    }
+
+    /** Holds a bean whose member names its holding property matches case-insensitively. */
+    public static class CaseInsensitiveHolder {
+        private RenamedZip inner;
+
+        public RenamedZip getInner() {
+            return inner;
+        }
+
+        @JsonFormat(with = JsonFormat.Feature.ACCEPT_CASE_INSENSITIVE_PROPERTIES)
+        public void setInner(RenamedZip inner) {
+            this.inner = inner;
+        }
+    }
+
+    /** A setter-bound property whose name holds a letter that folds differently by locale. */
+    public static class Identified {
+        private String id;
+
+        public String getId() {
+            return id;
+        }
+
+        public void setId(String id) {
+            this.id = id;
+        }
+    }
+
     /** Members whose positions have no stable identity: a map entry and a set member. */
     public record Keyed(Map<String, Named> byKey, Set<String> tags) {}
 
@@ -220,6 +292,32 @@ class JakartaPathPointersDocumentTest {
 
     /** A route mapper that matches member names case-insensitively and ignores undeclared members. */
     private static final ObjectMapper FOLDS_CASE = JsonMapper.builder()
+            .enable(MapperFeature.ACCEPT_CASE_INSENSITIVE_PROPERTIES)
+            .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
+            .build();
+
+    /** A case-sensitive route mapper whose config override makes {@link Zipped} case-insensitive. */
+    private static final ObjectMapper FOLDS_CASE_FOR_ZIPPED = JsonMapper.builder()
+            .withConfigOverride(
+                    Zipped.class,
+                    o -> o.setFormat(JsonFormat.Value.empty()
+                            .withFeature(JsonFormat.Feature.ACCEPT_CASE_INSENSITIVE_PROPERTIES)))
+            .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
+            .build();
+
+    /** A case-insensitive route mapper whose config override makes {@link Zipped} case-sensitive. */
+    private static final ObjectMapper FOLDS_CASE_EXCEPT_ZIPPED = JsonMapper.builder()
+            .enable(MapperFeature.ACCEPT_CASE_INSENSITIVE_PROPERTIES)
+            .withConfigOverride(
+                    Zipped.class,
+                    o -> o.setFormat(JsonFormat.Value.empty()
+                            .withoutFeature(JsonFormat.Feature.ACCEPT_CASE_INSENSITIVE_PROPERTIES)))
+            .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
+            .build();
+
+    /** A case-insensitive route mapper that folds member names in the Turkish locale. */
+    private static final ObjectMapper FOLDS_CASE_IN_TURKISH = JsonMapper.builder()
+            .defaultLocale(Locale.forLanguageTag("tr-TR"))
             .enable(MapperFeature.ACCEPT_CASE_INSENSITIVE_PROPERTIES)
             .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
             .build();
@@ -510,6 +608,72 @@ class JakartaPathPointersDocumentTest {
                         Open.class,
                         path(property("extras", Open.class), opaque()),
                         "{\"" + HOSTILE_KEY + "\":\"x\",\"name\":\"\"}",
+                        "",
+                        PRESENT),
+                // --- case matching that differs between the route and an owner or holder: the parent ---
+                arguments(
+                        "case variant sent to a class that matches names case-insensitively",
+                        TOLERANT,
+                        CaseInsensitiveZip.class,
+                        path(property("zipCode", CaseInsensitiveZip.class)),
+                        "{\"ZIPCODE\":\"\"}",
+                        "",
+                        PRESENT),
+                arguments(
+                        "exact key sent to a class that matches names case-insensitively",
+                        TOLERANT,
+                        CaseInsensitiveZip.class,
+                        path(property("zipCode", CaseInsensitiveZip.class)),
+                        "{\"zipCode\":\"\"}",
+                        "",
+                        PRESENT),
+                arguments(
+                        "case variant sent to a class a config override makes case-insensitive",
+                        FOLDS_CASE_FOR_ZIPPED,
+                        Zipped.class,
+                        path(property("zipCode", Zipped.class)),
+                        "{\"ZIPCODE\":\"\"}",
+                        "",
+                        PRESENT),
+                arguments(
+                        "case variant sent to a class a config override makes case-sensitive",
+                        FOLDS_CASE_EXCEPT_ZIPPED,
+                        Zipped.class,
+                        path(property("zipCode", Zipped.class)),
+                        "{\"ZIPCODE\":\"\"}",
+                        "",
+                        PRESENT),
+                arguments(
+                        "case variant sent through a holding property that matches names case-insensitively",
+                        TOLERANT,
+                        CaseInsensitiveHolder.class,
+                        path(property("inner", CaseInsensitiveHolder.class), property("zipCode", RenamedZip.class)),
+                        "{\"inner\":{\"ZIP_CODE\":\"\"}}",
+                        "/inner",
+                        PRESENT),
+                arguments(
+                        "declared key and case variant sent through a holding property that matches names"
+                                + " case-insensitively",
+                        TOLERANT,
+                        CaseInsensitiveHolder.class,
+                        path(property("inner", CaseInsensitiveHolder.class), property("zipCode", RenamedZip.class)),
+                        "{\"inner\":{\"zip_code\":\"x\",\"ZIP_CODE\":\"\"}}",
+                        "/inner",
+                        PRESENT),
+                arguments(
+                        "declared key and case variant sent to a class that matches names case-insensitively",
+                        TOLERANT,
+                        CaseInsensitiveRenamedZip.class,
+                        path(property("zipCode", CaseInsensitiveRenamedZip.class)),
+                        "{\"zip_code\":\"x\",\"ZIP_CODE\":\"\"}",
+                        "",
+                        PRESENT),
+                arguments(
+                        "dotted capital sent to a route that folds names in the Turkish locale",
+                        FOLDS_CASE_IN_TURKISH,
+                        Identified.class,
+                        path(property("id", Identified.class)),
+                        "{\"ID\":\"\"}",
                         "",
                         PRESENT));
     }

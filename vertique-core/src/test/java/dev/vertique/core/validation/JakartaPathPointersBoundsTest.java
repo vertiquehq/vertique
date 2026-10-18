@@ -11,6 +11,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.core.JsonPointer;
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.MapperFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.introspect.AnnotatedClass;
 import com.fasterxml.jackson.databind.introspect.JacksonAnnotationIntrospector;
@@ -36,11 +37,13 @@ import org.junit.jupiter.api.function.Executable;
  * {@link JakartaPathPointers#MAX_SEGMENTS} segments however deep the path and the document are;
  * hostile path strings, a type whose introspection fails and a projection that fails all yield the
  * pointer verified so far; and one session asks the projection about each owner class and indexes
- * each visited document object once, however many violations it resolves.
+ * each visited document object once, however many violations it resolves, and matches an object
+ * holding many case variants of one member name in bounded work.
  *
  * <p>The projection is a counting double with the answers the Jackson-backed projection gives for the
- * plain records here: every member bound, every key its own Java name. No validator or Vert.x context
- * is required.
+ * plain records here: every member bound, every key its own Java name, or, for a route that matches
+ * names case-insensitively, every case variant of a member's name. No validator or Vert.x context is
+ * required.
  */
 class JakartaPathPointersBoundsTest {
 
@@ -64,8 +67,16 @@ class JakartaPathPointersBoundsTest {
     /** Holds the two failing types beside a well-behaved member. */
     public record Armed(Bomb bomb, Overflow overflow, String name) {}
 
+    /** A record with a long member name, sent in many case variants, beside a plain member. */
+    public record LongName(String abcdefghijklmnopqrst, String other) {}
+
     /** The route mapper of the well-behaved rows. */
     private static final ObjectMapper MAPPER = JsonMapper.builder().build();
+
+    /** A route mapper that matches member names case-insensitively. */
+    private static final ObjectMapper FOLDING = JsonMapper.builder()
+            .enable(MapperFeature.ACCEPT_CASE_INSENSITIVE_PROPERTIES)
+            .build();
 
     /** A mapper whose introspection of {@link Bomb} and {@link Overflow} fails. */
     private static final ObjectMapper FAILING_INTROSPECTION = JsonMapper.builder()
@@ -90,12 +101,19 @@ class JakartaPathPointersBoundsTest {
     static final class CountingProjection implements InputFieldNameResolver {
 
         private final Class<?> failing;
+        private final boolean foldsCase;
         final List<String> calls = new ArrayList<>();
         final Map<Class<?>, Integer> boundJavaNamesCalls = new HashMap<>();
         int logicalNameCalls;
 
         CountingProjection(Class<?> failing) {
+            this(failing, false);
+        }
+
+        /** A double for a route mapper that matches member names case-insensitively when asked. */
+        CountingProjection(Class<?> failing, boolean foldsCase) {
             this.failing = failing;
+            this.foldsCase = foldsCase;
         }
 
         private void record(String method, Class<?> ownerType) {
@@ -109,6 +127,13 @@ class JakartaPathPointersBoundsTest {
         public String logicalName(Class<?> ownerType, String wireName) {
             logicalNameCalls++;
             record("logicalName", ownerType);
+            if (foldsCase && ownerType.isRecord()) {
+                for (var component : ownerType.getRecordComponents()) {
+                    if (component.getName().equalsIgnoreCase(wireName)) {
+                        return component.getName();
+                    }
+                }
+            }
             return wireName;
         }
 
@@ -201,6 +226,7 @@ class JakartaPathPointersBoundsTest {
         failingIntrospection(checks);
         failingProjection(checks);
         sessionMemo(checks);
+        caseVariants(checks);
         assertAll(checks);
     }
 
@@ -414,6 +440,59 @@ class JakartaPathPointersBoundsTest {
                 names.logicalNameCalls <= 8,
                 "each visited object's keys are matched once per session; logicalName calls: "
                         + names.logicalNameCalls));
+    }
+
+    /**
+     * Many case variants of one member name in one object cost a bounded amount of matching however
+     * many violations pass through the object.
+     */
+    private static void caseVariants(List<Executable> checks) {
+        // Given: one object holding 20,000 case variants of a 20-letter member name beside a plain member,
+        // on a route that matches names case-insensitively
+        String name = "abcdefghijklmnopqrst";
+        Map<String, Object> document = new LinkedHashMap<>();
+        for (int variant = 0; variant < 20_000; variant++) {
+            document.put(caseVariant(name, variant), "");
+        }
+        document.put("other", "");
+        CountingProjection names = new CountingProjection(Void.class, true);
+        JakartaPathPointers.Resolver session = projectionSession(FOLDING, names);
+        PropertyPath variants = path(new Property(name, LongName.class));
+        PropertyPath other = path(new Property("other", LongName.class));
+
+        // When: 100 violations through that object resolve in one session
+        List<String> wrong = new ArrayList<>();
+        long started = System.nanoTime();
+        for (int i = 0; i < 100; i++) {
+            boolean onVariants = i % 2 == 0;
+            String pointer = session.toPointer(onVariants ? variants : other, LongName.class, document);
+            String expected = onVariants ? "" : "/other";
+            if (!pointer.equals(expected)) {
+                wrong.add(i + ": '" + abbreviate(pointer) + "'");
+            }
+        }
+        long elapsedMillis = (System.nanoTime() - started) / 1_000_000;
+
+        // Then: the member sent in many spellings stops at the parent, the plain member resolves, and the
+        // matching work depends neither on the number of variants nor on the number of violations
+        checks.add(() -> assertEquals(List.of(), wrong, "pointers that differ from the expected ones"));
+        checks.add(() -> assertTrue(
+                names.logicalNameCalls <= 8,
+                "matching one visited object must take a bounded number of projection lookups; logicalName calls: "
+                        + names.logicalNameCalls));
+        checks.add(() -> assertTrue(
+                elapsedMillis < 10_000, "100 violations over 20,000 case variants took " + elapsedMillis + " ms"));
+    }
+
+    /** The name with the letters whose bit is set in {@code variant} upper-cased. */
+    private static String caseVariant(String name, int variant) {
+        char[] letters = name.toCharArray();
+        for (int i = 0; i < letters.length; i++) {
+            if (((variant >> i) & 1) == 1) {
+                letters[i] = Character.toUpperCase(letters[i]);
+            }
+        }
+        return new String(letters);
     }
 
     /** Asserts that a non-root pointer names a value present in the document. */

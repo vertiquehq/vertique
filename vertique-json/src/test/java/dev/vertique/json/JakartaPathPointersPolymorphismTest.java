@@ -39,8 +39,9 @@ import org.junit.jupiter.params.provider.MethodSource;
  * <p>When the type id is a plain member of the object itself or of its holder (a type property, an
  * existing property, an external property, deduction from the members, a visible type id, a default
  * implementation), the runtime class of the bound value decides the member names, so a subtype's
- * renamed member is named as the client sent it. A runtime class the mapper's subtypes do not list
- * falls back to the declared base's names. Type information that wraps the value (a wrapper object or
+ * renamed member is named as the client sent it. A runtime class the mapper's subtypes do not list may
+ * rename even the members it inherits, so the pointer stops at the property holding the value; so does
+ * a path that records no runtime class at all. Type information that wraps the value (a wrapper object or
  * array), object identity and single-element array unwrapping move the members away from where the
  * value's own names would put them, so the pointer stops at the property holding the value.
  *
@@ -211,6 +212,72 @@ class JakartaPathPointersPolymorphismTest {
         }
     }
 
+    /**
+     * Class-name type ids with one listed subtype, where the unlisted subtype renames the member it
+     * inherits from the base.
+     */
+    @JsonTypeInfo(use = JsonTypeInfo.Id.CLASS)
+    @JsonSubTypes(@JsonSubTypes.Type(RenamingByClassName.Dog.class))
+    public abstract static class RenamingByClassName {
+        private String name;
+
+        public String getName() {
+            return name;
+        }
+
+        public void setName(String name) {
+            this.name = name;
+        }
+
+        /** The listed subtype; it keeps the base's name. */
+        public static class Dog extends RenamingByClassName {}
+
+        /** A subtype the list does not name; it binds the inherited member under another name. */
+        public static class Cat extends RenamingByClassName {
+            @Override
+            @JsonProperty("nom")
+            public String getName() {
+                return super.getName();
+            }
+
+            @Override
+            @JsonProperty("nom")
+            public void setName(String name) {
+                super.setName(name);
+            }
+        }
+    }
+
+    /** A type-property base whose listed subtype binds the inherited member under another name. */
+    @JsonTypeInfo(use = JsonTypeInfo.Id.NAME, include = JsonTypeInfo.As.PROPERTY, property = "type")
+    @JsonSubTypes(@JsonSubTypes.Type(value = ByPropertyRenaming.Dog.class, name = "dog"))
+    public abstract static class ByPropertyRenaming {
+        private String name;
+
+        public String getName() {
+            return name;
+        }
+
+        public void setName(String name) {
+            this.name = name;
+        }
+
+        /** The listed subtype; it renames the member it inherits. */
+        public static class Dog extends ByPropertyRenaming {
+            @Override
+            @JsonProperty("dog_name")
+            public String getName() {
+                return super.getName();
+            }
+
+            @Override
+            @JsonProperty("dog_name")
+            public void setName(String name) {
+                super.setName(name);
+            }
+        }
+    }
+
     /** A bean the mapper may bind from an object id reference to an earlier instance. */
     @JsonIdentityInfo(generator = ObjectIdGenerators.IntSequenceGenerator.class, property = "@id")
     public static class Pal {
@@ -279,16 +346,27 @@ class JakartaPathPointersPolymorphismTest {
     /** Holds a class-name typed value. */
     public record ClassNameHolder(ByClassName pet) {}
 
+    /** Holds a class-name typed value whose unlisted subtype renames an inherited member. */
+    public record RenamingClassNameHolder(RenamingByClassName pet) {}
+
     /** Holds an identity-bearing value and a list of them. */
     public record IdentityHolder(Pal pet, List<Pal> pets) {}
 
     /** Holds a plain value. */
     public record MuttHolder(Mutt pet) {}
 
+    /** Holds a type-property value whose subtype renames an inherited member. */
+    public record RenamingPropertyHolder(ByPropertyRenaming pet) {}
+
     // --- Mappers ---
 
     /** A route mapper with Jackson's defaults. */
     private static final ObjectMapper PLAIN = JsonMapper.builder().build();
+
+    /** A route mapper that ignores undeclared members. */
+    private static final ObjectMapper TOLERANT = JsonMapper.builder()
+            .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
+            .build();
 
     /** A route mapper that reads a one-element array where a single value is declared. */
     private static final ObjectMapper UNWRAPS_SINGLE_VALUE_ARRAYS = JsonMapper.builder()
@@ -312,6 +390,10 @@ class JakartaPathPointersPolymorphismTest {
     private static final String CAT_CLASS = ByClassName.Cat.class.getName();
 
     private static final String DOG_CLASS = ByClassName.Dog.class.getName();
+
+    private static final String RENAMING_CAT_CLASS = RenamingByClassName.Cat.class.getName();
+
+    private static final String RENAMING_DOG_CLASS = RenamingByClassName.Dog.class.getName();
 
     static Stream<Arguments> polymorphismRows() {
         return Stream.of(
@@ -395,7 +477,7 @@ class JakartaPathPointersPolymorphismTest {
                         path(property("pet", ClassNameHolder.class), property("bark", ByClassName.Dog.class)),
                         "{\"pet\":{\"@class\":\"" + DOG_CLASS + "\",\"woof\":\"\"}}",
                         "/pet/woof"),
-                // --- a runtime class the projection does not list: the declared base's names ---
+                // --- a runtime class the projection does not list: stop at the property holding the value ---
                 arguments(
                         "unlisted runtime class, member only on the subtype",
                         PLAIN,
@@ -409,8 +491,8 @@ class JakartaPathPointersPolymorphismTest {
                         ClassNameHolder.class,
                         path(property("pet", ClassNameHolder.class), property("name", ByClassName.Cat.class)),
                         "{\"pet\":{\"@class\":\"" + CAT_CLASS + "\",\"name\":\"\"}}",
-                        "/pet/name"),
-                // --- no usable runtime class: the declared base's names ---
+                        "/pet"),
+                // --- no usable runtime class: stop at the property holding the value ---
                 arguments(
                         "type property without a recorded runtime class",
                         PLAIN,
@@ -506,7 +588,74 @@ class JakartaPathPointersPolymorphismTest {
                                 property("pet", NamedWrapperArrayHolder.class),
                                 property("name", NamedByWrapperArray.Dog.class)),
                         "{\"pet\":[\"dog\",{\"name\":\"\"}]}",
-                        "/pet"));
+                        "/pet"),
+                // --- an unlisted subtype may rename an inherited member: stop at the property ---
+                arguments(
+                        "unlisted runtime class renaming an inherited member",
+                        PLAIN,
+                        RenamingClassNameHolder.class,
+                        path(
+                                property("pet", RenamingClassNameHolder.class),
+                                property("name", RenamingByClassName.Cat.class)),
+                        "{\"pet\":{\"@class\":\"" + RENAMING_CAT_CLASS + "\",\"nom\":\"\"}}",
+                        "/pet"),
+                arguments(
+                        "unlisted runtime class renaming an inherited member, base spelling also sent",
+                        TOLERANT,
+                        RenamingClassNameHolder.class,
+                        path(
+                                property("pet", RenamingClassNameHolder.class),
+                                property("name", RenamingByClassName.Cat.class)),
+                        "{\"pet\":{\"@class\":\"" + RENAMING_CAT_CLASS + "\",\"nom\":\"x\",\"name\":\"\"}}",
+                        "/pet"),
+                arguments(
+                        "listed runtime class, member declared on the base",
+                        PLAIN,
+                        RenamingClassNameHolder.class,
+                        path(
+                                property("pet", RenamingClassNameHolder.class),
+                                property("name", RenamingByClassName.Dog.class)),
+                        "{\"pet\":{\"@class\":\"" + RENAMING_DOG_CLASS + "\",\"name\":\"\"}}",
+                        "/pet/name"),
+                // --- flat type information without a recorded runtime class: stop at the property ---
+                arguments(
+                        "type property, subtype renames an inherited member, no recorded runtime class",
+                        PLAIN,
+                        RenamingPropertyHolder.class,
+                        path(property("pet", RenamingPropertyHolder.class), property("name", null)),
+                        "{\"pet\":{\"type\":\"dog\",\"dog_name\":\"\"}}",
+                        "/pet"),
+                arguments(
+                        "type property, subtype renames an inherited member, base spelling also sent, no recorded"
+                                + " runtime class",
+                        TOLERANT,
+                        RenamingPropertyHolder.class,
+                        path(property("pet", RenamingPropertyHolder.class), property("name", null)),
+                        "{\"pet\":{\"type\":\"dog\",\"dog_name\":\"x\",\"name\":\"\"}}",
+                        "/pet"),
+                arguments(
+                        "class-name type id, member declared on the base, no recorded runtime class",
+                        PLAIN,
+                        ClassNameHolder.class,
+                        path(property("pet", ClassNameHolder.class), property("name", null)),
+                        "{\"pet\":{\"@class\":\"" + DOG_CLASS + "\",\"name\":\"\"}}",
+                        "/pet"),
+                arguments(
+                        "type property, subtype renames an inherited member, listed runtime class recorded",
+                        PLAIN,
+                        RenamingPropertyHolder.class,
+                        path(
+                                property("pet", RenamingPropertyHolder.class),
+                                property("name", ByPropertyRenaming.Dog.class)),
+                        "{\"pet\":{\"type\":\"dog\",\"dog_name\":\"\"}}",
+                        "/pet/dog_name"),
+                arguments(
+                        "plain type without type information, no recorded runtime class",
+                        PLAIN,
+                        MuttHolder.class,
+                        path(property("pet", MuttHolder.class), property("bark", null)),
+                        "{\"pet\":{\"woof\":\"\"}}",
+                        "/pet/woof"));
     }
 
     @ParameterizedTest(name = "{0}")

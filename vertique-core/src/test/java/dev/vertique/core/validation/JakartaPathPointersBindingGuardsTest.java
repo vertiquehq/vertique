@@ -10,16 +10,22 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.params.provider.Arguments.arguments;
 
 import com.fasterxml.jackson.annotation.JsonAnySetter;
+import com.fasterxml.jackson.annotation.JsonBackReference;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonFormat;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.annotation.JsonIgnoreType;
+import com.fasterxml.jackson.annotation.JsonManagedReference;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.annotation.JsonPropertyOrder;
+import com.fasterxml.jackson.annotation.JsonSubTypes;
+import com.fasterxml.jackson.annotation.JsonTypeInfo;
 import com.fasterxml.jackson.annotation.JsonUnwrapped;
 import com.fasterxml.jackson.annotation.JsonValue;
 import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.databind.DeserializationContext;
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonDeserializer;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.KeyDeserializer;
@@ -35,6 +41,7 @@ import dev.vertique.core.validation.PropertyPath.Property;
 import java.io.IOException;
 import java.lang.reflect.Type;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -505,6 +512,129 @@ class JakartaPathPointersBindingGuardsTest {
     /** Holds a {@link Pair} that a config override reads from an array. */
     public record PairHolder(Pair pair) {}
 
+    /** A type the mapper never binds, by its own annotation. */
+    @JsonIgnoreType
+    public static class Secret {
+        public String x;
+    }
+
+    /** A plain type; one mapper below never binds it, through a config override. */
+    public static class Hidden {
+        public String x;
+    }
+
+    /** Setter-bound members whose types the mapper may ignore, beside a plain member. */
+    public static class IgnoredTypes {
+        private Secret secret;
+        private Hidden hidden;
+        private String name;
+
+        public Secret getSecret() {
+            return secret;
+        }
+
+        public void setSecret(Secret secret) {
+            this.secret = secret;
+        }
+
+        public Hidden getHidden() {
+            return hidden;
+        }
+
+        public void setHidden(Hidden hidden) {
+            this.hidden = hidden;
+        }
+
+        public String getName() {
+            return name;
+        }
+
+        public void setName(String name) {
+            this.name = name;
+        }
+    }
+
+    /** The parent side of a managed and back reference pair. */
+    public static class Parent {
+        @JsonManagedReference
+        private Kid kid;
+
+        public Kid getKid() {
+            return kid;
+        }
+
+        public void setKid(Kid kid) {
+            this.kid = kid;
+        }
+    }
+
+    /** The child side: the mapper sets {@code parent} to the holder and never reads it from input. */
+    public static class Kid {
+        private String name;
+
+        @JsonBackReference
+        private Parent parent;
+
+        public String getName() {
+            return name;
+        }
+
+        public void setName(String name) {
+            this.name = name;
+        }
+
+        public Parent getParent() {
+            return parent;
+        }
+
+        public void setParent(Parent parent) {
+            this.parent = parent;
+        }
+    }
+
+    /** A type-property base whose listed subtype binds the inherited member under another name. */
+    @JsonTypeInfo(use = JsonTypeInfo.Id.NAME, include = JsonTypeInfo.As.PROPERTY, property = "type")
+    @JsonSubTypes(@JsonSubTypes.Type(value = Animal.Dog.class, name = "dog"))
+    public abstract static class Animal {
+        private String name;
+
+        public String getName() {
+            return name;
+        }
+
+        public void setName(String name) {
+            this.name = name;
+        }
+
+        /** The listed subtype; it renames the member it inherits. */
+        public static class Dog extends Animal {
+            @Override
+            @JsonProperty("dog_name")
+            public String getName() {
+                return super.getName();
+            }
+
+            @Override
+            @JsonProperty("dog_name")
+            public void setName(String name) {
+                super.setName(name);
+            }
+        }
+    }
+
+    /** Holds a type-property value. */
+    public static class AnimalHolder {
+        private Animal pet;
+
+        public Animal getPet() {
+            return pet;
+        }
+
+        public void setPet(Animal pet) {
+            this.pet = pet;
+        }
+    }
+
     /** A payload member bound through a private field with a getter and no setter. */
     public static class CommentPayload {
         private String comment;
@@ -522,6 +652,30 @@ class JakartaPathPointersBindingGuardsTest {
     /** Reads {@link Pair} from a JSON array through a config override instead of an annotation. */
     private static final ObjectMapper PAIR_AS_ARRAY = JsonMapper.builder()
             .withConfigOverride(Pair.class, o -> o.setFormat(JsonFormat.Value.forShape(JsonFormat.Shape.ARRAY)))
+            .build();
+
+    /** Ignores undeclared members. */
+    private static final ObjectMapper TOLERANT = JsonMapper.builder()
+            .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
+            .build();
+
+    /** Never binds {@link Hidden}, through a config override; ignores undeclared members. */
+    private static final ObjectMapper HIDES_TYPE = JsonMapper.builder()
+            .withConfigOverride(Hidden.class, o -> o.setIsIgnoredType(true))
+            .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
+            .build();
+
+    /** Reads a single value where any collection is declared, through a config override. */
+    private static final ObjectMapper SINGLE_VALUES_FOR_COLLECTIONS = JsonMapper.builder()
+            .withConfigOverride(
+                    Collection.class,
+                    o -> o.setFormat(
+                            JsonFormat.Value.empty().withFeature(JsonFormat.Feature.ACCEPT_SINGLE_VALUE_AS_ARRAY)))
+            .build();
+
+    /** Reads a one-element array where a single value is declared. */
+    private static final ObjectMapper UNWRAPS_SINGLE_VALUE_ARRAYS = JsonMapper.builder()
+            .enable(DeserializationFeature.UNWRAP_SINGLE_VALUE_ARRAYS)
             .build();
 
     // --- Paths ---
@@ -815,7 +969,94 @@ class JakartaPathPointersBindingGuardsTest {
                         Review.class,
                         path(property("name", Review.class)),
                         "{\"display_name\":\"\"}",
-                        "/display_name"));
+                        "/display_name"),
+                // --- members of a type the mapper never binds, and back references, stop at their bean ---
+                arguments(
+                        "member whose type is ignored by its annotation stops at its bean",
+                        TOLERANT,
+                        IgnoredTypes.class,
+                        path(property("secret", IgnoredTypes.class)),
+                        "{\"secret\":{\"x\":\"v\"}}",
+                        ""),
+                arguments(
+                        "member below a type ignored by its annotation stops at the holding bean",
+                        TOLERANT,
+                        IgnoredTypes.class,
+                        path(property("secret", IgnoredTypes.class), property("x", Secret.class)),
+                        "{\"secret\":{\"x\":\"v\"}}",
+                        ""),
+                arguments(
+                        "member whose type a config override ignores stops at its bean",
+                        HIDES_TYPE,
+                        IgnoredTypes.class,
+                        path(property("hidden", IgnoredTypes.class)),
+                        "{\"hidden\":{\"x\":\"v\"}}",
+                        ""),
+                arguments(
+                        "setter-bound sibling of members of ignored types resolves",
+                        HIDES_TYPE,
+                        IgnoredTypes.class,
+                        path(property("name", IgnoredTypes.class)),
+                        "{\"name\":\"\"}",
+                        "/name"),
+                arguments(
+                        "back reference stops at its bean",
+                        TOLERANT,
+                        Parent.class,
+                        path(property("kid", Parent.class), property("parent", Kid.class)),
+                        "{\"kid\":{\"name\":\"a\",\"parent\":{}}}",
+                        "/kid"),
+                arguments(
+                        "setter-bound sibling of a back reference resolves",
+                        TOLERANT,
+                        Parent.class,
+                        path(property("kid", Parent.class), property("name", Kid.class)),
+                        "{\"kid\":{\"name\":\"\"}}",
+                        "/kid/name"),
+                // --- positions the mapper may move without a document to check them against ---
+                arguments(
+                        "single values accepted for every collection by a config override stop at the list",
+                        SINGLE_VALUES_FOR_COLLECTIONS,
+                        c,
+                        path(property("items", c), index(0), property("name", Item.class)),
+                        "{\"items\":{\"name\":\"\"}}",
+                        "/items"),
+                arguments(
+                        "root bean read from a one-element array stops at the root",
+                        UNWRAPS_SINGLE_VALUE_ARRAYS,
+                        Child.class,
+                        path(property("name", Child.class)),
+                        "[{\"name\":\"\"}]",
+                        ""),
+                arguments(
+                        "nested bean under a root that may be read from a one-element array stops at the root",
+                        UNWRAPS_SINGLE_VALUE_ARRAYS,
+                        PairHolder.class,
+                        path(property("pair", PairHolder.class), property("left", Pair.class)),
+                        "{\"pair\":[{\"left\":\"\"}]}",
+                        ""),
+                // --- flat type information: the recorded runtime class decides; without one, stop ---
+                arguments(
+                        "type property without a recorded runtime class stops at the property",
+                        PROCESS,
+                        AnimalHolder.class,
+                        path(property("pet", AnimalHolder.class), property("name", null)),
+                        "{\"pet\":{\"type\":\"dog\",\"dog_name\":\"\"}}",
+                        "/pet"),
+                arguments(
+                        "type property with the recorded runtime class renaming an inherited member resolves",
+                        PROCESS,
+                        AnimalHolder.class,
+                        path(property("pet", AnimalHolder.class), property("name", Animal.Dog.class)),
+                        "{\"pet\":{\"type\":\"dog\",\"dog_name\":\"\"}}",
+                        "/pet/dog_name"),
+                arguments(
+                        "plain type without a recorded runtime class resolves",
+                        PROCESS,
+                        PairHolder.class,
+                        path(property("pair", PairHolder.class), property("left", null)),
+                        "{\"pair\":{\"left\":\"\"}}",
+                        "/pair/left"));
     }
 
     @ParameterizedTest(name = "{0}")
@@ -836,6 +1077,26 @@ class JakartaPathPointersBindingGuardsTest {
                         "the row's document must bind with the row's mapper"),
                 () -> assertEquals(expected, pointer, "pointer for '" + shape + "'"),
                 () -> assertFalse(pointer.contains("ZZ"), "a client-chosen key reached the pointer"));
+    }
+
+    @Test
+    @DisplayName("the path-string entry point stops at a value with type information and names a plain bean's member")
+    void thePathStringEntryPointStopsAtAValueWithTypeInformation() {
+        // Given: a type-property value whose subtype renames the member it inherits, and a plain bean; a path
+        // string records no runtime class
+        String document = "{\"pet\":{\"type\":\"dog\",\"dog_name\":\"\"}}";
+
+        // When: their violation path strings are converted with the process mapper
+        String polymorphic = JakartaPathPointers.toPointer("pet.name", AnimalHolder.class, PROCESS);
+        String plain = JakartaPathPointers.toPointer("pair.left", PairHolder.class, PROCESS);
+
+        // Then: the value with type information stops at its property; the plain bean's member resolves
+        assertAll(
+                () -> assertDoesNotThrow(
+                        () -> PROCESS.readValue(document, AnimalHolder.class),
+                        "the document must bind with the process mapper"),
+                () -> assertEquals("/pet", polymorphic, "type-property value without a runtime class"),
+                () -> assertEquals("/pair/left", plain, "plain bean member"));
     }
 
     @Test
