@@ -194,7 +194,7 @@ class DeprecatedVersionAdmissionTest {
         JoinStateRepository<SqlClient> joinStates = mock();
         TimerStore<SqlClient> timerStore = mock();
         TaskStore<SqlClient> taskStore = mock();
-        SqlClient tx = mock();
+        SqlClient tx = ActiveTransactionClient.create();
 
         RuntimeWorkflow version1 = runtimeWorkflow(1, PLAN_HASH_V1);
         RuntimeWorkflow version2 = runtimeWorkflow(2, PLAN_HASH_V2);

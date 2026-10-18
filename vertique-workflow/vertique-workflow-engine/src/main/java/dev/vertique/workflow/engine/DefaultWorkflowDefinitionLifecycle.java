@@ -6,6 +6,8 @@ package dev.vertique.workflow.engine;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException;
 import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException.Reason;
+import dev.vertique.workflow.exception.WorkflowDefinitionMissingException;
+import dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowRegistry;
 import dev.vertique.workflow.registry.store.ActivationClaim;
@@ -19,6 +21,7 @@ import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
+import jakarta.annotation.Nullable;
 import jakarta.inject.Inject;
 import jakarta.inject.Provider;
 import jakarta.inject.Singleton;
@@ -36,6 +39,10 @@ import java.util.function.Supplier;
  * <p>When the outcome of a completion stays unknown, the runtime this lifecycle published is remembered per
  * key. A later activation of the same key adopts exactly that runtime, and only while the registry still holds
  * that same instance; a registration the lifecycle did not publish is never adopted or removed.
+ *
+ * <p>Every publication this lifecycle makes is attributed to its owner in {@link ManagedRegistrations}. Ordinary
+ * deprecation and retirement act only on a registration that is attributed and still held as the same instance,
+ * and refuse, before any durable change, one that is not.
  */
 @Singleton
 final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLifecycle {
@@ -43,19 +50,34 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
     private final Provider<WorkflowRegistry> registry;
     private final Set<PersistedDefinitionLoader> loaders;
     private final DefinitionApplyQueue queue;
+    private final ManagedRegistrations registrations;
     /** Runtimes this lifecycle published whose completion outcome is still unknown, by key. */
     private final ConcurrentMap<DefinitionKey, RuntimeWorkflow> uncertain = new ConcurrentHashMap<>();
+
+    /**
+     * Constructs a lifecycle with its own private attributions, for unit tests only. Production graphs inject
+     * the attributions shared with the startup step.
+     */
+    DefaultWorkflowDefinitionLifecycle(
+            Optional<WorkflowDefinitionRegistryStore> store,
+            Provider<WorkflowRegistry> registry,
+            Set<PersistedDefinitionLoader> loaders,
+            DefinitionApplyQueue queue) {
+        this(store, registry, loaders, queue, new ManagedRegistrations());
+    }
 
     @Inject
     DefaultWorkflowDefinitionLifecycle(
             Optional<WorkflowDefinitionRegistryStore> store,
             Provider<WorkflowRegistry> registry,
             Set<PersistedDefinitionLoader> loaders,
-            DefinitionApplyQueue queue) {
+            DefinitionApplyQueue queue,
+            ManagedRegistrations registrations) {
         this.store = store;
         this.registry = registry;
         this.loaders = loaders;
         this.queue = queue;
+        this.registrations = registrations;
     }
 
     @Override
@@ -77,14 +99,88 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
             if (store.isEmpty())
                 return Future.failedFuture(failure(Reason.INVALID_TRANSITION, key, "durable registry is unavailable"));
             // Commit the durable status first; only a committed status is projected onto the local registry.
-            return queue.submit(
-                    key.definitionId(), () -> commitDeprecation(key, true).compose(ignored -> {
+            return queue.submit(key.definitionId(), () -> {
+                // A registration this lifecycle did not publish is refused before the durable status changes.
+                ManagedRegistrations.Standing standing = preflight(key);
+                return commitDeprecation(key, true).compose(ignored -> {
+                    // A registration published for another owner is not this definition's to mark.
+                    if (standing != ManagedRegistrations.Standing.OTHER_OWNER)
                         registry.get().markDeprecated(key.definitionId(), key.definitionVersion());
-                        return Future.<Void>succeededFuture();
-                    }));
+                    return Future.<Void>succeededFuture();
+                });
+            });
         } catch (RuntimeException e) {
             return Future.failedFuture(e);
         }
+    }
+
+    @Override
+    public Future<Void> retire(DefinitionKey key) {
+        try {
+            Objects.requireNonNull(key, "key");
+            if (store.isEmpty())
+                return Future.failedFuture(failure(Reason.INVALID_TRANSITION, key, "durable registry is unavailable"));
+            return queue.submit(key.definitionId(), () -> retireQueued(key));
+        } catch (RuntimeException e) {
+            return Future.failedFuture(e);
+        }
+    }
+
+    /**
+     * Refuses an unattributed or replaced registration, commits the retirement, and only then removes the local
+     * registration, when it is the very instance this lifecycle published for the same owner.
+     */
+    private Future<Void> retireQueued(DefinitionKey key) {
+        preflight(key);
+        return store.orElseThrow().retire(key).compose(ignored -> {
+            WorkflowRegistry local = registry.get();
+            String id = key.definitionId();
+            long version = key.definitionVersion();
+            RuntimeWorkflow held = held(local, id, version);
+            if (registrations.classify(key.tenantKey(), id, version, held) == ManagedRegistrations.Standing.OWN) {
+                local.unregister(id, version);
+                registrations.clear(id, version, held);
+                uncertain.remove(key, held);
+            }
+            return Future.<Void>succeededFuture();
+        });
+    }
+
+    /**
+     * Classifies the local registration of the key's id and version before any durable change. A registration
+     * the lifecycle did not publish, or one that a direct registry call replaced after publication, fails as an
+     * invalid transition and stays registered; one published for another owner is only reported, never touched.
+     */
+    private ManagedRegistrations.Standing preflight(DefinitionKey key) {
+        ManagedRegistrations.Standing standing = registrations.classify(
+                key.tenantKey(),
+                key.definitionId(),
+                key.definitionVersion(),
+                held(registry.get(), key.definitionId(), key.definitionVersion()));
+        if (standing == ManagedRegistrations.Standing.UNATTRIBUTED)
+            throw failure(
+                    Reason.INVALID_TRANSITION,
+                    key,
+                    "the registered runtime was not published by the durable lifecycle for this definition");
+        return standing;
+    }
+
+    /** The runtime the registry holds for the exact id and version, or {@code null} when it holds none. */
+    private static @Nullable RuntimeWorkflow held(WorkflowRegistry local, String definitionId, long version) {
+        try {
+            return local.resolvePinned(definitionId, version);
+        } catch (WorkflowVersionPinUnavailableException | WorkflowDefinitionMissingException absent) {
+            return null;
+        }
+    }
+
+    private void attribute(Attempt attempt) {
+        if (attempt.publication != null)
+            registrations.attribute(
+                    attempt.key.tenantKey(),
+                    attempt.key.definitionId(),
+                    attempt.key.definitionVersion(),
+                    attempt.publication);
     }
 
     /** Reads the current status, then moves an active or superseded row to deprecated; already deprecated is accepted. */
@@ -182,6 +278,7 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
                             }))
                             .compose(ignored -> complete(attempt))
                             .map(ignored -> {
+                                attribute(attempt);
                                 uncertain.remove(key);
                                 return (Void) null;
                             });
@@ -211,6 +308,7 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
                 // The commit outcome remains unknown: preserve the publication for reconciliation, and
                 // remember it so a retry adopts it instead of registering the same version again.
                 uncertain.put(attempt.key, attempt.publication);
+                attribute(attempt);
                 return Future.failedFuture(original);
             }
             Optional<WorkflowDefinitionRecord> current = read.result();
@@ -219,6 +317,7 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
                                     (r.status() == DefinitionStatus.ACTIVE || r.status() == DefinitionStatus.SUPERSEDED)
                                             && r.planHash().equals(attempt.record.planHash()))
                             .isPresent()) {
+                attribute(attempt);
                 uncertain.remove(attempt.key);
                 return Future.succeededFuture();
             }
@@ -257,6 +356,8 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
                     WorkflowRegistry local = registry.get();
                     if (isRegistered(local, attempt.publication))
                         local.unregister(attempt.key.definitionId(), attempt.key.definitionVersion());
+                    registrations.clear(
+                            attempt.key.definitionId(), attempt.key.definitionVersion(), attempt.publication);
                     // Forget the runtime only once it is gone; a failed removal leaves it to be adopted by a retry.
                     uncertain.remove(attempt.key, attempt.publication);
                 } catch (RuntimeException compensation) {

@@ -289,7 +289,7 @@ class HistoryPayloadCorrelationStitchingTest {
         DurableContextPropagator propagator = TenantCtxCodec.propagator(holder);
         Harness h = buildHarness(propagator);
         var captured = captureAppendedPayload(h.history());
-        SqlClient tx = mock();
+        SqlClient tx = ActiveTransactionClient.create();
 
         WorkflowInstance inst = instanceAt(COMPLETE_STEP, WaitType.SIGNAL, "approve", WorkflowStatus.WAITING);
         when(h.instances().findById(inst.id(), tx)).thenReturn(Future.succeededFuture(Optional.of(inst)));
@@ -318,7 +318,7 @@ class HistoryPayloadCorrelationStitchingTest {
         DurableContextPropagator propagator = TenantCtxCodec.propagator(holder);
         Harness h = buildHarness(propagator);
         var captured = captureAppendedPayload(h.history());
-        SqlClient tx = mock();
+        SqlClient tx = ActiveTransactionClient.create();
 
         WorkflowInstance inst = instanceAt(COMPLETE_STEP, WaitType.SIGNAL, "approve", WorkflowStatus.WAITING);
         when(h.instances().findById(inst.id(), tx)).thenReturn(Future.succeededFuture(Optional.of(inst)));
@@ -346,7 +346,7 @@ class HistoryPayloadCorrelationStitchingTest {
         DurableContextPropagator propagator = TenantCtxCodec.propagator(holder);
         Harness h = buildHarness(propagator);
         var captured = captureAppendedPayload(h.history());
-        SqlClient tx = mock();
+        SqlClient tx = ActiveTransactionClient.create();
 
         RuntimeWorkflow rw = buildRuntimeWorkflow(stubCallbacks());
         when(h.registry().resolvePinned(DEFINITION_ID, 1L)).thenReturn(rw);
@@ -387,7 +387,7 @@ class HistoryPayloadCorrelationStitchingTest {
         JoinStateRepository<SqlClient> joinStates = mock();
         TimerStore<SqlClient> timerStore = mock();
         TaskStore<SqlClient> taskStore = mock();
-        SqlClient tx = mock();
+        SqlClient tx = ActiveTransactionClient.create();
 
         var captured = captureAppendedPayload(history);
         when(history.listRecentByInstance(any(), anyInt(), any())).thenReturn(Future.succeededFuture(List.of()));
@@ -462,7 +462,7 @@ class HistoryPayloadCorrelationStitchingTest {
         DurableContextPropagator propagator = TenantCtxCodec.propagator(holder);
         Harness h = buildHarness(propagator);
         var captured = captureAppendedPayload(h.history());
-        SqlClient tx = mock();
+        SqlClient tx = ActiveTransactionClient.create();
 
         RuntimeWorkflow rw = buildRuntimeWorkflow(stubCallbacks());
         when(h.registry().resolvePinned(DEFINITION_ID, 1L)).thenReturn(rw);
@@ -611,7 +611,7 @@ class HistoryPayloadCorrelationStitchingTest {
         DurableContextPropagator propagator = TenantCtxCodec.propagator(holder);
         Harness h = buildHarness(propagator);
         var captured = captureAppendedPayload(h.history());
-        SqlClient tx = mock();
+        SqlClient tx = ActiveTransactionClient.create();
 
         RuntimeWorkflow rw = buildBranchRuntimeWorkflow(stubCallbacks());
         when(h.registry().resolvePinned(DEFINITION_ID, 1L)).thenReturn(rw);
@@ -664,7 +664,7 @@ class HistoryPayloadCorrelationStitchingTest {
         DurableContextPropagator propagator = TenantCtxCodec.propagator(holder);
         Harness h = buildHarness(propagator);
         var captured = captureAppendedPayload(h.history());
-        SqlClient tx = mock();
+        SqlClient tx = ActiveTransactionClient.create();
 
         RuntimeWorkflow rw = buildBranchRuntimeWorkflow(stubCallbacks());
         when(h.registry().resolvePinned(DEFINITION_ID, 1L)).thenReturn(rw);
@@ -741,7 +741,7 @@ class HistoryPayloadCorrelationStitchingTest {
         DurableContextPropagator propagator = TenantCtxCodec.propagator(holder);
         Harness h = buildHarness(propagator);
         var captured = captureAppendedPayload(h.history());
-        SqlClient tx = mock();
+        SqlClient tx = ActiveTransactionClient.create();
 
         RuntimeWorkflow rw = buildBranchRuntimeWorkflow(stubCallbacks());
         when(h.registry().resolvePinned(DEFINITION_ID, 1L)).thenReturn(rw);

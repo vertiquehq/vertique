@@ -344,6 +344,115 @@ class DefaultWorkflowDefinitionLifecycleTest {
     }
 
     @Test
+    @DisplayName("deprecating over a runtime the lifecycle did not publish is refused before any store call")
+    void deprecateRefusesUnattributedRuntimeBeforeTheStore() {
+        // Given a runtime registered for the key that no attribution names, as after a direct registry call
+        DeprecationScenario scenario = new DeprecationScenario();
+        scenario.registryHolds(Mockito.mock(RuntimeWorkflow.class));
+
+        // When the definition is deprecated
+        Future<Void> result = scenario.lifecycle(new ManagedRegistrations()).deprecate(KEY);
+
+        // Then it fails as an invalid transition naming the key, and neither the store nor the registry is touched
+        assertInvalidTransition(result);
+        assertThat(scenario.events).isEmpty();
+    }
+
+    @Test
+    @DisplayName("deprecating commits durably but marks nothing when the runtime was published for another owner")
+    void deprecateLeavesRuntimePublishedForAnotherOwnerUnmarked() {
+        // Given a runtime attributed to another owner for the same id and version
+        DeprecationScenario scenario = new DeprecationScenario();
+        RuntimeWorkflow otherOwners = Mockito.mock(RuntimeWorkflow.class);
+        scenario.registryHolds(otherOwners);
+        ManagedRegistrations registrations = new ManagedRegistrations();
+        registrations.attribute("tenant-other", "wf", 1, otherOwners);
+        scenario.reads.add(Future.succeededFuture(Optional.of(row(DefinitionStatus.ACTIVE))));
+        scenario.transitions.add(Future.succeededFuture());
+
+        // When this owner's row is deprecated
+        Future<Void> result = scenario.lifecycle(registrations).deprecate(KEY);
+
+        // Then the durable transition ran, and the registry was not marked
+        assertThat(result.succeeded()).isTrue();
+        assertThat(scenario.events).containsExactly("find", "transition ACTIVE->DEPRECATED");
+    }
+
+    @Test
+    @DisplayName("deprecating marks the runtime the lifecycle published for this owner")
+    void deprecateMarksOwnPublishedRuntime() {
+        // Given a runtime attributed to this owner
+        DeprecationScenario scenario = new DeprecationScenario();
+        RuntimeWorkflow own = Mockito.mock(RuntimeWorkflow.class);
+        scenario.registryHolds(own);
+        ManagedRegistrations registrations = new ManagedRegistrations();
+        registrations.attribute(null, "wf", 1, own);
+        scenario.reads.add(Future.succeededFuture(Optional.of(row(DefinitionStatus.ACTIVE))));
+        scenario.transitions.add(Future.succeededFuture());
+
+        // When the row is deprecated
+        Future<Void> result = scenario.lifecycle(registrations).deprecate(KEY);
+
+        // Then the transition ran and the registry was marked afterwards
+        assertThat(result.succeeded()).isTrue();
+        assertThat(scenario.events).containsExactly("find", "transition ACTIVE->DEPRECATED", "mark wf 1");
+    }
+
+    @Test
+    @DisplayName("retiring over a runtime the lifecycle did not publish is refused before the store retires")
+    void retireRefusesUnattributedRuntimeBeforeTheStore() {
+        // Given a runtime registered for the key that no attribution names
+        DeprecationScenario scenario = new DeprecationScenario();
+        scenario.registryHolds(Mockito.mock(RuntimeWorkflow.class));
+        scenario.retirements.add(Future.succeededFuture());
+
+        // When the definition is retired
+        Future<Void> result = scenario.lifecycle(new ManagedRegistrations()).retire(KEY);
+
+        // Then it fails as an invalid transition naming the key, and the store and the registry are untouched
+        assertInvalidTransition(result);
+        assertThat(scenario.events).isEmpty();
+    }
+
+    @Test
+    @DisplayName("retiring commits durably but removes nothing when the runtime was published for another owner")
+    void retireLeavesRuntimePublishedForAnotherOwnerRegistered() {
+        // Given a runtime attributed to another owner for the same id and version
+        DeprecationScenario scenario = new DeprecationScenario();
+        RuntimeWorkflow otherOwners = Mockito.mock(RuntimeWorkflow.class);
+        scenario.registryHolds(otherOwners);
+        ManagedRegistrations registrations = new ManagedRegistrations();
+        registrations.attribute("tenant-other", "wf", 1, otherOwners);
+        scenario.retirements.add(Future.succeededFuture());
+
+        // When this owner's row is retired
+        Future<Void> result = scenario.lifecycle(registrations).retire(KEY);
+
+        // Then the store retired the row, and the other owner's runtime was not unregistered
+        assertThat(result.succeeded()).isTrue();
+        assertThat(scenario.events).containsExactly("retire");
+    }
+
+    @Test
+    @DisplayName("retiring removes the runtime the lifecycle published for this owner")
+    void retireRemovesOwnPublishedRuntime() {
+        // Given a runtime attributed to this owner
+        DeprecationScenario scenario = new DeprecationScenario();
+        RuntimeWorkflow own = Mockito.mock(RuntimeWorkflow.class);
+        scenario.registryHolds(own);
+        ManagedRegistrations registrations = new ManagedRegistrations();
+        registrations.attribute(null, "wf", 1, own);
+        scenario.retirements.add(Future.succeededFuture());
+
+        // When the row is retired
+        Future<Void> result = scenario.lifecycle(registrations).retire(KEY);
+
+        // Then the store retired the row, and only afterwards was the runtime unregistered
+        assertThat(result.succeeded()).isTrue();
+        assertThat(scenario.events).containsExactly("retire", "unregister wf 1");
+    }
+
+    @Test
     @DisplayName("a null key fails the returned future instead of throwing, and marks nothing")
     void failsFutureForNullKey() {
         // Given a lifecycle with a store
@@ -409,6 +518,12 @@ class DefaultWorkflowDefinitionLifecycleTest {
                 })
                 .when(registry)
                 .markDeprecated(Mockito.anyString(), Mockito.anyLong());
+        Mockito.doAnswer(invocation -> {
+                    events.add("unregister " + invocation.getArgument(0) + " " + invocation.getArgument(1));
+                    return null;
+                })
+                .when(registry)
+                .unregister(Mockito.anyString(), Mockito.anyLong());
         return registry;
     }
 
@@ -420,12 +535,28 @@ class DefaultWorkflowDefinitionLifecycleTest {
         final List<String> events = new ArrayList<>();
         final Deque<Future<Optional<WorkflowDefinitionRecord>>> reads = new ArrayDeque<>();
         final Deque<Future<Void>> transitions = new ArrayDeque<>();
+        final Deque<Future<Void>> retirements = new ArrayDeque<>();
         final List<DefinitionKey> transitionKeys = new ArrayList<>();
         private final WorkflowRegistry registry = recordingRegistry(events);
 
         DefaultWorkflowDefinitionLifecycle lifecycle() {
             return new DefaultWorkflowDefinitionLifecycle(
                     Optional.of(new ScriptedStore(this)), () -> registry, Set.of(), new DefinitionApplyQueue());
+        }
+
+        /** Builds the lifecycle over the given attributions, so a test decides who published the registration. */
+        DefaultWorkflowDefinitionLifecycle lifecycle(ManagedRegistrations registrations) {
+            return new DefaultWorkflowDefinitionLifecycle(
+                    Optional.of(new ScriptedStore(this)),
+                    () -> registry,
+                    Set.of(),
+                    new DefinitionApplyQueue(),
+                    registrations);
+        }
+
+        /** Makes the registry hold the given runtime for the test key, as a published or direct registration. */
+        void registryHolds(RuntimeWorkflow runtime) {
+            Mockito.when(registry.resolvePinned("wf", 1)).thenReturn(runtime);
         }
     }
 
@@ -491,6 +622,13 @@ class DefaultWorkflowDefinitionLifecycleTest {
         @Override
         public Future<Void> recomputeActive(String tenantKey, String definitionId) {
             throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public Future<Void> retire(DefinitionKey key) {
+            scenario.events.add("retire");
+            Future<Void> next = scenario.retirements.poll();
+            return next != null ? next : Future.failedFuture(new IllegalStateException("unscripted retirement"));
         }
     }
 
@@ -660,6 +798,11 @@ class DefaultWorkflowDefinitionLifecycleTest {
         }
 
         @Override
+        public Future<Void> retire(DefinitionKey key) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
         public Future<Void> transition(DefinitionKey key, DefinitionStatus from, DefinitionStatus to) {
             throw new UnsupportedOperationException();
         }
@@ -775,6 +918,11 @@ class DefaultWorkflowDefinitionLifecycleTest {
 
         @Override
         public Future<Void> recomputeActive(String tenantKey, String definitionId) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public Future<Void> retire(DefinitionKey key) {
             throw new UnsupportedOperationException();
         }
 

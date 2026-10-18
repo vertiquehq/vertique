@@ -117,6 +117,34 @@ the owner and the expected current status, and updates only a row still in that 
 currently accepts ACTIVE to DEPRECATED and SUPERSEDED to DEPRECATED; any other pair, a missing row or a
 changed status fails with `INVALID_TRANSITION`. It does not recompute or promote other versions.
 
+`retire(key)` moves a CANDIDATE row, or a DEPRECATED row past the cooling window (`maxStalenessSeconds`, database
+clock), to RETIRED. Its transaction always runs at READ COMMITTED, whatever the server default, so the pin count sees
+every pin committed while retirement waited for the id lock. Under the id lock it checks the row, the status, and for a
+DEPRECATED row the cooling age and then the exact-version count of RUNNING, WAITING and COMPENSATING instances (archived
+rows included), in that order; a CANDIDATE row is retired without the pin check because only a held version can be
+pinned. ACTIVE and SUPERSEDED rows cannot retire. The count scans `workflow_instances` by definition id and version while
+retirement holds the exclusive id lock and no index covers that predicate, so on a very large live instance table a
+retirement can delay new starts of that id. `PgWorkflowInstanceQueryService.countNonTerminal(definitionId, version)` exposes the same
+informational count; it is not the retirement guard.
+
+Pin admission: before `insert` creates an instance pin, `migratePinAndState` changes one, or `updateOptimistic`
+resurrects a terminal instance (FAILED retry or FAILED to COMPENSATING), the repository takes
+`pg_advisory_xact_lock_shared` on the definition id in its own statement, then reads the id's definition rows in a second
+statement. Starts share the lock, so they do not serialize each other, but a queued deprecate or retire waits for them and
+PostgreSQL queues later admissions behind that waiting writer, so long caller transactions can delay lifecycle and startup
+mutations. The caller's pin transaction must therefore end before it awaits any store-owned lifecycle call for the same
+id. At READ COMMITTED an id with no definition rows is admitted (code-first definitions have none yet); otherwise the sole
+holding owner must have the exact version and plan hash ACTIVE or SUPERSEDED, and a resurrection also accepts DEPRECATED.
+Under REPEATABLE READ or SERIALIZABLE the rows are read `FOR SHARE`, a changed row raises a serialization failure, and an id
+with no visible row is refused with `INVALID_TRANSITION` (a snapshot taken before the first row cannot tell absence from a
+newly managed id; this includes engines built by hand that skip the registry bootstrap). Every admission sets
+`SET LOCAL lock_timeout = '30000ms'`; a timeout rolls back the caller's transaction, so retry the whole caller
+transaction. In a caller-owned transaction the failure is the data-access `PessimisticLockingFailureException`
+(SQLSTATE 55P03); the retryable `WorkflowPersistenceException` carrying the id is what the engine's own runners and the
+store's lifecycle operations raise. The setting overrides a stricter `lock_timeout` configured on the role or session and
+also bounds every later lock wait of that transaction at 30 seconds until its commit or rollback. Direct callers must pass a `SqlConnection` with a pending Vert.x transaction; a pool, bare or completed
+connection, raw `BEGIN` or wrapper fails with `IllegalArgumentException` before any SQL.
+
 DOCUMENT bodies require `server_encoding = UTF8`. The adapter checks this before its first body
 read/write, caches only a successful capability result, and retries a failed lookup on the next
 operation. Metadata and CODE-only operations do not require that capability. Every source read checks

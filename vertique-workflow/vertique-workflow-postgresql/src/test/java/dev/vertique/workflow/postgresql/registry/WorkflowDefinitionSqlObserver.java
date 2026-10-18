@@ -27,6 +27,7 @@ final class WorkflowDefinitionSqlObserver {
     private final List<ObservedQuery> queries = new CopyOnWriteArrayList<>();
     private final List<String> statements = new CopyOnWriteArrayList<>();
     private final AtomicBoolean shortenDefinitionLockTimeout = new AtomicBoolean();
+    private volatile long shortenedLockTimeoutMillis = 500;
     private final java.util.concurrent.atomic.AtomicInteger shortenedDefinitionLockTimeouts =
             new java.util.concurrent.atomic.AtomicInteger();
     private final AtomicBoolean failNextEncodingLookup = new AtomicBoolean();
@@ -50,6 +51,13 @@ final class WorkflowDefinitionSqlObserver {
     }
 
     void shortenNextDefinitionLockTimeout() {
+        shortenedLockTimeoutMillis = 500;
+        shortenDefinitionLockTimeout.set(true);
+    }
+
+    /** Shortens the next definition lock timeout to the given wait, leaving time to observe the queued lock. */
+    void shortenNextDefinitionLockTimeout(long millis) {
+        shortenedLockTimeoutMillis = millis;
         shortenDefinitionLockTimeout.set(true);
     }
 
@@ -111,7 +119,8 @@ final class WorkflowDefinitionSqlObserver {
             statements.add(sql);
             if (isDefinitionLockTimeout(sql) && shortenDefinitionLockTimeout.compareAndSet(true, false)) {
                 for (int i = 0; i < forwarded.length; i++) {
-                    if (sql.equals(forwarded[i])) forwarded[i] = "SET LOCAL lock_timeout = '500ms'";
+                    if (sql.equals(forwarded[i]))
+                        forwarded[i] = "SET LOCAL lock_timeout = '" + shortenedLockTimeoutMillis + "ms'";
                 }
                 shortenedDefinitionLockTimeouts.incrementAndGet();
             }

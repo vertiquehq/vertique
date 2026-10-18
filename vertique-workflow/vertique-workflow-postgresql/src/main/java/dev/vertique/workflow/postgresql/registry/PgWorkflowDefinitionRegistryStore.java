@@ -271,6 +271,59 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
     }
 
     @Override
+    public Future<Void> retire(DefinitionKey key) {
+        return attempt(() -> {
+            Objects.requireNonNull(key, "key");
+            return mutateReadCommitted(key.definitionId(), (tx, rows) -> {
+                Row current = row(rows, key).orElseThrow(() -> invalid(key, "definition not found"));
+                String status = current.getString("status");
+                if (!"CANDIDATE".equals(status) && !"DEPRECATED".equals(status))
+                    throw invalid(key, "cannot retire status " + status);
+                // Only a deprecated version can be pinned by instances, so a candidate skips cooling and the count.
+                Future<Void> guard = "DEPRECATED".equals(status) ? guardDeprecated(tx, key) : Future.succeededFuture();
+                return guard.compose(ignored -> tx.preparedQuery(
+                                "UPDATE workflow_definitions SET status='RETIRED', status_changed_at=clock_timestamp() WHERE "
+                                        + KEY + " AND status=$4")
+                        .execute(parameters(key).addString(status))
+                        .map(updated -> {
+                            if (updated.rowCount() != 1)
+                                throw invalid(key, "expected status " + status + " but the row changed");
+                            return (Void) null;
+                        }));
+            });
+        });
+    }
+
+    /**
+     * Refuses a deprecated row that is still cooling, then one that is still pinned. Both reads run after the
+     * locks were acquired, so they see everything committed while the lock was awaited.
+     */
+    private Future<Void> guardDeprecated(SqlConnection tx, DefinitionKey key) {
+        return tx.preparedQuery(
+                        "SELECT (clock_timestamp() - status_changed_at) < ($4::bigint * interval '1 second') AS cooling FROM workflow_definitions WHERE "
+                                + KEY)
+                .execute(parameters(key).addLong(config.maxStalenessSeconds()))
+                .compose(result -> {
+                    if (result.iterator().next().getBoolean("cooling"))
+                        throw conflict(
+                                Reason.COOLING,
+                                key,
+                                "deprecated less than " + config.maxStalenessSeconds()
+                                        + " seconds ago, so it is still cooling");
+                    return tx.preparedQuery(
+                                    "SELECT count(*) AS total FROM workflow_instances WHERE definition_id = $1 AND definition_version = $2 AND status IN ('RUNNING','WAITING','COMPENSATING')")
+                            .execute(Tuple.of(key.definitionId(), key.definitionVersion()));
+                })
+                .map(result -> {
+                    long pinned = result.iterator().next().getLong("total");
+                    if (pinned > 0)
+                        throw conflict(
+                                Reason.PINNED_INSTANCES, key, "pinned by " + pinned + " non-terminal instance(s)");
+                    return (Void) null;
+                });
+    }
+
+    @Override
     public Future<Void> recomputeActive(@jakarta.annotation.Nullable String tenantKey, String definitionId) {
         return attempt(() -> {
             Objects.requireNonNull(definitionId, "definitionId");
@@ -364,12 +417,26 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
     }
 
     private <T> Future<T> mutate(String definitionId, LockedOperation<T> action) {
-        return transaction(definitionId, tx -> DefinitionIdLock.acquire(tx, definitionId)
-                .compose(ignored -> tx.preparedQuery(
-                                "SELECT " + COLUMNS
-                                        + ", activation_token, extract(epoch from (clock_timestamp() - status_changed_at)) >= ($2::numeric * 2) AS stale FROM workflow_definitions WHERE definition_id=$1 ORDER BY tenant_key NULLS FIRST, definition_version FOR UPDATE")
-                        .execute(Tuple.of(definitionId, config.maxStalenessSeconds())))
+        return transaction(definitionId, tx -> lockedRows(tx, definitionId).compose(rows -> action.apply(tx, rows)));
+    }
+
+    /**
+     * Like {@link #mutate(String, LockedOperation)}, but the transaction is first pinned to READ COMMITTED, so the
+     * reads taken after a lock wait are current whatever the server default isolation is. The isolation statement
+     * must be the first statement of the transaction, before the lock bound and the advisory lock.
+     */
+    private <T> Future<T> mutateReadCommitted(String definitionId, LockedOperation<T> action) {
+        return transaction(definitionId, tx -> tx.query("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
+                .execute()
+                .compose(ignored -> lockedRows(tx, definitionId))
                 .compose(rows -> action.apply(tx, rows)));
+    }
+
+    private Future<RowSet<Row>> lockedRows(SqlConnection tx, String definitionId) {
+        return DefinitionIdLock.acquire(tx, definitionId).compose(ignored -> tx.preparedQuery(
+                        "SELECT " + COLUMNS
+                                + ", activation_token, extract(epoch from (clock_timestamp() - status_changed_at)) >= ($2::numeric * 2) AS stale FROM workflow_definitions WHERE definition_id=$1 ORDER BY tenant_key NULLS FIRST, definition_version FOR UPDATE")
+                .execute(Tuple.of(definitionId, config.maxStalenessSeconds())));
     }
 
     private <T> Future<T> transaction(String id, Function<SqlConnection, Future<T>> action) {

@@ -547,6 +547,11 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      */
     @Override
     public Future<WorkflowInstanceId> start(StartCommand cmd, SqlClient tx) {
+        Future<WorkflowInstanceId> invalidClient = WorkflowTransactionClientGuard.reject("start", tx);
+        if (invalidClient != null) {
+            return invalidClient;
+        }
+
         RuntimeWorkflow rw;
         try {
             if (cmd.requestedDefinitionVersion() != null) {
@@ -781,6 +786,11 @@ final class WorkflowEngine implements WorkflowEngineHandle {
     @Override
     public Future<Void> signal(
             WorkflowInstanceId id, String signalName, Object payload, String signalDedupKey, SqlClient tx) {
+        Future<Void> invalidClient = WorkflowTransactionClientGuard.reject("signal", tx);
+        if (invalidClient != null) {
+            return invalidClient;
+        }
+
         // Claim before load: the workflow_dedup upsert (kind='signal') locks only its own row —
         // (kind, scope, key) is not part of the workflow_timers -> workflow_tasks ->
         // workflow_branch_tokens -> workflow_instances lock-order chain — so claiming first cannot
@@ -832,6 +842,11 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             @jakarta.annotation.Nullable String forkStepId,
             @jakarta.annotation.Nullable String branchId,
             SqlClient tx) {
+        Future<Void> invalidClient = WorkflowTransactionClientGuard.reject("signal", tx);
+        if (invalidClient != null) {
+            return invalidClient;
+        }
+
         if (forkStepId == null && branchId == null) {
             return signal(id, signalName, payload, signalDedupKey, tx);
         }
@@ -957,6 +972,11 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             @Nullable String branchId,
             @Nullable DurableMetadata signalMetadata,
             SqlClient tx) {
+        Future<Void> invalidClient = WorkflowTransactionClientGuard.reject("signal", tx);
+        if (invalidClient != null) {
+            return invalidClient;
+        }
+
         if (signalMetadata == null) {
             return signal(id, signalName, payload, signalDedupKey, forkStepId, branchId, tx);
         }
@@ -1136,6 +1156,11 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      */
     @Override
     public Future<Void> cancel(WorkflowInstanceId id, String reason, SqlClient tx) {
+        Future<Void> invalidClient = WorkflowTransactionClientGuard.reject("cancel", tx);
+        if (invalidClient != null) {
+            return invalidClient;
+        }
+
         // Non-locking read: same lock-order rationale as signal(). The optimistic UPDATE catches
         // concurrent writes; using findByIdForUpdate would invert the timers-before-instances
         // invariant and cause deadlocks under cancel-vs-fire races.
@@ -1281,6 +1306,11 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      */
     @Override
     public Future<Void> retry(WorkflowInstanceId id, SqlClient tx) {
+        Future<Void> invalidClient = WorkflowTransactionClientGuard.reject("retry", tx);
+        if (invalidClient != null) {
+            return invalidClient;
+        }
+
         // retry() keeps findByIdForUpdate (unlike signal() / cancel() which switched to non-locking
         // findById to honor the workflow_timers-before-workflow_instances lock-order invariant).
         // retry() does not touch workflow_timers — a retry only fires for FAILED instances, which
@@ -1378,6 +1408,11 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      */
     @Override
     public Future<Void> migrate(WorkflowInstanceId id, long targetVersion, SqlClient tx) {
+        Future<Void> invalidClient = WorkflowTransactionClientGuard.reject("migrate", tx);
+        if (invalidClient != null) {
+            return invalidClient;
+        }
+
         return migrationExecutor.migrate(id, targetVersion, tx);
     }
 
@@ -1420,6 +1455,11 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      */
     @Override
     public Future<TaskMutationResult> taskCompleted(TaskCompletionCommand cmd, SqlClient tx) {
+        Future<TaskMutationResult> invalidClient = WorkflowTransactionClientGuard.reject("taskCompleted", tx);
+        if (invalidClient != null) {
+            return invalidClient;
+        }
+
         return taskLifecycle.taskCompleted(cmd, tx);
     }
 
@@ -1445,6 +1485,11 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      */
     @Override
     public Future<TaskMutationResult> taskDueFired(WorkflowInstanceId workflowId, UUID taskId, SqlClient tx) {
+        Future<TaskMutationResult> invalidClient = WorkflowTransactionClientGuard.reject("taskDueFired", tx);
+        if (invalidClient != null) {
+            return invalidClient;
+        }
+
         return taskLifecycle.taskDueFired(workflowId, taskId, tx);
     }
 
@@ -1465,6 +1510,11 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      */
     @Override
     public Future<TaskMutationResult> taskReassigned(TaskReassignmentCommand cmd, SqlClient tx) {
+        Future<TaskMutationResult> invalidClient = WorkflowTransactionClientGuard.reject("taskReassigned", tx);
+        if (invalidClient != null) {
+            return invalidClient;
+        }
+
         return taskLifecycle.taskReassigned(cmd, tx);
     }
 
@@ -1486,6 +1536,11 @@ final class WorkflowEngine implements WorkflowEngineHandle {
     @Override
     public Future<Void> taskReminderFired(
             WorkflowInstanceId workflowId, UUID taskId, UUID timerId, Instant scheduledFireAt, SqlClient tx) {
+        Future<Void> invalidClient = WorkflowTransactionClientGuard.reject("taskReminderFired", tx);
+        if (invalidClient != null) {
+            return invalidClient;
+        }
+
         return taskLifecycle.taskReminderFired(workflowId, taskId, timerId, scheduledFireAt, tx);
     }
 
@@ -1511,6 +1566,11 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      */
     @Override
     public Future<TimerFiringResult> timerFired(WorkflowInstanceId workflowId, UUID timerId, SqlClient tx) {
+        Future<TimerFiringResult> invalidClient = WorkflowTransactionClientGuard.reject("timerFired", tx);
+        if (invalidClient != null) {
+            return invalidClient;
+        }
+
         return timerLifecycle.timerFired(workflowId, timerId, tx);
     }
 
@@ -1534,6 +1594,11 @@ final class WorkflowEngine implements WorkflowEngineHandle {
     @Override
     public Future<TimerFiringResult> timerFiringFailed(
             WorkflowInstanceId workflowId, UUID timerId, String errorType, String errorMessage, SqlClient tx) {
+        Future<TimerFiringResult> invalidClient = WorkflowTransactionClientGuard.reject("timerFiringFailed", tx);
+        if (invalidClient != null) {
+            return invalidClient;
+        }
+
         return timerLifecycle.timerFiringFailed(workflowId, timerId, errorType, errorMessage, tx);
     }
 

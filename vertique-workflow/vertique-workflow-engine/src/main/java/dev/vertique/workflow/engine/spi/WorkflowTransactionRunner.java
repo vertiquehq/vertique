@@ -22,6 +22,16 @@ import java.util.function.Function;
  * transaction-handle type {@code TX}; a SQL backend implements it with a dialect-specific
  * transaction handle (e.g. {@code io.vertx.sqlclient.SqlClient}).
  *
+ * <p>For the existing Vert.x SQL engine binding the handle passed to {@code work} must be an
+ * {@code io.vertx.sqlclient.SqlConnection} with a pending transaction that was begun through
+ * Vert.x, for example by {@code Pool.withTransaction}. The engine's public transaction-aware
+ * entrypoints reject any other client, namely a pool, a connection without a Vert.x transaction,
+ * a connection whose transaction has completed, a connection on which a textual {@code BEGIN} was
+ * issued, or a wrapper around a connection, by failing the returned {@link Future} with an
+ * {@link IllegalArgumentException} before any SQL is issued. A runner must therefore keep the
+ * transaction pending until the {@link Future} returned by {@code work} completes; callers of the
+ * engine must await the operation's {@link Future} before committing or rolling back.
+ *
  * @param <TX> the transaction-handle type passed to the work function
  */
 public interface WorkflowTransactionRunner<TX> {

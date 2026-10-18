@@ -15,6 +15,15 @@ import jakarta.annotation.Nullable;
  * transaction as other domain operations (e.g., persisting a signal alongside an inbox dedup
  * record). The engine performs all state mutations using the provided {@code tx} object.
  *
+ * <p>For the existing Vert.x SQL engine binding, {@code tx} must be an
+ * {@code io.vertx.sqlclient.SqlConnection} with a pending transaction that was begun through
+ * Vert.x, for example by {@code Pool.withTransaction}. A pool, a connection without a Vert.x
+ * transaction, a connection whose transaction has completed, a connection on which a textual
+ * {@code BEGIN} was issued, and a wrapper around a connection are rejected: the returned
+ * {@link Future} fails with an {@link IllegalArgumentException} before any SQL is issued. Callers
+ * must await the returned {@link Future} before committing or rolling back the transaction. This
+ * interface itself stays generic over {@code TX}.
+ *
  * @param <TX> the transaction context type (e.g., {@code SqlClient} in the PostgreSQL
  *     implementation)
  */

@@ -27,6 +27,14 @@ public interface WorkflowDefinitionService {
      * required; without one the returned future fails.
      */
     Future<Void> deprecate(DefinitionKey key);
+    /**
+     * Retires a candidate, or a deprecated definition once it has cooled and no instance is pinned to it, so it
+     * can no longer be activated or resolved. The durable status is committed first, together with the cooling
+     * and pin checks, and then projected into the local cache; a refused retirement fails typed and changes
+     * nothing. The local runtime is removed only when it is the registration published for this key's owner. A
+     * durable registry is required; without one the returned future fails.
+     */
+    Future<Void> retire(DefinitionKey key);
     /** Returns an immutable, source-free metadata snapshot in the selected scope. */
     Future<List<WorkflowDefinitionRecord>> list(DefinitionFilter filter);
     /** Returns the source attribution of a definition without reading its source body. */

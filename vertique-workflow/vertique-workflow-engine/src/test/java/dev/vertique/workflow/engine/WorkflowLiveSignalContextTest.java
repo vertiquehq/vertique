@@ -196,7 +196,7 @@ class WorkflowLiveSignalContextTest {
     void signal_liveAmbientCorrelationNoExplicitCarrier_ambientWinsAndInstanceFillsTenant(
             Vertx vertx, VertxTestContext ctx) {
         Harness h = buildHarness();
-        SqlClient tx = mock();
+        SqlClient tx = ActiveTransactionClient.create();
 
         RuntimeWorkflow rw = buildRuntimeWorkflow();
         when(h.registry().resolvePinned(DEFINITION_ID, 1L)).thenReturn(rw);

@@ -260,6 +260,9 @@ public final class ManagedDefinitionDatabase {
 
         dev.vertique.workflow.ops.WorkflowOperations workflowOperations();
 
+        dev.vertique.workflow.ops.TransactionalWorkflowOperations<io.vertx.sqlclient.SqlClient>
+                transactionalOperations();
+
         WorkflowDefinitionPipeline definitionPipeline();
 
         WorkflowRegistry workflowRegistry();

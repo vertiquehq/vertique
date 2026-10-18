@@ -174,6 +174,30 @@ public final class DefaultWorkflowDefinitionService implements WorkflowDefinitio
     }
 
     @Override
+    public Future<Void> retire(DefinitionKey key) {
+        return attempt(() -> {
+            Objects.requireNonNull(key, "key");
+            if (durable.isEmpty())
+                throw new WorkflowDefinitionException("cannot retire " + key + ": a durable registry is required");
+            if (lifecycle.isEmpty())
+                throw new WorkflowDefinitionLifecycleException(
+                        WorkflowDefinitionLifecycleException.Reason.LOADER_MISSING,
+                        key,
+                        "No lifecycle implementation for " + key);
+            // The committed row is the source of truth for the local cache projection.
+            return lifecycle
+                    .orElseThrow()
+                    .retire(key)
+                    .compose(ignored -> durable.orElseThrow().find(key))
+                    .map(found -> {
+                        found.filter(record -> record.kind() == DefinitionKind.DOCUMENT)
+                                .ifPresent(store::metadata);
+                        return (Void) null;
+                    });
+        });
+    }
+
+    @Override
     public Future<List<WorkflowDefinitionRecord>> list(DefinitionFilter filter) {
         return attempt(() -> {
             Objects.requireNonNull(filter, "filter");

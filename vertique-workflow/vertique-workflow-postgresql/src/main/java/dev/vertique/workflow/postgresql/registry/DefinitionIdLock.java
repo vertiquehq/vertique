@@ -33,7 +33,11 @@ final class DefinitionIdLock {
                 .mapEmpty());
     }
 
-    private static long lockKey(String definitionId) {
+    /**
+     * Maps a definition id to the signed 64-bit advisory key shared by the exclusive store mutations and
+     * the shared pin admission, so that both modes address the same lock.
+     */
+    static long lockKey(String definitionId) {
         try {
             return ByteBuffer.wrap(MessageDigest.getInstance("SHA-256")
                             .digest(("vertique.workflow.definition:" + definitionId).getBytes(StandardCharsets.UTF_8)))

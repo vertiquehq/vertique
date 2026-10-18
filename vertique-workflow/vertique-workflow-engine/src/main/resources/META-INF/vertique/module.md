@@ -271,6 +271,28 @@ or to prove that nothing still runs the version. Marking is a no-op for a versio
 node, and a registry without deprecation support fails the call after the durable commit, leaving the
 committed status in place.
 
+`WorkflowDefinitionLifecycle.retire` retires a CANDIDATE version, or a DEPRECATED one after the cooling window (the
+configured staleness bound) once no RUNNING, WAITING or COMPENSATING instance, archived or not, is pinned to it; the
+store checks status, cooling and the pin count in one transaction, so a refusal is typed (`COOLING`, `PINNED_INSTANCES`,
+or `INVALID_TRANSITION` for ACTIVE/SUPERSEDED). Retirement removes the local runtime and its contract mapping only when
+the engine's own managed publication attributed that exact runtime to the retiring owner: the engine records every
+registration it publishes or restores, and the registrations present when startup begins (packaged documents and
+application-contributed code) count as global. A runtime that was registered directly through `WorkflowRegistry`
+after startup, or replaced after a managed publication, is not attributed: deprecate and retire then fail with
+`INVALID_TRANSITION` before any durable change and leave the runtime alone. Do not register definitions directly
+at runtime and expect the lifecycle to manage them; managed operations also rely on the shared per-definition queue.
+`activate` has no such preflight: activating a version that a foreign registration already occupies fails when it
+registers, and the claim is released. If removing the local runtime fails after the durable retirement committed, the
+call fails but the row stays RETIRED and the runtime stays registered until the next restart; repeating the call is
+refused because the row is no longer retirable.
+
+Every public transaction-aware engine entrypoint (`start`, the `signal` overloads, `cancel`, `retry`, `migrate`, the
+task and timer callbacks) requires a `SqlConnection` with a pending transaction begun through Vert.x and returns a
+failed Future with `IllegalArgumentException`, before any SQL, for a pool, a bare or completed connection, a raw `BEGIN`
+or a wrapper; await the operation before committing or rolling back. New starts and migrations are admitted against the
+definition row in the caller's transaction (see the PostgreSQL reference), so for a short window between local
+publication and the durable commit of an activation, new starts of that version are refused.
+
 Every node sharing live document rows must install the corresponding loader, normally
 `WorkflowDefinitionModule`. Loading and compilation use the Vert.x worker executor when startup runs
 on a Vert.x context. Compose validators already ran in VALIDATE and do not rerun for these restored

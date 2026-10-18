@@ -35,24 +35,33 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.function.Supplier;
 
-/** Restores global document membership after migrations and before BOOTSTRAP verticle deployment. */
+/**
+ * Restores global document membership after migrations and before BOOTSTRAP verticle deployment.
+ *
+ * <p>It also attributes the registrations that already exist when it starts, the packaged static documents and
+ * the application-contributed definitions registered while the registry was constructed, to the global owner,
+ * and attributes each document it restores itself.
+ */
 @Singleton
 final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartupStep {
     private final Optional<WorkflowDefinitionRegistryStore> store;
     private final Provider<WorkflowRegistry> registry;
     private final Set<PersistedDefinitionLoader> loaders;
     private final DefinitionApplyQueue queue;
+    private final ManagedRegistrations registrations;
 
     @Inject
     WorkflowDefinitionRegistryBootstrapStep(
             Optional<WorkflowDefinitionRegistryStore> store,
             Provider<WorkflowRegistry> registry,
             Set<PersistedDefinitionLoader> loaders,
-            DefinitionApplyQueue queue) {
+            DefinitionApplyQueue queue,
+            ManagedRegistrations registrations) {
         this.store = store;
         this.registry = registry;
         this.loaders = loaders;
         this.queue = queue;
+        this.registrations = registrations;
     }
 
     @Override
@@ -69,11 +78,17 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
     public Future<Void> start() {
         if (store.isEmpty()) return Future.succeededFuture();
         // Registry construction invokes static contributors; keep their parsing off the event loop.
-        return work(registry::get).compose(local -> reconcileOrigins()
-                .compose(ignored ->
-                        store.orElseThrow().list(new DefinitionFilter(DefinitionFilter.TenantScope.GLOBAL, null, null)))
-                .compose(records -> restoreAll(local, records).compose(verified -> recomputeGlobal(records)
-                        .compose(ignored -> refreshCommittedMetadata(verified)))));
+        return work(() -> {
+                    WorkflowRegistry local = registry.get();
+                    // Only what registry construction registered is attributed; later direct registration is not.
+                    registrations.attributeExistingToGlobal(local);
+                    return local;
+                })
+                .compose(local -> reconcileOrigins()
+                        .compose(ignored -> store.orElseThrow()
+                                .list(new DefinitionFilter(DefinitionFilter.TenantScope.GLOBAL, null, null)))
+                        .compose(records -> restoreAll(local, records).compose(verified -> recomputeGlobal(records)
+                                .compose(ignored -> refreshCommittedMetadata(verified)))));
     }
 
     private Future<List<VerifiedDocument>> restoreAll(WorkflowRegistry local, List<WorkflowDefinitionRecord> records) {
@@ -228,7 +243,14 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
                                         key,
                                         "DOCUMENT stored hash " + record.planHash() + " differs from registered hash "
                                                 + existing.orElseThrow().plan().planHash());
-                        } else local.register(definition);
+                        } else {
+                            local.register(definition);
+                            registrations.attribute(
+                                    key.tenantKey(),
+                                    key.definitionId(),
+                                    key.definitionVersion(),
+                                    local.resolvePinned(key.definitionId(), key.definitionVersion()));
+                        }
                         loader.onRestored(record, definition);
                         return Optional.of(new VerifiedDocument(loader, record, definition));
                     }));

@@ -192,7 +192,7 @@ class PgWorkflowEngineEventEmissionTest {
         taskStore = mock(PgTaskStore.class);
         timerStore = mock(PgTimerStore.class);
         pool = mock(Pool.class);
-        tx = mock(SqlClient.class);
+        tx = ActiveTransactionConnection.create();
 
         // nextSequence returns incrementing longs.
         when(historyRepo.nextSequence(any(WorkflowInstanceId.class), any(SqlClient.class)))

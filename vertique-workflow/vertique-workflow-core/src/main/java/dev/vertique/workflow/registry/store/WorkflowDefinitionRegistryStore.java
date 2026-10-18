@@ -100,6 +100,23 @@ public interface WorkflowDefinitionRegistryStore {
     Future<Void> transition(DefinitionKey key, DefinitionStatus from, DefinitionStatus to);
 
     /**
+     * Retires one definition under the definition id lock. A {@code CANDIDATE} row is retired directly. A
+     * {@code DEPRECATED} row is retired only after its cooling window, the configured staleness bound measured
+     * from the status change time by the database clock, and only while no instance pinned to exactly this
+     * definition version is still running, waiting or compensating, archived instances included. Every other
+     * status is refused as an invalid transition. The checks run in that order and in the same transaction as the
+     * change: a missing or ineligible row fails with
+     * {@link dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException} reason
+     * {@code INVALID_TRANSITION}, a row that is still cooling fails with reason {@code COOLING}, and a row that
+     * is still pinned fails with reason {@code PINNED_INSTANCES}. A refusal changes no row, and a success changes
+     * only this row's status and status change time.
+     *
+     * @param key tenant-scoped definition key to retire
+     * @return a future completed after the store-owned transaction commits
+     */
+    Future<Void> retire(DefinitionKey key);
+
+    /**
      * Recomputes active membership for one exact tenant owner and definition id. Only ACTIVE and
      * SUPERSEDED rows participate; the highest version becomes ACTIVE and lower eligible versions
      * become SUPERSEDED. Other statuses, owners, and definition ids are left unchanged. The

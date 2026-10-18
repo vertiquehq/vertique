@@ -291,6 +291,11 @@ another, so a durable listing can show no ACTIVE version until the next startup 
 current resolution already serves the next lower version. It requires the durable registry: without one,
 the returned Future fails.
 
+`retire(DefinitionKey)` retires a candidate version, or a deprecated one after the cooling window with no live pinned
+instance, and reports RETIRED in service metadata and lists; the returned Future fails with `COOLING`,
+`PINNED_INSTANCES` or `INVALID_TRANSITION`. Retiring a candidate of one owner never removes another owner's runtime,
+even when id, version and hash are equal.
+
 Startup restores global documents only; a document activated under a tenant key stays in the database,
 holding its id against other owners, but is not registered again after a restart. `load`, `activate` and
 `deprecate` perform no authorization: restrict them to authorized callers. Exclusivity of an id between a
