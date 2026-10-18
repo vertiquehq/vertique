@@ -30,7 +30,7 @@ final class Registries {
      * @return the registry
      */
     static DefaultWorkflowRegistry withSchemaValidator(PayloadSchemaCache cache) {
-        return withSchemaValidator(cache, Profiles.builtIn(), Profiles.VERTIQUE);
+        return withSchemaValidator(cache, PayloadSchemaTestProfiles.builtIn(), PayloadSchemaTestProfiles.VERTIQUE);
     }
 
     /**
@@ -55,8 +55,8 @@ final class Registries {
      * @return the registry
      */
     static DefaultWorkflowRegistry withSchemaValidator(PayloadSchemaCache cache, ClassLoader classLoader) {
-        PayloadSchemaGenerator generator =
-                new PayloadSchemaGenerator(Profiles.builtIn(), Profiles.VERTIQUE, Optional.of(VALIDATOR));
+        PayloadSchemaGenerator generator = new PayloadSchemaGenerator(
+                PayloadSchemaTestProfiles.builtIn(), PayloadSchemaTestProfiles.VERTIQUE, Optional.of(VALIDATOR));
         return new DefaultWorkflowRegistry(
                 null, Set.of(new PayloadSchemaRegistrationValidator(cache, generator, classLoader)));
     }
@@ -79,7 +79,7 @@ final class Registries {
      */
     static JsonObject generated(Type type) {
         return new JsonObject(AnnotationJsonSchemaGenerator.forInputProfile(
-                        Profiles.builtIn().profile(JsonProfileId.of("vertique")), VALIDATOR)
+                        PayloadSchemaTestProfiles.builtIn().profile(JsonProfileId.of("vertique")), VALIDATOR)
                 .generateCanonical(type));
     }
 }

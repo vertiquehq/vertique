@@ -110,8 +110,9 @@ class SchemaAcceptedBindsTest {
         decisions.put("decide", fixture.type());
         registry.register(Definitions.withStartAndDecisions(ID, 1L, Void.class, decisions));
         WorkflowPayloadSchemas schemas = new DefaultWorkflowPayloadSchemas(registry, cache);
-        ObjectMapper mapper =
-                Profiles.builtIn().profile(JsonProfileId.of("vertique")).mapper();
+        ObjectMapper mapper = PayloadSchemaTestProfiles.builtIn()
+                .profile(JsonProfileId.of("vertique"))
+                .mapper();
 
         // When / Then: every accepted declared-key payload is valid and binds to an instance
         for (JsonObject payload : fixture.accepted()) {

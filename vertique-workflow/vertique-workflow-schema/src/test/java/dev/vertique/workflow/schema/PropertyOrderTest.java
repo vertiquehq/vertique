@@ -106,9 +106,10 @@ class PropertyOrderTest {
         // Given: a profile that publishes, for a record, a schema whose properties the record does not have
         JsonSchemaFragment fragment = JsonSchemaFragment.parse("{\"type\": \"object\", \"properties\":"
                 + " {\"zeta\": {\"type\": \"string\"}, \"alpha\": {\"type\": \"string\"}}}");
-        var profiles = Profiles.with(Profiles.withOverrides(
+        var profiles = PayloadSchemaTestProfiles.with(PayloadSchemaTestProfiles.withOverrides(
                 "replaced", List.of(JsonSchemaTypeOverride.input(OrderedPayloads.Replaced.class, fragment))));
-        var registry = Registries.withSchemaValidator(cache, profiles, Profiles.systemProfile("replaced"));
+        var registry =
+                Registries.withSchemaValidator(cache, profiles, PayloadSchemaTestProfiles.systemProfile("replaced"));
         registry.register(Definitions.withStart("replaced", 1L, OrderedPayloads.Replaced.class));
         var schemas = new DefaultWorkflowPayloadSchemas(registry, cache);
 
@@ -179,8 +180,8 @@ class PropertyOrderTest {
     @DisplayName("the property order uses the profile's wire names and is cached with the schema")
     void propertyOrderUsesTheProfilesWireNamesAndIsCachedWithTheSchema() {
         // Given: a system profile that names properties in snake case
-        var profiles = Profiles.with(Profiles.snakeCase("p1"));
-        var registry = Registries.withSchemaValidator(cache, profiles, Profiles.systemProfile("p1"));
+        var profiles = PayloadSchemaTestProfiles.with(PayloadSchemaTestProfiles.snakeCase("p1"));
+        var registry = Registries.withSchemaValidator(cache, profiles, PayloadSchemaTestProfiles.systemProfile("p1"));
 
         // When: a definition whose start type has camel case components is registered
         registry.register(Definitions.withStart("snake", 1L, OrderedPayloads.SnakeNamed.class));

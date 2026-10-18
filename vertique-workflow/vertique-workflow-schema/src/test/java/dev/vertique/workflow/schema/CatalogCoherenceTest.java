@@ -35,7 +35,10 @@ class CatalogCoherenceTest {
      */
     private DefaultWorkflowRegistry registryWithALaterValidator() {
         PayloadSchemaRegistrationValidator schema = new PayloadSchemaRegistrationValidator(
-                Profiles.builtIn(), Profiles.VERTIQUE, Optional.of(Validations.BEAN_VALIDATOR), cache);
+                PayloadSchemaTestProfiles.builtIn(),
+                PayloadSchemaTestProfiles.VERTIQUE,
+                Optional.of(Validations.BEAN_VALIDATOR),
+                cache);
         WorkflowDefinitionValidator wrapper = candidate -> {
             schema.validate(candidate);
             if (REJECTED_ID.equals(candidate.plan().definitionId())) {
