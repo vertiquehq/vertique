@@ -215,6 +215,7 @@ Dagger module owning the engine-internal bindings:
 - Provides the `@OptionalIntentKinds Set<IntentKind>` (delegates to `WorkflowEngineFactory.DEFAULT_OPTIONAL_INTENT_KINDS`).
 - Declares `WorkflowMigrationRegistry` as `@BindsOptionalOf` (opt-in migration support).
 - Declares `BeanValidator` as `@BindsOptionalOf` (opt-in payload constraint enforcement; bound by installing the validation module).
+- Declares `WorkflowTenantResolver` as `@BindsOptionalOf` (opt-in tenant stamping; with no binding new instances carry no tenant).
 - Includes `WorkflowCoreModule` and `ContextRuntimeModule`.
 
 Adapter modules (`WorkflowPostgresqlModule`) include this module, so applications installing only the
@@ -234,6 +235,10 @@ public interface AppComponent {
     WorkflowOperations workflowOperations();
 }
 ```
+
+### Instance Tenant Resolution
+
+When an application binds a `WorkflowTenantResolver`, `WorkflowEngine.doCreateInstance` calls it once per newly created instance, directly where it captures the durable context (`DurableMetadata.empty()` when no propagator is wired), after the start dedup claim and inside the start transaction. A non-null result is validated (nonblank, at most 255 code points, no NUL, control characters or unpaired surrogates, no `:`) and stamped on the new `WorkflowInstance`. An invalid value or a resolver exception fails the returned `Future` with a `WorkflowDefinitionException` carrying a fixed message and no cause, so no context content and no resolver exception text appears in the failure (a warning names only the definition id and whether the resolver threw or its result was rejected). With `start(StartCommand)` the engine-owned transaction rolls back and leaves no dedup, instance, history or task row; with the caller-owned `start(cmd, tx)` the caller must roll back after a failed start, because the idempotency claim is written before the instance. An idempotent replay returns the existing instance id without calling the resolver. `MigrationExecutor` carries the instance's tenant into the re-pinned snapshot. `WorkflowEngineFactory` has no resolver overload: an engine assembled by hand has no resolver, so its instances carry no tenant. The tenant is information and a filter, not an isolation boundary.
 
 ### Document Activation And Startup Restoration
 

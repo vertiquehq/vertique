@@ -364,7 +364,8 @@ final class MigrationExecutor {
                     clock.instant(),
                     // AC-6/FR-WF-CTX-011 immutability: migrate must never re-capture or alter
                     // metadata — carry the pre-migration instance's captured context unchanged.
-                    inst.metadata());
+                    inst.metadata(),
+                    inst.tenantKey());
 
             Instant now = clock.instant();
             String handlerClassName = handler.getClass().getName();

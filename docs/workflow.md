@@ -582,11 +582,27 @@ is registered, and a static source failing a limit fails startup naming the reso
 - **Added bindings.** Applications gain the bound `WorkflowDefinitionLifecycle`, `WorkflowDefinitionRegistryView` and
   `WorkflowDefinitionPropagationPoller`. The poller adds one periodic timer per node; it is scheduled after startup and
   stopped at shutdown.
+- **Instance tenant.** `V004__` adds the nullable tenant columns; an optional `WorkflowTenantResolver` binding stamps new
+  instances (see [Instance tenant resolution](#instance-tenant-resolution)), and without it they stay `null`. Tenant ids
+  use the `<tenantKey>:<name>` namespace for definition loads. Record patterns that deconstruct `WorkflowInstance`,
+  `TaskRecord`, `WorkflowInstanceQuery` or `TaskFilter` by component list need the new trailing `tenantKey` component.
+  Other modules or tools that read `workflow_instances` or `workflow_tasks` see an extra nullable column.
 
 ### 6. Configuration
 
 Two optional keys, `workflow.definitions.maxStalenessSeconds` (30) and `workflow.definitions.maxDocumentSizeBytes` (262144).
 Existing configuration needs no change. See [Configuration](#configuration).
+
+### Instance tenant resolution
+
+The engine can stamp a tenant key on each new instance from the durable context it captures at start. Bind a `WorkflowTenantResolver` (`@Nullable String tenantOf(DurableMetadata captured)`) and the engine calls it once per new instance, inside the start transaction; without a binding, or when it returns `null`, the instance has no tenant. Tasks inherit the instance's tenant, and migration and resurrection keep it.
+
+- **Derive the tenant from an integrity-protected value.** The durable context captured at start includes values bound from inbound transport headers (for example message consumers) without sanitization, and a namespace that refuses explicit signal carriers is still reachable from such headers. Read the tenant from a verified value such as an identity snapshot, never from a namespace whose decoder performs no integrity check.
+- **Fail-closed values.** A non-null result must be nonblank, at most 255 code points, and free of NUL, control characters, unpaired surrogates and `:`; otherwise the start fails (leading or trailing whitespace and invisible formatting characters are not rejected, so normalize in the resolver). A resolver that throws, including with an undeclared checked exception, also fails the start. With `start(cmd, tx)` the caller must roll back `tx` after a failed start: the idempotency claim is written before the instance. The failure message is fixed and carries no context content and no resolver exception.
+- **Not called on replay.** An idempotent replay of an existing start returns the existing id without calling the resolver.
+- **Information, not isolation.** The tenant is a label and a filter. A `null` filter matches every tenant, so do not pass an unresolved tenant as `null` expecting scoping. Start idempotency keys and business keys remain global: a start that reuses another tenant's key returns that tenant's instance.
+- **No definition cross-check.** The stamped tenant is not compared with the `<tenantKey>:` prefix of the started definition id; a start may run another tenant's namespaced definition.
+- **Manual wiring.** `WorkflowEngineFactory` has no resolver overload, so a hand-assembled engine leaves instances without a tenant.
 
 ---
 
