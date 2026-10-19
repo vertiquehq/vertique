@@ -61,6 +61,7 @@ import jakarta.inject.Singleton;
 import jakarta.ws.rs.WebApplicationException;
 import jakarta.ws.rs.core.Response;
 import jakarta.ws.rs.ext.ExceptionMapper;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -481,20 +482,33 @@ public abstract class RestModule {
      * ViolationPathForm#JSON_POINTER} carrier's detail paths become {@code pointer}; every other form
      * renders neither {@code pointer} nor {@code parameter}, because a Java property path is not a
      * request location, and logs the neutralized path and the type instead.
+     *
+     * <p>A carrier of at most {@link ValidationErrorDetail#MAX_ENTRIES} violations plus one is rendered whole,
+     * so a carrier that already ends with its own truncation entry passes unchanged. A longer list is
+     * rendered as its first {@link ValidationErrorDetail#MAX_ENTRIES} violations and one
+     * {@link ValidationErrorDetail#truncated()} entry. The log cap applies to the whole list, before the cut.
      */
     private static List<ValidationErrorDetail> toErrors(ViolationCarrier carrier) {
         List<ViolationDetail> violations = carrier.violations();
+        boolean cut = violations.size() > ValidationErrorDetail.MAX_ENTRIES + 1;
+        List<ViolationDetail> listed = cut ? violations.subList(0, ValidationErrorDetail.MAX_ENTRIES) : violations;
+        List<ValidationErrorDetail> errors = new ArrayList<>(listed.size() + 1);
         if (carrier.violationPathForm() == ViolationPathForm.JSON_POINTER) {
-            return violations.stream()
-                    .map(v -> ValidationErrorDetail.ofPointer(v.path(), v.message())
-                            .withType(v.type())
-                            .withArgs(v.args()))
-                    .toList();
+            for (ViolationDetail v : listed) {
+                errors.add(ValidationErrorDetail.ofPointer(v.path(), v.message())
+                        .withType(v.type())
+                        .withArgs(v.args()));
+            }
+        } else {
+            logCarrierPaths(violations);
+            for (ViolationDetail v : listed) {
+                errors.add(new ValidationErrorDetail(null, null, v.message(), null, v.type(), v.args()));
+            }
         }
-        logCarrierPaths(violations);
-        return violations.stream()
-                .map(v -> new ValidationErrorDetail(null, null, v.message(), null, v.type(), v.args()))
-                .toList();
+        if (cut) {
+            errors.add(ValidationErrorDetail.truncated());
+        }
+        return List.copyOf(errors);
     }
 
     private static void logCarrierPaths(List<ViolationDetail> violations) {

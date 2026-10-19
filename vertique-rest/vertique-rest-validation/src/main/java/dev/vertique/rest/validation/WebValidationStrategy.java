@@ -618,8 +618,17 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
      * file-content verifier runs, or the next handler is called. A pattern-input rejection stops validation
      * of the request in both modes: its one detail follows the details earlier validator calls contributed,
      * and nothing after it runs.
+     *
+     * <p>The failure list is capped across parameters, the body and file parts: the gate stops adding once it
+     * holds one entry more than {@link ValidationErrorDetail#MAX_ENTRIES} (one upload can add two failures, so a
+     * file part can take it one past that), so a very long engine result is never converted past that point, and
+     * a list longer than the cap is reported as its first
+     * {@link ValidationErrorDetail#MAX_ENTRIES} entries and one {@link ValidationErrorDetail#truncated()} entry.
      */
     private static final class GateHandler implements Handler<RoutingContext> {
+
+        /** The failures the gate holds before it stops adding: the cap, and one more to show the list is cut. */
+        private static final int HELD_FAILURES = ValidationErrorDetail.MAX_ENTRIES + 1;
 
         private final JaxRsOperationDescriptor op;
         private final Validator bodyValidator;
@@ -679,14 +688,14 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
                 window.close();
             }
             if (stopped) {
-                ctx.fail(new RestValidationException("Request validation failed", failures));
+                ctx.fail(new RestValidationException("Request validation failed", capped(failures)));
                 return;
             }
             List<ApplicableUpload> uploads = snapshotUploads(ctx);
             validateFileParts(uploads, failures);
 
             if (!failures.isEmpty()) {
-                ctx.fail(new RestValidationException("Request validation failed", failures));
+                ctx.fail(new RestValidationException("Request validation failed", capped(failures)));
                 return;
             }
 
@@ -796,6 +805,21 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
         }
 
         /**
+         * The failures as the response lists them: a list of at most {@link ValidationErrorDetail#MAX_ENTRIES}
+         * entries unchanged, a longer one as its first {@link ValidationErrorDetail#MAX_ENTRIES} entries and
+         * the {@link ValidationErrorDetail#truncated()} entry.
+         */
+        private static List<ValidationErrorDetail> capped(List<ValidationErrorDetail> failures) {
+            if (failures.size() <= ValidationErrorDetail.MAX_ENTRIES) {
+                return failures;
+            }
+            List<ValidationErrorDetail> listed =
+                    new ArrayList<>(failures.subList(0, ValidationErrorDetail.MAX_ENTRIES));
+            listed.add(ValidationErrorDetail.truncated());
+            return listed;
+        }
+
+        /**
          * Validates each physical upload at most once, in request order. Exact case-sensitive named
          * constraints take precedence; the aggregate constraint applies only when no named constraint
          * matches. Occurrence indexes count every earlier physical upload with the same part name,
@@ -806,6 +830,9 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
          */
         private void validateFileParts(List<ApplicableUpload> uploads, List<ValidationErrorDetail> failures) {
             for (ApplicableUpload applicable : uploads) {
+                if (failures.size() >= HELD_FAILURES) {
+                    return;
+                }
                 FileUpload upload = applicable.part();
                 PreparedFilePart filePart = namedFileDescriptors.get(upload.name());
                 if (filePart == null || !filePart.constrained()) {
@@ -1113,7 +1140,8 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
          * @param location     the location token for the call's details
          * @param fallbackPath the parameter name, or {@code null} for the body
          * @param schema       the original schema, for constraint-value resolution
-         * @param failures     the accumulating failure list
+         * @param failures     the accumulating failure list, which this call leaves no longer than
+         *                     {@code HELD_FAILURES}
          * @return {@code true} when the pattern-input guard rejected the call, so validation stops
          */
         private boolean validateAndCollect(
@@ -1123,6 +1151,10 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
                 String fallbackPath,
                 JsonObject schema,
                 List<ValidationErrorDetail> failures) {
+            int room = HELD_FAILURES - failures.size();
+            if (room <= 0) {
+                return false;
+            }
             OutputUnit result;
             try {
                 result = validator.validate(instance);
@@ -1134,7 +1166,9 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
                 failures.add(rejection.get());
                 return true;
             }
-            for (ViolationDetail detail : ViolationDetails.collect(result, schema, failFast, PathForm.RFC6901)) {
+            // At most `room` details: the limit overload yields one more than the limit it is given.
+            for (ViolationDetail detail :
+                    ViolationDetails.collect(result, schema, failFast, PathForm.RFC6901, room - 1)) {
                 failures.add(toValidationErrorDetail(detail, location, fallbackPath));
             }
             return false;

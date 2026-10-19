@@ -718,6 +718,11 @@ public final class OpenApiContractValidationStrategy implements RequestValidatio
      * under a schema-valued {@code additionalProperties}, and a member of an object-valued parameter can
      * all appear in it.
      *
+     * <p>At most {@link ValidationErrorDetail#MAX_ENTRIES} concrete details are listed. When the unit holds
+     * more, the list is the first {@link ValidationErrorDetail#MAX_ENTRIES} in declaration order followed by
+     * one {@link ValidationErrorDetail#truncated()} entry, and conversion stops at the 101st concrete error;
+     * structural wrappers are not counted.
+     *
      * @param outputUnit the schema validation output unit; may be {@code null}
      * @return a list of sanitized validation error details (possibly empty), never {@code null}
      */
@@ -738,6 +743,12 @@ public final class OpenApiContractValidationStrategy implements RequestValidatio
             ValidationErrorDetail detail = toDetail(error);
             if (detail != null) {
                 details.add(detail);
+                if (details.size() > ValidationErrorDetail.MAX_ENTRIES) {
+                    // One concrete violation past the cap is all the cut needs: the rest are never converted.
+                    details.remove(ValidationErrorDetail.MAX_ENTRIES);
+                    details.add(ValidationErrorDetail.truncated());
+                    return details;
+                }
             }
         }
         // A schema-violation OutputUnit with only structural wrappers (all skipped) would yield an empty

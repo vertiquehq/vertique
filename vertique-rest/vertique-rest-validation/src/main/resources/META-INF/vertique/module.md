@@ -301,6 +301,16 @@ named `""`. A failure of any other request location carries `parameter`: the dec
 nothing after the first other segment, because the member names of an object-valued parameter are the
 client's. An entry never carries both.
 
+**The failure list is capped.** The gate lists at most 100 entries across the parameters, the body and
+the file parts of one request. When it finds more, the response lists the first 100 in validation order
+(parameters in declaration order, then the body, then file parts) and then one entry with `type`
+`"truncated"`, `detail` `"further violations omitted"` and no `pointer`, `parameter`, `location` or
+`args`; a client treats that entry as "there are more", not as a location. A list of 100 entries or
+fewer carries no such entry. The gate stops adding failures once it holds 101 and bounds each body or
+parameter walk with the limit overload of `ViolationDetails.collect`, so converting the violations does
+not grow with their number. The engine still evaluates the whole value, so the request body limit is what
+bounds that work.
+
 **A schema failure is always a rejection.** A validation call — the body, and each declared
 parameter independently — whose result the validator does not report valid is rejected with 400,
 whatever keywords the reported errors carry. Each reported error normally becomes one error detail

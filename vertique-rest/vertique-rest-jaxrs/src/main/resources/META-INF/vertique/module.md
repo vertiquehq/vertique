@@ -550,6 +550,13 @@ at its first bracket and has control and format characters removed) and the type
 third-party carrier whose paths are pointers renders no location until it overrides `violationPathForm()`.
 Entries of a `RestValidationException` are rendered as built.
 
+A carrier of up to 101 violations renders every one of them, so a carrier that ends with its own
+truncation entry (the workflow engine's payload check lists 100 and one) passes unchanged. A longer
+carrier renders its first 100 violations and then one entry of type `truncated`, `detail` `"further
+violations omitted"` and no `pointer`, `parameter`, `location` or `args`
+(`ValidationErrorDetail.truncated()`). A client treats that entry as "there are more", not as a location.
+The DEBUG log cap of 100 applies to the whole carrier before the cut.
+
 The mapper dispatches by class and checks for `ViolationCarrier` inside the `ValidationException`
 handler. Overriding the `ValidationException` mapping changes how every carrier that is not itself
 covered by a more specific registered mapper renders. `BeanValidationException` keeps its own explicit
@@ -1160,18 +1167,24 @@ reports.
   also stops at the holding property; a deserializer installed by a Jackson module is not detected.
 - A body bound by an application `RequestBodyDecoder`, a body bound with a mapper other than the one the
   route's wire names come from, a body of which no readable JSON document is available, a violation a
-  validator reports without a structured path, and a body violation beyond the first 100 of a response
+  validator reports without a structured path
   carry neither `pointer` nor `parameter` and keep `location: "body"`; the validator's Java path is
-  never offered in its place, and a path given only as text is not resolved. A violation without a
-  structured path counts toward the 100. The mappers are compared by identity, the route's mapper being the one in force for the
+  never offered in its place, and a path given only as text is not resolved. The mappers are compared by
+  identity, the route's mapper being the one in force for the
   request. The route's name projection is built from its mapper when the router is built, so after the
   process JSON mapper is re-installed under the same profile id, routes on the default profile report no
   pointer until the router is rebuilt.
 - The `errors` of a response are sorted by parameter index, then by the lexicographic text of the
   violation's loggable Java path (the path with control and format characters removed, compared
   character by character, so `items[10]` precedes `items[2]`), then by constraint type, message and
-  arrival position. The cap counts body violations in that order, so the 100 that are resolved are the
-  same on every request with the same body.
+  arrival position. A response lists at most 100 entries across every location, form bodies included:
+  the first 100 in that order, then one entry of type `truncated`, `detail` `"further violations
+  omitted"` and no `pointer`, `parameter`, `location` or `args` when there were more. A client treats
+  that entry as "there are more", not as a location. Every violation is still sorted before the cut,
+  because the sort decides which 100 survive, so the cost of ranking grows with the number of
+  violations the validator reports, and the validator itself has already built every one of them; the
+  pointer resolution and the DEBUG log run only over the 100
+  listed, so they are bounded by the cap and the same 100 are listed on every request with the same body.
 
 ```json
 { "pointer": "/items/1/name", "detail": "must not be blank", "location": "body", "type": "required" }
@@ -1188,7 +1201,8 @@ violation's path is one the mapper does not bind, when the mapper binds it only 
 example a `public` field with no setter, creator parameter or record component), or when the mapper binds
 the bean through a builder or another shape that is not its reported properties. A form-bound DTO whose
 properties are all bound only through fields therefore never reports a `parameter`, and a violation on it
-carries only `detail`, `type`, `args` and `location: "form"`. Form entries are neither capped nor logged.
+carries only `detail`, `type`, `args` and `location: "form"`. Form entries count toward the 100 entries
+of the response, and are not logged.
 
 At DEBUG the mapper logs one `body violation path=… pointer=… rootType=…` event for each of the first 100
 body violations of a response, in the sorted order: the Java path rendered without map keys, with
@@ -1196,9 +1210,8 @@ control and format characters removed and cut to 512 characters; the pointer, li
 suffixed `(truncated)` when it stops before the end of the path, or `<omitted:unbound>` when no
 framework binder materialized the body or no readable document of it is available,
 `<omitted:mismatch>` for a mapper mismatch and `<omitted:unstructured>` for a violation a validator
-reports without a structured path, which gets no pointer; and the body's declared type. A violation
-beyond the 100th logs nothing, and a form-urlencoded body logs nothing. No message, argument, value or raw validator path is
-logged.
+reports without a structured path, which gets no pointer; and the body's declared type. A
+form-urlencoded body logs nothing. No message, argument, value or raw validator path is logged.
 
 A violation on a `query`, `path`, `header`, `cookie` or `form` parameter is reported in `parameter`
 and never in `pointer`: the declared parameter name, followed by the leading `[n]` run of list or

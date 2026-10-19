@@ -9,6 +9,10 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -41,6 +45,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Random;
 import java.util.Set;
+import java.util.function.IntFunction;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.DisplayName;
@@ -50,6 +55,7 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.slf4j.LoggerFactory;
 
 /**
  * Unit tests for {@link ConstraintViolationMapper}, verifying that
@@ -60,6 +66,10 @@ import org.junit.jupiter.params.provider.ValueSource;
  * {@code @BeanParam} POJO / record reflection path.
  */
 class ConstraintViolationMapperTest {
+
+    /** The entry that closes a list the cap cut short: its detail and type, and no other member. */
+    private static final ValidationErrorDetail TRUNCATED =
+            new ValidationErrorDetail(null, null, "further violations omitted", null, "truncated", null);
 
     // --- Test helper to build ResourceMethodMeta ---
 
@@ -925,8 +935,8 @@ class ConstraintViolationMapperTest {
     }
 
     @Test
-    @DisplayName("Should count violations with only the path text toward the body cap")
-    void textOnlyBodyViolationsCountTowardTheCap() {
+    @DisplayName("Should cap violations with only the path text together with the structured ones")
+    void textOnlyBodyViolationsAreCappedWithTheRest() {
         // Given 100 path-text violations that sort first and 5 structured ones that sort after them
         ObjectMapper routeMapper = new ObjectMapper();
         JsonArray items = new JsonArray();
@@ -947,11 +957,13 @@ class ConstraintViolationMapperTest {
         List<ValidationErrorDetail> errors = mapBody(bodyMeta(BodyCart.class), violations, request, routeMapper)
                 .errors();
 
-        // Then all 105 entries are without members: the path-text ones used up the cap
-        assertEquals(105, errors.size());
-        for (ValidationErrorDetail err : errors) {
+        // Then the 100 path-text entries are without members, the later structured ones are not listed and
+        // the marker closes the list
+        assertEquals(101, errors.size());
+        for (ValidationErrorDetail err : errors.subList(0, 100)) {
             assertBodyWithoutMembers(err);
         }
+        assertEquals(TRUNCATED, errors.get(100));
     }
 
     @Test
@@ -1163,8 +1175,8 @@ class ConstraintViolationMapperTest {
     }
 
     @Test
-    @DisplayName("Should not cap form body entries")
-    void formBodyEntriesAreNotCapped() {
+    @DisplayName("Should cap form body entries at 100 and one truncation entry")
+    void formBodyEntriesAreCapped() {
         // Given a form body with many violations
         ObjectMapper codec = new ObjectMapper();
         Request request = new Request().routeMapper(codec).marked(BodyBindingMark.Kind.FORM, codec);
@@ -1176,21 +1188,187 @@ class ConstraintViolationMapperTest {
         List<ValidationErrorDetail> errors =
                 mapBody(bodyMeta(BodyTags.class), violations, request, codec).errors();
 
-        // Then every entry names its parameter, including those beyond the JSON pointer cap
-        assertEquals(150, errors.size());
-        for (ValidationErrorDetail err : errors) {
+        // Then the first 100 entries each name their parameter in the form location, then the marker
+        assertEquals(101, errors.size());
+        for (ValidationErrorDetail err : errors.subList(0, 100)) {
             assertNull(err.pointer());
             assertNotNull(err.parameter(), () -> "no parameter on " + err);
             assertEquals("form", err.location());
         }
         assertEquals(
-                150,
-                errors.stream().map(ValidationErrorDetail::parameter).distinct().count());
+                100,
+                errors.subList(0, 100).stream()
+                        .map(ValidationErrorDetail::parameter)
+                        .distinct()
+                        .count());
+        assertEquals(TRUNCATED, errors.get(100));
+    }
+
+    /** One request whose violations the cap is proven on, and the entries the response must list. */
+    private record CapRow(
+            String label,
+            ResourceMethodMeta meta,
+            List<ParameterViolation> violations,
+            Request request,
+            ObjectMapper mapper,
+            List<String> expected) {
+
+        @Override
+        public String toString() {
+            return label;
+        }
+    }
+
+    private static Stream<CapRow> capRows() {
+        ObjectMapper mapper = new ObjectMapper();
+        // The violations are ordered by the text of their Java path, so item 10 sorts before item 2.
+        List<Integer> sorted = IntStream.range(0, 150)
+                .boxed()
+                .sorted(Comparator.comparing(i -> "items[" + i + "].name"))
+                .toList();
+        List<Integer> sortedTags = IntStream.range(0, 101)
+                .boxed()
+                .sorted(Comparator.comparing(i -> "tags[" + i + "]"))
+                .toList();
+        JsonObject cart = new JsonObject().put("items", blankItemDocuments(150));
+
+        List<ParameterViolation> body150 = shuffled(150, i -> bodyViolation(path(prop("items"), idx(i), prop("name"))));
+        List<String> first100Pointers = sorted.stream()
+                .limit(100)
+                .map(i -> "body:/items/" + i + "/name:required")
+                .toList();
+        List<String> expected150 = new ArrayList<>(first100Pointers);
+        expected150.add("truncated");
+
+        List<ParameterViolation> form101 = shuffled(101, i -> bodyViolation(path(prop("tags"), idx(i))));
+        List<String> expectedForm = new ArrayList<>(sortedTags.stream()
+                .limit(100)
+                .map(i -> "form:tag_list[" + i + "]:required")
+                .toList());
+        expectedForm.add("truncated");
+
+        ResourceMethodMeta queryAndBody = metaWithParams(
+                new ResourceMethodMeta.ParamMeta("page", ResourceMethodMeta.ParamSource.QUERY, int.class),
+                new ResourceMethodMeta.ParamMeta(null, ResourceMethodMeta.ParamSource.BODY, BodyCart.class));
+        List<ParameterViolation> mixed = new ArrayList<>();
+        for (int i = 0; i < 60; i++) {
+            mixed.add(new ParameterViolation(0, new ViolationDetail("", "must be positive", "min", null)));
+            PropertyPath itemPath = path(prop("items"), idx(i), prop("name"));
+            mixed.add(new ParameterViolation(
+                    1, new ViolationDetail(itemPath.toJavaPath(), "must not be blank", "required", null), itemPath));
+        }
+        Collections.shuffle(mixed, new Random(5));
+        List<Integer> sortedSixty = IntStream.range(0, 60)
+                .boxed()
+                .sorted(Comparator.comparing(i -> "items[" + i + "].name"))
+                .toList();
+        List<String> expectedMixed = new ArrayList<>();
+        for (int i = 0; i < 60; i++) {
+            expectedMixed.add("query:page:min");
+        }
+        sortedSixty.stream().limit(40).forEach(i -> expectedMixed.add("body:/items/" + i + "/name:required"));
+        expectedMixed.add("truncated");
+
+        return Stream.of(
+                new CapRow(
+                        "150 body violations",
+                        bodyMeta(BodyCart.class),
+                        body150,
+                        new Request().body(cart).routeMapper(mapper).marked(BodyBindingMark.Kind.JSON, mapper),
+                        mapper,
+                        expected150),
+                new CapRow(
+                        "100 body violations",
+                        bodyMeta(BodyCart.class),
+                        shuffled(100, i -> bodyViolation(path(prop("items"), idx(i), prop("name")))),
+                        new Request().body(cart).routeMapper(mapper).marked(BodyBindingMark.Kind.JSON, mapper),
+                        mapper,
+                        expected100()),
+                new CapRow(
+                        "101 form body violations",
+                        bodyMeta(BodyTags.class),
+                        form101,
+                        new Request().routeMapper(mapper).marked(BodyBindingMark.Kind.FORM, mapper),
+                        mapper,
+                        expectedForm),
+                new CapRow(
+                        "60 query and 60 body violations",
+                        queryAndBody,
+                        mixed,
+                        new Request().body(cart).routeMapper(mapper).marked(BodyBindingMark.Kind.JSON, mapper),
+                        mapper,
+                        expectedMixed));
+    }
+
+    /** The 100 body violations' entries: the sorted pointers of the items 0 to 99, with no marker. */
+    private static List<String> expected100() {
+        return IntStream.range(0, 100)
+                .boxed()
+                .sorted(Comparator.comparing(i -> "items[" + i + "].name"))
+                .map(i -> "body:/items/" + i + "/name:required")
+                .toList();
+    }
+
+    private static JsonArray blankItemDocuments(int count) {
+        JsonArray items = new JsonArray();
+        for (int i = 0; i < count; i++) {
+            items.add(new JsonObject().put("name", ""));
+        }
+        return items;
+    }
+
+    private static List<ParameterViolation> shuffled(int count, IntFunction<ParameterViolation> of) {
+        List<ParameterViolation> violations =
+                new ArrayList<>(IntStream.range(0, count).mapToObj(of).toList());
+        Collections.shuffle(violations, new Random(7));
+        return violations;
+    }
+
+    /** How an entry is told apart in a comparison: its location, its pointer or parameter, and its type. */
+    private static String describe(ValidationErrorDetail err) {
+        if (TRUNCATED.equals(err)) {
+            return "truncated";
+        }
+        return err.location() + ":" + (err.pointer() != null ? err.pointer() : err.parameter()) + ":" + err.type();
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("capRows")
+    @DisplayName("Should cap the whole response at 100 entries and one truncation entry in every location")
+    void capsTheWholeResponseAtOneHundredEntries(CapRow row) {
+        // Given a request whose violations are listed in a shuffled order (see the row)
+        Logger mapperLogger = (Logger) LoggerFactory.getLogger(ConstraintViolationMapper.class);
+        Level previousLevel = mapperLogger.getLevel();
+        ListAppender<ILoggingEvent> events = new ListAppender<>();
+        events.start();
+        mapperLogger.setLevel(Level.DEBUG);
+        mapperLogger.addAppender(events);
+        List<ValidationErrorDetail> errors;
+        try {
+            // When mapped
+            errors = mapBody(row.meta(), row.violations(), row.request(), row.mapper())
+                    .errors();
+        } finally {
+            mapperLogger.detachAppender(events);
+            events.stop();
+            mapperLogger.setLevel(previousLevel);
+        }
+
+        // Then the entries are the first 100 in sorted order, then the marker only when more than 100 were held
+        assertEquals(
+                row.expected(),
+                errors.stream().map(ConstraintViolationMapperTest::describe).toList());
+        // And the marker is the shared one, with no member but its detail and type
+        List<ValidationErrorDetail> markers =
+                errors.stream().filter(e -> "truncated".equals(e.type())).toList();
+        assertEquals(row.expected().contains("truncated") ? List.of(TRUNCATED) : List.of(), markers);
+        // And at most 100 DEBUG events are logged
+        assertTrue(events.list.size() <= 100, () -> events.list.size() + " events");
     }
 
     @Test
-    @DisplayName("Should project the first 100 BODY violations in sorted order and leave the rest unlocated")
-    void sortedOrderDecidesWhichHundredBodyViolationsGetAPointer() {
+    @DisplayName("Should project the first 100 BODY violations in sorted order and then list one truncation entry")
+    void sortedOrderDecidesWhichHundredBodyViolationsAreListed() {
         // Given 150 blank items in the document and the violations in a shuffled order
         ObjectMapper routeMapper = new ObjectMapper();
         JsonArray items = new JsonArray();
@@ -1218,24 +1396,21 @@ class ConstraintViolationMapperTest {
                     .errors());
         }
 
-        // Then the entries follow the sorted order, exactly the first 100 carry a pointer, on both runs
+        // Then the entries follow the sorted order, the first 100 carry a pointer and the marker follows, on both
+        // runs
         for (List<ValidationErrorDetail> errors : runs) {
-            assertEquals(150, errors.size());
-            for (int rank = 0; rank < 150; rank++) {
-                ValidationErrorDetail err = errors.get(rank);
-                if (rank < 100) {
-                    assertPointer("/items/" + sorted.get(rank) + "/name", err);
-                } else {
-                    assertBodyWithoutMembers(err);
-                }
+            assertEquals(101, errors.size());
+            for (int rank = 0; rank < 100; rank++) {
+                assertPointer("/items/" + sorted.get(rank) + "/name", errors.get(rank));
             }
+            assertEquals(TRUNCATED, errors.get(100));
         }
         assertEquals(runs.get(0), runs.get(1));
     }
 
     @Test
-    @DisplayName("Should count only BODY violations toward the cap and order entries by parameter index first")
-    void capCountsOnlyBodyViolationsAndParameterIndexSortsFirst() {
+    @DisplayName("Should count every location toward the cap and order entries by parameter index first")
+    void capCountsEveryLocationAndParameterIndexSortsFirst() {
         // Given a query parameter at index 0, a body at index 1, 50 query violations and 120 body ones
         ObjectMapper routeMapper = new ObjectMapper();
         ResourceMethodMeta meta = metaWithParams(
@@ -1262,29 +1437,21 @@ class ConstraintViolationMapperTest {
         List<ValidationErrorDetail> errors =
                 mapBody(meta, violations, request, routeMapper).errors();
 
-        // Then the 50 query entries come first and are untouched by the cap
-        assertEquals(170, errors.size());
+        // Then the 50 query entries come first
+        assertEquals(101, errors.size());
         for (ValidationErrorDetail err : errors.subList(0, 50)) {
             assertEquals("query", err.location());
             assertEquals("page", err.parameter());
         }
-        // And the 100 body entries after them carry a pointer, the last 20 do not
-        assertEquals(
-                100,
-                errors.subList(50, 170).stream()
-                        .filter(e -> e.pointer() != null)
-                        .count());
-        assertEquals(
-                20,
-                errors.subList(50, 170).stream()
-                        .filter(e -> e.pointer() == null)
-                        .count());
-        for (ValidationErrorDetail err : errors.subList(50, 150)) {
-            assertNotNull(err.pointer(), () -> "expected a pointer on " + err);
+        // And the 50 body entries after them carry a pointer, in sorted order, and the marker closes the list
+        List<Integer> sorted = IntStream.range(0, 120)
+                .boxed()
+                .sorted(Comparator.comparing(i -> "items[" + i + "].name"))
+                .toList();
+        for (int rank = 0; rank < 50; rank++) {
+            assertPointer("/items/" + sorted.get(rank) + "/name", errors.get(50 + rank));
         }
-        for (ValidationErrorDetail err : errors.subList(150, 170)) {
-            assertBodyWithoutMembers(err);
-        }
+        assertEquals(TRUNCATED, errors.get(100));
     }
 
     @Test

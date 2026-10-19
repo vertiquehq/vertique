@@ -321,6 +321,8 @@ public record ValidationErrorDetail(
 ) {
     public static ValidationErrorDetail ofPointer(String pointer, String detail) { … }
     public static ValidationErrorDetail ofParameter(String parameter, String detail) { … }
+    public static ValidationErrorDetail truncated() { … }
+    public static final int MAX_ENTRIES = 100;
     public ValidationErrorDetail withLocation(@Nullable String location) { … }
     public ValidationErrorDetail withType(@Nullable String type) { … }
     public ValidationErrorDetail withArgs(@Nullable Map<String, Object> args) { … }
@@ -337,6 +339,15 @@ public record ValidationErrorDetail(
   `IllegalArgumentException` when both are present, which also rejects a malformed response body
   read on the client side. An entry carries neither when the location cannot be stated.
 - The `with…` methods return a copy that carries every other member over.
+- **The list cap.** The framework's validation producers (the bean-validation gate, the schema gate,
+  the contract strategy and the default rendering of a `ViolationCarrier`) list at most
+  `ValidationErrorDetail.MAX_ENTRIES` (100) entries. When they hold more violations the response lists
+  the first 100, in the producer's order, then the entry `ValidationErrorDetail.truncated()` returns:
+  `detail` `"further violations omitted"`, `type` `"truncated"`, and no `pointer`, `parameter`,
+  `location` or `args`. A client treats an entry of type `truncated` as "there are more", not as a
+  location; detect it by `type` alone. A list of 100 entries or fewer carries no such entry, except that a
+  `ViolationCarrier` of up to 101 details is rendered whole: a carrier's own truncation entry passes unchanged
+  and may carry a `pointer`. A `RestValidationException` an application builds is rendered as built, not capped.
 
 `null` components are omitted from JSON and unknown members are ignored when reading. `args` is
 populated for standard Jakarta constraints by the `ViolationArgsInspector` SPI in

@@ -187,6 +187,7 @@ class ModuleStructureTest {
                         "public static final String PATTERN_INPUT_LENGTH_TYPE",
                         "public static final String PATTERN_INPUT_TOTAL_LENGTH_TYPE",
                         "public static List<ViolationDetail> collect(OutputUnit, JsonObject, boolean, PathForm)",
+                        "public static List<ViolationDetail> collect(OutputUnit, JsonObject, boolean, PathForm, int)",
                         "public static ViolationDetail valueFree(String)",
                         "public static String safeDetail(String, Map<String, Object>, String)",
                         "public static Optional<ViolationDetail> patternInputBound(Throwable)",

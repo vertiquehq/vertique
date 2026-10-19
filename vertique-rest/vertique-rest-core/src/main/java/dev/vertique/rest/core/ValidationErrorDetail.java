@@ -30,6 +30,10 @@ import java.util.Map;
  * both {@code pointer} and {@code parameter} is enforced by the canonical constructor, so it also
  * rejects a malformed response body read on the client side.
  *
+ * <p>The framework's validation producers list at most {@link #MAX_ENTRIES} entries. When they hold more
+ * violations, the response lists the first {@link #MAX_ENTRIES} and then the {@link #truncated()} entry,
+ * type {@code truncated}, which locates nothing: a client treats it as "there are more", not as a location.
+ *
  * <p>Use the {@link #ofPointer(String, String)} or {@link #ofParameter(String, String)} factory
  * methods when location, type, and args context are not applicable.
  *
@@ -55,6 +59,12 @@ public record ValidationErrorDetail(
         @Nullable String location,
         @Nullable String type,
         @Nullable Map<String, Object> args) {
+
+    /**
+     * The most entries a framework validation producer lists before it cuts the list: the first
+     * {@code MAX_ENTRIES} violations, then one {@link #truncated()} entry.
+     */
+    public static final int MAX_ENTRIES = 100;
 
     /**
      * Canonical constructor, used by Jackson when reading.
@@ -92,6 +102,20 @@ public record ValidationErrorDetail(
      */
     public static ValidationErrorDetail ofParameter(String parameter, String detail) {
         return new ValidationErrorDetail(null, parameter, detail, null, null, null);
+    }
+
+    /**
+     * Creates the entry that ends a cut list: it tells the client that more violations were found than the
+     * {@link #MAX_ENTRIES} listed before it.
+     *
+     * <p>The entry has {@code detail} {@code "further violations omitted"}, {@code type} {@code "truncated"}, and
+     * no {@code pointer}, {@code parameter}, {@code location} or {@code args}. A client must treat an entry of type
+     * {@code truncated} as "there are more" and not as a location.
+     *
+     * @return a new {@link ValidationErrorDetail} marking a cut list
+     */
+    public static ValidationErrorDetail truncated() {
+        return new ValidationErrorDetail(null, null, "further violations omitted", null, "truncated", null);
     }
 
     /**

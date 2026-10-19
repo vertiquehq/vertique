@@ -136,6 +136,38 @@ public final class ViolationDetails {
      * @return the details, empty for a valid result
      */
     public static List<ViolationDetail> collect(OutputUnit result, JsonObject schema, boolean failFast, PathForm form) {
+        return collectUpTo(result, schema, failFast, form, Integer.MAX_VALUE);
+    }
+
+    /**
+     * Translates a validation result into at most {@code limit + 1} details, and stops walking the result once it
+     * holds that many.
+     *
+     * <p>The details are the first {@code limit + 1} that {@link #collect(OutputUnit, JsonObject, boolean,
+     * PathForm)} returns, in its order, so a result of {@code limit} violations or fewer yields all of them and a
+     * longer one yields {@code limit} and one more, which tells a caller the list was cut without it having
+     * converted the rest. The walk over a very long error list stops at that point; the engine's own work to produce the list is
+     * not bounded by it.
+     *
+     * @param result   the engine's result
+     * @param schema   the schema the result was produced for; may be {@code null}
+     * @param failFast when {@code true}, stops after the first concrete or unresolved error
+     * @param form     the spelling of each detail's path
+     * @param limit    the most details the caller will list, not negative
+     * @return the details, empty for a valid result, at most {@code limit + 1} long
+     * @throws IllegalArgumentException if {@code limit} is negative
+     */
+    public static List<ViolationDetail> collect(
+            OutputUnit result, JsonObject schema, boolean failFast, PathForm form, int limit) {
+        if (limit < 0) {
+            throw new IllegalArgumentException("limit must not be negative: " + limit);
+        }
+        return collectUpTo(result, schema, failFast, form, limit == Integer.MAX_VALUE ? limit : limit + 1);
+    }
+
+    /** The shared walk: stops once it holds {@code stopAt} details, or after the first when {@code failFast}. */
+    private static List<ViolationDetail> collectUpTo(
+            OutputUnit result, JsonObject schema, boolean failFast, PathForm form, int stopAt) {
         List<ViolationDetail> failures = new ArrayList<>();
         if (result.getValid() != null && result.getValid()) {
             return failures;
@@ -152,7 +184,7 @@ public final class ViolationDetails {
             }
             if (keyword == null) {
                 failures.add(valueFreeAt(error.getInstanceLocation(), schema, form));
-                if (failFast) {
+                if (failFast || failures.size() >= stopAt) {
                     return failures;
                 }
                 continue;
@@ -169,7 +201,7 @@ public final class ViolationDetails {
                     message,
                     keyword,
                     args.isEmpty() ? null : args));
-            if (failFast) {
+            if (failFast || failures.size() >= stopAt) {
                 return failures;
             }
         }

@@ -46,13 +46,16 @@ import lombok.extern.slf4j.Slf4j;
  * materialized a JSON body with the mapper that also decides the route's wire names: an RFC 6901
  * JSON Pointer over those names, verified against the bound document, so it is shorter than the
  * violation's path where the document or the mapper cannot confirm a segment, never different. The
- * binders record what they did in a {@link BodyBindingMark}. The first 100 body violations in sorted
- * order are resolved; later ones, a body no framework binder materialized (an application decoder), a
- * body bound with another mapper, a body with no readable document and a violation a validator
- * reports without a structured path carry neither member and keep {@code location: "body"}. A
- * form-urlencoded body is a set of request parameters: its violations are reported in
- * {@code parameter} with {@code location: "form"}, under the field name of the mapper that bound the
- * body, and are not capped. The validator's path text is never echoed.
+ * binders record what they did in a {@link BodyBindingMark}. A body no framework binder materialized
+ * (an application decoder), a body bound with another mapper, a body with no readable document and a
+ * violation a validator reports without a structured path carry neither member and keep
+ * {@code location: "body"}. A form-urlencoded body is a set of request parameters: its violations are
+ * reported in {@code parameter} with {@code location: "form"}, under the field name of the mapper that
+ * bound the body. The validator's path text is never echoed.
+ *
+ * <p>The response lists at most {@link ValidationErrorDetail#MAX_ENTRIES} entries across every location,
+ * form bodies included: the first 100 violations in sorted order, then one
+ * {@link ValidationErrorDetail#truncated()} entry when there were more.
  *
  * <p>A violation on a {@code QUERY}, {@code PATH}, {@code HEADER}, {@code COOKIE} or {@code FORM}
  * parameter is reported in {@code parameter}, never in {@code pointer}: the declared parameter name
@@ -74,7 +77,11 @@ import lombok.extern.slf4j.Slf4j;
 @Slf4j
 final class ConstraintViolationMapper {
 
-    /** The most body violations of one call that are resolved to a pointer, and logged. */
+    /**
+     * The most body violations of one call that are resolved to a pointer, and logged. The response lists
+     * no more entries than {@link ValidationErrorDetail#MAX_ENTRIES}, so no violation is left beyond this
+     * bound; it stays a bound of its own on the resolver and the log.
+     */
     private static final int MAX_BODY_POINTERS = 100;
 
     /** Marks the pointer of a logged event that stops before the end of the violation's path. */
@@ -127,7 +134,9 @@ final class ConstraintViolationMapper {
      *
      * <p>The violations are first sorted by parameter index, the neutralized Java path, constraint
      * type, message and arrival position, so the response and the choice of which body violations are
-     * resolved do not depend on the validator's iteration order.
+     * resolved do not depend on the validator's iteration order. Every violation is sorted before the
+     * list is cut to {@link ValidationErrorDetail#MAX_ENTRIES} entries, so the sort decides which survive;
+     * when more were found the cut list ends with {@link ValidationErrorDetail#truncated()}.
      *
      * @param meta             the resource method metadata providing parameter source info
      * @param violations       the non-empty list of parameter violations
@@ -149,9 +158,13 @@ final class ConstraintViolationMapper {
         }
         ranked.sort(ORDER);
         BodyReport body = new BodyReport(ctx, bodyNames, projectionMapper);
-        List<ValidationErrorDetail> errors = new ArrayList<>(ranked.size());
-        for (Ranked entry : ranked) {
+        int listed = Math.min(ranked.size(), ValidationErrorDetail.MAX_ENTRIES);
+        List<ValidationErrorDetail> errors = new ArrayList<>(listed + 1);
+        for (Ranked entry : ranked.subList(0, listed)) {
             errors.add(toErrorDetail(meta, entry, body));
+        }
+        if (ranked.size() > ValidationErrorDetail.MAX_ENTRIES) {
+            errors.add(ValidationErrorDetail.truncated());
         }
         return new RestValidationException("Validation failed", errors);
     }

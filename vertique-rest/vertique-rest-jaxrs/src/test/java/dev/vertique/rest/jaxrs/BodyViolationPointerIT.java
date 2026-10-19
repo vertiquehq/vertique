@@ -464,8 +464,8 @@ public class BodyViolationPointerIT {
     // --- TP: the cap ---
 
     @Test
-    @DisplayName("At most one hundred body violations are projected, the same hundred on every run")
-    void atMostOneHundredBodyViolationsAreProjected() {
+    @DisplayName("At most one hundred body violations are listed, the same hundred on every run, then one marker")
+    void atMostOneHundredBodyViolationsAreListed() {
         int port = deploy(b -> {}, new PointerResources.ShapeResource());
         // Violations are ordered by the text of their Java path, so item 10 sorts before item 2.
         List<Integer> sortedPositions = IntStream.range(0, 150)
@@ -483,16 +483,33 @@ public class BodyViolationPointerIT {
         for (Reply reply : List.of(first, second)) {
             assertEquals(400, reply.status());
             List<JsonObject> errors = reply.errors();
-            assertEquals(150, errors.size());
+            assertEquals(101, errors.size());
             for (int i = 0; i < 100; i++) {
                 assertPointer(expectedPointers.get(i), errors.get(i));
             }
-            for (int i = 100; i < 150; i++) {
-                assertWithoutLocationMembers(errors.get(i));
-                assertEquals("body", errors.get(i).getString("location"));
-            }
+            assertTruncationEntry(errors.get(100));
         }
         assertEquals(first.json().getJsonArray("errors"), second.json().getJsonArray("errors"));
+    }
+
+    @Test
+    @DisplayName("Exactly one hundred body violations are all listed and carry no marker")
+    void oneHundredBodyViolationsCarryNoMarker() {
+        int port = deploy(b -> {}, new PointerResources.ShapeResource());
+        List<String> expectedPointers = IntStream.range(0, 100)
+                .boxed()
+                .sorted(Comparator.comparing(i -> "items[" + i + "].name"))
+                .map(i -> "/items/" + i + "/name")
+                .toList();
+
+        Reply reply = postJson(port, "/bodies/cart", blankItems(100));
+
+        assertEquals(400, reply.status());
+        List<JsonObject> errors = reply.errors();
+        assertEquals(100, errors.size());
+        for (int i = 0; i < 100; i++) {
+            assertPointer(expectedPointers.get(i), errors.get(i));
+        }
     }
 
     // --- TP: polymorphic root list ---
@@ -742,6 +759,12 @@ public class BodyViolationPointerIT {
             actual.add(entry.getString("pointer"));
         }
         assertEquals(expected, actual, reply.raw());
+    }
+
+    /** Asserts the truncation entry: its detail and type, and no other member. */
+    private static void assertTruncationEntry(JsonObject entry) {
+        assertEquals(
+                new JsonObject().put("detail", "further violations omitted").put("type", "truncated"), entry);
     }
 
     /** Asserts a form body entry located by {@code parameter} and by nothing else. */
