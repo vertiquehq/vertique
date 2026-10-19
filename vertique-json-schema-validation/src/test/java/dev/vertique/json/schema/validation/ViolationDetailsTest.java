@@ -4,7 +4,6 @@
 package dev.vertique.json.schema.validation;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.tuple;
 import static org.junit.jupiter.api.Assertions.assertAll;
 
@@ -13,7 +12,6 @@ import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 import io.vertx.json.schema.OutputUnit;
 import io.vertx.json.schema.Validator;
-import java.util.AbstractList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -126,105 +124,6 @@ class ViolationDetailsTest {
                 .isTrue();
         assertThat(SchemaKeywords.constraintKeyword(ResultShapes.leaf("#/additionalProperties", "#/zz")))
                 .isNull();
-    }
-
-    @Test
-    @DisplayName("collecting with a limit returns at most the limit plus one details, the first of the unlimited"
-            + " result, and stops walking the result there")
-    void collectWithLimitStopsAfterTheLimitPlusOne() {
-        // Given results of 250, 100 and 3 violations from a real validator: an array of strings where integers
-        // are required
-        JsonObject schema = Schemas.json("{'type':'array','items':{'type':'integer'}}");
-        Validator validator = Validators.compile(schema);
-        OutputUnit many = validator.validate(notNumbers(250));
-        OutputUnit exactlyTheLimit = validator.validate(notNumbers(100));
-        OutputUnit few = validator.validate(notNumbers(3));
-
-        for (PathForm form : PathForm.values()) {
-            List<ViolationDetail> unlimitedMany = ViolationDetails.collect(many, schema, false, form);
-            List<ViolationDetail> unlimitedExact = ViolationDetails.collect(exactlyTheLimit, schema, false, form);
-            List<ViolationDetail> unlimitedFew = ViolationDetails.collect(few, schema, false, form);
-
-            // When each is collected with a limit of 100
-            List<ViolationDetail> limitedMany = ViolationDetails.collect(many, schema, false, form, 100);
-            List<ViolationDetail> limitedExact = ViolationDetails.collect(exactlyTheLimit, schema, false, form, 100);
-            List<ViolationDetail> limitedFew = ViolationDetails.collect(few, schema, false, form, 100);
-
-            // Then the unlimited overload still returns every detail
-            assertThat(unlimitedMany).as("unlimited, 250 violations, %s", form).hasSize(250);
-            assertThat(unlimitedExact).as("unlimited, 100 violations, %s", form).hasSize(100);
-            assertThat(unlimitedFew).as("unlimited, 3 violations, %s", form).hasSize(3);
-            // And the limit overload returns 101, 100 and 3 details, equal to the first of the unlimited result
-            assertThat(limitedMany).as("limited, 250 violations, %s", form).hasSize(101);
-            assertThat(limitedMany).isEqualTo(unlimitedMany.subList(0, 101));
-            assertThat(limitedExact).as("limited, 100 violations, %s", form).isEqualTo(unlimitedExact);
-            assertThat(limitedFew).as("limited, 3 violations, %s", form).isEqualTo(unlimitedFew);
-        }
-
-        // And fail-fast with a limit still stops at the first concrete violation
-        assertThat(ViolationDetails.collect(many, schema, true, PathForm.URI_FRAGMENT, 100))
-                .isEqualTo(ViolationDetails.collect(many, schema, true, PathForm.URI_FRAGMENT))
-                .hasSize(1);
-
-        // And a result of 20,000 errors is read only as far as the 101st concrete violation
-        int[] errorsRead = {0};
-        List<OutputUnit> errors = new AbstractList<>() {
-            @Override
-            public OutputUnit get(int index) {
-                errorsRead[0]++;
-                return ResultShapes.leaf(null, "#/amount");
-            }
-
-            @Override
-            public int size() {
-                return 20_000;
-            }
-        };
-        OutputUnit huge = new OutputUnit().setValid(false).setErrors(errors);
-        assertThat(huge.getErrors())
-                .as("the result holds the counting list itself")
-                .isSameAs(errors);
-        assertThat(errorsRead[0]).as("nothing is read before collecting").isZero();
-        assertThat(ViolationDetails.collect(huge, DECLARES_AMOUNT, false, PathForm.URI_FRAGMENT, 100))
-                .hasSize(101);
-        // (a loop that tests its bound at the top of the next round may read one error more than it keeps)
-        assertThat(errorsRead[0]).as("errors read of 20,000").isPositive().isLessThanOrEqualTo(102);
-    }
-
-    @Test
-    @DisplayName("a limit of zero yields one detail for a failing result and none for a valid one, and a negative"
-            + " limit is rejected")
-    void collectWithLimitZeroAndNegativeLimit() {
-        // Given a failing result of several violations and a valid result
-        JsonObject schema = Schemas.json("{'type':'array','items':{'type':'integer'}}");
-        Validator validator = Validators.compile(schema);
-        OutputUnit failing = validator.validate(notNumbers(5));
-        OutputUnit valid = validator.validate(new JsonArray().add(1).add(2));
-
-        for (PathForm form : PathForm.values()) {
-            // When each is collected with a limit of zero
-            List<ViolationDetail> unlimited = ViolationDetails.collect(failing, schema, false, form);
-
-            // Then the failing result yields exactly its first detail and the valid one none
-            assertThat(unlimited).as("unlimited, %s", form).hasSize(5);
-            assertThat(ViolationDetails.collect(failing, schema, false, form, 0))
-                    .as("limit 0, failing, %s", form)
-                    .isEqualTo(unlimited.subList(0, 1));
-            assertThat(ViolationDetails.collect(valid, schema, false, form, 0))
-                    .as("limit 0, valid, %s", form)
-                    .isEmpty();
-        }
-
-        // And a negative limit is rejected
-        assertThatThrownBy(() -> ViolationDetails.collect(failing, schema, false, PathForm.RFC6901, -1))
-                .isInstanceOf(IllegalArgumentException.class);
-    }
-
-    /** An array of {@code n} strings, each a violation of an integer item schema. */
-    private static JsonArray notNumbers(int n) {
-        JsonArray values = new JsonArray();
-        IntStream.range(0, n).forEach(i -> values.add("not-a-number-" + i));
-        return values;
     }
 
     @ParameterizedTest(name = "{0} -> {1}")

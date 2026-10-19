@@ -56,28 +56,6 @@ class ValidationErrorDetailTest {
     }
 
     @Test
-    @DisplayName("the truncation entry carries only its detail and type, and the cap is one hundred entries")
-    void truncatedEntryShape() throws JsonProcessingException {
-        // Given the shared factory and the cap constant
-        // When the truncation entry is built and serialized
-        ValidationErrorDetail truncated = ValidationErrorDetail.truncated();
-        JsonObject serialized = json(truncated);
-
-        // Then the cap is 100
-        assertEquals(100, ValidationErrorDetail.MAX_ENTRIES);
-        // And the record has no location member, no args and exactly this detail and type
-        assertNull(truncated.pointer());
-        assertNull(truncated.parameter());
-        assertEquals("further violations omitted", truncated.detail());
-        assertNull(truncated.location());
-        assertEquals("truncated", truncated.type());
-        assertNull(truncated.args());
-        assertEquals(
-                new JsonObject().put("detail", "further violations omitted").put("type", "truncated"), serialized);
-        assertEquals(truncated, ValidationErrorDetail.truncated());
-    }
-
-    @Test
     @DisplayName("an empty pointer is serialized as an empty string")
     void serializesTheEmptyPointer() throws JsonProcessingException {
         String serialized = VertiqueJson.mapper().writeValueAsString(ValidationErrorDetail.ofPointer("", "d"));

@@ -214,11 +214,6 @@ per call to `ViolationDetails.collect`.
 - `collect(OutputUnit result, JsonObject schema, boolean failFast, PathForm form)` — the detail list
   described under "Violation detail shape". With `failFast` true it stops after the first
   non-structural violation.
-- `collect(OutputUnit result, JsonObject schema, boolean failFast, PathForm form, int limit)` — the
-  same details in the same order, but at most `limit + 1` of them: it stops walking the result once it
-  holds `limit + 1`, so a caller that lists `limit` entries and one marker learns the list was cut
-  without converting the rest of a very long error list. A result of `limit` violations or fewer
-  yields all of them; `limit` must not be negative. `failFast` still stops at the first.
 - `valueFree(String path)` — a detail with the fixed message and `null` `type` and `args`.
 - `safeDetail(String keyword, Map<String, Object> args, String rawMessage)` — the keyword-canonical,
   value-free message for a violated keyword. It fails closed: a keyword whose constraint is missing

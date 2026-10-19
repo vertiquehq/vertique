@@ -28,7 +28,6 @@ import dev.vertique.rest.core.ValidationErrorDetail;
 import dev.vertique.rest.core.ValidationProblemDetail;
 import jakarta.ws.rs.core.Response;
 import java.time.Duration;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.IntStream;
@@ -417,99 +416,6 @@ class RestModuleDefaultMappingTest {
         assertFalse(defaultEntry.has("location"), () -> "unexpected location in " + defaultEntry);
         assertEquals("must be valid", defaultEntry.path("detail").asText());
         assertEquals("pattern", defaultEntry.path("type").asText());
-    }
-
-    @Test
-    @DisplayName("carrier rendering lists at most 100 entries and one truncation entry, and passes a producer's own"
-            + " marker unchanged")
-    void carrierRenderingCapsTheList() {
-        // Given pointer carriers of 100, 101 (the last a producer's own truncation entry) and 150 details
-        List<ViolationDetail> hundred = pointerDetails(100);
-        List<ViolationDetail> hundredAndMarker = new ArrayList<>(pointerDetails(100));
-        hundredAndMarker.add(new ViolationDetail("", "further violations omitted", "truncated", null));
-        List<ViolationDetail> hundredAndFifty = pointerDetails(150);
-
-        // When each is rendered
-        List<JsonNode> exactlyTheCap = render(new PointerCarrierValidationException("invalid", hundred));
-        List<JsonNode> withOwnMarker = render(new PointerCarrierValidationException("invalid", hundredAndMarker));
-        List<JsonNode> overTheCap = render(new PointerCarrierValidationException("invalid", hundredAndFifty));
-
-        // Then 100 entries are rendered unchanged and without a marker
-        assertEquals(100, exactlyTheCap.size());
-        for (int i = 0; i < 100; i++) {
-            assertEquals("/field" + i, exactlyTheCap.get(i).path("pointer").asText());
-        }
-        assertTrue(exactlyTheCap.stream()
-                .noneMatch(e -> "truncated".equals(e.path("type").asText())));
-        // And 101 entries are rendered unchanged: the producer's marker keeps its empty pointer
-        assertEquals(101, withOwnMarker.size());
-        for (int i = 0; i < 100; i++) {
-            assertEquals("/field" + i, withOwnMarker.get(i).path("pointer").asText());
-        }
-        assertTrue(withOwnMarker.get(100).has("pointer"), "the producer's empty pointer must not be dropped");
-        assertEquals("", withOwnMarker.get(100).get("pointer").asText());
-        assertEquals("truncated", withOwnMarker.get(100).path("type").asText());
-        // And 150 give the first 100 in order and one unlocated marker
-        assertEquals(101, overTheCap.size());
-        for (int i = 0; i < 100; i++) {
-            assertEquals("/field" + i, overTheCap.get(i).path("pointer").asText());
-            assertEquals("must not be blank", overTheCap.get(i).path("detail").asText());
-        }
-        assertUnlocatedMarker(overTheCap.get(100));
-
-        // And a Java-path carrier of 150 details gives 101 entries with neither location member, the last
-        // being the marker, and exactly 100 DEBUG events
-        List<ViolationDetail> javaPaths = IntStream.range(0, 150)
-                .mapToObj(i -> new ViolationDetail("field" + i, "must not be blank", "required", null))
-                .toList();
-        List<JsonNode> javaEntries = render(new CarrierValidationException("invalid", javaPaths));
-        assertEquals(101, javaEntries.size());
-        for (JsonNode entry : javaEntries.subList(0, 100)) {
-            assertFalse(entry.has("pointer"), () -> "unexpected pointer in " + entry);
-            assertFalse(entry.has("parameter"), () -> "unexpected parameter in " + entry);
-            assertEquals("must not be blank", entry.path("detail").asText());
-        }
-        assertUnlocatedMarker(javaEntries.get(100));
-        assertEquals(100, appender.list.size());
-    }
-
-    @Test
-    @DisplayName("a carrier of 101 genuine details renders all of them and 102 give the first 100 and the marker")
-    void carrierRenderingCutsOnlyBeyondOneHundredAndOneGenuineDetails() {
-        // Given pointer carriers of 101 and 102 details, none of them a truncation entry
-        List<ViolationDetail> hundredAndOne = pointerDetails(101);
-        List<ViolationDetail> hundredAndTwo = pointerDetails(102);
-
-        // When each is rendered
-        List<JsonNode> unchanged = render(new PointerCarrierValidationException("invalid", hundredAndOne));
-        List<JsonNode> cut = render(new PointerCarrierValidationException("invalid", hundredAndTwo));
-
-        // Then 101 entries are rendered unchanged, with no marker added
-        assertEquals(101, unchanged.size());
-        for (int i = 0; i < 101; i++) {
-            assertEquals("/field" + i, unchanged.get(i).path("pointer").asText());
-            assertEquals("required", unchanged.get(i).path("type").asText());
-        }
-        // And 102 give the first 100 in order and one unlocated marker
-        assertEquals(101, cut.size());
-        for (int i = 0; i < 100; i++) {
-            assertEquals("/field" + i, cut.get(i).path("pointer").asText());
-            assertEquals("required", cut.get(i).path("type").asText());
-        }
-        assertUnlocatedMarker(cut.get(100));
-    }
-
-    private static List<ViolationDetail> pointerDetails(int count) {
-        return IntStream.range(0, count)
-                .mapToObj(i -> new ViolationDetail("/field" + i, "must not be blank", "required", null))
-                .toList();
-    }
-
-    /** The truncation entry: its detail and type, and no other member. */
-    private static void assertUnlocatedMarker(JsonNode entry) {
-        assertEquals("further violations omitted", entry.path("detail").asText());
-        assertEquals("truncated", entry.path("type").asText());
-        assertEquals(2, entry.size(), () -> "the marker carries only detail and type: " + entry);
     }
 
     @Test

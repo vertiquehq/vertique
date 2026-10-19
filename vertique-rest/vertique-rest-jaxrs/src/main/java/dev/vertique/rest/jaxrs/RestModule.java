@@ -484,22 +484,15 @@ public abstract class RestModule {
      * request location, and logs the neutralized path and the type instead. A pointer that
      * {@link ViolationPathForm#accepts(String)} rejects is omitted from its entry, and one DEBUG event names
      * only that entry's type.
-     *
-     * <p>A carrier of at most {@link ValidationErrorDetail#MAX_ENTRIES} violations plus one is rendered whole,
-     * so a carrier that already ends with its own truncation entry passes unchanged. A longer list is
-     * rendered as its first {@link ValidationErrorDetail#MAX_ENTRIES} violations and one
-     * {@link ValidationErrorDetail#truncated()} entry. The log cap applies to the whole list, before the cut.
      */
     private static List<ValidationErrorDetail> toErrors(ViolationCarrier carrier) {
         List<ViolationDetail> violations = carrier.violations();
-        boolean cut = violations.size() > ValidationErrorDetail.MAX_ENTRIES + 1;
-        List<ViolationDetail> listed = cut ? violations.subList(0, ValidationErrorDetail.MAX_ENTRIES) : violations;
-        List<ValidationErrorDetail> errors = new ArrayList<>(listed.size() + 1);
+        List<ValidationErrorDetail> errors = new ArrayList<>(violations.size());
         ViolationPathForm form = carrier.violationPathForm();
         if (form == ViolationPathForm.JSON_POINTER) {
             boolean debug = log.isDebugEnabled();
             int logged = 0;
-            for (ViolationDetail v : listed) {
+            for (ViolationDetail v : violations) {
                 if (form.accepts(v.path())) {
                     errors.add(ValidationErrorDetail.ofPointer(v.path(), v.message())
                             .withType(v.type())
@@ -514,12 +507,9 @@ public abstract class RestModule {
             }
         } else {
             logCarrierPaths(violations);
-            for (ViolationDetail v : listed) {
+            for (ViolationDetail v : violations) {
                 errors.add(new ValidationErrorDetail(null, null, v.message(), null, v.type(), v.args()));
             }
-        }
-        if (cut) {
-            errors.add(ValidationErrorDetail.truncated());
         }
         return List.copyOf(errors);
     }
