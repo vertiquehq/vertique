@@ -469,14 +469,19 @@ changes startup for every PostgreSQL application. Do the following in order.
 
 ### 1. Migrate the schema
 
-- Flyway applies `V002__create_workflow_definitions.sql` (the `workflow_definitions` table) and
-  `V003__add_workflow_definition_digest.sql` (the `document_digest` column) from `db/migration/workflow`. Both must run
-  before the first 0.4.0 node starts.
+- Flyway applies `V002__create_workflow_definitions.sql` (the `workflow_definitions` table),
+  `V003__add_workflow_definition_digest.sql` (the `document_digest` column) and `V004__add_workflow_tenant_key.sql` (a
+  nullable `tenant_key` column on `workflow_instances` and `workflow_tasks`, existing rows `null`) from
+  `db/migration/workflow`. All three must run before the first 0.4.0 node starts. `V004__` changes only catalog metadata,
+  but each `ALTER TABLE` holds an `ACCESS EXCLUSIVE` lock until the migration commits: run it when no long transaction is
+  open on those tables. It waits at most 30 seconds for the lock (`SET LOCAL lock_timeout`) and fails rather than blocking
+  the workflow tables, so rerun it after the blocking transaction ends. Nodes of the previous release insert tasks without a
+  tenant; finish the rolling upgrade before relying on tenant-filtered task lists.
 - PostgreSQL 15 or later is required (`NULLS NOT DISTINCT`).
 - Anything else that writes `DOCUMENT` rows, such as operator scripts or other modules, must supply `document_digest`:
   the lowercase hex SHA-256 of the stored UTF-8 text, present on `DOCUMENT` rows and absent on `CODE` rows. The migration
   backfills rows that already exist, which only matters for databases of pre-release builds. Where Flyway is disabled,
-  run both migration scripts yourself before the first 0.4.0 node starts.
+  run all three migration scripts yourself before the first 0.4.0 node starts.
 - Durable `DOCUMENT` bodies need `server_encoding = UTF8`. The check runs before the first document read or write. `CODE`
   rows and applications without documents work on any encoding.
 

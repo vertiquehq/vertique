@@ -132,16 +132,24 @@ Instance state is modeled as a single current snapshot plus an append-only histo
 
 Starts require an idempotency key. `StartCommand.requestedDefinitionVersion` may pin a new instance to a specific registered version; when omitted, the current version is used. Idempotency and dedup keys are scoped to what they protect — a start key is scoped to the definition id and a signal dedup key is scoped to the workflow instance; see `dev.vertique:vertique-workflow-postgresql` for the complete key-scope table across all operations.
 
+### Tenant Key on Instances, Tasks And Filters
+
+`WorkflowInstance` and `TaskRecord` each end with a nullable `String tenantKey` component, and `WorkflowInstanceQuery` and `TaskFilter` each end with a nullable `String tenantKey` filter component (after `includeArchived`). The previous constructors of all four records are retained and delegate with `null`, so existing callers keep compiling; `WorkflowInstanceQuery.withTenantKey(...)` and `TaskFilter.withTenantKey(...)` set the filter, and every other `with*` method preserves it. The instance has no tenant setter and every instance updater passes the tenant through. Record patterns that deconstruct these four records by component list stop compiling and must add the component.
+
+The PostgreSQL store persists the value in nullable `tenant_key` columns added by `V004__add_workflow_tenant_key.sql`. Existing rows read `null`. The filters are exact-match; a task's tenant is derived from its owning instance row by the PostgreSQL store, whatever the `TaskRecord` carries on insert. Nothing in this module resolves a tenant at start yet, so instances started by the engine carry no tenant.
+
+The value and the filters are information and a filter, not an isolation or authorization boundary: a `null` filter matches every tenant, so a caller must not pass an unresolved tenant as `null` expecting scoping. Start idempotency keys and business keys stay global.
+
 ### Durable Context on the Instance
 
-`WorkflowInstance` carries an 18th component, `@Nullable DurableMetadata metadata` — the durable
+`WorkflowInstance` carries a `@Nullable DurableMetadata metadata` component — the durable
 context (correlation, tenant, and other registered namespaces) captured once at start time, using
 the framework's standard `{"context": …}` carrier shape. It is `null` when no ambient durable context was
 present at start (empty capture) or for instances started before this field existed.
 
 The field is immutable for the instance's lifetime: no `withMetadata(...)` updater exists, and
 every other `with*` updater (`withVersion`, `withStatus`, `withCurrentStepId`, `withWait`,
-`withState`, `withError`, `withUpdatedAt`) passes it through unchanged. No transition, migration,
+`withState`, `withError`, `withUpdatedAt`) passes it through unchanged (as it does `tenantKey`). No transition, migration,
 retry, or repair operation may overwrite it.
 
 At drive time, the engine treats this carrier as a base-wins/instance-fill *fill* source, not an
@@ -469,7 +477,7 @@ Behaviors that are load-bearing for correct use and not obvious from method sign
 - **Missing recorders fail the transition.** When a step emits a side-effect intent and no `WorkflowSideEffectRecorder<TX>` is registered for that `IntentKind`, the transaction fails. There is no silent no-op. Optional intent kinds may be declared via `@OptionalIntentKinds` and are no-ops only when explicitly opted in.
 - **Recorders must be durable, never live.** A `WorkflowSideEffectRecorder<TX>` may persist an outbox row, schedule a delayed job, or write to another transactional store, but must not call a downstream service before commit.
 - **Human task DSL guard rails.** A task step's decision list must be non-empty with unique decision names (enforced by the `HumanTaskNode` compact constructor). The optional due-date triplet (`dueDate`, `onDueMutator`, `dueNextStepId`) is all-or-nothing — supplying a partial subset is rejected at construction.
-- **`TaskFilter` single-assignee-kind guard.** At most one of `assigneeUser` / `assigneeRole` / `assigneeQueue` may be set, mirroring the single-`assignee_type` storage shape. Use `TaskFilter.empty()` plus `with*` copies to compose filters.
+- **`TaskFilter` single-assignee-kind guard.** At most one of `assigneeUser` / `assigneeRole` / `assigneeQueue` may be set, mirroring the single-`assignee_type` storage shape. Use `TaskFilter.empty()` plus `with*` copies to compose filters. The optional `tenantKey` filter is an exact match, not validated, and `null` means every tenant.
 - **Version-stable approvals.** `.requireVersionStability()` on a task captures `subject_version` at task creation; completion fails with `WorkflowStaleSubjectVersionException` when the reviewer's `reviewedSubjectVersion` does not match the snapshot. Creating a stability-required task with a null `subject_version` fails with `WorkflowSubjectVersionUnavailableException`.
 - **Subject resolver precedence.** An explicit `StartCommand.subjectRef` wins; otherwise a definition-level `.subject(...)` resolver is invoked with the initial state. A configured resolver returning `null` is a contract violation (`WorkflowDefinitionException`), not a silent "no subject".
 - **`WorkflowActor` is required on every task mutation command.** `TaskCompletionCommand` and `TaskReassignmentCommand` reject null / blank actor identity through their compact constructors. Blank `reason` is normalized to `null` before the command is fingerprinted for idempotency.

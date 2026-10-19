@@ -31,7 +31,7 @@ Install this module when workflows must survive process restarts, run across mor
 | Retention service | `PgWorkflowRetentionService` — SKIP LOCKED archive + purge sweep; the application drives the batch loop and cadence, there is no built-in scheduler |
 | Recovery service | `PgWorkflowBranchRecoveryService` — opt-in cluster-singleton branch recovery cron |
 | Migration support | Optional in-flight workflow definition migration (`WorkflowMigrationModule`) |
-| Flyway schema | Shipped `V1__create_workflow_tables.sql` plus additive `V002__create_workflow_definitions.sql` and `V003__add_workflow_definition_digest.sql` |
+| Flyway schema | Shipped `V1__create_workflow_tables.sql` plus additive `V002__create_workflow_definitions.sql` `V003__add_workflow_definition_digest.sql` and `V004__add_workflow_tenant_key.sql` |
 
 The module `includes WorkflowEngineModule`, which provides the `WorkflowOperations` binding and recorder-router wiring. It does not deliver downstream service calls or execute delayed jobs by itself; those are separate modules.
 
@@ -73,7 +73,9 @@ The module owns workflow persistence tables, including:
 | `workflow_branch_tokens` | Active branch execution state; includes `metadata JSONB` for durable context |
 | `workflow_join_states` | Fan-in state for fork/join workflows |
 
-The migration files live with the module under `db/migration/workflow`. The shipped `V1__create_workflow_tables.sql` contains the instance/runtime tables, including branch tokens and durable metadata. The additive `V002__create_workflow_definitions.sql` adds the definition registry and `V003__add_workflow_definition_digest.sql` adds its `document_digest` column; V1 is unchanged.
+The migration files live with the module under `db/migration/workflow`. The shipped `V1__create_workflow_tables.sql` contains the instance/runtime tables, including branch tokens and durable metadata. The additive `V002__create_workflow_definitions.sql` adds the definition registry and `V003__add_workflow_definition_digest.sql` adds its `document_digest` column. `V004__add_workflow_tenant_key.sql` adds a nullable `tenant_key VARCHAR(255)` column to `workflow_instances` and `workflow_tasks`; existing rows read `null`. The statements change only catalog metadata, but each takes an `ACCESS EXCLUSIVE` lock on its table until the migration commits, and the script bounds its wait for that lock with `SET LOCAL lock_timeout = '30s'`: run it when no long transaction (a retention sweep, a long read) is open, and expect it to fail and be retried rather than stall the workflow tables. No index is added; tenant filters use the existing keyset indexes until a workload shows the need for a dedicated one. Nodes that still run the previous release insert tasks without a tenant, so once tenants are stamped, finish the rolling upgrade before relying on tenant-filtered task lists. V1, V002 and V003 are unchanged.
+
+`PgWorkflowInstanceRepository.insert` writes `tenant_key` from `WorkflowInstance.tenantKey()` and no update statement changes it. `PgTaskStore.insertOpen` writes the task's `tenant_key` from the owning instance row (`SELECT tenant_key FROM workflow_instances WHERE id = …`) and ignores the value on the `TaskRecord`, so every task creation path inherits the instance tenant; the guarantee belongs to this store, not to the `TaskStore` SPI. `WorkflowInstanceQuery.tenantKey()` and `TaskFilter.tenantKey()` add an exact-match `tenant_key = ?` condition when non-null and leave keyset order and archived handling unchanged; `null` matches every tenant. The column and the filters are information and a filter, not an isolation or authorization boundary: callers must not pass an unresolved tenant as `null` expecting scoping, and start idempotency and business keys stay global. Nothing in this module resolves the tenant at start yet.
 
 ---
 

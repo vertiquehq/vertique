@@ -53,15 +53,15 @@ public final class PgWorkflowInstanceRepository extends PgSqlRepository
             + " (id, definition_id, definition_version, plan_hash, version, status,"
             + " business_key, subject_type, subject_id, subject_version,"
             + " current_step_id, wait_type, wait_key, wait_aux_id, state_json,"
-            + " error_type, error_message, metadata, created_at, updated_at)"
+            + " error_type, error_message, metadata, created_at, updated_at, tenant_key)"
             + " VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::jsonb, $16, $17,"
-            + " $18::jsonb, $19, $20)";
+            + " $18::jsonb, $19, $20, $21)";
 
     private static final String SQL_SELECT_ALL_COLUMNS =
             "SELECT id, definition_id, definition_version, plan_hash, version, status,"
                     + " business_key, subject_type, subject_id, subject_version,"
                     + " current_step_id, wait_type, wait_key, wait_aux_id, state_json,"
-                    + " error_type, error_message, metadata, created_at, updated_at, completed_at"
+                    + " error_type, error_message, metadata, created_at, updated_at, completed_at, tenant_key"
                     + " FROM workflow_instances";
 
     private static final String SQL_FIND_BY_ID = SQL_SELECT_ALL_COLUMNS + " WHERE id = $1";
@@ -183,7 +183,8 @@ public final class PgWorkflowInstanceRepository extends PgSqlRepository
                 inst.errorMessage(),
                 inst.metadata() == null ? null : inst.metadata().toCarrier(),
                 toOffsetDateTime(inst.createdAt()),
-                toOffsetDateTime(inst.updatedAt()));
+                toOffsetDateTime(inst.updatedAt()),
+                inst.tenantKey());
 
         return DefinitionPinAdmission.admitPin(
                         tx, inst.definitionId(), inst.definitionVersion(), inst.planHash(), exceptionMapper)
@@ -495,6 +496,12 @@ public final class PgWorkflowInstanceRepository extends PgSqlRepository
             sql.append(hasWhere ? " AND" : " WHERE");
             paramValues.add(query.subjectVersion());
             sql.append(" subject_version = $").append(paramValues.size());
+            hasWhere = true;
+        }
+        if (query.tenantKey() != null) {
+            sql.append(hasWhere ? " AND" : " WHERE");
+            paramValues.add(query.tenantKey());
+            sql.append(" tenant_key = $").append(paramValues.size());
             hasWhere = true;
         }
         if (!query.includeArchived()) {

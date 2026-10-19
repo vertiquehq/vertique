@@ -64,8 +64,9 @@ public final class PgTaskStore extends PgSqlRepository implements TaskStore<SqlC
     private static final String SQL_INSERT = "INSERT INTO workflow_tasks"
             + " (task_id, workflow_id, step_id, status, assignee_type, assignee_key,"
             + " decisions_snapshot_json, due_at, due_date_timer_id, subject_version_at_creation,"
-            + " created_at, updated_at, branch_token_id, fork_step_id, branch_id)"
-            + " VALUES ($1, $2, $3, 'OPEN', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)";
+            + " created_at, updated_at, branch_token_id, fork_step_id, branch_id, tenant_key)"
+            + " VALUES ($1, $2, $3, 'OPEN', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,"
+            + " (SELECT tenant_key FROM workflow_instances WHERE id = $2))";
 
     private static final String SQL_SELECT_ALL_COLUMNS =
             "SELECT task_id, workflow_id, step_id, status, assignee_type, assignee_key,"
@@ -75,7 +76,7 @@ public final class PgTaskStore extends PgSqlRepository implements TaskStore<SqlC
                     + " completed_at, cancelled_at, expired_at, cancellation_reason,"
                     + " subject_version_at_creation,"
                     + " branch_token_id, fork_step_id, branch_id,"
-                    + " created_at, updated_at"
+                    + " created_at, updated_at, tenant_key"
                     + " FROM workflow_tasks";
 
     private static final String SQL_FIND_BY_ID = SQL_SELECT_ALL_COLUMNS + " WHERE task_id = $1";
@@ -354,9 +355,12 @@ public final class PgTaskStore extends PgSqlRepository implements TaskStore<SqlC
                     + " wt.completed_at, wt.cancelled_at, wt.expired_at, wt.cancellation_reason,"
                     + " wt.subject_version_at_creation,"
                     + " wt.branch_token_id, wt.fork_step_id, wt.branch_id,"
-                    + " wt.created_at, wt.updated_at"
+                    + " wt.created_at, wt.updated_at, wt.tenant_key"
                     + " FROM workflow_tasks wt"
-                    + " JOIN workflow_instances wi ON wt.workflow_id = wi.id");
+                    // The joined side exposes only the columns the filters read, so the unqualified
+                    // keyset columns (updated_at, task_id) stay unambiguous on every page.
+                    + " JOIN (SELECT id, subject_type, subject_id, archived_at FROM workflow_instances) wi"
+                    + " ON wt.workflow_id = wi.id");
         }
 
         List<Object> paramValues = new ArrayList<>();
@@ -415,6 +419,12 @@ public final class PgTaskStore extends PgSqlRepository implements TaskStore<SqlC
             sql.append(hasWhere ? " AND" : " WHERE");
             paramValues.add(filter.subjectId());
             sql.append(" wi.subject_id = $").append(paramValues.size());
+            hasWhere = true;
+        }
+        if (filter.tenantKey() != null) {
+            sql.append(hasWhere ? " AND" : " WHERE");
+            paramValues.add(filter.tenantKey());
+            sql.append(" ").append(colPrefix).append("tenant_key = $").append(paramValues.size());
             hasWhere = true;
         }
         if (!filter.includeArchived()) {
@@ -601,7 +611,8 @@ public final class PgTaskStore extends PgSqlRepository implements TaskStore<SqlC
                 subjectVersionAtCreation,
                 branchTokenId,
                 forkStepId,
-                branchId);
+                branchId,
+                row.getString("tenant_key"));
     }
 
     /**

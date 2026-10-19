@@ -158,6 +158,7 @@ public class DefinitionMigrationIT {
         Flyway latest = Flyway.configure()
                 .dataSource(digestDb.jdbcUrl(), digestDb.username(), digestDb.password())
                 .locations("classpath:db/migration/workflow")
+                .target("3")
                 .load();
         assertThat(latest.info().pending())
                 .extracting(MigrationInfo::getScript)

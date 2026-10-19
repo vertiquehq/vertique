@@ -21,7 +21,7 @@ import java.time.Instant;
  *
  * <p>Use the {@code with*} methods to produce a modified copy with all other fields preserved.
  * These are the preferred way to produce updated snapshots inside the engine, avoiding the
- * 18-argument canonical constructor at every mutation site.
+ * canonical constructor at every mutation site.
  *
  * @param id unique identifier for this workflow instance
  * @param definitionId identifier of the workflow definition that created this instance
@@ -49,6 +49,10 @@ import java.time.Instant;
  *     when no ambient durable context was present at start (empty capture) or for instances
  *     started before this carrier existed. Immutable for the lifetime of the instance — no
  *     {@code with*} updater exists for this field; every updater passes it through unchanged.
+ * @param tenantKey optional tenant key stamped when the instance was created; {@code null} when no
+ *     tenant applies and for rows created before the column existed. Immutable for the lifetime
+ *     of the instance: no setter exists and every {@code with*} updater passes it through. It is
+ *     information and a filter value, not an isolation or authorization boundary.
  */
 public record WorkflowInstance(
         WorkflowInstanceId id,
@@ -68,7 +72,53 @@ public record WorkflowInstance(
         @Nullable String errorMessage,
         Instant createdAt,
         Instant updatedAt,
-        @Nullable DurableMetadata metadata) {
+        @Nullable DurableMetadata metadata,
+        @Nullable String tenantKey) {
+
+    /**
+     * Creates an instance without a tenant key. Retained so existing callers keep compiling;
+     * equivalent to the canonical constructor with a {@code null} {@code tenantKey}.
+     */
+    public WorkflowInstance(
+            WorkflowInstanceId id,
+            String definitionId,
+            long definitionVersion,
+            String planHash,
+            long version,
+            WorkflowStatus status,
+            @Nullable String businessKey,
+            @Nullable WorkflowSubjectRef subjectRef,
+            String currentStepId,
+            @Nullable WaitType waitType,
+            @Nullable String waitKey,
+            @Nullable java.util.UUID waitAuxId,
+            String stateJson,
+            @Nullable String errorType,
+            @Nullable String errorMessage,
+            Instant createdAt,
+            Instant updatedAt,
+            @Nullable DurableMetadata metadata) {
+        this(
+                id,
+                definitionId,
+                definitionVersion,
+                planHash,
+                version,
+                status,
+                businessKey,
+                subjectRef,
+                currentStepId,
+                waitType,
+                waitKey,
+                waitAuxId,
+                stateJson,
+                errorType,
+                errorMessage,
+                createdAt,
+                updatedAt,
+                metadata,
+                null);
+    }
 
     // --- Fluent updaters ---
 
@@ -98,7 +148,8 @@ public record WorkflowInstance(
                 errorMessage,
                 createdAt,
                 updatedAt,
-                metadata);
+                metadata,
+                tenantKey);
     }
 
     /**
@@ -127,7 +178,8 @@ public record WorkflowInstance(
                 errorMessage,
                 createdAt,
                 updatedAt,
-                metadata);
+                metadata,
+                tenantKey);
     }
 
     /**
@@ -156,7 +208,8 @@ public record WorkflowInstance(
                 errorMessage,
                 createdAt,
                 updatedAt,
-                metadata);
+                metadata,
+                tenantKey);
     }
 
     /**
@@ -191,7 +244,8 @@ public record WorkflowInstance(
                 errorMessage,
                 createdAt,
                 updatedAt,
-                metadata);
+                metadata,
+                tenantKey);
     }
 
     /**
@@ -237,7 +291,8 @@ public record WorkflowInstance(
                 errorMessage,
                 createdAt,
                 updatedAt,
-                metadata);
+                metadata,
+                tenantKey);
     }
 
     /**
@@ -267,7 +322,8 @@ public record WorkflowInstance(
                 newErrorMessage,
                 createdAt,
                 updatedAt,
-                metadata);
+                metadata,
+                tenantKey);
     }
 
     /**
@@ -296,6 +352,7 @@ public record WorkflowInstance(
                 errorMessage,
                 createdAt,
                 when,
-                metadata);
+                metadata,
+                tenantKey);
     }
 }
