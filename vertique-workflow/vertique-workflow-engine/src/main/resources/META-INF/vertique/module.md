@@ -271,6 +271,24 @@ through the shared per-definition queue, and fails startup (nothing deploys) on 
 Required rows with no unique loader fail startup with the key and diagnostic. Callback failures remain fatal.
 Compose validators ran in VALIDATE and do not re-run for restored definitions.
 
+`WorkflowDefinitionLifecycle.reinstate` brings a RETIRED version back. It is accepted only when the executable source is
+available (a code definition from the code deployed with the node, captured before startup removed retired runtimes; a
+document through its loader and the stored text, whose compiled hash must equal the stored hash) and no other owner holds the
+id. It publishes the runtime locally first, then commits `RETIRED -> SUPERSEDED` and the membership recomputation in one store
+transaction (the version may become ACTIVE when it is the highest eligible one; a lower version stays SUPERSEDED under the
+current ACTIVE one). If the transaction fails, only the runtime this call published is removed; a registration that was already
+present and attributed to the owner is kept. Failures are typed: `CODE_UNAVAILABLE`, `OWNER_CONFLICT`, `DRIFT`,
+`LOADER_MISSING` or `INVALID_TRANSITION` (also for a runtime that was registered directly rather than by the lifecycle). Between
+the local publication and the commit, new pins on the version are still refused by the database.
+
+A registration that already stands for the owner is checked by plan hash against the stored hash and is not recompiled; this
+is deliberate, because a runtime this lifecycle published for the owner already passed that check. The owner check before
+publication is advisory and only saves work: the store's check under its lock is authoritative, and an activating row of another
+owner is left to the store, which treats a stale claim as not holding the id and a fresh claim as a conflict. When the commit
+outcome cannot be read back, the published runtime is remembered. A retry that finds the row committed with that runtime's plan
+hash succeeds and hands the row over as after a first success; a retry that the store refuses removes the remembered runtime.
+Only a runtime this lifecycle published is ever remembered or removed.
+
 Changing the compiled shape of a code definition without changing its version is a rolling-deploy hazard: the first
 new-code node that finds no live instance pinned to that version rewrites the stored hash (a WARN names both hashes), and
 from then on every old-code node refuses new starts, migrations and failed-instance retries of that version with

@@ -289,6 +289,11 @@ another, so a durable listing can show no ACTIVE version until the next startup 
 current resolution already serves the next lower version. It requires the durable registry: without one,
 the returned Future fails.
 
+`reinstate(DefinitionKey)` brings a retired version back when its source is available (the deployed code for a code version,
+the stored text for a document) and no other owner holds the id; the version becomes ACTIVE if it is the highest eligible
+version, otherwise SUPERSEDED. The returned Future fails with `CODE_UNAVAILABLE`, `OWNER_CONFLICT`, `DRIFT`,
+`LOADER_MISSING` or `INVALID_TRANSITION`, and service metadata reports the committed status.
+
 `retire(DefinitionKey)` retires a candidate version, or a deprecated one after the cooling window with no live pinned
 instance, and reports RETIRED in service metadata and lists; the returned Future fails with `COOLING`,
 `PINNED_INSTANCES` or `INVALID_TRANSITION`. Retiring a candidate of one owner never removes another owner's runtime,

@@ -114,8 +114,14 @@ one becomes SUPERSEDED, so the one-ACTIVE index is never violated.
 
 `transition(key, from, to)` is a conditional status change under the same id lock: it checks the row,
 the owner and the expected current status, and updates only a row still in that status. The store
-currently accepts ACTIVE to DEPRECATED and SUPERSEDED to DEPRECATED; any other pair, a missing row or a
-changed status fails with `INVALID_TRANSITION`. It does not recompute or promote other versions.
+accepts ACTIVE to DEPRECATED and SUPERSEDED to DEPRECATED (which do not recompute or promote other versions) and RETIRED
+to SUPERSEDED (which does); any other pair, a missing row or a changed status fails with `INVALID_TRANSITION`.
+
+`transition(key, RETIRED, SUPERSEDED)` is the atomic reinstatement: in one transaction under the id lock it checks the row is RETIRED
+and that no other owner holds the id, sets it SUPERSEDED, demotes lower ACTIVE versions of the owner and then promotes the highest
+eligible version; any failure rolls back everything. Like retirement, its transaction runs at READ COMMITTED whatever the server
+default, so the owner check sees every row another owner committed while the call waited for the id lock. The store does not check
+that an executable source exists or that its hash matches; the lifecycle does that before it calls the store.
 
 `retire(key)` moves a CANDIDATE row, or a DEPRECATED row past the cooling window (`maxStalenessSeconds`, database
 clock), to RETIRED. Its transaction always runs at READ COMMITTED, whatever the server default, so the pin count sees

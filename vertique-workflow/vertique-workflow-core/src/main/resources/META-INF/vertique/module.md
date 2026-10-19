@@ -388,6 +388,8 @@ optional informational count whose default fails with `UnsupportedOperationExcep
 implementations backed by the Vert.x SQL engine receive a `SqlConnection` with a pending Vert.x transaction. Publishing
 a runtime directly through `WorkflowRegistry` is not seen as managed by the durable lifecycle: a managed deprecate or retire
 of such a version fails with `INVALID_TRANSITION` rather than taking it over.
+The lifecycle and the definition service also add `reinstate(DefinitionKey)`; the store performs it as `transition(key, RETIRED,
+SUPERSEDED)` with the membership recomputation inside the same transaction.
 The store also adds `upsertCode` (startup record of deployed code: rehash only while no live instance is pinned to
 that exact version, decided inside the store transaction) and `resetStaleActivating` (claims older than twice the
 staleness bound return to CANDIDATE). `WorkflowRegistry.registeredDefinition(id, version)` is an internal default-empty

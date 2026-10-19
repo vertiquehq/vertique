@@ -31,4 +31,19 @@ public interface WorkflowDefinitionLifecycle {
      * removed. A registration published for a different owner is left in place.
      */
     Future<Void> retire(DefinitionKey key);
+
+    /**
+     * Reinstates a retired version when its executable source is available and no other owner holds the id.
+     * A code version needs the code the application deployed; a document version is recompiled from its stored
+     * text, whose hash must equal the recorded one. The executable registration is published locally first, and
+     * then the durable change is committed as one transaction that returns the row to service and settles which
+     * version of the owner is active. When the durable change fails, only the registration this call published
+     * is removed, and a registration that existed before the call stays. The future fails typed with
+     * {@code CODE_UNAVAILABLE} when the code is not deployed, {@code OWNER_CONFLICT} when another owner holds
+     * the id, {@code DRIFT} when the source no longer compiles to the recorded hash, and
+     * {@code LOADER_MISSING} when no single loader supports a document's format or its stored text is missing,
+     * and {@code INVALID_TRANSITION} when the version is not retired or a registration this lifecycle did not
+     * publish stands in the way.
+     */
+    Future<Void> reinstate(DefinitionKey key);
 }

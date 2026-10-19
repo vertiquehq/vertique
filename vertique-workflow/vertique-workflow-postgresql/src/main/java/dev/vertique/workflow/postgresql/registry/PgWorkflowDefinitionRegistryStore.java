@@ -295,6 +295,7 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
             Objects.requireNonNull(key, "key");
             Objects.requireNonNull(from, "from");
             Objects.requireNonNull(to, "to");
+            if (from == DefinitionStatus.RETIRED && to == DefinitionStatus.SUPERSEDED) return reinstate(key);
             if (to != DefinitionStatus.DEPRECATED
                     || (from != DefinitionStatus.ACTIVE && from != DefinitionStatus.SUPERSEDED))
                 throw invalid(key, "transition " + from + " to " + to + " is not supported");
@@ -317,6 +318,39 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
                             return (Void) null;
                         });
             });
+        });
+    }
+
+    /**
+     * Returns a retired version to service in one exclusive transaction: it checks the row and the owner, marks
+     * the row superseded, then settles which version of this owner and id is active. Any failure rolls back the
+     * whole change. The transaction reads committed rows, so that the owner check after the lock wait sees every
+     * row another owner committed meanwhile, whatever the server default isolation is.
+     */
+    private Future<Void> reinstate(DefinitionKey key) {
+        return mutateReadCommitted(key.definitionId(), (tx, rows) -> {
+            Row current = row(rows, key).orElseThrow(() -> invalid(key, "definition not found"));
+            String status = current.getString("status");
+            if (!"RETIRED".equals(status)) throw invalid(key, "expected status RETIRED but found " + status);
+            if (ownerConflict(rows, key))
+                throw conflict(
+                        Reason.OWNER_CONFLICT, key, "another owner holds this definition id: " + heldOwners(rows, key));
+            return tx.preparedQuery(
+                            "UPDATE workflow_definitions SET status='SUPERSEDED', status_changed_at=clock_timestamp() WHERE "
+                                    + KEY + " AND status='RETIRED'")
+                    .execute(parameters(key))
+                    .compose(updated -> {
+                        if (updated.rowCount() != 1) throw invalid(key, "expected status RETIRED but the row changed");
+                        List<Member> members = java.util.stream.StreamSupport.stream(rows.spliterator(), false)
+                                .filter(r -> Objects.equals(key.tenantKey(), r.getString("tenant_key")))
+                                .map(r -> new Member(
+                                        r.getLong("definition_version"),
+                                        r.getLong("definition_version") == key.definitionVersion()
+                                                ? "SUPERSEDED"
+                                                : r.getString("status")))
+                                .toList();
+                        return recomputeMembership(tx, key.tenantKey(), key.definitionId(), members);
+                    });
         });
     }
 
@@ -389,36 +423,54 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
             // DefinitionKey enforces the key constraints; the version is irrelevant here.
             new DefinitionKey(tenantKey, definitionId, 1);
             return mutate(definitionId, (tx, rows) -> {
-                List<Row> eligible = java.util.stream.StreamSupport.stream(rows.spliterator(), false)
+                List<Member> members = java.util.stream.StreamSupport.stream(rows.spliterator(), false)
                         .filter(row -> Objects.equals(tenantKey, row.getString("tenant_key")))
-                        .filter(row -> "ACTIVE".equals(row.getString("status"))
-                                || "SUPERSEDED".equals(row.getString("status")))
+                        .map(row -> new Member(row.getLong("definition_version"), row.getString("status")))
                         .toList();
-                if (eligible.isEmpty()) return Future.succeededFuture();
-
-                Row highest = eligible.stream()
-                        .max(java.util.Comparator.comparingLong(row -> row.getLong("definition_version")))
-                        .orElseThrow();
-                long highestVersion = highest.getLong("definition_version");
-                Future<Void> demote = eligible.stream()
-                                .anyMatch(row -> "ACTIVE".equals(row.getString("status"))
-                                        && row.getLong("definition_version") != highestVersion)
-                        ? tx.preparedQuery(
-                                        "UPDATE workflow_definitions SET status='SUPERSEDED', status_changed_at=clock_timestamp() WHERE tenant_key IS NOT DISTINCT FROM $1 AND definition_id=$2 AND definition_version<>$3 AND status='ACTIVE'")
-                                .execute(Tuple.of(tenantKey, definitionId, highestVersion))
-                                .mapEmpty()
-                        : Future.succeededFuture();
-
-                if ("ACTIVE".equals(highest.getString("status"))) return demote;
-                DefinitionKey highestKey = new DefinitionKey(tenantKey, definitionId, highestVersion);
-                return demote.compose(ignored -> tx.preparedQuery(
-                                "UPDATE workflow_definitions SET status='ACTIVE', status_changed_at=clock_timestamp() WHERE "
-                                        + KEY + " AND status='SUPERSEDED'")
-                        .execute(parameters(highestKey))
-                        .mapEmpty());
+                return recomputeMembership(tx, tenantKey, definitionId, members);
             });
         });
     }
+
+    /**
+     * Settles which version of one owner and id is active, on the caller's locked transaction: the highest
+     * version among the active and superseded ones wins. Lower active versions are demoted first, then the
+     * winner is promoted, so the one-active-version rule holds at every statement. Rows that are already correct
+     * keep their timestamps.
+     */
+    private static Future<Void> recomputeMembership(
+            SqlConnection tx,
+            @jakarta.annotation.Nullable String tenantKey,
+            String definitionId,
+            List<Member> members) {
+        List<Member> eligible = members.stream()
+                .filter(member -> "ACTIVE".equals(member.status()) || "SUPERSEDED".equals(member.status()))
+                .toList();
+        if (eligible.isEmpty()) return Future.succeededFuture();
+
+        Member highest = eligible.stream()
+                .max(java.util.Comparator.comparingLong(Member::version))
+                .orElseThrow();
+        long highestVersion = highest.version();
+        Future<Void> demote = eligible.stream()
+                        .anyMatch(member -> "ACTIVE".equals(member.status()) && member.version() != highestVersion)
+                ? tx.preparedQuery(
+                                "UPDATE workflow_definitions SET status='SUPERSEDED', status_changed_at=clock_timestamp() WHERE tenant_key IS NOT DISTINCT FROM $1 AND definition_id=$2 AND definition_version<>$3 AND status='ACTIVE'")
+                        .execute(Tuple.of(tenantKey, definitionId, highestVersion))
+                        .mapEmpty()
+                : Future.succeededFuture();
+
+        if ("ACTIVE".equals(highest.status())) return demote;
+        DefinitionKey highestKey = new DefinitionKey(tenantKey, definitionId, highestVersion);
+        return demote.compose(ignored -> tx.preparedQuery(
+                        "UPDATE workflow_definitions SET status='ACTIVE', status_changed_at=clock_timestamp() WHERE "
+                                + KEY + " AND status='SUPERSEDED'")
+                .execute(parameters(highestKey))
+                .mapEmpty());
+    }
+
+    /** One version of an owner and id, with the status it has at this point of the transaction. */
+    private record Member(long version, String status) {}
 
     private Future<Void> encoding(SqlConnection tx) {
         if (utf8Confirmed) return Future.succeededFuture();

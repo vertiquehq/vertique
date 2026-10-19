@@ -35,6 +35,16 @@ public interface WorkflowDefinitionService {
      * durable registry is required; without one the returned future fails.
      */
     Future<Void> retire(DefinitionKey key);
+    /**
+     * Reinstates a retired version when its executable source is available and no other owner holds the id: the
+     * deployed code for a code version, the stored text for a document version. The version returns to service
+     * as the active version when it is the highest of its owner, and as a superseded one otherwise. The future
+     * fails typed with {@code CODE_UNAVAILABLE}, {@code OWNER_CONFLICT}, {@code DRIFT}, {@code LOADER_MISSING}
+     * or {@code INVALID_TRANSITION}. When the durable change fails, the version stays retired and only the
+     * registration this call published is removed; a registration that existed before the call stays. A durable
+     * registry is required; without one the returned future fails.
+     */
+    Future<Void> reinstate(DefinitionKey key);
     /** Returns an immutable, source-free metadata snapshot in the selected scope. */
     Future<List<WorkflowDefinitionRecord>> list(DefinitionFilter filter);
     /** Returns the source attribution of a definition without reading its source body. */

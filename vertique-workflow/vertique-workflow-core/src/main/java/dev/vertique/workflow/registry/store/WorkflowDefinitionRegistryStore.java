@@ -105,10 +105,21 @@ public interface WorkflowDefinitionRegistryStore {
      * lock. The row must exist, be owned consistently with the other rows of the id, and currently have the
      * expected {@code from} status; otherwise the returned future fails with a
      * {@link dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException} naming the key and no row
-     * changes. Only the transitions the store supports are accepted: currently {@code ACTIVE} to
-     * {@code DEPRECATED} and {@code SUPERSEDED} to {@code DEPRECATED}. Any other pair is refused as an invalid
-     * transition, and activation changes use only the claim, complete and release operations. The change does
-     * not recompute or promote any other row, and it refreshes the status change time.
+     * changes. Only the transitions the store supports are accepted: {@code ACTIVE} to {@code DEPRECATED},
+     * {@code SUPERSEDED} to {@code DEPRECATED} and {@code RETIRED} to {@code SUPERSEDED}. Any other pair is
+     * refused as an invalid transition, and activation changes use only the claim, complete and release
+     * operations. A change to {@code DEPRECATED} does not recompute or promote any other row, and every change
+     * refreshes the status change time.
+     *
+     * <p>{@code RETIRED} to {@code SUPERSEDED} is the reinstatement primitive; the {@link WorkflowDefinitionLifecycle}
+     * enforces the preconditions that an executable source is available and that its hash equals the recorded
+     * one, and the store does not. In one exclusive transaction the
+     * store checks that the row exists and is retired and that no other owner holds the id, marks the row
+     * superseded, and then settles the active version of that owner and id over its active and superseded rows:
+     * lower active rows are demoted before the highest version is promoted, so the reinstated row becomes
+     * active when it is the highest and stays superseded otherwise. Deprecated rows stay excluded. A failure at
+     * any point rolls back every change of the transaction, leaving the retired row and the previous active row
+     * as they were. The failure is typed as an owner conflict when another owner holds the id.
      *
      * @param key tenant-scoped definition key to change
      * @param from the status the row is required to have
