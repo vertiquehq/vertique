@@ -70,7 +70,7 @@ Lombok `@Builder` configuration value object. Deserialized from the `"flyway"` s
 | `baselineVersion` | `String` | `"1"` | Baseline version applied when `baselineOnMigrate` is true |
 | `validateOnMigrate` | `boolean` | `true` | Validate applied migrations on each migrate run |
 | `instances` | `List<FlywayInstanceConfig>` | `null` | Named-instance overrides, bound from the keyed `flyway.instances` object. `null` (absent) keeps the legacy single Flyway; a non-null list, even empty, selects [named mode](#named-instances) |
-| `coordinationLockTimeoutMs` | `long` | `30000` | Accepted range 1 to 300000, checked in named mode; named execution takes no cross-instance lock today, so the value has no other effect |
+| `coordinationLockTimeoutMs` | `long` | `30000` | Accepted range 1 to 300000, checked in named mode. Upper bound on how long a named run that migrates waits for the database-wide [coordination lock](#coordination-lock); has no effect on legacy or `VALIDATE`-only runs |
 
 **Secret hygiene:** `password` and `placeholders` are write-only — read from configuration but never
 serialized back out by Jackson. `toString()` renders the password as `<redacted>`, the placeholder
@@ -272,7 +272,7 @@ managed schemas do not become a search path.
 | `db.schemas.job: jobs`, instance `schemas: [jobs, archive]` | `jobs` | `[jobs, archive]` |
 | `db.schemas.job: jobs`, instance `schemas: [other]` or `[]` | rejected before connecting | — |
 | no entry, instance `schemas: [x]` | `x` | `[x]` |
-| no entry, no list | the connection's default schema | empty |
+| no entry, no list | the default schema of the instance's own migration connection, resolved and frozen at run time | empty (Flyway manages that one schema) |
 
 - **No silent precedence.** An explicit instance list must start with S, and an explicit `[]` conflicts
   with an entry; both are rejected. An inherited root list contributes its other entries after S.
@@ -282,12 +282,24 @@ managed schemas do not become a search path.
   has no runtime pool and cannot check this, and the condition holds after migrations as well as at
   startup: creating a schema that sits earlier in a runtime search path can change what unqualified
   names resolve to. Prefer a `db.schemas` entry whenever instances live in different schemas.
+- **Default resolution.** When an instance has no `db.schemas` entry and an empty effective schema list,
+  a run opens a short connection with that instance's own selected credential pair, reads the
+  connection's `current_schema()` and uses it as the instance's default and history schema. A role
+  whose search path resolves to no existing schema, or to a name that breaks the
+  [identifier rules](#identifier-rules), is rejected before any write. The resolved default is **frozen
+  for the invocation**: the instance's default schema is bound explicitly in Flyway, so a schema an
+  earlier instance creates in a later role's search path cannot move that later history, and the
+  report shows the frozen schema. The next invocation resolves afresh. Resolution reads the
+  connection's default without changing its search path.
 - **Native search-path fallback.** PostgreSQL keeps fallback search-path entries, so an unqualified
   reference to an existing object may resolve outside the first schema. Qualify existing-object
   references in a script when its target must be deterministic; the runner does not rewrite SQL.
 - **Scripts may name schemas explicitly.** That SQL is owned by the script, not by placement.
-- **Shared lists are allowed**, but every instance needs a distinct history table in its schema:
-  instances that resolve to the same known schema and table are rejected.
+- **Shared lists are allowed**, but every instance needs a distinct history table in its schema.
+  Instances that resolve to the same schema and table are rejected, and so are history tables whose
+  derived names collide (see [Identifier rules](#identifier-rules)). A schema known from configuration
+  is checked before connecting; a default resolved from a role is checked at the start of the run,
+  before any write.
 
 How the neighbouring components read `db.schemas`:
 
@@ -357,16 +369,20 @@ Future<MigrationReport> report = runner.run(vertx);          // runs on a Vert.x
   context class loader, which can block: call it off the event loop. Every call validates afresh. A
   view carries the effective schema, managed list, table, locations, mode, target, baseline and
   validation settings, user, `credentialSource` and placeholder *keys*; it never carries a password or
-  placeholder value. `schema` is `null` when the connection default applies.
-- **`run(Vertx)`** repeats the same validation on a worker before opening any connection, then runs
+  placeholder value. `schema` is `null` when the connection default applies, because `instances()` does
+  not connect; a run reports the frozen default instead.
+- **`run(Vertx)`** repeats the same validation on a worker before opening any connection. It then opens
+  the guard session, runs the batch preflight described under [Execution scope](#execution-scope), runs
   each enabled instance through native Flyway and reports every outcome. In legacy mode it returns a
   single entry named `legacy` with the history schema and table actually used.
 - **`migrate(Vertx)`** is what `FlywayMigrationStartupStep` calls. In named mode it runs the same
   operation as `run`, sums the applied counts, and returns the native target version only when the
   report has exactly one entry (a `DISABLED` entry counts); otherwise `targetVersion` is `null`.
-- **A batch holds one worker thread** for its whole duration. A batch longer than the Vert.x
-  worker-execute-time limit (60 seconds by default) draws blocked-thread warnings; raise
-  `VertxOptions.maxWorkerExecuteTime` or run long migrations as their own job.
+- **A batch holds one worker thread** for its whole duration, and that includes the wait for the
+  coordination lock. A batch longer than the Vert.x worker-execute-time limit (60 seconds by default)
+  draws blocked-thread warnings; `coordinationLockTimeoutMs` may be set above that limit, so a long
+  wait alone can trigger them. Raise `VertxOptions.maxWorkerExecuteTime` or run long migrations as
+  their own job.
 - **Order.** Instances run in dependency order with lexicographic tie-breaking. Unknown and self
   dependencies and cycles are rejected. A `DISABLED` dependency is ordered but not executed:
   disabling it declares that the operator manages its readiness.
@@ -385,11 +401,13 @@ the resolved view, a `MigrationStatus`, `migrationsApplied`, and `currentVersion
 | `VALIDATED` | Native validation passed |
 | `DISABLED` | The instance mode is `DISABLED`; Flyway did not run for it |
 | `FAILED` | The instance failed; `migrationsApplied` is 0 and `currentVersion` is `null` |
-| `NOT_RUN` | An earlier instance failed |
+| `NOT_RUN` | An earlier instance failed, or the batch was rejected before any instance ran. In the second case every entry is `NOT_RUN`, a disabled one included |
 
 `currentVersion` is read through Flyway after the operation; it is `null` when no versioned migration
-is applied, and is not the same value as `MigrationResult.targetVersion()`. For an attempted instance
-the view's `schema` is the history schema actually used.
+is applied, and is not the same value as `MigrationResult.targetVersion()`. If that read fails after the
+operation succeeded, the entry stays `MIGRATED` or `VALIDATED` with a `null` `currentVersion`. For an
+enabled instance the view's `schema` is the frozen history schema the run used, including a default
+resolved from the instance's role.
 
 A failure of a named operation is a `MigrationRunException` (a `MigrationException`):
 
@@ -399,51 +417,117 @@ A failure of a named operation is a `MigrationRunException` (a `MigrationExcepti
 | `operation()` | `configuration` (config binding), `instances`, `run`, or `coordination` |
 | `report()` | `null` when the failure came before the instances were resolved; otherwise the full ordered report |
 
+What each safety failure looks like:
+
+| Situation | `failureCode()` / `operation()` | Report |
+|-----------|---------------------------------|--------|
+| Schema or history table name breaks the [identifier rules](#identifier-rules), or two histories collide on names known from configuration | `CONFIGURATION` / `instances` (from `instances()`), `run` (from a run) | `instances()`: none; a run: every entry `NOT_RUN` |
+| Guard connection cannot be opened, the lock is not acquired within `coordinationLockTimeoutMs`, or a guard round trip times out while the lock is requested | `COORDINATION` / `coordination` | every entry `NOT_RUN`, a disabled one included; no instance is blamed |
+| Destination's `version()` does not start with `PostgreSQL`, a role's default resolves to nothing, a collision appears only after defaults resolve, the mixed-schema check or a conventional-history check rejects the batch, a history an instance keeps in place fails its validation, the catalog cannot be read or a check's round trip times out | `PREFLIGHT` / `run` | every entry `NOT_RUN` |
+| The mixed-schema check or the conventional-history check rejects an instance just before it runs (an earlier instance created a schema or a conventional history) | `PREFLIGHT` / `run` | earlier results kept, that instance `FAILED` with nothing applied, later entries `NOT_RUN` |
+| The guard session lost the lock between instances, does not hold it for a migrating instance, or a guard round trip times out while the lock is confirmed | `COORDINATION` / `coordination` | earlier results kept, the next instance `FAILED` with nothing applied, later entries `NOT_RUN` |
+
 - **Safe messages.** The message is written by the framework: operation, instance name, and a fixed
   description. It may add the Flyway error-code name and the SQLState or failing migration, and never
   contains raw native messages, SQL text, JDBC URLs, credentials or placeholder values. The exception
   keeps no cause and no suppressed exception, because native exceptions can carry statements and
   connection details. This differs from legacy mode, which keeps the original `MigrationException`
   with its native cause. Named configuration-binding failures keep no Jackson cause for the same
-  reason.
+  reason. The guard and preflight failures above use fixed text that names the instance where one is
+  to blame; it carries no schema, table or URL values and no native message, only an SQLState when the
+  catalog could not be read.
 - **Occupied schema.** When an instance's default schema already holds objects but the instance has no
   history, the message tells you to give the instance its own schema with a separate `db.schemas`
   entry, or to set `baselineOnMigrate=true` with `baselineVersion="0"` for that instance so every
   migration still runs. See the next section.
 
 Native Flyway renders placeholder-substituted statements when `org.flywaydb` logs at DEBUG. Keep
-placeholders free of secrets and keep `org.flywaydb` at INFO. Callbacks keep
-native Flyway behavior and are trusted deployment resources that may write; wherever this document says the runner "writes nothing", it means the runner's own
-writes (schemas, history tables, migrations), not callback effects.
+placeholders free of secrets and keep `org.flywaydb` at INFO.
+
+**Callbacks.** Callbacks keep native Flyway behavior and are trusted deployment resources that may
+write. Wherever this document says the runner "writes nothing" or rejects "before any write", it means
+the runner's own writes (schemas, history tables, migrations) and excludes callback effects. A callback
+in a location can run during a validation that ends in a rejection, and during `VALIDATE`.
 
 `VALIDATE` instances run native validation per history. The runner creates no schema or history
-table for them; with runtime credentials they need `USAGE` on the schema and `SELECT` on the history.
+table for them, even against an absent history; with runtime credentials they need `USAGE` on the
+schema and `SELECT` on the history. A `VALIDATE`-only run resolves defaults and checks history
+collisions exactly like a migrating run, takes no [coordination lock](#coordination-lock), and skips
+the initialization checks of [Existing and shared schemas](#existing-and-shared-schemas).
 
 ### Existing and shared schemas
 
-Named mode never converts, copies or relocates an existing history. Keep an installation whose
-scripts already ran in a shared history in legacy mode. Adding named instances to such a database
-starts new, empty histories and would try to run every script again; the runner does not detect an
-existing shared history.
+Named mode never converts, copies or relocates an existing history. An installation whose scripts
+already ran in a shared history stays in legacy mode, and nothing in named mode converts it. The runner
+performs a bounded check for the conventional shared history (below) but cannot prove that a database
+has no earlier history.
 
 For a fresh install, give each instance its own schema (one `db.schemas` entry each). If several
 instances must share a schema, or an instance's managed list includes schemas that already exist:
 
-- **Provision before the first run.** A root `schemas` list inherited by several instances becomes the
-  extra managed schemas of each. Native Flyway creates a missing managed schema and, when one
-  instance's managed set mixes existing schemas with its own missing schema, it can record a history
-  marker while creating it that bypasses the later baseline decision. Create every schema of each
-  instance's managed set before the first run, or give instances disjoint extra schemas.
-- **Occupied shared schema.** With `baselineOnMigrate=false` (the default) a non-empty schema without
-  the instance's history fails with the message above. To install independent scripts into an
-  occupied shared schema, set `baselineOnMigrate: true` and `baselineVersion: "0"` on that instance.
-  Flyway then records its baseline marker and runs `V1`. Versions at or below the baseline are
-  skipped, so root `baselineOnMigrate: true` with the default root `baselineVersion` `1` skips `V1` in
-  an occupied schema. Use `true` and `"0"` on every instance that shares the schema: even an initially
-  empty shared schema is occupied once the first instance commits. A per-instance `false` overrides a
-  root `true`.
+- **Mixed-schema guard.** Before an instance without a history initializes one, the runner checks
+  which of the instance's managed schemas exist. If some exist and some are missing, the batch is
+  rejected before any write: provision **every** schema of that instance's managed set, or none of
+  them, and run again with the same baseline settings. The check reads only whether each schema
+  exists, never whether it holds objects, so an existing empty schema counts as existing. A set whose
+  schemas are all missing is created by native Flyway, and a set whose schemas all exist follows
+  native baseline rules. The check runs once for the batch and again immediately before each
+  instance, so a schema an earlier instance's script created can fail a later instance (it reports
+  `FAILED` with nothing applied and keeps the earlier results). An instance that already has its
+  history is never subject to it. The reason is native behavior: when Flyway creates a missing managed
+  schema beside existing ones it can record a history marker that bypasses the later baseline
+  decision.
+- **Shared extras.** A root `schemas` list inherited by several instances becomes the extra managed
+  schemas of each. After the first instance creates the extras, a second instance whose own schema is
+  still missing is rejected by the guard; create its schema (and every other schema of its set) and run
+  again, or give the instances disjoint extra schemas, which need no provisioning.
+- **After provisioning, the native baseline policy decides.** With `baselineOnMigrate=false` (the
+  default) a non-empty schema without the instance's history fails with the message above. With
+  `baselineOnMigrate: true` and `baselineVersion: "0"` Flyway records its baseline marker and runs
+  `V1`; with `true` and version `1` it skips `V1`. Versions at or below the baseline are skipped, so
+  root `baselineOnMigrate: true` with the default root `baselineVersion` `1` skips `V1` in an occupied
+  schema. To install independent scripts into an occupied shared schema, use `true` and `"0"` on
+  every instance that shares the schema: even an initially empty shared schema is occupied once the
+  first instance commits. A per-instance `false` overrides a root `true`. The guard never changes
+  these outcomes; it only keeps a mixed set from bypassing them.
 - **Named opt-in authorizes pending scripts only.** It does not establish that existing objects match
   them; conflicts surface through Flyway and the scripts.
+
+#### Conventional shared history detection
+
+Before an instance initializes a missing history, the runner looks for a table named
+`flyway_schema_history`, the single-Flyway default, and rejects the instance before it writes when it
+finds one that no instance keeps (at batch start, the whole batch before any write). The detection is bounded, and an undetected history is not proof
+that scripts ran:
+
+- **Where it looks.** The default schema of the guard connection (the root credential pair), the first
+  entry of the root `flyway.schemas` list even if every instance replaces that list, every managed
+  schema of every enabled instance, and every instance's frozen default schema.
+- **What it finds.** Only a table with the conventional name, by schema and table name in the catalog.
+  A history with a custom name, a history in a schema outside that set, or a history created by other
+  tooling is not found.
+- **When it looks.** When the batch starts, and again immediately before each migrating instance
+  that has no history yet. The repeat probes the same schemas and reads again from the catalog which
+  instances now own a conventional history, so one that an earlier instance's script created fails
+  that instance (it reports `FAILED` with nothing applied and keeps the earlier results) unless an
+  enabled instance owns it. A history that becomes owned only during the run does not get the
+  forced validation of the in-place exception below, which runs once, before any instance.
+- **What to do.** Keep the installation in legacy mode. Changing the named schemas or removing or
+  renaming a history is not a supported transition, and there is no preview, copy or conversion.
+  Never point an instance at a new schema or location and assume that an undetected custom history
+  proves its scripts already ran.
+
+**Keeping an existing history in place.** One exception lets an independently managed history stay
+where it is while new instances are installed beside it: configure that instance with
+`table: flyway_schema_history` and the module's own locations. When some other instance is about to
+initialize its history, the runner validates that history with native Flyway against the owner's
+resources before any instance runs, with target `latest` and pending migrations as the only ignored state. The validation is
+forced even when `validateOnMigrate` is `false`. Pending migrations of the owner pass; an applied
+migration the owner's locations do not describe (such as a row another module applied), a failed
+migration or a checksum mismatch rejects the whole batch before any write. This shows the history
+fits the instance's resources; it does not prove that the instance owns every row. The owner must
+have its explicit table `flyway_schema_history` in its default schema, and a `DISABLED` owner does
+not count, so its history is treated as unowned and blocks the batch.
 
 ### Legacy mode and `db.schemas`
 
@@ -459,23 +543,101 @@ module's location is redundant.
 
 ### Execution scope
 
-Named execution validates configuration, resolves each instance's defaults and credentials, and runs
-native Flyway per instance in dependency order. The runner passes schema and history table names to
-Flyway as configured: PostgreSQL identifier rules are not applied to Flyway schema lists or history
-table names, history collisions are detected only between instances whose schema is known before
-connecting, and the runner takes no lock between concurrent runs and makes no catalog check of the
-database before running. `coordinationLockTimeoutMs` is validated (1 to 300000) and has no further
-effect today. `PgTableNames` validates `db.schemas` values when an adapter is constructed. Further
-PostgreSQL guard behavior is documented here when it ships.
+Named execution validates configuration, then runs each enabled instance through native Flyway in
+dependency order. Nothing connects until configuration and resources have validated. A run then:
 
-**Several replicas.** Every replica that starts in named `MIGRATE` mode runs the batch. Run migrations
-as a one-off deployment job in `MIGRATE` mode and start the replicas in `VALIDATE` or `DISABLED`.
+1. **Opens the guard session**: a dedicated direct connection with the root credential pair (the root
+   `flyway.user`/`flyway.password` when both are set, else the `DbPoolConfig` pair). It rejects a
+   destination whose `version()` does not start with `PostgreSQL`, even when its URL uses the
+   PostgreSQL scheme; a wire-compatible product that reports itself as PostgreSQL is admitted. Any run
+   with an enabled instance opens it, including a `VALIDATE`-only run.
+2. **Takes the [coordination lock](#coordination-lock)** when at least one enabled instance is `MIGRATE`.
+3. **Preflights the batch**: resolves and freezes every unknown default schema, rejects history
+   collisions, and, for migrating instances without a history, applies the
+   [mixed-schema guard and the conventional-history detection](#existing-and-shared-schemas).
+4. **Validates a kept history** (the in-place exception) natively, before any instance runs.
+5. **Runs the instances in order.** Before each enabled instance the guard rechecks that it still holds
+   the lock (when the run holds one) and, for a migrating instance without a history, the mixed-schema guard
+   and the conventional-history detection. Then native Flyway
+   migrates or validates it with the frozen default schema bound.
+
+The guard session pins only itself: after reading its own default schema it sets its `search_path` to
+`pg_catalog`, and every catalog query is schema-qualified and uses bound values, so a role's search
+path cannot redirect the guard's checks. Migration sessions are never altered and keep Flyway's native
+default and search-path behavior, including fallback-schema resolution of unqualified references.
+
+**Operator exclusions.** The guard coordinates this runner only. During a run, nothing else may:
+
+- run schema DDL against the managed schemas or write to the history tables;
+- change the roles or their `search_path` configuration.
+
+Migration scripts must not change their own default schema or write another instance's history.
+Arbitrary script analysis is outside the runner. **Direct connection required:** the guard connection
+and the session lock need one stable backend session, so the root JDBC URL must reach PostgreSQL
+directly, not through a transaction-pooling proxy. An idle-session timeout or termination of the guard
+connection (for example `idle_session_timeout` or an administrator terminating the backend) ends the
+lock: the next instance fails closed, but a native migration already running continues without the
+lock's protection, so keep idle timeouts for the guard role above the longest migration.
+
+**Several replicas.** Every replica that starts in named `MIGRATE` mode runs the batch, and runs that
+overlap are serialized by the lock. Prefer running migrations as a one-off deployment job in `MIGRATE`
+mode and starting the replicas in `VALIDATE` or `DISABLED`. If replicas must migrate at startup, raise
+`coordinationLockTimeoutMs` above the longest expected batch so that waiting replicas do not time out; a
+waiting replica blocks its worker thread for the whole wait, and a wait or batch beyond the Vert.x
+worker-execute-time limit draws blocked-thread warnings.
+
+**Known limitation: disabled instances.** The run-time preflight sees enabled instances only. A
+history table collision between a default schema resolved from a role at run time and a `DISABLED`
+instance that already has a known schema is therefore not detected. Disabled instances never connect;
+keep a disabled instance's schema and history table distinct from those of the enabled ones.
 
 **Database engines.** Named execution runs on PostgreSQL destinations (a root JDBC URL starting with
 `jdbc:postgresql:`); any other destination fails with `CONFIGURATION` before any write, and legacy
-mode on another Flyway-supported database is unchanged. The database-specific code is internal to this
-artifact, so supporting a second engine needs a change in `vertique-db-flyway`, not configuration.
-`MigrationDefinition.locations` is interpreted by the migration engine, not by `vertique-db-core`.
+mode on another Flyway-supported database is unchanged and receives none of these checks. The
+database-specific code is internal to this artifact, so supporting a second engine needs a change in
+`vertique-db-flyway`, not configuration. `MigrationDefinition.locations` is interpreted by the
+migration engine, not by `vertique-db-core`. `PgTableNames` validates `db.schemas` values when an
+adapter is constructed.
+
+### Identifier rules
+
+The PostgreSQL backend validates every resolved instance in `instances()` and at the start of a run,
+before any connection. All rules are case-sensitive: `Jobs` and `jobs` are different schemas.
+
+| Name | Rule |
+|------|------|
+| Schema (default schema and every managed schema) | One identifier of ASCII letters, digits and underscores, not starting with a digit, at most 63 characters. Names starting `pg_` and `information_schema` are reserved |
+| History table | The same syntax, at most 57 characters, so the primary-key and index relations Flyway derives from it fit the 63-character limit |
+| Collisions | In one schema, no history table may equal another history table or one of its derived relation names (`<table>_pk`, `<table>_s_idx`) |
+
+A role's resolved default schema must pass the schema rules too. The reserved prefix applies to
+schemas only; a history table may start with `pg_`. `DbSchemas` itself stays vendor-neutral: the
+rules run on the resolved migration instance, not when `db.schemas` is bound.
+
+### Coordination lock
+
+A named run that includes a `MIGRATE` instance takes one database-wide PostgreSQL advisory session
+lock before any database-dependent check, on the guard connection, and holds it through every outcome
+until the run ends. It covers the whole preflight and every instance, and a failing or partly failed
+batch holds it to the end too. The lock serializes this runner's runs across all histories; it does
+not replace Flyway's per-history locks.
+
+- **Bounded wait.** The wait for the lock and every guard round trip are bounded: the runner polls for
+  the lock for at most `coordinationLockTimeoutMs`, and each round trip of the guard connection and of
+  the short default-schema connections is bounded by a 30-second network timeout. If another run, or
+  any session holding the same key, still has the lock at the deadline, the run fails with
+  `COORDINATION` and every entry `NOT_RUN`, a disabled one included, and writes nothing. A round trip
+  that times out fails the run closed: `COORDINATION` while the lock is requested or confirmed,
+  `PREFLIGHT` during a check. The network timeout bounds only a reply the runner is waiting for; it
+  does not end an idle guard connection during a long native migration, and the idle-session caveat
+  under [Operator exclusions](#execution-scope) still applies.
+- **Not taken when not needed.** `VALIDATE`-only runs, legacy runs and fully disabled runs never take or
+  wait for the lock.
+- **Liveness.** Before each instance the guard confirms the same backend still owns the lock. If the
+  guard session was ended or does not hold the lock, the next instance fails with `COORDINATION` (reported `FAILED`, nothing
+  applied), earlier results are kept and later entries are `NOT_RUN`.
+- **Release.** Closing the guard connection releases the lock on every exit; a connection that does not
+  close cleanly is aborted.
 
 ---
 

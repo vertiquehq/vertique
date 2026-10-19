@@ -4,6 +4,7 @@
 package dev.vertique.db.flyway;
 
 import java.util.List;
+import java.util.regex.Pattern;
 
 /**
  * Internal carrier of a named-resolution failure. It records the failure category, the instance to
@@ -26,6 +27,8 @@ final class NamedMigrationFailure extends RuntimeException {
     static final String OP_INSTANCES = "instances";
     static final String OP_RUN = "run";
     static final String OP_COORDINATION = "coordination";
+
+    private static final Pattern SQL_STATE = Pattern.compile("[0-9A-Z]{5}");
 
     private final String failureCode;
     private final String instance;
@@ -117,6 +120,16 @@ final class NamedMigrationFailure extends RuntimeException {
     static MigrationRunException reissue(MigrationRunException backend, String operation, MigrationReport report) {
         return new MigrationRunException(
                 message(operation, null, backend.getMessage()), backend.failureCode(), operation, report);
+    }
+
+    /**
+     * Formats a SQLState for a framework-authored detail.
+     *
+     * @param state the reported SQLState, or {@code null}
+     * @return {@code " (SQLState XXXXX)"} for a well-formed five-character state, else an empty string
+     */
+    static String sqlStateSuffix(String state) {
+        return state != null && SQL_STATE.matcher(state).matches() ? " (SQLState " + state + ")" : "";
     }
 
     /**

@@ -137,7 +137,7 @@ final class NamedInstanceResolver {
         List<NamedPlan.Instance> instances =
                 resolved.stream().map(Resolved::instance).toList();
         if (root == FlywayMode.DISABLED) {
-            return new NamedPlan(instances, null, null, null, null);
+            return new NamedPlan(instances, null, null, null, null, 0L, null);
         }
 
         checkResources(resolved, loader, views);
@@ -162,12 +162,15 @@ final class NamedInstanceResolver {
             throw rejectedBySupport(views);
         }
         boolean rootPair = config.user() != null && config.password() != null;
+        List<String> rootSchemas = config.schemas();
         return new NamedPlan(
                 instances,
                 url,
                 support,
                 rootPair ? config.user() : pool.user(),
-                rootPair ? config.password() : pool.password());
+                rootPair ? config.password() : pool.password(),
+                timeout,
+                rootSchemas == null || rootSchemas.isEmpty() ? null : rootSchemas.get(0));
     }
 
     /** Asks the selector; a selector that breaks its contract is reported without its own failure. */

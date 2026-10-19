@@ -15,9 +15,19 @@ import java.util.Map;
  * @param support the selected database support, or {@code null} when the root mode is disabled
  * @param sessionUser the user that opens the database-support session
  * @param sessionPassword the password that opens the database-support session
+ * @param lockTimeoutMs the upper bound on waiting for the coordination lock, or {@code 0} when the root
+ *     mode is disabled
+ * @param rootFirstSchema the first entry of the root schema list, or {@code null} when it has none or
+ *     the root mode is disabled
  */
 record NamedPlan(
-        List<Instance> instances, String jdbcUrl, DatabaseSupport support, String sessionUser, String sessionPassword) {
+        List<Instance> instances,
+        String jdbcUrl,
+        DatabaseSupport support,
+        String sessionUser,
+        String sessionPassword,
+        long lockTimeoutMs,
+        String rootFirstSchema) {
 
     NamedPlan {
         instances = List.copyOf(instances);

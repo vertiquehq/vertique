@@ -3,6 +3,7 @@
 
 package dev.vertique.db.flyway;
 
+import java.sql.SQLException;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -11,15 +12,17 @@ import java.util.Optional;
  * PostgreSQL {@link DatabaseSupport}, selected for {@code jdbc:postgresql:} destinations. It is the
  * only database that named migration supports.
  *
- * <p>This version adds no checks of its own: configuration validation accepts every view, and the
- * session opens no connection and checks nothing.
+ * <p>Configuration validation applies the PostgreSQL identifier rules of {@link PostgresIdentifiers}
+ * to every resolved instance without connecting. A session is a {@link PostgresGuardSession}: a
+ * dedicated direct connection with the root credential pair that confirms the destination is
+ * PostgreSQL, coordinates migrating runs with an advisory session lock, resolves and freezes unknown
+ * default schemas and guards history initialization.
  */
 final class PostgresDatabaseSupport implements DatabaseSupport {
 
     private static final String URL_PREFIX = "jdbc:postgresql:";
 
-    /** Opens the connections this support owns; none are opened yet. */
-    @SuppressWarnings("unused")
+    /** Opens the guard connection and the short default-schema connections this support owns. */
     private final JdbcConnector connector;
 
     /**
@@ -46,30 +49,11 @@ final class PostgresDatabaseSupport implements DatabaseSupport {
 
     @Override
     public void validateConfiguration(List<MigrationInstanceView> views) {
-        // No PostgreSQL-specific configuration rules yet.
+        PostgresIdentifiers.validate(views);
     }
 
     @Override
-    public Session open(String jdbcUrl, String user, String password) {
-        return new NoOpSession();
-    }
-
-    /** Session that holds no connection and checks nothing. */
-    private static final class NoOpSession implements Session {
-
-        @Override
-        public void preflight(List<MigrationInstanceView> enabledViews) {
-            // Nothing to check yet.
-        }
-
-        @Override
-        public void beforeInstance(MigrationInstanceView view) {
-            // Nothing to check yet.
-        }
-
-        @Override
-        public void close() {
-            // Nothing to release.
-        }
+    public Session open(String jdbcUrl, String user, String password, long lockTimeoutMs) throws SQLException {
+        return PostgresGuardSession.open(connector, jdbcUrl, user, password, lockTimeoutMs);
     }
 }

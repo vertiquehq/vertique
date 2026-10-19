@@ -5,8 +5,11 @@ package dev.vertique.db.flyway;
 
 import java.sql.Connection;
 import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -22,7 +25,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  */
 final class RecordingDatabaseSupport implements DatabaseSupport {
 
-    /** One recorded {@link #open(String, String, String)} call. */
+    /** One recorded {@link #open(String, String, String, long)} call. */
     record Open(String jdbcUrl, String user, String password) {
 
         // The password is deliberately kept out of the rendering so a failing assertion cannot print it.
@@ -36,6 +39,9 @@ final class RecordingDatabaseSupport implements DatabaseSupport {
     private final List<Open> opens = new CopyOnWriteArrayList<>();
     private final List<List<MigrationInstanceView>> preflights = new CopyOnWriteArrayList<>();
     private final List<MigrationInstanceView> beforeInstances = new CopyOnWriteArrayList<>();
+    private final List<Long> lockTimeouts = new CopyOnWriteArrayList<>();
+    private final List<String> rootFirstSchemas = Collections.synchronizedList(new ArrayList<>());
+    private final List<Preflight> preflightResults = new CopyOnWriteArrayList<>();
     private final AtomicInteger closedSessions = new AtomicInteger();
 
     private volatile MigrationRunException validationFailure;
@@ -67,7 +73,7 @@ final class RecordingDatabaseSupport implements DatabaseSupport {
     }
 
     /**
-     * Makes {@link #open(String, String, String)} throw the given exception after recording the call.
+     * Makes {@link #open(String, String, String, long)} throw the given exception after recording the call.
      *
      * @param failure the exception to throw, or {@code null} to open sessions again
      * @return this double
@@ -87,7 +93,7 @@ final class RecordingDatabaseSupport implements DatabaseSupport {
     }
 
     /**
-     * Returns the recorded {@link #open(String, String, String)} calls.
+     * Returns the recorded {@link #open(String, String, String, long)} calls.
      *
      * @return the recorded calls, oldest first
      */
@@ -96,12 +102,43 @@ final class RecordingDatabaseSupport implements DatabaseSupport {
     }
 
     /**
-     * Returns the view lists handed to {@link Session#preflight(List)}.
+     * Returns the view lists handed to {@link Session#preflight(List, String)}.
      *
      * @return the recorded batches, oldest first
      */
     List<List<MigrationInstanceView>> preflights() {
         return List.copyOf(preflights);
+    }
+
+    /**
+     * Returns the lock timeouts, in milliseconds, handed to {@link #open(String, String, String, long)}.
+     *
+     * @return the recorded timeouts, oldest first
+     */
+    List<Long> lockTimeouts() {
+        return List.copyOf(lockTimeouts);
+    }
+
+    /**
+     * Returns the root-first schemas handed to {@link Session#preflight(List, String)}; an entry is
+     * {@code null} when the root configuration names no schema.
+     *
+     * @return the recorded schemas, oldest first
+     */
+    List<String> rootFirstSchemas() {
+        synchronized (rootFirstSchemas) {
+            return Collections.unmodifiableList(new ArrayList<>(rootFirstSchemas));
+        }
+    }
+
+    /**
+     * Returns what each {@link Session#preflight(List, String)} call answered: the unchanged views of
+     * the enabled instances and no history owners.
+     *
+     * @return the recorded answers, oldest first
+     */
+    List<Preflight> preflightResults() {
+        return List.copyOf(preflightResults);
     }
 
     /**
@@ -155,8 +192,9 @@ final class RecordingDatabaseSupport implements DatabaseSupport {
     }
 
     @Override
-    public Session open(String jdbcUrl, String user, String password) throws SQLException {
+    public Session open(String jdbcUrl, String user, String password, long lockTimeoutMs) throws SQLException {
         opens.add(new Open(jdbcUrl, user, password));
+        lockTimeouts.add(lockTimeoutMs);
         SQLException failure = openFailure;
         if (failure != null) {
             throw failure;
@@ -164,12 +202,18 @@ final class RecordingDatabaseSupport implements DatabaseSupport {
         return new RecordingSession();
     }
 
-    /** Session handed out by {@link RecordingDatabaseSupport#open(String, String, String)}. */
+    /** Session handed out by {@link RecordingDatabaseSupport#open(String, String, String, long)}. */
     private final class RecordingSession implements Session {
 
         @Override
-        public void preflight(List<MigrationInstanceView> enabledViews) {
-            preflights.add(List.copyOf(enabledViews));
+        public Preflight preflight(List<NamedPlan.Instance> enabledInstances, String rootFirstSchema) {
+            List<MigrationInstanceView> enabledViews =
+                    enabledInstances.stream().map(NamedPlan.Instance::view).toList();
+            preflights.add(enabledViews);
+            rootFirstSchemas.add(rootFirstSchema);
+            Preflight result = new Preflight(enabledViews, Set.of());
+            preflightResults.add(result);
+            return result;
         }
 
         @Override

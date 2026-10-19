@@ -60,9 +60,19 @@ import org.slf4j.LoggerFactory;
  *
  * <p>An instance's default and history schema is its {@code db.schemas} entry when the supplied
  * {@link DbSchemas} has one, otherwise the first entry of its managed schema list, otherwise the
- * connection's default schema. Named-mode failures are {@link MigrationRunException}s whose messages
+ * default schema of a connection opened with the instance's own credential pair. A run resolves that
+ * default once, before any instance runs, freezes it for the whole run, binds it as native Flyway's
+ * default schema and reports it. Named-mode failures are {@link MigrationRunException}s whose messages
  * never contain SQL, JDBC URLs, credentials or placeholder values and which retain no native cause.
- * Named execution currently supports PostgreSQL destinations only.
+ *
+ * <p>Named execution currently supports PostgreSQL destinations only. A named run that migrates first
+ * takes a database-wide coordination lock on a dedicated direct connection, waiting at most
+ * {@link FlywayConfig#coordinationLockTimeoutMs()}, and holds it until the run ends; a VALIDATE-only
+ * run takes no lock. Before any instance writes, the run rejects history collisions in the resolved
+ * schemas, a history-less instance whose managed schemas are only partly provisioned, and a
+ * conventional single-Flyway history that no instance explicitly keeps as its own. An instance that
+ * keeps such a history must first pass native validation against its own migrations. The
+ * single-Flyway path takes no lock and runs none of these checks.
  */
 @Singleton
 public class FlywayMigrationRunner implements MigrationRunner {
@@ -76,7 +86,11 @@ public class FlywayMigrationRunner implements MigrationRunner {
     private final DbPoolConfig dbPoolConfig;
     private final NamedInstanceResolver resolver;
 
-    /** Opens the connections the runner owns itself; none are opened yet. */
+    /**
+     * Retained connector of the package-private constructor. The runner opens no connection with it
+     * directly: the database support opens the connections it owns through the connector its selector
+     * was created with.
+     */
     @SuppressWarnings("unused")
     private final JdbcConnector jdbcConnector;
 
@@ -156,7 +170,10 @@ public class FlywayMigrationRunner implements MigrationRunner {
      * of each instance's schema list with its {@code db.schemas} entry, location syntax and known
      * history collisions, then, unless the root mode is {@link FlywayMode#DISABLED}, confirms that
      * every location exists and asks the database support for the root JDBC destination to apply its
-     * identifier rules; the PostgreSQL support currently applies no identifier rules. Classpath
+     * identifier rules. For PostgreSQL every managed schema must be a single identifier of letters,
+     * digits and underscores of at most 63 characters, not reserved for system schemas, every history
+     * table the same syntax of at most 57 characters, and no history table may collide with another or
+     * with the key and index relations native Flyway derives from it in the same known schema. Classpath
      * locations are looked up on the calling thread's context class loader; this lookup and the
      * filesystem checks may block, so call this method off the event loop. Every call validates
      * afresh.
