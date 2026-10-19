@@ -6,7 +6,12 @@ package dev.vertique.rest.core;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonInclude;
+import dev.vertique.core.validation.ViolationCarrier;
+import dev.vertique.core.validation.ViolationDetail;
+import dev.vertique.core.validation.ViolationPathForm;
 import jakarta.annotation.Nullable;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -92,6 +97,36 @@ public record ValidationErrorDetail(
      */
     public static ValidationErrorDetail ofParameter(String parameter, String detail) {
         return new ValidationErrorDetail(null, parameter, detail, null, null, null);
+    }
+
+    /**
+     * Renders the violations a {@link ViolationCarrier} holds, one entry each in the carrier's order, by the
+     * path form the carrier declares.
+     *
+     * <p>For {@link ViolationPathForm#JSON_POINTER} a detail's path becomes {@code pointer} when
+     * {@link ViolationPathForm#accepts(String)} holds; a path it rejects is left off, so the entry keeps
+     * its message, type and args and states no location. For any other form the paths are Java property
+     * paths, which are not request locations, so no entry carries {@code pointer}, {@code parameter} or
+     * {@code location}. The form is read from the declaration only, never from how a path looks.
+     *
+     * <p>The list has as many entries as the carrier has violations; it is not capped, and logging is
+     * the caller's concern. An application that renders its own error shape can call this to reuse the
+     * rules.
+     *
+     * @param carrier the exception holding the violations
+     * @return an immutable list of entries
+     */
+    public static List<ValidationErrorDetail> ofViolations(ViolationCarrier carrier) {
+        ViolationPathForm form = carrier.violationPathForm();
+        List<ViolationDetail> violations = carrier.violations();
+        List<ValidationErrorDetail> entries = new ArrayList<>(violations.size());
+        for (ViolationDetail violation : violations) {
+            String pointer =
+                    form == ViolationPathForm.JSON_POINTER && form.accepts(violation.path()) ? violation.path() : null;
+            entries.add(new ValidationErrorDetail(
+                    pointer, null, violation.message(), null, violation.type(), violation.args()));
+        }
+        return List.copyOf(entries);
     }
 
     /**

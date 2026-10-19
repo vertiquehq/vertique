@@ -937,6 +937,26 @@ class ErrorPipelineTest {
             assertNull(events.getFirst().getThrowableProxy(), "a mapped server error logs no stack");
         }
 
+        @Test
+        @DisplayName("A mapped carrier's violations are logged once with the response, never the message")
+        void mappedCarrierViolationsAreLogged() {
+            dev.vertique.core.validation.BeanValidationException carrier =
+                    new dev.vertique.core.validation.BeanValidationException(
+                            "validation failed",
+                            List.of(new dev.vertique.core.validation.ViolationDetail(
+                                    "items[0].name", "ZZMESSAGE", "required", null)));
+
+            Response response =
+                    pipelineWithFrameworkDefaults().mapToResponse(ctx, carrier).result();
+
+            assertEquals(400, response.getStatus());
+            List<String> messages = appender.list.stream()
+                    .map(ILoggingEvent::getFormattedMessage)
+                    .filter(m -> m.startsWith("carried violation"))
+                    .toList();
+            assertEquals(List.of("carried violation path=items[] type=required"), messages);
+        }
+
         private ErrorPipeline pipelineWithAfterMapping(ErrorInterceptor... interceptors) {
             ExceptionMapperRegistry registry =
                     new ExceptionMapperRegistry(RestModule.defaultExceptionMapper(), Set.of());

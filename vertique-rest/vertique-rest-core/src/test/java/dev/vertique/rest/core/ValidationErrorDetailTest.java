@@ -8,6 +8,9 @@ import static org.junit.jupiter.api.Assertions.*;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import dev.vertique.core.json.VertiqueJson;
+import dev.vertique.core.validation.ViolationCarrier;
+import dev.vertique.core.validation.ViolationDetail;
+import dev.vertique.core.validation.ViolationPathForm;
 import io.vertx.core.json.JsonObject;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.RecordComponent;
@@ -280,5 +283,100 @@ class ValidationErrorDetailTest {
                 () -> read("{\"pointer\":\"\",\"parameter\":\"a\",\"detail\":\"d\",\"location\":\"body\"}"));
 
         assertInstanceOf(IllegalArgumentException.class, failure.getCause());
+    }
+
+    private static ViolationCarrier carrier(ViolationPathForm form, List<ViolationDetail> violations) {
+        return new ViolationCarrier() {
+            @Override
+            public List<ViolationDetail> violations() {
+                return violations;
+            }
+
+            @Override
+            public ViolationPathForm violationPathForm() {
+                return form;
+            }
+        };
+    }
+
+    @Test
+    @DisplayName(
+            "ofViolations keeps a pointer carrier's well-formed pointers, the empty one included, and its other members")
+    void ofViolationsKeepsWellFormedPointers() {
+        // Given: a pointer carrier with a pointer, the empty pointer, a type and args
+        ViolationCarrier carrier = carrier(
+                ViolationPathForm.JSON_POINTER,
+                List.of(
+                        new ViolationDetail("/comment", "too long", "maxLength", Map.of("max", 5)),
+                        new ViolationDetail("", "whole document", "type", null)));
+
+        // When: it is rendered
+        List<ValidationErrorDetail> entries = ValidationErrorDetail.ofViolations(carrier);
+
+        // Then: both pointers are kept in order with their detail, type and args, and nothing else is set
+        assertEquals(
+                List.of(
+                        new ValidationErrorDetail("/comment", null, "too long", null, "maxLength", Map.of("max", 5)),
+                        new ValidationErrorDetail("", null, "whole document", null, "type", null)),
+                entries);
+    }
+
+    @Test
+    @DisplayName("ofViolations leaves off a pointer that is not well formed and keeps the entry")
+    void ofViolationsLeavesOffAMalformedPointer() {
+        // Given: a pointer carrier with a path that has no leading slash and one with an unknown escape
+        ViolationCarrier carrier = carrier(
+                ViolationPathForm.JSON_POINTER,
+                List.of(
+                        new ViolationDetail("a/b", "slash", "pattern", null),
+                        new ViolationDetail("/x~2", "escape", "format", null)));
+
+        // When: it is rendered
+        List<ValidationErrorDetail> entries = ValidationErrorDetail.ofViolations(carrier);
+
+        // Then: each entry keeps its detail and type and states no location
+        assertEquals(
+                List.of(
+                        new ValidationErrorDetail(null, null, "slash", null, "pattern", null),
+                        new ValidationErrorDetail(null, null, "escape", null, "format", null)),
+                entries);
+    }
+
+    @Test
+    @DisplayName("ofViolations states no location for a Java-path carrier, whatever its paths look like")
+    void ofViolationsStatesNoLocationForAJavaPathCarrier() {
+        // Given: the default form with a path shaped like a pointer
+        ViolationCarrier carrier = carrier(
+                ViolationPathForm.JAVA_PROPERTY_PATH,
+                List.of(
+                        new ViolationDetail("/looks/like/a/pointer", "first", "required", null),
+                        new ViolationDetail("items[0].name", "second", "required", null)));
+
+        // When: it is rendered
+        List<ValidationErrorDetail> entries = ValidationErrorDetail.ofViolations(carrier);
+
+        // Then: neither pointer nor parameter nor location is set
+        assertEquals(
+                List.of(
+                        new ValidationErrorDetail(null, null, "first", null, "required", null),
+                        new ValidationErrorDetail(null, null, "second", null, "required", null)),
+                entries);
+    }
+
+    @Test
+    @DisplayName("ofViolations does not cap the list and returns an immutable one")
+    void ofViolationsIsNotCappedAndIsImmutable() {
+        // Given: a carrier of 250 violations
+        List<ViolationDetail> details = java.util.stream.IntStream.range(0, 250)
+                .mapToObj(i -> new ViolationDetail("/p" + i, "bad", "format", null))
+                .toList();
+
+        // When: it is rendered
+        List<ValidationErrorDetail> entries =
+                ValidationErrorDetail.ofViolations(carrier(ViolationPathForm.JSON_POINTER, details));
+
+        // Then: every violation has its entry, and the list cannot be changed
+        assertEquals(250, entries.size());
+        assertThrows(UnsupportedOperationException.class, () -> entries.add(entries.get(0)));
     }
 }

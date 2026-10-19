@@ -9,10 +9,6 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import ch.qos.logback.classic.Level;
-import ch.qos.logback.classic.Logger;
-import ch.qos.logback.classic.spi.ILoggingEvent;
-import ch.qos.logback.core.read.ListAppender;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.vertique.core.exception.BusinessRuleException;
@@ -30,12 +26,8 @@ import jakarta.ws.rs.core.Response;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
-import java.util.stream.IntStream;
-import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.slf4j.LoggerFactory;
 
 /**
  * Verifies that {@link RestModule#defaultExceptionMapper()} maps the persistence-agnostic core
@@ -133,27 +125,6 @@ class RestModuleDefaultMappingTest {
 
     private static final ObjectMapper JSON = new ObjectMapper();
 
-    private Logger mappingLogger;
-    private Level previousLevel;
-    private ListAppender<ILoggingEvent> appender;
-
-    @BeforeEach
-    void captureMappingLogs() {
-        mappingLogger = (Logger) LoggerFactory.getLogger(RestModule.class);
-        previousLevel = mappingLogger.getLevel();
-        mappingLogger.setLevel(Level.DEBUG);
-        appender = new ListAppender<>();
-        appender.start();
-        mappingLogger.addAppender(appender);
-    }
-
-    @AfterEach
-    void releaseMappingLogs() {
-        mappingLogger.detachAppender(appender);
-        appender.stop();
-        mappingLogger.setLevel(previousLevel);
-    }
-
     /** Renders {@code exception} through the default mapping and returns each error entry as JSON. */
     private static List<JsonNode> render(ValidationException exception) {
         Response response = RestModule.defaultExceptionMapper().toResponse(exception);
@@ -163,11 +134,6 @@ class RestModuleDefaultMappingTest {
         return body.errors().stream()
                 .map(error -> JSON.<JsonNode>valueToTree(error))
                 .toList();
-    }
-
-    /** The formatted messages of the DEBUG events captured so far. */
-    private List<String> loggedMessages() {
-        return appender.list.stream().map(ILoggingEvent::getFormattedMessage).toList();
     }
 
     // --- Tests ---
@@ -456,43 +422,13 @@ class RestModuleDefaultMappingTest {
         assertEquals("pattern", entries.get(1).path("type").asText());
         assertEquals("ZZMESSAGE-escape", entries.get(3).path("detail").asText());
         assertEquals("format", entries.get(3).path("type").asText());
-
-        // And one DEBUG event per omitted entry names its type, and no event holds a path or a message
-        List<String> messages = loggedMessages();
-        assertEquals(2, messages.size(), () -> messages.toString());
-        assertTrue(messages.get(0).contains("pattern"), () -> messages.toString());
-        assertTrue(messages.get(1).contains("format"), () -> messages.toString());
-        for (String forbidden : List.of("a/b", "x~2", "ZZMESSAGE", "/comment", "further violations omitted")) {
-            for (ILoggingEvent event : appender.list) {
-                assertFalse(
-                        event.getFormattedMessage().contains(forbidden),
-                        () -> forbidden + " logged: " + event.getFormattedMessage());
-                for (Object argument : event.getArgumentArray() == null ? new Object[0] : event.getArgumentArray()) {
-                    assertFalse(
-                            String.valueOf(argument).contains(forbidden),
-                            () -> forbidden + " logged as an argument: " + argument);
-                }
-            }
-        }
     }
 
     @Test
-    @DisplayName("a pointer carrier's paths are not logged")
-    void pointerCarrierPathsAreNotLogged() {
-        PointerCarrierValidationException pointerCarrier = new PointerCarrierValidationException(
-                "invalid decision payload", List.of(new ViolationDetail("/comment", "too long", "maxLength", null)));
-
-        render(pointerCarrier);
-
-        assertTrue(loggedMessages().isEmpty(), () -> "unexpected events: " + loggedMessages());
-    }
-
-    @Test
-    @DisplayName("BeanValidationException entries carry no location member and log a neutralized path, never a key or "
-            + "the message")
+    @DisplayName("BeanValidationException entries carry no location member and keep detail and type")
     void beanValidationExceptionEntriesCarryNoLocationMember() {
         // Given: Java paths holding a map key shaped to break a naive renderer, a nested list in a map, and
-        // the root, each with a message that must never be logged
+        // the root
         BeanValidationException exception = new BeanValidationException(
                 "validation failed",
                 List.of(
@@ -516,39 +452,5 @@ class RestModuleDefaultMappingTest {
             assertEquals("ZZMESSAGE", entry.path("detail").asText());
             assertEquals("required", entry.path("type").asText());
         }
-
-        // And: the DEBUG events show the path up to its first bracket, with the type, one per violation
-        List<String> messages = loggedMessages();
-        assertEquals(2, messages.stream().filter(m -> m.contains("byKey[]")).count(), () -> messages.toString());
-        assertEquals(3, messages.stream().filter(m -> m.contains("x[]")).count(), () -> messages.toString());
-        assertEquals(5, messages.size(), () -> "the empty path must log nothing: " + messages);
-        assertTrue(messages.stream().allMatch(m -> m.contains("required")), () -> messages.toString());
-
-        // And: no event holds a key the client chose, any index, or the message
-        for (ILoggingEvent event : appender.list) {
-            String text = event.getFormattedMessage();
-            assertFalse(text.contains("ZZKEY"), () -> "key logged: " + text);
-            assertFalse(text.contains("ZZMESSAGE"), () -> "message logged: " + text);
-            assertFalse(text.contains("[a"), () -> "key text logged: " + text);
-            assertFalse(text.contains("[0"), () -> "index logged: " + text);
-            for (Object argument : event.getArgumentArray() == null ? new Object[0] : event.getArgumentArray()) {
-                String rendered = String.valueOf(argument);
-                assertFalse(rendered.contains("ZZKEY"), () -> "key logged: " + rendered);
-                assertFalse(rendered.contains("ZZMESSAGE"), () -> "message logged: " + rendered);
-            }
-        }
-    }
-
-    @Test
-    @DisplayName("a default-form carrier logs at most 100 path events per response and still renders every entry")
-    void aDefaultFormCarrierLogsAtMostOneHundredPathEventsPerResponse() {
-        List<ViolationDetail> details = IntStream.range(0, 101)
-                .mapToObj(i -> new ViolationDetail("field" + i, "must not be blank", "required", null))
-                .toList();
-
-        List<JsonNode> entries = render(new BeanValidationException("validation failed", details));
-
-        assertEquals(101, entries.size());
-        assertEquals(100, appender.list.size());
     }
 }

@@ -543,15 +543,16 @@ with no `location` and no `parameter`; the pointer is relative to the document t
 necessarily the request body. A path that `ViolationPathForm.JSON_POINTER.accepts` rejects (not `""` or
 `/`-prefixed, a `~` not followed by `0` or `1`, a control or line-separator character, or more than 2,000
 characters) is not rendered as a pointer: its entry keeps `detail`, `type` and `args` and carries neither
-`pointer` nor `parameter` nor `location`, and one DEBUG event names only that entry's type, never the path or
-the message. At most 100 such events are logged per response. Beyond that guard the framework renders paths
+`pointer` nor `parameter` nor `location`. Beyond that guard the framework renders paths
 exactly as given: a producer that declares the `JSON_POINTER` form is responsible for no path holding a key the
 client chose. Every
 other form, `BeanValidationException` included, gives an entry with neither `pointer` nor `parameter`, only
-`detail`, `type` and `args`, because a Java property path is not a request location. For such a carrier the
-mapper logs at DEBUG, for each of the first 100 details with a non-empty path, the path (a string path stops
-at its first bracket and has control and format characters removed) and the type, never the message. A
-third-party carrier whose paths are pointers renders no location until it overrides `violationPathForm()`.
+`detail`, `type` and `args`, because a Java property path is not a request location. The rendering is
+`ValidationErrorDetail.ofViolations(carrier)`, which an application's own exception mapper can call. It does
+not log. `ErrorPipeline` logs a carrier's violations at DEBUG once per response, at most 100 events: for a Java
+path carrier each non-empty path (a string path stops at its first bracket and has control and format
+characters removed) with its type, and for a pointer carrier only the type of an entry whose pointer was
+rejected, never a path, a pointer or a message. A third-party carrier whose paths are pointers renders no location until it overrides `violationPathForm()`.
 Entries of a `RestValidationException` are rendered as built.
 
 The mapper dispatches by class and checks for `ViolationCarrier` inside the `ValidationException`

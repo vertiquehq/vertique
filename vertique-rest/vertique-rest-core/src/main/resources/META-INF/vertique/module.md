@@ -321,6 +321,7 @@ public record ValidationErrorDetail(
 ) {
     public static ValidationErrorDetail ofPointer(String pointer, String detail) { … }
     public static ValidationErrorDetail ofParameter(String parameter, String detail) { … }
+    public static List<ValidationErrorDetail> ofViolations(ViolationCarrier carrier) { … }
     public ValidationErrorDetail withLocation(@Nullable String location) { … }
     public ValidationErrorDetail withType(@Nullable String type) { … }
     public ValidationErrorDetail withArgs(@Nullable Map<String, Object> args) { … }
@@ -337,6 +338,10 @@ public record ValidationErrorDetail(
   `IllegalArgumentException` when both are present, which also rejects a malformed response body
   read on the client side. An entry carries neither when the location cannot be stated.
 - The `with…` methods return a copy that carries every other member over.
+- **`ofViolations(ViolationCarrier)`** renders a carrier's violations by the path form it declares,
+  one entry each in order and without a cap. A `JSON_POINTER` carrier's path becomes `pointer` when
+  `ViolationPathForm.accepts` holds and is left off when it does not; any other form states no location.
+  It does not log. Use it from an application's own exception mapper to reuse the framework's rules.
 
 `null` components are omitted from JSON and unknown members are ignored when reading. `args` is
 populated for standard Jakarta constraints by the `ViolationArgsInspector` SPI in
