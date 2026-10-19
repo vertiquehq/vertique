@@ -330,6 +330,9 @@ application-contributed code) count as global. A runtime that was registered dir
 after startup, or replaced after a managed publication, is not attributed: deprecate and retire then fail with
 `INVALID_TRANSITION` before any durable change and leave the runtime alone. Do not register definitions directly
 at runtime and expect the lifecycle to manage them; managed operations also rely on the shared per-definition queue.
+Managed operations are serialized per definition id on the node. A direct `register` or `unregister` of the same id
+while a managed operation is in flight does not take part in that queue and is outside the lifecycle's compound
+guarantee; each individual registry operation stays thread safe.
 `activate` has no such preflight: activating a version that a foreign registration already occupies fails when it
 registers, and the claim is released. If removing the local runtime fails after the durable retirement committed, the
 call fails but the row stays RETIRED and the runtime stays registered until the next restart; repeating the call is

@@ -302,16 +302,19 @@ even when id, version and hash are equal.
 
 Startup restores the live documents of every owner, global and tenant. An id that deployed code registers is a
 global CODE row, so activating a tenant document under that id fails with `OWNER_CONFLICT` naming both owners.
-`load`, `activate`, `deprecate` and `retire` perform no authorization: restrict them to authorized callers. The
+`load`, `activate`, `deprecate`, `retire` and `reinstate` perform no authorization: restrict them to authorized callers. The
 public `currentStatus` of a version that is only persisted metadata (a candidate or retired row that startup did
-not compile) reports the persisted status instead of failing. An equal plan hash no longer proves equal text: a
+not compile) reports the persisted status instead of returning `null`; it returns `null` only when nothing is known about the version. An equal plan hash no longer proves equal text: a
 packaged document whose text differs (even by a comment, whitespace or line endings) from the stored text of the
-same id and version fails startup, so bump the version or retire the old row.
+same id and version fails startup, so bump the version of a changed document; a retired row of that id and version blocks it too.
 
 `sourceMetadata(DefinitionKey)` reads attribution without fetching source text. Lists contain immutable,
-key-bearing metadata. Definition id (255), source type (64) and revision, author and upload id (255)
-code-point limits apply in every mode, including when no store is installed, and over-limit input is
-rejected before anything is registered. Invalid asynchronous
+key-bearing metadata. With a store bound, `list` and `sourceMetadata` read the durable table and have no
+in-memory fallback, so metadata of packaged documents and code definitions appears only after the managed
+BOOTSTRAP step has recorded it. Definition id and tenant key (255), source type (64), URI (2048) and revision,
+author and upload id (255) code-point limits apply in every mode, including when no store is installed. NUL and
+unpaired surrogates are rejected in every text field, ISO control characters in ids and tenant keys, and a
+version must be positive. Over-limit input is rejected before anything is registered. Invalid asynchronous
 arguments are failed Futures. Previously started instances keep their pinned version. Each coexisting
 document version needs its own contract interface class because registry contract mappings use that class.
 

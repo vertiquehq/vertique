@@ -366,7 +366,9 @@ WorkflowActorMapper customActorMapper() {
 
 `dev.vertique.workflow.registry.store` supplies SQL-free metadata and source values, the
 `WorkflowDefinitionRegistryStore` persistence SPI, and `WorkflowDefinitionLifecycle.activate(DefinitionKey)`.
-A `DefinitionKey` carries nullable tenant scope, definition id, and positive version. A
+A `DefinitionKey` carries nullable tenant scope, definition id, and positive version; ids and tenant keys are
+nonblank, at most 255 code points and free of control characters, and provenance text is bounded (source type 64,
+URI 2048, revision, author and upload id 255 code points). A
 `DefinitionFilter` selects ALL, GLOBAL, or one TENANT explicitly; it does not authorize tenant access.
 `WorkflowDefinitionRecord` contains immutable metadata and provenance; source text is fetched separately
 as `WorkflowDefinitionDocument`. Source URIs are opaque attribution and are never fetched on restore.
@@ -412,14 +414,14 @@ the defaults and introduces no parser dependency into the graph.
 
 | Property | Default | Meaning |
 |---|---|---|
-| `workflow.definitions.maxStalenessSeconds` | `30` | Positive registry timing bound; activation claims become reclaimable after twice this age |
+| `workflow.definitions.maxStalenessSeconds` | `30` | Positive registry timing bound: the peer reconciliation period, the cooling window before a deprecated version may retire, and (doubled) the age at which an activation claim becomes reclaimable |
 | `workflow.definitions.maxDocumentSizeBytes` | `262144` | Positive runtime input-byte limit L; L + floor(L/2) must fit an integer |
 
 `maxStoredDocumentSizeBytes()` derives floor(3L/2). Durable source text must fit both that UTF-8 byte
 bound and L Unicode code points. These bounds describe normalized text, not its original encoding.
 All nodes sharing the table must use the same policy. Raising L increases parsing and memory costs;
 raise it on every node before admitting larger documents. Before lowering it, ensure documents
-required for restoration fit the new envelope; otherwise startup fails explicitly.
+required for restoration fit the new envelope; otherwise startup fails explicitly and a periodic reconciliation counts and retries the row.
 
 `WorkflowDefinitionLifecycleException` reports a typed `reason()` and `key()` for lifecycle refusals,
 including stale claims, ownership conflicts, missing loaders, and plan drift. Asynchronous entrypoints

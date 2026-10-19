@@ -73,7 +73,7 @@ The module owns workflow persistence tables, including:
 | `workflow_branch_tokens` | Active branch execution state; includes `metadata JSONB` for durable context |
 | `workflow_join_states` | Fan-in state for fork/join workflows |
 
-The migration files live with the module under `db/migration/workflow`. The shipped `V1__create_workflow_tables.sql` contains the instance/runtime tables, including branch tokens and durable metadata. The additive `V002__create_workflow_definitions.sql` adds the definition registry; V1 is unchanged.
+The migration files live with the module under `db/migration/workflow`. The shipped `V1__create_workflow_tables.sql` contains the instance/runtime tables, including branch tokens and durable metadata. The additive `V002__create_workflow_definitions.sql` adds the definition registry and `V003__add_workflow_definition_digest.sql` adds its `document_digest` column; V1 is unchanged.
 
 ---
 
@@ -119,7 +119,7 @@ to SUPERSEDED (which does); any other pair, a missing row or a changed status fa
 
 `transition(key, RETIRED, SUPERSEDED)` is the atomic reinstatement: in one transaction under the id lock it checks the row is RETIRED
 and that no other owner holds the id, sets it SUPERSEDED, demotes lower ACTIVE versions of the owner and then promotes the highest
-eligible version; any failure rolls back everything. Like retirement, its transaction runs at READ COMMITTED whatever the server
+eligible version; any failure rolls back everything. Like every registry mutation (see `retire` below), its transaction runs at READ COMMITTED whatever the server
 default, so the owner check sees every row another owner committed while the call waited for the id lock. The store does not check
 that an executable source exists or that its hash matches; the lifecycle does that before it calls the store.
 
