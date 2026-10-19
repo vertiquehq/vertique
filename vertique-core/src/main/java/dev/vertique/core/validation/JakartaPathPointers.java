@@ -359,6 +359,8 @@ public final class JakartaPathPointers {
          */
         private final Map<Class<?>, Object> promotedRoots = new HashMap<>();
 
+        private final Map<Class<?>, Boolean> rebuiltSequences = new HashMap<>();
+
         /** Owner classes for which a projection call threw during this session. */
         private final Set<Class<?>> failedProjections = new HashSet<>();
 
@@ -712,11 +714,15 @@ public final class JakartaPathPointers {
 
         /**
          * Whether a sequence's bound positions may differ from the document's for a reason the mapper
-         * applies to the sequence type itself: null elements skipped, or a single value read as a
-         * one-element sequence.
+         * applies to the sequence type itself: null elements skipped, a single value read as a
+         * one-element sequence, or a type-level deserializer or converter that rebuilds the sequence
+         * from its input.
          */
         private boolean reordersPositions(JavaType sequence) {
             if (globallyReordersPositions) {
+                return true;
+            }
+            if (rebuiltSequences.computeIfAbsent(sequence.getRawClass(), this::isRebuiltByItsType)) {
                 return true;
             }
             if (collectionsAcceptSingleValue && sequence.isCollectionLikeType()) {
@@ -726,6 +732,14 @@ public final class JakartaPathPointers {
             ConfigOverride override = config.getConfigOverride(raw);
             return skipsContentNulls(override.getSetterInfo())
                     || acceptsSingleValue(config.getDefaultPropertyFormat(raw));
+        }
+
+        /** Whether a type-level deserializer or converter on the sequence class rebuilds it from its input. */
+        private boolean isRebuiltByItsType(Class<?> sequenceClass) {
+            AnnotatedClass info =
+                    config.introspectClassAnnotations(sequenceClass).getClassInfo();
+            return introspector.findDeserializer(info) != null
+                    || introspector.findDeserializationConverter(info) != null;
         }
 
         /**

@@ -29,7 +29,7 @@ public final class JacksonBindings {
      * Reports whether the mapper binds a type through the properties its introspection reports,
      * which is the only case in which those properties say what the mapper binds into.
      *
-     * <p>A custom deserializer, a builder, or a delegating creator — one declared
+     * <p>A custom deserializer, a converter, a builder, or a delegating creator — one declared
      * {@link JsonCreator.Mode#DELEGATING}, or a single-parameter creator whose parameter carries no
      * name — binds whatever it reads, and the declaration view says nothing about it.
      *
@@ -40,6 +40,7 @@ public final class JacksonBindings {
     public static boolean bindsThroughItsProperties(DeserializationConfig config, BeanDescription description) {
         AnnotationIntrospector introspector = config.getAnnotationIntrospector();
         if (introspector.findDeserializer(description.getClassInfo()) != null
+                || introspector.findDeserializationConverter(description.getClassInfo()) != null
                 || description.findPOJOBuilder() != null) {
             return false;
         }
