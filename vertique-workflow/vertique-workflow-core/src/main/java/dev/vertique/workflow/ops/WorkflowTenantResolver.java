@@ -24,8 +24,13 @@ import jakarta.annotation.Nullable;
  *       signal carriers is still reachable from such headers. Derive the tenant only from an
  *       integrity-protected value, such as a verified identity snapshot, never from a namespace
  *       whose decoder performs no integrity check.
+ *   <li>The resolver runs synchronously in the context of the caller that starts the workflow, so
+ *       the simplest safe source is that caller's authenticated identity, or a verified identity
+ *       snapshot; do not parse the raw body of a namespace whose decoder checks nothing.
  *   <li>A non-null result must be nonblank, at most 255 Unicode code points, and free of NUL, other
- *       control characters and the {@code ':'} character. Otherwise the start fails.
+ *       control characters, unpaired surrogates and the {@code ':'} character. Otherwise the start
+ *       fails. Leading or trailing whitespace and invisible formatting characters are not rejected:
+ *       normalize them in the resolver.
  * </ul>
  *
  * <p>A resolver that throws, including with an undeclared checked exception, also fails the start. In both failure cases the failure carries a fixed

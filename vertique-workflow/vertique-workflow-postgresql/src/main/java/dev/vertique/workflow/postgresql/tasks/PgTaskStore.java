@@ -339,10 +339,10 @@ public final class PgTaskStore extends PgSqlRepository implements TaskStore<SqlC
     @Override
     public Future<PagedResult<TaskRecord>> findByFilter(TaskFilter filter, PageCursor cursor, SqlClient tx) {
         // The subject filters (subjectType, subjectId) need a JOIN to workflow_instances.
-        // The archived-filter is handled with a NOT EXISTS subquery (not a JOIN) to avoid the
-        // "column reference is ambiguous" error that arises when both workflow_tasks.updated_at
-        // and workflow_instances.updated_at are visible in a JOIN and the keyset WHERE predicate
-        // references "updated_at" without a table qualifier.
+        // The joined side is a narrowed projection of workflow_instances (only the columns the
+        // filters read) so workflow_instances.updated_at is never visible: the keyset WHERE
+        // predicate references "updated_at" without a table qualifier. Without a subject filter the
+        // archived-filter uses a NOT EXISTS subquery instead of a JOIN for the same reason.
         boolean needsInstanceJoin = filter.subjectType() != null || filter.subjectId() != null;
 
         StringBuilder sql = new StringBuilder(SQL_SELECT_ALL_COLUMNS);
@@ -431,9 +431,8 @@ public final class PgTaskStore extends PgSqlRepository implements TaskStore<SqlC
             // Exclude tasks whose owning workflow instance has been soft-deleted (archived).
             // When a subject-filter JOIN is present, reuse the already-joined wi alias.
             // Otherwise, use a correlated NOT EXISTS subquery so the keyset pagination columns
-            // (updated_at, task_id) remain unambiguous — a JOIN would introduce a second
-            // updated_at column from workflow_instances, causing a "column reference is
-            // ambiguous" error in the keyset WHERE predicate.
+            // (updated_at, task_id) remain unambiguous — a plain JOIN of workflow_instances would
+            // introduce a second updated_at column and make the keyset WHERE predicate ambiguous.
             sql.append(hasWhere ? " AND" : " WHERE");
             if (needsInstanceJoin) {
                 sql.append(" wi.archived_at IS NULL");

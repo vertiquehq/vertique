@@ -474,9 +474,14 @@ changes startup for every PostgreSQL application. Do the following in order.
   nullable `tenant_key` column on `workflow_instances` and `workflow_tasks`, existing rows `null`) from
   `db/migration/workflow`. All three must run before the first 0.4.0 node starts. `V004__` changes only catalog metadata,
   but each `ALTER TABLE` holds an `ACCESS EXCLUSIVE` lock until the migration commits: run it when no long transaction is
-  open on those tables. It waits at most 30 seconds for the lock (`SET LOCAL lock_timeout`) and fails rather than blocking
-  the workflow tables, so rerun it after the blocking transaction ends. Nodes of the previous release insert tasks without a
-  tenant; finish the rolling upgrade before relying on tenant-filtered task lists.
+  open on those tables. It waits at most 30 seconds per table for the lock (`SET LOCAL lock_timeout`), during which new
+  statements on that table queue behind it, and then fails, so rerun it after the blocking transaction ends. A manual run
+  must be one transaction (`psql --single-transaction -f V004__add_workflow_tenant_key.sql`), or the timeout has no effect.
+  Instances started and tasks created by nodes of the previous release keep `tenant_key = null` permanently: bind a
+  `WorkflowTenantResolver` only after every node runs 0.4.0, and for tasks created earlier from a stamped instance run
+  `UPDATE workflow_tasks t SET tenant_key = i.tenant_key FROM workflow_instances i WHERE t.workflow_id = i.id AND
+  t.tenant_key IS NULL AND i.tenant_key IS NOT NULL`. Instances started by previous-release nodes cannot be backfilled
+  from the column.
 - PostgreSQL 15 or later is required (`NULLS NOT DISTINCT`).
 - Anything else that writes `DOCUMENT` rows, such as operator scripts or other modules, must supply `document_digest`:
   the lowercase hex SHA-256 of the stored UTF-8 text, present on `DOCUMENT` rows and absent on `CODE` rows. The migration
@@ -593,15 +598,15 @@ is registered, and a static source failing a limit fails startup naming the reso
 Two optional keys, `workflow.definitions.maxStalenessSeconds` (30) and `workflow.definitions.maxDocumentSizeBytes` (262144).
 Existing configuration needs no change. See [Configuration](#configuration).
 
-### Instance tenant resolution
+## Instance Tenant Resolution
 
 The engine can stamp a tenant key on each new instance from the durable context it captures at start. Bind a `WorkflowTenantResolver` (`@Nullable String tenantOf(DurableMetadata captured)`) and the engine calls it once per new instance, inside the start transaction; without a binding, or when it returns `null`, the instance has no tenant. Tasks inherit the instance's tenant, and migration and resurrection keep it.
 
-- **Derive the tenant from an integrity-protected value.** The durable context captured at start includes values bound from inbound transport headers (for example message consumers) without sanitization, and a namespace that refuses explicit signal carriers is still reachable from such headers. Read the tenant from a verified value such as an identity snapshot, never from a namespace whose decoder performs no integrity check.
+- **Derive the tenant from an integrity-protected value.** The durable context captured at start includes values bound from inbound transport headers (for example message consumers) without sanitization, and a namespace that refuses explicit signal carriers is still reachable from such headers. The resolver runs synchronously in the context of the caller that starts the workflow, so the simplest safe source is that caller's authenticated identity, or a verified identity snapshot; never parse the raw body of a namespace whose decoder performs no integrity check.
 - **Fail-closed values.** A non-null result must be nonblank, at most 255 code points, and free of NUL, control characters, unpaired surrogates and `:`; otherwise the start fails (leading or trailing whitespace and invisible formatting characters are not rejected, so normalize in the resolver). A resolver that throws, including with an undeclared checked exception, also fails the start. With `start(cmd, tx)` the caller must roll back `tx` after a failed start: the idempotency claim is written before the instance. The failure message is fixed and carries no context content and no resolver exception.
 - **Not called on replay.** An idempotent replay of an existing start returns the existing id without calling the resolver.
-- **Information, not isolation.** The tenant is a label and a filter. A `null` filter matches every tenant, so do not pass an unresolved tenant as `null` expecting scoping. Start idempotency keys and business keys remain global: a start that reuses another tenant's key returns that tenant's instance.
-- **No definition cross-check.** The stamped tenant is not compared with the `<tenantKey>:` prefix of the started definition id; a start may run another tenant's namespaced definition.
+- **Information, not isolation.** The tenant is a label and a filter. A `null` filter matches every tenant, so do not pass an unresolved tenant as `null` expecting scoping. Start idempotency keys and business keys remain global: a start that reuses another tenant's key returns that tenant's instance. No operation addressed by instance or task id (query, signal, cancel, retry, migrate, task complete or reassign) checks the tenant, and timers, branch tokens and definition resolution are global: before acting on a caller-supplied id, load the instance and compare its `tenantKey()` with the caller's tenant.
+- **No definition cross-check.** The stamped tenant is not compared with the `<tenantKey>:` prefix of the started definition id; a start may run another tenant's namespaced definition. A tenant key of 254 or more code points can be stamped but can never own a loadable definition, because `<key>:<name>` would exceed the 255 code point id limit.
 - **Manual wiring.** `WorkflowEngineFactory` has no resolver overload, so a hand-assembled engine leaves instances without a tenant.
 
 ---
