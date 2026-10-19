@@ -5,7 +5,7 @@
 # with real side effects, so they run here, as an unprivileged user, against a
 # throwaway copy of the source.
 
-FROM eclipse-temurin:25-jdk@sha256:8c0a84ea11c8f6ed52600fc19f1040121f2a162998e9f50a5faebbbad9172dcc
+FROM eclipse-temurin:25-jdk@sha256:2d5d5e9b533342a565907c84f47a2ec298c40cde7b13a3ca85d4950fa456a641
 
 RUN useradd --create-home --uid 10001 pit \
     && mkdir -p /home/pit/.m2/repository /home/pit/.m2/wrapper /work \
