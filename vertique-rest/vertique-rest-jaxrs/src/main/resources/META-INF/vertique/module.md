@@ -537,22 +537,18 @@ The framework's `ExceptionMapper<Throwable>`, pre-configured by `RestModule`:
 | `UnavailableException` (core.exception) | 503 | `ProblemDetail` |
 | `Throwable` (catch-all) | 500 | `ProblemDetail` with the fixed detail `"Internal Server Error"` — the exception message is never echoed. Logging is deferred to `ErrorPipeline` (see below) so a Vert.x 4xx fallback is not recorded as an unhandled server fault |
 
-A `ViolationCarrier` detail renders by the carrier's declared `violationPathForm()`. A `JSON_POINTER`
-carrier (a workflow payload exception) gives each entry a `pointer` equal to the detail path, `""` included,
-with no `location` and no `parameter`; the pointer is relative to the document the producer validated, not
-necessarily the request body. A path that `ViolationPathForm.JSON_POINTER.accepts` rejects (not `""` or
-`/`-prefixed, a `~` not followed by `0` or `1`, a control or line-separator character, or more than 2,000
-characters) is not rendered as a pointer: its entry keeps `detail`, `type` and `args` and carries neither
-`pointer` nor `parameter` nor `location`. Beyond that guard the framework renders paths
-exactly as given: a producer that declares the `JSON_POINTER` form is responsible for no path holding a key the
-client chose. Every
-other form, `BeanValidationException` included, gives an entry with neither `pointer` nor `parameter`, only
-`detail`, `type` and `args`, because a Java property path is not a request location. The rendering is
-`ValidationErrorDetail.ofViolations(carrier)`, which an application's own exception mapper can call. It does
-not log. `ErrorPipeline` logs a carrier's violations at DEBUG once per response, at most 100 events: for a Java
-path carrier each non-empty path (a string path stops at its first bracket and has control and format
-characters removed) with its type, and for a pointer carrier only the type of an entry whose pointer was
-rejected, never a path, a pointer or a message. A third-party carrier whose paths are pointers renders no location until it overrides `violationPathForm()`.
+A `ViolationCarrier` detail renders with `detail`, `type` and `args` and neither `pointer` nor `parameter` nor
+`location`, whatever its path form: a detail's path is a location in the value its producer validated, not in
+the request, and the default mapping cannot know where that value sits. The rendering is
+`ValidationErrorDetail.ofViolations(carrier)`, which an application's own exception mapper can call. To report
+the pointer details of a carrier as body locations, a mapper that knows the validated value is the request body
+(or sits at a known place in it) calls `ValidationErrorDetail.ofViolations(carrier, basePointer)` with `""`
+or the member's pointer such as `"/payload"`; a `JSON_POINTER` detail whose joined pointer is accepted by
+`ViolationPathForm.accepts` then gets `pointer` and `location` `"body"`, and every other detail stays without a
+location. Neither method logs. `ErrorPipeline` logs a carrier's violations at DEBUG once per response, at most
+100 events: for a detail with a Java path the non-empty path (a string path stops at its first bracket and has
+control and format characters removed) with its type, for a pointer detail only its type, and nothing for a
+detail with no path; never a pointer, a message, a key or an index.
 Entries of a `RestValidationException` are rendered as built.
 
 The mapper dispatches by class and checks for `ViolationCarrier` inside the `ValidationException`

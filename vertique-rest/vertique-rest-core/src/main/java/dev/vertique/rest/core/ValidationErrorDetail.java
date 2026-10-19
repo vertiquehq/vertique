@@ -21,14 +21,11 @@ import java.util.Map;
  *
  * <p>A body location the framework resolved is reported in {@code pointer}, an RFC 6901 JSON Pointer
  * into the request document over the wire names the request was bound with ({@code ""} is the whole
- * document, {@code "/"} the member with the empty name). A workflow payload rejection carries the
- * engine's pointer into the payload it validated. The framework's validation gates report any other
- * request location in {@code parameter}, which names a non-body request location such as a query
+ * document, {@code "/"} the member with the empty name). The framework's validation gates report any
+ * other request location in {@code parameter}, which names a non-body request location such as a query
  * parameter, header, path variable, cookie or form field, except where a producer's module document
  * records otherwise. An entry carries at most one of the two, and neither when the location cannot be
- * stated. A {@code pointer} without a {@code location} is relative to the document
- * its producer validated. Test for presence, not truthiness: {@code ""} is a valid pointer and is
- * serialized.
+ * stated. Test for presence, not truthiness: {@code ""} is a valid pointer and is serialized.
  *
  * <p>When serialized as JSON, {@code null} members are omitted so clients see only the context that is
  * actually available. Unknown members are ignored when reading. The rule that an entry never carries
@@ -100,14 +97,13 @@ public record ValidationErrorDetail(
     }
 
     /**
-     * Renders the violations a {@link ViolationCarrier} holds, one entry each in the carrier's order, by the
-     * path form the carrier declares.
+     * Renders the violations a {@link ViolationCarrier} holds, one entry each in the carrier's order,
+     * without a location.
      *
-     * <p>For {@link ViolationPathForm#JSON_POINTER} a detail's path becomes {@code pointer} when
-     * {@link ViolationPathForm#accepts(String)} holds; a path it rejects is left off, so the entry keeps
-     * its message, type and args and states no location. For any other form the paths are Java property
-     * paths, which are not request locations, so no entry carries {@code pointer}, {@code parameter} or
-     * {@code location}. The form is read from the declaration only, never from how a path looks.
+     * <p>A violation's path is a location in the value its producer validated, not in the request, so
+     * this method never sets {@code pointer}, {@code parameter} or {@code location}; each entry keeps
+     * the detail's message, type and args. Use {@link #ofViolations(ViolationCarrier, String)} where the
+     * validated value is the request document or sits at a known place in it.
      *
      * <p>The list has as many entries as the carrier has violations; it is not capped, and logging is
      * the caller's concern. An application that renders its own error shape can call this to reuse the
@@ -117,14 +113,54 @@ public record ValidationErrorDetail(
      * @return an immutable list of entries
      */
     public static List<ValidationErrorDetail> ofViolations(ViolationCarrier carrier) {
-        ViolationPathForm form = carrier.violationPathForm();
         List<ViolationDetail> violations = carrier.violations();
         List<ValidationErrorDetail> entries = new ArrayList<>(violations.size());
         for (ViolationDetail violation : violations) {
-            String pointer =
-                    form == ViolationPathForm.JSON_POINTER && form.accepts(violation.path()) ? violation.path() : null;
             entries.add(new ValidationErrorDetail(
-                    pointer, null, violation.message(), null, violation.type(), violation.args()));
+                    null, null, violation.message(), null, violation.type(), violation.args()));
+        }
+        return List.copyOf(entries);
+    }
+
+    /**
+     * Renders the violations a {@link ViolationCarrier} holds as locations in the request body, for a
+     * validated value that sits at {@code basePointer} in it.
+     *
+     * <p>A violation whose path is a pointer ({@link ViolationPathForm#JSON_POINTER}) becomes
+     * {@code pointer = basePointer + path} with {@code location} {@code "body"}, provided the joined
+     * pointer is accepted by {@link ViolationPathForm#accepts(String)}. A violation with any other path
+     * form, with no path, or whose joined pointer is not accepted keeps its message, type and args and
+     * states no location; so does every violation when {@code basePointer} is not a well-formed pointer.
+     *
+     * <p>Call this only where the validated value is known to be part of the request body: pass {@code ""}
+     * when the validated document is the body, or the pointer of the member holding it (for example
+     * {@code "/payload"}) when it is nested. The pointer is only as exact as the producer's own names,
+     * which are not necessarily the names the request was bound with.
+     *
+     * @param carrier     the exception holding the violations
+     * @param basePointer the RFC 6901 pointer of the validated value within the request body; {@code ""}
+     *                    for the whole body
+     * @return an immutable list of entries
+     */
+    public static List<ValidationErrorDetail> ofViolations(ViolationCarrier carrier, String basePointer) {
+        List<ViolationDetail> violations = carrier.violations();
+        List<ValidationErrorDetail> entries = new ArrayList<>(violations.size());
+        for (ViolationDetail violation : violations) {
+            String path = violation.path();
+            String pointer = null;
+            if (violation.form() == ViolationPathForm.JSON_POINTER && path != null) {
+                String joined = basePointer + path;
+                if (ViolationPathForm.JSON_POINTER.accepts(joined)) {
+                    pointer = joined;
+                }
+            }
+            entries.add(new ValidationErrorDetail(
+                    pointer,
+                    null,
+                    violation.message(),
+                    pointer == null ? null : "body",
+                    violation.type(),
+                    violation.args()));
         }
         return List.copyOf(entries);
     }

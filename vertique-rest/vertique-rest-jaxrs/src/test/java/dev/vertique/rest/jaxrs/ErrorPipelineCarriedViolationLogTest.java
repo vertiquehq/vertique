@@ -11,11 +11,9 @@ import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
-import dev.vertique.core.exception.BusinessRuleException;
 import dev.vertique.core.validation.BeanValidationException;
 import dev.vertique.core.validation.ViolationCarrier;
 import dev.vertique.core.validation.ViolationDetail;
-import dev.vertique.core.validation.ViolationPathForm;
 import java.util.List;
 import java.util.stream.IntStream;
 import org.junit.jupiter.api.AfterEach;
@@ -30,26 +28,6 @@ import org.slf4j.LoggerFactory;
  * count per response is bounded.
  */
 class ErrorPipelineCarriedViolationLogTest {
-
-    /** A carrier whose detail paths are JSON Pointers and which declares so. */
-    private static final class PointerCarrier extends BusinessRuleException implements ViolationCarrier {
-        private final List<ViolationDetail> violations;
-
-        PointerCarrier(List<ViolationDetail> violations) {
-            super("invalid payload");
-            this.violations = violations;
-        }
-
-        @Override
-        public List<ViolationDetail> violations() {
-            return violations;
-        }
-
-        @Override
-        public ViolationPathForm violationPathForm() {
-            return ViolationPathForm.JSON_POINTER;
-        }
-    }
 
     private Logger pipelineLogger;
     private Level previousLevel;
@@ -117,23 +95,24 @@ class ErrorPipelineCarriedViolationLogTest {
     }
 
     @Test
-    @DisplayName("a pointer carrier logs nothing for a well-formed pointer and only the type for a malformed one")
-    void pointerCarrierLogsOnlyTheTypeOfAMalformedPointer() {
-        // Given: a good pointer, a path with no leading slash, the empty pointer and an unknown escape
-        PointerCarrier carrier = new PointerCarrier(List.of(
-                new ViolationDetail("/comment", "ZZMESSAGE-good", "maxLength", null),
-                new ViolationDetail("a/b", "ZZMESSAGE-slash", "pattern", null),
-                new ViolationDetail("", "further violations omitted", "truncated", null),
-                new ViolationDetail("/x~2", "ZZMESSAGE-escape", "format", null)));
+    @DisplayName("a pointer detail logs only its type, an unlocated one logs nothing, and no path or message is logged")
+    void pointerDetailsLogOnlyTheType() {
+        // Given: pointer details, one of them malformed, and an unlocated marker
+        ViolationCarrier carrier = () -> List.of(
+                ViolationDetail.atPointer("/comment", "ZZMESSAGE-good", "maxLength", null),
+                ViolationDetail.atPointer("a/b", "ZZMESSAGE-slash", "pattern", null),
+                ViolationDetail.unlocated("further violations omitted", "truncated"),
+                ViolationDetail.atPointer("/x~2", "ZZMESSAGE-escape", "format", null));
 
         // When: the pipeline logs the carrier
         ErrorPipeline.logCarriedViolations(carrier);
 
-        // Then: one event per malformed pointer names its type
+        // Then: one event per pointer detail names its type, and the marker logs nothing
         List<String> messages = loggedMessages();
-        assertEquals(2, messages.size(), () -> messages.toString());
-        assertTrue(messages.get(0).contains("pattern"), () -> messages.toString());
-        assertTrue(messages.get(1).contains("format"), () -> messages.toString());
+        assertEquals(3, messages.size(), () -> messages.toString());
+        assertTrue(messages.get(0).contains("maxLength"), () -> messages.toString());
+        assertTrue(messages.get(1).contains("pattern"), () -> messages.toString());
+        assertTrue(messages.get(2).contains("format"), () -> messages.toString());
 
         // And: no event or argument holds a path or a message
         for (String forbidden : List.of("a/b", "x~2", "ZZMESSAGE", "/comment", "further violations omitted")) {
@@ -151,17 +130,6 @@ class ErrorPipelineCarriedViolationLogTest {
     }
 
     @Test
-    @DisplayName("a pointer carrier of well-formed pointers logs nothing")
-    void pointerCarrierOfWellFormedPointersLogsNothing() {
-        PointerCarrier carrier =
-                new PointerCarrier(List.of(new ViolationDetail("/comment", "too long", "maxLength", null)));
-
-        ErrorPipeline.logCarriedViolations(carrier);
-
-        assertTrue(loggedMessages().isEmpty(), () -> "unexpected events: " + loggedMessages());
-    }
-
-    @Test
     @DisplayName("a Java-path carrier logs at most 100 events per response")
     void javaPathCarrierLogsAtMostOneHundredEvents() {
         List<ViolationDetail> details = IntStream.range(0, 101)
@@ -174,13 +142,13 @@ class ErrorPipelineCarriedViolationLogTest {
     }
 
     @Test
-    @DisplayName("a pointer carrier logs at most 100 events per response")
-    void pointerCarrierLogsAtMostOneHundredEvents() {
+    @DisplayName("a carrier of pointer details logs at most 100 events per response")
+    void pointerDetailsLogAtMostOneHundredEvents() {
         List<ViolationDetail> details = IntStream.range(0, 101)
-                .mapToObj(i -> new ViolationDetail("no-slash" + i, "bad", "format", null))
+                .mapToObj(i -> ViolationDetail.atPointer("/p" + i, "bad", "format", null))
                 .toList();
 
-        ErrorPipeline.logCarriedViolations(new PointerCarrier(details));
+        ErrorPipeline.logCarriedViolations(() -> details);
 
         assertEquals(100, appender.list.size());
     }

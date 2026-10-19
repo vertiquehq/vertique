@@ -8,6 +8,7 @@ import static org.assertj.core.api.Assertions.tuple;
 import static org.junit.jupiter.api.Assertions.assertAll;
 
 import dev.vertique.core.validation.ViolationDetail;
+import dev.vertique.core.validation.ViolationPathForm;
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 import io.vertx.json.schema.OutputUnit;
@@ -44,6 +45,30 @@ class ViolationDetailsTest {
     /** A schema that declares {@code amount}, so a reported {@code #/amount} survives the cut-back. */
     private static final JsonObject DECLARES_AMOUNT =
             Schemas.json("{'type':'object','properties':" + "{'amount':{'type':'integer','minimum':2}}}");
+
+    @Test
+    @DisplayName("a detail states a pointer form only when it was built in the RFC 6901 form, value-free and"
+            + " single-violation details included")
+    void detailsStateTheFormTheyWereBuiltIn() {
+        // Given: a schema failing one constraint and a required member, and one with only a structural failure
+        JsonObject schema = Schemas.json(
+                "{'type':'object','required':['name'],'properties':{" + "'n':{'type':'integer','minimum':2}}}");
+        OutputUnit result = Validators.validate(schema, new JsonObject().put("n", 1));
+        JsonObject typed = Schemas.json("{'type':'object','properties':{'a':{'type':'string'}}}");
+        OutputUnit wrongType = Validators.validate(typed, new JsonObject().put("a", 1));
+
+        // When: collected in each form, fail-fast and not
+        List<ViolationDetail> pointers = ViolationDetails.collect(result, schema, false, PathForm.RFC6901);
+        List<ViolationDetail> fragments = ViolationDetails.collect(result, schema, false, PathForm.URI_FRAGMENT);
+        List<ViolationDetail> first = ViolationDetails.collect(result, schema, true, PathForm.RFC6901);
+        List<ViolationDetail> single = ViolationDetails.collect(wrongType, typed, false, PathForm.RFC6901);
+
+        // Then: every pointer-form detail says so, and no fragment-form detail does
+        assertThat(pointers).isNotEmpty().allMatch(d -> d.form() == ViolationPathForm.JSON_POINTER);
+        assertThat(first).isNotEmpty().allMatch(d -> d.form() == ViolationPathForm.JSON_POINTER);
+        assertThat(single).isNotEmpty().allMatch(d -> d.form() == ViolationPathForm.JSON_POINTER);
+        assertThat(fragments).isNotEmpty().allMatch(d -> d.form() == ViolationPathForm.JAVA_PROPERTY_PATH);
+    }
 
     @Test
     @DisplayName("each concrete violation is rendered with its keyword, a canonical message, its constraint and"
@@ -1184,9 +1209,9 @@ class ViolationDetailsTest {
 
             assertThat(all)
                     .containsExactlyInAnyOrder(
-                            new ViolationDetail(
+                            ViolationDetail.atPointer(
                                     "/pet/name", MISSING_PREFIX + "name\"", "required", Map.of("required", true)),
-                            new ViolationDetail(
+                            ViolationDetail.atPointer(
                                     "/pet/age", MISSING_PREFIX + "age\"", "required", Map.of("required", true)));
             assertThat(first).hasSize(1);
             assertThat(first.get(0).path()).isIn("/pet/name", "/pet/age");

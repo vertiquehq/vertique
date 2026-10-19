@@ -7,7 +7,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNull;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -18,7 +17,6 @@ import dev.vertique.core.exception.ValidationException;
 import dev.vertique.core.validation.BeanValidationException;
 import dev.vertique.core.validation.ViolationCarrier;
 import dev.vertique.core.validation.ViolationDetail;
-import dev.vertique.core.validation.ViolationPathForm;
 import dev.vertique.rest.core.ProblemDetail;
 import dev.vertique.rest.core.ValidationErrorDetail;
 import dev.vertique.rest.core.ValidationProblemDetail;
@@ -108,18 +106,6 @@ class RestModuleDefaultMappingTest {
         @Override
         public List<ViolationDetail> violations() {
             return violations;
-        }
-    }
-
-    /** A carrier whose detail paths are JSON Pointers and which declares so. */
-    private static final class PointerCarrierValidationException extends CarrierValidationException {
-        PointerCarrierValidationException(String message, List<ViolationDetail> violations) {
-            super(message, violations);
-        }
-
-        @Override
-        public ViolationPathForm violationPathForm() {
-            return ViolationPathForm.JSON_POINTER;
         }
     }
 
@@ -265,9 +251,9 @@ class RestModuleDefaultMappingTest {
     @DisplayName("ValidationException implementing ViolationCarrier should map to 400 ValidationProblemDetail")
     void violationCarrierValidationExceptionShouldMapToValidationProblemDetail() {
         DefaultExceptionMapper mapper = RestModule.defaultExceptionMapper();
-        PointerCarrierValidationException exception = new PointerCarrierValidationException(
+        CarrierValidationException exception = new CarrierValidationException(
                 "invalid decision payload",
-                List.of(new ViolationDetail(
+                List.of(ViolationDetail.atPointer(
                         "/comment", "must have a maximum length of 3", "maxLength", Map.of("maxLength", 3))));
 
         Response response = mapper.toResponse(exception);
@@ -279,7 +265,7 @@ class RestModuleDefaultMappingTest {
         assertEquals("invalid decision payload", body.detail());
         assertEquals(1, body.errors().size());
         ValidationErrorDetail error = body.errors().get(0);
-        assertEquals("/comment", error.pointer());
+        assertNull(error.pointer());
         assertNull(error.parameter());
         assertEquals("must have a maximum length of 3", error.detail());
         assertNull(error.location());
@@ -334,94 +320,34 @@ class RestModuleDefaultMappingTest {
     }
 
     @Test
-    @DisplayName("carriers render by their declared path form, never by what the path looks like")
-    void carriersRenderByTheirDeclaredPathForm() {
-        // Given: a pointer carrier (with the truncation entry), a default-form carrier whose path looks
-        // like a pointer, and a pointer carrier with a nested list position
-        PointerCarrierValidationException pointerCarrier = new PointerCarrierValidationException(
-                "invalid decision payload",
-                List.of(
-                        new ViolationDetail("/comment", "must have a maximum length of 3", "maxLength", null),
-                        new ViolationDetail("", "further violations omitted", "truncated", null)));
-        CarrierValidationException defaultCarrier = new CarrierValidationException(
-                "invalid carrier",
-                List.of(new ViolationDetail("/looks/like/a/pointer", "must be valid", "pattern", null)));
-        PointerCarrierValidationException nestedPointerCarrier = new PointerCarrierValidationException(
-                "invalid payload",
-                List.of(new ViolationDetail("/items/0/name", "must not be blank", "required", null)));
-
-        // When: the default mapping renders each
-        List<JsonNode> pointerEntries = render(pointerCarrier);
-        List<JsonNode> defaultEntries = render(defaultCarrier);
-        List<JsonNode> nestedEntries = render(nestedPointerCarrier);
-
-        // Then: a pointer carrier's entries carry pointer, the empty pointer stays present, and no entry
-        // carries a location or a path
-        assertEquals(2, pointerEntries.size());
-        assertEquals("/comment", pointerEntries.get(0).path("pointer").asText());
-        assertEquals(
-                "must have a maximum length of 3",
-                pointerEntries.get(0).path("detail").asText());
-        assertTrue(pointerEntries.get(1).has("pointer"), "the empty pointer must not be omitted");
-        assertEquals("", pointerEntries.get(1).get("pointer").asText());
-        assertEquals("truncated", pointerEntries.get(1).path("type").asText());
-        assertEquals(1, nestedEntries.size());
-        assertEquals("/items/0/name", nestedEntries.get(0).path("pointer").asText());
-        for (JsonNode entry : List.of(pointerEntries.get(0), pointerEntries.get(1), nestedEntries.get(0))) {
-            assertFalse(entry.has("location"), () -> "unexpected location in " + entry);
-            assertFalse(entry.has("path"), () -> "unexpected path in " + entry);
-            assertFalse(entry.has("parameter"), () -> "unexpected parameter in " + entry);
-        }
-
-        // And: the default-form carrier's entry has neither member, although its path looks like a pointer
-        assertEquals(1, defaultEntries.size());
-        JsonNode defaultEntry = defaultEntries.get(0);
-        assertFalse(defaultEntry.has("pointer"), () -> "unexpected pointer in " + defaultEntry);
-        assertFalse(defaultEntry.has("parameter"), () -> "unexpected parameter in " + defaultEntry);
-        assertFalse(defaultEntry.has("path"), () -> "unexpected path in " + defaultEntry);
-        assertFalse(defaultEntry.has("location"), () -> "unexpected location in " + defaultEntry);
-        assertEquals("must be valid", defaultEntry.path("detail").asText());
-        assertEquals("pattern", defaultEntry.path("type").asText());
-    }
-
-    @Test
-    @DisplayName("a carried pointer that is not well formed is omitted, a good one is kept, and only the type of an"
-            + " omitted one is logged")
-    void carrierPointerThatIsNotWellFormedIsOmitted() {
-        // Given a pointer carrier whose paths are a good pointer, a path with no leading slash, the empty pointer
-        // of a truncation entry, and a path with an unknown escape, each with its own message and type
-        PointerCarrierValidationException carrier = new PointerCarrierValidationException(
+    @DisplayName("the default mapping reports no location for a carrier, whatever its details' path forms")
+    void carriersGetNoLocationFromTheDefaultMapping() {
+        // Given: a carrier holding a pointer detail, the empty pointer, an unlocated marker and a Java path
+        // shaped like a pointer
+        CarrierValidationException carrier = new CarrierValidationException(
                 "invalid payload",
                 List.of(
-                        new ViolationDetail("/comment", "ZZMESSAGE-good", "maxLength", null),
-                        new ViolationDetail("a/b", "ZZMESSAGE-slash", "pattern", null),
-                        new ViolationDetail("", "further violations omitted", "truncated", null),
-                        new ViolationDetail("/x~2", "ZZMESSAGE-escape", "format", null)));
+                        ViolationDetail.atPointer("/comment", "must have a maximum length of 3", "maxLength", null),
+                        ViolationDetail.atPointer("", "whole payload", "type", null),
+                        ViolationDetail.unlocated("further violations omitted", "truncated"),
+                        new ViolationDetail("/looks/like/a/pointer", "must be valid", "pattern", null)));
 
-        // When it is rendered
+        // When: the default mapping renders it
         List<JsonNode> entries = render(carrier);
 
-        // Then four entries come back in the same order
+        // Then: every entry keeps its detail and type and carries no pointer, parameter, location or path
         assertEquals(4, entries.size());
-        // And the good pointer and the empty one keep their pointer
-        assertEquals("/comment", entries.get(0).path("pointer").asText());
-        assertEquals("ZZMESSAGE-good", entries.get(0).path("detail").asText());
-        assertEquals("maxLength", entries.get(0).path("type").asText());
-        assertTrue(entries.get(2).has("pointer"), "the empty pointer must not be omitted");
-        assertEquals("", entries.get(2).get("pointer").asText());
-        assertEquals("truncated", entries.get(2).path("type").asText());
-        // And the malformed ones carry neither pointer nor parameter nor location, with detail and type kept
-        for (int omitted : new int[] {1, 3}) {
-            JsonNode entry = entries.get(omitted);
+        for (JsonNode entry : entries) {
             assertFalse(entry.has("pointer"), () -> "unexpected pointer in " + entry);
             assertFalse(entry.has("parameter"), () -> "unexpected parameter in " + entry);
-            assertFalse(entry.has("location"), () -> "unexpected location in " + entry);
             assertFalse(entry.has("path"), () -> "unexpected path in " + entry);
+            assertFalse(entry.has("location"), () -> "unexpected location in " + entry);
         }
-        assertEquals("ZZMESSAGE-slash", entries.get(1).path("detail").asText());
-        assertEquals("pattern", entries.get(1).path("type").asText());
-        assertEquals("ZZMESSAGE-escape", entries.get(3).path("detail").asText());
-        assertEquals("format", entries.get(3).path("type").asText());
+        assertEquals(
+                "must have a maximum length of 3", entries.get(0).path("detail").asText());
+        assertEquals("maxLength", entries.get(0).path("type").asText());
+        assertEquals("truncated", entries.get(2).path("type").asText());
+        assertEquals("pattern", entries.get(3).path("type").asText());
     }
 
     @Test

@@ -18,6 +18,7 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import dagger.Component;
 import dev.vertique.core.validation.BeanValidator;
 import dev.vertique.core.validation.ViolationDetail;
+import dev.vertique.core.validation.ViolationPathForm;
 import dev.vertique.db.DbPoolConfig;
 import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.test.DatabaseExtension;
@@ -489,12 +490,13 @@ public class PgWorkflowEnginePayloadConstraintIT {
         assertEquals(101, details.size(), "100 real details and one truncation detail expected");
 
         // And: the last one is the fixed truncation detail
-        assertEquals(new ViolationDetail("", "further violations omitted", "truncated", null), details.get(100));
+        assertEquals(ViolationDetail.unlocated("further violations omitted", "truncated"), details.get(100));
 
         // And: the 100 before it are real violations of list items, each at its own pointer
         List<ViolationDetail> real = details.subList(0, 100);
         for (ViolationDetail detail : real) {
             assertEquals("required", detail.type());
+            assertEquals(ViolationPathForm.JSON_POINTER, detail.form(), "a located detail states a pointer");
             assertTrue(detail.path().startsWith("/items/"), "a real detail addresses a list item: " + detail.path());
         }
         assertEquals(

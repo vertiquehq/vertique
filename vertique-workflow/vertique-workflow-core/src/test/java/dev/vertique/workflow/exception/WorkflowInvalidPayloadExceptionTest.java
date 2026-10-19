@@ -52,17 +52,21 @@ class WorkflowInvalidPayloadExceptionTest {
     }
 
     @Test
-    @DisplayName("declares JSON pointer paths while a bean validation exception keeps the Java property path form")
-    void declaresJsonPointerPaths() {
-        // Given: a workflow payload rejection and a bean validation exception
+    @DisplayName("keeps each detail's own path form, pointer or none, and a bean validation exception keeps Java paths")
+    void keepsEachDetailsPathForm() {
+        // Given: a rejection holding a pointer detail and an unlocated one, and a bean validation exception
+        ViolationDetail pointer = ViolationDetail.atPointer("/comment", "too long", "maxLength", null);
+        ViolationDetail unlocated = ViolationDetail.unlocated("further violations omitted", "truncated");
         WorkflowInvalidPayloadException rejection =
-                new WorkflowInvalidPayloadException("invalid decision payload", List.of(DETAIL));
+                new WorkflowInvalidPayloadException("invalid decision payload", List.of(pointer, unlocated));
         BeanValidationException beanValidation = new BeanValidationException(
                 "validation failed", List.of(ViolationDetail.of("name", "must not be blank")));
 
-        // When / Then: each reports the form of its detail paths
-        assertThat(rejection.violationPathForm()).isEqualTo(ViolationPathForm.JSON_POINTER);
-        assertThat(beanValidation.violationPathForm()).isEqualTo(ViolationPathForm.JAVA_PROPERTY_PATH);
+        // When / Then: each detail reports its own form and path
+        assertThat(rejection.violations().get(0).form()).isEqualTo(ViolationPathForm.JSON_POINTER);
+        assertThat(rejection.violations().get(0).path()).isEqualTo("/comment");
+        assertThat(rejection.violations().get(1).path()).isNull();
+        assertThat(beanValidation.violations().get(0).form()).isEqualTo(ViolationPathForm.JAVA_PROPERTY_PATH);
     }
 
     @Nested

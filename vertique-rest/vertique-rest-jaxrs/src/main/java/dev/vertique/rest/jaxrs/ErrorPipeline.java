@@ -269,9 +269,9 @@ public class ErrorPipeline {
 
     /**
      * Logs, at DEBUG, the violations a carrier holds, at most {@value #MAX_LOGGED_VIOLATIONS} per
-     * response. A carrier of Java property paths logs each non-empty path with its type, the path
-     * neutralized and cut at its first position marker; a pointer carrier logs only the type of an
-     * entry whose pointer is not well formed. No message, key text, index or pointer is logged, because
+     * response. A violation with a Java property path logs the non-empty path with its type, the path
+     * neutralized and cut at its first position marker; a violation with a pointer logs only its type.
+     * A violation with no path logs nothing. No message, key text, index or pointer is logged, because
      * those can hold what the client sent.
      *
      * @param carrier the exception holding the violations
@@ -280,19 +280,19 @@ public class ErrorPipeline {
         if (!log.isDebugEnabled()) {
             return;
         }
-        ViolationPathForm form = carrier.violationPathForm();
         int logged = 0;
         for (ViolationDetail violation : carrier.violations()) {
             if (logged == MAX_LOGGED_VIOLATIONS) {
                 return;
             }
             String path = violation.path();
-            if (form == ViolationPathForm.JSON_POINTER) {
-                if (!form.accepts(path)) {
-                    log.debug("carried pointer omitted type={}", violation.type());
-                    logged++;
-                }
-            } else if (path != null && !path.isEmpty()) {
+            if (path == null) {
+                continue;
+            }
+            if (violation.form() == ViolationPathForm.JSON_POINTER) {
+                log.debug("carried pointer violation type={}", violation.type());
+                logged++;
+            } else if (!path.isEmpty()) {
                 log.debug(
                         "carried violation path={} type={}", JakartaPathPointers.loggablePath(path), violation.type());
                 logged++;

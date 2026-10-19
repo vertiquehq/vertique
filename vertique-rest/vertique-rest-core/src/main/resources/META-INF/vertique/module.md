@@ -330,18 +330,20 @@ public record ValidationErrorDetail(
 
 - **`pointer`** is an RFC 6901 JSON Pointer into the request document over the wire names the
   request was bound with. `""` is a valid pointer (the whole document) and is serialized, so test
-  for presence, not truthiness. A `pointer` without a `location` is relative to the document its
-  producer validated.
+  for presence, not truthiness.
 - **`parameter`** names a non-body request location (query parameter, header, path variable,
   cookie, form field).
 - **At most one** of `pointer` and `parameter` is set; the canonical constructor throws
   `IllegalArgumentException` when both are present, which also rejects a malformed response body
   read on the client side. An entry carries neither when the location cannot be stated.
 - The `with…` methods return a copy that carries every other member over.
-- **`ofViolations(ViolationCarrier)`** renders a carrier's violations by the path form it declares,
-  one entry each in order and without a cap. A `JSON_POINTER` carrier's path becomes `pointer` when
-  `ViolationPathForm.accepts` holds and is left off when it does not; any other form states no location.
-  It does not log. Use it from an application's own exception mapper to reuse the framework's rules.
+- **`ofViolations(ViolationCarrier)`** renders a carrier's violations one entry each in order and without a
+  cap, with `detail`, `type` and `args` and no location: a detail's path is a location in the value its producer
+  validated, not in the request. **`ofViolations(ViolationCarrier, String basePointer)`** is for code that knows
+  the validated value sits at `basePointer` in the request body (`""` when it is the body): a `JSON_POINTER`
+  detail whose joined pointer `ViolationPathForm.accepts` admits gets `pointer` and `location` `"body"`, every
+  other detail stays without a location. Neither logs. Use them from an application's own exception mapper to
+  reuse the framework's rules.
 
 `null` components are omitted from JSON and unknown members are ignored when reading. `args` is
 populated for standard Jakarta constraints by the `ViolationArgsInspector` SPI in

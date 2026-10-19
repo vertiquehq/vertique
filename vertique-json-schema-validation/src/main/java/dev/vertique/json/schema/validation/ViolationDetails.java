@@ -4,6 +4,7 @@
 package dev.vertique.json.schema.validation;
 
 import dev.vertique.core.validation.ViolationDetail;
+import dev.vertique.core.validation.ViolationPathForm;
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 import io.vertx.core.json.pointer.JsonPointer;
@@ -168,7 +169,8 @@ public final class ViolationDetails {
                     missing == null ? detailPath : member(detailPath, missing, form),
                     message,
                     keyword,
-                    args.isEmpty() ? null : args));
+                    args.isEmpty() ? null : args,
+                    pathFormOf(form)));
             if (failFast) {
                 return failures;
             }
@@ -187,6 +189,15 @@ public final class ViolationDetails {
      */
     public static ViolationDetail valueFree(String path) {
         return new ViolationDetail(path, VALUE_FREE_MESSAGE, null, null);
+    }
+
+    private static ViolationDetail valueFree(String path, PathForm form) {
+        return new ViolationDetail(path, VALUE_FREE_MESSAGE, null, null, pathFormOf(form));
+    }
+
+    /** The core path form a detail built in {@code form} states: a pointer only for {@link PathForm#RFC6901}. */
+    private static ViolationPathForm pathFormOf(PathForm form) {
+        return form == PathForm.RFC6901 ? ViolationPathForm.JSON_POINTER : ViolationPathForm.JAVA_PROPERTY_PATH;
     }
 
     /**
@@ -326,14 +337,18 @@ public final class ViolationDetails {
         }
         Map<String, Object> args = resolveConstraintArgs(keyword, result.getKeywordLocation(), schema);
         failures.add(new ViolationDetail(
-                path(null, form), safeDetail(keyword, args, result.getError()), keyword, args.isEmpty() ? null : args));
+                path(null, form),
+                safeDetail(keyword, args, result.getError()),
+                keyword,
+                args.isEmpty() ? null : args,
+                pathFormOf(form)));
     }
 
     /**
      * Builds a value-free detail at an instance location, cut back to the part the schema declares.
      */
     private static ViolationDetail valueFreeAt(String instanceLocation, JsonObject schema, PathForm form) {
-        return valueFree(path(declaredLocation(instanceLocation, schema), form));
+        return valueFree(path(declaredLocation(instanceLocation, schema), form), form);
     }
 
     /** Spells a location in the requested form; a missing location is the empty string. */

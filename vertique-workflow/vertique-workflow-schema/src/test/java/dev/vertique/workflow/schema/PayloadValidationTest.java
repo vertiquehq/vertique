@@ -92,7 +92,7 @@ class PayloadValidationTest {
         // Then: one violation names the RFC 6901 pointer, the keyword, its argument and the canonical message
         assertThat(result.valid()).isFalse();
         assertThat(result.violations())
-                .containsExactly(new ViolationDetail(
+                .containsExactly(ViolationDetail.atPointer(
                         "/comment", "must have a maximum length of 3", "maxLength", Map.of("maxLength", 3)));
         Validations.assertNoValueIn(result, SENTINEL);
     }
@@ -120,7 +120,9 @@ class PayloadValidationTest {
         assertThat(violation.path()).isEmpty();
         assertThat(violation.type()).isNull();
         assertThat(violation.args()).isNull();
-        assertThat(violation).isEqualTo(ViolationDetails.valueFree(""));
+        assertThat(violation)
+                .isEqualTo(ViolationDetail.atPointer(
+                        "", ViolationDetails.valueFree("").message(), null, null));
         Validations.assertNoValueIn(closed, "extraZZ");
 
         // And: control, the engine itself reports the undeclared name, so the assertion above can fail
@@ -227,7 +229,7 @@ class PayloadValidationTest {
     }
 
     private static final ViolationDetail TRUNCATED =
-            new ViolationDetail("", "further violations omitted", "truncated", null);
+            ViolationDetail.unlocated("further violations omitted", "truncated");
 
     private static JsonObject itemsOfWhichTheFirstAreTooLong(int total, int tooLong) {
         JsonArray items = new JsonArray();
@@ -392,13 +394,13 @@ class PayloadValidationTest {
         // Given: the orders definition with a void decision reject, and a second definition without a start payload
         JsonObject empty = new JsonObject();
         JsonObject extra = new JsonObject().put("x", 1);
-        ViolationDetail unknownDefinition = new ViolationDetail("", "definition is not registered", "definition", null);
+        ViolationDetail unknownDefinition = ViolationDetail.unlocated("definition is not registered", "definition");
         ViolationDetail unknownDecision =
-                new ViolationDetail("", "decision is not declared for this task step", "decision", null);
-        ViolationDetail voidDecision = new ViolationDetail(
-                "", "payload is not accepted for a decision without a payload type", "payload", null);
+                ViolationDetail.unlocated("decision is not declared for this task step", "decision");
+        ViolationDetail voidDecision =
+                ViolationDetail.unlocated("payload is not accepted for a decision without a payload type", "payload");
         ViolationDetail voidStart =
-                new ViolationDetail("", "payload is not accepted for a start type without a payload", "payload", null);
+                ViolationDetail.unlocated("payload is not accepted for a start type without a payload", "payload");
 
         // When / Then: an unknown definition, decision or step yields one fixed violation each
         PayloadValidationResult definition = schemas.validateDecision("ZZID", 1L, "s", "d", empty);
@@ -426,7 +428,7 @@ class PayloadValidationTest {
         assertThat(schemas.validateStart(NO_START_ID, 1L, extra).violations()).containsExactly(voidStart);
 
         // And: a missing payload for a typed decision or start is a required payload
-        ViolationDetail required = new ViolationDetail("", "payload is required", "payload", null);
+        ViolationDetail required = ViolationDetail.unlocated("payload is required", "payload");
         assertThat(validateApprove(null).violations()).containsExactly(required);
         assertThat(schemas.validateStart(ID, 1L, null).violations()).containsExactly(required);
     }

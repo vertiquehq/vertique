@@ -6,26 +6,26 @@ package dev.vertique.core.validation;
 import jakarta.annotation.Nullable;
 
 /**
- * How the detail paths of a {@link ViolationCarrier} are written.
+ * How the path of a {@link ViolationDetail} is written.
  *
  * <p>A transport reads the form to decide whether a path may be reported as a location. New values
  * may be added in a later release, so a consumer that switches on this type keeps a default branch
  * and treats a value it does not recognize like {@link #JAVA_PROPERTY_PATH}.
  *
- * <p>A carrier's pointer is relative to the document its producer validated and is built with the
- * producer's own mapper. It is not guaranteed to be a pointer into the body of the request that
- * carried the data, for example when the route binds names differently or nests the validated
- * document.
+ * <p>A pointer is relative to the document its producer validated and is built with the producer's
+ * own mapper. It is not a pointer into the body of any request: only the code that knows where the
+ * validated document sits in the request can say so, for example when the route binds names
+ * differently or nests the document.
  *
  * <p>{@link #accepts(String)} tells whether a path is well formed for a form. A producer emits only
- * accepted paths, and the default REST rendering omits the pointer of an entry whose path a {@link
- * #JSON_POINTER} carrier declares but this form does not accept.
+ * accepted paths, and a transport reports a pointer only when this form accepts it.
  */
 public enum ViolationPathForm {
 
     /**
-     * A Java property path of the validated object, such as {@code items[0].name}. It is not a
-     * location in any request and a transport does not render it as one.
+     * A Java property path of the validated object, such as {@code items[0].name}, or any other path
+     * that is not a pointer. It is not a location in any request and a transport does not render it as
+     * one.
      */
     JAVA_PROPERTY_PATH,
 
