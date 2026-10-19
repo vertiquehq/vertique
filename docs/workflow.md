@@ -264,6 +264,13 @@ definitions, their lifecycle status and their document sources survive restarts 
   and no timer is scheduled. `deprecate`, `retire` and `reinstate` need the store and fail without one.
 - **Identity.** A row is identified by `DefinitionKey(tenantKey, definitionId, definitionVersion)`. A null tenant key
   is the global owner. One owner at a time holds a definition id; a second owner's claim fails with `OWNER_CONFLICT`.
+- **Tenant ids.** With the store bound, `load` for a tenant accepts only a document whose id is `<tenantKey>:<name>`
+  (a non-blank name), and a tenant key must not contain `:`; anything else fails with `WorkflowDefinitionException`
+  naming the tenant key and the id, and nothing is stored. The namespaced id is the definition id everywhere it is used:
+  `StartCommand.definitionId`, pinned resolution and migration targets. This keeps a tenant from holding an id that a later
+  code release needs. Global loads and code definitions are not restricted, but avoid `:` in global ids: a global id equal
+  to a tenant's namespaced id still fails with `OWNER_CONFLICT`. The rule binds `load`, not the registry store SPI, and
+  rows written before it keep every lifecycle operation.
 
 ### Code and document definitions
 
@@ -506,6 +513,10 @@ Every PostgreSQL application, including code-first ones that never touch documen
 - **Key rules.** A code definition with a blank, over-long or control-character id, or a non-positive version, fails
   startup with a message naming the definition. Definition ids and tenant keys are at most 255 code points.
 - **Kind and owner conflicts** fail startup naming both rows or owners.
+- **Tenant ids are namespaced.** With the store bound, `load` for a tenant now requires the document id to be
+  `<tenantKey>:<name>` and the tenant key to contain no `:`. Existing tenant rows are unaffected; rename and reload a
+  document that used an unprefixed id, start it under the new id, and `retire` the old unprefixed versions: until they are
+  retired they keep holding the id, and reinstating one takes it back.
 
 Applications that combine the automatically bound PostgreSQL store with static document sources gain extra startup
 prerequisites. Each packaged document now must:

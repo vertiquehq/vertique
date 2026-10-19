@@ -255,20 +255,22 @@ public class DefinitionReinstatementIT {
 
             // Given a tenant that retired the id and a second tenant that has since activated the same id
             long coolingSeconds = node.app().workflowDefinitionsConfig().maxStalenessSeconds();
-            await(service.load(
+            TenantRowSeed.seed(
+                    node.app(),
+                    "tenant-one",
                     documentBytes(ownerId, 1, OwnerDocV1.class),
-                    DocumentFormat.YAML,
                     source("tenant-one", loadedAt),
-                    "tenant-one"));
+                    DefinitionStatus.CANDIDATE);
             await(service.activate(tenantOneKey));
             await(service.deprecate(tenantOneKey));
             scenario.ageStatus(tenantOneKey, coolingSeconds + 60);
             await(service.retire(tenantOneKey));
-            await(service.load(
+            TenantRowSeed.seed(
+                    node.app(),
+                    "tenant-two",
                     documentBytes(ownerId, 1, OwnerDocV1.class),
-                    DocumentFormat.YAML,
                     source("tenant-two", loadedAt),
-                    "tenant-two"));
+                    DefinitionStatus.CANDIDATE);
             await(service.activate(tenantTwoKey));
             Stored retiredBefore = scenario.stored("tenant-one", ownerId, 1);
             Stored holderBefore = scenario.stored("tenant-two", ownerId, 1);
@@ -686,11 +688,16 @@ public class DefinitionReinstatementIT {
             long coolingSeconds = node.app().workflowDefinitionsConfig().maxStalenessSeconds();
 
             // Given a tenant that retired the id
-            String loadedHash = await(service.load(
-                            documentBytes(id, 1, StaleDocV1.class),
-                            DocumentFormat.YAML,
-                            source("tenant-one", loadedAt),
-                            "tenant-one"))
+            byte[] staleDocument = documentBytes(id, 1, StaleDocV1.class);
+            TenantRowSeed.seed(
+                    node.app(),
+                    "tenant-one",
+                    staleDocument,
+                    source("tenant-one", loadedAt),
+                    DefinitionStatus.CANDIDATE);
+            String loadedHash = node.app()
+                    .definitionPipeline()
+                    .load(new DefinitionResource(staleDocument, DocumentFormat.YAML, source("tenant-one", loadedAt)))
                     .planHash();
             await(service.activate(tenantOneKey));
             await(service.deprecate(tenantOneKey));

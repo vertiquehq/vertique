@@ -26,6 +26,7 @@ import dev.vertique.workflow.definition.service.ActivationStatus;
 import dev.vertique.workflow.definition.service.CompiledDefinitionRef;
 import dev.vertique.workflow.definition.service.WorkflowDefinitionService;
 import dev.vertique.workflow.definition.source.DefinitionResource;
+import dev.vertique.workflow.definition.source.SourceMetadata;
 import dev.vertique.workflow.definition.source.WorkflowDefinitionSource;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
@@ -41,11 +42,13 @@ import dev.vertique.workflow.ops.WorkflowView;
 import dev.vertique.workflow.postgresql.registry.DefinitionScenario.Boot;
 import dev.vertique.workflow.postgresql.registry.DefinitionScenario.PendingBoot;
 import dev.vertique.workflow.postgresql.registry.DefinitionScenario.Stored;
+import dev.vertique.workflow.postgresql.registry.ManagedDefinitionDatabase.AppComponent;
 import dev.vertique.workflow.postgresql.registry.ManagedDefinitionDatabase.BootObservation;
 import dev.vertique.workflow.postgresql.repository.PgWorkflowInstanceRepository;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowRegistry;
 import dev.vertique.workflow.registry.store.DefinitionKey;
+import dev.vertique.workflow.registry.store.DefinitionStatus;
 import dev.vertique.workflow.state.WorkflowInstance;
 import dev.vertique.workflow.state.WorkflowStatus;
 import io.vertx.core.Future;
@@ -141,25 +144,25 @@ public class MixedDefinitionBootstrapIT {
     @WorkflowContract(definitionId = "mixed-bootstrap-timeout-code", definitionVersion = 1)
     public interface TimeoutCodeV1 {}
 
-    @WorkflowContract(definitionId = "mixed-bootstrap-tenant-active", definitionVersion = 1)
+    @WorkflowContract(definitionId = "tenant-active:mixed-bootstrap-tenant-active", definitionVersion = 1)
     public interface TenantActiveV1 {}
 
-    @WorkflowContract(definitionId = "mixed-bootstrap-tenant-superseded", definitionVersion = 1)
+    @WorkflowContract(definitionId = "tenant-superseded:mixed-bootstrap-tenant-superseded", definitionVersion = 1)
     public interface TenantSupersededV1 {}
 
-    @WorkflowContract(definitionId = "mixed-bootstrap-tenant-superseded", definitionVersion = 2)
+    @WorkflowContract(definitionId = "tenant-superseded:mixed-bootstrap-tenant-superseded", definitionVersion = 2)
     public interface TenantSupersededV2 {}
 
-    @WorkflowContract(definitionId = "mixed-bootstrap-tenant-deprecated", definitionVersion = 1)
+    @WorkflowContract(definitionId = "tenant-deprecated:mixed-bootstrap-tenant-deprecated", definitionVersion = 1)
     public interface TenantDeprecatedV1 {}
 
-    @WorkflowContract(definitionId = "mixed-bootstrap-tenant-deprecated", definitionVersion = 2)
+    @WorkflowContract(definitionId = "tenant-deprecated:mixed-bootstrap-tenant-deprecated", definitionVersion = 2)
     public interface TenantDeprecatedV2 {}
 
     @WorkflowContract(definitionId = "mixed-bootstrap-tenant-shared", definitionVersion = 1)
     public interface TenantSharedV1 {}
 
-    @WorkflowContract(definitionId = "mixed-bootstrap-tenant-candidate", definitionVersion = 1)
+    @WorkflowContract(definitionId = "tenant-candidate:mixed-bootstrap-tenant-candidate", definitionVersion = 1)
     public interface TenantCandidateV1 {}
 
     @WorkflowContract(definitionId = "mixed-bootstrap-packaged-deprecated", definitionVersion = 1)
@@ -845,13 +848,12 @@ public class MixedDefinitionBootstrapIT {
                     .isPresent();
             Stored globalBefore = scenario.stored(id, 1);
             assertThat(globalBefore.kind()).isEqualTo("CODE");
-            await(node.app()
-                    .definitionService()
-                    .load(
-                            documentBytes(id, 1, TenantVsCodeV1.class),
-                            DocumentFormat.YAML,
-                            source("tenant-candidate", Instant.parse("2026-10-18T12:00:00Z")),
-                            tenant));
+            TenantRowSeed.seed(
+                    node.app(),
+                    tenant,
+                    documentBytes(id, 1, TenantVsCodeV1.class),
+                    source("tenant-candidate", Instant.parse("2026-10-18T12:00:00Z")),
+                    DefinitionStatus.CANDIDATE);
             Stored candidateBefore = scenario.stored(tenant, id, 1);
             assertThat(candidateBefore.status()).isEqualTo("CANDIDATE");
             RuntimeWorkflow runtimeBefore = node.app().workflowRegistry().resolvePinned(id, 1);
@@ -1103,11 +1105,11 @@ public class MixedDefinitionBootstrapIT {
     @EnumSource(SharedIdOrder.class)
     @DisplayName("every live tenant document is restored before traffic, whichever order the owners are read in")
     void restoresTenantDocumentBeforeTraffic(SharedIdOrder order, Vertx vertx) {
-        String activeId = "mixed-bootstrap-tenant-active";
-        String supersededId = "mixed-bootstrap-tenant-superseded";
-        String deprecatedId = "mixed-bootstrap-tenant-deprecated";
+        String activeId = "tenant-active:mixed-bootstrap-tenant-active";
+        String supersededId = "tenant-superseded:mixed-bootstrap-tenant-superseded";
+        String deprecatedId = "tenant-deprecated:mixed-bootstrap-tenant-deprecated";
         String sharedId = "mixed-bootstrap-tenant-shared";
-        String candidateId = "mixed-bootstrap-tenant-candidate";
+        String candidateId = "tenant-candidate:mixed-bootstrap-tenant-candidate";
         Instant loadedAt = Instant.parse("2026-10-18T12:00:00Z");
 
         try (DefinitionScenario scenario = new DefinitionScenario(vertx, db)) {
@@ -1135,19 +1137,24 @@ public class MixedDefinitionBootstrapIT {
             // And one id retained for a retired owner and held by another owner at the identical version and hash
             DefinitionKey retiredKey = new DefinitionKey(order.retiredTenant, sharedId, 1);
             DefinitionKey liveKey = new DefinitionKey(order.liveTenant, sharedId, 1);
-            CompiledDefinitionRef retiredLoaded = await(service.load(
-                    documentBytes(sharedId, 1, TenantSharedV1.class),
-                    DocumentFormat.YAML,
+            byte[] sharedDocument = documentBytes(sharedId, 1, TenantSharedV1.class);
+            TenantRowSeed.seed(
+                    first.app(),
+                    order.retiredTenant,
+                    sharedDocument,
                     source("shared-retired", loadedAt),
-                    order.retiredTenant));
-            CompiledDefinitionRef liveLoaded = await(service.load(
-                    documentBytes(sharedId, 1, TenantSharedV1.class),
-                    DocumentFormat.YAML,
+                    DefinitionStatus.CANDIDATE);
+            TenantRowSeed.seed(
+                    first.app(),
+                    order.liveTenant,
+                    sharedDocument,
                     source("shared-live", loadedAt),
-                    order.liveTenant));
+                    DefinitionStatus.CANDIDATE);
+            String retiredPlanHash = documentPlanHash(first.app(), sharedDocument, source("shared-retired", loadedAt));
+            String livePlanHash = documentPlanHash(first.app(), sharedDocument, source("shared-live", loadedAt));
             await(service.activate(liveKey));
             await(service.retire(retiredKey));
-            assertThat(retiredLoaded.planHash()).isEqualTo(liveLoaded.planHash());
+            assertThat(retiredPlanHash).isEqualTo(livePlanHash);
             first.close();
             assertThat(scenario.stored("tenant-active", activeId, 1).status()).isEqualTo("ACTIVE");
             assertThat(scenario.stored("tenant-superseded", supersededId, 1).status())
@@ -1186,7 +1193,7 @@ public class MixedDefinitionBootstrapIT {
                     .isEqualTo(deprecatedV1.planHash());
             assertThat(registry.resolvePinned(deprecatedId, 2).plan().planHash())
                     .isEqualTo(deprecatedV2.planHash());
-            assertThat(registry.resolvePinned(sharedId, 1).plan().planHash()).isEqualTo(liveLoaded.planHash());
+            assertThat(registry.resolvePinned(sharedId, 1).plan().planHash()).isEqualTo(livePlanHash);
             for (Class<?> contract : List.of(
                     TenantActiveV1.class,
                     TenantSupersededV1.class,
@@ -1497,6 +1504,12 @@ public class MixedDefinitionBootstrapIT {
                 tenant));
         await(service.activate(new DefinitionKey(tenant, definitionId, version)));
         return loaded;
+    }
+
+    private static String documentPlanHash(AppComponent app, byte[] document, SourceMetadata source) {
+        return app.definitionPipeline()
+                .load(new DefinitionResource(document, DocumentFormat.YAML, source))
+                .planHash();
     }
 
     private static WorkflowDefinition<?, ?> code(String definitionId, long version, Class<?> contract, String endStep) {

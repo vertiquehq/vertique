@@ -302,6 +302,10 @@ even when id, version and hash are equal.
 
 Startup restores the live documents of every owner, global and tenant. An id that deployed code registers is a
 global CODE row, so activating a tenant document under that id fails with `OWNER_CONFLICT` naming both owners.
+With the store bound, `load` for a tenant accepts only a document id of the form `<tenantKey>:<name>` and a tenant key without `:`;
+otherwise it fails with `WorkflowDefinitionException` naming the tenant key and id and stores nothing. Use the namespaced id
+everywhere the definition id is used (start, pinned resolution, migration targets). Global loads and the in-memory service are
+unchanged; avoid `:` in global ids, since a global id equal to a tenant's namespaced id still collides at startup.
 `load`, `activate`, `deprecate`, `retire` and `reinstate` perform no authorization: restrict them to authorized callers. The
 public `currentStatus` of a version that is only persisted metadata (a candidate or retired row that startup did
 not compile) reports the persisted status instead of returning `null`; it returns `null` only when nothing is known about the version. An equal plan hash no longer proves equal text: a

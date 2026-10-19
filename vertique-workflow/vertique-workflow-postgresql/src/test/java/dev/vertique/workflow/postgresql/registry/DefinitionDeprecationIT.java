@@ -313,8 +313,12 @@ public class DefinitionDeprecationIT {
             await(app.definitionService()
                     .load(document(id, 1, OwnerCaseV1.class), DocumentFormat.YAML, source("owner-global"), null));
             await(app.definitionService().activate(globalKey));
-            await(app.definitionService()
-                    .load(document(id, 1, OwnerCaseV1.class), DocumentFormat.YAML, source("owner-tenant"), "tenant-a"));
+            TenantRowSeed.seed(
+                    app,
+                    "tenant-a",
+                    document(id, 1, OwnerCaseV1.class),
+                    source("owner-tenant"),
+                    DefinitionStatus.CANDIDATE);
 
             // And tenant-a is also forced to ACTIVE by SQL, because the public operations never let two owners hold an
             // id

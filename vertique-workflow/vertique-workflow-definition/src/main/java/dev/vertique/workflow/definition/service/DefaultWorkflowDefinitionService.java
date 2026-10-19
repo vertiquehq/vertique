@@ -95,6 +95,7 @@ public final class DefaultWorkflowDefinitionService implements WorkflowDefinitio
                                 tenantKey,
                                 compiled.definition().definitionId(),
                                 compiled.definition().definitionVersion());
+                        if (durable.isPresent()) requireTenantNamespace(key);
                         WorkflowDefinitionDocument text = durable.isPresent()
                                 ? DefinitionSourceText.decode(key, resource.content(), format, config)
                                 : null;
@@ -116,6 +117,25 @@ public final class DefaultWorkflowDefinitionService implements WorkflowDefinitio
                                 });
                     });
         });
+    }
+
+    /**
+     * With a durable store, a tenant-scoped definition id is the tenant key, a colon and a name, so one tenant
+     * cannot hold an id that another owner needs. A tenant key therefore must not contain the colon itself. The
+     * values were already bounded and stripped of control characters by {@link DefinitionKey}, so the rejection
+     * message cannot carry unbounded or forged text.
+     */
+    private static void requireTenantNamespace(DefinitionKey key) {
+        String tenantKey = key.tenantKey();
+        if (tenantKey == null) return;
+        String definitionId = key.definitionId();
+        String prefix = tenantKey + ":";
+        if (tenantKey.indexOf(':') >= 0
+                || !definitionId.startsWith(prefix)
+                || definitionId.substring(prefix.length()).isBlank())
+            throw new WorkflowDefinitionException("tenant '" + tenantKey + "' may only load definitions whose id is '"
+                    + tenantKey.replace(':', '_') + ":<name>' (a tenant key must not contain ':'); rejected id '"
+                    + definitionId + "'");
     }
 
     @Override

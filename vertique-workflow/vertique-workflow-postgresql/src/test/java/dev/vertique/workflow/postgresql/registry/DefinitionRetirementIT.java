@@ -389,19 +389,10 @@ public class DefinitionRetirementIT {
                     AppComponent app = fixture.node().app();
 
                     // Given tenant-a's candidate and tenant-b's document with the same id, version and source hash
-                    CompiledDefinitionRef loadedCandidate = await(app.definitionService()
-                            .load(
-                                    document(id, version, contract),
-                                    DocumentFormat.YAML,
-                                    source("candidate"),
-                                    "tenant-a"));
-                    CompiledDefinitionRef loadedRegistered = await(app.definitionService()
-                            .load(
-                                    document(id, version, contract),
-                                    DocumentFormat.YAML,
-                                    source("registered"),
-                                    "tenant-b"));
-                    assertThat(loadedCandidate.planHash()).isEqualTo(loadedRegistered.planHash());
+                    String candidateHash = seedCandidate(app, "tenant-a", document(id, version, contract), "candidate");
+                    String registeredHash =
+                            seedCandidate(app, "tenant-b", document(id, version, contract), "registered");
+                    assertThat(candidateHash).isEqualTo(registeredHash);
 
                     // And only tenant-b's document is activated, so it alone owns the registered runtime
                     await(app.definitionService().activate(registeredKey));
@@ -446,19 +437,10 @@ public class DefinitionRetirementIT {
                     long coolingSeconds = app.workflowDefinitionsConfig().maxStalenessSeconds();
 
                     // Given tenant-a's candidate and tenant-b's document with the same id, version and source hash
-                    CompiledDefinitionRef loadedCandidate = await(app.definitionService()
-                            .load(
-                                    document(id, version, contract),
-                                    DocumentFormat.YAML,
-                                    source("candidate"),
-                                    "tenant-a"));
-                    CompiledDefinitionRef loadedRegistered = await(app.definitionService()
-                            .load(
-                                    document(id, version, contract),
-                                    DocumentFormat.YAML,
-                                    source("registered"),
-                                    "tenant-b"));
-                    assertThat(loadedCandidate.planHash()).isEqualTo(loadedRegistered.planHash());
+                    String candidateHash = seedCandidate(app, "tenant-a", document(id, version, contract), "candidate");
+                    String registeredHash =
+                            seedCandidate(app, "tenant-b", document(id, version, contract), "registered");
+                    assertThat(candidateHash).isEqualTo(registeredHash);
 
                     // And only tenant-b's document is activated, so it alone owns the registered runtime
                     await(app.definitionService().activate(registeredKey));
@@ -499,7 +481,7 @@ public class DefinitionRetirementIT {
                     assertThat(fixture.stored("tenant-a", id, version).status()).isEqualTo("ACTIVE");
                     RuntimeWorkflow replacement = app.workflowRegistry().resolvePinned(id, version);
                     assertThat(replacement).isNotSameAs(runtimeBefore);
-                    assertThat(replacement.plan().planHash()).isEqualTo(loadedCandidate.planHash());
+                    assertThat(replacement.plan().planHash()).isEqualTo(candidateHash);
                     assertThat(app.workflowRegistry().contractMetadata(contract))
                             .isNotNull();
                     assertThat(app.workflowRegistry().isDeprecated(id, version)).isFalse();
@@ -1923,23 +1905,15 @@ public class DefinitionRetirementIT {
             AppComponent app = fixture.node().app();
 
             // Given tenant-a's candidate and tenant-b's ACTIVE document with the same id, version and source hash
-            CompiledDefinitionRef loadedCandidate = await(app.definitionService()
-                    .load(
-                            document(id, 1, CandidatePinsCaseV1.class),
-                            DocumentFormat.YAML,
-                            source("candidate"),
-                            "tenant-a"));
-            CompiledDefinitionRef loadedRegistered = await(app.definitionService()
-                    .load(
-                            document(id, 1, CandidatePinsCaseV1.class),
-                            DocumentFormat.YAML,
-                            source("registered"),
-                            "tenant-b"));
-            assertThat(loadedCandidate.planHash()).isEqualTo(loadedRegistered.planHash());
+            String candidateHash =
+                    seedCandidate(app, "tenant-a", document(id, 1, CandidatePinsCaseV1.class), "candidate");
+            String registeredHash =
+                    seedCandidate(app, "tenant-b", document(id, 1, CandidatePinsCaseV1.class), "registered");
+            assertThat(candidateHash).isEqualTo(registeredHash);
             await(app.definitionService().activate(registeredKey));
 
             // And tenant-b has one RUNNING instance pinned to that id and version (inserted by SQL)
-            UUID pin = fixture.insertInstance(id, 1, loadedRegistered.planHash(), "RUNNING", false);
+            UUID pin = fixture.insertInstance(id, 1, registeredHash, "RUNNING", false);
             Instance pinBefore = fixture.instance(pin);
             Stored registeredBefore = fixture.stored("tenant-b", id, 1);
             Stored candidateBefore = fixture.stored("tenant-a", id, 1);
@@ -2147,6 +2121,14 @@ public class DefinitionRetirementIT {
             throw new IllegalStateException("The workflow fixture did not take the scenario identity");
         }
         return yaml.getBytes(StandardCharsets.UTF_8);
+    }
+
+    /** Seeds a tenant candidate of the document and returns the plan hash its pipeline computes. */
+    private static String seedCandidate(AppComponent app, String tenant, byte[] document, String label) {
+        TenantRowSeed.seed(app, tenant, document, source(label), DefinitionStatus.CANDIDATE);
+        return app.definitionPipeline()
+                .load(new DefinitionResource(document, DocumentFormat.YAML, source(label)))
+                .planHash();
     }
 
     private static SourceMetadata source(String label) {

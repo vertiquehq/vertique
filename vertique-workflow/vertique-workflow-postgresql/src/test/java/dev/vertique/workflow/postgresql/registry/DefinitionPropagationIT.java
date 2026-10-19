@@ -311,11 +311,12 @@ public class DefinitionPropagationIT {
 
             // Given, when the current owner is reinstated, that node B had already retired that owner's version
             if (reinstates) {
-                await(bService.load(
+                TenantRowSeed.seed(
+                        b.app(),
+                        currentTenant,
                         documentBytes(id, 1, OwnerDocV1.class),
-                        DocumentFormat.YAML,
                         source("current-owner", loadedAt),
-                        currentTenant));
+                        DefinitionStatus.CANDIDATE);
                 await(bService.activate(currentKey));
                 await(bService.deprecate(currentKey));
                 scenario.ageStatus(currentKey, coolingSeconds + 60);
@@ -324,11 +325,18 @@ public class DefinitionPropagationIT {
             }
 
             // And node A loaded and activated the other owner's version, so A holds its real runtime
-            String hash = await(aService.load(
+            TenantRowSeed.seed(
+                    a.app(),
+                    retiredTenant,
+                    documentBytes(id, 1, OwnerDocV1.class),
+                    source("retiring-owner", loadedAt),
+                    DefinitionStatus.CANDIDATE);
+            String hash = a.app()
+                    .definitionPipeline()
+                    .load(new DefinitionResource(
                             documentBytes(id, 1, OwnerDocV1.class),
                             DocumentFormat.YAML,
-                            source("retiring-owner", loadedAt),
-                            retiredTenant))
+                            source("retiring-owner", loadedAt)))
                     .planHash();
             await(aService.activate(retiredKey));
             RuntimeWorkflow staleRuntime = aRegistry.resolvePinned(id, 1);
@@ -343,11 +351,12 @@ public class DefinitionPropagationIT {
             if (reinstates) {
                 await(bService.reinstate(currentKey));
             } else {
-                await(bService.load(
+                TenantRowSeed.seed(
+                        b.app(),
+                        currentTenant,
                         documentBytes(id, 1, OwnerDocV1.class),
-                        DocumentFormat.YAML,
                         source("current-owner", loadedAt),
-                        currentTenant));
+                        DefinitionStatus.CANDIDATE);
                 await(bService.activate(currentKey));
             }
             Stored current = scenario.stored(currentTenant, id, 1);

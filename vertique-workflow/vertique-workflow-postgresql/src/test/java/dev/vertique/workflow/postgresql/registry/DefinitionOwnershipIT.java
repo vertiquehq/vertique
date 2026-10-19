@@ -83,16 +83,16 @@ public class DefinitionOwnershipIT {
     @WorkflowContract(definitionId = "ownership-held-doc", definitionVersion = 1)
     public interface HeldV1 {}
 
-    @WorkflowContract(definitionId = "ownership-v3-first-doc", definitionVersion = 3)
+    @WorkflowContract(definitionId = "tenant-a:ownership-v3-first-doc", definitionVersion = 3)
     public interface V3FirstVersion3 {}
 
-    @WorkflowContract(definitionId = "ownership-v3-first-doc", definitionVersion = 4)
+    @WorkflowContract(definitionId = "tenant-a:ownership-v3-first-doc", definitionVersion = 4)
     public interface V3FirstVersion4 {}
 
-    @WorkflowContract(definitionId = "ownership-v4-first-doc", definitionVersion = 3)
+    @WorkflowContract(definitionId = "tenant-a:ownership-v4-first-doc", definitionVersion = 3)
     public interface V4FirstVersion3 {}
 
-    @WorkflowContract(definitionId = "ownership-v4-first-doc", definitionVersion = 4)
+    @WorkflowContract(definitionId = "tenant-a:ownership-v4-first-doc", definitionVersion = 4)
     public interface V4FirstVersion4 {}
 
     @WorkflowContract(definitionId = "ownership-stale-doc", definitionVersion = 1)
@@ -131,15 +131,17 @@ public class DefinitionOwnershipIT {
 
             // Given an id without any row, and two candidates loaded while a barrier holds the id lock
             IdLockBarrier loadBarrier = fixture.holdIdLock(raceId);
-            Future<CompiledDefinitionRef> loadA = nodeA.service()
-                    .load(document(raceId, 1, RaceV1.class), DocumentFormat.YAML, source("race-a"), "tenant-a");
-            Future<CompiledDefinitionRef> loadB = nodeB.service()
-                    .load(document(raceId, 1, RaceV1.class), DocumentFormat.YAML, source("race-b"), "tenant-b");
+            Future<DefinitionKey> loadA = TenantRowSeed.insertCandidate(
+                    nodeA.app(), "tenant-a", document(raceId, 1, RaceV1.class), DocumentFormat.YAML, source("race-a"));
+            Future<DefinitionKey> loadB = TenantRowSeed.insertCandidate(
+                    nodeB.app(), "tenant-b", document(raceId, 1, RaceV1.class), DocumentFormat.YAML, source("race-b"));
             loadBarrier.awaitQueued(2);
             assertThat(fixture.stored(raceId)).isEmpty();
             loadBarrier.release();
-            CompiledDefinitionRef loadedA = await(loadA);
-            CompiledDefinitionRef loadedB = await(loadB);
+            await(loadA);
+            await(loadB);
+            String planHashA = planHash(nodeA, document(raceId, 1, RaceV1.class), "race-a");
+            String planHashB = planHash(nodeB, document(raceId, 1, RaceV1.class), "race-b");
 
             // Then both candidates coexist without either claiming the id
             assertThat(fixture.stored(raceId))
@@ -165,7 +167,7 @@ public class DefinitionOwnershipIT {
             Node winnerNode = tenantAWon ? nodeA : nodeB;
             Node loserNode = tenantAWon ? nodeB : nodeA;
             Throwable loserFailure = tenantAWon ? failureB : failureA;
-            String winnerPlanHash = tenantAWon ? loadedA.planHash() : loadedB.planHash();
+            String winnerPlanHash = tenantAWon ? planHashA : planHashB;
             assertThat(loserFailure).isInstanceOfSatisfying(WorkflowDefinitionLifecycleException.class, failure -> {
                 assertThat(failure.reason()).isEqualTo(Reason.OWNER_CONFLICT);
                 assertThat(failure.key()).isEqualTo(loserKey);
@@ -192,10 +194,18 @@ public class DefinitionOwnershipIT {
                     .isInstanceOf(WorkflowProxyContractException.class);
 
             // Given a second id where tenant-a's claim is committed and its completion is held back
-            await(nodeA.service()
-                    .load(document(heldId, 1, HeldV1.class), DocumentFormat.YAML, source("held-a"), "tenant-a"));
-            await(nodeB.service()
-                    .load(document(heldId, 1, HeldV1.class), DocumentFormat.YAML, source("held-b"), "tenant-b"));
+            TenantRowSeed.seed(
+                    nodeA.app(),
+                    "tenant-a",
+                    document(heldId, 1, HeldV1.class),
+                    source("held-a"),
+                    DefinitionStatus.CANDIDATE);
+            TenantRowSeed.seed(
+                    nodeB.app(),
+                    "tenant-b",
+                    document(heldId, 1, HeldV1.class),
+                    source("held-b"),
+                    DefinitionStatus.CANDIDATE);
             WorkflowDefinitionSqlObserver.CompletionLockGate gate =
                     nodeA.observer().holdNextCompletionLockAfterClaim();
             fixture.onClose(gate::release);
@@ -240,8 +250,10 @@ public class DefinitionOwnershipIT {
     @DisplayName("concurrent activations of two versions of one owner end with the highest version active")
     void highestVersionWinsWithoutUniqueIndexFailure(Vertx vertx) {
         List<OrderScenario> scenarios = List.of(
-                new OrderScenario("ownership-v3-first-doc", V3FirstVersion3.class, V3FirstVersion4.class, true),
-                new OrderScenario("ownership-v4-first-doc", V4FirstVersion3.class, V4FirstVersion4.class, false));
+                new OrderScenario(
+                        "tenant-a:ownership-v3-first-doc", V3FirstVersion3.class, V3FirstVersion4.class, true),
+                new OrderScenario(
+                        "tenant-a:ownership-v4-first-doc", V4FirstVersion3.class, V4FirstVersion4.class, false));
 
         try (Fixture fixture = new Fixture(vertx)) {
             Node nodeA = fixture.node();
@@ -332,10 +344,18 @@ public class DefinitionOwnershipIT {
             Node nodeA = fixture.node();
             Node nodeB = fixture.node();
             fixture.ownRows(id);
-            await(nodeA.service()
-                    .load(document(id, 1, StaleV1.class), DocumentFormat.YAML, source("stale-a"), "tenant-a"));
-            await(nodeB.service()
-                    .load(document(id, 1, StaleV1.class), DocumentFormat.YAML, source("stale-b"), "tenant-b"));
+            TenantRowSeed.seed(
+                    nodeA.app(),
+                    "tenant-a",
+                    document(id, 1, StaleV1.class),
+                    source("stale-a"),
+                    DefinitionStatus.CANDIDATE);
+            TenantRowSeed.seed(
+                    nodeB.app(),
+                    "tenant-b",
+                    document(id, 1, StaleV1.class),
+                    source("stale-b"),
+                    DefinitionStatus.CANDIDATE);
 
             // Given tenant-a's claim is committed, published locally and held before completion
             WorkflowDefinitionSqlObserver.CompletionLockGate gate =
@@ -433,13 +453,19 @@ public class DefinitionOwnershipIT {
             fixture.ownRows(candidatesId, mixId);
 
             // Given the same id and version loaded as candidates by the global scope and two tenants
-            for (String tenant : new String[] {null, "tenant-a", "tenant-b"}) {
-                await(node.service()
-                        .load(
-                                document(candidatesId, 1, CandidatesV1.class),
-                                DocumentFormat.YAML,
-                                source("candidates-" + (tenant == null ? "global" : tenant)),
-                                tenant));
+            await(node.service()
+                    .load(
+                            document(candidatesId, 1, CandidatesV1.class),
+                            DocumentFormat.YAML,
+                            source("candidates-global"),
+                            null));
+            for (String tenant : new String[] {"tenant-a", "tenant-b"}) {
+                TenantRowSeed.seed(
+                        node.app(),
+                        tenant,
+                        document(candidatesId, 1, CandidatesV1.class),
+                        source("candidates-" + tenant),
+                        DefinitionStatus.CANDIDATE);
             }
 
             // Then the candidates coexist, none of them claims the id, and each tenant lists only its own
@@ -626,16 +652,15 @@ public class DefinitionOwnershipIT {
 
             // Given tenant-a holds an id through a real activation
             byte[] heldDocument = document(heldId, 1, ReconcileHeldV1.class);
-            CompiledDefinitionRef held = await(
-                    nodeB.service().load(heldDocument, DocumentFormat.YAML, source("reconcile-held"), "tenant-a"));
-            await(nodeB.service().activate(heldTenant));
+            TenantRowSeed.seed(
+                    nodeB.app(), "tenant-a", heldDocument, source("reconcile-held"), DefinitionStatus.ACTIVE);
+            String heldPlanHash = planHash(nodeB, heldDocument, "reconcile-held");
             Stored heldBefore = fixture.stored(heldId).getFirst();
             assertThat(heldBefore.status()).isEqualTo("ACTIVE");
 
             // When a global static document with the same id and version is reconciled
             ReconcileOutcome heldOutcome = await(nodeA.store()
-                    .upsertDocument(
-                            staticRecord(heldGlobal, held.planHash()), staticDocument(heldGlobal, heldDocument)));
+                    .upsertDocument(staticRecord(heldGlobal, heldPlanHash), staticDocument(heldGlobal, heldDocument)));
 
             // Then it is refused, inserts no global row and leaves tenant-a's row untouched
             assertThat(heldOutcome).isEqualTo(ReconcileOutcome.OWNER_CONFLICT);
@@ -654,8 +679,8 @@ public class DefinitionOwnershipIT {
             IdLockBarrier freshBarrier = fixture.holdIdLock(freshId);
             Future<ReconcileOutcome> freshReconcile = nodeA.store()
                     .upsertDocument(staticRecord(freshGlobal, freshHash), staticDocument(freshGlobal, freshDocument));
-            Future<Void> freshActivation = nodeB.service()
-                    .load(freshDocument, DocumentFormat.YAML, source("reconcile-fresh"), "tenant-a")
+            Future<Void> freshActivation = TenantRowSeed.insertCandidate(
+                            nodeB.app(), "tenant-a", freshDocument, DocumentFormat.YAML, source("reconcile-fresh"))
                     .compose(loaded -> nodeB.service().activate(freshTenant));
             freshBarrier.awaitQueued(2);
             assertThat(fixture.stored(freshId)).isEmpty();
@@ -691,7 +716,8 @@ public class DefinitionOwnershipIT {
                     .definitionPipeline()
                     .load(new DefinitionResource(raceDocument, DocumentFormat.YAML, source("reconcile-race")))
                     .planHash();
-            await(nodeB.service().load(raceDocument, DocumentFormat.YAML, source("reconcile-race"), "tenant-a"));
+            await(TenantRowSeed.insertCandidate(
+                    nodeB.app(), "tenant-a", raceDocument, DocumentFormat.YAML, source("reconcile-race")));
             IdLockBarrier raceBarrier = fixture.holdIdLock(raceId);
             Future<ReconcileOutcome> raceReconcile = nodeA.store()
                     .upsertDocument(staticRecord(raceGlobal, raceHash), staticDocument(raceGlobal, raceDocument));
@@ -888,6 +914,13 @@ public class DefinitionOwnershipIT {
             throw new IllegalStateException("The workflow fixture did not take the scenario identity");
         }
         return yaml.getBytes(StandardCharsets.UTF_8);
+    }
+
+    private static String planHash(Node node, byte[] document, String label) {
+        return node.app()
+                .definitionPipeline()
+                .load(new DefinitionResource(document, DocumentFormat.YAML, source(label)))
+                .planHash();
     }
 
     private static SourceMetadata source(String label) {
