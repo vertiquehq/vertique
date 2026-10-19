@@ -5,6 +5,7 @@ package dev.vertique.examples.workflow.order;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -23,7 +24,6 @@ import dev.vertique.db.DbModule;
 import dev.vertique.db.DbPoolConfig;
 import dev.vertique.db.DbSchemas;
 import dev.vertique.db.MigrationDefinition;
-import dev.vertique.db.flyway.CredentialSource;
 import dev.vertique.db.flyway.DbFlywayModule;
 import dev.vertique.db.flyway.FlywayMigrationRunner;
 import dev.vertique.db.flyway.FlywayMode;
@@ -31,6 +31,7 @@ import dev.vertique.db.flyway.MigrationInstanceResult;
 import dev.vertique.db.flyway.MigrationInstanceView;
 import dev.vertique.db.flyway.MigrationReport;
 import dev.vertique.db.flyway.MigrationRunException;
+import dev.vertique.db.flyway.MigrationRunException.Stage;
 import dev.vertique.db.flyway.MigrationStatus;
 import dev.vertique.db.postgresql.DbPostgresqlModule;
 import dev.vertique.db.test.DatabaseExtension;
@@ -275,10 +276,6 @@ class StandaloneNamedMigrationsIT {
         assertWorkerStillCarriesUnrelatedLoader(worker);
         assertEquals(Set.of(), vertx.deploymentIDs(), "nothing is deployed before the run");
 
-        // Then: without the caller's loader the instances cannot be resolved, so the loader decides the outcome
-        assertLoaderCannotResolveInstance(migration.runner(), applicationLoader(), JOB_SIBLING);
-        assertLoaderCannotResolveInstance(migration.runner(), callerLoader.getParent(), JOB);
-
         // When: the caller resolves the connection-free views and runs the public runner on its own loader
         List<MigrationInstanceView> views = withCallerLoader(migration.runner()::instances);
         MigrationReport first = runWithCallerLoader(migration.runner());
@@ -296,6 +293,14 @@ class StandaloneNamedMigrationsIT {
 
         // Then: nothing is applied twice and nothing moved
         assertEveryInstanceMigrated(second, scripts, false);
+        assertHistoriesHoldOnlyTheirOwnScripts(scripts);
+        assertObjectsLiveOnlyInTheirMappedSchemas();
+        assertSeededRows();
+
+        // When: loaders that cannot resolve one instance's location run the migrated database again
+        // Then: that instance fails on its missing location, so the loader decides the outcome, and nothing moved
+        assertLoaderCannotResolveInstance(migration.runner(), applicationLoader(), JOB_SIBLING);
+        assertLoaderCannotResolveInstance(migration.runner(), callerLoader.getParent(), JOB);
         assertHistoriesHoldOnlyTheirOwnScripts(scripts);
         assertObjectsLiveOnlyInTheirMappedSchemas();
         assertSeededRows();
@@ -605,8 +610,8 @@ class StandaloneNamedMigrationsIT {
             report = withCallerLoader(() -> await(runner.run(vertx)));
         } catch (ExecutionException failure) {
             if (failure.getCause() instanceof MigrationRunException named) {
-                return fail("named run failed with " + named.failureCode() + " during " + named.operation() + ": "
-                        + named.getMessage() + "; report " + named.report());
+                return fail("named run failed at " + named.stage() + ": " + named.getMessage() + "; report "
+                        + named.report());
             }
             throw failure;
         }
@@ -614,16 +619,43 @@ class StandaloneNamedMigrationsIT {
         return report;
     }
 
-    private static void assertLoaderCannotResolveInstance(
+    /**
+     * Runs on a loader that cannot see one instance's location and expects exactly that instance to fail on
+     * the missing location: earlier instances are current and apply nothing, later ones are not run.
+     */
+    private void assertLoaderCannotResolveInstance(
             FlywayMigrationRunner runner, ClassLoader loader, String unresolvedInstance) throws Exception {
-        MigrationRunException failure =
-                withContextClassLoader(loader, () -> assertThrows(MigrationRunException.class, runner::instances));
+        ExecutionException failure = withContextClassLoader(
+                loader, () -> assertThrows(ExecutionException.class, () -> await(runner.run(vertx))));
+        MigrationRunException named = assertInstanceOf(MigrationRunException.class, failure.getCause());
 
-        assertEquals("RESOURCE", failure.failureCode(), failure.getMessage());
-        assertEquals("instances", failure.operation());
+        assertEquals(Stage.MIGRATION, named.stage(), named.getMessage());
         assertTrue(
-                failure.getMessage().contains("'" + unresolvedInstance + "'"),
-                "the failure names " + unresolvedInstance + ": " + failure.getMessage());
+                named.getMessage().contains("'" + unresolvedInstance + "'"),
+                "the failure names " + unresolvedInstance + ": " + named.getMessage());
+        List<MigrationInstanceResult> results = named.report().instances();
+        assertEquals(
+                INSTANCES.stream().map(ExpectedInstance::name).toList(),
+                results.stream().map(result -> result.instance().name()).toList());
+        boolean reached = false;
+        for (MigrationInstanceResult result : results) {
+            if (result.instance().name().equals(unresolvedInstance)) {
+                assertEquals(MigrationStatus.FAILED, result.status(), unresolvedInstance);
+                reached = true;
+            } else if (reached) {
+                assertEquals(
+                        MigrationStatus.NOT_RUN,
+                        result.status(),
+                        result.instance().name());
+            } else {
+                assertEquals(
+                        MigrationStatus.MIGRATED,
+                        result.status(),
+                        result.instance().name());
+                assertEquals(0, result.migrationsApplied(), result.instance().name() + " is already current");
+            }
+        }
+        assertTrue(reached, "the unresolved instance is part of the report");
     }
 
     private static void assertConnectionFreeViews(List<MigrationInstanceView> views) {
@@ -640,7 +672,6 @@ class StandaloneNamedMigrationsIT {
             assertEquals(List.of(expected.location()), view.locations(), name + " locations");
             assertEquals(FlywayMode.MIGRATE, view.mode(), name + " mode");
             assertFalse(view.baselineOnMigrate(), name + " baselineOnMigrate");
-            assertEquals(CredentialSource.DB_POOL, view.credentialSource(), name + " credential source");
             assertEquals(db.username(), view.user(), name + " user");
             assertEquals(Set.of(), view.placeholderKeys(), name + " placeholder keys");
         }

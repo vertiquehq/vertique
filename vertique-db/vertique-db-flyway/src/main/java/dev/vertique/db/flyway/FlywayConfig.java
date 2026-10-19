@@ -182,14 +182,12 @@ public class FlywayConfig {
     private final List<FlywayInstanceConfig> instances;
 
     /**
-     * Upper bound, in milliseconds, on waiting for the cross-instance coordination lock of a named run
-     * that migrates. Defaults to {@code 30000}; the runner accepts {@code 1} to {@code 300000} and
-     * rejects other values when it resolves named instances. A run that does not get the lock within
-     * this time fails before any instance runs, with every instance reported as not run. VALIDATE-only
-     * named runs and the single-Flyway path take no lock.
+     * Maximum number of one-second retries Flyway makes to acquire its history-table lock when another
+     * process holds it. {@code null} (the default) keeps Flyway's own default of {@code 50}; {@code -1}
+     * retries without a bound. Values below {@code -1} are rejected. Applies to the single-Flyway path
+     * and, unless an instance overrides it, to every named instance.
      */
-    @Builder.Default
-    private final long coordinationLockTimeoutMs = 30_000L;
+    private final Integer lockRetryCount;
 
     // --- Secret hygiene ---
 
@@ -216,7 +214,7 @@ public class FlywayConfig {
                 + ", baselineVersion=" + baselineVersion
                 + ", validateOnMigrate=" + validateOnMigrate
                 + ", instances=" + instances
-                + ", coordinationLockTimeoutMs=" + coordinationLockTimeoutMs
+                + ", lockRetryCount=" + lockRetryCount
                 + "]";
     }
 

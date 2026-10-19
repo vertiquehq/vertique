@@ -10,7 +10,6 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.db.DbPoolConfig;
-import dev.vertique.db.DbSchemas;
 import dev.vertique.db.MigrationException;
 import dev.vertique.db.MigrationResult;
 import io.vertx.core.Vertx;
@@ -22,7 +21,6 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.Statement;
 import java.util.List;
-import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import org.flywaydb.core.api.FlywayException;
 import org.junit.jupiter.api.AfterAll;
@@ -258,13 +256,13 @@ class FlywayMigrationRunnerIT {
         }
     }
 
-    /** The one entry every legacy report holds, checked for the reserved name and the effective history. */
+    /** The one entry every legacy report holds: the reserved name, the first configured schema (or null) and the table. */
     private static MigrationInstanceResult onlyLegacyEntry(MigrationReport report, String schema, String table) {
         assertEquals(1, report.instances().size(), "legacy mode reports exactly one entry");
         MigrationInstanceResult entry = report.instances().get(0);
         assertEquals("legacy", entry.instance().name());
-        assertEquals(schema, entry.instance().schema(), "the actual effective history schema");
-        assertEquals(table, entry.instance().table(), "the actual effective history table");
+        assertEquals(schema, entry.instance().schema(), "the first configured schema, null when none is configured");
+        assertEquals(table, entry.instance().table(), "the effective history table");
         return entry;
     }
 
@@ -287,7 +285,7 @@ class FlywayMigrationRunnerIT {
                 })
                 .compose(first -> {
                     ctx.verify(() -> {
-                        MigrationInstanceResult entry = onlyLegacyEntry(first, "public", "flyway_schema_history");
+                        MigrationInstanceResult entry = onlyLegacyEntry(first, null, "flyway_schema_history");
                         assertEquals(MigrationStatus.MIGRATED, entry.status());
                         assertEquals(1, entry.migrationsApplied(), "the same count migrate() reports");
                         assertEquals("1", entry.currentVersion());
@@ -298,7 +296,7 @@ class FlywayMigrationRunnerIT {
                     return runner.run(vertx);
                 })
                 .onComplete(ctx.succeeding(second -> ctx.verify(() -> {
-                    MigrationInstanceResult entry = onlyLegacyEntry(second, "public", "flyway_schema_history");
+                    MigrationInstanceResult entry = onlyLegacyEntry(second, null, "flyway_schema_history");
                     assertEquals(MigrationStatus.MIGRATED, entry.status());
                     assertEquals(0, entry.migrationsApplied(), "a second run applies nothing, like migrate()");
                     assertEquals("1", entry.currentVersion());
@@ -332,7 +330,8 @@ class FlywayMigrationRunnerIT {
     }
 
     @Test
-    @DisplayName("legacy run() reports the schema the connection really uses when no schema is configured")
+    @DisplayName(
+            "legacy run() reports no schema when none is configured and the history lands where the connection points")
     void run_legacyReportsTheConnectionSchema(Vertx vertx, VertxTestContext ctx) throws Exception {
         String database = freshDatabase();
         createSchema(database, "connection_it");
@@ -347,7 +346,7 @@ class FlywayMigrationRunnerIT {
         runner(config, database)
                 .run(vertx)
                 .onComplete(ctx.succeeding(report -> ctx.verify(() -> {
-                    MigrationInstanceResult entry = onlyLegacyEntry(report, "connection_it", "flyway_schema_history");
+                    MigrationInstanceResult entry = onlyLegacyEntry(report, null, "flyway_schema_history");
                     assertEquals(MigrationStatus.MIGRATED, entry.status());
                     assertTrue(historyExists(database, "connection_it", "flyway_schema_history"));
                     assertFalse(historyExists(database, "public", "flyway_schema_history"));
@@ -377,7 +376,7 @@ class FlywayMigrationRunnerIT {
                 .compose(ignored -> runner(validate, database).run(vertx))
                 .compose(validated -> {
                     ctx.verify(() -> {
-                        MigrationInstanceResult entry = onlyLegacyEntry(validated, "public", "flyway_schema_history");
+                        MigrationInstanceResult entry = onlyLegacyEntry(validated, null, "flyway_schema_history");
                         assertEquals(MigrationStatus.VALIDATED, entry.status());
                         assertEquals(0, entry.migrationsApplied(), "VALIDATE never applies");
                         assertEquals(1, countRows(database, "flyway_it_marker"));
@@ -396,18 +395,14 @@ class FlywayMigrationRunnerIT {
     }
 
     @Test
-    @DisplayName("a legacy runner opens no guard or probe connection of its own for run() or migrate()")
-    void legacy_opensNoGuardOrProbeConnection(Vertx vertx, VertxTestContext ctx) throws Exception {
+    @DisplayName("a legacy runner applies once through run() and reports nothing pending through migrate()")
+    void legacy_runThenMigrateAppliesOnce(Vertx vertx, VertxTestContext ctx) throws Exception {
         String database = freshDatabase();
         FlywayConfig config = FlywayConfig.builder()
                 .mode(FlywayMode.MIGRATE)
                 .locations(List.of(GOOD))
                 .build();
-        RecordingDatabaseSupport support = new RecordingDatabaseSupport();
-        RecordingDatabaseSupport.CountingConnector connector = new RecordingDatabaseSupport.CountingConnector();
-        // The connector fails every attempt: a guard or probe connection would be counted and break the run.
-        FlywayMigrationRunner runner = new FlywayMigrationRunner(
-                config, poolConfig(database), Set.of(), DbSchemas.empty(), support.selector(), connector);
+        FlywayMigrationRunner runner = runner(config, database);
 
         runner.run(vertx)
                 .compose(report -> {
@@ -417,9 +412,6 @@ class FlywayMigrationRunnerIT {
                 .onComplete(ctx.succeeding(second -> ctx.verify(() -> {
                     assertEquals(new MigrationResult(0, null), second);
                     assertEquals(1, countRows(database, "flyway_it_marker"));
-                    assertEquals(0, connector.attempts(), "legacy execution opens no connection of its own");
-                    assertTrue(support.opens().isEmpty(), "legacy execution opens no database-support session");
-                    assertEquals(0, support.closedSessions());
                     ctx.completeNow();
                 })));
     }

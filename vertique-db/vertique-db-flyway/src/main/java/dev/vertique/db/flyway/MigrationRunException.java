@@ -8,56 +8,58 @@ import dev.vertique.db.MigrationException;
 /**
  * Failure of a named-instance migration operation.
  *
- * <p>The message is written by the framework and names the operation and, when one is to blame, the
- * instance. It never contains SQL, JDBC URLs, credentials or placeholder values, and the exception
- * never retains the original third-party throwable as its cause or as a suppressed exception,
- * because native exceptions can carry statements and connection details.
+ * <p>The message is a fixed sentence written by the framework. It names the stage, the instance when
+ * one is to blame, and, for a native Flyway failure, the Flyway error-code name and the SQLState when
+ * the failure carries them. It never contains a statement, JDBC URL, credential or placeholder value.
  *
- * <p>{@link #failureCode()} is a stable category from the closed set {@code CONFIGURATION},
- * {@code RESOURCE}, {@code COORDINATION}, {@code PREFLIGHT}, {@code MIGRATION} and
- * {@code VALIDATION}. {@link #operation()} names the failed step, for example {@code run},
- * {@code instances}, {@code coordination} or {@code configuration}. {@link #report()} is the ordered
- * report of a failed run, or {@code null} when the failure happened before any report existed (while
- * resolving instances). A configuration that cannot be bound never reaches this type; it fails earlier
- * with the framework's {@link dev.vertique.core.exception.ConfigurationException}.
+ * <p>For a native failure the original Flyway exception is kept as the cause, as in the
+ * single-Flyway path. Flyway messages can embed statement text, so log {@link #getMessage()} and
+ * {@link #stage()}, not the full cause chain.
+ *
+ * <p>{@link #report()} is the ordered report of a failed run, or {@code null} when the failure
+ * happened before any report existed (while resolving instances). A configuration that cannot be bound
+ * never reaches this type; it fails earlier with the framework's
+ * {@link dev.vertique.core.exception.ConfigurationException}.
  */
 public final class MigrationRunException extends MigrationException {
 
-    private final String failureCode;
-    private final String operation;
+    /** The step of a named operation that failed. */
+    public enum Stage {
+
+        /** The named configuration or the migration declarations are invalid. */
+        CONFIGURATION,
+
+        /** A native migrate operation failed. */
+        MIGRATION,
+
+        /** A native validate operation failed. */
+        VALIDATION
+    }
+
+    private final Stage stage;
     private final MigrationReport report;
 
     /**
-     * Creates a named migration failure without a cause.
+     * Creates a named migration failure.
      *
      * @param message the framework-authored message
-     * @param failureCode the stable failure category
-     * @param operation the failed operation
+     * @param cause the native cause, or {@code null} when the framework itself rejected the input
+     * @param stage the failed stage
      * @param report the ordered report, or {@code null} when none exists
      */
-    public MigrationRunException(String message, String failureCode, String operation, MigrationReport report) {
-        super(message, null);
-        this.failureCode = failureCode;
-        this.operation = operation;
+    public MigrationRunException(String message, Throwable cause, Stage stage, MigrationReport report) {
+        super(message, cause);
+        this.stage = stage;
         this.report = report;
     }
 
     /**
-     * Returns the stable failure category.
+     * Returns the stage that failed.
      *
-     * @return the failure code
+     * @return the stage
      */
-    public String failureCode() {
-        return failureCode;
-    }
-
-    /**
-     * Returns the operation that failed.
-     *
-     * @return the operation name
-     */
-    public String operation() {
-        return operation;
+    public Stage stage() {
+        return stage;
     }
 
     /**

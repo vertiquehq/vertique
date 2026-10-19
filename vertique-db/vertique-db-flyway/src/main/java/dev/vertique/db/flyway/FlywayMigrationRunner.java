@@ -3,6 +3,7 @@
 
 package dev.vertique.db.flyway;
 
+import dev.vertique.core.exception.ConfigurationException;
 import dev.vertique.db.DbPoolConfig;
 import dev.vertique.db.DbSchemas;
 import dev.vertique.db.MigrationDefinition;
@@ -13,7 +14,6 @@ import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
-import java.sql.DriverManager;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
@@ -58,41 +58,24 @@ import org.slf4j.LoggerFactory;
  * aggregates the report. Earlier successful instances are never rolled back; a later run continues
  * from each instance's own history.
  *
- * <p>An instance's default and history schema is its {@code db.schemas} entry when the supplied
- * {@link DbSchemas} has one, otherwise the first entry of its managed schema list, otherwise the
- * default schema of a connection opened with the instance's own credential pair. A run resolves that
- * default once, before any instance runs, freezes it for the whole run, binds it as native Flyway's
- * default schema and reports it. Named-mode failures are {@link MigrationRunException}s whose messages
- * never contain SQL, JDBC URLs, credentials or placeholder values and which retain no native cause.
+ * <p>Concurrent starts are coordinated by Flyway itself: it locks each history table while it
+ * migrates, so two processes that start together migrate one instance at a time and the second finds
+ * nothing left to apply. {@link FlywayConfig#lockRetryCount()} bounds how long a process waits.
  *
- * <p>Named execution currently supports PostgreSQL destinations only. A named run that migrates first
- * takes a database-wide coordination lock on a dedicated direct connection, waiting at most
- * {@link FlywayConfig#coordinationLockTimeoutMs()}, and holds it until the run ends; a VALIDATE-only
- * run takes no lock. Before any instance writes, the run rejects history collisions in the resolved
- * schemas, a history-less instance whose managed schemas are only partly provisioned, and a
- * conventional single-Flyway history that no instance explicitly keeps as its own. An instance that
- * keeps such a history must first pass native validation against its own migrations. The
- * single-Flyway path takes no lock and runs none of these checks.
+ * <p>An instance's default and history schema is the first entry of its managed schema list, which is
+ * its {@code db.schemas} entry when the supplied {@link DbSchemas} has one. An instance without a
+ * schema list uses the connection's default schema. Named-mode failures are
+ * {@link MigrationRunException}s with a fixed, value-free message that keep the native Flyway exception
+ * as their cause.
  */
 @Singleton
 public class FlywayMigrationRunner implements MigrationRunner {
 
     private static final Logger log = LoggerFactory.getLogger(FlywayMigrationRunner.class);
 
-    /** Opens runner-owned connections through the JDBC driver manager. */
-    private static final JdbcConnector DRIVER_MANAGER = DriverManager::getConnection;
-
     private final FlywayConfig flywayConfig;
     private final DbPoolConfig dbPoolConfig;
     private final NamedInstanceResolver resolver;
-
-    /**
-     * Retained connector of the package-private constructor. The runner opens no connection with it
-     * directly: the database support opens the connections it owns through the connector its selector
-     * was created with.
-     */
-    @SuppressWarnings("unused")
-    private final JdbcConnector jdbcConnector;
 
     /**
      * Creates a new Flyway migration runner.
@@ -123,77 +106,39 @@ public class FlywayMigrationRunner implements MigrationRunner {
             DbPoolConfig dbPoolConfig,
             Set<MigrationDefinition> definitions,
             DbSchemas schemas) {
-        this(
-                flywayConfig,
-                dbPoolConfig,
-                definitions,
-                schemas,
-                PostgresDatabaseSupport.selector(DRIVER_MANAGER),
-                DRIVER_MANAGER);
-    }
-
-    /**
-     * Creates a runner with an explicit database-support selector and connector.
-     *
-     * @param flywayConfig the Flyway configuration
-     * @param dbPoolConfig the database pool configuration
-     * @param definitions the wired migration declarations
-     * @param schemas the neutral schema placement
-     * @param selector chooses the database support for the root JDBC destination
-     * @param jdbcConnector opens the connections the runner owns itself
-     */
-    FlywayMigrationRunner(
-            FlywayConfig flywayConfig,
-            DbPoolConfig dbPoolConfig,
-            Set<MigrationDefinition> definitions,
-            DbSchemas schemas,
-            DatabaseSupportSelector selector,
-            JdbcConnector jdbcConnector) {
         this.flywayConfig = flywayConfig;
         this.dbPoolConfig = dbPoolConfig;
-        this.jdbcConnector = jdbcConnector;
         this.resolver = new NamedInstanceResolver(
                 flywayConfig,
                 dbPoolConfig,
                 List.copyOf(Objects.requireNonNull(definitions, "definitions must not be null")),
-                Objects.requireNonNull(schemas, "schemas must not be null"),
-                Objects.requireNonNull(selector, "selector must not be null"),
-                this::resolveJdbcUrl);
+                Objects.requireNonNull(schemas, "schemas must not be null"));
     }
 
     // --- Named instances ---
 
     /**
-     * Resolves and validates the named instances without opening a database connection.
+     * Resolves and validates the named instances without opening a database connection or looking up
+     * any migration resource.
      *
      * <p>Checks names, the dependency graph, the root mode ceiling, credential pairs, the agreement
-     * of each instance's schema list with its {@code db.schemas} entry, location syntax and known
-     * history collisions, then, unless the root mode is {@link FlywayMode#DISABLED}, confirms that
-     * every location exists and asks the database support for the root JDBC destination to apply its
-     * identifier rules. For PostgreSQL every managed schema must be a single identifier of letters,
-     * digits and underscores of at most 63 characters, not reserved for system schemas, every history
-     * table the same syntax of at most 57 characters, and no history table may collide with another or
-     * with the key and index relations native Flyway derives from it in the same known schema. Classpath
-     * locations are looked up on the calling thread's context class loader; this lookup and the
-     * filesystem checks may block, so call this method off the event loop. Every call validates
-     * afresh.
+     * of each instance's schema list with its {@code db.schemas} entry, the lock retry count, history
+     * identities (the same schema, possibly unset, and table) and classpath locations that nest across
+     * instances. Whether a location exists is checked by Flyway when the instance runs. Every call
+     * validates afresh.
      *
      * @return the resolved instances in execution order, immutable and free of secret values; empty
-     *     when {@link FlywayConfig#instances()} is {@code null}, because the single-Flyway default
-     *     schema may only be known after connecting
-     * @throws MigrationRunException with operation {@code instances} and no report when the named
-     *     configuration or the declarations are invalid
+     *     when {@link FlywayConfig#instances()} is {@code null}
+     * @throws MigrationRunException with {@link MigrationRunException.Stage#CONFIGURATION} and no
+     *     report when the named configuration or the declarations are invalid
      */
     public List<MigrationInstanceView> instances() {
         if (!isNamed()) {
             return List.of();
         }
-        ClassLoader loader = callerClassLoader();
-        try {
-            return resolver.resolve(loader).views();
-        } catch (NamedMigrationFailure failure) {
-            throw failure.toException(NamedMigrationFailure.OP_INSTANCES, null);
-        }
+        return resolver.resolve().stream()
+                .map(NamedInstanceResolver.Instance::view)
+                .toList();
     }
 
     /**
@@ -207,8 +152,9 @@ public class FlywayMigrationRunner implements MigrationRunner {
      * failed and not-run instances in order.
      *
      * <p>Without named instances the single Flyway runs exactly as {@link #migrate(Vertx)} runs it
-     * and the report holds one entry named {@code legacy} with the history schema and table actually
-     * used; failures keep the {@link MigrationException} behavior of {@link #migrate(Vertx)}.
+     * and the report holds one entry named {@code legacy} with the first configured schema, if any, and
+     * the history table; failures keep the {@link MigrationException} behavior of
+     * {@link #migrate(Vertx)}.
      *
      * @param vertx the Vert.x instance used for {@code executeBlocking}; the caller owns it
      * @return a future with the ordered report
@@ -231,14 +177,7 @@ public class FlywayMigrationRunner implements MigrationRunner {
     }
 
     private NamedMigrationExecution.Outcome executeNamed(ClassLoader loader) {
-        NamedPlan plan;
-        try {
-            plan = resolver.resolve(loader);
-        } catch (NamedMigrationFailure failure) {
-            MigrationReport report = failure.views() == null ? null : NamedMigrationExecution.notRun(failure.views());
-            throw failure.toException(NamedMigrationFailure.OP_RUN, report);
-        }
-        return new NamedMigrationExecution(plan, flywayConfig, loader).execute();
+        return new NamedMigrationExecution(resolver.resolve(), flywayConfig, loader, this::resolveJdbcUrl).execute();
     }
 
     private Future<MigrationResult> migrateNamed(Vertx vertx) {
@@ -257,7 +196,7 @@ public class FlywayMigrationRunner implements MigrationRunner {
     private Future<MigrationReport> runLegacy(Vertx vertx) {
         if (flywayConfig.mode() == FlywayMode.DISABLED) {
             log.info("Flyway migration disabled");
-            MigrationInstanceView view = legacyView(firstConfiguredSchema(), "flyway_schema_history");
+            MigrationInstanceView view = legacyView("flyway_schema_history");
             return Future.succeededFuture(
                     new MigrationReport(List.of(new MigrationInstanceResult(view, MigrationStatus.DISABLED, 0, null))));
         }
@@ -281,17 +220,12 @@ public class FlywayMigrationRunner implements MigrationRunner {
                 status = MigrationStatus.VALIDATED;
             }
             String currentVersion;
-            String schema;
             try {
                 currentVersion = NamedMigrationExecution.currentVersion(flyway);
-                schema = firstConfiguredSchema() != null
-                        ? firstConfiguredSchema()
-                        : NamedMigrationExecution.connectionSchema(flyway);
             } catch (FlywayException e) {
                 throw new MigrationException("Migration status could not be read: " + e.getMessage(), e);
             }
-            MigrationInstanceView view =
-                    legacyView(schema, flyway.getConfiguration().getTable());
+            MigrationInstanceView view = legacyView(flyway.getConfiguration().getTable());
             return new MigrationReport(List.of(new MigrationInstanceResult(view, status, applied, currentVersion)));
         });
     }
@@ -301,12 +235,12 @@ public class FlywayMigrationRunner implements MigrationRunner {
         return schemas == null || schemas.isEmpty() ? null : schemas.get(0);
     }
 
-    /** The single entry of a legacy report; the credential source reflects where the user came from. */
-    private MigrationInstanceView legacyView(String schema, String table) {
+    /** The single entry of a legacy report. */
+    private MigrationInstanceView legacyView(String table) {
         boolean flywayUser = flywayConfig.user() != null;
         return new MigrationInstanceView(
                 NamedInstanceResolver.LEGACY_NAME,
-                schema,
+                firstConfiguredSchema(),
                 flywayConfig.schemas() == null ? List.of() : flywayConfig.schemas(),
                 table,
                 flywayConfig.locations() == null ? List.of() : flywayConfig.locations(),
@@ -317,7 +251,6 @@ public class FlywayMigrationRunner implements MigrationRunner {
                 flywayConfig.baselineVersion(),
                 flywayConfig.validateOnMigrate(),
                 flywayUser ? flywayConfig.user() : dbPoolConfig.user(),
-                flywayUser ? CredentialSource.ROOT_FLYWAY : CredentialSource.DB_POOL,
                 flywayConfig.placeholders() == null
                         ? Set.of()
                         : flywayConfig.placeholders().keySet());
@@ -438,6 +371,13 @@ public class FlywayMigrationRunner implements MigrationRunner {
         }
         if (!flywayConfig.placeholders().isEmpty()) {
             cfg.placeholders(flywayConfig.placeholders());
+        }
+        Integer lockRetryCount = flywayConfig.lockRetryCount();
+        if (lockRetryCount != null) {
+            if (lockRetryCount < -1) {
+                throw new ConfigurationException("flyway.lockRetryCount must be -1 or greater");
+            }
+            cfg.lockRetryCount(lockRetryCount);
         }
 
         return cfg.load();

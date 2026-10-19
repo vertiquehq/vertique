@@ -41,6 +41,8 @@ import java.util.Objects;
  * @param placeholders placeholder values replacing the root map; {@code {}} clears it
  * @param user the migration user; set together with {@code password}
  * @param password the migration password; set together with {@code user}
+ * @param lockRetryCount the number of one-second retries Flyway makes to acquire its history-table lock,
+ *     {@code -1} for no bound; {@code null} inherits the root value
  */
 public record FlywayInstanceConfig(
         String name,
@@ -60,7 +62,9 @@ public record FlywayInstanceConfig(
         String user,
 
         @JsonProperty(access = JsonProperty.Access.WRITE_ONLY)
-        String password) {
+        String password,
+
+        Integer lockRetryCount) {
 
     /**
      * Creates instance overrides, keeping absent components {@code null} and copying present
@@ -118,6 +122,7 @@ public record FlywayInstanceConfig(
                 + ", placeholders=" + (placeholders == null ? "null" : placeholders.keySet())
                 + ", user=" + user
                 + ", password=" + (password != null ? "<redacted>" : "null")
+                + ", lockRetryCount=" + lockRetryCount
                 + "]";
     }
 }

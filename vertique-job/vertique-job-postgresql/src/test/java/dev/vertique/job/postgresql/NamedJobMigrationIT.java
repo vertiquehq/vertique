@@ -31,7 +31,6 @@ import dev.vertique.db.DbPoolConfig;
 import dev.vertique.db.DbSchemas;
 import dev.vertique.db.MigrationDefinition;
 import dev.vertique.db.MigrationRunner;
-import dev.vertique.db.flyway.CredentialSource;
 import dev.vertique.db.flyway.DbFlywayModule;
 import dev.vertique.db.flyway.FlywayConfig;
 import dev.vertique.db.flyway.FlywayMigrationRunner;
@@ -400,7 +399,6 @@ class NamedJobMigrationIT {
             assertEquals(List.of(schema), view.schemas(), view.name() + " managed schemas");
             assertEquals("flyway_schema_history_" + view.name(), view.table());
             assertEquals(FlywayMode.MIGRATE, view.mode());
-            assertEquals(CredentialSource.DB_POOL, view.credentialSource());
         }
         assertEquals(List.of("classpath:db/migration/job"), views.get(1).locations());
         assertEquals(List.of("classpath:db/it-named-app"), views.get(0).locations());

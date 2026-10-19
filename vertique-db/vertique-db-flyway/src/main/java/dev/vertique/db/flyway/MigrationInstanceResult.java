@@ -13,8 +13,7 @@ import java.util.Objects;
  * applied, and for failed, not-run and disabled entries. {@code migrationsApplied} is zero for those
  * entries too.
  *
- * @param instance the resolved instance; for an attempted entry its schema is the history schema
- *     actually used
+ * @param instance the resolved instance
  * @param status the outcome
  * @param migrationsApplied the number of migrations this invocation applied
  * @param currentVersion the current version after the operation, or {@code null}
