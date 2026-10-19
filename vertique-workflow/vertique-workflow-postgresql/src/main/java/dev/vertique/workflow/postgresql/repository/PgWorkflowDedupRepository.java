@@ -3,8 +3,10 @@
 
 package dev.vertique.workflow.postgresql.repository;
 
+import dev.vertique.db.DbSchemas;
 import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.postgresql.PgSqlRepository;
+import dev.vertique.db.postgresql.PgTableNames;
 import dev.vertique.workflow.dedup.WorkflowDedupScopes;
 import dev.vertique.workflow.engine.spi.DedupClaim;
 import dev.vertique.workflow.engine.spi.StartDedupResult;
@@ -60,7 +62,14 @@ public final class PgWorkflowDedupRepository extends PgSqlRepository implements 
     /** Kind value for task-reassignment dedup rows: {@code (kind='task-reassign', scope=taskId::text, key=idempotencyKey)}. */
     private static final String DEDUP_KIND_TASK_REASSIGN = "task-reassign";
 
-    // --- SQL constants ---
+    /** Name of the migration instance whose schema mapping places the workflow tables. */
+    private static final String INSTANCE_NAME = "workflow";
+
+    // --- SQL statements ---
+    //
+    // The statements are built once at construction because every table reference is qualified with
+    // the schema mapped for the workflow instance (when there is one), so the text depends on the
+    // configured placement rather than being a compile-time constant.
 
     /**
      * Race-safe upsert for start dedup. Includes the {@code fingerprint} column so the engine can
@@ -75,30 +84,18 @@ public final class PgWorkflowDedupRepository extends PgSqlRepository implements 
      *
      * <p>Parameters: $1=scope (definitionId), $2=key (idempotencyKey), $3=workflow_id, $4=fingerprint.
      */
-    private static final String SQL_CLAIM_OR_RESOLVE_START =
-            "INSERT INTO workflow_dedup (kind, scope, key, workflow_id, fingerprint)"
-                    + " VALUES ('" + DEDUP_KIND_START + "', $1, $2, $3, $4)"
-                    + " ON CONFLICT (kind, scope, key) DO UPDATE"
-                    + " SET workflow_id = workflow_dedup.workflow_id"
-                    + " RETURNING workflow_id, (xmax = 0) AS inserted, fingerprint AS existing_fingerprint";
+    private final String sqlClaimOrResolveStart;
 
-    private static final String SQL_FIND_SIGNAL = "SELECT workflow_id FROM workflow_dedup" + " WHERE kind = '"
-            + DEDUP_KIND_SIGNAL + "' AND scope = $1 AND key = $2";
+    private final String sqlFindSignal;
 
-    private static final String SQL_INSERT_SIGNAL = "INSERT INTO workflow_dedup (kind, scope, key, workflow_id)"
-            + " VALUES ('" + DEDUP_KIND_SIGNAL + "', $1, $2, $3)";
+    private final String sqlInsertSignal;
 
     /**
-     * Race-safe upsert for signal dedup. Same shape as {@link #SQL_CLAIM_OR_RESOLVE_START}: the
+     * Race-safe upsert for signal dedup. Same shape as {@link #sqlClaimOrResolveStart}: the
      * {@code DO UPDATE} no-op write makes {@code RETURNING} fire on conflict so the caller always
      * gets back {@code (xmax = 0)} which is {@code true} iff this transaction won the race.
      */
-    private static final String SQL_CLAIM_OR_RESOLVE_SIGNAL =
-            "INSERT INTO workflow_dedup (kind, scope, key, workflow_id)"
-                    + " VALUES ('" + DEDUP_KIND_SIGNAL + "', $1, $2, $3)"
-                    + " ON CONFLICT (kind, scope, key) DO UPDATE"
-                    + " SET workflow_id = workflow_dedup.workflow_id"
-                    + " RETURNING (xmax = 0) AS inserted";
+    private final String sqlClaimOrResolveSignal;
 
     /**
      * Race-safe upsert for task-completion dedup. Includes the {@code fingerprint} column so the
@@ -107,37 +104,83 @@ public final class PgWorkflowDedupRepository extends PgSqlRepository implements 
      *
      * <p>Parameters: $1=scope (taskId::text), $2=key (idempotencyKey), $3=workflow_id, $4=fingerprint.
      */
-    private static final String SQL_CLAIM_OR_RESOLVE_TASK_COMPLETE =
-            "INSERT INTO workflow_dedup (kind, scope, key, workflow_id, fingerprint)"
-                    + " VALUES ('" + DEDUP_KIND_TASK_COMPLETE + "', $1, $2, $3, $4)"
-                    + " ON CONFLICT (kind, scope, key) DO UPDATE"
-                    + " SET workflow_id = workflow_dedup.workflow_id"
-                    + " RETURNING (xmax = 0) AS inserted, fingerprint AS existing_fingerprint";
+    private final String sqlClaimOrResolveTaskComplete;
 
     /**
      * Race-safe upsert for task-reassignment dedup. Mirror of
-     * {@link #SQL_CLAIM_OR_RESOLVE_TASK_COMPLETE} with a different {@code kind} literal.
+     * {@link #sqlClaimOrResolveTaskComplete} with a different {@code kind} literal.
      *
      * <p>Parameters: $1=scope (taskId::text), $2=key (idempotencyKey), $3=workflow_id, $4=fingerprint.
      */
-    private static final String SQL_CLAIM_OR_RESOLVE_TASK_REASSIGN =
-            "INSERT INTO workflow_dedup (kind, scope, key, workflow_id, fingerprint)"
-                    + " VALUES ('" + DEDUP_KIND_TASK_REASSIGN + "', $1, $2, $3, $4)"
-                    + " ON CONFLICT (kind, scope, key) DO UPDATE"
-                    + " SET workflow_id = workflow_dedup.workflow_id"
-                    + " RETURNING (xmax = 0) AS inserted, fingerprint AS existing_fingerprint";
+    private final String sqlClaimOrResolveTaskReassign;
 
     // --- Constructor ---
 
     /**
-     * Creates a new repository with the given connection pool and exception mapper.
+     * Creates a new repository whose table is not schema-qualified, so it resolves through the
+     * connection's default schema.
      *
      * @param pool   the PostgreSQL connection pool
      * @param mapper the exception mapper for translating SQL errors to domain exceptions
      */
     @Inject
     public PgWorkflowDedupRepository(Pool pool, PgDbExceptionMapper mapper) {
+        this(pool, mapper, DbSchemas.empty());
+    }
+
+    /**
+     * Creates a new repository that qualifies every table reference with the schema mapped to the
+     * {@code workflow} instance, when {@code schemas} holds one. Without a mapping the statements
+     * are identical to those of the two-argument constructor. Column qualifiers such as
+     * {@code workflow_dedup.workflow_id} stay bare: they name the table in the statement, not its
+     * schema.
+     *
+     * @param pool    the PostgreSQL connection pool
+     * @param mapper  the exception mapper for translating SQL errors to domain exceptions
+     * @param schemas the schema placement; an empty mapping leaves table names unqualified
+     * @throws IllegalArgumentException if the mapped schema name is not a valid single-segment
+     *                                  PostgreSQL identifier
+     */
+    public PgWorkflowDedupRepository(Pool pool, PgDbExceptionMapper mapper, DbSchemas schemas) {
         super(pool, mapper);
+
+        String dedup = PgTableNames.qualify(schemas, INSTANCE_NAME, "workflow_dedup");
+
+        this.sqlClaimOrResolveStart = "INSERT INTO " + dedup + " (kind, scope, key, workflow_id, fingerprint)"
+                + " VALUES ('" + DEDUP_KIND_START + "', $1, $2, $3, $4)"
+                + " ON CONFLICT (kind, scope, key) DO UPDATE"
+                + " SET workflow_id = workflow_dedup.workflow_id"
+                + " RETURNING workflow_id, (xmax = 0) AS inserted, fingerprint AS existing_fingerprint";
+
+        this.sqlFindSignal = "SELECT workflow_id FROM " + dedup + " WHERE kind = '" + DEDUP_KIND_SIGNAL
+                + "' AND scope = $1 AND key = $2";
+
+        this.sqlInsertSignal = "INSERT INTO " + dedup + " (kind, scope, key, workflow_id)" + " VALUES ('"
+                + DEDUP_KIND_SIGNAL + "', $1, $2, $3)";
+
+        this.sqlClaimOrResolveSignal = "INSERT INTO " + dedup + " (kind, scope, key, workflow_id)"
+                + " VALUES ('" + DEDUP_KIND_SIGNAL + "', $1, $2, $3)"
+                + " ON CONFLICT (kind, scope, key) DO UPDATE"
+                + " SET workflow_id = workflow_dedup.workflow_id"
+                + " RETURNING (xmax = 0) AS inserted";
+
+        this.sqlClaimOrResolveTaskComplete = "INSERT INTO " + dedup + " (kind, scope, key, workflow_id, fingerprint)"
+                + " VALUES ('" + DEDUP_KIND_TASK_COMPLETE + "', $1, $2, $3, $4)"
+                + " ON CONFLICT (kind, scope, key) DO UPDATE"
+                + " SET workflow_id = workflow_dedup.workflow_id"
+                + " RETURNING (xmax = 0) AS inserted, fingerprint AS existing_fingerprint";
+
+        this.sqlClaimOrResolveTaskReassign = "INSERT INTO " + dedup + " (kind, scope, key, workflow_id, fingerprint)"
+                + " VALUES ('" + DEDUP_KIND_TASK_REASSIGN + "', $1, $2, $3, $4)"
+                + " ON CONFLICT (kind, scope, key) DO UPDATE"
+                + " SET workflow_id = workflow_dedup.workflow_id"
+                + " RETURNING (xmax = 0) AS inserted, fingerprint AS existing_fingerprint";
+
+        this.sqlClaimOrResolveDispatch = "INSERT INTO " + dedup + " (kind, scope, key, workflow_id)"
+                + " VALUES ('" + WorkflowDedupScopes.DISPATCH_KIND + "', $1, $2, $3)"
+                + " ON CONFLICT (kind, scope, key) DO UPDATE"
+                + " SET workflow_id = workflow_dedup.workflow_id"
+                + " RETURNING (xmax = 0) AS inserted";
     }
 
     // --- Start dedup ---
@@ -184,7 +227,7 @@ public final class PgWorkflowDedupRepository extends PgSqlRepository implements 
             WorkflowInstanceId proposedNewId,
             String fingerprint,
             SqlClient tx) {
-        return tx.preparedQuery(SQL_CLAIM_OR_RESOLVE_START)
+        return tx.preparedQuery(sqlClaimOrResolveStart)
                 .execute(Tuple.of(definitionId, idempotencyKey, proposedNewId.value(), fingerprint))
                 .map(rs -> {
                     var row = rs.iterator().next();
@@ -210,7 +253,7 @@ public final class PgWorkflowDedupRepository extends PgSqlRepository implements 
     @Override
     public Future<Optional<UUID>> findSignal(WorkflowInstanceId workflowId, String signalDedupKey, SqlClient tx) {
         String scope = workflowId.value().toString();
-        return tx.preparedQuery(SQL_FIND_SIGNAL)
+        return tx.preparedQuery(sqlFindSignal)
                 .execute(Tuple.of(scope, signalDedupKey))
                 .map(rs -> {
                     var it = rs.iterator();
@@ -238,7 +281,7 @@ public final class PgWorkflowDedupRepository extends PgSqlRepository implements 
     @Override
     public Future<Void> insertSignal(WorkflowInstanceId workflowId, String signalDedupKey, SqlClient tx) {
         String scope = workflowId.value().toString();
-        return tx.preparedQuery(SQL_INSERT_SIGNAL)
+        return tx.preparedQuery(sqlInsertSignal)
                 .execute(Tuple.of(scope, signalDedupKey, workflowId.value()))
                 .<Void>mapEmpty()
                 .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_dedup insertSignal")));
@@ -275,7 +318,7 @@ public final class PgWorkflowDedupRepository extends PgSqlRepository implements 
     public Future<DedupClaim> claimOrResolveTaskCompletion(
             UUID taskId, String idempotencyKey, WorkflowInstanceId workflowId, String fingerprint, SqlClient tx) {
         String scope = taskId.toString();
-        return tx.preparedQuery(SQL_CLAIM_OR_RESOLVE_TASK_COMPLETE)
+        return tx.preparedQuery(sqlClaimOrResolveTaskComplete)
                 .execute(Tuple.of(scope, idempotencyKey, workflowId.value(), fingerprint))
                 .map(rs -> {
                     var row = rs.iterator().next();
@@ -305,7 +348,7 @@ public final class PgWorkflowDedupRepository extends PgSqlRepository implements 
     public Future<DedupClaim> claimOrResolveTaskReassignment(
             UUID taskId, String idempotencyKey, WorkflowInstanceId workflowId, String fingerprint, SqlClient tx) {
         String scope = taskId.toString();
-        return tx.preparedQuery(SQL_CLAIM_OR_RESOLVE_TASK_REASSIGN)
+        return tx.preparedQuery(sqlClaimOrResolveTaskReassign)
                 .execute(Tuple.of(scope, idempotencyKey, workflowId.value(), fingerprint))
                 .map(rs -> {
                     var row = rs.iterator().next();
@@ -341,7 +384,7 @@ public final class PgWorkflowDedupRepository extends PgSqlRepository implements 
     @Override
     public Future<Boolean> claimOrResolveSignal(WorkflowInstanceId workflowId, String signalDedupKey, SqlClient tx) {
         String scope = workflowId.value().toString();
-        return tx.preparedQuery(SQL_CLAIM_OR_RESOLVE_SIGNAL)
+        return tx.preparedQuery(sqlClaimOrResolveSignal)
                 .execute(Tuple.of(scope, signalDedupKey, workflowId.value()))
                 .map(rs -> Boolean.TRUE.equals(rs.iterator().next().getBoolean("inserted")))
                 .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_dedup claimOrResolveSignal")));
@@ -364,7 +407,7 @@ public final class PgWorkflowDedupRepository extends PgSqlRepository implements 
     @Override
     public Future<Boolean> claimOrResolveSignalScoped(
             String scope, String key, WorkflowInstanceId workflowId, SqlClient tx) {
-        return tx.preparedQuery(SQL_CLAIM_OR_RESOLVE_SIGNAL)
+        return tx.preparedQuery(sqlClaimOrResolveSignal)
                 .execute(Tuple.of(scope, key, workflowId.value()))
                 .map(rs -> Boolean.TRUE.equals(rs.iterator().next().getBoolean("inserted")))
                 .recover(t ->
@@ -381,12 +424,7 @@ public final class PgWorkflowDedupRepository extends PgSqlRepository implements 
      *
      * <p>Parameters: $1=scope (workflowId::text), $2=key (SHA-256 hex), $3=workflow_id.
      */
-    private static final String SQL_CLAIM_OR_RESOLVE_DISPATCH =
-            "INSERT INTO workflow_dedup (kind, scope, key, workflow_id)"
-                    + " VALUES ('" + WorkflowDedupScopes.DISPATCH_KIND + "', $1, $2, $3)"
-                    + " ON CONFLICT (kind, scope, key) DO UPDATE"
-                    + " SET workflow_id = workflow_dedup.workflow_id"
-                    + " RETURNING (xmax = 0) AS inserted";
+    private final String sqlClaimOrResolveDispatch;
 
     /**
      * Atomically claims a branch service-dispatch dedup slot or resolves an existing one
@@ -408,7 +446,7 @@ public final class PgWorkflowDedupRepository extends PgSqlRepository implements 
     @Override
     public Future<Boolean> claimOrResolveDispatch(
             WorkflowInstanceId workflowId, String scope, String key, SqlClient tx) {
-        return tx.preparedQuery(SQL_CLAIM_OR_RESOLVE_DISPATCH)
+        return tx.preparedQuery(sqlClaimOrResolveDispatch)
                 .execute(Tuple.of(scope, key, workflowId.value()))
                 .map(rs -> Boolean.TRUE.equals(rs.iterator().next().getBoolean("inserted")))
                 .recover(t ->
