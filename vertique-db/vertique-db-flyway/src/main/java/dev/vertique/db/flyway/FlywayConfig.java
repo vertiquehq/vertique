@@ -41,10 +41,30 @@ import lombok.extern.jackson.Jacksonized;
  * }
  * }</pre>
  *
+ * <p><strong>Named instances.</strong> When {@link #instances()} is {@code null} (the
+ * {@code instances} key is absent or JSON {@code null}) the runner keeps its single-Flyway behavior.
+ * A present {@code instances} object, even an empty one, selects named mode: every wired
+ * {@link dev.vertique.db.MigrationDefinition} becomes an instance with its own history, the root
+ * policy fields above are inherited unless an instance overrides them, root {@code locations} is not
+ * inherited, and the root {@code mode} is a ceiling that an instance may lower but never raise.
+ *
+ * <pre>{@code
+ * {
+ *   "flyway": {
+ *     "mode": "MIGRATE",
+ *     "instances": {
+ *       "job": {},
+ *       "app": { "target": "42" }
+ *     }
+ *   }
+ * }
+ * }</pre>
+ *
  * <p><strong>Secret hygiene.</strong> {@code password} and {@code placeholders} are read from
  * configuration but are {@link JsonProperty.Access#WRITE_ONLY}: Jackson never serializes them back
- * out. {@link #toString()} renders the password redacted, the placeholder keys without values, and a
- * {@code password=} parameter in {@code jdbcUrl} masked, on the class and on its builder.
+ * out, and the same holds for every nested {@link FlywayInstanceConfig}. {@link #toString()} renders
+ * the password redacted, the placeholder keys without values, a {@code password=} parameter in
+ * {@code jdbcUrl} masked and every instance in its redacted form, on the class and on its builder.
  */
 @Getter
 @Builder
@@ -151,6 +171,24 @@ public class FlywayConfig {
     @Builder.Default
     private final boolean validateOnMigrate = true;
 
+    // --- Named instances ---
+
+    /**
+     * Named instance overrides. {@code null} (the default) keeps the single-Flyway behavior; a
+     * non-null list, even an empty one, selects named mode. Bound from the keyed
+     * {@code flyway.instances} object by {@link DbFlywayModule}.
+     */
+    private final List<FlywayInstanceConfig> instances;
+
+    /**
+     * Upper bound, in milliseconds, on waiting for the cross-instance coordination of a named run.
+     * Defaults to {@code 30000}; the runner accepts {@code 1} to {@code 300000} and rejects other
+     * values when it resolves named instances. The value is currently validated for range only: no
+     * lock is taken until the PostgreSQL coordination guard ships.
+     */
+    @Builder.Default
+    private final long coordinationLockTimeoutMs = 30_000L;
+
     // --- Secret hygiene ---
 
     /**
@@ -175,7 +213,36 @@ public class FlywayConfig {
                 + ", baselineOnMigrate=" + baselineOnMigrate
                 + ", baselineVersion=" + baselineVersion
                 + ", validateOnMigrate=" + validateOnMigrate
+                + ", instances=" + instances
+                + ", coordinationLockTimeoutMs=" + coordinationLockTimeoutMs
                 + "]";
+    }
+
+    /**
+     * Returns a copy of this configuration with the given named instances and every other field
+     * unchanged.
+     *
+     * @param namedInstances the instance overrides, or {@code null} for the single-Flyway behavior
+     * @return the copy
+     */
+    FlywayConfig withInstances(List<FlywayInstanceConfig> namedInstances) {
+        return FlywayConfig.builder()
+                .mode(mode)
+                .jdbcUrl(jdbcUrl)
+                .user(user)
+                .password(password)
+                .locations(locations)
+                .target(target)
+                .schemas(schemas)
+                .placeholders(placeholders)
+                .outOfOrder(outOfOrder)
+                .cleanDisabled(cleanDisabled)
+                .baselineOnMigrate(baselineOnMigrate)
+                .baselineVersion(baselineVersion)
+                .validateOnMigrate(validateOnMigrate)
+                .instances(namedInstances)
+                .coordinationLockTimeoutMs(coordinationLockTimeoutMs)
+                .build();
     }
 
     private static final Pattern URL_PASSWORD = Pattern.compile("([;&?]password=)[^;&]*");
@@ -191,11 +258,24 @@ public class FlywayConfig {
      */
     public static class FlywayConfigBuilder {
 
+        /**
+         * Sets the named instance overrides from an immutable copy of the list.
+         *
+         * @param instances the instance overrides, or {@code null} for the single-Flyway behavior
+         * @return this builder
+         * @throws NullPointerException if an element is {@code null}
+         */
+        public FlywayConfigBuilder instances(List<FlywayInstanceConfig> instances) {
+            this.instances = instances == null ? null : List.copyOf(instances);
+            return this;
+        }
+
         @Override
         public String toString() {
             return "FlywayConfig.FlywayConfigBuilder[jdbcUrl=" + redactJdbcUrl(jdbcUrl)
                     + ", user=" + user
                     + ", password=" + (password != null ? "<redacted>" : "null")
+                    + ", instances=" + instances
                     + "]";
         }
     }

@@ -5,9 +5,11 @@ package dev.vertique.job.postgresql;
 
 import static dev.vertique.job.postgresql.JobExecutionMapper.COL_ID;
 
+import dev.vertique.db.DbSchemas;
 import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.postgresql.PgLockMode;
 import dev.vertique.db.postgresql.PgSqlRepository;
+import dev.vertique.db.postgresql.PgTableNames;
 import dev.vertique.job.CronJobSchedule;
 import dev.vertique.job.JobExecution;
 import dev.vertique.job.JobRepository;
@@ -50,108 +52,31 @@ import lombok.extern.slf4j.Slf4j;
 @Singleton
 public class PgJobRepository extends PgSqlRepository implements JobRepository {
 
-    // --- SQL constants ---
+    // --- SQL statements ---
+    //
+    // The statements are built once at construction because every table reference is qualified with
+    // the schema mapped for the job instance (when there is one), so the text depends on the
+    // configured placement rather than being a compile-time constant.
 
-    private static final String SQL_INSERT = """
-            INSERT INTO job_executions (
-                id, job_id, job_type, handler, queue, state, payload, progress, parameters,
-                metadata, attempt, max_attempts, priority, scheduled_at, locked_by,
-                last_error, error_type, created_at, updated_at
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9::jsonb, $10::jsonb,
-                      $11, $12, $13, $14, $15, $16, $17, NOW(), NOW())
-            RETURNING id
-            """;
-
-    private static final String SQL_SELECT_ALL_COLS = """
-            SELECT id, job_id, job_type, handler, queue, state, payload, progress, parameters,
-                   metadata, attempt, max_attempts, priority, scheduled_at, started_at, completed_at,
-                   locked_by, last_error, error_type, created_at, updated_at
-            FROM job_executions
-            """;
-
-    private static final String SQL_CLAIM_SELECT = SQL_SELECT_ALL_COLS
-            + "WHERE queue = $1 AND state = 'ENQUEUED' AND scheduled_at <= NOW() "
-            + "ORDER BY priority DESC, scheduled_at ASC "
-            + "LIMIT $2";
-
-    private static final String SQL_CLAIM_UPDATE =
-            "UPDATE job_executions SET state = 'PROCESSING', started_at = NOW(), updated_at = NOW(), locked_by = $1 "
-                    + "WHERE id = ANY($2)";
-
-    private static final String SQL_FIND_BY_ID = SQL_SELECT_ALL_COLS + "WHERE id = $1";
-
-    private static final String SQL_UPDATE_STATE =
-            "UPDATE job_executions SET state = $2, updated_at = NOW() WHERE id = $1 AND state = $3";
-
-    // The WHERE clause validates source/target pairs against the JobState transition model so an
-    // invalid transition (e.g. ABANDONED->ABANDONED) matches zero rows and returns empty rather than
-    // emitting a spurious duplicate transition. PROCESSING accepts any terminal/abandoned target;
-    // ABANDONED accepts only the late-completion / exhaustion targets (SUCCEEDED/FAILED/DEAD_LETTER) —
-    // re-enqueue from ABANDONED goes through SQL_SCHEDULE_RETRY, not here.
-    private static final String SQL_COMPLETE =
-            "UPDATE job_executions SET state = $2, completed_at = NOW(), updated_at = NOW(), "
-                    + "last_error = $3, error_type = $4, progress = $5::jsonb "
-                    + "WHERE id = $1 AND ("
-                    + "(state = 'PROCESSING' AND $2 IN ('SUCCEEDED', 'FAILED', 'CANCELLED', 'ABANDONED', 'DEAD_LETTER')) "
-                    + "OR (state = 'ABANDONED' AND $2 IN ('SUCCEEDED', 'FAILED', 'DEAD_LETTER'))"
-                    + ") RETURNING *";
-
-    private static final String SQL_SCHEDULE_RETRY =
-            "UPDATE job_executions SET state = 'ENQUEUED', scheduled_at = $2, attempt = $3, "
-                    + "started_at = NULL, completed_at = NULL, locked_by = NULL, updated_at = NOW() "
-                    + "WHERE id = $1 AND state IN ('FAILED', 'ABANDONED')";
-
-    private static final String SQL_HEARTBEAT =
-            "UPDATE job_executions SET updated_at = NOW(), progress = $2::jsonb WHERE id = $1";
-
-    private static final String SQL_FIND_STALE =
-            SQL_SELECT_ALL_COLS + "WHERE state = 'PROCESSING' AND updated_at < NOW() - ($1 * interval '1 second')";
-
-    private static final String SQL_INSERT_LOG =
-            "INSERT INTO job_logs (execution_id, level, message, logged_at) VALUES ($1, $2, $3, $4)";
-
-    private static final String SQL_TRY_INSERT = """
-            INSERT INTO job_executions (
-                id, job_id, job_type, handler, queue, state, payload, progress, parameters,
-                metadata, attempt, max_attempts, priority, scheduled_at, locked_by,
-                last_error, error_type, created_at, updated_at
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9::jsonb, $10::jsonb,
-                      $11, $12, $13, $14, $15, $16, $17, NOW(), NOW())
-            ON CONFLICT (job_id, scheduled_at) WHERE job_type = 'CRON' AND state NOT IN ('DEAD_LETTER', 'CANCELLED')
-            DO NOTHING
-            RETURNING id
-            """;
-
-    private static final String SQL_SAVE_SCHEDULE = """
-            INSERT INTO job_schedules (job_id, cron_expression, handler, target, execution_mode, timezone,
-                enabled, overlap_policy, max_attempts, tracked, created_at, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW())
-            ON CONFLICT (job_id) DO UPDATE SET
-                cron_expression = $2, handler = $3, target = $4, execution_mode = $5, timezone = $6,
-                enabled = $7, overlap_policy = $8, max_attempts = $9, tracked = $10, updated_at = NOW()
-            """;
-
-    private static final String SQL_UPDATE_SCHEDULE_FIRE_TIMES =
-            "UPDATE job_schedules SET last_fired_at = $2, next_fire_at = $3, updated_at = NOW() WHERE job_id = $1";
-
-    private static final String SQL_FIND_SCHEDULE = """
-            SELECT job_id, cron_expression, handler, target, execution_mode, timezone, enabled,
-                   overlap_policy, max_attempts, tracked, last_fired_at, next_fire_at
-            FROM job_schedules WHERE job_id = $1
-            """;
-
-    private static final String SQL_SERVER_HEARTBEAT =
-            "INSERT INTO job_server_heartbeats (server_id, last_heartbeat, started_at) "
-                    + "VALUES ($1, NOW(), NOW()) "
-                    + "ON CONFLICT (server_id) DO UPDATE SET last_heartbeat = NOW()";
-
-    private static final String SQL_FIND_DEAD_SERVERS = "SELECT server_id FROM job_server_heartbeats "
-            + "WHERE last_heartbeat < NOW() - ($1 * interval '1 second')";
-
-    private static final String SQL_REMOVE_SERVER = "DELETE FROM job_server_heartbeats WHERE server_id = $1";
-
-    private static final String SQL_FIND_BY_LOCKED_BY =
-            SQL_SELECT_ALL_COLS + "WHERE locked_by = $1 AND state = 'PROCESSING'";
+    private final String sqlInsert;
+    private final String sqlSelectAllCols;
+    private final String sqlClaimSelect;
+    private final String sqlClaimUpdate;
+    private final String sqlFindById;
+    private final String sqlUpdateState;
+    private final String sqlComplete;
+    private final String sqlScheduleRetry;
+    private final String sqlHeartbeat;
+    private final String sqlFindStale;
+    private final String sqlInsertLog;
+    private final String sqlTryInsert;
+    private final String sqlSaveSchedule;
+    private final String sqlUpdateScheduleFireTimes;
+    private final String sqlFindSchedule;
+    private final String sqlServerHeartbeat;
+    private final String sqlFindDeadServers;
+    private final String sqlRemoveServer;
+    private final String sqlFindByLockedBy;
 
     // --- Node identity ---
 
@@ -165,15 +90,134 @@ public class PgJobRepository extends PgSqlRepository implements JobRepository {
     // --- Constructor ---
 
     /**
-     * Creates a new PostgreSQL job repository.
+     * Creates a new PostgreSQL job repository whose tables are not schema-qualified, so they resolve
+     * through the connection's default schema.
      *
      * @param pool          the PostgreSQL connection pool
      * @param exceptionMapper the PostgreSQL failure mapper for exception translation
      */
     @Inject
     public PgJobRepository(Pool pool, PgDbExceptionMapper exceptionMapper) {
+        this(pool, exceptionMapper, DbSchemas.empty());
+    }
+
+    /**
+     * Creates a new PostgreSQL job repository that qualifies every table reference with the schema
+     * mapped to the {@code job} instance, when {@code schemas} holds one. Without a
+     * mapping the statements are identical to those of the two-argument constructor.
+     *
+     * <p>The mapping is validated here, before any query runs.
+     *
+     * @param pool          the PostgreSQL connection pool
+     * @param exceptionMapper the PostgreSQL failure mapper for exception translation
+     * @param schemas       the schema placement shared with the migrations; never {@code null}
+     * @throws IllegalArgumentException if the schema mapped for the job instance is not a valid
+     *                                  single-segment PostgreSQL schema name
+     */
+    public PgJobRepository(Pool pool, PgDbExceptionMapper exceptionMapper, DbSchemas schemas) {
         super(pool, exceptionMapper);
         this.nodeId = resolveNodeId();
+
+        String executions = PgTableNames.qualify(schemas, JobMigrationsModule.INSTANCE_NAME, "job_executions");
+        String logs = PgTableNames.qualify(schemas, JobMigrationsModule.INSTANCE_NAME, "job_logs");
+        String jobSchedules = PgTableNames.qualify(schemas, JobMigrationsModule.INSTANCE_NAME, "job_schedules");
+        String heartbeats = PgTableNames.qualify(schemas, JobMigrationsModule.INSTANCE_NAME, "job_server_heartbeats");
+
+        this.sqlInsert = """
+                INSERT INTO %s (
+                    id, job_id, job_type, handler, queue, state, payload, progress, parameters,
+                    metadata, attempt, max_attempts, priority, scheduled_at, locked_by,
+                    last_error, error_type, created_at, updated_at
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9::jsonb, $10::jsonb,
+                          $11, $12, $13, $14, $15, $16, $17, NOW(), NOW())
+                RETURNING id
+                """.formatted(executions);
+
+        this.sqlSelectAllCols = """
+                SELECT id, job_id, job_type, handler, queue, state, payload, progress, parameters,
+                       metadata, attempt, max_attempts, priority, scheduled_at, started_at, completed_at,
+                       locked_by, last_error, error_type, created_at, updated_at
+                FROM %s
+                """.formatted(executions);
+
+        this.sqlClaimSelect = sqlSelectAllCols
+                + "WHERE queue = $1 AND state = 'ENQUEUED' AND scheduled_at <= NOW() "
+                + "ORDER BY priority DESC, scheduled_at ASC "
+                + "LIMIT $2";
+
+        this.sqlClaimUpdate = "UPDATE " + executions
+                + " SET state = 'PROCESSING', started_at = NOW(), updated_at = NOW(), locked_by = $1 "
+                + "WHERE id = ANY($2)";
+
+        this.sqlFindById = sqlSelectAllCols + "WHERE id = $1";
+
+        this.sqlUpdateState =
+                "UPDATE " + executions + " SET state = $2, updated_at = NOW() WHERE id = $1 AND state = $3";
+
+        // The WHERE clause validates source/target pairs against the JobState transition model so an
+        // invalid transition (e.g. ABANDONED->ABANDONED) matches zero rows and returns empty rather than
+        // emitting a spurious duplicate transition. PROCESSING accepts any terminal/abandoned target;
+        // ABANDONED accepts only the late-completion / exhaustion targets (SUCCEEDED/FAILED/DEAD_LETTER) —
+        // re-enqueue from ABANDONED goes through sqlScheduleRetry, not here.
+        this.sqlComplete = "UPDATE " + executions + " SET state = $2, completed_at = NOW(), updated_at = NOW(), "
+                + "last_error = $3, error_type = $4, progress = $5::jsonb "
+                + "WHERE id = $1 AND ("
+                + "(state = 'PROCESSING' AND $2 IN ('SUCCEEDED', 'FAILED', 'CANCELLED', 'ABANDONED', 'DEAD_LETTER')) "
+                + "OR (state = 'ABANDONED' AND $2 IN ('SUCCEEDED', 'FAILED', 'DEAD_LETTER'))"
+                + ") RETURNING *";
+
+        this.sqlScheduleRetry = "UPDATE " + executions + " SET state = 'ENQUEUED', scheduled_at = $2, attempt = $3, "
+                + "started_at = NULL, completed_at = NULL, locked_by = NULL, updated_at = NOW() "
+                + "WHERE id = $1 AND state IN ('FAILED', 'ABANDONED')";
+
+        this.sqlHeartbeat = "UPDATE " + executions + " SET updated_at = NOW(), progress = $2::jsonb WHERE id = $1";
+
+        this.sqlFindStale =
+                sqlSelectAllCols + "WHERE state = 'PROCESSING' AND updated_at < NOW() - ($1 * interval '1 second')";
+
+        this.sqlInsertLog =
+                "INSERT INTO " + logs + " (execution_id, level, message, logged_at) VALUES ($1, $2, $3, $4)";
+
+        this.sqlTryInsert = """
+                INSERT INTO %s (
+                    id, job_id, job_type, handler, queue, state, payload, progress, parameters,
+                    metadata, attempt, max_attempts, priority, scheduled_at, locked_by,
+                    last_error, error_type, created_at, updated_at
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9::jsonb, $10::jsonb,
+                          $11, $12, $13, $14, $15, $16, $17, NOW(), NOW())
+                ON CONFLICT (job_id, scheduled_at) WHERE job_type = 'CRON' AND state NOT IN ('DEAD_LETTER', 'CANCELLED')
+                DO NOTHING
+                RETURNING id
+                """.formatted(executions);
+
+        this.sqlSaveSchedule = """
+                INSERT INTO %s (job_id, cron_expression, handler, target, execution_mode, timezone,
+                    enabled, overlap_policy, max_attempts, tracked, created_at, updated_at)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW())
+                ON CONFLICT (job_id) DO UPDATE SET
+                    cron_expression = $2, handler = $3, target = $4, execution_mode = $5, timezone = $6,
+                    enabled = $7, overlap_policy = $8, max_attempts = $9, tracked = $10, updated_at = NOW()
+                """.formatted(jobSchedules);
+
+        this.sqlUpdateScheduleFireTimes = "UPDATE " + jobSchedules
+                + " SET last_fired_at = $2, next_fire_at = $3, updated_at = NOW() WHERE job_id = $1";
+
+        this.sqlFindSchedule = """
+                SELECT job_id, cron_expression, handler, target, execution_mode, timezone, enabled,
+                       overlap_policy, max_attempts, tracked, last_fired_at, next_fire_at
+                FROM %s WHERE job_id = $1
+                """.formatted(jobSchedules);
+
+        this.sqlServerHeartbeat = "INSERT INTO " + heartbeats + " (server_id, last_heartbeat, started_at) "
+                + "VALUES ($1, NOW(), NOW()) "
+                + "ON CONFLICT (server_id) DO UPDATE SET last_heartbeat = NOW()";
+
+        this.sqlFindDeadServers =
+                "SELECT server_id FROM " + heartbeats + " WHERE last_heartbeat < NOW() - ($1 * interval '1 second')";
+
+        this.sqlRemoveServer = "DELETE FROM " + heartbeats + " WHERE server_id = $1";
+
+        this.sqlFindByLockedBy = sqlSelectAllCols + "WHERE locked_by = $1 AND state = 'PROCESSING'";
     }
 
     /**
@@ -204,7 +248,7 @@ public class PgJobRepository extends PgSqlRepository implements JobRepository {
      */
     @Override
     public Future<UUID> save(JobExecution execution) {
-        return this.<UUID>query(SQL_INSERT)
+        return this.<UUID>query(sqlInsert)
                 .params(buildInsertTuple(execution))
                 .mapping(row -> row.getUUID(COL_ID))
                 .returning();
@@ -219,7 +263,7 @@ public class PgJobRepository extends PgSqlRepository implements JobRepository {
      * @return a future of the saved execution ID
      */
     public Future<UUID> save(JobExecution execution, SqlClient client) {
-        return this.<UUID>query(SQL_INSERT)
+        return this.<UUID>query(sqlInsert)
                 .on(client)
                 .params(buildInsertTuple(execution))
                 .mapping(row -> row.getUUID(COL_ID))
@@ -238,7 +282,7 @@ public class PgJobRepository extends PgSqlRepository implements JobRepository {
     public Future<List<JobExecution>> claimNextJob(String queue, int batchSize) {
         return transaction().execute(conn -> {
             // Step 1: SELECT eligible rows with SKIP LOCKED via framework query builder
-            return this.<JobExecution>query(SQL_CLAIM_SELECT)
+            return this.<JobExecution>query(sqlClaimSelect)
                     .on(conn)
                     .params(Tuple.of(queue, batchSize))
                     .mapping(JobExecutionMapper::fromRow)
@@ -253,7 +297,7 @@ public class PgJobRepository extends PgSqlRepository implements JobRepository {
                         Tuple claimTuple = Tuple.tuple();
                         claimTuple.addValue(nodeId);
                         claimTuple.addArrayOfUUID(ids);
-                        return this.<Void>query(SQL_CLAIM_UPDATE)
+                        return this.<Void>query(sqlClaimUpdate)
                                 .on(conn)
                                 .params(claimTuple)
                                 .execute()
@@ -268,7 +312,7 @@ public class PgJobRepository extends PgSqlRepository implements JobRepository {
     /** {@inheritDoc} */
     @Override
     public Future<Void> heartbeat(UUID executionId, ProgressSnapshot progress) {
-        return this.<Void>query(SQL_HEARTBEAT)
+        return this.<Void>query(sqlHeartbeat)
                 .params(Tuple.of(executionId, toJsonObject(progress)))
                 .execute()
                 .mapEmpty();
@@ -277,7 +321,7 @@ public class PgJobRepository extends PgSqlRepository implements JobRepository {
     /** {@inheritDoc} */
     @Override
     public Future<List<JobExecution>> findStale(Duration heartbeatTimeout) {
-        return this.<JobExecution>query(SQL_FIND_STALE)
+        return this.<JobExecution>query(sqlFindStale)
                 .params(Tuple.of(heartbeatTimeout.toSeconds()))
                 .mapping(JobExecutionMapper::fromRow)
                 .list();
@@ -286,7 +330,7 @@ public class PgJobRepository extends PgSqlRepository implements JobRepository {
     /** {@inheritDoc} */
     @Override
     public Future<Optional<JobExecution>> findById(UUID executionId) {
-        return this.<JobExecution>query(SQL_FIND_BY_ID)
+        return this.<JobExecution>query(sqlFindById)
                 .params(Tuple.of(executionId))
                 .mapping(JobExecutionMapper::fromRow)
                 .one();
@@ -295,7 +339,7 @@ public class PgJobRepository extends PgSqlRepository implements JobRepository {
     /** {@inheritDoc} */
     @Override
     public Future<Void> updateState(UUID executionId, JobState fromState, JobState toState) {
-        return this.<Void>query(SQL_UPDATE_STATE)
+        return this.<Void>query(sqlUpdateState)
                 .params(Tuple.of(executionId, toState.name(), fromState.name()))
                 .execute()
                 .compose(count -> {
@@ -317,7 +361,7 @@ public class PgJobRepository extends PgSqlRepository implements JobRepository {
     @Override
     public Future<Optional<JobExecution>> completeExecution(
             UUID executionId, JobState newState, String errorMessage, String errorType, ProgressSnapshot progress) {
-        return this.<JobExecution>query(SQL_COMPLETE)
+        return this.<JobExecution>query(sqlComplete)
                 .params(Tuple.of(executionId, newState.name(), errorMessage, errorType, toJsonObject(progress)))
                 .mapping(JobExecutionMapper::fromRow)
                 .returningOptional();
@@ -332,7 +376,7 @@ public class PgJobRepository extends PgSqlRepository implements JobRepository {
      */
     @Override
     public Future<Void> scheduleRetry(UUID executionId, Instant nextScheduledAt, int newAttempt) {
-        return this.<Void>query(SQL_SCHEDULE_RETRY)
+        return this.<Void>query(sqlScheduleRetry)
                 .params(Tuple.of(executionId, toOffsetDateTime(nextScheduledAt), newAttempt))
                 .execute()
                 .compose(count -> {
@@ -382,7 +426,7 @@ public class PgJobRepository extends PgSqlRepository implements JobRepository {
      * Atomic "mark then re-enqueue" shared by {@link #failAndScheduleRetry} and
      * {@link #abandonAndScheduleRetry}. Runs the two writes in a single transaction so the row is never
      * left stranded in the intermediate {@code markState}: step 1 records {@code markState} via the
-     * {@code SQL_COMPLETE} guard ({@code RETURNING *} the snapshot for audit) — valid only from a
+     * {@code sqlComplete} guard ({@code RETURNING *} the snapshot for audit) — valid only from a
      * {@code PROCESSING} row (an already-{@code ABANDONED} row passed to {@code abandonAndScheduleRetry}
      * is rejected by the state-pair guard and yields empty); step 2 re-enqueues the same row
      * ({@code markState} → {@code ENQUEUED}). If step 1 transitioned no row the result is empty; if step 2
@@ -398,7 +442,7 @@ public class PgJobRepository extends PgSqlRepository implements JobRepository {
             ProgressSnapshot progress,
             Instant nextScheduledAt,
             int nextAttempt) {
-        return transaction().execute(conn -> this.<JobExecution>query(SQL_COMPLETE)
+        return transaction().execute(conn -> this.<JobExecution>query(sqlComplete)
                 .on(conn)
                 .params(Tuple.of(executionId, markState.name(), errorMessage, errorType, toJsonObject(progress)))
                 .mapping(JobExecutionMapper::fromRow)
@@ -407,7 +451,7 @@ public class PgJobRepository extends PgSqlRepository implements JobRepository {
                     if (markSnapshot.isEmpty()) {
                         return Future.succeededFuture(Optional.<JobExecution>empty());
                     }
-                    return this.<Void>query(SQL_SCHEDULE_RETRY)
+                    return this.<Void>query(sqlScheduleRetry)
                             .on(conn)
                             .params(Tuple.of(executionId, toOffsetDateTime(nextScheduledAt), nextAttempt))
                             .execute()
@@ -432,7 +476,7 @@ public class PgJobRepository extends PgSqlRepository implements JobRepository {
         List<Tuple> batch = entries.stream()
                 .map(e -> Tuple.of(executionId, e.level(), e.message(), toOffsetDateTime(e.loggedAt())))
                 .toList();
-        return this.<Void>query(SQL_INSERT_LOG).batch(batch).execute().mapEmpty();
+        return this.<Void>query(sqlInsertLog).batch(batch).execute().mapEmpty();
     }
 
     /**
@@ -444,7 +488,7 @@ public class PgJobRepository extends PgSqlRepository implements JobRepository {
      */
     @Override
     public Future<Optional<UUID>> tryInsert(JobExecution execution) {
-        return this.<UUID>query(SQL_TRY_INSERT)
+        return this.<UUID>query(sqlTryInsert)
                 .params(buildInsertTuple(execution))
                 .mapping(row -> row.getUUID(JobExecutionMapper.COL_ID))
                 .returningOptional();
@@ -459,7 +503,7 @@ public class PgJobRepository extends PgSqlRepository implements JobRepository {
      */
     @Override
     public Future<Void> saveSchedule(CronJobSchedule schedule) {
-        return this.<Void>query(SQL_SAVE_SCHEDULE)
+        return this.<Void>query(sqlSaveSchedule)
                 .params(Tuple.of(
                         schedule.jobId(),
                         schedule.cronExpression(),
@@ -478,7 +522,7 @@ public class PgJobRepository extends PgSqlRepository implements JobRepository {
     /** {@inheritDoc} */
     @Override
     public Future<Void> updateScheduleFireTimes(String jobId, Instant lastFiredAt, Instant nextFireAt) {
-        return this.<Void>query(SQL_UPDATE_SCHEDULE_FIRE_TIMES)
+        return this.<Void>query(sqlUpdateScheduleFireTimes)
                 .params(Tuple.of(jobId, toOffsetDateTime(lastFiredAt), toOffsetDateTime(nextFireAt)))
                 .execute()
                 .mapEmpty();
@@ -493,7 +537,7 @@ public class PgJobRepository extends PgSqlRepository implements JobRepository {
      */
     @Override
     public Future<Optional<CronJobSchedule>> findSchedule(String jobId) {
-        return this.<CronJobSchedule>query(SQL_FIND_SCHEDULE)
+        return this.<CronJobSchedule>query(sqlFindSchedule)
                 .params(Tuple.of(jobId))
                 .mapping(row -> {
                     OffsetDateTime lastFiredOdt = row.getOffsetDateTime("last_fired_at");
@@ -525,7 +569,7 @@ public class PgJobRepository extends PgSqlRepository implements JobRepository {
     /** {@inheritDoc} */
     @Override
     public Future<Void> serverHeartbeat(String serverId) {
-        return this.<Void>query(SQL_SERVER_HEARTBEAT)
+        return this.<Void>query(sqlServerHeartbeat)
                 .params(Tuple.of(serverId))
                 .execute()
                 .mapEmpty();
@@ -534,7 +578,7 @@ public class PgJobRepository extends PgSqlRepository implements JobRepository {
     /** {@inheritDoc} */
     @Override
     public Future<List<String>> findDeadServers(Duration heartbeatTimeout) {
-        return this.<String>query(SQL_FIND_DEAD_SERVERS)
+        return this.<String>query(sqlFindDeadServers)
                 .params(Tuple.of(heartbeatTimeout.toSeconds()))
                 .mapping(row -> row.getString("server_id"))
                 .list();
@@ -543,7 +587,7 @@ public class PgJobRepository extends PgSqlRepository implements JobRepository {
     /** {@inheritDoc} */
     @Override
     public Future<Void> removeServer(String serverId) {
-        return this.<Void>query(SQL_REMOVE_SERVER)
+        return this.<Void>query(sqlRemoveServer)
                 .params(Tuple.of(serverId))
                 .execute()
                 .mapEmpty();
@@ -552,7 +596,7 @@ public class PgJobRepository extends PgSqlRepository implements JobRepository {
     /** {@inheritDoc} */
     @Override
     public Future<List<JobExecution>> findByLockedBy(String serverId) {
-        return this.<JobExecution>query(SQL_FIND_BY_LOCKED_BY)
+        return this.<JobExecution>query(sqlFindByLockedBy)
                 .params(Tuple.of(serverId))
                 .mapping(JobExecutionMapper::fromRow)
                 .list();

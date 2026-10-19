@@ -13,7 +13,7 @@ SPDX-License-Identifier: EUPL-1.2
 `vertique-db-core` is the vendor-neutral data-access surface for Vertique. It supplies the
 repository base types, the fluent query and pagination builders, the typed `DataAccessException`
 hierarchy with its hierarchy-aware translator, transaction and savepoint semantics, connection-pool
-configuration, and the migration contract — all against `io.vertx:vertx-sql-client` interfaces with
+configuration, optional schema-placement metadata, and the migration contract — all against `io.vertx:vertx-sql-client` interfaces with
 no driver dependency.
 
 It is not a runnable data layer on its own. A vendor artifact such as
@@ -32,7 +32,7 @@ through the Vert.x SQL client.
 | Pairing | Supplies |
 |---|---|
 | `dev.vertique:vertique-db-postgresql` | The PostgreSQL driver, `Pool`, `PgSqlRepository`, `PgDbExceptionMapper`, `PgLockMode` |
-| `dev.vertique:vertique-db-flyway` | A Flyway-backed `MigrationRunner` |
+| `dev.vertique:vertique-db-flyway` | A Flyway-backed `MigrationRunner`, including opt-in named instances with one migration history per module |
 
 Depend on this artifact alone — without a vendor module — when a module needs only the DB-agnostic
 types: the exception hierarchy, `PageCursor`/`PagedResult`, `OrderKey`, or the `MigrationRunner`
@@ -67,6 +67,13 @@ types when tamper-evidence is required.)
 **Identifiers are validated, values are bound.** Parameters always travel as `Tuple` placeholders.
 Column names — the one place a string reaches SQL — go through `SqlIdentifier` at construction time
 and are quoted again by vendor builders during composition.
+
+**Schema placement is optional metadata, not pool configuration.** The `db.schemas` setting maps a
+placement name (`job`, `workflow`, or any name an application picks) to a schema name. `DbModule`
+exposes it as `DbSchemas`; framework adapters, the migration runner and application code read the
+same value, so migrations and queries agree on where a module's tables live. Without an entry,
+SQL stays unqualified and tables resolve through the connection's default schema. This module stores
+the names verbatim and applies no vendor identifier rules — those belong to the vendor module.
 
 ---
 
@@ -491,6 +498,60 @@ host, a non-positive `maxPoolSize`, a trust store configured while `sslMode` is 
 throws and nothing calls it automatically; invoke it yourself and log the result if you want that
 diagnostic at startup.
 
+### `DbSchemas`
+
+Immutable placement metadata: a schema name per placement name.
+
+```java
+public final class DbSchemas {
+    public DbSchemas(Map<String, String> mappings);
+    public static DbSchemas empty();
+    public Map<String, String> mappings();
+    public Optional<String> schema(String instanceName);
+}
+```
+
+The constructor copies the map defensively; `mappings()` is immutable. It throws
+`NullPointerException` for a null map, key or value and `IllegalArgumentException` for a blank key or
+value. `schema(name)` is empty for a name with no mapping. The class holds no SQL rendering, JDBC,
+Flyway or PostgreSQL types.
+
+An application injects `DbSchemas` to place its own tables under the same names the migrations use:
+
+```java
+@Inject
+public OrderRepository(Pool pool, PgDbExceptionMapper mapper, DbSchemas schemas) {
+    super(pool, mapper);
+    this.orders = PgTableNames.qualify(schemas, "app", "orders");   // "app_data"."orders" when mapped
+}
+```
+
+`PgTableNames` lives in `dev.vertique:vertique-db-postgresql`. Code that constructs a framework
+adapter directly passes the same `DbSchemas` to the adapter constructor that accepts one.
+
+### `DbSchemasModule`
+
+Declares `DbSchemas` as an optional binding (`@BindsOptionalOf`). Adapter modules and
+`dev.vertique:vertique-db-flyway` include it and consume `Optional<DbSchemas>`, so a component that
+includes no module providing placement — one with only a `Pool` and an exception mapper, for example —
+keeps compiling and runs with unqualified SQL. Application components rarely include it directly.
+
+### `MigrationDefinition`
+
+```java
+public record MigrationDefinition(String name, List<String> locations, List<String> dependsOn) {}
+```
+
+Immutable declaration of one named migration instance: its name, the scheme-qualified locations of its
+scripts (for example `classpath:db/migration/job`) and the names of instances that must migrate first.
+The constructor rejects nulls and copies both lists; it validates neither the name nor the locations.
+The migration engine that consumes a definition interprets `locations` and enforces the name rules —
+`dev.vertique:vertique-db-flyway` is the only engine today, and its rules are documented there.
+
+Definitions carry no runtime services. A module or application contributes one with
+`@Provides @IntoSet MigrationDefinition`. A definition's name is also the key under which
+`db.schemas` places that instance's tables.
+
 ### Migration contract
 
 ```java
@@ -518,6 +579,15 @@ Provides `DbPoolConfig` as a `@Singleton`, parsed from the `db` config section. 
 `DbPoolConfig.validate()` — missing host, non-positive pool size, a trust store under `sslMode`
 `DISABLE` — is logged at WARN when the binding is created; a warning never fails startup. Include it
 alongside a vendor module.
+
+It also provides `DbSchemas` as a `@Singleton`, read from `db.schemas` (see
+[Schema placement](#schema-placement-dbschemas)). The binding is created when first requested and
+opens no connection, so a malformed `db.schemas` fails the request for `DbSchemas` (or for an adapter
+that needs it), not component creation.
+
+An application that supplies its own `DbSchemas` binding must not include `DbModule`: Dagger reports
+the duplicate binding at compile time and there is no silent precedence. Such a component also
+provides `DbPoolConfig` itself.
 
 ```java
 @Singleton
@@ -677,6 +747,38 @@ Unknown keys are ignored. `keyPath` and `certPath` are a pair — mutual TLS nee
 `password`, `trustStorePassword`, and `properties` are write-only: they are read from configuration
 but never serialized back out by Jackson, and `toString()` renders them as `<redacted>`.
 
+### Schema placement (`db.schemas`)
+
+`DbModule` also reads the optional `db.schemas` object into `DbSchemas`. It is not a `DbPoolConfig`
+field.
+
+```json
+{
+  "db": {
+    "schemas": {
+      "job": "jobs",
+      "app": "app_data"
+    }
+  }
+}
+```
+
+- **Keys are open.** Any name works: an adapter's instance name (`job`, `workflow`, `inbox-outbox`)
+  or an application name such as `app`. A key needs no migration declaration, and a key that matches
+  no instance is valid.
+- **Values are non-blank strings**, kept verbatim. No vendor identifier rule, quoting or length limit
+  applies here; the consumer validates at its own engine boundary (for PostgreSQL,
+  `PgTableNames.qualify` when an adapter is constructed).
+- **Absent means unqualified.** No `db` section, an absent or JSON-null `schemas`, `{}` or an absent
+  key yield no entry, and SQL for that name stays unqualified.
+- **Malformed input fails with a `ConfigurationException`** that names the setting and never echoes
+  a value: a `db` that is not an object names `db`; a `schemas` that is not an object, or a blank key,
+  names `db.schemas`; a null, non-string or blank value names `db.schemas.<key>`.
+
+**Check the keys yourself.** Open keys cannot be validated, so a misspelled key (`workflows` for
+`workflow`) leaves the intended placement unmapped and its SQL unqualified, with no error. Compare
+`DbSchemas.mappings()` with your instance names before deploying.
+
 ---
 
 ## Extension Points
@@ -794,6 +896,10 @@ compile-time constant or a developer-controlled string, never anything derived f
 | `IllegalStateException: A mapper must be configured via .mapping() …` | A row-mapping terminal called without `.mapping(...)` |
 | Statement runs outside its transaction | A builder inside `transaction().execute(...)` missing `.on(conn)` |
 | Pool never grows past the first connection | A `PoolConnectHandler` that does not call `conn.close()` |
+| `ConfigurationException` naming `db.schemas` or `db.schemas.<key>` | `db.schemas` is not an object, has a blank key, or a value that is null, not a string, or blank |
+| Tables land in the default schema although `db.schemas` is set | The key is misspelled or does not match the instance name; `DbSchemas.mappings()` shows what was read |
+| Dagger duplicate-binding error for `DbSchemas` | The application provides its own `DbSchemas` and also includes `DbModule`; pick one source |
+| Application queries miss the schema the migrations used | Hand-written SQL names the table without `PgTableNames.qualify(schemas, name, table)` |
 | Unique-violation surfaces as HTTP 500 | No boundary translation; catch `UniqueConstraintViolationException` and rethrow `ConflictException` |
 | Syntax error after `ORDER BY` | Base SQL for a paginated query already contained `ORDER BY`, `LIMIT`, or `OFFSET` |
 
