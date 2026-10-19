@@ -22,8 +22,10 @@ import dev.vertique.core.extension.OrderedExtension;
 import dev.vertique.core.lifecycle.ComposeValidator;
 import dev.vertique.core.validation.BeanValidationException;
 import dev.vertique.core.validation.BeanValidator;
+import dev.vertique.core.validation.JakartaPathPointers;
 import dev.vertique.core.validation.ViolationCarrier;
 import dev.vertique.core.validation.ViolationDetail;
+import dev.vertique.core.validation.ViolationPathForm;
 import dev.vertique.input.processing.InputObjectProcessor;
 import dev.vertique.rest.core.ProblemDetail;
 import dev.vertique.rest.core.RestValidationException;
@@ -397,12 +399,12 @@ public abstract class RestModule {
                         .type("application/problem+json")
                         .build())
                 .on(BeanValidationException.class, ex -> Response.status(400)
-                        .entity(ValidationProblemDetail.of(ex.getMessage(), toErrors(ex.violations())))
+                        .entity(ValidationProblemDetail.of(ex.getMessage(), toErrors(ex)))
                         .type("application/problem+json")
                         .build())
                 .on(ValidationException.class, ex -> {
                     Object body = ex instanceof ViolationCarrier carrier
-                            ? ValidationProblemDetail.of(ex.getMessage(), toErrors(carrier.violations()))
+                            ? ValidationProblemDetail.of(ex.getMessage(), toErrors(carrier))
                             : ProblemDetail.of(400, ex.getMessage());
                     return Response.status(400)
                             .entity(body)
@@ -471,10 +473,46 @@ public abstract class RestModule {
                                         .build());
     }
 
-    private static List<ValidationErrorDetail> toErrors(List<ViolationDetail> violations) {
+    /** The most carried-detail paths logged for one response. */
+    private static final int MAX_LOGGED_CARRIER_PATHS = 100;
+
+    /**
+     * Renders the violations of a carrier by the path form it declares. A {@link
+     * ViolationPathForm#JSON_POINTER} carrier's detail paths become {@code pointer}; every other form
+     * renders neither {@code pointer} nor {@code parameter}, because a Java property path is not a
+     * request location, and logs the neutralized path and the type instead.
+     */
+    private static List<ValidationErrorDetail> toErrors(ViolationCarrier carrier) {
+        List<ViolationDetail> violations = carrier.violations();
+        if (carrier.violationPathForm() == ViolationPathForm.JSON_POINTER) {
+            return violations.stream()
+                    .map(v -> ValidationErrorDetail.ofPointer(v.path(), v.message())
+                            .withType(v.type())
+                            .withArgs(v.args()))
+                    .toList();
+        }
+        logCarrierPaths(violations);
         return violations.stream()
-                .map(v -> new ValidationErrorDetail(v.path(), v.message(), null, v.type(), v.args()))
+                .map(v -> new ValidationErrorDetail(null, null, null, v.message(), null, v.type(), v.args()))
                 .toList();
+    }
+
+    private static void logCarrierPaths(List<ViolationDetail> violations) {
+        if (!log.isDebugEnabled()) {
+            return;
+        }
+        int logged = 0;
+        for (ViolationDetail violation : violations) {
+            if (logged == MAX_LOGGED_CARRIER_PATHS) {
+                return;
+            }
+            String path = violation.path();
+            if (path == null || path.isEmpty()) {
+                continue;
+            }
+            log.debug("carried violation path={} type={}", JakartaPathPointers.loggablePath(path), violation.type());
+            logged++;
+        }
     }
 
     /**

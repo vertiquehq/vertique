@@ -9,8 +9,10 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 
 import dev.vertique.core.exception.BusinessRuleException;
 import dev.vertique.core.exception.ValidationException;
+import dev.vertique.core.validation.BeanValidationException;
 import dev.vertique.core.validation.ViolationCarrier;
 import dev.vertique.core.validation.ViolationDetail;
+import dev.vertique.core.validation.ViolationPathForm;
 import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.DisplayName;
@@ -47,6 +49,20 @@ class WorkflowInvalidPayloadExceptionTest {
         }
         assertThat(withCause.getCause()).isSameAs(cause);
         assertThat(withoutCause.getCause()).isNull();
+    }
+
+    @Test
+    @DisplayName("declares JSON pointer paths while a bean validation exception keeps the Java property path form")
+    void declaresJsonPointerPaths() {
+        // Given: a workflow payload rejection and a bean validation exception
+        WorkflowInvalidPayloadException rejection =
+                new WorkflowInvalidPayloadException("invalid decision payload", List.of(DETAIL));
+        BeanValidationException beanValidation = new BeanValidationException(
+                "validation failed", List.of(ViolationDetail.of("name", "must not be blank")));
+
+        // When / Then: each reports the form of its detail paths
+        assertThat(rejection.violationPathForm()).isEqualTo(ViolationPathForm.JSON_POINTER);
+        assertThat(beanValidation.violationPathForm()).isEqualTo(ViolationPathForm.JAVA_PROPERTY_PATH);
     }
 
     @Nested

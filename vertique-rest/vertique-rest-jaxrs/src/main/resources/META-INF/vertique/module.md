@@ -537,8 +537,15 @@ The framework's `ExceptionMapper<Throwable>`, pre-configured by `RestModule`:
 | `UnavailableException` (core.exception) | 503 | `ProblemDetail` |
 | `Throwable` (catch-all) | 500 | `ProblemDetail` with the fixed detail `"Internal Server Error"` — the exception message is never echoed. Logging is deferred to `ErrorPipeline` (see below) so a Vert.x 4xx fallback is not recorded as an unhandled server fault |
 
-`errors[].path` is producer-defined: Jakarta dotted paths from `BeanValidationException`, `#/...`
-fragments from `RestValidationException`, and RFC 6901 pointers from workflow payload exceptions.
+A `ViolationCarrier` detail renders by the carrier's declared `violationPathForm()`. A `JSON_POINTER`
+carrier (a workflow payload exception) gives each entry a `pointer` equal to the detail path, `""` included,
+with no `location` and no `parameter`; the pointer is relative to the document the producer validated. Every
+other form, `BeanValidationException` included, gives an entry with neither `pointer` nor `parameter`, only
+`detail`, `type` and `args`, because a Java property path is not a request location. For such a carrier the
+mapper logs at DEBUG, for each of the first 100 details with a non-empty path, the path (a string path stops
+at its first bracket and has control and format characters removed) and the type, never the message. A
+third-party carrier whose paths are pointers renders no location until it overrides `violationPathForm()`.
+Entries of a `RestValidationException` are rendered as built.
 
 The mapper dispatches by class and checks for `ViolationCarrier` inside the `ValidationException`
 handler. Overriding the `ValidationException` mapping changes how every carrier that is not itself

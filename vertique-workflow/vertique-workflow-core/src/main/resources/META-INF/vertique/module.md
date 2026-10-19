@@ -382,8 +382,12 @@ WorkflowActorMapper customActorMapper() {
 `WorkflowInvalidPayloadException` reports a caller-supplied payload that is not acceptable. It is a
 `ViolationCarrier`, so the default REST mapping renders it as a structured validation problem with one
 error per violation instead of a message-only 400. `violations()` returns an unmodifiable list of
-`ViolationDetail` (`path`, `message`, `type`, `args`) and is never `null`. Each `path` is an RFC 6901
-JSON pointer. Details built by the engine are value-free (no payload value, decision name, class name,
+`ViolationDetail` (`path`, `message`, `type`, `args`) and is never `null`. `violationPathForm()` returns
+`JSON_POINTER`, so each `path` is an RFC 6901 JSON pointer. The pointer is relative to the payload the engine
+validated and is named with the engine's own mapper; it can differ from a pointer into the request body that
+carried the payload, for example when the route binds names differently or nests the payload. An
+application-built instance is always rendered as `JSON_POINTER`, so every detail path must be `""` or start
+with `/` and must contain no key the client chose. Details built by the engine are value-free (no payload value, decision name, class name,
 decode message or map key). Constraint messages produced by an application's constraints pass through
 unchanged, so applications must not interpolate the validated value. A binding failure keeps the decode
 exception as the cause, and it can carry submitted text, so applications must not log the cause of a
