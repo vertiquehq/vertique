@@ -631,6 +631,7 @@ not replace Flyway's per-history locks.
   `PREFLIGHT` during a check. The network timeout bounds only a reply the runner is waiting for; it
   does not end an idle guard connection during a long native migration, and the idle-session caveat
   under [Operator exclusions](#execution-scope) still applies.
+- **Lock key.** The lock is the two-integer advisory lock `(1448365393, 1296648018)`, visible in `pg_locks` with `locktype = 'advisory'` while a run holds it. Advisory locks are database-wide, so any role that can connect to the database can hold the same key; treat a `COORDINATION` timeout as either a concurrent run or a foreign holder of that key.
 - **Not taken when not needed.** `VALIDATE`-only runs, legacy runs and fully disabled runs never take or
   wait for the lock.
 - **Liveness.** Before each instance the guard confirms the same backend still owns the lock. If the

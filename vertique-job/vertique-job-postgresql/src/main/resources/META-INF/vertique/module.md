@@ -245,7 +245,7 @@ Give the job tables their own schema and history table:
 ### Single Flyway (legacy) configuration
 
 When `flyway.instances` is absent, the default `classpath:db/migration` location already includes the
-bundled `db/migration/job` scripts, so no extra location is needed:
+bundled `db/migration/job` scripts, so no extra location is needed. Every bundled adapter ships its own `V1` script, so one history can hold only one of them (a second would fail with a duplicate version); to run several adapters, use named instances. The single-history example:
 
 ```json
 {
