@@ -3,6 +3,7 @@
 
 package dev.vertique.rest.validation;
 
+import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -122,7 +123,9 @@ public class FileVerifierRejectionIT {
                         assertEquals(1, errors.size());
                         assertEquals(
                                 new ValidationErrorDetail(
+                                        null,
                                         "upload[1]",
+                                        null,
                                         "application verifier rejected the second physical upload",
                                         "file",
                                         "applicationPolicyRejected",
@@ -153,7 +156,9 @@ public class FileVerifierRejectionIT {
                         assertEquals(1, errors.size(), "an empty verifier set must add no errors beyond baseline");
                         assertEquals(
                                 new ValidationErrorDetail(
+                                        null,
                                         "upload",
+                                        null,
                                         "file part content type is not allowed",
                                         "file",
                                         "fileContentTypeNotAllowed",
@@ -165,7 +170,65 @@ public class FileVerifierRejectionIT {
                 }));
     }
 
-    private Future<HttpServer> startServer(Set<FileContentVerifier> verifiers, UploadResource resource) {
+    @Test
+    @DisplayName("A verifier rejection of an undeclared part carries no part name and a declared part keeps its name")
+    void verifierRejectionOfAnUndeclaredPartCarriesNoName(VertxTestContext ctx) {
+        MixedUploadResource resource = new MixedUploadResource();
+        RejectByNameVerifier verifier = new RejectByNameVerifier();
+
+        verifier.rejectedPartName = "ZZPART";
+        startServer(Set.of(verifier), resource)
+                .compose(listeningServer -> {
+                    server = listeningServer;
+                    return postMultipart("/mixed", declaredAndUndeclaredFiles());
+                })
+                .compose(undeclaredRejection -> {
+                    verifier.rejectedPartName = "avatar";
+                    return postMultipart("/mixed", declaredAndUndeclaredFiles())
+                            .map(declaredRejection -> List.of(undeclaredRejection, declaredRejection));
+                })
+                .onComplete(ctx.succeeding(results -> {
+                    ctx.verify(() -> {
+                        HttpResult undeclared = results.get(0);
+                        HttpResult declared = results.get(1);
+                        assertEquals(400, undeclared.statusCode());
+                        assertEquals(400, declared.statusCode());
+                        JsonArray undeclaredErrors = new JsonObject(undeclared.body()).getJsonArray("errors");
+                        JsonArray declaredErrors = new JsonObject(declared.body()).getJsonArray("errors");
+                        assertEquals(1, undeclaredErrors.size());
+                        assertEquals(1, declaredErrors.size());
+                        JsonObject undeclaredEntry = undeclaredErrors.getJsonObject(0);
+                        JsonObject declaredEntry = declaredErrors.getJsonObject(0);
+                        assertAll(
+                                () -> assertFalse(undeclaredEntry.containsKey("pointer"), undeclaredEntry.encode()),
+                                () -> assertFalse(undeclaredEntry.containsKey("parameter"), undeclaredEntry.encode()),
+                                () -> assertFalse(undeclaredEntry.containsKey("path"), undeclaredEntry.encode()),
+                                () -> assertEquals("file", undeclaredEntry.getString("location")),
+                                () -> assertEquals("applicationPolicyRejected", undeclaredEntry.getString("type")),
+                                () -> assertEquals(
+                                        "application verifier rejected the upload",
+                                        undeclaredEntry.getString("detail")),
+                                () -> assertEquals(
+                                        REJECTION_ARGS,
+                                        undeclaredEntry.getJsonObject("args").getMap()),
+                                () -> assertFalse(
+                                        undeclared.body().contains("ZZPART"),
+                                        "the response must not echo the client-chosen part name"),
+                                () -> assertEquals("avatar", declaredEntry.getString("parameter")),
+                                () -> assertEquals("file", declaredEntry.getString("location")),
+                                () -> assertFalse(declaredEntry.containsKey("pointer"), declaredEntry.encode()),
+                                () -> assertFalse(declaredEntry.containsKey("path"), declaredEntry.encode()),
+                                () -> assertFalse(
+                                        declared.body().contains("ZZPART"),
+                                        "the response must not echo the client-chosen part name"),
+                                () -> assertFalse(
+                                        resource.invoked.get(), "a rejection must prevent resource invocation"));
+                    });
+                    ctx.completeNow();
+                }));
+    }
+
+    private Future<HttpServer> startServer(Set<FileContentVerifier> verifiers, Object resource) {
         RestTestContributions.Builder contributions = RestTestContributions.builder();
         verifiers.forEach(contributions::addFileContentVerifier);
         return RestTestMounts.startServer(vertx, MountFixtures.mount(vertx, contributions.build()), Set.of(resource));
@@ -182,7 +245,11 @@ public class FileVerifierRejectionIT {
      * @return a future of the response status, Content-Type, and body text
      */
     private Future<HttpResult> postMultipart(Buffer body) {
-        return client.post(server.actualPort(), "127.0.0.1", "/files")
+        return postMultipart("/files", body);
+    }
+
+    private Future<HttpResult> postMultipart(String path, Buffer body) {
+        return client.post(server.actualPort(), "127.0.0.1", path)
                 .putHeader("Content-Type", MultipartBodies.contentType())
                 .sendBuffer(body)
                 .map(response -> new HttpResult(
@@ -200,8 +267,21 @@ public class FileVerifierRejectionIT {
     }
 
     private static void appendFilePart(Buffer body, String fileName, byte[] content) {
+        appendNamedFilePart(body, "upload", fileName, content);
+    }
+
+    private static Buffer declaredAndUndeclaredFiles() {
+        Buffer body = Buffer.buffer();
+        appendNamedFilePart(body, "ZZPART", "undeclared.png", new byte[] {1});
+        appendNamedFilePart(body, "avatar", "declared.png", new byte[] {2});
+        appendAscii(body, "--" + MultipartBodies.BOUNDARY + "--\r\n");
+        return body;
+    }
+
+    private static void appendNamedFilePart(Buffer body, String partName, String fileName, byte[] content) {
         appendAscii(body, "--" + MultipartBodies.BOUNDARY + "\r\n");
-        appendAscii(body, "Content-Disposition: form-data; name=\"upload\"; filename=\"" + fileName + "\"\r\n");
+        appendAscii(
+                body, "Content-Disposition: form-data; name=\"" + partName + "\"; filename=\"" + fileName + "\"\r\n");
         appendAscii(body, "Content-Type: image/png\r\n\r\n");
         body.appendBytes(content);
         appendAscii(body, "\r\n");
@@ -239,6 +319,40 @@ public class FileVerifierRejectionIT {
         public String upload(@FormParam("upload") @FilePart(allowedTypes = {"image/png"}) List<FileUpload> uploads) {
             invoked.set(true);
             return Integer.toString(uploads.size());
+        }
+    }
+
+    /**
+     * Resource declaring one named part and an aggregate list of every upload, so a part named
+     * outside the declaration is verified only because the aggregate exists.
+     */
+    @Path("/mixed")
+    public static class MixedUploadResource {
+
+        private final AtomicBoolean invoked = new AtomicBoolean();
+
+        @POST
+        @Consumes(MediaType.MULTIPART_FORM_DATA)
+        @Produces(MediaType.TEXT_PLAIN)
+        @Operation(operationId = "verifyMixedUploads")
+        public String upload(@FormParam("avatar") FileUpload avatar, List<FileUpload> everyUpload) {
+            invoked.set(true);
+            return Integer.toString(everyUpload.size());
+        }
+    }
+
+    /** Rejects the physical upload whose part name equals the currently selected name. */
+    private static final class RejectByNameVerifier implements FileContentVerifier {
+
+        private volatile String rejectedPartName;
+
+        @Override
+        public Future<FileVerificationResult> verify(FileUpload part) {
+            if (part.name().equals(rejectedPartName)) {
+                return Future.succeededFuture(FileVerificationResult.rejected(
+                        "application verifier rejected the upload", "applicationPolicyRejected", REJECTION_ARGS));
+            }
+            return Future.succeededFuture(FileVerificationResult.accepted());
         }
     }
 

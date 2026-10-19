@@ -148,7 +148,26 @@ class WebValidationGateVerifierTest {
         RestValidationException failure = assertInstanceOf(RestValidationException.class, captureFailure(ctx));
         assertEquals(
                 List.of(new ValidationErrorDetail(
-                        "avatar", "application policy rejected the upload", "file", "macroPolicy", args)),
+                        null, "avatar", null, "application policy rejected the upload", "file", "macroPolicy", args)),
+                failure.errors());
+        verify(ctx, never()).next();
+    }
+
+    @Test
+    @DisplayName("A rejection of an upload matched only by an aggregate constraint carries no part name")
+    void rejectedUndeclaredPartCarriesNoName() {
+        Map<String, Object> args = Map.of("rule", "no-macros");
+        FileContentVerifier verifier = verifierReturning(Future.succeededFuture(
+                FileVerificationResult.rejected("application policy rejected the upload", "macroPolicy", args)));
+        Handler<RoutingContext> gate = gate(Set.of(verifier), List.of(new FilePartDescriptor(null, List.of(), -1)));
+        RoutingContext ctx = context(List.of(upload("ZZPART")));
+
+        gate.handle(ctx);
+
+        RestValidationException failure = assertInstanceOf(RestValidationException.class, captureFailure(ctx));
+        assertEquals(
+                List.of(new ValidationErrorDetail(
+                        null, null, null, "application policy rejected the upload", "file", "macroPolicy", args)),
                 failure.errors());
         verify(ctx, never()).next();
     }
@@ -182,7 +201,9 @@ class WebValidationGateVerifierTest {
         RestValidationException failure = assertInstanceOf(RestValidationException.class, captureFailure(ctx));
         assertEquals(
                 List.of(new ValidationErrorDetail(
+                        null,
                         "avatar",
+                        null,
                         "file part content type is not allowed",
                         "file",
                         "fileContentTypeNotAllowed",
@@ -281,7 +302,13 @@ class WebValidationGateVerifierTest {
         RestValidationException failure = assertInstanceOf(RestValidationException.class, captureFailure(ctx));
         assertEquals(
                 List.of(new ValidationErrorDetail(
-                        "avatar[1]", "application policy rejected the upload", "file", "filePolicy", Map.of())),
+                        null,
+                        "avatar[1]",
+                        null,
+                        "application policy rejected the upload",
+                        "file",
+                        "filePolicy",
+                        Map.of())),
                 failure.errors());
         verify(verifier, times(1)).verify(first);
         verify(verifier, times(1)).verify(second);

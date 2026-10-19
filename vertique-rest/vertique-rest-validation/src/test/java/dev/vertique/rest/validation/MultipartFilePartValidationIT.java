@@ -147,7 +147,9 @@ public class MultipartFilePartValidationIT {
                 ValidationErrorDetail actual = errors.getJsonObject(0).mapTo(ValidationErrorDetail.class);
                 assertEquals(
                         new ValidationErrorDetail(
+                                null,
                                 "avatar",
+                                null,
                                 "file part content type is not allowed",
                                 "file",
                                 "fileContentTypeNotAllowed",
@@ -172,7 +174,9 @@ public class MultipartFilePartValidationIT {
                 ValidationErrorDetail actual = errors.getJsonObject(0).mapTo(ValidationErrorDetail.class);
                 assertEquals(
                         new ValidationErrorDetail(
+                                null,
                                 "avatar",
+                                null,
                                 "file part declares a malformed or wildcard content type",
                                 "file",
                                 "fileContentTypeMalformed",

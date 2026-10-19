@@ -700,8 +700,10 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
 
         /**
          * Snapshots physical uploads in request order. Each upload instance is included at most once,
-         * and occurrence pointers count all earlier unique uploads with the same part name. The same
-         * frozen snapshot feeds synchronous constraints and deep verification.
+         * and occurrence indexes count all earlier unique uploads with the same part name. An upload
+         * whose part name is declared is named by that declared name plus its occurrence index; an
+         * upload whose part name is not declared is not named at all, because the name is the
+         * client's. The same frozen snapshot feeds synchronous constraints and deep verification.
          */
         private List<ApplicableUpload> snapshotUploads(RoutingContext ctx) {
             if (namedFileDescriptors.isEmpty() && aggregateFileDescriptor == null) {
@@ -718,8 +720,11 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
 
                 String partName = upload.name();
                 int occurrence = occurrencesByName.merge(partName, 1, Integer::sum) - 1;
-                String pointer = occurrence == 0 ? partName : partName + "[" + occurrence + "]";
-                uploads.add(new ApplicableUpload(upload, pointer));
+                String parameter = null;
+                if (namedFileDescriptors.containsKey(partName)) {
+                    parameter = occurrence == 0 ? partName : partName + "[" + occurrence + "]";
+                }
+                uploads.add(new ApplicableUpload(upload, parameter));
             }
             return List.copyOf(uploads);
         }
@@ -769,8 +774,8 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
                                 new IllegalStateException("FileContentVerifier completed with a null result"));
                     }
                     if (result instanceof FileVerificationResult.Rejected rejected) {
-                        ValidationErrorDetail detail = new ValidationErrorDetail(
-                                upload.pointer(), rejected.detail(), "file", rejected.type(), rejected.args());
+                        ValidationErrorDetail detail =
+                                fileDetail(upload.parameter(), rejected.detail(), rejected.type(), rejected.args());
                         return Future.failedFuture(
                                 new RestValidationException("Request validation failed", List.of(detail)));
                     }
@@ -782,7 +787,7 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
         /**
          * Validates each physical upload at most once, in request order. Exact case-sensitive named
          * constraints take precedence; the aggregate constraint applies only when no named constraint
-         * matches. Occurrence pointers count every earlier physical upload with the same part name,
+         * matches. Occurrence indexes count every earlier physical upload with the same part name,
          * including conforming ones. Size is checked before declared content type.
          *
          * @param uploads  the frozen physical-upload snapshot
@@ -801,10 +806,9 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
 
                 FilePartDescriptor descriptor = filePart.descriptor();
                 if (descriptor.maxSizeBytes() >= 0 && upload.size() > descriptor.maxSizeBytes()) {
-                    failures.add(new ValidationErrorDetail(
-                            applicable.pointer(),
+                    failures.add(fileDetail(
+                            applicable.parameter(),
                             "file part exceeds the maximum allowed size",
-                            "file",
                             "fileMaxSize",
                             Map.of("maxSizeBytes", descriptor.maxSizeBytes())));
                     if (failFast) {
@@ -813,12 +817,22 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
                 }
 
                 if (!descriptor.allowedTypes().isEmpty()) {
-                    validateDeclaredContentType(upload.contentType(), applicable.pointer(), filePart, failures);
+                    validateDeclaredContentType(upload.contentType(), applicable.parameter(), filePart, failures);
                     if (failFast && !failures.isEmpty()) {
                         return;
                     }
                 }
             }
+        }
+
+        /**
+         * Builds one file-part entry: {@code parameter} is the declared part name with its occurrence
+         * index, or {@code null} for an upload whose part name is not declared, which then carries
+         * no name at all.
+         */
+        private static ValidationErrorDetail fileDetail(
+                @Nullable String parameter, String detail, String type, @Nullable Map<String, Object> args) {
+            return new ValidationErrorDetail(null, parameter, null, detail, "file", type, args);
         }
 
         /**
@@ -828,15 +842,14 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
          */
         private static void validateDeclaredContentType(
                 String rawContentType,
-                String pointer,
+                @Nullable String parameter,
                 PreparedFilePart filePart,
                 List<ValidationErrorDetail> failures) {
             List<String> allowedTypes = filePart.descriptor().allowedTypes();
             if (rawContentType == null || rawContentType.isBlank()) {
-                failures.add(new ValidationErrorDetail(
-                        pointer,
+                failures.add(fileDetail(
+                        parameter,
                         "file part declares no content type",
-                        "file",
                         "fileContentTypeMissing",
                         Map.of("allowedTypes", allowedTypes)));
                 return;
@@ -844,20 +857,18 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
 
             MediaType declared = parseStrictDeclaredMediaType(rawContentType);
             if (declared == null || declared.isWildcardType() || declared.isWildcardSubtype()) {
-                failures.add(new ValidationErrorDetail(
-                        pointer,
+                failures.add(fileDetail(
+                        parameter,
                         "file part declares a malformed or wildcard content type",
-                        "file",
                         "fileContentTypeMalformed",
                         Map.of("allowedTypes", allowedTypes)));
                 return;
             }
 
             if (!isAllowedDeclaredType(declared, filePart.allowedTypes())) {
-                failures.add(new ValidationErrorDetail(
-                        pointer,
+                failures.add(fileDetail(
+                        parameter,
                         "file part content type is not allowed",
-                        "file",
                         "fileContentTypeNotAllowed",
                         Map.of("allowedTypes", allowedTypes)));
             }
@@ -997,8 +1008,12 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
             }
         }
 
-        /** One physical upload and its frozen request-occurrence pointer. */
-        private record ApplicableUpload(FileUpload part, String pointer) {}
+        /**
+         * One physical upload and its frozen report name: the declared part name with its occurrence
+         * index, or {@code null} when the upload's part name is not declared.
+         */
+        private record ApplicableUpload(
+                FileUpload part, @Nullable String parameter) {}
 
         /** One file-part declaration with its allowed types parsed once when the gate is built. */
         private record PreparedFilePart(FilePartDescriptor descriptor, List<MediaType> allowedTypes) {

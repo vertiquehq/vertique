@@ -3,9 +3,11 @@
 
 package dev.vertique.rest.validation;
 
+import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -70,7 +72,9 @@ class WebValidationGateFilePartTest {
 
         assertEquals(
                 List.of(new ValidationErrorDetail(
+                        null,
                         "avatar",
+                        null,
                         "file part exceeds the maximum allowed size",
                         "file",
                         "fileMaxSize",
@@ -179,8 +183,8 @@ class WebValidationGateFilePartTest {
 
         assertEquals(
                 List.of(
-                        fileError("avatar", "file part content type is not allowed", "fileContentTypeNotAllowed"),
-                        fileError("document", "file part content type is not allowed", "fileContentTypeNotAllowed")),
+                        undeclaredFileError("file part content type is not allowed", "fileContentTypeNotAllowed"),
+                        undeclaredFileError("file part content type is not allowed", "fileContentTypeNotAllowed")),
                 captureFailure(ctx).errors());
     }
 
@@ -290,7 +294,7 @@ class WebValidationGateFilePartTest {
         gate.handle(ctx);
 
         assertEquals(
-                List.of(fileError("avatar", "file part content type is not allowed", "fileContentTypeNotAllowed")),
+                List.of(undeclaredFileError("file part content type is not allowed", "fileContentTypeNotAllowed")),
                 captureFailure(ctx).errors());
     }
 
@@ -353,6 +357,46 @@ class WebValidationGateFilePartTest {
         assertFalse(serialized.contains("/tmp/private-upload-path"));
         assertFalse(serialized.contains("application/x-private-declared-type"));
         assertFalse(serialized.contains("987654321"));
+    }
+
+    @Test
+    @DisplayName("File entries carry the declared name for declared parts and no name for undeclared parts")
+    void fileEntriesNeverCarryAClientChosenPartName() {
+        Handler<RoutingContext> gate = gate(
+                strategy,
+                List.of(),
+                List.of(new FilePartDescriptor("avatar", List.of(), 4), new FilePartDescriptor(null, List.of(), 8)),
+                OperationSchemas.empty());
+        RoutingContext ctx = context(
+                List.of(
+                        upload("avatar", "image/png", 4),
+                        upload("avatar", "image/png", 5),
+                        upload("ZZPART", "image/png", 9)),
+                null,
+                null);
+
+        gate.handle(ctx);
+
+        List<ValidationErrorDetail> errors = captureFailure(ctx).errors();
+        assertEquals(2, errors.size(), "one entry for the declared second upload and one for the undeclared upload");
+        ValidationErrorDetail declared = errors.get(0);
+        ValidationErrorDetail undeclared = errors.get(1);
+        assertAll(
+                () -> assertEquals("avatar[1]", declared.parameter(), "declared occurrence is named by parameter"),
+                () -> assertEquals("file", declared.location()),
+                () -> assertNull(declared.pointer(), "a declared part has no pointer"),
+                () -> assertNull(declared.path(), "a declared part has no path"),
+                () -> assertEquals("fileMaxSize", declared.type()),
+                () -> assertEquals(Map.of("maxSizeBytes", 4L), declared.args()),
+                () -> assertNull(undeclared.pointer(), "an undeclared part has no pointer"),
+                () -> assertNull(undeclared.parameter(), "an undeclared part has no parameter"),
+                () -> assertNull(undeclared.path(), "an undeclared part has no path"),
+                () -> assertEquals("file", undeclared.location()),
+                () -> assertEquals("fileMaxSize", undeclared.type()),
+                () -> assertEquals(Map.of("maxSizeBytes", 8L), undeclared.args()),
+                () -> assertFalse(
+                        errors.stream().anyMatch(WebValidationGateFilePartTest::mentionsClientPartName),
+                        "no entry member may contain the client-chosen part name"));
     }
 
     @Test
@@ -436,8 +480,17 @@ class WebValidationGateFilePartTest {
         return assertInstanceOf(RestValidationException.class, failure.getValue());
     }
 
-    private static ValidationErrorDetail fileError(String path, String detail, String type) {
-        return new ValidationErrorDetail(path, detail, "file", type, Map.of("allowedTypes", PNG_ONLY));
+    private static boolean mentionsClientPartName(ValidationErrorDetail entry) {
+        return Json.encode(entry).contains("ZZPART") || String.valueOf(entry).contains("ZZPART");
+    }
+
+    private static ValidationErrorDetail fileError(String declaredName, String detail, String type) {
+        return new ValidationErrorDetail(
+                null, declaredName, null, detail, "file", type, Map.of("allowedTypes", PNG_ONLY));
+    }
+
+    private static ValidationErrorDetail undeclaredFileError(String detail, String type) {
+        return new ValidationErrorDetail(null, null, null, detail, "file", type, Map.of("allowedTypes", PNG_ONLY));
     }
 
     private static JaxRsOperationDescriptor descriptor(

@@ -283,8 +283,16 @@ The gate processes request data in this order:
 
 Aggregate/fail-fast mode applies to stages 1–3. Verifier execution is always sequential and
 fail-fast. Each physical `FileUpload` instance is checked and verified at most once even when more
-than one resource parameter exposes it. Same-name duplicate uploads are distinct and use error
-paths `name`, `name[1]`, and so on.
+than one resource parameter exposes it. Same-name duplicate uploads are distinct.
+
+**Where a file-part failure is located.** A size, content-type or verifier failure of an upload whose
+part name is declared by a `@FilePart` parameter carries `parameter`: the declared name, followed by
+`[n]` where n counts the earlier uploads with the same name (`avatar`, `avatar[1]`), and
+`location: "file"`;
+it never carries `pointer`. An upload whose part name is not declared — one matched only by an
+aggregate `List<FileUpload>` constraint, or verified only because such an aggregate exists — carries
+neither `pointer` nor `parameter`, and keeps `location: "file"`, because no declared name stands for
+it. The client's part name is never placed in a response.
 
 **Where a schema failure is located.** A body failure carries its location in `pointer`, an RFC 6901
 JSON Pointer over the schema's own names: `/pet/name`, `""` for the whole body, `/` for the member
