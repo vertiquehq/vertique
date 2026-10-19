@@ -363,7 +363,7 @@ Filesystem locations are not compared; keep them disjoint yourself.
 
 ```java
 FlywayMigrationRunner runner = ...;
-List<MigrationInstanceView> views = runner.instances();      // blocking; call off the event loop
+List<MigrationInstanceView> views = runner.instances();      // configuration only: no connection, no I/O
 Future<MigrationReport> report = runner.run(vertx);          // runs on a Vert.x worker
 ```
 
