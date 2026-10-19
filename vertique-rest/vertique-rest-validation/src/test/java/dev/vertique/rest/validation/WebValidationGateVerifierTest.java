@@ -148,7 +148,7 @@ class WebValidationGateVerifierTest {
         RestValidationException failure = assertInstanceOf(RestValidationException.class, captureFailure(ctx));
         assertEquals(
                 List.of(new ValidationErrorDetail(
-                        null, "avatar", null, "application policy rejected the upload", "file", "macroPolicy", args)),
+                        null, "avatar", "application policy rejected the upload", "file", "macroPolicy", args)),
                 failure.errors());
         verify(ctx, never()).next();
     }
@@ -167,7 +167,7 @@ class WebValidationGateVerifierTest {
         RestValidationException failure = assertInstanceOf(RestValidationException.class, captureFailure(ctx));
         assertEquals(
                 List.of(new ValidationErrorDetail(
-                        null, null, null, "application policy rejected the upload", "file", "macroPolicy", args)),
+                        null, null, "application policy rejected the upload", "file", "macroPolicy", args)),
                 failure.errors());
         verify(ctx, never()).next();
     }
@@ -203,7 +203,6 @@ class WebValidationGateVerifierTest {
                 List.of(new ValidationErrorDetail(
                         null,
                         "avatar",
-                        null,
                         "file part content type is not allowed",
                         "file",
                         "fileContentTypeNotAllowed",
@@ -302,13 +301,7 @@ class WebValidationGateVerifierTest {
         RestValidationException failure = assertInstanceOf(RestValidationException.class, captureFailure(ctx));
         assertEquals(
                 List.of(new ValidationErrorDetail(
-                        null,
-                        "avatar[1]",
-                        null,
-                        "application policy rejected the upload",
-                        "file",
-                        "filePolicy",
-                        Map.of())),
+                        null, "avatar[1]", "application policy rejected the upload", "file", "filePolicy", Map.of())),
                 failure.errors());
         verify(verifier, times(1)).verify(first);
         verify(verifier, times(1)).verify(second);

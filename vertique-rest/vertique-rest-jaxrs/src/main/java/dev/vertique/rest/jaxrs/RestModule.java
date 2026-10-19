@@ -493,7 +493,7 @@ public abstract class RestModule {
         }
         logCarrierPaths(violations);
         return violations.stream()
-                .map(v -> new ValidationErrorDetail(null, null, null, v.message(), null, v.type(), v.args()))
+                .map(v -> new ValidationErrorDetail(null, null, v.message(), null, v.type(), v.args()))
                 .toList();
     }
 

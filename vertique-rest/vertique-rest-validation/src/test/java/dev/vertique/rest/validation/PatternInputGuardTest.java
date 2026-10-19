@@ -2593,7 +2593,6 @@ class PatternInputGuardTest {
                 "the " + type + " detail",
                 () -> assertEquals(path.isEmpty() ? path : null, detail.pointer(), "pointer"),
                 () -> assertEquals(path.isEmpty() ? null : path, abbreviate(detail.parameter()), "parameter"),
-                () -> assertNull(detail.path(), "the retired path member"),
                 () -> assertEquals(location, detail.location(), "location"),
                 () -> assertEquals(type, detail.type(), "type"),
                 () -> assertEquals(text, abbreviate(detail.detail()), "detail"),

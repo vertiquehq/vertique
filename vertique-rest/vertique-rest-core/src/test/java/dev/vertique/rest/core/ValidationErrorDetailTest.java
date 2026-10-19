@@ -5,21 +5,24 @@ package dev.vertique.rest.core;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import dev.vertique.core.json.VertiqueJson;
 import io.vertx.core.json.JsonObject;
+import java.lang.reflect.Constructor;
 import java.lang.reflect.RecordComponent;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
  * Unit tests for {@link ValidationErrorDetail}.
  *
- * <p>Verifies the {@code pointer} and {@code parameter} members, the either-or rule, the retained
- * {@code path}-based constructor and factory, the withers, and the JSON read and write behavior.
+ * <p>Verifies the record's exact members, the {@code pointer} and {@code parameter} members, the
+ * either-or rule, the factories, the withers, and the JSON read and write behavior.
  */
 class ValidationErrorDetailTest {
 
@@ -44,7 +47,7 @@ class ValidationErrorDetailTest {
         JsonObject parameterJson = json(parameter);
         JsonObject wholeDocumentJson = json(wholeDocument);
 
-        // Then: exact member sets, so no path, location, type or args member appears
+        // Then: exact member sets, so no location, type or args member appears
         assertEquals(new JsonObject().put("pointer", "/items/0/name").put("detail", "must not be blank"), pointerJson);
         assertEquals(new JsonObject().put("parameter", "page").put("detail", "too small"), parameterJson);
         assertTrue(wholeDocumentJson.containsKey("pointer"));
@@ -61,25 +64,49 @@ class ValidationErrorDetailTest {
     }
 
     @Test
-    @DisplayName("the components are declared in the order pointer, parameter, path, detail, location, type, args")
-    void declaresComponentsInContractOrder() {
+    @DisplayName("the record exposes exactly pointer, parameter, detail, location, type and args")
+    void recordExposesExactlyTheFinalMembers() throws Exception {
+        // Given: the record's components and an entry with every member set except parameter
+        Map<String, Object> args = Map.of("max", 5);
+        ValidationErrorDetail entry = new ValidationErrorDetail("/name", null, "too long", "body", "size", args);
+
+        // When
         List<String> names = Arrays.stream(ValidationErrorDetail.class.getRecordComponents())
                 .map(RecordComponent::getName)
                 .toList();
+        Set<String> keys = json(entry).fieldNames();
+        Constructor<ValidationErrorDetail> canonical = ValidationErrorDetail.class.getDeclaredConstructor(
+                String.class, String.class, String.class, String.class, String.class, Map.class);
 
-        assertEquals(List.of("pointer", "parameter", "path", "detail", "location", "type", "args"), names);
+        // Then: the components in declared order
+        assertEquals(List.of("pointer", "parameter", "detail", "location", "type", "args"), names);
+
+        // And: the serialized key set, without parameter
+        assertEquals(Set.of("pointer", "detail", "location", "type", "args"), keys);
+
+        // And: the canonical constructor is the creator Jackson reads with
+        assertNotNull(canonical.getAnnotation(JsonCreator.class));
+
+        // And: each wither returns an entry equal in every other component
+        assertEquals(
+                new ValidationErrorDetail("/name", null, "too long", "query", "size", args),
+                entry.withLocation("query"));
+        assertEquals(
+                new ValidationErrorDetail("/name", null, "too long", "body", "other", args), entry.withType("other"));
+        assertEquals(
+                new ValidationErrorDetail("/name", null, "too long", "body", "size", Map.of("max", 9)),
+                entry.withArgs(Map.of("max", 9)));
     }
 
     @Test
-    @DisplayName("the canonical constructor takes all seven components in declared order")
+    @DisplayName("the canonical constructor takes all six components in declared order")
     void canonicalConstructorCarriesEveryComponent() {
         Map<String, Object> args = Map.of("min", 1);
 
-        ValidationErrorDetail detail = new ValidationErrorDetail("/a", null, "legacy", "d", "body", "required", args);
+        ValidationErrorDetail detail = new ValidationErrorDetail("/a", null, "d", "body", "required", args);
 
         assertEquals("/a", detail.pointer());
         assertNull(detail.parameter());
-        assertEquals("legacy", detail.path());
         assertEquals("d", detail.detail());
         assertEquals("body", detail.location());
         assertEquals("required", detail.type());
@@ -90,17 +117,15 @@ class ValidationErrorDetailTest {
     @DisplayName("an entry with both pointer and parameter is rejected")
     void rejectsAnEntryWithBothPointerAndParameter() {
         // Given / When / Then: both present
+        assertThrows(IllegalArgumentException.class, () -> new ValidationErrorDetail("/a", "a", "d", null, null, null));
         assertThrows(
                 IllegalArgumentException.class,
-                () -> new ValidationErrorDetail("/a", "a", null, "d", null, null, null));
-        assertThrows(
-                IllegalArgumentException.class,
-                () -> new ValidationErrorDetail("", "a", "/legacy", "d", "body", "type", Map.of()));
+                () -> new ValidationErrorDetail("", "a", "d", "body", "type", Map.of()));
 
         // Then: only one of them succeeds
-        ValidationErrorDetail onlyPointer = new ValidationErrorDetail("/a", null, null, "d", null, null, null);
-        ValidationErrorDetail onlyParameter = new ValidationErrorDetail(null, "a", null, "d", null, null, null);
-        ValidationErrorDetail neither = new ValidationErrorDetail(null, null, null, "d", null, null, null);
+        ValidationErrorDetail onlyPointer = new ValidationErrorDetail("/a", null, "d", null, null, null);
+        ValidationErrorDetail onlyParameter = new ValidationErrorDetail(null, "a", "d", null, null, null);
+        ValidationErrorDetail neither = new ValidationErrorDetail(null, null, "d", null, null, null);
         assertEquals("/a", onlyPointer.pointer());
         assertNull(onlyPointer.parameter());
         assertNull(onlyParameter.pointer());
@@ -112,29 +137,20 @@ class ValidationErrorDetailTest {
     @Test
     @DisplayName("an empty pointer still counts as present when combined with a parameter")
     void rejectsAnEmptyPointerCombinedWithAParameter() {
-        assertThrows(
-                IllegalArgumentException.class, () -> new ValidationErrorDetail("", "a", null, "d", null, null, null));
-        assertThrows(
-                IllegalArgumentException.class, () -> new ValidationErrorDetail("/a", "", null, "d", null, null, null));
+        assertThrows(IllegalArgumentException.class, () -> new ValidationErrorDetail("", "a", "d", null, null, null));
+        assertThrows(IllegalArgumentException.class, () -> new ValidationErrorDetail("/a", "", "d", null, null, null));
     }
 
     @Test
-    @DisplayName("the five-argument constructor yields path with null pointer and parameter")
-    void fiveArgumentConstructorKeepsPath() throws JsonProcessingException {
+    @DisplayName("an entry with location, type and args serializes every member that is set")
+    void serializesLocationTypeAndArgs() throws JsonProcessingException {
         Map<String, Object> args = Map.of("max", 5);
 
-        ValidationErrorDetail detail = new ValidationErrorDetail("/name", "too long", "body", "size", args);
+        ValidationErrorDetail detail = new ValidationErrorDetail("/name", null, "too long", "body", "size", args);
 
-        assertNull(detail.pointer());
-        assertNull(detail.parameter());
-        assertEquals("/name", detail.path());
-        assertEquals("too long", detail.detail());
-        assertEquals("body", detail.location());
-        assertEquals("size", detail.type());
-        assertEquals(args, detail.args());
         assertEquals(
                 new JsonObject()
-                        .put("path", "/name")
+                        .put("pointer", "/name")
                         .put("detail", "too long")
                         .put("location", "body")
                         .put("type", "size")
@@ -143,29 +159,13 @@ class ValidationErrorDetailTest {
     }
 
     @Test
-    @DisplayName("of() yields path with null pointer, parameter, location, type and args")
-    void ofKeepsPathAndSerializesAsBefore() throws JsonProcessingException {
-        ValidationErrorDetail detail = ValidationErrorDetail.of("/x", "bad");
-
-        assertNull(detail.pointer());
-        assertNull(detail.parameter());
-        assertEquals("/x", detail.path());
-        assertEquals("bad", detail.detail());
-        assertNull(detail.location());
-        assertNull(detail.type());
-        assertNull(detail.args());
-        assertEquals(new JsonObject().put("path", "/x").put("detail", "bad"), json(detail));
-    }
-
-    @Test
-    @DisplayName("the pointer and parameter factories leave path, location, type and args null")
+    @DisplayName("the pointer and parameter factories leave location, type and args null")
     void factoriesLeaveOtherMembersNull() {
         ValidationErrorDetail pointer = ValidationErrorDetail.ofPointer("/a", "d");
         ValidationErrorDetail parameter = ValidationErrorDetail.ofParameter("a", "d");
 
         assertEquals("/a", pointer.pointer());
         assertNull(pointer.parameter());
-        assertNull(pointer.path());
         assertEquals("d", pointer.detail());
         assertNull(pointer.location());
         assertNull(pointer.type());
@@ -173,7 +173,6 @@ class ValidationErrorDetailTest {
 
         assertNull(parameter.pointer());
         assertEquals("a", parameter.parameter());
-        assertNull(parameter.path());
         assertEquals("d", parameter.detail());
         assertNull(parameter.location());
         assertNull(parameter.type());
@@ -195,7 +194,6 @@ class ValidationErrorDetailTest {
         // Then
         assertEquals("/a", result.pointer());
         assertNull(result.parameter());
-        assertNull(result.path());
         assertEquals("d", result.detail());
         assertEquals("body", result.location());
         assertEquals("required", result.type());
@@ -206,26 +204,23 @@ class ValidationErrorDetailTest {
     }
 
     @Test
-    @DisplayName("withers in any order keep pointer, parameter and path")
+    @DisplayName("withers in any order keep pointer and parameter")
     void withersPreserveTheLocationMembers() {
         ValidationErrorDetail pointer = ValidationErrorDetail.ofPointer("", "d");
         ValidationErrorDetail parameter = ValidationErrorDetail.ofParameter("page", "d");
-        ValidationErrorDetail path = ValidationErrorDetail.of("/legacy", "d");
+        ValidationErrorDetail neither = new ValidationErrorDetail(null, null, "d", null, null, null);
         Map<String, Object> args = Map.of("k", "v");
 
         ValidationErrorDetail p = pointer.withArgs(args).withType("t").withLocation("l");
         ValidationErrorDetail q = parameter.withType("t").withArgs(args).withLocation("l");
-        ValidationErrorDetail r = path.withLocation("l").withArgs(args).withType("t");
+        ValidationErrorDetail r = neither.withLocation("l").withArgs(args).withType("t");
 
         assertEquals("", p.pointer());
         assertNull(p.parameter());
-        assertNull(p.path());
         assertNull(q.pointer());
         assertEquals("page", q.parameter());
-        assertNull(q.path());
         assertNull(r.pointer());
         assertNull(r.parameter());
-        assertEquals("/legacy", r.path());
         for (ValidationErrorDetail each : List.of(p, q, r)) {
             assertEquals("d", each.detail());
             assertEquals("l", each.location());
@@ -237,39 +232,35 @@ class ValidationErrorDetailTest {
     @Test
     @DisplayName("each wither replaces only its own member")
     void eachWitherReplacesOnlyItsOwnMember() {
-        ValidationErrorDetail full =
-                new ValidationErrorDetail(null, "page", "legacy", "d", "query", "min", Map.of("min", 1));
+        ValidationErrorDetail full = new ValidationErrorDetail(null, "page", "d", "query", "min", Map.of("min", 1));
 
         ValidationErrorDetail relocated = full.withLocation("body");
         ValidationErrorDetail retyped = full.withType("max");
         ValidationErrorDetail reargued = full.withArgs(null);
 
-        assertEquals(
-                new ValidationErrorDetail(null, "page", "legacy", "d", "body", "min", Map.of("min", 1)), relocated);
-        assertEquals(new ValidationErrorDetail(null, "page", "legacy", "d", "query", "max", Map.of("min", 1)), retyped);
-        assertEquals(new ValidationErrorDetail(null, "page", "legacy", "d", "query", "min", null), reargued);
+        assertEquals(new ValidationErrorDetail(null, "page", "d", "body", "min", Map.of("min", 1)), relocated);
+        assertEquals(new ValidationErrorDetail(null, "page", "d", "query", "max", Map.of("min", 1)), retyped);
+        assertEquals(new ValidationErrorDetail(null, "page", "d", "query", "min", null), reargued);
     }
 
     @Test
-    @DisplayName("a body with path and detail still reads into a path-only entry")
-    void readsAPathOnlyBody() throws JsonProcessingException {
+    @DisplayName("a body naming only the earlier path member reads into an entry without a location member")
+    void ignoresTheEarlierPathMemberOnRead() throws JsonProcessingException {
         ValidationErrorDetail read = read("{\"path\":\"/a\",\"detail\":\"d\"}");
 
         assertNull(read.pointer());
         assertNull(read.parameter());
-        assertEquals("/a", read.path());
         assertEquals("d", read.detail());
-        assertEquals(ValidationErrorDetail.of("/a", "d"), read);
+        assertEquals(new ValidationErrorDetail(null, null, "d", null, null, null), read);
     }
 
     @Test
     @DisplayName("a body with every member reads into the matching components")
     void readsEveryMember() throws JsonProcessingException {
-        ValidationErrorDetail read =
-                read("{\"parameter\":\"page\",\"path\":\"legacy\",\"detail\":\"d\",\"location\":\"query\","
-                        + "\"type\":\"min\",\"args\":{\"min\":1}}");
+        ValidationErrorDetail read = read("{\"parameter\":\"page\",\"detail\":\"d\",\"location\":\"query\","
+                + "\"type\":\"min\",\"args\":{\"min\":1}}");
 
-        assertEquals(new ValidationErrorDetail(null, "page", "legacy", "d", "query", "min", Map.of("min", 1)), read);
+        assertEquals(new ValidationErrorDetail(null, "page", "d", "query", "min", Map.of("min", 1)), read);
     }
 
     @Test

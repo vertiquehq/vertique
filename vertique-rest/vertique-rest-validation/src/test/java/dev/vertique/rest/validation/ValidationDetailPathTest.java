@@ -465,7 +465,7 @@ class ValidationDetailPathTest {
     }
 
     @Test
-    @DisplayName("Every body entry the gate reports carries a pointer and neither a parameter nor the retired path")
+    @DisplayName("Every body entry the gate reports carries a pointer and no parameter")
     void bodyEntriesCarryAPointerAndNothingElseForLocation() throws Exception {
         // Given the nested, root, tuple, escaped-name and undeclared-key bodies this class validates
         JsonObject nested = object(new JsonObject().put("pet", inner()));
@@ -486,7 +486,6 @@ class ValidationDetailPathTest {
         assertAll(outcomes.stream().flatMap(outcome -> outcome.errors().stream().map(error -> (Executable) () -> {
             assertNotNull(error.pointer(), "a body entry carries a pointer: " + outcome.json);
             assertNull(error.parameter(), "a body entry names no parameter: " + outcome.json);
-            assertNull(error.path(), "a body entry carries no path: " + outcome.json);
         })));
     }
 

@@ -74,7 +74,6 @@ class WebValidationGateFilePartTest {
                 List.of(new ValidationErrorDetail(
                         null,
                         "avatar",
-                        null,
                         "file part exceeds the maximum allowed size",
                         "file",
                         "fileMaxSize",
@@ -319,7 +318,7 @@ class WebValidationGateFilePartTest {
         assertEquals(
                 List.of(
                         new ValidationErrorDetail(
-                                null, "limit", null, "must be at most 100", "query", "maximum", Map.of("maximum", 100)),
+                                null, "limit", "must be at most 100", "query", "maximum", Map.of("maximum", 100)),
                         fileError("avatar", "file part content type is not allowed", "fileContentTypeNotAllowed")),
                 captureFailure(ctx).errors());
     }
@@ -385,12 +384,10 @@ class WebValidationGateFilePartTest {
                 () -> assertEquals("avatar[1]", declared.parameter(), "declared occurrence is named by parameter"),
                 () -> assertEquals("file", declared.location()),
                 () -> assertNull(declared.pointer(), "a declared part has no pointer"),
-                () -> assertNull(declared.path(), "a declared part has no path"),
                 () -> assertEquals("fileMaxSize", declared.type()),
                 () -> assertEquals(Map.of("maxSizeBytes", 4L), declared.args()),
                 () -> assertNull(undeclared.pointer(), "an undeclared part has no pointer"),
                 () -> assertNull(undeclared.parameter(), "an undeclared part has no parameter"),
-                () -> assertNull(undeclared.path(), "an undeclared part has no path"),
                 () -> assertEquals("file", undeclared.location()),
                 () -> assertEquals("fileMaxSize", undeclared.type()),
                 () -> assertEquals(Map.of("maxSizeBytes", 8L), undeclared.args()),
@@ -485,12 +482,11 @@ class WebValidationGateFilePartTest {
     }
 
     private static ValidationErrorDetail fileError(String declaredName, String detail, String type) {
-        return new ValidationErrorDetail(
-                null, declaredName, null, detail, "file", type, Map.of("allowedTypes", PNG_ONLY));
+        return new ValidationErrorDetail(null, declaredName, detail, "file", type, Map.of("allowedTypes", PNG_ONLY));
     }
 
     private static ValidationErrorDetail undeclaredFileError(String detail, String type) {
-        return new ValidationErrorDetail(null, null, null, detail, "file", type, Map.of("allowedTypes", PNG_ONLY));
+        return new ValidationErrorDetail(null, null, detail, "file", type, Map.of("allowedTypes", PNG_ONLY));
     }
 
     private static JaxRsOperationDescriptor descriptor(

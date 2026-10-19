@@ -314,7 +314,6 @@ public class QuotaProblemDetail extends ProblemDetail {
 public record ValidationErrorDetail(
         @Nullable String pointer,           // RFC 6901 JSON Pointer into the request document, e.g. "/items/0/name"
         @Nullable String parameter,         // non-body request location, e.g. "page", "X-Token"
-        @Nullable String path,              // replaced by pointer and parameter in this release
         String detail,                      // human-readable failure description
         @Nullable String location,          // "body", "query", "header", "path", "cookie", "form", "file"
         @Nullable String type,              // classification: "required", "size", "min", "pattern", …
@@ -322,7 +321,6 @@ public record ValidationErrorDetail(
 ) {
     public static ValidationErrorDetail ofPointer(String pointer, String detail) { … }
     public static ValidationErrorDetail ofParameter(String parameter, String detail) { … }
-    public static ValidationErrorDetail of(String path, String detail) { … }
     public ValidationErrorDetail withLocation(@Nullable String location) { … }
     public ValidationErrorDetail withType(@Nullable String type) { … }
     public ValidationErrorDetail withArgs(@Nullable Map<String, Object> args) { … }
@@ -338,9 +336,6 @@ public record ValidationErrorDetail(
 - **At most one** of `pointer` and `parameter` is set; the canonical constructor throws
   `IllegalArgumentException` when both are present, which also rejects a malformed response body
   read on the client side. An entry carries neither when the location cannot be stated.
-- **`path`** remains for now, with the five-argument constructor and `of(path, detail)`, but is
-  replaced by `pointer` and `parameter` in this release; new code uses `ofPointer` and
-  `ofParameter`.
 - The `with…` methods return a copy that carries every other member over.
 
 `null` components are omitted from JSON and unknown members are ignored when reading. `args` is

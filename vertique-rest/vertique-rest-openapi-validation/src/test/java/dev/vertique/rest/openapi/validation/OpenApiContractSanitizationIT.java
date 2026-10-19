@@ -258,7 +258,6 @@ public class OpenApiContractSanitizationIT {
         for (ValidationErrorDetail entry : all) {
             rows.add(() -> {
                 assertNotNull(entry.pointer(), "every entry must carry a pointer");
-                assertNull(entry.path(), "path must no longer be filled");
                 entry.pointer()
                         .codePoints()
                         .forEach(cp -> assertFalse(
@@ -274,8 +273,7 @@ public class OpenApiContractSanitizationIT {
                 () -> assertNotNull(entry.pointer(), "the location must be reported in pointer for " + entry),
                 () -> assertEquals(expectedPointer, entry.pointer()),
                 () -> assertEquals("body", entry.location()),
-                () -> assertNull(entry.parameter()),
-                () -> assertNull(entry.path()));
+                () -> assertNull(entry.parameter()));
     }
 
     // --- helpers ---

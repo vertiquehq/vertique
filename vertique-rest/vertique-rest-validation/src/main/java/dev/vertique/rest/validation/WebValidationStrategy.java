@@ -384,7 +384,6 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
             return new ValidationErrorDetail(
                     parameterName == null ? "" : null,
                     parameterName,
-                    null,
                     detail.message(),
                     location,
                     detail.type(),
@@ -832,7 +831,7 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
          */
         private static ValidationErrorDetail fileDetail(
                 @Nullable String parameter, String detail, String type, @Nullable Map<String, Object> args) {
-            return new ValidationErrorDetail(null, parameter, null, detail, "file", type, args);
+            return new ValidationErrorDetail(null, parameter, detail, "file", type, args);
         }
 
         /**
@@ -1143,7 +1142,6 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
             return new ValidationErrorDetail(
                     fallbackPath == null ? detail.path() : null,
                     fallbackPath == null ? null : parameterName(fallbackPath, detail.path()),
-                    null,
                     detail.message(),
                     location,
                     detail.type(),

@@ -315,7 +315,6 @@ class RestModuleDefaultMappingTest {
         ValidationErrorDetail error = body.errors().get(0);
         assertEquals("/comment", error.pointer());
         assertNull(error.parameter());
-        assertNull(error.path());
         assertEquals("must have a maximum length of 3", error.detail());
         assertNull(error.location());
         assertEquals("maxLength", error.type());
@@ -362,7 +361,6 @@ class RestModuleDefaultMappingTest {
         ValidationErrorDetail error = beanBody.errors().get(0);
         assertNull(error.pointer());
         assertNull(error.parameter());
-        assertNull(error.path());
         assertEquals("must not be blank", error.detail());
         assertNull(error.location());
         assertEquals("required", error.type());

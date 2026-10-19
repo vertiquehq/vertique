@@ -136,7 +136,6 @@ class ConstraintViolationMapperTest {
 
         assertEquals(1, ex.errors().size());
         ValidationErrorDetail err = ex.errors().get(0);
-        assertNull(err.path(), "path");
         assertNull(err.pointer(), "pointer");
         assertNull(err.parameter(), "parameter");
         assertEquals("must not be blank", err.detail());
@@ -155,7 +154,6 @@ class ConstraintViolationMapperTest {
         RestValidationException ex = map(meta, violations);
 
         ValidationErrorDetail err = ex.errors().get(0);
-        assertNull(err.path(), "path");
         assertNull(err.pointer(), "pointer");
         assertNull(err.parameter(), "parameter");
         assertNeverRendered("address", err);
@@ -422,7 +420,6 @@ class ConstraintViolationMapperTest {
         assertEquals("id", ex.errors().get(0).parameter());
         assertNull(ex.errors().get(0).pointer());
         assertEquals("body", ex.errors().get(1).location());
-        assertNull(ex.errors().get(1).path(), "path");
         assertNull(ex.errors().get(1).pointer(), "pointer");
         assertNull(ex.errors().get(1).parameter(), "parameter");
     }
@@ -787,7 +784,6 @@ class ConstraintViolationMapperTest {
     private static void assertPointer(String expected, ValidationErrorDetail err) {
         assertEquals(expected, err.pointer(), "pointer");
         assertNull(err.parameter(), "parameter");
-        assertNull(err.path(), "path");
         assertEquals("body", err.location());
         assertEquals("must not be blank", err.detail());
         assertEquals("required", err.type());
@@ -796,7 +792,6 @@ class ConstraintViolationMapperTest {
     private static void assertBodyWithoutMembers(ValidationErrorDetail err) {
         assertNull(err.pointer(), "pointer");
         assertNull(err.parameter(), "parameter");
-        assertNull(err.path(), "path");
         assertEquals("body", err.location());
         assertEquals("must not be blank", err.detail());
         assertEquals("required", err.type());
@@ -805,14 +800,12 @@ class ConstraintViolationMapperTest {
     private static void assertFormParameter(String expected, ValidationErrorDetail err) {
         assertNull(err.pointer(), "pointer");
         assertEquals(expected, err.parameter(), "parameter");
-        assertNull(err.path(), "path");
         assertEquals("form", err.location());
     }
 
     private static void assertFormWithoutMembers(ValidationErrorDetail err) {
         assertNull(err.pointer(), "pointer");
         assertNull(err.parameter(), "parameter");
-        assertNull(err.path(), "path");
         assertEquals("form", err.location());
     }
 
@@ -833,7 +826,7 @@ class ConstraintViolationMapperTest {
         // When the blank member is mapped
         ValidationErrorDetail err = mapOneBody(BodyAddress.class, path(prop("zipCode")), request, routeMapper);
 
-        // Then the wire name is the pointer, with location body and neither parameter nor path
+        // Then the wire name is the pointer, with location body and no parameter
         assertPointer("/zip_code", err);
     }
 

@@ -381,13 +381,14 @@ class ErrorPipelineTest {
             // A claims validator running bean validation produces a ValidationProblemDetail at 400 whose
             // errors[] name claim paths and messages. The Vert.x 401 supersedes that status — the errors[]
             // describe the superseded 400 and must not survive alongside the cleared detail.
-            DefaultExceptionMapper defaults = new DefaultExceptionMapper().on(Throwable.class, ex -> Response.status(
-                            400)
-                    .entity(ValidationProblemDetail.of(
-                            "Request validation failed",
-                            List.of(ValidationErrorDetail.of("/claims/tenant_id", "tenant 4711 is not permitted"))))
-                    .type("application/problem+json")
-                    .build());
+            DefaultExceptionMapper defaults = new DefaultExceptionMapper()
+                    .on(Throwable.class, ex -> Response.status(400)
+                            .entity(ValidationProblemDetail.of(
+                                    "Request validation failed",
+                                    List.of(ValidationErrorDetail.ofPointer(
+                                            "/claims/tenant_id", "tenant 4711 is not permitted"))))
+                            .type("application/problem+json")
+                            .build());
             ExceptionMapperRegistry registry = new ExceptionMapperRegistry(defaults, Set.of());
             RestExceptionMapper failureMapper = new RestExceptionMapper();
             ErrorPipeline customPipeline = new ErrorPipeline(List.of(), List.of(), failureMapper, registry);

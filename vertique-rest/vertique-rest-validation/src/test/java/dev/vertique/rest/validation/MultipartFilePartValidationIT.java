@@ -149,7 +149,6 @@ public class MultipartFilePartValidationIT {
                         new ValidationErrorDetail(
                                 null,
                                 "avatar",
-                                null,
                                 "file part content type is not allowed",
                                 "file",
                                 "fileContentTypeNotAllowed",
@@ -176,7 +175,6 @@ public class MultipartFilePartValidationIT {
                         new ValidationErrorDetail(
                                 null,
                                 "avatar",
-                                null,
                                 "file part declares a malformed or wildcard content type",
                                 "file",
                                 "fileContentTypeMalformed",

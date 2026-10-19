@@ -256,8 +256,7 @@ final class ConstraintViolationMapper {
         }
 
         private static ValidationErrorDetail bodyEntry(@Nullable String pointer, ViolationDetail detail) {
-            return new ValidationErrorDetail(
-                    pointer, null, null, detail.message(), "body", detail.type(), detail.args());
+            return new ValidationErrorDetail(pointer, null, detail.message(), "body", detail.type(), detail.args());
         }
 
         /** The pointer of the violation and whether it stops before the end of the violation's path. */
@@ -285,8 +284,7 @@ final class ConstraintViolationMapper {
                     parameter = name + leadingIndexes(path, 1);
                 }
             }
-            return new ValidationErrorDetail(
-                    null, parameter, null, detail.message(), "form", detail.type(), detail.args());
+            return new ValidationErrorDetail(null, parameter, detail.message(), "form", detail.type(), detail.args());
         }
 
         /**
@@ -375,7 +373,7 @@ final class ConstraintViolationMapper {
 
     /** An entry with neither {@code pointer} nor {@code parameter} and no location. */
     private static ValidationErrorDetail unlocated(ViolationDetail detail) {
-        return new ValidationErrorDetail(null, null, null, detail.message(), null, detail.type(), detail.args());
+        return new ValidationErrorDetail(null, null, detail.message(), null, detail.type(), detail.args());
     }
 
     /**
@@ -390,8 +388,7 @@ final class ConstraintViolationMapper {
             return unlocated(detail);
         }
         String parameter = name + leadingIndexes(pv.propertyPath(), firstIndexSegment);
-        return new ValidationErrorDetail(
-                null, parameter, null, detail.message(), location, detail.type(), detail.args());
+        return new ValidationErrorDetail(null, parameter, detail.message(), location, detail.type(), detail.args());
     }
 
     private static ValidationErrorDetail parameterEntry(@Nullable String name, String location, ParameterViolation pv) {

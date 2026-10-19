@@ -125,7 +125,6 @@ public class FileVerifierRejectionIT {
                                 new ValidationErrorDetail(
                                         null,
                                         "upload[1]",
-                                        null,
                                         "application verifier rejected the second physical upload",
                                         "file",
                                         "applicationPolicyRejected",
@@ -158,7 +157,6 @@ public class FileVerifierRejectionIT {
                                 new ValidationErrorDetail(
                                         null,
                                         "upload",
-                                        null,
                                         "file part content type is not allowed",
                                         "file",
                                         "fileContentTypeNotAllowed",

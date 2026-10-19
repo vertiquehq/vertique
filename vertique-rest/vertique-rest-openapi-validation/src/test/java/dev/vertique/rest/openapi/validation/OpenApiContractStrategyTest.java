@@ -433,7 +433,6 @@ class OpenApiContractStrategyTest {
             ValidationErrorDetail entry = mapped.errors().get(0);
             assertNotNull(entry.pointer(), "the location must be reported in pointer");
             assertEquals(row.expectedPointer(), entry.pointer());
-            assertNull(entry.path(), "path must no longer be filled");
             assertNull(entry.parameter(), "a body location is never a parameter");
             assertEquals("body", entry.location());
             assertEquals(row.expectedType(), entry.type());

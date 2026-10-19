@@ -738,7 +738,7 @@ public final class OpenApiContractValidationStrategy implements RequestValidatio
         // A schema-violation OutputUnit with only structural wrappers (all skipped) would yield an empty
         // list; emit a single generic, value-free detail so the client still gets actionable structure.
         if (details.isEmpty()) {
-            details.add(new ValidationErrorDetail("", null, null, "is invalid", "body", null, null));
+            details.add(new ValidationErrorDetail("", null, "is invalid", "body", null, null));
         }
         return details;
     }
@@ -777,7 +777,7 @@ public final class OpenApiContractValidationStrategy implements RequestValidatio
         // treated as no keyword, producing a generic "is invalid" detail).
         String pointer =
                 endBeforeControlSegment(ViolationDetails.rfc6901(sanitizePath(error.getInstanceLocation(), segment)));
-        return new ValidationErrorDetail(pointer, null, null, safeDetail(segment), "body", segment, null);
+        return new ValidationErrorDetail(pointer, null, safeDetail(segment), "body", segment, null);
     }
 
     /**
