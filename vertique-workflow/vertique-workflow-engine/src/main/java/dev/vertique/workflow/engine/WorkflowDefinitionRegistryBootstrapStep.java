@@ -287,7 +287,8 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
                                     + "; stored from "
                                     + described(previous.orElseThrow().provenance()) + ", packaged from "
                                     + described(source.provenance())
-                                    + ". Bump the version of the changed document or retire the old row."));
+                                    + ". Bump the version of the changed document; it is not enough to retire the old row, because a stored row of"
+                                    + " the same id and version blocks startup in every status."));
                 String stored = previous.map(
                                 row -> "stored hash " + row.planHash() + " from " + described(row.provenance()))
                         .orElse("stored source unavailable");
