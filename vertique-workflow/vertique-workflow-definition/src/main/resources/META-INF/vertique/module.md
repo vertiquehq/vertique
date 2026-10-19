@@ -282,9 +282,10 @@ through the asynchronous signatures.
 local registry and reports DEPRECATED in service metadata and lists. New starts of that version and
 migrations to it are refused with reason `DEPRECATED`, including a retry of an explicit start under an
 idempotency key used before the deprecation; instances already pinned to it keep running on the node that
-marked it. A restart restores the deprecated version (including a packaged document deprecated in the
+marked it, and on every peer that marks the version when its own reconciliation applies the deprecation. A restart restores the deprecated version (including a packaged document deprecated in the
 database), registers it, marks it and lets pinned instances resume, while new starts of it stay refused.
-Other running nodes learn of the deprecation when they restart. Deprecating the active version does not promote
+Other running nodes learn of the deprecation from their next periodic reconciliation, which takes the configured
+staleness cadence plus the time to apply, or when they restart. Deprecating the active version does not promote
 another, so a durable listing can show no ACTIVE version until the next startup recomputation, while
 current resolution already serves the next lower version. It requires the durable registry: without one,
 the returned Future fails.

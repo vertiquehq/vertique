@@ -42,6 +42,8 @@ import dev.vertique.workflow.definition.source.WorkflowDefinitionSource;
 import dev.vertique.workflow.di.WorkflowDefinitionsConfigModule;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
+import dev.vertique.workflow.engine.WorkflowDefinitionPropagationPoller;
+import dev.vertique.workflow.engine.WorkflowDefinitionRegistryView;
 import dev.vertique.workflow.plan.DefaultRaceSafetyTargetRegistry;
 import dev.vertique.workflow.plan.WorkflowPlanValidator;
 import dev.vertique.workflow.postgresql.engine.WorkflowPostgresqlModule;
@@ -291,6 +293,12 @@ public final class ManagedDefinitionDatabase {
         WorkflowDefinitionStore workflowDefinitionStore();
 
         WorkflowDefinitionsConfig workflowDefinitionsConfig();
+
+        /** The committed records this node has applied to its registry, and its count of rows that fail to apply. */
+        WorkflowDefinitionRegistryView definitionRegistryView();
+
+        /** The periodic reconciliation, triggered by the tests directly instead of by waiting for its timer. */
+        WorkflowDefinitionPropagationPoller definitionPropagationPoller();
 
         Pool pool();
     }

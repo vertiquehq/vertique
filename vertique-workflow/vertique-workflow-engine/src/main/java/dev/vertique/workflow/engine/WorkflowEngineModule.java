@@ -186,4 +186,27 @@ public abstract class WorkflowEngineModule {
             WorkflowDefinitionRegistryBootstrapStep step) {
         return step;
     }
+
+    /** Exposes what this node has applied from the durable definition table. */
+    @Binds
+    @Singleton
+    abstract WorkflowDefinitionRegistryView definitionRegistryView(DefaultWorkflowDefinitionRegistryView view);
+
+    /** Arms the periodic reconciliation of the registry with the durable table once every verticle has deployed. */
+    @Provides
+    @Singleton
+    @IntoSet
+    static dev.vertique.core.lifecycle.ApplicationStartupStep definitionPropagationStartupStep(
+            WorkflowDefinitionPropagationPoller poller) {
+        return poller.startupStep();
+    }
+
+    /** Cancels the periodic reconciliation on shutdown and waits for the pass that is running. */
+    @Provides
+    @Singleton
+    @IntoSet
+    static dev.vertique.core.lifecycle.ApplicationShutdownStep definitionPropagationShutdownStep(
+            WorkflowDefinitionPropagationPoller poller) {
+        return poller.shutdownStep();
+    }
 }

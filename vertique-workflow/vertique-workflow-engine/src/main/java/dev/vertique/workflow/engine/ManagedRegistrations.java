@@ -9,6 +9,7 @@ import jakarta.annotation.Nullable;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
@@ -69,6 +70,23 @@ final class ManagedRegistrations {
         if (entry == null || entry.runtime() != held) return Standing.UNATTRIBUTED;
         return Objects.equals(entry.tenantKey(), tenantKey) ? Standing.OWN : Standing.OTHER_OWNER;
     }
+
+    /**
+     * Returns the owner the lifecycle published {@code held} for, while the registry still holds exactly that
+     * instance.
+     *
+     * @param held the runtime the registry holds for the version, or {@code null} when it holds none
+     * @return the owner of the attributed instance, or empty when {@code held} is absent or not attributed
+     */
+    Optional<Owner> ownerOf(String definitionId, long version, @Nullable RuntimeWorkflow held) {
+        if (held == null) return Optional.empty();
+        Attribution entry = attributions.get(new VersionKey(definitionId, version));
+        if (entry == null || entry.runtime() != held) return Optional.empty();
+        return Optional.of(new Owner(entry.tenantKey()));
+    }
+
+    /** The owner a runtime was published for; a {@code null} tenant key is the global owner. */
+    record Owner(@Nullable String tenantKey) {}
 
     /** How the registration held for an id and version relates to the owner a managed mutation acts for. */
     enum Standing {

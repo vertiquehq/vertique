@@ -7,8 +7,6 @@ import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.engine.WorkflowCodeDefinitionCatalog.CodeDefinition;
 import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException;
 import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException.Reason;
-import dev.vertique.workflow.exception.WorkflowDefinitionMissingException;
-import dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowRegistry;
 import dev.vertique.workflow.registry.store.ActivationClaim;
@@ -66,6 +64,8 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
     private final DefinitionApplyQueue queue;
     private final ManagedRegistrations registrations;
     private final WorkflowCodeDefinitionCatalog catalog;
+    /** The node's view of the applied records, or {@code null} when the lifecycle was built without one. */
+    private final @Nullable DefaultWorkflowDefinitionRegistryView view;
     /** Runtimes this lifecycle published whose completion outcome is still unknown, by key. */
     private final ConcurrentMap<DefinitionKey, RuntimeWorkflow> uncertain = new ConcurrentHashMap<>();
     /** Runtimes a reinstatement published whose commit outcome could not be read back, by key. */
@@ -93,7 +93,7 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
         this(store, registry, loaders, queue, registrations, new WorkflowCodeDefinitionCatalog());
     }
 
-    @Inject
+    /** Constructs a lifecycle that does not feed a node view, for unit tests only. */
     DefaultWorkflowDefinitionLifecycle(
             Optional<WorkflowDefinitionRegistryStore> store,
             Provider<WorkflowRegistry> registry,
@@ -101,6 +101,19 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
             DefinitionApplyQueue queue,
             ManagedRegistrations registrations,
             WorkflowCodeDefinitionCatalog catalog) {
+        this(store, registry, loaders, queue, registrations, catalog, null);
+    }
+
+    @Inject
+    DefaultWorkflowDefinitionLifecycle(
+            Optional<WorkflowDefinitionRegistryStore> store,
+            Provider<WorkflowRegistry> registry,
+            Set<PersistedDefinitionLoader> loaders,
+            DefinitionApplyQueue queue,
+            ManagedRegistrations registrations,
+            WorkflowCodeDefinitionCatalog catalog,
+            @Nullable DefaultWorkflowDefinitionRegistryView view) {
+        this.view = view;
         this.store = store;
         this.registry = registry;
         this.loaders = loaders;
@@ -133,9 +146,9 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
                 ManagedRegistrations.Standing standing = preflight(key);
                 return commitDeprecation(key, true).compose(ignored -> {
                     // A registration published for another owner is not this definition's to mark.
-                    if (standing != ManagedRegistrations.Standing.OTHER_OWNER)
-                        registry.get().markDeprecated(key.definitionId(), key.definitionVersion());
-                    return Future.<Void>succeededFuture();
+                    if (standing == ManagedRegistrations.Standing.OTHER_OWNER) return Future.<Void>succeededFuture();
+                    registry.get().markDeprecated(key.definitionId(), key.definitionVersion());
+                    return refreshView(key);
                 });
             });
         } catch (RuntimeException e) {
@@ -331,53 +344,17 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
 
     /** Registers the code definition the deployed code provides, after its hash was checked against the row. */
     private void publishCode(Reinstatement attempt, WorkflowRegistry local) {
-        DefinitionKey key = attempt.key;
-        CodeDefinition code = catalog.find(key.definitionId(), key.definitionVersion())
-                .filter(entry -> entry.definition() != null)
-                .orElseThrow(() -> failure(
-                        Reason.CODE_UNAVAILABLE,
-                        key,
-                        "the deployed code does not provide " + key.definitionId() + " version "
-                                + key.definitionVersion()));
-        if (!attempt.record.planHash().equals(code.planHash()))
-            throw failure(
-                    Reason.DRIFT,
-                    key,
-                    "stored hash " + attempt.record.planHash() + " differs from deployed hash " + code.planHash());
+        CodeDefinition code = DefinitionPublication.verifiedCode(catalog, attempt.record);
         publish(attempt, local, code.definition());
     }
 
     /** Registers the definition and records the exact runtime as this attempt's own, attributed publication. */
     private void publish(Reinstatement attempt, WorkflowRegistry local, WorkflowDefinition<?, ?> definition) {
-        DefinitionKey key = attempt.key;
-        local.register(definition);
-        try {
-            attempt.publication = local.resolvePinned(key.definitionId(), key.definitionVersion());
-            registrations.attribute(key.tenantKey(), key.definitionId(), key.definitionVersion(), attempt.publication);
-        } catch (RuntimeException e) {
-            // The registration was made by this call, so it is removed whatever the registry holds under the key.
-            try {
-                local.unregister(key.definitionId(), key.definitionVersion());
-                if (attempt.publication != null)
-                    registrations.clear(key.definitionId(), key.definitionVersion(), attempt.publication);
-            } catch (RuntimeException compensation) {
-                if (compensation != e) e.addSuppressed(compensation);
-            }
-            attempt.publication = null;
-            throw e;
-        }
+        attempt.publication = DefinitionPublication.publish(local, registrations, attempt.key, definition);
     }
 
     private PersistedDefinitionLoader loaderFor(WorkflowDefinitionRecord record) {
-        List<PersistedDefinitionLoader> matches = loaders.stream()
-                .filter(l -> l.supports(record.documentFormat()))
-                .toList();
-        if (matches.size() != 1)
-            throw failure(
-                    Reason.LOADER_MISSING,
-                    record.key(),
-                    "expected one loader for " + record.documentFormat() + ", found " + matches.size());
-        return matches.getFirst();
+        return DefinitionPublication.loaderFor(loaders, record);
     }
 
     /**
@@ -432,11 +409,12 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
     private Future<Void> handOffReinstated(Reinstatement attempt) {
         if (attempt.loader == null) {
             unresolvedReinstatements.remove(attempt.key);
-            return Future.succeededFuture();
+            return refreshView(attempt.key);
         }
         return store.orElseThrow().find(attempt.key).map(found -> {
             WorkflowDefinitionRecord current =
                     found.orElseThrow(() -> failure(Reason.STALE_CLAIM, attempt.key, "reinstated row disappeared"));
+            if (view != null) view.applied(current);
             if (attempt.definition != null) attempt.loader.onRestored(current, attempt.definition);
             else attempt.loader.onMetadata(current);
             // The adopted publication is settled only once the committed row was handed over.
@@ -472,6 +450,7 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
 
     /** Removes the runtime this lifecycle published for the retired key's owner; any other registration stays. */
     private Future<Void> removeRetired(DefinitionKey key) {
+        if (view != null) view.removed(key);
         WorkflowRegistry local = registry.get();
         String id = key.definitionId();
         long version = key.definitionVersion();
@@ -506,11 +485,7 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
 
     /** The runtime the registry holds for the exact id and version, or {@code null} when it holds none. */
     private static @Nullable RuntimeWorkflow held(WorkflowRegistry local, String definitionId, long version) {
-        try {
-            return local.resolvePinned(definitionId, version);
-        } catch (WorkflowVersionPinUnavailableException | WorkflowDefinitionMissingException absent) {
-            return null;
-        }
+        return DefinitionPublication.held(local, definitionId, version);
     }
 
     private void attribute(Attempt attempt) {
@@ -629,6 +604,7 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
             return durable.find(key).map(found -> {
                 WorkflowDefinitionRecord current =
                         found.orElseThrow(() -> failure(Reason.STALE_CLAIM, key, "completed row disappeared"));
+                if (view != null) view.applied(current);
                 attempt.loader.onRestored(current, attempt.definition);
                 return (Void) null;
             });
@@ -705,6 +681,35 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
             }
             return Future.failedFuture(original);
         });
+    }
+
+    /**
+     * Brings the node view up to date with the committed row after an operation that left no row in hand. The
+     * refresh is best effort: it never fails the operation, and it is skipped when no view was injected, so that
+     * a lifecycle built without one makes no additional store call.
+     */
+    private Future<Void> refreshView(DefinitionKey key) {
+        if (view == null) return Future.succeededFuture();
+        try {
+            return store.orElseThrow()
+                    .find(key)
+                    .<Void>map(found -> {
+                        WorkflowRegistry local = registry.get();
+                        boolean own = registrations.classify(
+                                        key.tenantKey(),
+                                        key.definitionId(),
+                                        key.definitionVersion(),
+                                        held(local, key.definitionId(), key.definitionVersion()))
+                                == ManagedRegistrations.Standing.OWN;
+                        found.filter(row -> HOLDING.contains(row.status()))
+                                .filter(row -> own)
+                                .ifPresentOrElse(view::applied, () -> view.removed(key));
+                        return null;
+                    })
+                    .recover(ignored -> Future.succeededFuture());
+        } catch (RuntimeException ignored) {
+            return Future.succeededFuture();
+        }
     }
 
     /** Whether the registry holds exactly this runtime instance. */

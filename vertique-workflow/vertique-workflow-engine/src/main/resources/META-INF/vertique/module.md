@@ -209,6 +209,8 @@ Dagger module owning the engine-internal bindings:
   `TransactionalTimerCallbacks<SqlClient>`, and `TransactionalTaskCallbacks<SqlClient>`.
 - Binds `WorkflowRecoveryBridgeImpl` as `WorkflowRecoveryBridge`.
 - Binds `WorkflowDefinitionLifecycle` for durable document activation and contributes the document registry startup step.
+- Binds `WorkflowDefinitionRegistryView` and contributes the startup and shutdown steps of
+  `WorkflowDefinitionPropagationPoller`, which keeps the node's registry in step with the durable table.
 - Declares the `@WorkflowRecorders`-qualified `Set<WorkflowSideEffectRecorder<SqlClient>>` multibinding.
 - Provides the `@OptionalIntentKinds Set<IntentKind>` (delegates to `WorkflowEngineFactory.DEFAULT_OPTIONAL_INTENT_KINDS`).
 - Declares `WorkflowMigrationRegistry` as `@BindsOptionalOf` (opt-in migration support).
@@ -311,9 +313,10 @@ leaves the committed row, and repeating the call repairs the mark. A deprecated 
 current resolution, and an explicit-version start or a migration whose target is deprecated fails with
 `WorkflowDefinitionLifecycleException` reason `DEPRECATED` before any instance row is written. Signals,
 timers and resumption of instances already pinned to the version, and migration away from it, are
-unaffected. These checks use the node's own registry: this call does not tell other nodes, and a freshly
-started node restores deprecation from the database, but other running nodes learn of it only when they restart, so do not rely on these
-checks alone to stop starts elsewhere or to prove that nothing still runs the version. Marking is a no-op for a version not registered on the
+unaffected. These checks use the node's own registry: this call does not tell other nodes. A freshly
+started node restores deprecation from the database and a running node learns of it from its next periodic
+reconciliation (see Peer Propagation), which is bounded only by the cadence plus the time the pass needs, so do not
+rely on these checks alone to stop starts elsewhere or to prove that nothing still runs the version. Marking is a no-op for a version not registered on the
 node, and a registry without deprecation support fails the call after the durable commit, leaving the
 committed status in place.
 
@@ -344,6 +347,81 @@ Every node sharing live document rows must install the corresponding loader, nor
 on a Vert.x context. Compose validators already ran in VALIDATE and do not rerun for these restored
 registrations or runtime activation. With no registry store, this startup step performs no I/O and
 creates no timer.
+
+### Peer Propagation
+
+`WorkflowDefinitionPropagationPoller` converges a running node with changes that another node committed. With a
+durable registry store it contributes a startup step in `AFTER_START` that arms a Vert.x periodic timer, and a
+shutdown step in the same phase that cancels it. The period is `workflow.definitions.maxStalenessSeconds` (30
+seconds by default, the same key that bounds the cooling window); a value whose millisecond equivalent overflows
+fails startup with a configuration error. The startup step runs no pass itself, because the bootstrap step has
+applied the table before traffic, so the first pass runs one period after startup. Without a store nothing is
+scheduled and nothing is touched.
+
+`pollNow()` runs one pass immediately and returns its `Future`; the timer calls the same entry. At most one pass is
+in flight: a call that arrives while one runs, from the timer or from `pollNow()`, returns that pass's future.
+The future succeeds when every row was handled, including when some rows failed to apply, and fails only when the
+table cannot be read; a failed pass does not stop the following ones. Shutdown cancels the timer at once, a tick
+that was already queued starts nothing, a `pollNow()` call after shutdown began returns a completed future and runs
+no pass, and shutdown completes only after the pass in flight has finished. A `pollNow()` call that joins a pass
+already running receives that pass, which may have read the table before a change committed just before the call, so
+that change can need one more pass.
+
+Convergence time is the cadence plus the time one pass needs to apply; there is no tighter bound. A row that
+cannot be applied is retried on every pass and stays unapplied meanwhile, so a stalled or failing apply gives no
+time bound at all.
+
+A pass reads the table's metadata and does not read the bodies of rows that are already applied. It applies the
+metadata in two rounds, each row under the shared per-definition queue after re-reading it, and the round is chosen
+by the re-read status: a row whose status moved between the listing and the re-read is left untouched for the next
+pass, and a row that vanished is forgotten. A row that is already settled on the node costs nothing: a retired,
+candidate or activating row whose status and change instant were settled by an earlier pass and whose owner has no
+runtime in memory, and a live row whose runtime the node holds with the stored hash, whose recorded change instant and
+deprecation mark agree with the row and that is not failing, are skipped without taking a slot or reading the row.
+Anything else takes the full path again, so a runtime that was removed behind the pass is restored. A row that is
+not applied within twice the poll period is counted as failing and logged, and the pass goes on with the other
+rows; its slot stays held until the action finishes. An error that is not fatal, such as a stack overflow, is
+contained to its row in the same way. A store error while re-reading a row fails the pass instead of counting the
+healthy rows as failing.
+
+1. Retired rows remove the runtime attributed to the row's own owner (and its contract mapping); a runtime of another
+   owner, or a replacement, is never removed because id, version and hash match, and a retired row whose runtime is
+   unattributed has nothing of its owner to remove and is settled without failing. Candidate and retired documents are
+   handed to their loader through `onMetadata`. Activating rows are left alone.
+2. Active, superseded and deprecated rows restore the runtime the node does not hold for the owner, then mark a
+   deprecated row. A DOCUMENT row needs exactly one loader that supports its format (normally
+   `WorkflowDefinitionModule`); the stored text is read through the guarded projection, compiled by the loader, and
+   its hash must equal the row's before the runtime is registered. A CODE row needs the same version in the code
+   deployed on this node, with a plan hash equal to the row's. A runtime the owner already holds is checked by plan
+   hash. A slot held by another owner's runtime fails the row, unless that owner has no live row any more, in
+   which case the stale registration is removed and the row is published. An unattributed runtime is preserved and
+   fails the row with `INVALID_TRANSITION`.
+
+Polling never deploys code, never records or accepts a code hash, never reinstates, and never changes a durable
+row. A node whose deployed code lacks a live CODE version, or compiles it to a different hash, reports
+`CODE_UNAVAILABLE` or `DRIFT` for the row on every pass until it is deployed with matching code; a document without a
+loader fails with `LOADER_MISSING`. A registration failure of the registry itself, for example a contract class that
+another runtime already holds, fails the row in the same way, with the committed row untouched. Compose validators
+do not re-run for propagated definitions.
+
+A failing row is logged at WARN through the logger named after `WorkflowDefinitionPropagationPoller` with the
+definition key and the typed reason, never with source text, on its first failure and whenever the reason changes;
+the same failure on later passes is logged at DEBUG, and the row stays counted. Each applied change is logged at
+INFO.
+
+### WorkflowDefinitionRegistryView
+
+The bound `WorkflowDefinitionRegistryView` is a read-only view of one node:
+
+- `registered()` returns an immutable snapshot of the committed records, in a live status, whose runtime this
+  node holds, ordered by definition id, owner (global first) and version. It lists the applied records of every
+  owner, with their ids, versions and provenance, so it is an operator view: do not expose it to tenants
+  unfiltered.
+- `applyFailures()` returns the number of rows that currently fail to apply, not a running total: a successful
+  retry removes the row from the count, and so does a row that is no longer in the table.
+
+The startup step, the lifecycle operations of this node (`activate`, `deprecate`, `retire`, `reinstate`) and the
+poller feed the view. The view reflects this node only; another node can differ until its own pass has run.
 
 ### WorkflowRecoveryBridge
 

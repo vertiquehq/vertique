@@ -62,6 +62,7 @@ import org.slf4j.LoggerFactory;
  *   <li>It recomputes the active version of every owner and id.
  *   <li>It applies the deprecation marks, and removes the registrations of retired rows when they are still
  *       attributed to the row's own owner.
+ *   <li>It records in the node's view every live row whose runtime this node holds for the row's own owner.
  *   <li>It resets activation attempts that went stale, for every definition id of the table.
  *   <li>It hands the committed metadata, the rows just reset included, to the loaders.
  * </ol>
@@ -87,6 +88,7 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
     private final DefinitionApplyQueue queue;
     private final ManagedRegistrations registrations;
     private final WorkflowCodeDefinitionCatalog catalog;
+    private final DefaultWorkflowDefinitionRegistryView view;
 
     @Inject
     WorkflowDefinitionRegistryBootstrapStep(
@@ -95,7 +97,9 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
             Set<PersistedDefinitionLoader> loaders,
             DefinitionApplyQueue queue,
             ManagedRegistrations registrations,
-            WorkflowCodeDefinitionCatalog catalog) {
+            WorkflowCodeDefinitionCatalog catalog,
+            DefaultWorkflowDefinitionRegistryView view) {
+        this.view = view;
         this.store = store;
         this.registry = registry;
         this.loaders = loaders;
@@ -127,8 +131,9 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
                             .compose(ignored -> restoreAll(local, reconciled))
                             .compose(verified -> recompute(reconciled)
                                     .compose(ignored -> listAll())
-                                    .compose(committed ->
-                                            applyMembership(local, committed).compose(ignored -> resetStale(committed)))
+                                    .compose(committed -> applyMembership(local, committed)
+                                            .compose(ignored -> recordView(local, committed))
+                                            .compose(ignored -> resetStale(committed)))
                                     .compose(ignored -> handOffMetadata(verified))));
         });
     }
@@ -402,6 +407,22 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
         return chain;
     }
 
+    /** Records in the node view each live row of the committed listing whose runtime is held for the row's owner. */
+    private Future<Void> recordView(WorkflowRegistry local, List<WorkflowDefinitionRecord> committed) {
+        Future<Void> chain = Future.succeededFuture();
+        for (WorkflowDefinitionRecord row : committed) {
+            if (!LIVE.contains(row.status())) continue;
+            DefinitionKey key = row.key();
+            chain = chain.compose(ignored -> queue.submit(key.definitionId(), () -> {
+                RuntimeWorkflow held = held(local, key);
+                if (registrations.classify(key.tenantKey(), key.definitionId(), key.definitionVersion(), held)
+                        == ManagedRegistrations.Standing.OWN) view.applied(row);
+                return Future.<Void>succeededFuture();
+            }));
+        }
+        return chain;
+    }
+
     /**
      * Classifies the runtime the registry holds for the row. A runtime of another owner or none at all is left
      * alone; one that nobody published is preserved and fails the start, because it cannot be attributed.
@@ -525,12 +546,7 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
                                         "DOCUMENT stored hash " + record.planHash() + " differs from registered hash "
                                                 + existing.orElseThrow().plan().planHash());
                         } else {
-                            local.register(definition);
-                            registrations.attribute(
-                                    key.tenantKey(),
-                                    key.definitionId(),
-                                    key.definitionVersion(),
-                                    local.resolvePinned(key.definitionId(), key.definitionVersion()));
+                            DefinitionPublication.publish(local, registrations, key, definition);
                         }
                         loader.onRestored(record, definition);
                         return Optional.of(new VerifiedDocument(loader, record, definition));
