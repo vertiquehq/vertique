@@ -6,6 +6,7 @@ package dev.vertique.json.schema.validation;
 import dev.vertique.core.validation.ViolationDetail;
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
+import io.vertx.core.json.pointer.JsonPointer;
 import io.vertx.json.schema.OutputUnit;
 import java.io.ByteArrayOutputStream;
 import java.nio.ByteBuffer;
@@ -17,6 +18,7 @@ import java.util.Collections;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -31,7 +33,8 @@ import java.util.stream.Collectors;
  * resolved, and a result whose errors are all structural wrappers, yield one fixed value-free detail instead.
  *
  * <p>A reported location is cut back to the part the schema itself declares, so text a client chose, such as the
- * key of an undeclared property, never appears in a path.
+ * key of an undeclared property, never appears in a path. The one name appended to such a location is a missing
+ * required member, and it is taken from the schema's own {@code required} array.
  *
  * <p>INTERNAL framework seam: this type is shared by framework modules and is not an application contract.
  * It is a stateless utility; every member is {@code static}.
@@ -89,6 +92,12 @@ public final class ViolationDetails {
     /** The {@code type} keyword, whose declared value is a type name or a list of type names. */
     private static final String TYPE_KEYWORD = "type";
 
+    /** The engine's message for an omitted required member, up to the opening quote of the member's name. */
+    private static final String MISSING_REQUIRED_PREFIX = "Instance does not have required property \"";
+
+    /** The only schema that makes an {@code anyOf} entry the absent half of an optional value. */
+    private static final JsonObject NULL_BRANCH = new JsonObject().put(TYPE_KEYWORD, "null");
+
     private ViolationDetails() {}
 
     /**
@@ -110,6 +119,14 @@ public final class ViolationDetails {
      * <p>The path of a detail is the engine's instance location, cut back to the part the schema declares, in the
      * requested form. A result without a nested error list is itself the one error and, when its keyword is
      * resolved, is located at the root, spelled as the empty string.
+     *
+     * <p>The engine reports an omitted {@code required} member at its parent. That detail's path is the parent's
+     * followed by the member's name when the schema confirms the name: it is an entry of the {@code required}
+     * array at the unit's keyword location, the reported location needed no cutting back, and the keyword
+     * location passes through no {@code oneOf} or {@code not} and no {@code anyOf} other than a two-entry one whose
+     * other entry is exactly {@code {"type":"null"}}, which only makes the value optional. Otherwise the parent is
+     * the path, so one of several alternatives is never reported as the member that is missing. The name is
+     * escaped as one pointer segment, never decoded, and is never text the client sent.
      *
      * @param result   the engine's result
      * @param schema   the schema the result was produced for, used to resolve constraint values and to tell a
@@ -144,8 +161,11 @@ public final class ViolationDetails {
             String message = safeDetail(keyword, args, error.getError());
             // Cut back exactly as the value-free detail is: a violation under an undeclared key is reported at a
             // location ending in the client's own key, which must never reach a response.
+            String declared = declaredLocation(error.getInstanceLocation(), schema);
+            String detailPath = path(declared, form);
+            String missing = "required".equals(keyword) ? omittedRequiredMember(error, declared, schema) : null;
             failures.add(new ViolationDetail(
-                    path(declaredLocation(error.getInstanceLocation(), schema), form),
+                    missing == null ? detailPath : member(detailPath, missing, form),
                     message,
                     keyword,
                     args.isEmpty() ? null : args));
@@ -318,9 +338,126 @@ public final class ViolationDetails {
         return form == PathForm.RFC6901 ? rfc6901(location) : (location == null ? "" : location);
     }
 
+    /**
+     * Appends a member name to a parent path already spelled in {@code form}. The RFC 6901 form escapes the name
+     * as one pointer segment, {@code ~} first and then {@code /}, and leaves it otherwise as written; the fragment
+     * form spells it as the engine spells a location segment. A name that cannot be spelled leaves the parent.
+     */
+    private static String member(String parent, String name, PathForm form) {
+        if (form == PathForm.RFC6901) {
+            return parent + '/' + name.replace("~", "~0").replace("/", "~1");
+        }
+        try {
+            String segment = JsonPointer.create().append(name).toURI().toString();
+            return segment.startsWith("#/") ? parent + segment.substring(1) : parent;
+        } catch (RuntimeException e) {
+            return parent;
+        }
+    }
+
     private static boolean isGuardFailure(Throwable thrown) {
         return thrown instanceof PatternInputGuard.PatternInputTooLong
                 || thrown instanceof PatternInputGuard.PatternInputTotalExceeded;
+    }
+
+    // --- omitted required member ---
+
+    /**
+     * The name of the member a {@code required} unit reports as omitted, or {@code null} when the schema does not
+     * confirm it and the unit stays at its parent.
+     *
+     * <p>The name is the engine's message with its fixed prefix and the final quote removed. It is returned only
+     * when it is an entry of the {@code required} array the keyword location leads to, so the text that enters a
+     * path is the schema's own, and only when {@code declared}, the reported location after the cut-back, is the
+     * reported location itself: a parent under a key the client chose is not extended.
+     */
+    private static String omittedRequiredMember(OutputUnit error, String declared, JsonObject schema) {
+        String message = error.getError();
+        if (schema == null
+                || message == null
+                || message.length() <= MISSING_REQUIRED_PREFIX.length()
+                || !message.startsWith(MISSING_REQUIRED_PREFIX)
+                || !message.endsWith("\"")
+                || !Objects.equals(declared, error.getInstanceLocation())) {
+            return null;
+        }
+        String name = message.substring(MISSING_REQUIRED_PREFIX.length(), message.length() - 1);
+        JsonObject node = requiredOwner(schema, error.getKeywordLocation());
+        return node != null && node.getValue("required") instanceof JsonArray required && required.contains(name)
+                ? name
+                : null;
+    }
+
+    /**
+     * Navigates a {@code required} keyword location to the subschema that carries the keyword, or {@code null}
+     * when a step cannot be resolved or the location is not one whose unit may be named.
+     *
+     * <p>A {@code oneOf} or {@code not} step ends the walk, as does an {@code anyOf} step after a {@code $ref}
+     * step or one whose array is not a null branch beside the branch the location enters: the unit is then one
+     * of several alternatives. A {@code $ref} step is followed when it is local.
+     */
+    private static JsonObject requiredOwner(JsonObject root, String keywordLocation) {
+        if (keywordLocation == null) {
+            return null;
+        }
+        String location = keywordLocation.startsWith("#") ? keywordLocation.substring(1) : keywordLocation;
+        String keywordStep = "/required";
+        if (!location.endsWith(keywordStep)) {
+            return null;
+        }
+        String path = location.substring(0, location.length() - keywordStep.length());
+        if (path.isEmpty()) {
+            return root;
+        }
+        Object current = root;
+        boolean followedRef = false;
+        boolean enteredAnyOf = false;
+        String[] segments = path.split("/", -1);
+        for (int position = 0; position < segments.length; position++) {
+            String segment = segments[position];
+            if (position == 0 && segment.isEmpty()) {
+                continue;
+            }
+            Object next;
+            if (current instanceof JsonArray array) {
+                long index = arrayIndex(segment);
+                if (index < 0 || index >= array.size()) {
+                    return null;
+                }
+                if (enteredAnyOf) {
+                    enteredAnyOf = false;
+                    if (array.size() != 2 || !NULL_BRANCH.equals(array.getValue(1 - (int) index))) {
+                        return null;
+                    }
+                }
+                next = array.getValue((int) index);
+            } else if (current instanceof JsonObject object) {
+                String name = decodeSegment(segment);
+                if (name == null || "oneOf".equals(name) || "not".equals(name)) {
+                    return null;
+                }
+                next = object.getValue(name);
+                if ("anyOf".equals(name)) {
+                    if (followedRef || !(next instanceof JsonArray)) {
+                        return null;
+                    }
+                    enteredAnyOf = true;
+                } else if ("$ref".equals(name)) {
+                    if (!(next instanceof String ref) || !ref.startsWith("#")) {
+                        return null;
+                    }
+                    followedRef = true;
+                    next = navigateSchema(root, ref.substring(1));
+                }
+            } else {
+                return null;
+            }
+            if (next == null) {
+                return null;
+            }
+            current = next;
+        }
+        return current instanceof JsonObject owner && !enteredAnyOf ? owner : null;
     }
 
     // --- constraint resolution ---

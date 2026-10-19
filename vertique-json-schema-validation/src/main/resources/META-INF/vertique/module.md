@@ -89,7 +89,16 @@ entries:
 - **`path`** — the engine's instance location after cut-back to a declared location, in the
   `PathForm` the caller requests: `URI_FRAGMENT` is the engine's own form, verbatim, including its
   percent-encoding (`#/a%20b`); `RFC6901` is the JSON Pointer form (`/a b`), with the document root as
-  the empty string and the member named `""` as `/`. A missing location is the empty string.
+  the empty string and the member named `""` as `/`. A missing location is the empty string. An omitted
+  `required` member is reported at its parent by the engine; the path names it as `<parent>/<name>`
+  (RFC 6901: the name escaped as one segment, `~` as `~0` and `/` as `~1`, and never decoded; the fragment
+  form: percent-encoded as the engine spells a location). The name is taken from the schema's `required`
+  array, never from the request, and is added only when the schema confirms it: the name is an entry of
+  the `required` array at the unit's keyword location, the reported location needed no cut-back, and the
+  keyword location passes through no `oneOf` or `not` and no `anyOf` other than a two-entry one whose
+  other entry is exactly `{"type":"null"}` (an optional value) that no `$ref` step precedes. Every other case,
+  such as one of several alternatives or a parent under a key the client chose, keeps the parent
+  location. `allOf` branches, `$ref`, `then` and `else` are named.
 - **`type`** — the violated constraint keyword (`maxLength`, `minimum`, `required`, ...), or `null`
   when no actionable keyword exists.
 - **`message`** — a value-free message for that keyword, rendered from the schema's own arguments.

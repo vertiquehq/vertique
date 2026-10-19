@@ -60,20 +60,20 @@ class PayloadValidationTest {
     }
 
     @Test
-    @DisplayName("a missing required property yields one required violation at the root without values")
-    void missingRequiredPropertyYieldsOneRequiredViolationAtTheRootWithoutValues() {
+    @DisplayName("a missing required property yields one required violation at the missing member without values")
+    void missingRequiredPropertyYieldsOneRequiredViolationAtTheMissingMemberWithoutValues() {
         // Given: the registry of the orders definition, where the approve comment is required
         JsonObject payload = new JsonObject().put("other", SENTINEL);
 
         // When: a payload without the comment is validated
         PayloadValidationResult result = validateApprove(payload);
 
-        // Then: it is invalid with exactly one required violation at the root that names the property
+        // Then: it is invalid with exactly one required violation whose pointer names the missing property
         assertThat(result.valid()).isFalse();
         assertThat(result.violations()).hasSize(1);
         ViolationDetail violation = result.violations().get(0);
         assertThat(violation.type()).isEqualTo("required");
-        assertThat(violation.path()).isEmpty();
+        assertThat(violation.path()).isEqualTo("/comment");
         assertThat(violation.message()).contains("comment");
 
         // And: neither the submitted value nor the undeclared name appears in any field
@@ -379,10 +379,10 @@ class PayloadValidationTest {
         assertThat(decision.violations()).isEmpty();
         assertThat(start.valid()).isTrue();
 
-        // And: the invalid start payload is one required violation at the root
+        // And: the invalid start payload is one required violation at the missing member
         assertThat(invalidStart.violations())
                 .extracting(ViolationDetail::path, ViolationDetail::type)
-                .containsExactly(tuple("", "required"));
+                .containsExactly(tuple("/comment", "required"));
         Validations.assertNoValueIn(invalidStart, SENTINEL, "other");
     }
 

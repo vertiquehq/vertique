@@ -491,6 +491,62 @@ class ValidationDetailPathTest {
     }
 
     @Test
+    @DisplayName("An omitted required member is reported at the member itself, with its location and keyword, and a"
+            + " parent under a client's key stays at the parent")
+    void omittedRequiredMemberIsNamedAtTheGate() throws Exception {
+        // Given a body schema whose pet must have a name, a nullable pet, a map of pets by client key, and a root
+        // that must have an id
+        JsonObject requiresName = new JsonObject()
+                .put("type", "object")
+                .put("properties", new JsonObject().put("name", maxLength(3)))
+                .put("required", new JsonArray().add("name"));
+        JsonObject plain = object(new JsonObject().put("pet", requiresName));
+        JsonObject nullable = object(new JsonObject()
+                        .put(
+                                "pet",
+                                new JsonObject()
+                                        .put(
+                                                "anyOf",
+                                                new JsonArray()
+                                                        .add(new JsonObject().put("type", "null"))
+                                                        .add(new JsonObject().put("$ref", "#/$defs/Pet")))))
+                .put("$defs", new JsonObject().put("Pet", requiresName));
+        JsonObject byKey = object(new JsonObject()
+                .put("byKey", new JsonObject().put("type", "object").put("additionalProperties", requiresName)));
+        JsonObject root = new JsonObject().put("type", "object").put("required", new JsonArray().add("id"));
+
+        // When the gate validates a body that omits each member
+        Outcome omittedPet = validate(plain, new JsonObject().put("pet", new JsonObject()));
+        Outcome omittedNullablePet = validate(nullable, new JsonObject().put("pet", new JsonObject()));
+        Outcome omittedUnderKey =
+                validate(byKey, new JsonObject().put("byKey", new JsonObject().put(CLIENT_KEY, new JsonObject())));
+        Outcome omittedRoot = validate(root, new JsonObject());
+
+        // Then the entry names the member under its parent, carries the body location and the required keyword,
+        // and keeps the engine's message
+        assertAll(
+                () -> assertEquals(Set.of("/pet/name"), omittedPet.pointersFor("required"), omittedPet.json),
+                () -> assertEquals(
+                        Set.of("/pet/name"), omittedNullablePet.pointersFor("required"), omittedNullablePet.json),
+                () -> assertEquals(Set.of("/pet"), omittedNullablePet.pointersFor("type"), omittedNullablePet.json),
+                () -> assertEquals(Set.of("/id"), omittedRoot.pointersFor("required"), omittedRoot.json),
+                // And a parent under a client's key stays at the declared parent, without the key
+                () -> assertEquals(Set.of("/byKey"), omittedUnderKey.pointersFor("required"), omittedUnderKey.json),
+                () -> assertFalse(omittedUnderKey.json.contains(CLIENT_KEY), omittedUnderKey.json),
+                () -> {
+                    ValidationErrorDetail entry = omittedPet.errors().stream()
+                            .filter(error -> "required".equals(error.type()))
+                            .findFirst()
+                            .orElseThrow(() -> new AssertionError(omittedPet.json));
+                    assertEquals("/pet/name", entry.pointer(), omittedPet.json);
+                    assertEquals("body", entry.location(), omittedPet.json);
+                    assertEquals("required", entry.type(), omittedPet.json);
+                    assertNull(entry.parameter(), omittedPet.json);
+                    assertEquals("Instance does not have required property \"name\"", entry.detail(), omittedPet.json);
+                });
+    }
+
+    @Test
     @DisplayName("A violation inside an array parameter names the parameter and the item's index")
     void arrayParameterItemReportsParameterNameWithIndex() {
         // Given an ids query parameter that is an array of integers up to 10, and a limit query parameter
