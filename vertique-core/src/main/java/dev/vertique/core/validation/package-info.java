@@ -13,6 +13,8 @@
  *   <li>{@link dev.vertique.core.validation.ViolationCarrier} — implemented by validation exceptions whose
  *       violations a transport may render</li>
  *   <li>{@link dev.vertique.core.validation.ParameterViolation} — violation scoped to a method parameter</li>
+ *   <li>{@link dev.vertique.core.validation.PropertyPath} — INTERNAL structured Java-side path to a violated
+ *       element, carried optionally by {@code ParameterViolation}</li>
  *   <li>{@link dev.vertique.core.validation.JakartaPathPointers} — INTERNAL conversion of a Jakarta property path
  *       into an RFC 6901 pointer over wire names</li>
  *   <li>{@link dev.vertique.core.validation.ValidateWith} — annotation for specifying validation groups</li>
