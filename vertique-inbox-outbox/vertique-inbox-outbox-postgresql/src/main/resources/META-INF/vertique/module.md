@@ -8,13 +8,14 @@ SPDX-License-Identifier: EUPL-1.2
 > **Status:** Stable
 > **Package:** `dev.vertique.inboxoutbox.postgresql`
 > **Artifact:** `vertique-inbox-outbox-postgresql`
-> **Depends on:** `dev.vertique:vertique-inbox-outbox-core`, `dev.vertique:vertique-db-postgresql`,
+> **Depends on:** `dev.vertique:vertique-inbox-outbox-core`, `dev.vertique:vertique-db-postgresql`
+> (which brings `dev.vertique:vertique-db-core` for `DbSchemas` and `MigrationDefinition`),
 > `dev.vertique:vertique-core`, `dev.vertique:vertique-context`, `dev.vertique:vertique-deploy`,
 > `dev.vertique:vertique-logging`, `dev.vertique:vertique-services`, `dev.vertique:vertique-job-cron`
 > (the maintenance cron jobs). `dev.vertique:vertique-db-flyway` is test-scope here; the application
-> supplies it.
+> supplies the migration runner.
 
-PostgreSQL persistence and relay engine for Transactional Messaging. Provides `DefaultInboxService` and `DefaultOutboxService` (the only implementations of the core write APIs), `PgInboxOutboxRepository` (claim/lease queries, stale recovery), `OutboxRelay` (relay verticle with POLLING and LISTEN_NOTIFY strategies), and the Flyway migration that creates the `inbox` and `outbox` tables.
+PostgreSQL persistence and relay engine for Transactional Messaging. Provides `DefaultInboxService` and `DefaultOutboxService` (the only implementations of the core write APIs), `PgInboxOutboxRepository` (claim/lease queries, stale recovery), `OutboxRelay` (relay verticle with POLLING and LISTEN_NOTIFY strategies), and the Flyway migration that creates the `inbox` and `outbox` tables. `InboxOutboxMigrationsModule` declares those migrations as the `inbox-outbox` migration instance for named Flyway instances, and the optional `db.schemas.inbox-outbox` setting places both tables in one schema for the migrations and the repository.
 
 ---
 
@@ -22,7 +23,20 @@ PostgreSQL persistence and relay engine for Transactional Messaging. Provides `D
 
 ### `PgInboxOutboxRepository`
 
-PostgreSQL repository that owns all DDL, claim queries, lease recovery, and LISTEN/NOTIFY integration. Extends `PgSqlRepository`.
+PostgreSQL repository that owns the inbox and outbox SQL: inserts, claim queries, state transitions, lease recovery and retention cleanup. The table DDL and the `LISTEN/NOTIFY` trigger belong to the packaged migration (see [Database Schema](#database-schema)), and the `LISTEN` connection belongs to `OutboxRelay`. Extends `PgSqlRepository`.
+
+**Constructors:**
+
+```java
+@Inject
+public PgInboxOutboxRepository(Pool pool, PgDbExceptionMapper exceptionMapper)
+
+public PgInboxOutboxRepository(Pool pool, PgDbExceptionMapper exceptionMapper, DbSchemas schemas)
+```
+
+The two-argument constructor leaves every table unqualified, so `inbox` and `outbox` resolve through the connection's default schema. The three-argument constructor qualifies every inbox and outbox table reference, in every statement, with the schema that `schemas` maps to `inbox-outbox`; with no `inbox-outbox` entry its SQL is the same as the two-argument constructor's. Statements are built once at construction. The mapping is validated then: a schema that is not a single valid PostgreSQL identifier (or is reserved by PostgreSQL) throws `IllegalArgumentException` before any query runs (see `PgTableNames` in `dev.vertique:vertique-db-postgresql`). Column qualifiers inside the SQL, such as `outbox.id`, name the table within the statement and are never schema-qualified. SQL in this document is shown with unqualified table names.
+
+Mapped or not, `tryInsert` and `insert` run on the `SqlClient` the caller passes, so the inbox or outbox row commits or rolls back with the application's own writes.
 
 **Inbox operations:**
 - `tryInsert(String messageId, String source, SqlClient tx)` — inserts the inbox row in the caller's transaction; returns `true` for new messages, `false` when the `(messageId, source)` pair was already recorded
@@ -239,21 +253,123 @@ Index: `idx_inbox_processed_at` (for cleanup queries).
 
 **LISTEN/NOTIFY trigger:** `transactional_outbox_notify` fires `AFTER INSERT ON outbox` and calls `pg_notify('transactional_outbox_channel', NEW.id::text)`.
 
+**Placement.** The migration scripts are unqualified, so the migration instance's default schema decides where the tables, indexes, the `outbox_id_seq` sequence, the `notify_transactional_outbox` function and the trigger land. In named Flyway mode with a `db.schemas.inbox-outbox` entry, that schema is the default, and the repository qualifies every table with it, so both agree. In legacy mode the migration lands where the legacy configuration says (see [Flyway Configuration](#flyway-configuration)). The `transactional_outbox_channel` notification channel is **database-wide**: PostgreSQL channels are not schema-scoped, so every relay listening on the database receives every notification. Treat the channel as a wake-up hint, not a tenant boundary; a relay still claims rows only from its own mapped `outbox` table.
+
+---
+
+## Flyway Configuration
+
+The inbox/outbox migration is declared once, by `InboxOutboxMigrationsModule`, and can be run two ways.
+The declaration is metadata only: it names the `inbox-outbox` instance and the location
+`classpath:db/migration/inbox-outbox`, has no dependencies and needs no connection pool, so a
+migration-only component can include it on its own. `TransactionalMessagingPostgresqlModule` includes it,
+so an application that wires the repository contributes the declaration automatically.
+
+### Named instances
+
+Give the inbox and outbox tables their own schema and history table:
+
+```json
+{
+  "db": {
+    "schemas": { "inbox-outbox": "messaging" }
+  },
+  "flyway": {
+    "mode": "MIGRATE",
+    "instances": { "inbox-outbox": {} }
+  }
+}
+```
+
+- **One setting places everything.** `db.schemas.inbox-outbox` is the instance's default schema and
+  history schema, and `PgInboxOutboxRepository` qualifies every inbox and outbox table with it, so the
+  migrations and every statement use one schema. The tables, indexes, the `outbox_id_seq` sequence, the
+  notify function and its trigger all land there, and the history table is
+  `flyway_schema_history_inbox_outbox` in that schema.
+- **Run it through the named runner.** A migration component installs `DbModule`, `DbFlywayModule` and
+  `InboxOutboxMigrationsModule` (plus the configuration and Vert.x modules the application already
+  uses), and calls `FlywayMigrationRunner.run(vertx)`; `FlywayMigrationStartupStep` runs the same engine
+  at startup. The component needs no connection pool. `dev.vertique:vertique-db-flyway` documents
+  `instances()`, `run(Vertx)`, reports and failures.
+- **Without a `db.schemas.inbox-outbox` entry** the migration uses the first entry of the instance's
+  Flyway `schemas` list, or the connection's default schema, and the repository stays unqualified.
+  Configure the migration and runtime connections to the same default schema.
+- **Include `DbModule` in the migration component** (or bind `DbSchemas` yourself). A named migration
+  component without either ignores `db.schemas`, and the tables can land in a different schema than a
+  runtime component with `DbModule` queries.
+- **The application's own migrations** are a separate instance with a disjoint location such as
+  `classpath:db/migration/app`. A broad `classpath:db/migration` location overlaps
+  `classpath:db/migration/inbox-outbox` and is rejected.
+- **A dedicated DDL user** is set with `flyway.user` and `flyway.password` (both, or neither), or per
+  instance with `flyway.instances.inbox-outbox.user` and `flyway.instances.inbox-outbox.password`.
+  Without them the migration uses the `db` pool credentials.
+
+`dev.vertique:vertique-db-flyway` documents the full instance configuration, the agreement rules between
+`db.schemas` and Flyway schema lists, and the failure model.
+
+### Single Flyway (legacy) configuration
+
+When `flyway.instances` is absent, the default `classpath:db/migration` location already includes the
+bundled `db/migration/inbox-outbox` scripts, so no extra location is needed:
+
+```json
+{
+  "flyway": {
+    "mode": "MIGRATE",
+    "user": "ddl_user",
+    "password": "ddl_secret"
+  }
+}
+```
+
+If you override `locations`, list the inbox/outbox directory next to an application directory that does
+not contain it, for example `["classpath:db/migration/inbox-outbox", "classpath:db/app"]`. Do not list
+both `classpath:db/migration` and `classpath:db/migration/inbox-outbox`: the first already covers the
+second.
+
+In this mode the migration lands where the legacy configuration says, and nothing checks it against
+`db.schemas`. If `db.schemas.inbox-outbox` is also set, the repository queries that schema, so make the
+legacy `flyway.schemas` list (first entry) or the connection default match it, or the repository will
+look in a schema the migration never filled.
+
+### Runtime placement
+
+- **The repository reads placement from `DbSchemas`.** A runtime component that installs `DbModule`
+  gets it from `db.schemas`, with no Flyway module or Flyway configuration. A component that installs
+  neither `DbModule` nor its own `DbSchemas` binding keeps unqualified SQL.
+- **Check the keys yourself.** `db.schemas` keys are open and are not validated, so a misspelled key
+  (`inbox_outbox` or `inboxoutbox` for `inbox-outbox`) leaves the placement unmapped and the SQL
+  unqualified, with no error. Compare `DbSchemas.mappings()` with the instance names before deploying.
+- **The runtime database role needs `USAGE` on the mapped schema**, besides the usual privileges on the
+  tables.
+- **An invalid mapping fails at construction.** A mapped schema that is not a single valid PostgreSQL
+  identifier throws `IllegalArgumentException` when the repository is created, not on the first query.
+- **The notification channel is database-wide.** `transactional_outbox_channel` is shared by every
+  schema in the database, so it is not a tenant boundary (see [Database Schema](#database-schema)).
+- **Your own tables.** An application can inject `DbSchemas` and place its own tables with the same
+  mapping mechanism; see `dev.vertique:vertique-db-core` (`DbSchemas`) and `PgTableNames` in
+  `dev.vertique:vertique-db-postgresql`.
+- **One source of `DbSchemas`.** A component that binds `DbSchemas` itself cannot also install
+  `DbModule`: Dagger reports a duplicate binding at compile time, with no silent precedence.
+
 ---
 
 ## Dagger Wiring
 
-`TransactionalMessagingPostgresqlModule` includes `TransactionalMessagingModule` (core) and provides:
+`TransactionalMessagingPostgresqlModule` includes `TransactionalMessagingModule` (core), `InboxOutboxMigrationsModule` (the `inbox-outbox` migration declaration) and `DbSchemasModule` (the optional `DbSchemas` binding), and provides:
 
 | Binding | Type | Description |
 |---------|------|-------------|
 | `InboxService` | Singleton | `DefaultInboxService` backed by `PgInboxOutboxRepository` |
 | `OutboxService` | Singleton | `DefaultOutboxService` backed by `PgInboxOutboxRepository` |
-| `PgInboxOutboxRepository` | Singleton | PostgreSQL repository |
+| `PgInboxOutboxRepository` | Singleton | PostgreSQL repository, built from `Optional<DbSchemas>`: placed in the schema mapped to `inbox-outbox` when the component supplies `DbSchemas` (a component that installs `DbModule` gets it from `db.schemas.inbox-outbox`), unqualified when it does not. The `InboxRepository` and `OutboxRepository` bindings, both services, the maintenance cron and every relay instance resolve to this one instance, so they share one node identity (each relay instance appends a counter suffix to it for `claimed_by`) |
+| `Set<MigrationDefinition>` | `@IntoSet` | The `inbox-outbox` declaration from `InboxOutboxMigrationsModule`: location `classpath:db/migration/inbox-outbox`, no dependencies |
 | `OutboxRelayConfig` | Singleton | Relay configuration deserialized from `inboxOutbox.relay` |
 | `InboxOutboxCleanupConfig` | Singleton | Cleanup configuration deserialized from `inboxOutbox.cleanup` |
 | `Set<VerticleDeployment>` | `@ElementsIntoSet` | `OutboxRelay` verticle; SERVICES phase, priority 100. Every relay instance is given the contributed `Set<OutboxPublishObserver>`, sorted once per instance by `OrderedExtension` order |
 | `@Services Set<Object>` | `@IntoSet` | `OutboxMaintenanceCron` — provides cluster-singleton `@CronJob` entry points for stale-lease recovery and table cleanup |
+
+**Compatibility note.** `PgInboxOutboxRepository` is now provided by an explicit `@Provides` method. A component that installs this module and also provides `PgInboxOutboxRepository` itself sees a duplicate binding; remove its own provider. The `@Inject` two-argument constructor remains for components that do not install this module.
 
 `RelayCapabilities` are derived at startup by `OutboxRelay.deriveCapabilities(handlerMap)` from the registered `Set<OutboxDestinationHandler>`. No `@ServiceTargetIds`- or `@DelayedJobTargetIds`-qualified `Set<String>` bindings are provided by this module — each adapter handler owns its own claim scope.
 
@@ -261,6 +377,7 @@ Index: `idx_inbox_processed_at` (for cleanup queries).
 @Component(modules = {
     VertxModule.class,
     DispatchModule.class,
+    DbModule.class,                              // supplies DbSchemas from db.schemas
     DbPostgresqlModule.class,
     DbFlywayModule.class,
     TransactionalMessagingPostgresqlModule.class,
