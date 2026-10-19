@@ -469,24 +469,47 @@ changes startup for every PostgreSQL application. Do the following in order.
 
 ### 1. Migrate the schema
 
-- Flyway applies `V002__create_workflow_definitions.sql` (the `workflow_definitions` table),
-  `V003__add_workflow_definition_digest.sql` (the `document_digest` column) and `V004__add_workflow_tenant_key.sql` (a
-  nullable `tenant_key` column on `workflow_instances` and `workflow_tasks`, existing rows `null`) from
-  `db/migration/workflow`. All three must run before the first 0.4.0 node starts. `V004__` changes only catalog metadata,
-  but each `ALTER TABLE` holds an `ACCESS EXCLUSIVE` lock until the migration commits: run it when no long transaction is
-  open on those tables. It waits at most 30 seconds per table for the lock (`SET LOCAL lock_timeout`), during which new
-  statements on that table queue behind it, and then fails, so rerun it after the blocking transaction ends. A manual run
-  must be one transaction (`psql --single-transaction -f V004__add_workflow_tenant_key.sql`), or the timeout has no effect.
-  Instances started and tasks created by nodes of the previous release keep `tenant_key = null` permanently: bind a
-  `WorkflowTenantResolver` only after every node runs 0.4.0, and for tasks created earlier from a stamped instance run
-  `UPDATE workflow_tasks t SET tenant_key = i.tenant_key FROM workflow_instances i WHERE t.workflow_id = i.id AND
-  t.tenant_key IS NULL AND i.tenant_key IS NOT NULL`. Instances started by previous-release nodes cannot be backfilled
-  from the column.
+- Flyway applies one new migration, `V002__create_workflow_definitions_and_tenant_key.sql`, from `db/migration/workflow`
+  (`V1__` is unchanged). It creates the `workflow_definitions` table with its `document_digest` column, adds a nullable
+  `tenant_key` column to `workflow_tasks` and `workflow_instances` (existing rows `null`) and creates one partial index
+  per table for tenant-filtered listings: `idx_workflow_tasks_tenant_updated_at` and
+  `idx_workflow_instances_tenant_updated_at`, each on `(tenant_key, updated_at DESC, <id>)` where `tenant_key IS NOT NULL`.
+  It must run before the first 0.4.0 node starts.
+- **Lock and duration.** Each `ALTER TABLE` and each `CREATE INDEX` holds an `ACCESS EXCLUSIVE` lock until the migration
+  commits, and each index build is a sequential scan of its table under that lock, so the time the tables are blocked
+  grows with their size. Run the migration when no long transaction is open on `workflow_tasks` or `workflow_instances`.
+  It waits at most 30 seconds per statement for a lock (`SET LOCAL lock_timeout`), during which new statements on that
+  table queue behind it, and then fails, so rerun it after the blocking transaction ends. A manual run must be one
+  transaction (`psql --single-transaction -f V002__create_workflow_definitions_and_tenant_key.sql`), or the timeout has no
+  effect.
+- **Large installations.** Every column and index statement is `IF NOT EXISTS`, so you can do the table work ahead of the
+  upgrade and let the migration find it done. Run these exact statements outside a transaction (each on an autocommit
+  connection), with the `ALTER` statements first:
+
+  ```sql
+  ALTER TABLE workflow_tasks     ADD COLUMN IF NOT EXISTS tenant_key VARCHAR(255);
+  ALTER TABLE workflow_instances ADD COLUMN IF NOT EXISTS tenant_key VARCHAR(255);
+  CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_workflow_tasks_tenant_updated_at
+      ON workflow_tasks (tenant_key, updated_at DESC, task_id ASC) WHERE tenant_key IS NOT NULL;
+  CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_workflow_instances_tenant_updated_at
+      ON workflow_instances (tenant_key, updated_at DESC, id ASC) WHERE tenant_key IS NOT NULL;
+  ```
+
+  The migration then adds no scan. `ADD COLUMN IF NOT EXISTS` still takes the exclusive lock briefly. Both `IF NOT EXISTS`
+  forms match by name only, so a column or index of that name with a different definition is silently accepted: use the
+  statements above unchanged. A failed concurrent build leaves an `INVALID` index that `IF NOT EXISTS` would skip: check
+  `pg_index.indisvalid` for both index names and drop an invalid one before the migration runs.
+- **Rolling upgrade.** Instances started and tasks created by nodes of the previous release keep `tenant_key = null`
+  permanently: bind a `WorkflowTenantResolver` only after every node runs 0.4.0, and for tasks created earlier from a
+  stamped instance run `UPDATE workflow_tasks t SET tenant_key = i.tenant_key FROM workflow_instances i WHERE
+  t.workflow_id = i.id AND t.tenant_key IS NULL AND i.tenant_key IS NOT NULL`. Instances started by previous-release nodes
+  cannot be backfilled from the column.
+- **Development databases.** A database that applied an earlier 0.4.0 snapshot must be recreated: version 2 changed its
+  checksum and description, so Flyway validation fails, and the versions 3 and 4 it recorded are no longer shipped.
 - PostgreSQL 15 or later is required (`NULLS NOT DISTINCT`).
 - Anything else that writes `DOCUMENT` rows, such as operator scripts or other modules, must supply `document_digest`:
-  the lowercase hex SHA-256 of the stored UTF-8 text, present on `DOCUMENT` rows and absent on `CODE` rows. The migration
-  backfills rows that already exist, which only matters for databases of pre-release builds. Where Flyway is disabled,
-  run all three migration scripts yourself before the first 0.4.0 node starts.
+  the lowercase hex SHA-256 of the stored UTF-8 text, present on `DOCUMENT` rows and absent on `CODE` rows. Where Flyway
+  is disabled, run the migration script yourself, in one transaction, before the first 0.4.0 node starts.
 - Durable `DOCUMENT` bodies need `server_encoding = UTF8`. The check runs before the first document read or write. `CODE`
   rows and applications without documents work on any encoding.
 
@@ -516,7 +539,7 @@ cycle. Eight old declarations are removed; constructors and all other members st
 
 Every PostgreSQL application, including code-first ones that never touch documents:
 
-- **First boot writes `CODE` rows.** Each code definition is recorded as a global row. `V003` must have run.
+- **First boot writes `CODE` rows.** Each code definition is recorded as a global row. The `V002__` migration must have run.
 - **Code drift can fail startup.** If a version's compiled shape changed and instances are pinned to that exact version
   (`RUNNING`, `WAITING` or `COMPENSATING`), startup fails with `DRIFT` naming both hashes. Keep the code of a version unchanged
   until its instances finish, or bump the version. With no pinned instance the stored hash is replaced and a WARN logs it.
@@ -587,7 +610,7 @@ is registered, and a static source failing a limit fails startup naming the reso
 - **Added bindings.** Applications gain the bound `WorkflowDefinitionLifecycle`, `WorkflowDefinitionRegistryView` and
   `WorkflowDefinitionPropagationPoller`. The poller adds one periodic timer per node; it is scheduled after startup and
   stopped at shutdown.
-- **Instance tenant.** `V004__` adds the nullable tenant columns; an optional `WorkflowTenantResolver` binding stamps new
+- **Instance tenant.** `V002__` adds the nullable tenant columns; an optional `WorkflowTenantResolver` binding stamps new
   instances (see [Instance tenant resolution](#instance-tenant-resolution)), and without it they stay `null`. Tenant ids
   use the `<tenantKey>:<name>` namespace for definition loads. Record patterns that deconstruct `WorkflowInstance`,
   `TaskRecord`, `WorkflowInstanceQuery` or `TaskFilter` by component list need the new trailing `tenantKey` component.
