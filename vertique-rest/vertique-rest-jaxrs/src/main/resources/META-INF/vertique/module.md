@@ -828,6 +828,58 @@ public class ItemNotFoundMapper implements ExceptionMapper<ItemNotFoundException
 ExceptionMapper<?> itemNotFoundMapper(ItemNotFoundMapper mapper) { return mapper; }
 ```
 
+### Business-rule errors with their own code
+
+A rule that is not a constraint on a field (for example "credit limit exceeded") is not a validation
+violation. Give it its own exception and map it to a problem document that carries the rule's code as an
+extension member; do not put the code into a `ValidationErrorDetail` or a `ViolationDetail`, which locate
+failures in the request and have no member for a rule identifier. `ProblemDetail` is built for this:
+the builder's `extension(name, value)` adds a sibling JSON member, and a subclass declared with Lombok's
+`@SuperBuilder` adds typed members (`ValidationProblemDetail` does exactly that for `errors`).
+
+```java
+public class CreditLimitExceededException extends BusinessRuleException {
+    private final String code;
+
+    public CreditLimitExceededException(String message, String code) {
+        super(message);
+        this.code = code;
+    }
+
+    public String code() {
+        return code;
+    }
+}
+
+public class CreditLimitExceededMapper implements ExceptionMapper<CreditLimitExceededException> {
+    @Inject public CreditLimitExceededMapper() {}
+
+    @Override
+    public Response toResponse(CreditLimitExceededException ex) {
+        return Response.status(422)
+                .entity(ProblemDetail.builder()
+                        .type("about:blank")
+                        .title("Business rule violated")
+                        .status(422)
+                        .detail(ex.getMessage())
+                        .extension("code", ex.code())
+                        .build())
+                .type("application/problem+json")
+                .build();
+    }
+}
+
+@Provides @IntoSet
+ExceptionMapper<?> creditLimitMapper(CreditLimitExceededMapper mapper) { return mapper; }
+```
+
+The response is `{"type":"about:blank","title":"Business rule violated","status":422,"detail":"...","code":"RULE001",
+"instance":"urn:uuid:..."}`; the error pipeline stamps the `instance`. Keep the message free of submitted
+values, as for every mapper. To report several rule failures in one response, extend `ProblemDetail` with a
+typed list member the same way `ValidationProblemDetail` carries `errors`. Throwing a
+`RestValidationException` with `type = "business"` and the code in `args` also works, but it bends `args`
+(documented as constraint arguments) into an identifier, so prefer the dedicated exception.
+
 ### Framework decoders and encoders
 
 Both SPIs are declared in `dev.vertique:vertique-rest-core`; the implementations below are what
