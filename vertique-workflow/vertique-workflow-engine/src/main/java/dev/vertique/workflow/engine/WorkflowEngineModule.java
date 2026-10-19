@@ -18,7 +18,6 @@ import dev.vertique.workflow.ops.TransactionalTaskCallbacks;
 import dev.vertique.workflow.ops.TransactionalTimerCallbacks;
 import dev.vertique.workflow.ops.TransactionalWorkflowOperations;
 import dev.vertique.workflow.ops.WorkflowOperations;
-import dev.vertique.workflow.ops.WorkflowTenantResolver;
 import dev.vertique.workflow.sideeffect.IntentKind;
 import dev.vertique.workflow.sideeffect.WorkflowRecorders;
 import dev.vertique.workflow.sideeffect.WorkflowSideEffectRecorder;
@@ -141,15 +140,6 @@ public abstract class WorkflowEngineModule {
      */
     @BindsOptionalOf
     abstract BeanValidator optionalBeanValidator();
-
-    /**
-     * Declares the optional tenant resolver; when the application binds none, new instances carry no
-     * tenant.
-     *
-     * @return the optional resolver binding
-     */
-    @BindsOptionalOf
-    abstract WorkflowTenantResolver optionalTenantResolver();
 
     /**
      * Provides the set of {@link IntentKind} values that {@link RecorderRouter} treats as optional:

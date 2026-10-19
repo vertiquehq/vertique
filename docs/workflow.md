@@ -500,10 +500,10 @@ changes startup for every PostgreSQL application. Do the following in order.
   statements above unchanged. A failed concurrent build leaves an `INVALID` index that `IF NOT EXISTS` would skip: check
   `pg_index.indisvalid` for both index names and drop an invalid one before the migration runs.
 - **Rolling upgrade.** Instances started and tasks created by nodes of the previous release keep `tenant_key = null`
-  permanently: bind a `WorkflowTenantResolver` only after every node runs 0.4.0, and for tasks created earlier from a
-  stamped instance run `UPDATE workflow_tasks t SET tenant_key = i.tenant_key FROM workflow_instances i WHERE
-  t.workflow_id = i.id AND t.tenant_key IS NULL AND i.tenant_key IS NOT NULL`. Instances started by previous-release nodes
-  cannot be backfilled from the column.
+  permanently, and the engine sets no tenant on new instances yet, so every engine-started instance is `null` too. For
+  tasks created earlier from an instance that another writer stamped, run `UPDATE workflow_tasks t SET tenant_key =
+  i.tenant_key FROM workflow_instances i WHERE t.workflow_id = i.id AND t.tenant_key IS NULL AND i.tenant_key IS NOT
+  NULL`. Instances started by previous-release nodes cannot be backfilled from the column.
 - **Development databases.** A database that applied an earlier 0.4.0 snapshot must be recreated: version 2 changed its
   checksum and description, so Flyway validation fails, and the versions 3 and 4 it recorded are no longer shipped.
 - PostgreSQL 15 or later is required (`NULLS NOT DISTINCT`).
@@ -610,8 +610,8 @@ is registered, and a static source failing a limit fails startup naming the reso
 - **Added bindings.** Applications gain the bound `WorkflowDefinitionLifecycle`, `WorkflowDefinitionRegistryView` and
   `WorkflowDefinitionPropagationPoller`. The poller adds one periodic timer per node; it is scheduled after startup and
   stopped at shutdown.
-- **Instance tenant.** `V002__` adds the nullable tenant columns; an optional `WorkflowTenantResolver` binding stamps new
-  instances (see [Instance tenant resolution](#instance-tenant-resolution)), and without it they stay `null`. Tenant ids
+- **Instance tenant.** `V002__` adds the nullable tenant columns. The engine sets no tenant on new instances yet, so
+  they stay `null` (see [Instance Tenant](#instance-tenant)). Tenant ids
   use the `<tenantKey>:<name>` namespace for definition loads. Record patterns that deconstruct `WorkflowInstance`,
   `TaskRecord`, `WorkflowInstanceQuery` or `TaskFilter` by component list need the new trailing `tenantKey` component.
   Other modules or tools that read `workflow_instances` or `workflow_tasks` see an extra nullable column.
@@ -621,16 +621,15 @@ is registered, and a static source failing a limit fails startup naming the reso
 Two optional keys, `workflow.definitions.maxStalenessSeconds` (30) and `workflow.definitions.maxDocumentSizeBytes` (262144).
 Existing configuration needs no change. See [Configuration](#configuration).
 
-## Instance Tenant Resolution
+## Instance Tenant
 
-The engine can stamp a tenant key on each new instance from the durable context it captures at start. Bind a `WorkflowTenantResolver` (`@Nullable String tenantOf(DurableMetadata captured)`) and the engine calls it once per new instance, inside the start transaction; without a binding, or when it returns `null`, the instance has no tenant. Tasks inherit the instance's tenant, and migration and resurrection keep it.
+`WorkflowInstance`, `TaskRecord`, `WorkflowInstanceQuery` and `TaskFilter` carry a nullable `tenantKey`. The engine sets no tenant when it starts an instance, and no engine setting exists yet: the instance tenant is `NULL` until the tenant context stamps it. Migration and resurrection keep an instance's tenant for its life.
 
-- **Derive the tenant from an integrity-protected value.** The durable context captured at start includes values bound from inbound transport headers (for example message consumers) without sanitization, and a namespace that refuses explicit signal carriers is still reachable from such headers. The resolver runs synchronously in the context of the caller that starts the workflow, so the simplest safe source is that caller's authenticated identity, or a verified identity snapshot; never parse the raw body of a namespace whose decoder performs no integrity check.
-- **Fail-closed values.** A non-null result must be nonblank, at most 255 code points, and free of NUL, control characters, unpaired surrogates and `:`; otherwise the start fails (leading or trailing whitespace and invisible formatting characters are not rejected, so normalize in the resolver). A resolver that throws, including with an undeclared checked exception, also fails the start. With `start(cmd, tx)` the caller must roll back `tx` after a failed start: the idempotency claim is written before the instance. The failure message is fixed and carries no context content and no resolver exception.
-- **Not called on replay.** An idempotent replay of an existing start returns the existing id without calling the resolver.
-- **Information, not isolation.** The tenant is a label and a filter. A `null` filter matches every tenant, so do not pass an unresolved tenant as `null` expecting scoping. Start idempotency keys and business keys remain global: a start that reuses another tenant's key returns that tenant's instance. No operation addressed by instance or task id (query, signal, cancel, retry, migrate, task complete or reassign) checks the tenant, and timers, branch tokens and definition resolution are global: before acting on a caller-supplied id, load the instance and compare its `tenantKey()` with the caller's tenant.
-- **No definition cross-check.** The stamped tenant is not compared with the `<tenantKey>:` prefix of the started definition id; a start may run another tenant's namespaced definition. A tenant key of 254 or more code points can be stamped but can never own a loadable definition, because `<key>:<name>` would exceed the 255 code point id limit.
-- **Manual wiring.** `WorkflowEngineFactory` has no resolver overload, so a hand-assembled engine leaves instances without a tenant.
+- **Tasks follow the instance.** The PostgreSQL task store writes the owning instance row's tenant on every task insert, whatever the `TaskRecord` carries, so a task created after another writer stamped its instance carries that tenant and a task created earlier stays `NULL`.
+- **Filters.** `WorkflowInstanceQuery.tenantKey` and `TaskFilter.tenantKey` match exactly when non-null; `null` matches every tenant. Never pass an unresolved tenant as `null` expecting scoping.
+- **Information, not isolation.** The tenant is a label and a filter. Operations addressed by instance or task id (query, signal, cancel, retry, migrate, task complete or reassign) do not check it, and timers, branch tokens and definition resolution are global: before acting on a caller-supplied id, load the instance and compare its `tenantKey()` with the caller's tenant.
+- **Global keys.** Start idempotency keys and business keys are global: a start that reuses another tenant's key returns that tenant's instance.
+- **No definition cross-check.** Nothing ties an instance tenant to a definition owner: a stamped instance may run another tenant's namespaced definition or a global one.
 
 ---
 

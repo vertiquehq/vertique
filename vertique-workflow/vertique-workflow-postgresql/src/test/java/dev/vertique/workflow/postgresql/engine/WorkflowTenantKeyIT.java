@@ -14,7 +14,6 @@ import dev.vertique.context.ContextRuntimeModule;
 import dev.vertique.core.context.ContextHolder;
 import dev.vertique.core.context.DurableContextMetadataDecoder;
 import dev.vertique.core.context.DurableContextMetadataEncoder;
-import dev.vertique.core.context.DurableMetadata;
 import dev.vertique.db.DbPoolConfig;
 import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.test.DatabaseExtension;
@@ -37,10 +36,8 @@ import dev.vertique.workflow.ops.StartCommand;
 import dev.vertique.workflow.ops.TaskCompletionCommand;
 import dev.vertique.workflow.ops.TaskMutationResult;
 import dev.vertique.workflow.ops.TransactionalTaskCallbacks;
-import dev.vertique.workflow.ops.TransactionalWorkflowOperations;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.ops.WorkflowOperations;
-import dev.vertique.workflow.ops.WorkflowTenantResolver;
 import dev.vertique.workflow.plan.DefaultRaceSafetyTargetRegistry;
 import dev.vertique.workflow.plan.RaceSafety;
 import dev.vertique.workflow.plan.WorkflowPlanValidator;
@@ -71,9 +68,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 import org.junit.jupiter.api.AfterAll;
@@ -85,13 +80,13 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
- * Real PostgreSQL proof that the instance tenant is resolved from the captured durable context at
- * start, that every task takes its instance's tenant, and that the tenant survives migration and
- * resurrection.
+ * Real PostgreSQL proof that the engine leaves the instance tenant unset at start whatever the
+ * ambient context holds, that every task takes the tenant of its instance row once another writer
+ * has stamped one, and that the stamped tenant survives migration and resurrection.
  *
- * <p>The engine comes from the generated {@link TenantEngineHost} component, which binds a test
- * {@link WorkflowTenantResolver} reading the {@code tenant} namespace of the captured context and
- * registers the shared {@link TenantCtxCodec} fixture with the real propagator.
+ * <p>The engine comes from the generated {@link TenantEngineHost} component, which registers the
+ * shared {@link TenantCtxCodec} fixture with the real propagator so a tenant-looking value can be
+ * bound as the ambient context.
  */
 @ExtendWith({VertxExtension.class, DatabaseExtension.class})
 @Timeout(value = 20, unit = TimeUnit.SECONDS)
@@ -101,9 +96,6 @@ public class WorkflowTenantKeyIT {
             .withDatabaseName("workflow_tenant_key_test")
             .withMigration("classpath:db/migration/workflow");
 
-    /** Context content that must never surface in a failure. */
-    private static final String SECRET = "SECRET-CTX-7f3a";
-
     private static final String SINGLE_ID = "tenant-single";
     private static final String FORK_ID = "tenant-fork";
     private static final String MIGRATE_ID = "tenant-migrate";
@@ -112,7 +104,6 @@ public class WorkflowTenantKeyIT {
     static Pool pool;
     static TenantEngineHost host;
     static WorkflowOperations operations;
-    static TransactionalWorkflowOperations<SqlClient> transactional;
     static TransactionalTaskCallbacks<SqlClient> taskCallbacks;
     static WorkflowTransactionRunner<SqlClient> txRunner;
     static WorkflowInstanceRepository<SqlClient> instanceRepository;
@@ -311,32 +302,9 @@ public class WorkflowTenantKeyIT {
         }
     };
 
-    // --- Resolver and host ---
+    // --- Host ---
 
-    /**
-     * Resolver reading the tenant namespace of the captured context. A tenant starting with
-     * {@code boom} makes it throw, with a message that carries the tenant.
-     */
-    static final class ContextTenantResolver implements WorkflowTenantResolver {
-
-        static final AtomicInteger CALLS = new AtomicInteger();
-        static volatile RuntimeException lastThrown;
-
-        @Override
-        public String tenantOf(DurableMetadata captured) {
-            CALLS.incrementAndGet();
-            String tenantId = captured.body(TenantCtxCodec.NAMESPACE)
-                    .map(body -> body.getString("tenantId"))
-                    .orElse(null);
-            if (tenantId != null && tenantId.startsWith("boom")) {
-                lastThrown = new IllegalStateException("resolver failed for " + tenantId);
-                throw lastThrown;
-            }
-            return tenantId;
-        }
-    }
-
-    /** Test module: definitions, migration handler, resolver and the tenant codec for the propagator. */
+    /** Test module: definitions, migration handler and the tenant codec for the propagator. */
     @Module
     static class TenantEngineHostModule {
 
@@ -355,12 +323,6 @@ public class WorkflowTenantKeyIT {
         @IntoSet
         static WorkflowMigrationHandler<?, ?> migration() {
             return MIGRATION;
-        }
-
-        @Provides
-        @Singleton
-        static WorkflowTenantResolver tenantResolver() {
-            return new ContextTenantResolver();
         }
 
         @Provides
@@ -390,7 +352,7 @@ public class WorkflowTenantKeyIT {
 
     /**
      * Generated application graph with the PostgreSQL engine, the migration registry, the recovery
-     * bridge, the real propagator and the test resolver.
+     * bridge and the real propagator.
      */
     @Singleton
     @Component(
@@ -404,8 +366,6 @@ public class WorkflowTenantKeyIT {
     interface TenantEngineHost {
 
         WorkflowOperations workflowOperations();
-
-        TransactionalWorkflowOperations<SqlClient> transactionalOperations();
 
         TransactionalTaskCallbacks<SqlClient> taskCallbacks();
 
@@ -443,7 +403,6 @@ public class WorkflowTenantKeyIT {
                 .build();
         host = DaggerWorkflowTenantKeyIT_TenantEngineHost.factory().create(pool, Clock.systemUTC());
         operations = host.workflowOperations();
-        transactional = host.transactionalOperations();
         taskCallbacks = host.taskCallbacks();
         txRunner = host.transactionRunner();
         instanceRepository = host.instanceRepository();
@@ -460,8 +419,6 @@ public class WorkflowTenantKeyIT {
 
     @BeforeEach
     void truncateTables() throws Exception {
-        ContextTenantResolver.CALLS.set(0);
-        ContextTenantResolver.lastThrown = null;
         await(pool.query("TRUNCATE TABLE workflow_branch_tokens, workflow_join_states, workflow_timers,"
                         + " workflow_tasks, workflow_history, workflow_dedup, workflow_instances"
                         + " RESTART IDENTITY CASCADE")
@@ -478,116 +435,60 @@ public class WorkflowTenantKeyIT {
     // --- Tests ---
 
     @Test
-    @DisplayName("a started instance and all of its tasks carry the resolved tenant")
-    void startedInstanceAndAllItsTasksCarryTheResolvedTenant() throws Exception {
-        // Given a definition whose start creates a task and whose signal resume creates another
-        // When a workflow starts under a context carrying t1
-        WorkflowInstanceId single = await(inContext(
-                "t1", () -> operations.start(new StartCommand(SINGLE_ID, new StartFlow("a"), "k-single", null, null))));
+    @DisplayName("engine-started rows have no tenant and a later stamp hands it to later tasks")
+    void engineStartedRowsHaveNoTenantAndALaterStampHandsItToLaterTasks() throws Exception {
+        // Given single and forking workflows started under an ambient context carrying t1, two of them
+        // left alone and two stamped t1 by another writer right after the start
+        WorkflowInstanceId singleUnstamped = await(inContext(
+                "t1",
+                () -> operations.start(
+                        new StartCommand(SINGLE_ID, new StartFlow("a"), "k-single-unstamped", null, null))));
+        WorkflowInstanceId forkUnstamped = await(inContext(
+                "t1",
+                () -> operations.start(new StartCommand(FORK_ID, new StartFlow("b"), "k-fork-unstamped", null, null))));
+        WorkflowInstanceId singleStamped = await(inContext(
+                "t1",
+                () -> operations.start(
+                        new StartCommand(SINGLE_ID, new StartFlow("c"), "k-single-stamped", null, null))));
+        WorkflowInstanceId forkStamped = await(inContext(
+                "t1",
+                () -> operations.start(new StartCommand(FORK_ID, new StartFlow("d"), "k-fork-stamped", null, null))));
 
-        // Then the row and the record carry t1, and so does the start's task
-        assertThat(instanceTenantColumn(single)).isEqualTo("t1");
-        assertThat(await(instanceRepository.findById(single)).orElseThrow().tenantKey())
-                .isEqualTo("t1");
-        assertThat(taskTenants(single)).containsExactly("t1");
-
-        // When the task is completed and the signal resumes the instance, under a context without a tenant
-        UUID firstTask = openTaskId(single);
-        assertThat((TaskMutationResult) await(inContext(
-                        null,
-                        () -> pool.withTransaction(tx -> taskCallbacks.taskCompleted(
-                                new TaskCompletionCommand(
-                                        firstTask,
-                                        "approve",
-                                        null,
-                                        "k-complete",
-                                        new WorkflowActor.User("user-1"),
-                                        null),
-                                tx)))))
-                .isEqualTo(TaskMutationResult.APPLIED);
-        await(inContext(null, () -> operations.signal(single, "go", "payload", "k-signal")));
-
-        // Then the signal-resumed task carries the instance's t1, not the ambient absence of a tenant
-        assertThat(taskTenants(single)).containsExactly("t1", "t1");
-
-        // When a workflow starts without a tenant context
-        WorkflowInstanceId unscoped = await(inContext(
-                null, () -> operations.start(new StartCommand(SINGLE_ID, new StartFlow("b"), "k-none", null, null))));
-
-        // Then the instance and its task carry no tenant
-        assertThat(instanceTenantColumn(unscoped)).isNull();
-        assertThat(await(instanceRepository.findById(unscoped)).orElseThrow().tenantKey())
-                .isNull();
-        assertThat(taskTenants(unscoped)).hasSize(1).containsOnlyNulls();
-
-        // When a forking workflow starts under t1
-        WorkflowInstanceId forked = await(inContext(
-                "t1", () -> operations.start(new StartCommand(FORK_ID, new StartFlow("c"), "k-fork", null, null))));
-
-        // Then the instance and branch a's task carry t1
-        assertThat(instanceTenantColumn(forked)).isEqualTo("t1");
-        assertThat(taskTenants(forked)).containsExactly("t1");
-
-        // When branch b is parked for recovery at its task step and the recovery sweep runs
-        await(pool.preparedQuery("UPDATE workflow_branch_tokens SET status = 'RETRY_SCHEDULED',"
-                        + " current_step_id = 'task-b', wait_type = NULL, wait_key = NULL,"
-                        + " next_retry_at = $1, version = version + 1"
-                        + " WHERE workflow_id = $2 AND branch_id = 'b'")
-                .execute(Tuple.of(
-                        OffsetDateTime.ofInstant(Instant.now().minusSeconds(60), ZoneOffset.UTC), forked.value())));
-        await(inContext(null, () -> recovery.sweepOnce(Instant.now(), 10)));
-
-        // Then the recovered branch's task carries the instance's t1 as well
-        assertThat(taskTenants(forked)).containsExactly("t1", "t1");
-    }
-
-    @Test
-    @DisplayName("an invalid tenant rolls the start back and a replay does not resolve")
-    void invalidTenantRollsBackTheStartAndReplayDoesNotResolve() throws Exception {
-        StartCommand start = new StartCommand(SINGLE_ID, new StartFlow("d"), "k-rollback", null, null);
-
-        // Given a resolver that returns a value with a separator for one context and throws for another
-        for (String badContext : List.of(SECRET + ":x", "boom-" + SECRET)) {
-            int callsBefore = ContextTenantResolver.CALLS.get();
-
-            // When a start inside a transaction fails and the transaction owner rolls it back
-            Throwable failure = failureOf(
-                    inContext(badContext, () -> txRunner.inTransaction(null, tx -> transactional.start(start, tx))));
-
-            // Then no message in the cause chain holds the context content, the resolver's own exception is
-            // not attached, and no dedup, instance, history or task row exists
-            assertThat(ContextTenantResolver.CALLS.get()).isEqualTo(callsBefore + 1);
-            int depth = 0;
-            for (Throwable link = failure; link != null && depth < 32; link = link.getCause(), depth++) {
-                assertThat(String.valueOf(link.getMessage())).doesNotContain(SECRET);
-                assertThat(link.toString()).doesNotContain(SECRET);
-                assertThat(link).isNotSameAs(ContextTenantResolver.lastThrown);
-            }
-            for (String table : List.of("workflow_dedup", "workflow_instances", "workflow_history", "workflow_tasks")) {
-                assertThat(rowCount(table))
-                        .as("%s after a rolled back start", table)
-                        .isZero();
-            }
+        // Then the ambient tenant was not taken: no instance row and no start task carries a tenant
+        for (WorkflowInstanceId started : List.of(singleUnstamped, forkUnstamped, singleStamped, forkStamped)) {
+            assertThat(instanceTenantColumn(started)).isNull();
+            assertThat(taskTenants(started)).hasSize(1).containsOnlyNulls();
         }
-        int callsAfterFailures = ContextTenantResolver.CALLS.get();
-        assertThat(callsAfterFailures).isEqualTo(2);
 
-        // When the same start is repeated under a valid context
-        WorkflowInstanceId started = await(inContext("t1", () -> operations.start(start)));
+        // When another writer stamps two of the instances t1
+        stampInstanceTenant(singleStamped, "t1");
+        stampInstanceTenant(forkStamped, "t1");
 
-        // Then it succeeds on the freed idempotency key and the instance carries t1
-        assertThat(ContextTenantResolver.CALLS.get()).isEqualTo(callsAfterFailures + 1);
-        assertThat(instanceTenantColumn(started)).isEqualTo("t1");
-        assertThat(rowCount("workflow_instances")).isEqualTo(1);
+        // And every single-task workflow has its first task completed and is signalled, and every forking
+        // workflow has branch b parked for recovery and swept, all under a context without a tenant
+        completeFirstTaskThenSignalGo(singleUnstamped, "unstamped");
+        completeFirstTaskThenSignalGo(singleStamped, "stamped");
+        parkBranchBThenSweep(forkUnstamped);
+        parkBranchBThenSweep(forkStamped);
 
-        // When the successful start is replayed under another tenant's context
-        WorkflowInstanceId replayed = await(inContext("t2", () -> operations.start(start)));
+        // Then the unstamped instances and all of their tasks still have no tenant
+        for (WorkflowInstanceId unstamped : List.of(singleUnstamped, forkUnstamped)) {
+            assertThat(instanceTenantColumn(unstamped)).isNull();
+            assertThat(await(instanceRepository.findById(unstamped))
+                            .orElseThrow()
+                            .tenantKey())
+                    .isNull();
+            assertThat(taskTenants(unstamped)).hasSize(2).containsOnlyNulls();
+        }
 
-        // Then the existing id is returned, the resolver is not called again and the tenant is unchanged
-        assertThat(replayed).isEqualTo(started);
-        assertThat(ContextTenantResolver.CALLS.get()).isEqualTo(callsAfterFailures + 1);
-        assertThat(rowCount("workflow_instances")).isEqualTo(1);
-        assertThat(instanceTenantColumn(started)).isEqualTo("t1");
+        // And the stamped instances keep t1, the tasks created before the stamp stay null, and the
+        // signal-resumed task and the recovered branch b task carry t1
+        for (WorkflowInstanceId stamped : List.of(singleStamped, forkStamped)) {
+            assertThat(instanceTenantColumn(stamped)).isEqualTo("t1");
+            assertThat(await(instanceRepository.findById(stamped)).orElseThrow().tenantKey())
+                    .isEqualTo("t1");
+            assertThat(taskTenants(stamped)).containsExactly(null, "t1");
+        }
     }
 
     @Test
@@ -665,9 +566,6 @@ public class WorkflowTenantKeyIT {
         // And the task each of them created afterwards carries t1
         assertThat(taskTenants(running)).containsExactly("t1");
         assertThat(taskTenants(finished)).containsExactly("t1");
-
-        // And the resolver was never consulted, because neither operation creates an instance
-        assertThat(ContextTenantResolver.CALLS.get()).isZero();
     }
 
     // --- Helpers ---
@@ -696,12 +594,36 @@ public class WorkflowTenantKeyIT {
         return future.toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS);
     }
 
-    private static Throwable failureOf(Future<?> future) throws Exception {
-        CompletableFuture<Throwable> settled = new CompletableFuture<>();
-        future.onComplete(ar -> settled.complete(ar.failed() ? ar.cause() : null));
-        Throwable failure = settled.get(10, TimeUnit.SECONDS);
-        assertThat(failure).as("the start must fail").isNotNull();
-        return failure;
+    private static void stampInstanceTenant(WorkflowInstanceId id, String tenant) throws Exception {
+        await(pool.preparedQuery("UPDATE workflow_instances SET tenant_key = $1 WHERE id = $2")
+                .execute(Tuple.of(tenant, id.value())));
+    }
+
+    private static void completeFirstTaskThenSignalGo(WorkflowInstanceId id, String keySuffix) throws Exception {
+        UUID firstTask = openTaskId(id);
+        assertThat((TaskMutationResult) await(inContext(
+                        null,
+                        () -> pool.withTransaction(tx -> taskCallbacks.taskCompleted(
+                                new TaskCompletionCommand(
+                                        firstTask,
+                                        "approve",
+                                        null,
+                                        "k-complete-" + keySuffix,
+                                        new WorkflowActor.User("user-1"),
+                                        null),
+                                tx)))))
+                .isEqualTo(TaskMutationResult.APPLIED);
+        await(inContext(null, () -> operations.signal(id, "go", "payload", "k-signal-" + keySuffix)));
+    }
+
+    private static void parkBranchBThenSweep(WorkflowInstanceId id) throws Exception {
+        await(pool.preparedQuery("UPDATE workflow_branch_tokens SET status = 'RETRY_SCHEDULED',"
+                        + " current_step_id = 'task-b', wait_type = NULL, wait_key = NULL,"
+                        + " next_retry_at = $1, version = version + 1"
+                        + " WHERE workflow_id = $2 AND branch_id = 'b'")
+                .execute(Tuple.of(
+                        OffsetDateTime.ofInstant(Instant.now().minusSeconds(60), ZoneOffset.UTC), id.value())));
+        await(inContext(null, () -> recovery.sweepOnce(Instant.now(), 10)));
     }
 
     private static String instanceTenantColumn(WorkflowInstanceId id) throws Exception {
@@ -728,11 +650,5 @@ public class WorkflowTenantKeyIT {
                         "SELECT task_id FROM workflow_tasks WHERE workflow_id = $1 AND status = 'OPEN' LIMIT 1")
                 .execute(Tuple.of(id.value()))
                 .map(rows -> rows.iterator().next().getUUID("task_id")));
-    }
-
-    private static long rowCount(String table) throws Exception {
-        return await(pool.query("SELECT count(*) AS n FROM " + table)
-                .execute()
-                .map(rows -> rows.iterator().next().getLong("n")));
     }
 }

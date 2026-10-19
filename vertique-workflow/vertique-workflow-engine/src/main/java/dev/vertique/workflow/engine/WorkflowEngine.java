@@ -34,7 +34,6 @@ import dev.vertique.workflow.ops.TimerFiringResult;
 import dev.vertique.workflow.ops.TransactionalWorkflowOperations;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.ops.WorkflowOperations;
-import dev.vertique.workflow.ops.WorkflowTenantResolver;
 import dev.vertique.workflow.ops.WorkflowView;
 import dev.vertique.workflow.plan.WorkflowPlan;
 import dev.vertique.workflow.registry.CallbackId;
@@ -206,67 +205,6 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      */
     private final PayloadConstraintCheck payloadConstraintCheck;
 
-    /**
-     * Optional resolver of the tenant key stamped on each new instance; empty when the application
-     * binds none, in which case instances carry no tenant.
-     */
-    private final Optional<WorkflowTenantResolver> tenantResolver;
-
-    /** Largest accepted tenant key length, in Unicode code points. */
-    private static final int MAX_TENANT_KEY_CODE_POINTS = 255;
-
-    /**
-     * Compatibility overload of the Dagger constructor without a tenant resolver.
-     */
-    WorkflowEngine(
-            WorkflowTransactionRunner<SqlClient> txRunner,
-            WorkflowRegistry registry,
-            WorkflowInstanceRepository<SqlClient> instances,
-            WorkflowHistoryRepository<SqlClient> history,
-            WorkflowDedupRepository<SqlClient> dedup,
-            TimerStore<SqlClient> timerStore,
-            TaskStore<SqlClient> taskStore,
-            Clock clock,
-            BranchTokenRepository<SqlClient> branchTokens,
-            BranchTransitionEngine branchEngine,
-            WorkflowEventEmitter eventEmitter,
-            WorkflowHistoryRecorder historyRecorder,
-            ReminderScheduler reminderScheduler,
-            ForkJoinCoordinator forkJoin,
-            WorkflowTransitionDriver driver,
-            SignalHandler signalHandler,
-            TaskLifecycleService taskLifecycle,
-            TimerLifecycleService timerLifecycle,
-            MigrationExecutor migrationExecutor,
-            DurableContextPropagator propagator,
-            WorkflowContextBinder contextBinder,
-            PayloadConstraintCheck payloadConstraintCheck) {
-        this(
-                txRunner,
-                registry,
-                instances,
-                history,
-                dedup,
-                timerStore,
-                taskStore,
-                clock,
-                branchTokens,
-                branchEngine,
-                eventEmitter,
-                historyRecorder,
-                reminderScheduler,
-                forkJoin,
-                driver,
-                signalHandler,
-                taskLifecycle,
-                timerLifecycle,
-                migrationExecutor,
-                propagator,
-                contextBinder,
-                payloadConstraintCheck,
-                Optional.empty());
-    }
-
     @Inject
     WorkflowEngine(
             WorkflowTransactionRunner<SqlClient> txRunner,
@@ -290,9 +228,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             MigrationExecutor migrationExecutor,
             DurableContextPropagator propagator,
             WorkflowContextBinder contextBinder,
-            PayloadConstraintCheck payloadConstraintCheck,
-            Optional<WorkflowTenantResolver> tenantResolver) {
-        this.tenantResolver = tenantResolver;
+            PayloadConstraintCheck payloadConstraintCheck) {
         this.txRunner = txRunner;
         this.registry = registry;
         this.instances = instances;
@@ -386,57 +322,6 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             CompensationService compensationService,
             @Nullable dev.vertique.context.InboundExecutionContextScope inboundExecScope,
             PayloadConstraintCheck payloadConstraintCheck) {
-        this(
-                txRunner,
-                registry,
-                instances,
-                history,
-                dedup,
-                recorders,
-                timerStore,
-                taskStore,
-                fingerprintCanonicalizer,
-                clock,
-                branchTokens,
-                joinStates,
-                branchEngine,
-                branchCompensation,
-                propagator,
-                migrationRegistryOpt,
-                eventEmitter,
-                historyRecorder,
-                reminderScheduler,
-                compensationService,
-                inboundExecScope,
-                payloadConstraintCheck,
-                Optional.empty());
-    }
-
-    WorkflowEngine(
-            WorkflowTransactionRunner<SqlClient> txRunner,
-            WorkflowRegistry registry,
-            WorkflowInstanceRepository<SqlClient> instances,
-            WorkflowHistoryRepository<SqlClient> history,
-            WorkflowDedupRepository<SqlClient> dedup,
-            RecorderRouter recorders,
-            TimerStore<SqlClient> timerStore,
-            TaskStore<SqlClient> taskStore,
-            FingerprintCanonicalizer fingerprintCanonicalizer,
-            Clock clock,
-            BranchTokenRepository<SqlClient> branchTokens,
-            JoinStateRepository<SqlClient> joinStates,
-            BranchTransitionEngine branchEngine,
-            BranchCompensationOrchestrator branchCompensation,
-            @Nullable DurableContextPropagator propagator,
-            Optional<dev.vertique.workflow.migration.WorkflowMigrationRegistry> migrationRegistryOpt,
-            WorkflowEventEmitter eventEmitter,
-            WorkflowHistoryRecorder historyRecorder,
-            ReminderScheduler reminderScheduler,
-            CompensationService compensationService,
-            @Nullable dev.vertique.context.InboundExecutionContextScope inboundExecScope,
-            PayloadConstraintCheck payloadConstraintCheck,
-            Optional<WorkflowTenantResolver> tenantResolver) {
-        this.tenantResolver = tenantResolver;
         this.payloadConstraintCheck = payloadConstraintCheck;
         this.txRunner = txRunner;
         this.registry = registry;
@@ -782,22 +667,6 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                 propagator == null ? DurableMetadata.empty() : propagator.capture(DispatchBoundary.WORKFLOW);
         DurableMetadata instanceMetadata = captured.isEmpty() ? null : captured;
 
-        // The tenant is resolved once per new instance, here, inside the start transaction. The
-        // failure carries a fixed message and no cause: neither the captured context nor anything
-        // the resolver's own exception says may reach the caller.
-        String tenantKey;
-        try {
-            tenantKey = tenantResolver.map(r -> r.tenantOf(captured)).orElse(null);
-        } catch (Exception e) {
-            // Exception, not only RuntimeException: a resolver can throw an undeclared checked exception.
-            log.warn("Tenant resolution threw for definition '{}'", cmd.definitionId());
-            return Future.failedFuture(new WorkflowDefinitionException("tenant resolver failed for the instance"));
-        }
-        if (tenantKey != null && !isValidTenantKey(tenantKey)) {
-            log.warn("Tenant resolution rejected the tenant of a new '{}' instance", cmd.definitionId());
-            return Future.failedFuture(new WorkflowDefinitionException("tenant resolver rejected the instance tenant"));
-        }
-
         WorkflowInstance fresh = new WorkflowInstance(
                 id,
                 rw.plan().definitionId(),
@@ -816,30 +685,13 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                 null,
                 now,
                 now,
-                instanceMetadata,
-                tenantKey);
+                instanceMetadata);
 
         return instances
                 .insert(fresh, tx)
                 .compose(v -> appendStartHistory(fresh, cmd, tx))
                 .compose(v -> driver.driveTransitions(fresh, rw, tx))
                 .map(v -> id);
-    }
-
-    /**
-     * Validates a resolved tenant key: nonblank, at most 255 code points, and free of NUL, ISO
-     * control characters, unpaired surrogates (which would not survive the database encoding) and
-     * the {@code ':'} namespace separator.
-     */
-    private static boolean isValidTenantKey(String value) {
-        if (value.isBlank() || value.codePointCount(0, value.length()) > MAX_TENANT_KEY_CODE_POINTS) {
-            return false;
-        }
-        return value.codePoints()
-                .noneMatch(cp -> cp == 0
-                        || cp == ':'
-                        || Character.isISOControl(cp)
-                        || Character.getType(cp) == Character.SURROGATE);
     }
 
     /**

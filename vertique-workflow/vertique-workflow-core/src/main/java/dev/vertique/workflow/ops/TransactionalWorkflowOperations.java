@@ -35,9 +35,7 @@ public interface TransactionalWorkflowOperations<TX> {
      * @param cmd command describing the definition, payload, and idempotency key
      * @param tx the active transaction context
      * @return a {@link Future} that resolves to the id of the created (or existing) workflow
-     *     instance; if it fails, the caller must roll back {@code tx}: the idempotency claim is
-     *     written before the instance, so committing after a failed start would leave a claim that
-     *     points to an instance that does not exist
+     *     instance
      */
     Future<WorkflowInstanceId> start(StartCommand cmd, TX tx);
 
