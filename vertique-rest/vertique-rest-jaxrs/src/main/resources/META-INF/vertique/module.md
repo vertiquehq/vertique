@@ -539,9 +539,13 @@ The framework's `ExceptionMapper<Throwable>`, pre-configured by `RestModule`:
 
 A `ViolationCarrier` detail renders by the carrier's declared `violationPathForm()`. A `JSON_POINTER`
 carrier (a workflow payload exception) gives each entry a `pointer` equal to the detail path, `""` included,
-with no `location` and no `parameter`; the pointer is relative to the document the producer validated. The
-framework renders those paths exactly as given and does not verify them: a producer that declares the
-`JSON_POINTER` form is responsible for every path being `""` or starting with `/` and holding no key the
+with no `location` and no `parameter`; the pointer is relative to the document the producer validated, not
+necessarily the request body. A path that `ViolationPathForm.JSON_POINTER.accepts` rejects (not `""` or
+`/`-prefixed, a `~` not followed by `0` or `1`, a control or line-separator character, or more than 2,000
+characters) is not rendered as a pointer: its entry keeps `detail`, `type` and `args` and carries neither
+`pointer` nor `parameter` nor `location`, and one DEBUG event names only that entry's type, never the path or
+the message. At most 100 such events are logged per response. Beyond that guard the framework renders paths
+exactly as given: a producer that declares the `JSON_POINTER` form is responsible for no path holding a key the
 client chose. Every
 other form, `BeanValidationException` included, gives an entry with neither `pointer` nor `parameter`, only
 `detail`, `type` and `args`, because a Java property path is not a request location. For such a carrier the

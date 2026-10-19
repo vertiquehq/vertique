@@ -481,7 +481,9 @@ public abstract class RestModule {
      * Renders the violations of a carrier by the path form it declares. A {@link
      * ViolationPathForm#JSON_POINTER} carrier's detail paths become {@code pointer}; every other form
      * renders neither {@code pointer} nor {@code parameter}, because a Java property path is not a
-     * request location, and logs the neutralized path and the type instead.
+     * request location, and logs the neutralized path and the type instead. A pointer that
+     * {@link ViolationPathForm#accepts(String)} rejects is omitted from its entry, and one DEBUG event names
+     * only that entry's type.
      *
      * <p>A carrier of at most {@link ValidationErrorDetail#MAX_ENTRIES} violations plus one is rendered whole,
      * so a carrier that already ends with its own truncation entry passes unchanged. A longer list is
@@ -493,11 +495,22 @@ public abstract class RestModule {
         boolean cut = violations.size() > ValidationErrorDetail.MAX_ENTRIES + 1;
         List<ViolationDetail> listed = cut ? violations.subList(0, ValidationErrorDetail.MAX_ENTRIES) : violations;
         List<ValidationErrorDetail> errors = new ArrayList<>(listed.size() + 1);
-        if (carrier.violationPathForm() == ViolationPathForm.JSON_POINTER) {
+        ViolationPathForm form = carrier.violationPathForm();
+        if (form == ViolationPathForm.JSON_POINTER) {
+            boolean debug = log.isDebugEnabled();
+            int logged = 0;
             for (ViolationDetail v : listed) {
-                errors.add(ValidationErrorDetail.ofPointer(v.path(), v.message())
-                        .withType(v.type())
-                        .withArgs(v.args()));
+                if (form.accepts(v.path())) {
+                    errors.add(ValidationErrorDetail.ofPointer(v.path(), v.message())
+                            .withType(v.type())
+                            .withArgs(v.args()));
+                    continue;
+                }
+                errors.add(new ValidationErrorDetail(null, null, v.message(), null, v.type(), v.args()));
+                if (debug && logged < MAX_LOGGED_CARRIER_PATHS) {
+                    log.debug("carried pointer omitted type={}", v.type());
+                    logged++;
+                }
             }
         } else {
             logCarrierPaths(violations);

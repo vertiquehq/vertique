@@ -3,6 +3,8 @@
 
 package dev.vertique.core.validation;
 
+import jakarta.annotation.Nullable;
+
 /**
  * How the detail paths of a {@link ViolationCarrier} are written.
  *
@@ -14,6 +16,10 @@ package dev.vertique.core.validation;
  * producer's own mapper. It is not guaranteed to be a pointer into the body of the request that
  * carried the data, for example when the route binds names differently or nests the validated
  * document.
+ *
+ * <p>{@link #accepts(String)} tells whether a path is well formed for a form. A producer emits only
+ * accepted paths, and the default REST rendering omits the pointer of an entry whose path a {@link
+ * #JSON_POINTER} carrier declares but this form does not accept.
  */
 public enum ViolationPathForm {
 
@@ -29,5 +35,53 @@ public enum ViolationPathForm {
      * {@code ""} (the whole document) or begins with {@code /}, and that no path contains a key the
      * client chose.
      */
-    JSON_POINTER
+    JSON_POINTER;
+
+    /** The longest {@link #JSON_POINTER} path {@link #accepts(String)} admits, in characters. */
+    private static final int MAX_POINTER_LENGTH = 2000;
+
+    /**
+     * Tells whether {@code path} is well formed for this form.
+     *
+     * <p>Every path is accepted for {@link #JAVA_PROPERTY_PATH}, {@code null} included. For {@link
+     * #JSON_POINTER} a path is accepted only when it is {@code ""} or begins with {@code /}, every
+     * {@code ~} in it is followed by {@code 0} or {@code 1}, it holds no ISO control character and
+     * neither U+2028 nor U+2029, and it is at most 2,000 characters long. A {@code null} path is not
+     * accepted.
+     *
+     * <p>New values may be added in a later release; a value this method does not know accepts every
+     * path, like {@link #JAVA_PROPERTY_PATH}.
+     *
+     * @param path the detail path to check, may be {@code null}
+     * @return {@code true} when the path is well formed for this form
+     */
+    public boolean accepts(@Nullable String path) {
+        return this != JSON_POINTER || isWellFormedPointer(path);
+    }
+
+    private static boolean isWellFormedPointer(@Nullable String path) {
+        if (path == null) {
+            return false;
+        }
+        int length = path.length();
+        if (length > MAX_POINTER_LENGTH) {
+            return false;
+        }
+        if (length > 0 && path.charAt(0) != '/') {
+            return false;
+        }
+        for (int i = 0; i < length; i++) {
+            char c = path.charAt(i);
+            if (Character.isISOControl(c) || c == '\u2028' || c == '\u2029') {
+                return false;
+            }
+            if (c == '~') {
+                i++;
+                if (i == length || (path.charAt(i) != '0' && path.charAt(i) != '1')) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
 }

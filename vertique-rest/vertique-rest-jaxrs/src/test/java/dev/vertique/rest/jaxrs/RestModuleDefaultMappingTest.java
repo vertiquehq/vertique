@@ -513,6 +513,64 @@ class RestModuleDefaultMappingTest {
     }
 
     @Test
+    @DisplayName("a carried pointer that is not well formed is omitted, a good one is kept, and only the type of an"
+            + " omitted one is logged")
+    void carrierPointerThatIsNotWellFormedIsOmitted() {
+        // Given a pointer carrier whose paths are a good pointer, a path with no leading slash, the empty pointer
+        // of a truncation entry, and a path with an unknown escape, each with its own message and type
+        PointerCarrierValidationException carrier = new PointerCarrierValidationException(
+                "invalid payload",
+                List.of(
+                        new ViolationDetail("/comment", "ZZMESSAGE-good", "maxLength", null),
+                        new ViolationDetail("a/b", "ZZMESSAGE-slash", "pattern", null),
+                        new ViolationDetail("", "further violations omitted", "truncated", null),
+                        new ViolationDetail("/x~2", "ZZMESSAGE-escape", "format", null)));
+
+        // When it is rendered
+        List<JsonNode> entries = render(carrier);
+
+        // Then four entries come back in the same order
+        assertEquals(4, entries.size());
+        // And the good pointer and the empty one keep their pointer
+        assertEquals("/comment", entries.get(0).path("pointer").asText());
+        assertEquals("ZZMESSAGE-good", entries.get(0).path("detail").asText());
+        assertEquals("maxLength", entries.get(0).path("type").asText());
+        assertTrue(entries.get(2).has("pointer"), "the empty pointer must not be omitted");
+        assertEquals("", entries.get(2).get("pointer").asText());
+        assertEquals("truncated", entries.get(2).path("type").asText());
+        // And the malformed ones carry neither pointer nor parameter nor location, with detail and type kept
+        for (int omitted : new int[] {1, 3}) {
+            JsonNode entry = entries.get(omitted);
+            assertFalse(entry.has("pointer"), () -> "unexpected pointer in " + entry);
+            assertFalse(entry.has("parameter"), () -> "unexpected parameter in " + entry);
+            assertFalse(entry.has("location"), () -> "unexpected location in " + entry);
+            assertFalse(entry.has("path"), () -> "unexpected path in " + entry);
+        }
+        assertEquals("ZZMESSAGE-slash", entries.get(1).path("detail").asText());
+        assertEquals("pattern", entries.get(1).path("type").asText());
+        assertEquals("ZZMESSAGE-escape", entries.get(3).path("detail").asText());
+        assertEquals("format", entries.get(3).path("type").asText());
+
+        // And one DEBUG event per omitted entry names its type, and no event holds a path or a message
+        List<String> messages = loggedMessages();
+        assertEquals(2, messages.size(), () -> messages.toString());
+        assertTrue(messages.get(0).contains("pattern"), () -> messages.toString());
+        assertTrue(messages.get(1).contains("format"), () -> messages.toString());
+        for (String forbidden : List.of("a/b", "x~2", "ZZMESSAGE", "/comment", "further violations omitted")) {
+            for (ILoggingEvent event : appender.list) {
+                assertFalse(
+                        event.getFormattedMessage().contains(forbidden),
+                        () -> forbidden + " logged: " + event.getFormattedMessage());
+                for (Object argument : event.getArgumentArray() == null ? new Object[0] : event.getArgumentArray()) {
+                    assertFalse(
+                            String.valueOf(argument).contains(forbidden),
+                            () -> forbidden + " logged as an argument: " + argument);
+                }
+            }
+        }
+    }
+
+    @Test
     @DisplayName("a pointer carrier's paths are not logged")
     void pointerCarrierPathsAreNotLogged() {
         PointerCarrierValidationException pointerCarrier = new PointerCarrierValidationException(
