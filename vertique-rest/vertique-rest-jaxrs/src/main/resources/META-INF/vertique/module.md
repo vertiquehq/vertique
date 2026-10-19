@@ -539,7 +539,10 @@ The framework's `ExceptionMapper<Throwable>`, pre-configured by `RestModule`:
 
 A `ViolationCarrier` detail renders by the carrier's declared `violationPathForm()`. A `JSON_POINTER`
 carrier (a workflow payload exception) gives each entry a `pointer` equal to the detail path, `""` included,
-with no `location` and no `parameter`; the pointer is relative to the document the producer validated. Every
+with no `location` and no `parameter`; the pointer is relative to the document the producer validated. The
+framework renders those paths exactly as given and does not verify them: a producer that declares the
+`JSON_POINTER` form is responsible for every path being `""` or starting with `/` and holding no key the
+client chose. Every
 other form, `BeanValidationException` included, gives an entry with neither `pointer` nor `parameter`, only
 `detail`, `type` and `args`, because a Java property path is not a request location. For such a carrier the
 mapper logs at DEBUG, for each of the first 100 details with a non-empty path, the path (a string path stops
@@ -1179,8 +1182,13 @@ in `parameter`, never in `pointer`, with `location: "form"`: the form field's na
 leading `[n]` positions of the violation's path. The name is the primary wire name that the mapper
 which bound the body gives the first property of the path. `FormUrlencodedRequestBodyDecoder` binds with
 the process JSON mapper whatever the route's profile; the form branch that runs when an input object
-processor is bound uses the route's mapper. A property the mapper does not bind, or binds only through a
-field, carries neither member. Form entries are neither capped nor logged.
+processor is bound uses the route's mapper. The name is resolved from the mapper alone, with no request
+document to confirm it, so an entry carries neither member, by design, when the first property of the
+violation's path is one the mapper does not bind, when the mapper binds it only through a field (for
+example a `public` field with no setter, creator parameter or record component), or when the mapper binds
+the bean through a builder or another shape that is not its reported properties. A form-bound DTO whose
+properties are all bound only through fields therefore never reports a `parameter`, and a violation on it
+carries only `detail`, `type`, `args` and `location: "form"`. Form entries are neither capped nor logged.
 
 At DEBUG the mapper logs one `body violation path=… pointer=… rootType=…` event for each of the first 100
 body violations of a response, in the sorted order: the Java path rendered without map keys, with

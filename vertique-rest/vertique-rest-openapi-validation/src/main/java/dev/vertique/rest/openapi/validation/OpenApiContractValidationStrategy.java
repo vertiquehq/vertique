@@ -677,14 +677,15 @@ public final class OpenApiContractValidationStrategy implements RequestValidatio
      * sanitized per-field detail is extracted from its {@link OutputUnit}; for a plain
      * {@link ValidatorException} a sanitized message is carried with an empty error list.
      *
-     * <p><strong>Sanitization (W6).</strong> The raw vertx-openapi / vertx-json-schema exception
+     * <p><strong>Sanitization.</strong> The raw vertx-openapi / vertx-json-schema exception
      * message and per-error messages are <em>never</em> surfaced to the client: they can echo the
      * submitted request value or a client-supplied undeclared property name, and can carry internal
      * library text. The top-level message is replaced with the constant {@link #SANITIZED_MESSAGE}, and
      * each per-field {@code detail} is regenerated from the failed JSON-Schema keyword alone (see
-     * {@link #safeDetail}). Only the JSON-Pointer instance location (a field path, not a value) and the
-     * failed keyword are propagated — mirroring the {@code web-validation} strategy's {@code safeDetail}
-     * discipline.
+     * {@link #safeDetail}). Only the JSON-Pointer instance location and the failed keyword are
+     * propagated; the location is a path, never the submitted value, but it is not free of client-chosen
+     * member names (see {@link #sanitizePath}) — mirroring the {@code web-validation} strategy's
+     * {@code safeDetail} discipline for the message.
      *
      * <p>This method <strong>must only be called with a {@link ValidatorException}</strong> (or its
      * {@link SchemaValidationException} subclass). Server/config errors (e.g. missing operationId,
@@ -703,15 +704,19 @@ public final class OpenApiContractValidationStrategy implements RequestValidatio
 
     /**
      * Extracts <em>sanitized</em> per-field {@link ValidationErrorDetail}s from a vertx-json-schema
-     * {@link OutputUnit} (W6). The unit's {@code errors} list (when present) is flattened into one detail
+     * {@link OutputUnit}. The unit's {@code errors} list (when present) is flattened into one detail
      * per concrete reported error; otherwise the unit itself is turned into a single detail. Structural
      * traversal wrapper errors (e.g. {@code properties}, {@code allOf}) are skipped so each detail refers
      * to a concrete violated constraint. {@code additionalProperties} is NOT skipped — it is a concrete
      * client error (an undeclared property was sent) and is retained as a keyword.
      *
-     * <p>Each detail carries only the sanitized JSON Pointer and the failed keyword — never
-     * the raw vertx-json-schema message (which can echo the submitted value) and never a client-supplied
-     * undeclared property name.
+     * <p>Each detail carries only the JSON Pointer and the failed keyword — never the raw
+     * vertx-json-schema message (which can echo the submitted value) and never the member name an
+     * {@code additionalProperties} violation reports, which is cut from the pointer. Other client-chosen
+     * member names are not removed from the pointer: a key of a map-valued body object, a
+     * {@code patternProperties}, {@code propertyNames} or {@code unevaluatedProperties} member, a member
+     * under a schema-valued {@code additionalProperties}, and a member of an object-valued parameter can
+     * all appear in it.
      *
      * @param outputUnit the schema validation output unit; may be {@code null}
      * @return a list of sanitized validation error details (possibly empty), never {@code null}
@@ -750,10 +755,10 @@ public final class OpenApiContractValidationStrategy implements RequestValidatio
      *
      * <p>The {@code detail} message is regenerated from the failed keyword alone via {@link #safeDetail}
      * — the raw {@link OutputUnit#getError()} text is discarded because it can echo the submitted request
-     * value (e.g. {@code "String is too long (27 > 4)"}). The {@code pointer} is the sanitized JSON-Pointer
-     * instance location in plain RFC 6901 form with any trailing client-supplied undeclared-property
-     * segment stripped, so an undeclared property name never leaks into the response; it ends before a
-     * segment holding a control character.
+     * value (e.g. {@code "String is too long (27 > 4)"}). The {@code pointer} is the JSON-Pointer
+     * instance location in plain RFC 6901 form with the trailing undeclared-property segment of an
+     * {@code additionalProperties} violation stripped, so that name is not echoed; it ends before a
+     * segment holding a control character. No other client-chosen member name is removed.
      *
      * <p>The keyword location is parsed <em>once</em> via {@link SchemaErrorKeywords#extractKeyword}
      * to obtain the raw last segment; the structural classification then uses that segment directly,
@@ -810,11 +815,14 @@ public final class OpenApiContractValidationStrategy implements RequestValidatio
     }
 
     /**
-     * Produces a sanitized JSON-Pointer path for an error. For an {@code additionalProperties} violation
+     * Produces the JSON-Pointer path for an error. For an {@code additionalProperties} violation
      * the instance location's last segment is the client-supplied undeclared property name (e.g.
      * {@code #/internalSecretToken}); that segment is stripped so the path points at the containing
-     * object and the client's property name never leaks. All other paths are pass-through (a declared
-     * field pointer such as {@code #/pin} is part of the contract, not submitted data).
+     * object and that name is not echoed. All other paths are passed through unchanged: a declared
+     * field pointer such as {@code #/pin} is part of the contract, but a member name the client chose
+     * (a map key, or a {@code patternProperties}, {@code propertyNames}, {@code unevaluatedProperties}
+     * or schema-valued {@code additionalProperties} member, or a member of an object-valued parameter)
+     * is not removed.
      *
      * @param instanceLocation the {@link OutputUnit} instance location; may be {@code null}
      * @param keyword          the failed keyword, used to detect the {@code additionalProperties} case
@@ -833,7 +841,7 @@ public final class OpenApiContractValidationStrategy implements RequestValidatio
 
     /**
      * Generates a safe, canonical {@code detail} message from the failed JSON-Schema keyword alone —
-     * never echoing the submitted value (W6). Mirrors the {@code web-validation} strategy's phrasing
+     * never echoing the submitted value. Mirrors the {@code web-validation} strategy's phrasing
      * vocabulary; because the standalone {@link RequestValidator} path does not surface the constraint
      * value to this mapper, the messages describe the constraint without a numeric bound.
      *

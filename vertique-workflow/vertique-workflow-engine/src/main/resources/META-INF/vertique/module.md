@@ -122,9 +122,11 @@ violation:
   (nested lists give `/lists/0/1`), and `~` and `/` are escaped as `~0` and `~1`. A map entry or set member
   ends the pointer at the map or set property, so the caller's key never appears in the path. A segment
   uses the payload's primary wire name, and only for a member the mapper writes through a setter or a
-  creator parameter (record components included): the check resolves against the payload type without
-  the submitted document, so a member bound only through a field (a public field, or a private field
-  with a getter and no setter) ends the pointer at its parent, `""` at the root. A segment that cannot be
+  creator parameter (record components included): the check resolves in mapper-only mode, against the
+  payload type and the process JSON mapper without the submitted document, so a member bound only through
+  a field (a public field, or a private field with a getter and no setter) ends the pointer at its parent,
+  `""` at the root, and a payload bound through a builder gives `""` for every violation, because no
+  member of it can be verified. A segment that cannot be
   verified against the payload type ends the pointer at the deepest verified ancestor: an unknown member,
   a member the mapper does not write, a bean or property whose binding Jackson reshapes (a custom
   deserializer or converter, `@JsonDeserialize(as)`, a builder, a delegating or single-argument scalar

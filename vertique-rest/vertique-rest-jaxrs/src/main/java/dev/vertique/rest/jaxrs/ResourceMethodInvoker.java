@@ -203,8 +203,10 @@ public class ResourceMethodInvoker implements Handler<RoutingContext> {
      *
      * <p><strong>The body-name resolver must have been built from the mapper this constructor uses for
      * the projection</strong>: {@code resolvedBodyMapper}, or the process codec's mapper when that is
-     * {@code null}. A resolver built from another mapper cannot be detected here, and the pointers it
-     * yields would name the wrong properties.
+     * {@code null}. A resolver built from another mapper cannot be detected here. The projection only decides
+     * whether a segment can be confirmed against the document, so a resolver that does not match the
+     * mapper makes pointers shorter than the violated location, up to {@code ""}; it never rewrites a
+     * segment into a different name.
      *
      * @param meta                  metadata describing the JAX-RS resource method
      * @param interceptors          sorted list of operation interceptors

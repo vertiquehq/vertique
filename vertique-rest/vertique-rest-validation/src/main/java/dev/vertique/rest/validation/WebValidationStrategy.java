@@ -110,14 +110,26 @@ import java.util.concurrent.TimeUnit;
  *
  * <p><strong>Enrichment.</strong> Each {@link ValidationErrorDetail} carries:
  * <ul>
- *   <li>{@code path} — the JSON Pointer instance location of the failing value (e.g. {@code /code})</li>
+ *   <li>{@code pointer} — for a body failure, the location of the failing value as an RFC 6901 JSON
+ *       Pointer (e.g. {@code /code}, or {@code ""} for the whole body), cut back to the part the schema
+ *       itself declares so that no member name the client chose is reported</li>
+ *   <li>{@code parameter} — for a failure of any other request location, the declared parameter name
+ *       followed by {@code [n]} for each leading array index of the location inside the value (e.g.
+ *       {@code ids[1]}); an object member name inside the value is never added. A failure of a
+ *       declared file part carries the declared part name with its occurrence index (e.g. {@code avatar},
+ *       {@code avatar[1]}) and {@code "file"} as its {@code location}; an upload whose part name is not
+ *       declared carries neither {@code pointer} nor {@code parameter}. An entry carries at most one of
+ *       {@code pointer} and {@code parameter}</li>
  *   <li>{@code type} — the failed JSON Schema keyword (e.g. {@code "minLength"}, {@code "required"},
  *       {@code "type"}), extracted from the last segment of the {@code keywordLocation} field
  *       returned by the vertx-json-schema {@link OutputUnit}</li>
  *   <li>{@code args} — the expected constraint value for common keywords (e.g.
  *       {@code {"minLength": 3}}), resolved by navigating the schema {@link JsonObject} along the
  *       keyword location; keywords whose value cannot be resolved appear as {@code {keyword: true}}</li>
- *   <li>{@code location} — the parameter-location token ({@code "body"}, {@code "query"}, etc.)</li>
+ *   <li>{@code location} — the location token ({@code "body"}, {@code "query"}, {@code "path"},
+ *       {@code "header"}, {@code "cookie"}, {@code "form"} or {@code "file"})</li>
+ *   <li>{@code detail} — the human-readable description of the failure; it never contains the submitted
+ *       value</li>
  * </ul>
  *
  * <p>The serialized error response <strong>never</strong> contains the submitted request value;
