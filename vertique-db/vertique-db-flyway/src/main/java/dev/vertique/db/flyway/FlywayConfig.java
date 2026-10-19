@@ -6,6 +6,7 @@ package dev.vertique.db.flyway;
 import com.fasterxml.jackson.annotation.JsonAutoDetect;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import dev.vertique.core.json.KeyedBy;
 import java.util.List;
 import java.util.Map;
 import java.util.regex.Pattern;
@@ -176,7 +177,7 @@ public class FlywayConfig {
     /**
      * Named instance overrides. {@code null} (the default) keeps the single-Flyway behavior; a
      * non-null list, even an empty one, selects named mode. Bound from the keyed
-     * {@code flyway.instances} object by {@link DbFlywayModule}.
+     * {@code flyway.instances} object: each key becomes the {@code name} of its entry.
      */
     private final List<FlywayInstanceConfig> instances;
 
@@ -219,33 +220,6 @@ public class FlywayConfig {
                 + "]";
     }
 
-    /**
-     * Returns a copy of this configuration with the given named instances and every other field
-     * unchanged.
-     *
-     * @param namedInstances the instance overrides, or {@code null} for the single-Flyway behavior
-     * @return the copy
-     */
-    FlywayConfig withInstances(List<FlywayInstanceConfig> namedInstances) {
-        return FlywayConfig.builder()
-                .mode(mode)
-                .jdbcUrl(jdbcUrl)
-                .user(user)
-                .password(password)
-                .locations(locations)
-                .target(target)
-                .schemas(schemas)
-                .placeholders(placeholders)
-                .outOfOrder(outOfOrder)
-                .cleanDisabled(cleanDisabled)
-                .baselineOnMigrate(baselineOnMigrate)
-                .baselineVersion(baselineVersion)
-                .validateOnMigrate(validateOnMigrate)
-                .instances(namedInstances)
-                .coordinationLockTimeoutMs(coordinationLockTimeoutMs)
-                .build();
-    }
-
     private static final Pattern URL_PASSWORD = Pattern.compile("([;&?]password=)[^;&]*");
 
     /** Masks a {@code password=} query parameter so a credential embedded in the URL never renders. */
@@ -260,12 +234,15 @@ public class FlywayConfig {
     public static class FlywayConfigBuilder {
 
         /**
-         * Sets the named instance overrides from an immutable copy of the list.
+         * Sets the named instance overrides from an immutable copy of the list. Carries the keyed-object
+         * binding because Jackson reads annotations from this builder method, not from the
+         * {@code instances} field.
          *
          * @param instances the instance overrides, or {@code null} for the single-Flyway behavior
          * @return this builder
          * @throws NullPointerException if an element is {@code null}
          */
+        @KeyedBy("name")
         public FlywayConfigBuilder instances(List<FlywayInstanceConfig> instances) {
             this.instances = instances == null ? null : List.copyOf(instances);
             return this;

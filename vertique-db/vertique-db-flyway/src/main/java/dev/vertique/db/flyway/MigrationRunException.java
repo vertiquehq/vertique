@@ -18,7 +18,8 @@ import dev.vertique.db.MigrationException;
  * {@code VALIDATION}. {@link #operation()} names the failed step, for example {@code run},
  * {@code instances}, {@code coordination} or {@code configuration}. {@link #report()} is the ordered
  * report of a failed run, or {@code null} when the failure happened before any report existed (while
- * binding configuration or resolving instances).
+ * resolving instances). A configuration that cannot be bound never reaches this type; it fails earlier
+ * with the framework's {@link dev.vertique.core.exception.ConfigurationException}.
  */
 public final class MigrationRunException extends MigrationException {
 

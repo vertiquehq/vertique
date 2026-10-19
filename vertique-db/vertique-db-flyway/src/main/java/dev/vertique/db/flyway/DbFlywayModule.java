@@ -18,8 +18,6 @@ import dev.vertique.db.MigrationDefinition;
 import dev.vertique.db.MigrationRunner;
 import io.vertx.core.json.JsonObject;
 import jakarta.inject.Singleton;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 
@@ -42,90 +40,27 @@ import java.util.Set;
 @Module(includes = DbSchemasModule.class)
 public abstract class DbFlywayModule {
 
-    /** Fields a {@code flyway.instances.<name>} object may contain. */
-    private static final Set<String> INSTANCE_FIELDS = Set.of(
-            "mode",
-            "locations",
-            "schemas",
-            "table",
-            "target",
-            "outOfOrder",
-            "baselineOnMigrate",
-            "baselineVersion",
-            "validateOnMigrate",
-            "placeholders",
-            "user",
-            "password");
-
-    private static final String INSTANCES = "instances";
-
     /**
      * Provides the Flyway configuration from the {@code "flyway"} config section.
      *
-     * <p>The raw {@code instances} value decides the mode: absent or JSON {@code null} keeps the
-     * single-Flyway configuration, and an object, even an empty one, selects named mode. The root
-     * fields are parsed exactly as before in single-Flyway mode; in named mode an unreadable root field
-     * fails like an instance field, without a cause or an echoed value. Each named instance object may contain only the documented
-     * override fields; any other key, a non-object value or an unreadable field fails with a
-     * {@link MigrationRunException} (operation {@code configuration}) that names the instance and
-     * retains no cause, because an instance object can carry a password and placeholder values.
+     * <p>The section is bound in one step. The {@code instances} value decides the mode: absent or JSON
+     * {@code null} keeps the single-Flyway configuration, and an object keyed by instance name, even an
+     * empty one, selects named mode; each key becomes the {@code name} of its entry. Root fields are read
+     * the same way in both modes and unknown root keys are ignored. A named instance object may contain
+     * only the documented override fields.
      *
      * @param config the application config
      * @param parser the injected config parser
      * @return the Flyway configuration
-     * @throws MigrationRunException if the named instances or the root fields of a named configuration
-     *     are malformed
+     * @throws dev.vertique.core.exception.ConfigurationException if the section cannot be bound: a field
+     *     of the wrong type, {@code instances} that is not an object, an instance value that is not an
+     *     object, or an unsupported key in an instance object. The message never contains a configuration
+     *     value; a plain type error keeps the underlying binding failure as its cause
      */
     @Provides
     @Singleton
     static FlywayConfig flywayConfig(@VertxConfig JsonObject config, ConfigParser parser) {
-        JsonObject section = JsonConfigPaths.navigateObject(config, "flyway");
-        if (!section.containsKey(INSTANCES)) {
-            return parser.parse(section, FlywayConfig.class);
-        }
-        Object raw = section.getValue(INSTANCES);
-        JsonObject root = section.copy();
-        root.remove(INSTANCES);
-        if (raw == null) {
-            return parser.parse(root, FlywayConfig.class);
-        }
-        if (!(raw instanceof JsonObject instancesObject)) {
-            throw bindingFailure(null, "flyway.instances must be a JSON object keyed by instance name");
-        }
-        for (String name : instancesObject.fieldNames()) {
-            if (!(instancesObject.getValue(name) instanceof JsonObject entry)) {
-                throw bindingFailure(name, "the instance value must be a JSON object");
-            }
-            for (String field : entry.fieldNames()) {
-                if (!INSTANCE_FIELDS.contains(field)) {
-                    throw bindingFailure(
-                            name,
-                            "the field '" + field + "' is not a supported instance override; supported fields are "
-                                    + INSTANCE_FIELDS.stream().sorted().toList());
-                }
-            }
-        }
-        FlywayConfig parsed;
-        try {
-            parsed = parser.parse(root, FlywayConfig.class);
-        } catch (RuntimeException ex) {
-            throw bindingFailure(null, "the flyway section could not be read; check the type of every field");
-        }
-        List<FlywayInstanceConfig> instances = new ArrayList<>();
-        for (String name : instancesObject.fieldNames()) {
-            JsonObject single = new JsonObject().put(name, instancesObject.getJsonObject(name));
-            try {
-                instances.addAll(parser.parseKeyedObject(single, "name", FlywayInstanceConfig.class));
-            } catch (RuntimeException ex) {
-                throw bindingFailure(name, "the instance overrides could not be read; check the type of every field");
-            }
-        }
-        return parsed.withInstances(instances);
-    }
-
-    private static MigrationRunException bindingFailure(String instance, String detail) {
-        return NamedMigrationFailure.of(NamedMigrationFailure.CONFIGURATION, instance, detail)
-                .toException(NamedMigrationFailure.OP_CONFIGURATION, null);
+        return parser.parse(JsonConfigPaths.navigateObject(config, "flyway"), FlywayConfig.class);
     }
 
     /**

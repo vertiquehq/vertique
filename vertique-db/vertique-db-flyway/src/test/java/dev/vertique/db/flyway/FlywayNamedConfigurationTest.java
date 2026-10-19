@@ -65,9 +65,12 @@ import org.junit.jupiter.api.io.TempDir;
  * database-support double and a counting connector that fails every attempt.
  *
  * <p>One test factory carries the whole table of labelled cases, grouped by concern. Every
- * rejection case checks the same safety properties: the failure is a {@link MigrationRunException}
- * with a stable code and operation, it retains no cause or suppressed throwable, no secret sentinel
- * appears anywhere in it, and the runner has not touched a connection.
+ * resolution rejection case checks the same safety properties: the failure is a
+ * {@link MigrationRunException} with a stable code and operation, it retains no cause or suppressed
+ * throwable, no secret sentinel appears anywhere in it, and the runner has not touched a connection.
+ * A configuration that cannot be bound fails earlier, in the framework's config parser, with a
+ * {@link ConfigurationException} whose message names the instance and key where it can and never
+ * contains a configuration value.
  */
 class FlywayNamedConfigurationTest {
 
@@ -206,12 +209,9 @@ class FlywayNamedConfigurationTest {
             tests.add(dynamicTest("instances value " + nonObject.replace(SECRET_MARK, "x") + " is invalid", () -> {
                 Scenario scenario = new Scenario("{ 'instances': " + nonObject + " }");
 
-                MigrationRunException ex = assertThrows(MigrationRunException.class, scenario::bind);
+                ConfigurationException ex = assertThrows(ConfigurationException.class, scenario::bind);
 
-                assertEquals("CONFIGURATION", ex.failureCode());
-                assertEquals("configuration", ex.operation());
-                assertNull(ex.report(), "binding failures raise before any report exists");
-                assertSafe(ex);
+                assertBindingMessageSafe(ex);
             }));
         }
 
@@ -317,13 +317,13 @@ class FlywayNamedConfigurationTest {
                         "{ 'job': { '" + unknown + "': '" + SECRET_MARK + "-value', 'password': '" + INSTANCE_PASSWORD
                                 + "' } }"));
 
-                MigrationRunException ex = assertThrows(MigrationRunException.class, scenario::bind);
+                ConfigurationException ex = assertThrows(ConfigurationException.class, scenario::bind);
 
-                assertEquals("CONFIGURATION", ex.failureCode());
-                assertEquals("configuration", ex.operation());
-                assertNull(ex.report());
-                assertTrue(String.valueOf(ex.getMessage()).contains("job"), "names the offending instance");
-                assertSafe(ex);
+                String message = String.valueOf(ex.getMessage());
+                assertTrue(message.contains("flyway.instances.job"), "names the offending instance: " + message);
+                assertTrue(message.contains("'" + unknown + "'"), "names the offending key: " + message);
+                assertTrue(message.contains("schemas"), "lists the supported fields: " + message);
+                assertBindingMessageSafe(ex);
             }));
         }
 
@@ -331,20 +331,58 @@ class FlywayNamedConfigurationTest {
             Scenario scenario =
                     new Scenario(flyway("", "{ 'job': { 'mode': 'VALIDATE', 'table': 't', 'schemaa': 'x' } }"));
 
-            MigrationRunException ex = assertThrows(MigrationRunException.class, scenario::bind);
+            ConfigurationException ex = assertThrows(ConfigurationException.class, scenario::bind);
 
-            assertEquals("configuration", ex.operation());
+            assertTrue(String.valueOf(ex.getMessage()).contains("flyway.instances.job"), ex.getMessage());
+            assertTrue(String.valueOf(ex.getMessage()).contains("'schemaa'"), ex.getMessage());
+        }));
+
+        tests.add(dynamicTest("the supported fields in the message are the override components, never name", () -> {
+            Scenario scenario = new Scenario(flyway("", "{ 'job': { 'bogus': 1 } }"));
+
+            String message =
+                    assertThrows(ConfigurationException.class, scenario::bind).getMessage();
+
+            List<String> overrides = Stream.of(FlywayInstanceConfig.class.getRecordComponents())
+                    .map(java.lang.reflect.RecordComponent::getName)
+                    .filter(component -> !component.equals("name"))
+                    .toList();
+            assertEquals(12, overrides.size(), "the documented override fields");
+            for (String field : overrides) {
+                assertTrue(message.contains(field), field + " missing from: " + message);
+            }
+            assertFalse(message.contains("[name") || message.contains(" name,"), "the identity is not an override");
+        }));
+
+        tests.add(
+                dynamicTest("the key is the identity: an entry that repeats it is accepted, a conflict is not", () -> {
+                    FlywayConfig same =
+                            new Scenario(flyway("", "{ 'job': { 'name': 'job', 'mode': 'VALIDATE' } }")).bind();
+                    Scenario conflicting = new Scenario(flyway(
+                            "",
+                            "{ 'job': { 'name': '" + SECRET_MARK + "-other', 'password': '" + INSTANCE_PASSWORD
+                                    + "' } }"));
+
+                    ConfigurationException ex = assertThrows(ConfigurationException.class, conflicting::bind);
+
+                    assertEquals("job", same.instances().get(0).name());
+                    assertTrue(String.valueOf(ex.getMessage()).contains("job"), "names the entry: " + ex.getMessage());
+                    assertBindingMessageSafe(ex);
+                }));
+
+        tests.add(dynamicTest("a blank instance key is rejected", () -> {
+            Scenario scenario = new Scenario(flyway("", "{ ' ': {} }"));
+
+            assertBindingMessageSafe(assertThrows(ConfigurationException.class, scenario::bind));
         }));
 
         for (String badValue : List.of("'" + SECRET_MARK + "-text'", "7", "[]")) {
             tests.add(dynamicTest("instance entry value " + badValue.replace(SECRET_MARK, "x") + " is invalid", () -> {
                 Scenario scenario = new Scenario(flyway("", "{ 'job': " + badValue + " }"));
 
-                MigrationRunException ex = assertThrows(MigrationRunException.class, scenario::bind);
+                ConfigurationException ex = assertThrows(ConfigurationException.class, scenario::bind);
 
-                assertEquals("CONFIGURATION", ex.failureCode());
-                assertEquals("configuration", ex.operation());
-                assertSafe(ex);
+                assertBindingMessageSafe(ex);
             }));
         }
 
@@ -355,19 +393,14 @@ class FlywayNamedConfigurationTest {
         bindingFailures.put("boolean that cannot be read", "'outOfOrder': 'nope', " + instancePlaceholders);
         bindingFailures.put("placeholders of the wrong shape", "'placeholders': ['x']");
         bindingFailures.put("schemas of the wrong shape", "'schemas': {'a': 1}, " + instancePlaceholders);
-        bindingFailures.forEach((label, fields) -> tests.add(
-                dynamicTest("binding failure with a password in the object: " + label + " leaves no cause", () -> {
+        bindingFailures.forEach((label, fields) -> tests.add(dynamicTest(
+                "binding failure with a password in the object: " + label + " has a value-free message", () -> {
                     Scenario scenario = new Scenario(
                             flyway("", "{ 'job': { " + fields + ", 'password': '" + INSTANCE_PASSWORD + "' } }"));
 
-                    MigrationRunException ex = assertThrows(MigrationRunException.class, scenario::bind);
+                    ConfigurationException ex = assertThrows(ConfigurationException.class, scenario::bind);
 
-                    assertEquals("CONFIGURATION", ex.failureCode());
-                    assertEquals("configuration", ex.operation());
-                    assertNull(ex.getCause(), "no Jackson cause may be retained");
-                    assertEquals(0, ex.getSuppressed().length);
-                    assertNull(ex.report());
-                    assertSafe(ex);
+                    assertBindingMessageSafe(ex);
                 })));
 
         tests.add(dynamicTest("legacy binding failures keep their original configuration exception", () -> {
@@ -1485,6 +1518,13 @@ class FlywayNamedConfigurationTest {
                         assertFalse(configJson.contains(SECRET_MARK), configJson);
                         assertTrue(instanceJson.contains("\"name\":\"job\""), "non-secret fields still serialize");
                         assertTrue(instanceJson.contains("\"user\":\"inst_ddl\""));
+                        Set<String> serialized = new JsonObject(instanceJson).fieldNames();
+                        Set<String> components = Stream.of(FlywayInstanceConfig.class.getRecordComponents())
+                                .map(java.lang.reflect.RecordComponent::getName)
+                                .collect(java.util.stream.Collectors.toSet());
+                        assertTrue(
+                                components.containsAll(serialized),
+                                "only record components serialize, never the unknown-key hook: " + serialized);
                     }));
 
             tests.add(dynamicTest(
@@ -1821,47 +1861,36 @@ class FlywayNamedConfigurationTest {
     }
 
     @Test
-    void namedRootParseFailureRetainsNoSecretAndNoJacksonCause() {
-        // Given named configurations whose root section cannot be bound, each carrying a secret
-        // sentinel in a value that the native binding error would echo or nest
+    void unreadableRootSectionFailsWithAValueFreeMessageInBothModes() {
+        // Given unreadable root sections, each carrying a secret sentinel in a value that the native
+        // binding error would echo, in legacy and in named mode alike
         Map<String, String> unreadableRoots = new LinkedHashMap<>();
-        unreadableRoots.put("password given as an array", "{ 'instances': {}, 'password': ['" + ROOT_PASSWORD + "'] }");
+        unreadableRoots.put("password given as an array", "'password': ['" + ROOT_PASSWORD + "']");
         unreadableRoots.put(
-                "placeholder value given as an object",
-                "{ 'instances': {}, 'placeholders': { 'k': { 'x': '" + ROOT_PLACEHOLDER + "' } } }");
+                "placeholder value given as an object", "'placeholders': { 'k': { 'x': '" + ROOT_PLACEHOLDER + "' } }");
         unreadableRoots.put(
-                "lock timeout that is not a number",
-                "{ 'instances': {}, 'coordinationLockTimeoutMs': '" + SECRET_MARK + "-text' }");
-        unreadableRoots.put("mode that is not a mode", "{ 'instances': {}, 'mode': '" + SECRET_MARK + "-mode' }");
-        unreadableRoots.put("wrong-typed flag", "{ 'instances': {}, 'outOfOrder': ['" + SECRET_MARK + "-flag'] }");
+                "lock timeout that is not a number", "'coordinationLockTimeoutMs': '" + SECRET_MARK + "-text'");
+        unreadableRoots.put("mode that is not a mode", "'mode': '" + SECRET_MARK + "-mode'");
+        unreadableRoots.put("wrong-typed flag", "'outOfOrder': ['" + SECRET_MARK + "-flag']");
 
         List<Executable> checks = new ArrayList<>();
         for (Map.Entry<String, String> root : unreadableRoots.entrySet()) {
-            checks.add(() -> {
-                // When the section is bound
-                Throwable failure = bindFailure(root.getValue());
+            for (String section :
+                    List.of("{ " + root.getValue() + " }", "{ 'instances': {}, " + root.getValue() + " }")) {
+                checks.add(() -> {
+                    // When the section is bound
+                    Throwable failure = bindFailure(section);
 
-                // Then the failure is a configuration failure with no cause and no echoed value
-                MigrationRunException ex = assertInstanceOf(
-                        MigrationRunException.class,
-                        failure,
-                        root.getKey() + ": observed " + failure + " with cause " + failure.getCause());
-                assertEquals("CONFIGURATION", ex.failureCode(), root.getKey());
-                assertEquals("configuration", ex.operation(), root.getKey());
-                assertNull(ex.report(), root.getKey());
-                assertTrue(
-                        String.valueOf(ex.getMessage()).contains("flyway"),
-                        root.getKey() + ": message must name the flyway section: " + ex.getMessage());
-                assertSafe(ex);
-            });
+                    // Then the failure is a configuration failure whose message echoes no value
+                    ConfigurationException ex = assertInstanceOf(
+                            ConfigurationException.class, failure, root.getKey() + ": observed " + failure);
+                    assertBindingMessageSafe(ex);
+                });
+            }
         }
 
         // Then every case holds
         assertAll(checks);
-
-        // And the legacy path keeps its existing exception behavior for the same unreadable value
-        assertThrows(
-                ConfigurationException.class, () -> new Scenario("{ 'password': ['" + ROOT_PASSWORD + "'] }").bind());
     }
 
     private static Throwable bindFailure(String flywayJson) {
@@ -1963,7 +1992,18 @@ class FlywayNamedConfigurationTest {
         assertTrue(scenario.support.opens().isEmpty(), "the backend must not open a session");
     }
 
-    /** A named-mode failure must be safe: stable code, no cause, nothing suppressed, no secret anywhere. */
+    /**
+     * A configuration-binding failure must carry a non-empty message that contains no secret sentinel.
+     * The binding failure's cause is the framework parser's own and is not asserted on.
+     */
+    private static void assertBindingMessageSafe(Throwable failure) {
+        String message = failure.getMessage();
+        assertTrue(message != null && !message.isBlank(), "a binding failure explains itself");
+        assertFalse(message.contains(SECRET_MARK), "a configuration value leaked into the message: " + message);
+        assertFalse(message.contains("nope"), "a configuration value leaked into the message: " + message);
+    }
+
+    /** A named-mode resolution failure must be safe: stable code, no cause, nothing suppressed, no secret anywhere. */
     private static void assertSafe(Throwable failure) {
         assertNull(failure.getCause(), "no third-party cause may be retained");
         assertEquals(0, failure.getSuppressed().length, "no suppressed throwable may be retained");

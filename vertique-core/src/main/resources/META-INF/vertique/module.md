@@ -1043,9 +1043,11 @@ directly from the source `JsonObject` and attached afterwards.
 
 ### `@KeyedBy`
 
-Field annotation (`@Target(FIELD)`, in `dev.vertique.core.json`) on a `List<T>` record component
+Annotation (`@Target({FIELD, METHOD})`, in `dev.vertique.core.json`) on a `List<T>` record component
 whose external JSON is a keyed object. The object key is injected into the named identity property
-of each element.
+of each element. On a class bound through a builder (a Lombok `@Builder @Jacksonized` class, for
+example) Jackson reads the annotation from the builder setter rather than the field, so place it on a
+hand-written builder method that takes the list; a field annotation is not seen there.
 
 ```java
 // External JSON: { "consumers": { "orders": {...}, "refunds": {...} } }
@@ -1054,7 +1056,9 @@ record KafkaConfig(@KeyedBy("name") List<KafkaConsumerConfig> consumers) {}
 
 The element type must declare a settable property matching the annotation value. A conflict between
 an explicit JSON value and the injected key is a `ConfigurationException`; equal values are
-accepted. The deserializer backing it ships in `dev.vertique:vertique-json`.
+accepted. The annotated value itself must be a JSON object: a scalar or an array, including an empty
+array, is rejected, while an empty object binds to an empty list. The deserializer backing it ships
+in `dev.vertique:vertique-json`.
 
 ### `JsonConfigPaths`
 

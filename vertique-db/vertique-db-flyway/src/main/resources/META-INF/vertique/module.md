@@ -244,7 +244,7 @@ decides where their objects land.
 | absent or `null` | Legacy single Flyway, unchanged |
 | `{}` | Named mode with every wired `MigrationDefinition` |
 | `{ "job": {...} }` | Named mode; the object overrides that instance's settings |
-| any other value | `MigrationRunException` (`CONFIGURATION`, operation `configuration`) |
+| any other value | `ConfigurationException` from the config parser, before any runner exists |
 
 - **Every wired declaration runs**, whether or not it has an override entry. An override entry whose
   name matches no wired declaration is rejected rather than registering a module.
@@ -252,7 +252,17 @@ decides where their objects land.
   `db.schemas` entry.
 - **An empty declaration set is rejected** in named mode, except when the root `mode` is `DISABLED`.
 - **Unknown fields are rejected.** An instance object accepts only the override fields below; `schema`
-  is not an alias of `schemas`. Root fields keep their existing policy: unknown root keys are ignored.
+  is not an alias of `schemas`. The `ConfigurationException` message names `flyway.instances.<name>`,
+  the offending key and the supported fields, never a value. Root fields keep their existing policy:
+  unknown root keys are ignored.
+- **Binding failures are `ConfigurationException`.** The `flyway` section is bound in one step by the
+  config parser, for both modes: `instances` that is not an object, an instance value that is not an
+  object, a blank instance key, an entry whose own `name` differs from its key, an unsupported key, or
+  a field of the wrong type all fail with the framework's `ConfigurationException`, not with a
+  `MigrationRunException`. The message never contains a configuration value, so a password or
+  placeholder value cannot reach a log through it. For a plain type error the parser keeps the
+  underlying Jackson failure as the cause, and that cause can quote the offending value; do not log
+  the cause chain of a binding failure.
 - **Accepted residual.** A misspelled root key such as `flyway.instance` is ignored and selects legacy
   mode, and a misspelled root `mode` takes the `MIGRATE` default, the most permissive ceiling. Confirm
   the resolved instances and modes with `instances()` before deployment; in legacy mode it returns an
@@ -414,7 +424,7 @@ A failure of a named operation is a `MigrationRunException` (a `MigrationExcepti
 | Accessor | Value |
 |----------|-------|
 | `failureCode()` | One of `CONFIGURATION`, `RESOURCE`, `COORDINATION`, `PREFLIGHT`, `MIGRATION`, `VALIDATION` |
-| `operation()` | `configuration` (config binding), `instances`, `run`, or `coordination` |
+| `operation()` | `configuration` (identifier and collision rules), `instances`, `run`, or `coordination` |
 | `report()` | `null` when the failure came before the instances were resolved; otherwise the full ordered report |
 
 What each safety failure looks like:
@@ -432,8 +442,9 @@ What each safety failure looks like:
   contains raw native messages, SQL text, JDBC URLs, credentials or placeholder values. The exception
   keeps no cause and no suppressed exception, because native exceptions can carry statements and
   connection details. This differs from legacy mode, which keeps the original `MigrationException`
-  with its native cause. Named configuration-binding failures keep no Jackson cause for the same
-  reason. The guard and preflight failures above use fixed text that names the instance where one is
+  with its native cause. A configuration that cannot be bound fails earlier with a
+  `ConfigurationException`, which follows the parser's own policy described under
+  [Selecting named mode](#selecting-named-mode). The guard and preflight failures above use fixed text that names the instance where one is
   to blame; it carries no schema, table or URL values and no native message, only an SQLState when the
   catalog could not be read.
 - **Occupied schema.** When an instance's default schema already holds objects but the instance has no

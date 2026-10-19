@@ -3,7 +3,11 @@
 
 package dev.vertique.db.flyway;
 
+import com.fasterxml.jackson.annotation.JsonAnySetter;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import dev.vertique.core.exception.ConfigurationException;
+import java.lang.reflect.RecordComponent;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -15,6 +19,10 @@ import java.util.Objects;
  * to JSON {@code null}, which means "inherit": the runner resolves it against the root
  * {@link FlywayConfig} and the built-in defaults. An explicit {@code false}, empty list or empty map
  * is a value that replaces the inherited one. Lists and maps replace, never merge.
+ *
+ * <p><strong>Strict keys.</strong> Unlike the root {@link FlywayConfig}, an instance object accepts
+ * only the override fields below: any other key, such as a misspelled field name, is rejected while
+ * the configuration is bound, with a message that names the instance and the key but never a value.
  *
  * <p><strong>Secret hygiene.</strong> {@code password} and {@code placeholders} are accepted on input
  * but Jackson never serializes them, and {@link #toString()} renders the password redacted and the
@@ -67,6 +75,28 @@ public record FlywayInstanceConfig(
         schemas = schemas == null ? null : List.copyOf(schemas);
         placeholders = placeholders == null ? null : Map.copyOf(placeholders);
     }
+
+    /**
+     * Rejects a key that is not an override field. Jackson routes every key without a record component
+     * here; the method never stores anything, so it takes no part in equality, rendering or
+     * serialization.
+     *
+     * @param key the unsupported key
+     * @param value the unsupported key's value, deliberately left out of the failure message
+     * @throws ConfigurationException always; the message names {@code flyway.instances.<name>}, the key
+     *     and the supported fields, never a value
+     */
+    @JsonAnySetter
+    void rejectUnsupportedKey(String key, Object value) {
+        throw new ConfigurationException("flyway.instances." + name + ": the key '" + key
+                + "' is not a supported instance override; supported fields are " + SUPPORTED_FIELDS);
+    }
+
+    /** The override fields, taken from the record components so there is no second list to maintain. */
+    private static final List<String> SUPPORTED_FIELDS = Arrays.stream(FlywayInstanceConfig.class.getRecordComponents())
+            .map(RecordComponent::getName)
+            .filter(component -> !component.equals("name"))
+            .toList();
 
     /**
      * Redacted rendering: the password is never included and the placeholders render only their keys.

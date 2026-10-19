@@ -440,8 +440,9 @@ mapper.registerModule(strict);
 ### Keyed-collection support (`dev.vertique.json.keyed`)
 
 `KeyedCollectionModule` is a Jackson `SimpleModule` that deserializes a `@KeyedBy`-annotated
-`List<T>` field from a keyed JSON object (`{"orders": {…}, "refunds": {…}}`), injecting each entry key
-into the named identity property of the element. The `@KeyedBy` annotation itself lives in
+`List<T>` field, or `List<T>` builder setter method, from a keyed JSON object
+(`{"orders": {…}, "refunds": {…}}`), injecting each entry key into the named identity property of the
+element. The `@KeyedBy` annotation itself lives in
 `dev.vertique.core.json`, in `dev.vertique:vertique-core`. Register the module on any mapper that must
 bind keyed collections — `dev.vertique:vertique-config-core` does so automatically on the config
 mapper, so typed config records need no application wiring:
@@ -450,7 +451,10 @@ mapper, so typed config records need no application wiring:
 mapper.registerModule(new KeyedCollectionModule());
 ```
 
-Entry keys must be non-blank and entry values must be JSON objects. If an element already declares the
+The annotated value itself must be a JSON object: a scalar or an array, including an empty array, is
+rejected with a mapping failure that names the identity property and the JSON type, never the value; an empty
+object binds to an empty list and JSON `null` to no value. Entry keys must be non-blank and entry values
+must be JSON objects. If an element already declares the
 identity property with a **different** value, a `ConfigurationException` is raised naming the entry key
 and property — never the conflicting values; an equal value is accepted.
 
