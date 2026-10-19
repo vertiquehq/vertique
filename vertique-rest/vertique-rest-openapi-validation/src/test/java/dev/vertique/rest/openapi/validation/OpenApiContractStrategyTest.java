@@ -392,6 +392,9 @@ class OpenApiContractStrategyTest {
                     row("key spelling a percent escape keeps the literal text", "#/maxLength", "#/%250A", "/%0A"),
                     row("key with a line feed as the engine spells it", "#/maxLength", "#/a%Ab", "/a%Ab"),
                     row("key with double quotes is percent-decoded", "#/maxLength", "#/%22q%22", "/\"q\""),
+                    row("key spelling an escaped slash keeps the literal text", "#/maxLength", "#/%2Fa", "/%2Fa"),
+                    row("key spelling an escaped tilde keeps the literal text", "#/maxLength", "#/%7E1", "/%7E1"),
+                    row("key spelling an escaped letter keeps the literal text", "#/maxLength", "#/%6Eame", "/%6Eame"),
                     row("line feed in the first segment ends the pointer at the root", "#/maxLength", "#/a%0Ab", ""),
                     row(
                             "line separator in the last segment ends the pointer before it",

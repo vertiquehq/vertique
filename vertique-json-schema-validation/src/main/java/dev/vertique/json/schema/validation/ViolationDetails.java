@@ -278,7 +278,10 @@ public final class ViolationDetails {
      * Converts an engine instance location into an RFC 6901 JSON pointer.
      *
      * <p>One leading {@code #} is removed and each segment is percent-decoded as UTF-8; an escape that is not
-     * well formed, including one written with a non-ASCII digit, is left as written. The pointer escapes
+     * well formed, including one written with a non-ASCII digit, is left as written. So is an escape of a byte
+     * the engine never percent-escapes, such as a letter or a digit, exactly as it was written: the engine
+     * cannot have written it, and the engine's one-digit escape of a byte below {@code 0x10} would otherwise
+     * let a client key read as that byte. The pointer escapes
      * {@code ~0} and {@code ~1} are kept. The root, in any
      * spelling ({@code #}, the empty string, or {@code null}), becomes the empty string; {@code /} and
      * {@code #/} are the member with the empty name and become {@code /}.
@@ -595,8 +598,8 @@ public final class ViolationDetails {
      * {@code /} is skipped: a later empty segment is the member named {@code ""}, looked up like any other name.
      *
      * <p>Resolution fails closed: a segment that cannot be shown to be declared, under an unresolvable
-     * {@code $ref}, a composition past the subschema bound, a malformed encoding, or a {@code null} schema, ends
-     * the run, which names a shorter location and never a longer one.
+     * {@code $ref}, a composition past the subschema bound, a malformed encoding, an escape of a byte the engine
+     * never escapes, or a {@code null} schema, ends the run, which names a shorter location and never a longer one.
      */
     private static String declaredLocation(String instanceLocation, JsonObject schema) {
         if (instanceLocation == null || instanceLocation.isEmpty()) {
@@ -706,6 +709,9 @@ public final class ViolationDetails {
      * Decodes one instance-location segment as the engine reports it, percent-encoded UTF-8 over an escaped
      * name, back to the property name the schema would declare.
      *
+     * <p>A segment holding an escape of a byte the engine never escapes is not trusted, see
+     * {@link #neverEscapedByEngine(int)}, and is treated as not well formed.
+     *
      * @return the decoded name, or {@code null} when the segment is not a well-formed encoding
      */
     private static String decodeSegment(String segment) {
@@ -719,12 +725,11 @@ public final class ViolationDetails {
                 if (index + 2 >= segment.length()) {
                     return null;
                 }
-                int high = Character.digit(segment.charAt(index + 1), 16);
-                int low = Character.digit(segment.charAt(index + 2), 16);
-                if (high < 0 || low < 0) {
+                int value = hexEscapeAt(segment, index);
+                if (value < 0 || neverEscapedByEngine(value)) {
                     return null;
                 }
-                bytes.write(high * 16 + low);
+                bytes.write(value);
                 index += 2;
             } else if (c < 0x80) {
                 bytes.write(c);
@@ -826,7 +831,8 @@ public final class ViolationDetails {
 
     /**
      * Percent-decodes one pointer segment as UTF-8. A run of escapes that does not decode to well-formed UTF-8,
-     * and a {@code %} not followed by two hexadecimal digits, are left as written.
+     * and a {@code %} not followed by two hexadecimal digits, are left as written. So is an escape of a byte the
+     * engine never escapes, see {@link #neverEscapedByEngine(int)}; it does not join the run of escapes beside it.
      */
     private static String percentDecode(String segment) {
         if (segment.indexOf('%') < 0) {
@@ -840,10 +846,17 @@ public final class ViolationDetails {
                 index++;
                 continue;
             }
+            if (neverEscapedByEngine(hexEscapeAt(segment, index))) {
+                decoded.append(segment, index, index + 3);
+                index += 3;
+                continue;
+            }
             int start = index;
             ByteArrayOutputStream bytes = new ByteArrayOutputStream();
             int value;
-            while (index < segment.length() && (value = hexEscapeAt(segment, index)) >= 0) {
+            while (index < segment.length()
+                    && (value = hexEscapeAt(segment, index)) >= 0
+                    && !neverEscapedByEngine(value)) {
                 bytes.write(value);
                 index += 3;
             }
@@ -867,6 +880,29 @@ public final class ViolationDetails {
         int high = asciiHexValue(text.charAt(index + 1));
         int low = asciiHexValue(text.charAt(index + 2));
         return high < 0 || low < 0 ? -1 : high * 16 + low;
+    }
+
+    /**
+     * Whether the engine never percent-escapes the byte: an ASCII letter or digit, and the ASCII punctuation the
+     * engine writes as itself. A slash and a tilde are in the set, as the engine spells them {@code ~1} and
+     * {@code ~0}. Control characters, DEL, the space, and the characters it does escape, such as the quote, the
+     * percent sign, the angle brackets, the square brackets and the braces, are not.
+     *
+     * <p>An escape of such a byte cannot have come from the engine, so it is read as text the client wrote, never
+     * as the byte. The engine writes a byte below {@code 0x10} with one hexadecimal digit, so a client key such as
+     * a control character followed by {@code Eame} is located as {@code %6Eame}, and a decoder that honoured that
+     * escape would read the byte {@code n} and let the key forge a declared name.
+     */
+    private static boolean neverEscapedByEngine(int value) {
+        return value == 0x21
+                || value == 0x23
+                || value == 0x24
+                || (value >= 0x26 && value <= 0x3B)
+                || value == 0x3D
+                || (value >= 0x3F && value <= 0x5A)
+                || value == 0x5F
+                || (value >= 0x61 && value <= 0x7A)
+                || value == 0x7E;
     }
 
     /** The value of an ASCII hexadecimal digit ({@code 0-9}, {@code a-f}, {@code A-F}), or {@code -1}. */

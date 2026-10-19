@@ -20,6 +20,7 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.function.Executable;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.CsvSource;
@@ -620,6 +621,7 @@ class ViolationDetailsTest {
     @DisplayName("rfc6901 edge forms")
     class Rfc6901EdgeForms {
 
+        // The escaped tilde row is a form the engine never writes (it spells a tilde as ~0), so it is left as written.
         @ParameterizedTest(name = "{0} -> {1}")
         @CsvSource({
             "'/a%20b', '/a b'",
@@ -627,7 +629,7 @@ class ViolationDetailsTest {
             "'#/a%2', '/a%2'",
             "'#/a~0b', '/a~0b'",
             "'#/a+b', '/a+b'",
-            "'#/a%7E1b', '/a~1b'",
+            "'#/a%7E1b', '/a%7E1b'",
             "'#/0/1', '/0/1'"
         })
         @DisplayName("invalid escapes and escaped tildes are left as they are, and a plus is not a space")
@@ -635,17 +637,19 @@ class ViolationDetailsTest {
             assertThat(ViolationDetails.rfc6901(engineLocation)).isEqualTo(expected);
         }
 
+        // An escape of an ASCII letter, digit or slash is a form the engine never writes, so it is left as written.
         @ParameterizedTest(name = "{0} -> {1}")
         @CsvSource({
-            "'#/%4A', '/J'",
-            "'#/%4a', '/J'",
+            "'#/%4A', '/%4A'",
+            "'#/%4a', '/%4a'",
             "'#/%c3%A9', '/é'",
             "'#/%C3%a9', '/é'",
-            "'#/%2F', '//'",
-            "'#/%41%42', '/AB'"
+            "'#/%2F', '/%2F'",
+            "'#/%41%42', '/%41%42'"
         })
-        @DisplayName("an escape written with ASCII hex digits of either case is decoded")
-        void asciiHexDigitsOfEitherCaseAreDecoded(String engineLocation, String expected) {
+        @DisplayName("an escape is recognised with ASCII hex digits of either case: one the engine writes is decoded,"
+                + " any other ASCII byte is left as written")
+        void asciiHexDigitsOfEitherCaseAreRecognised(String engineLocation, String expected) {
             assertThat(ViolationDetails.rfc6901(engineLocation)).isEqualTo(expected);
         }
 
@@ -668,6 +672,316 @@ class ViolationDetailsTest {
             String grin = new String(Character.toChars(0x1F600));
 
             assertThat(ViolationDetails.rfc6901("#/%F0%9F%98%80/x")).isEqualTo("/" + grin + "/x");
+        }
+    }
+
+    /**
+     * The engine writes a character below {@code 0x10} as a percent sign and ONE hex digit, so what follows
+     * the escape in a client's key can read as its second digit. An escape that decodes to a character the
+     * engine never percent-escapes can therefore not be told from such a key, and is not trusted.
+     */
+    @Nested
+    @DisplayName("percent escapes the engine could not have written faithfully")
+    class UnreliableEscapes {
+
+        /** The ASCII characters the engine writes as themselves, or as {@code ~0} and {@code ~1}. */
+        private static final String NEVER_PERCENT_ESCAPED = "!#$&'()*+,-./" + "0123456789:;=?@"
+                + "ABCDEFGHIJKLMNOPQRSTUVWXYZ" + "_" + "abcdefghijklmnopqrstuvwxyz" + "~";
+
+        private static final JsonObject CLOSED_DECLARING_NAMES =
+                Schemas.json("{'properties':{'name':{},'n':{},'P':{}},'additionalProperties':false}");
+
+        private static final JsonObject CLOSED_DECLARING_SLASHES =
+                Schemas.json("{'properties':{'/a':{},'/':{}},'additionalProperties':false}");
+
+        private static final JsonObject OPEN_REQUIRING_C = Schemas.json("{'properties':{'name':{'type':'string'}},"
+                + "'additionalProperties':{'type':'object','required':['c']}}");
+
+        @ParameterizedTest(name = "key {0}")
+        @MethodSource("keysReadAsADeclaredName")
+        @DisplayName("a key whose one-digit escape reads as a declared name is cut back as an undeclared one")
+        void aKeyReadAsADeclaredNameIsCutBack(String key, String engineLocation) {
+            // Given a closed schema declaring the name the key's escape would be misread as
+            JsonObject schema = key.startsWith("\u0006") || key.startsWith("\u0005")
+                    ? CLOSED_DECLARING_NAMES
+                    : CLOSED_DECLARING_SLASHES;
+
+            // When the real engine rejects that key and the result is collected in both forms
+            OutputUnit result = Validators.validate(schema, new JsonObject().put(key, 1));
+            List<ViolationDetail> pointers = ViolationDetails.collect(result, schema, false, PathForm.RFC6901);
+            List<ViolationDetail> fragments = ViolationDetails.collect(result, schema, false, PathForm.URI_FRAGMENT);
+
+            // Then the engine spelled the key as expected, and nothing of it, or of the name it reads as, remains
+            assertAll(
+                    () -> assertThat(engineLocationOf(key)).isEqualTo(engineLocation),
+                    () -> assertThat(pointers).isNotEmpty(),
+                    () -> assertThat(pointers).extracting(ViolationDetail::path).containsOnly(""),
+                    () -> assertThat(fragments).isNotEmpty(),
+                    () -> assertThat(fragments)
+                            .extracting(ViolationDetail::path)
+                            .containsOnly("#"));
+        }
+
+        static Stream<Arguments> keysReadAsADeclaredName() {
+            return Stream.of(
+                    Arguments.of("\u0006Eame", "#/%6Eame"),
+                    Arguments.of("\u0006E", "#/%6E"),
+                    Arguments.of("\u00050", "#/%50"),
+                    Arguments.of("\u0002Fa", "#/%2Fa"),
+                    Arguments.of("\u0007E1", "#/%7E1"));
+        }
+
+        @Test
+        @DisplayName("a key read as a declared name below a declared parent is cut back to that parent")
+        void aKeyReadAsADeclaredNameBelowAParentIsCutBack() {
+            JsonObject schema = Schemas.json(
+                    "{'properties':{'pet':{'properties':{'name':{}}," + "'additionalProperties':{'type':'object'}}}}");
+
+            OutputUnit result =
+                    Validators.validate(schema, new JsonObject().put("pet", new JsonObject().put("\u0006Eame", 1)));
+
+            assertThat(ViolationDetails.collect(result, schema, false, PathForm.RFC6901))
+                    .isNotEmpty()
+                    .extracting(ViolationDetail::path)
+                    .containsOnly("/pet");
+        }
+
+        @ParameterizedTest(name = "control character {0}")
+        @ValueSource(ints = {2, 3, 4, 5, 6, 7})
+        @DisplayName("a control character below 0x10 never makes a key read as another declared name")
+        void noControlCharacterBelowSixteenForgesADeclaredName(int control) {
+            // Given a closed schema declaring every ASCII character as a one-character name
+            JsonObject properties = new JsonObject();
+            for (char name = 0; name < 0x80; name++) {
+                properties.put(String.valueOf(name), new JsonObject());
+            }
+            JsonObject schema = new JsonObject().put("properties", properties).put("additionalProperties", false);
+
+            // When the control character is followed by each hex digit, so the engine's escape reads as a byte
+            // the engine never percent-escapes
+            List<Executable> checks = "0123456789ABCDEFabcdef"
+                    .chars()
+                    .filter(digit -> NEVER_PERCENT_ESCAPED.indexOf(control * 16 + Character.digit(digit, 16)) >= 0)
+                    .mapToObj(digit -> {
+                        String key = "" + (char) control + (char) digit;
+                        return (Executable) () -> {
+                            OutputUnit result = Validators.validate(schema, new JsonObject().put(key, 1));
+                            // Then the key is reported as no declared name
+                            assertThat(ViolationDetails.collect(result, schema, false, PathForm.RFC6901))
+                                    .as("key %s", engineLocationOf(key))
+                                    .isNotEmpty()
+                                    .extracting(ViolationDetail::path)
+                                    .containsOnly("");
+                        };
+                    })
+                    .toList();
+
+            assertThat(checks).isNotEmpty();
+            assertAll(checks);
+        }
+
+        @Test
+        @DisplayName("a key read as a declared name yields no required member appended to a forged parent")
+        void aKeyReadAsADeclaredNameDoesNotForgeAParentForARequiredMember() {
+            OutputUnit result =
+                    Validators.validate(OPEN_REQUIRING_C, new JsonObject().put("\u0006Eame", new JsonObject()));
+
+            List<ViolationDetail> details = ViolationDetails.collect(result, OPEN_REQUIRING_C, false, PathForm.RFC6901);
+
+            assertAll(
+                    () -> assertThat(details).extracting(ViolationDetail::type).contains("required"),
+                    () -> assertThat(details).extracting(ViolationDetail::path).containsOnly(""));
+        }
+
+        @ParameterizedTest(name = "declared name {0}")
+        @MethodSource("declaredNamesTheEngineSpellsFaithfully")
+        @DisplayName("a declared name the engine spells faithfully is still reported, in either form")
+        void aFaithfullySpelledDeclaredNameIsStillReported(String name, String pointer, String fragment) {
+            JsonObject schema = new JsonObject()
+                    .put("properties", new JsonObject().put(name, new JsonObject().put("type", "integer")));
+            OutputUnit result = Validators.validate(schema, new JsonObject().put(name, "x"));
+
+            assertAll(
+                    () -> assertThat(ViolationDetails.collect(result, schema, false, PathForm.RFC6901))
+                            .extracting(ViolationDetail::path)
+                            .containsExactly(pointer),
+                    () -> assertThat(ViolationDetails.collect(result, schema, false, PathForm.URI_FRAGMENT))
+                            .extracting(ViolationDetail::path)
+                            .containsExactly(fragment));
+        }
+
+        static Stream<Arguments> declaredNamesTheEngineSpellsFaithfully() {
+            return Stream.of(
+                    Arguments.of("name", "/name", "#/name"),
+                    Arguments.of("a b", "/a b", "#/a%20b"),
+                    Arguments.of("é", "/é", "#/%C3%A9"),
+                    Arguments.of("a\u001Bb", "/a\u001Bb", "#/a%1Bb"),
+                    Arguments.of("a\u0010b", "/a\u0010b", "#/a%10b"),
+                    Arguments.of("a%b", "/a%b", "#/a%25b"),
+                    Arguments.of("a\"b", "/a\"b", "#/a%22b"),
+                    Arguments.of("a/b", "/a~1b", "#/a~1b"),
+                    Arguments.of("a~b", "/a~0b", "#/a~0b"),
+                    Arguments.of("a b", "/a b", "#/a%E2%80%A8b"));
+        }
+
+        @ParameterizedTest(name = "{0} -> {1}")
+        @MethodSource("pointersOfEscapesThatCannotBeTrusted")
+        @DisplayName("an escape of a character the engine never escapes is kept as written in the RFC 6901 form")
+        void anUntrustedEscapeIsKeptAsWritten(String engineLocation, String expected) {
+            assertThat(ViolationDetails.rfc6901(engineLocation)).isEqualTo(expected);
+        }
+
+        static Stream<Arguments> pointersOfEscapesThatCannotBeTrusted() {
+            return Stream.of(
+                    Arguments.of("#/%6Eame", "/%6Eame"),
+                    Arguments.of("#/%2Fa", "/%2Fa"),
+                    Arguments.of("#/%7E1", "/%7E1"),
+                    Arguments.of("#/%7e1", "/%7e1"),
+                    Arguments.of("#/x/%6Eame/y", "/x/%6Eame/y"),
+                    Arguments.of("#/%21", "/%21"),
+                    Arguments.of("#/%7E", "/%7E"),
+                    Arguments.of("#/%2F", "/%2F"),
+                    Arguments.of("#/%41%C3%A9", "/%41\u00e9"),
+                    Arguments.of("#/%C3%A9%41", "/\u00e9%41"));
+        }
+
+        @Test
+        @DisplayName("a declared name followed by a forged ASCII escape is cut back as an undeclared one")
+        void aDeclaredNameFollowedByAForgedEscapeIsCutBack() {
+            // Given a closed schema declaring a name that ends in a letter, and a key that spells it with a
+            // one-digit control escape followed by a digit
+            JsonObject schema = Schemas.json("{'properties':{'\u00e9A':{}},'additionalProperties':false}");
+            String key = "\u00e9\u00041";
+
+            OutputUnit result = Validators.validate(schema, new JsonObject().put(key, 1));
+
+            // Then the key is no declared name, and the engine's location is the ambiguous one
+            assertAll(
+                    () -> assertThat(engineLocationOf(key)).isEqualTo("#/%C3%A9%41"),
+                    () -> assertThat(ViolationDetails.collect(result, schema, false, PathForm.RFC6901))
+                            .isNotEmpty()
+                            .extracting(ViolationDetail::path)
+                            .containsOnly(""),
+                    () -> assertThat(ViolationDetails.collect(result, schema, false, PathForm.URI_FRAGMENT))
+                            .isNotEmpty()
+                            .extracting(ViolationDetail::path)
+                            .containsOnly("#"));
+        }
+
+        @ParameterizedTest(name = "key {0}")
+        @MethodSource("keysReadAsADeclaredName")
+        @DisplayName("the contract form of a real engine location never forges a character from a one-digit escape")
+        void theContractFormOfARealLocationForgesNothing(String key, String engineLocation) {
+            assertAll(() -> assertThat(engineLocationOf(key)).isEqualTo(engineLocation), () -> assertThat(
+                            ViolationDetails.rfc6901(engineLocationOf(key)))
+                    .isEqualTo("/" + engineLocation.substring("#/".length())));
+        }
+
+        @ParameterizedTest(name = "{0} -> {1}")
+        @MethodSource("pointersOfEscapesTheEngineWrites")
+        @DisplayName("an escape of a character the engine does escape is decoded as before")
+        void anEscapeTheEngineWritesIsDecoded(String engineLocation, String expected) {
+            assertThat(ViolationDetails.rfc6901(engineLocation)).isEqualTo(expected);
+        }
+
+        static Stream<Arguments> pointersOfEscapesTheEngineWrites() {
+            return Stream.of(
+                    Arguments.of("#/%C3%A9", "/é"),
+                    Arguments.of("#/%E2%80%A8", "/ "),
+                    Arguments.of("#/%20", "/ "),
+                    Arguments.of("#/a%0Ab", "/a\nb"),
+                    Arguments.of("#/a%1Bb", "/a\u001Bb"),
+                    Arguments.of("#/a%10b", "/a\u0010b"),
+                    Arguments.of("#/%22q%22", "/\"q\""),
+                    Arguments.of("#/%25", "/%"),
+                    Arguments.of("#/%250A", "/%0A"),
+                    Arguments.of("#/%3Cx%3E", "/<x>"),
+                    Arguments.of("#/%5B0%5D", "/[0]"),
+                    Arguments.of("#/%7Fz", "/\u007Fz"));
+        }
+
+        @Test
+        @DisplayName("every ASCII escape is kept as written when the engine never writes it, and decoded when it does")
+        void everyAsciiEscapeIsDecodedOnlyWhenTheEngineWritesIt() {
+            List<Executable> checks = IntStream.range(0, 0x80)
+                    .boxed()
+                    .flatMap(code -> Stream.of(String.format("%%%02X", code), String.format("%%%02x", code))
+                            .map(escape -> {
+                                boolean untrusted = NEVER_PERCENT_ESCAPED.indexOf(code) >= 0;
+                                String expected = "/x" + (untrusted ? escape : String.valueOf((char) (int) code)) + "y";
+                                return (Executable) () -> assertThat(ViolationDetails.rfc6901("#/x" + escape + "y"))
+                                        .as("escape %s", escape)
+                                        .isEqualTo(expected);
+                            }))
+                    .toList();
+
+            assertAll(checks);
+        }
+
+        @Test
+        @DisplayName("an escape written with full-width digits is left as written by the pointer form and ends"
+                + " the cut-back at the segment")
+        void fullWidthDigitsAreNotAnEscapeInEitherDecoder() {
+            // Given a declared name that the full-width digits would spell, if they were read as hex digits
+            String escape = "%" + new String(Character.toChars(0xFF14)) + new String(Character.toChars(0xFF11));
+            JsonObject schema = Schemas.json("{'properties':{'pet':{'properties':{'A':{}}}}}");
+            OutputUnit result = ResultShapes.singleError(null, "#/pet/" + escape);
+
+            // When the location is converted to a pointer and cut back to what the schema declares
+            String pointer = ViolationDetails.rfc6901("#/pet/" + escape);
+            List<ViolationDetail> pointers = ViolationDetails.collect(result, schema, false, PathForm.RFC6901);
+            List<ViolationDetail> fragments = ViolationDetails.collect(result, schema, false, PathForm.URI_FRAGMENT);
+
+            // Then neither decoder read an escape
+            assertAll(
+                    () -> assertThat(pointer).isEqualTo("/pet/" + escape),
+                    () -> assertThat(pointers).extracting(ViolationDetail::path).containsExactly("/pet"),
+                    () -> assertThat(fragments)
+                            .extracting(ViolationDetail::path)
+                            .containsExactly("#/pet"));
+        }
+
+        @ParameterizedTest(name = "full-width escape of {1}")
+        @MethodSource("fullWidthEscapesOfEscapedBytes")
+        @DisplayName("an escape written with full-width digits that would read as a byte the engine escapes is not"
+                + " read as that name")
+        void fullWidthDigitsOfAnEscapedByteAreNotReadAsThatName(String escape, String declaredName) {
+            // Given a closed schema declaring the one-character name the full-width digits would spell, if they
+            // were read as hex digits
+            JsonObject schema = new JsonObject()
+                    .put("properties", new JsonObject().put(declaredName, new JsonObject()))
+                    .put("additionalProperties", false);
+            OutputUnit result = ResultShapes.singleError(null, "#/" + escape);
+
+            // When the location is converted to a pointer and cut back to what the schema declares
+            String pointer = ViolationDetails.rfc6901("#/" + escape);
+            List<ViolationDetail> pointers = ViolationDetails.collect(result, schema, false, PathForm.RFC6901);
+            List<ViolationDetail> fragments = ViolationDetails.collect(result, schema, false, PathForm.URI_FRAGMENT);
+
+            // Then the text is kept as written by the pointer form, and the cut-back ends before the segment
+            assertAll(
+                    () -> assertThat(pointer).isEqualTo("/" + escape),
+                    () -> assertThat(pointers).extracting(ViolationDetail::path).containsExactly(""),
+                    () -> assertThat(fragments)
+                            .extracting(ViolationDetail::path)
+                            .containsExactly("#"));
+        }
+
+        static Stream<Arguments> fullWidthEscapesOfEscapedBytes() {
+            String fullWidthTwo = new String(Character.toChars(0xFF12));
+            String fullWidthZero = new String(Character.toChars(0xFF10));
+            return Stream.of(
+                    Arguments.of("%" + fullWidthTwo + fullWidthZero, " "),
+                    Arguments.of("%" + fullWidthTwo + fullWidthTwo, "\""));
+        }
+
+        /** The engine's own instance location for a body whose only member has the given key, under a closed schema. */
+        private String engineLocationOf(String key) {
+            OutputUnit result =
+                    Validators.validate(Schemas.json("{'additionalProperties':false}"), new JsonObject().put(key, 1));
+            return result.getErrors() == null || result.getErrors().isEmpty()
+                    ? result.getInstanceLocation()
+                    : result.getErrors().get(0).getInstanceLocation();
         }
     }
 

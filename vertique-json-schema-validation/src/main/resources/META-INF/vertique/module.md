@@ -126,6 +126,15 @@ splits on `/`, percent-decodes each segment as UTF-8 (an invalid escape is left 
 `~0` and `~1` untouched. `#`, the empty string, and `null` become the empty string (the document
 root); `/` and `#/` stay `/`, the member with the empty name.
 
+An escape the engine never writes is not honoured. The engine never percent-escapes an ASCII letter,
+digit or the punctuation it writes as itself (`!`, `#`, `$`, `&` to `;`, `=`, `?`, `@`, `_`, `~` and, as
+`~1`, `/`), and it spells a byte below `0x10` with one hex digit, so a client key such as a control
+character followed by `Eame` is located as `%6Eame`. The conversion keeps such an escape as written, with
+the case of its hex digits, so `%6Eame` stays `%6Eame` and never becomes `name`; an escape beside a
+multi-byte run does not join it (`%41%C3%A9` becomes `%41é`). Every other escape decodes as above. The
+declared-name check cuts the location back before a segment that holds such an escape, as it does for an
+undeclared segment, so a client key can never pass as a declared name.
+
 ### No configuration
 
 This module has no configuration properties and reads no configuration source. The bounds are

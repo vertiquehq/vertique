@@ -787,10 +787,11 @@ public final class OpenApiContractValidationStrategy implements RequestValidatio
      * document).
      *
      * <p>A pointer is percent-decoded, so a control character can only appear in it decoded, where it
-     * could forge a line in a log or break a rendering. The result is a prefix of the location the
-     * validator reported: ending the pointer sooner is shorter, never different. Segments are separated by
-     * {@code /}, which a member name spells {@code ~1}, so splitting on it never cuts a name. One linear
-     * scan; never throws.
+     * could forge a line in a log or break a rendering. The cut applies to the decoded pointer, and the result
+     * is a prefix of it: ending the pointer sooner is shorter, never different. The engine writes a character
+     * below {@code 0x10} as an escape with one hexadecimal digit, which the shared conversion does not decode,
+     * so such text stays as written and holds no control character. Segments are separated by {@code /}, which
+     * a member name spells {@code ~1}, so splitting on it never cuts a name. One linear scan; never throws.
      *
      * @param pointer an RFC 6901 pointer, empty or starting with {@code /}
      * @return the pointer up to, and not including, the first segment holding such a character
