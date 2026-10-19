@@ -8,7 +8,7 @@ SPDX-License-Identifier: EUPL-1.2
 > **Status:** Stable
 > **Package:** `dev.vertique.rest.openapi.validation`
 > **Artifact:** `vertique-rest-openapi-validation`
-> **Depends on:** rest-jaxrs
+> **Depends on:** rest-jaxrs, json-schema-validation
 
 Opt-in `openapi-contract` request-validation strategy that validates incoming requests against the generated `openapi.json` using `vertx-openapi`. This module is the only place in the framework that takes a **production/runtime** dependency on `io.vertx:vertx-openapi`; the default `web-validation` path (in `vertique-rest-validation`) carries no such dependency. (`vertx-web-openapi-router` appears as a test-scope dependency in `vertique-rest-security` and `vertique-rest-auth-jwt` for legacy IT support, but those are test-only and do not affect the production classpath.) Applications install this module only when spec-strict contract validation and the `vertx-openapi` preview artifact are both acceptable.
 
@@ -104,7 +104,7 @@ no longer calls. It validates against the global `jaxrs.openapiPath` contract an
 WARN for each mount that selects this strategy; `@FilePart` and verifier execution are provided by
 `web-validation` only.
 
-**Error sanitization.** Validation errors produced by the `openapi-contract` strategy are sanitized before reaching the client: submitted values, client-supplied property names, and raw validator internals are stripped from the error response. The 400 response body contains only the violation location (JSON pointer), the failed keyword, and a stable message — no echoed request data.
+**Error sanitization.** Validation errors produced by the `openapi-contract` strategy are sanitized before reaching the client: submitted values and the validator's raw error text are stripped. Each entry carries only the violation location in `pointer` (an RFC 6901 JSON Pointer, percent-decoded), the failed keyword as `type`, and a stable `detail` message. For an `additionalProperties` violation the undeclared key is cut back to its parent, so that key is never echoed. Other client-chosen member names are not removed: a key of a map in the body, a `patternProperties` or schema-valued `additionalProperties` member, and the key of an object-valued parameter (deepObject or form-exploded query object) can all appear in `pointer`. A segment holding a control character or a line or paragraph separator ends the pointer before that segment. Every entry is labelled `location: "body"`, including one for a parameter schema violation, and none carries `parameter`.
 
 **JSON profile first-parse.** When a route's resolved JSON mapper is not the same instance as the process codec's mapper (see `dev.vertique:vertique-rest-jaxrs` → request-body profiles, whose resolver returns that identity sentinel), the `openapi-contract` strategy runs that profile mapper's **first parse** of the request body — applying its strict parser features and rejecting a non-conforming body with a 400 — *before* OpenAPI schema validation, consistent with the default `web-validation` strategy. No profile is stashed when the route's mapper is the process codec's own instance, in which case this is a no-op and OpenAPI validation runs unchanged.
 
@@ -233,6 +233,7 @@ The strategy still passes the framework's `ParamConversionResolver` (`vertique-r
   `pattern`, `patternProperties`, or format position is handed to `vertx-openapi` at whatever length
   the request carries, and is evaluated by that library's own keyword and format handling. An
   application that needs the bound selects `web-validation`.
+- **`location: "body"` does not mean a body location here.** This strategy labels every entry `body`, including a violation of a parameter schema, and never sets `parameter`. Its `pointer` is percent-decoded and can carry client-chosen member names (see Error sanitization), so a consumer that renders or logs it must encode it for that sink; a pointer never holds a control character, but it can hold markup, quotes or whitespace.
 - **`vertx-openapi` is a preview artifact.** Its API shape may change across Vert.x minor versions. This module pins the `vertx-openapi` version via the parent BOM.
 - **Security semantics.** The active security model is OR-of-AND-with-scopes. The `openapi-contract` strategy inherits the same security handling as all other strategies — security is applied by `JaxRsRouteRegistrar`, not by the validation strategy itself. The validation gate runs after the auth/authorization chain and is unaffected by the security model shape.
 
@@ -255,6 +256,7 @@ not an application SPI.
 ## Dependencies
 
 - `dev.vertique:vertique-rest-jaxrs` (for `RequestValidationStrategy`, descriptors, config, and REST error types)
+- `dev.vertique:vertique-json-schema-validation` (for `ViolationDetails.rfc6901`, which turns the validator's instance location into the reported `pointer`)
 - `io.vertx:vertx-openapi`
 - `com.google.dagger:dagger`
 - `jakarta.inject:jakarta.inject-api`

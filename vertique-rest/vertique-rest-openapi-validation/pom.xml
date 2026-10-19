@@ -38,6 +38,12 @@ SPDX-License-Identifier: EUPL-1.2
             <artifactId>vertique-rest-jaxrs</artifactId>
         </dependency>
 
+        <!-- ViolationDetails.rfc6901: converts the engine's instance location to an RFC 6901 pointer. -->
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-json-schema-validation</artifactId>
+        </dependency>
+
         <!-- Preview standalone OpenAPI request validator. This module is the ONLY place the preview
              vertx-openapi artifact appears as a direct dependency (FR-025). Version is BOM-managed by
              vertx-dependencies. The RouterBuilder (vertx-web-openapi-router) is intentionally NOT a

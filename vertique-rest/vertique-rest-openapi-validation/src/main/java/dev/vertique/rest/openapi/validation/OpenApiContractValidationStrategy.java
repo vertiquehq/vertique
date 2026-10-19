@@ -4,6 +4,7 @@
 package dev.vertique.rest.openapi.validation;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.vertique.json.schema.validation.ViolationDetails;
 import dev.vertique.rest.core.RestConfigurationException;
 import dev.vertique.rest.core.RestValidationException;
 import dev.vertique.rest.core.ValidationErrorDetail;
@@ -708,7 +709,7 @@ public final class OpenApiContractValidationStrategy implements RequestValidatio
      * to a concrete violated constraint. {@code additionalProperties} is NOT skipped — it is a concrete
      * client error (an undeclared property was sent) and is retained as a keyword.
      *
-     * <p>Each detail carries only the sanitized JSON-Pointer field path and the failed keyword — never
+     * <p>Each detail carries only the sanitized JSON Pointer and the failed keyword — never
      * the raw vertx-json-schema message (which can echo the submitted value) and never a client-supplied
      * undeclared property name.
      *
@@ -737,7 +738,7 @@ public final class OpenApiContractValidationStrategy implements RequestValidatio
         // A schema-violation OutputUnit with only structural wrappers (all skipped) would yield an empty
         // list; emit a single generic, value-free detail so the client still gets actionable structure.
         if (details.isEmpty()) {
-            details.add(new ValidationErrorDetail("", "is invalid", "body", null, null));
+            details.add(new ValidationErrorDetail("", null, null, "is invalid", "body", null, null));
         }
         return details;
     }
@@ -749,9 +750,10 @@ public final class OpenApiContractValidationStrategy implements RequestValidatio
      *
      * <p>The {@code detail} message is regenerated from the failed keyword alone via {@link #safeDetail}
      * — the raw {@link OutputUnit#getError()} text is discarded because it can echo the submitted request
-     * value (e.g. {@code "String is too long (27 > 4)"}). The {@code path} is the sanitized JSON-Pointer
-     * instance location with any trailing client-supplied undeclared-property segment stripped, so a
-     * client-chosen property name never leaks into the response.
+     * value (e.g. {@code "String is too long (27 > 4)"}). The {@code pointer} is the sanitized JSON-Pointer
+     * instance location in plain RFC 6901 form with any trailing client-supplied undeclared-property
+     * segment stripped, so an undeclared property name never leaks into the response; it ends before a
+     * segment holding a control character.
      *
      * <p>The keyword location is parsed <em>once</em> via {@link SchemaErrorKeywords#extractKeyword}
      * to obtain the raw last segment; the structural classification then uses that segment directly,
@@ -773,8 +775,37 @@ public final class OpenApiContractValidationStrategy implements RequestValidatio
         }
         // segment is either a concrete keyword (non-structural) or null (absent location —
         // treated as no keyword, producing a generic "is invalid" detail).
-        String path = sanitizePath(error.getInstanceLocation(), segment);
-        return new ValidationErrorDetail(path, safeDetail(segment), "body", segment, null);
+        String pointer =
+                endBeforeControlSegment(ViolationDetails.rfc6901(sanitizePath(error.getInstanceLocation(), segment)));
+        return new ValidationErrorDetail(pointer, null, null, safeDetail(segment), "body", segment, null);
+    }
+
+    /**
+     * Ends an RFC 6901 pointer before the first segment that holds a control character or a line or
+     * paragraph separator, keeping only the segments in front of it; a pointer without such a segment is
+     * returned unchanged, and one whose first segment holds one becomes the empty pointer (the whole
+     * document).
+     *
+     * <p>A pointer is percent-decoded, so a control character can only appear in it decoded, where it
+     * could forge a line in a log or break a rendering. The result is a prefix of the location the
+     * validator reported: ending the pointer sooner is shorter, never different. Segments are separated by
+     * {@code /}, which a member name spells {@code ~1}, so splitting on it never cuts a name. One linear
+     * scan; never throws.
+     *
+     * @param pointer an RFC 6901 pointer, empty or starting with {@code /}
+     * @return the pointer up to, and not including, the first segment holding such a character
+     */
+    private static String endBeforeControlSegment(String pointer) {
+        int segmentStart = 0;
+        for (int i = 0; i < pointer.length(); i++) {
+            char c = pointer.charAt(i);
+            if (c == '/') {
+                segmentStart = i;
+            } else if (Character.isISOControl(c) || c == 0x2028 || c == 0x2029) {
+                return pointer.substring(0, segmentStart);
+            }
+        }
+        return pointer;
     }
 
     /**
