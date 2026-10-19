@@ -55,7 +55,7 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
- * End-to-end proofs of the {@code web-validation} gate's pattern-input bound (rest-022 T004, FR-020)
+ * End-to-end proofs of the {@code web-validation} gate's pattern-input bound
  * through a real mount: a string value or object key longer than {@code jaxrs.validationPatternMaxChars}
  * (default 4,096 UTF-16 code units) that reaches a pattern position is rejected before the pattern
  * runs, a request whose strings at such positions exceed {@code jaxrs.validationPatternMaxTotalChars}

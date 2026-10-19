@@ -261,7 +261,7 @@ public class ProfiledSchemaSynthesisIT {
         assertEquals(1, resource.invocations.get(), "no rejected body may reach the resource");
     }
 
-    // --- rest-020-refresh: the removed compiled-parameter-name creator-parameter join ---
+    // --- The removed compiled-parameter-name creator-parameter join ---
 
     /**
      * The gate-level half of the fix proof for {@code InputPropertyDescriber#backingField}'s removed
@@ -308,7 +308,7 @@ public class ProfiledSchemaSynthesisIT {
     // --- T006 TP-002: the Positive/Negative family — C3p and C3c parity, both validator modes ---
 
     /**
-     * rest-023 T006 TP-002. {@link PositiveFamilyStaticFactoryBody} (C3p: a {@code @JsonCreator} static
+     * TP-002. {@link PositiveFamilyStaticFactoryBody} (C3p: a {@code @JsonCreator} static
      * factory) and {@link PositiveFamilyConstructorBody} (C3c: a {@code @JsonCreator} constructor), each
      * carrying {@code @Positive} directly on the creator parameter, mounted on both the gate ({@link
      * #gateMount()}, no validator) and the validator-backed mount ({@link
@@ -1146,7 +1146,7 @@ public class ProfiledSchemaSynthesisIT {
     }
 
     /**
-     * vertiquehq/vertique-dev#598. A wrong-typed value under an undeclared key of a type whose
+     * A wrong-typed value under an undeclared key of a type whose
      * any-setter extras are described is reported at a non-structural keyword, so it takes the
      * concrete-detail path, and the instance location that path names ends in the client's own key.
      * The concrete detail's path must be cut back to the location the schema declares exactly as the
@@ -1176,7 +1176,7 @@ public class ProfiledSchemaSynthesisIT {
     }
 
     /**
-     * vertiquehq/vertique-dev#598, the precision half. The schema library publishes a nullable nested
+     * The precision half. The schema library publishes a nullable nested
      * object as {@code anyOf: [{"type":"null"}, {"$ref": ...}]}, so a violation inside it is reported
      * at an instance location whose field segment the schema declares only inside a composition
      * branch. The concrete detail must name that field, exactly as it names a field of a plain nested
@@ -1994,7 +1994,7 @@ public class ProfiledSchemaSynthesisIT {
     }
 
     /**
-     * rest-020-refresh: a transforming constructor whose parameter's compiled Java name coincides with
+     * A transforming constructor whose parameter's compiled Java name coincides with
      * an unrelated field's own name. No getter is declared on purpose: a public getter here would let
      * Jackson pair the private field with a getter-implied property of its own name — a second,
      * genuinely field-backed property this fixture does not intend to exercise. The resource below
@@ -3013,7 +3013,7 @@ public class ProfiledSchemaSynthesisIT {
         }
     }
 
-    // --- rest-023 T002 (D002, N14/N14n): Optional-typed extras value ---
+    // --- Optional-typed extras value (N14/N14n) ---
 
     /** A named property beside an any-setter whose extras value is {@code Optional<Plain>} (N14/N14n). */
     public static class OptionalAnySetterExtrasDto {
@@ -3053,7 +3053,7 @@ public class ProfiledSchemaSynthesisIT {
         }
     }
 
-    /** The rest-023 T002 resource: a single route accepting the {@code Optional}-typed extras body. */
+    /** The resource: a single route accepting the {@code Optional}-typed extras body. */
     @Path("/optional-extras")
     public static class OptionalExtrasResource {
 
@@ -3080,9 +3080,9 @@ public class ProfiledSchemaSynthesisIT {
         }
     }
 
-    // --- rest-023 T003 (D001): TP-004/TP-010, map value shapes and the single any-setter N16 shape ---
+    // --- TP-004/TP-010, map value shapes and the single any-setter N16 shape ---
 
-    /** S2a/S2b/S2c/S2d — one holder carrying every rest-023 T003 ordinary-map-property value shape. */
+    /** S2a/S2b/S2c/S2d — one holder carrying every ordinary-map-property value shape. */
     public static class MapValueShapesDto {
 
         /** S2b — a type-use-constrained String value. */
@@ -3106,7 +3106,7 @@ public class ProfiledSchemaSynthesisIT {
         }
     }
 
-    /** The rest-023 T003 resource: a single route accepting the map value shapes body. */
+    /** The resource: a single route accepting the map value shapes body. */
     @Path("/map-values")
     public static class MapValuesResource {
 
@@ -3137,7 +3137,7 @@ public class ProfiledSchemaSynthesisIT {
         public Map<String, @Size(max = 3) String> extras = new LinkedHashMap<>();
     }
 
-    /** The rest-023 T003 resource: a single route accepting the single any-setter N16 body. */
+    /** The resource: a single route accepting the single any-setter N16 body. */
     @Path("/any-setter-type-use")
     public static class AnySetterTypeUseResource {
 
@@ -3160,7 +3160,7 @@ public class ProfiledSchemaSynthesisIT {
         }
     }
 
-    // --- rest-023 T004 (D004): TP-002, several any-setters sharing a wire key ---
+    // --- TP-002, several any-setters sharing a wire key ---
 
     /** UW-2AS child: a type-use-constrained any-setter, sharing its wire key with the parent's own. */
     public static class SharedAnySetterConjunctionChild {
@@ -3182,7 +3182,7 @@ public class ProfiledSchemaSynthesisIT {
         public Map<String, Object> extras = new LinkedHashMap<>();
     }
 
-    /** The rest-023 T004 resource for the UW-2AS shared-any-setter-key shape. */
+    /** The resource for the UW-2AS shared-any-setter-key shape. */
     @Path("/shared-any-setter-conjunction")
     public static class SharedAnySetterConjunctionResource {
 
@@ -3243,7 +3243,7 @@ public class ProfiledSchemaSynthesisIT {
         public Map<String, ConjunctionLeft> extras = new LinkedHashMap<>();
     }
 
-    /** The rest-023 T004 resource for the object-valued two-any-setter-pair shape. */
+    /** The resource for the object-valued two-any-setter-pair shape. */
     @Path("/object-valued-any-setter-pair")
     public static class ObjectValuedAnySetterPairResource {
 
@@ -3266,7 +3266,7 @@ public class ProfiledSchemaSynthesisIT {
         }
     }
 
-    // --- rest-023 T005 (D005): TP-003, member-level closure ---
+    // --- TP-003, member-level closure ---
 
     /** The value type both the FALSE-closed member and the unannotated open control member reference. */
     public static class ClosedChild {
@@ -3291,7 +3291,7 @@ public class ProfiledSchemaSynthesisIT {
         public ClosedChild open;
     }
 
-    /** The rest-023 T005 resource for the member-level closure shape. */
+    /** The resource for the member-level closure shape. */
     @Path("/member-level-closure")
     public static class MemberLevelClosureResource {
 
@@ -3403,7 +3403,7 @@ public class ProfiledSchemaSynthesisIT {
                         1, resource.invocations.get(), "only the one valid body may have reached the resource"));
     }
 
-    // --- vertique-dev#598 nested-path fixtures ---
+    // --- Nested-path fixtures ---
 
     /** A nested object with one constrained name and string extras. */
     public static class NestedPet {
@@ -4154,10 +4154,10 @@ public class ProfiledSchemaSynthesisIT {
                         + " member was never reserved at all");
     }
 
-    // --- rest-023 T002 (D002): TP-002, Optional-typed extras value ---
+    // --- TP-002, Optional-typed extras value ---
 
     /**
-     * rest-023 T002 TP-002 (D002; {@code evidence/probe-report-327531b4.md} § N14, § N14n). An
+     * TP-002 (N14, N14n). An
      * any-setter extras value of declared type {@code Optional<Plain>} admits an explicit {@code null}
      * (Jackson's own {@code Optional.empty()} mapping, closing N14n) and rejects a non-null value
      * violating {@code Plain}'s own {@code @Size(max = 3)} constraint (closing N14), distinguished from
@@ -4204,11 +4204,10 @@ public class ProfiledSchemaSynthesisIT {
                         "only the null and constraint-satisfying bodies may have reached the resource"));
     }
 
-    // --- rest-023 T003 (D001): TP-004, map value shapes ---
+    // --- TP-004, map value shapes ---
 
     /**
-     * rest-023 T003 TP-004 (D001; {@code evidence/probe-report-327531b4.md} §§ S2a, S2b, rest023b §
-     * S2d). Every {@code tags}/{@code labels}/{@code opts} body is rejected, including a {@code null}
+     * TP-004 (S2a, S2b, S2d). Every {@code tags}/{@code labels}/{@code opts} body is rejected, including a {@code null}
      * inside the non-{@code Optional} {@code tags} map value (the explicit null rule); a companion
      * {@code opts} body carrying {@code null} is accepted, since {@code opts}'s own declared value type
      * is {@code Optional<Plain>}; the {@code raw} body stays accepted, unaffected.
@@ -4274,10 +4273,10 @@ public class ProfiledSchemaSynthesisIT {
                         "only the opts-null and raw bodies may have reached the resource"));
     }
 
-    // --- rest-023 T003 (D001): TP-010, the single any-setter N16 shape ---
+    // --- TP-010, the single any-setter N16 shape ---
 
     /**
-     * rest-023 T003 TP-010 (N16, architecture round-3 R1's own alternative, ruling X1). A body
+     * TP-010 (N16). A body
      * violating the single any-setter's own type-use constraint is rejected; a companion body
      * satisfying the constraint is accepted, distinguishing the rejection from a broken request path.
      *
@@ -4310,10 +4309,10 @@ public class ProfiledSchemaSynthesisIT {
                         1, resource.invocations.get(), "only the satisfying body may have reached the resource"));
     }
 
-    // --- rest-023 T004 (D004): TP-002, several any-setters sharing a wire key ---
+    // --- TP-002, several any-setters sharing a wire key ---
 
     /**
-     * rest-023 T004 TP-002. A body violating either any-setter's own constraint on a wire key both a
+     * TP-002. A body violating either any-setter's own constraint on a wire key both a
      * parent's own and an unwrapped child's own any-setter share (UW-2AS) is rejected; a companion body
      * satisfying both is accepted. An object-valued two-any-setter pair (both value types are beans) is
      * rejected when either bean's own constraint is violated, and accepted (zero false-reject) when both
@@ -4321,7 +4320,7 @@ public class ProfiledSchemaSynthesisIT {
      *
      * <p>Expected initial result: red for the object-valued pair's own conjunction (only one any-setter's
      * own value schema is described today, so a violation of the other-side bean's own constraint is not
-     * rejected); the UW-2AS body's own rejection may already be green — rest-023 T003 activated the
+     * rejected); the UW-2AS body's own rejection may already be green — an earlier change activated the
      * type-use overlay for a single any-setter's own value position, and UW-2AS's own child value is
      * exactly that shape, so {@code "TOOLONG"} may already be rejected before this task even though the
      * document still describes only one any-setter's own value schema, not the conjunction — reported
@@ -4384,10 +4383,10 @@ public class ProfiledSchemaSynthesisIT {
                         "the object-valued pair: only the satisfying body may have reached the resource"));
     }
 
-    // --- rest-023 T005 (D005): TP-003, member-level closure ---
+    // --- TP-003, member-level closure ---
 
     /**
-     * rest-023 T005 TP-003 (D005; M10). A body carrying an extra key under the member-level
+     * TP-003 (M10). A body carrying an extra key under the member-level
      * FALSE-closed member is rejected; the same extra-key shape under the unannotated control member
      * is accepted, unaffected — distinguishing this task's own rule's scope from a global tightening. A
      * companion body satisfying the closed member (no extra key) is accepted.

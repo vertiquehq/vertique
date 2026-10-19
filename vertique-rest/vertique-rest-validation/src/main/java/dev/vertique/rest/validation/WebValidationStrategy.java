@@ -54,10 +54,10 @@ import java.util.concurrent.TimeUnit;
 /**
  * The {@code web-validation} {@link RequestValidationStrategy}: validates each request body and
  * declared parameter against vertx-json-schema validators synthesized from the operation's
- * {@link OperationSchemas} (FR-005), and validates declared file-part constraints. It is the default
+ * {@link OperationSchemas}, and validates declared file-part constraints. It is the default
  * request-validation strategy.
  *
- * <p><strong>Validators are built once, at {@code gateFor} time (startup).</strong> For NFR-002
+ * <p><strong>Validators are built once, at {@code gateFor} time (startup).</strong> For
  * efficiency the body validator and each per-parameter validator are compiled when the gate is
  * produced and closed over by the returned handler, so no schema is compiled on the request hot path.
  * Each is compiled from a private copy of its schema; the objects {@link OperationSchemas} holds are
@@ -108,7 +108,7 @@ import java.util.concurrent.TimeUnit;
  * maximum size before comparing the client-declared media type directionally against the configured
  * allowed types. Only the configured subtype may be a wildcard.
  *
- * <p><strong>Enrichment (FR-010).</strong> Each {@link ValidationErrorDetail} carries:
+ * <p><strong>Enrichment.</strong> Each {@link ValidationErrorDetail} carries:
  * <ul>
  *   <li>{@code path} — the JSON Pointer instance location of the failing value (e.g. {@code /code})</li>
  *   <li>{@code type} — the failed JSON Schema keyword (e.g. {@code "minLength"}, {@code "required"},
@@ -123,7 +123,7 @@ import java.util.concurrent.TimeUnit;
  * <p>The serialized error response <strong>never</strong> contains the submitted request value;
  * only the schema constraint and its expected value are included in {@code args}.
  *
- * <p><strong>Validation mode (FR-011).</strong> The {@link JaxRsConfig#validationMode()} field
+ * <p><strong>Validation mode.</strong> The {@link JaxRsConfig#validationMode()} field
  * selects the collection strategy:
  * <ul>
  *   <li>{@code "aggregate"} (default) — all violations across params, body, and file parts are
@@ -145,7 +145,7 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
     /** The selection id for the web-validation strategy. */
     public static final String ID = "web-validation";
 
-    /** FR-JSON-075's message bound, applied at this module's boundary, in UTF-16 code units. */
+    /** The message bound, applied at this module's boundary, in UTF-16 code units. */
     private static final int MAX_MESSAGE_LENGTH = 512;
 
     /** Marker appended in place of the elided tail of a truncated description. */

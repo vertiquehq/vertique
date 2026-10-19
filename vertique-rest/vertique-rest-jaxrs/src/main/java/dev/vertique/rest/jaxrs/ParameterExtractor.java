@@ -284,7 +284,7 @@ final class ParameterExtractor {
         this.bodyNameResolver = bodyNameResolver;
         this.cachedParamPolicies = computeCachedParamPolicies(meta);
         warmBeanFieldPolicies();
-        // Precomputed once for the FR-REST-174 missing-context diagnostic (used only on the
+        // Precomputed once for the missing-context diagnostic (used only on the
         // exceptional CONTEXT-resolution-failure path). Null-safe by construction rather than by
         // invariant: a meta that declares no parameters at all may omit the reflective method (some
         // test fixtures do), and such a meta trivially carries no CONTEXT parameter either. A meta
@@ -524,7 +524,7 @@ final class ParameterExtractor {
     /**
      * Extracts method arguments from the bound request and {@link RoutingContext}.
      *
-     * <p>This is the reflective dispatch path (FR-024): parameter and body values come from the
+     * <p>This is the reflective dispatch path: parameter and body values come from the
      * transport-neutral {@link BoundRequest} (which binds them from the raw Vert.x request) rather
      * than from a Vert.x {@code ValidatedRequest}.
      *
@@ -537,7 +537,7 @@ final class ParameterExtractor {
         for (int i = 0; i < meta.params().size(); i++) {
             ResourceMethodMeta.ParamMeta pm = meta.params().get(i);
             args[i] = switch (pm.source()) {
-                // FR-REST-166/167/179: all @Context / auto-injectable params go through the
+                // All @Context / auto-injectable params go through the
                 // resolver chain, including SecurityContext and ContextValue subtypes.
                 case CONTEXT -> restContextResolution.require(pm.type(), ctx, declaringClassName, resourceMethodName);
                 case PRECONDITIONS -> RequestPreconditions.from(ctx);
@@ -558,7 +558,7 @@ final class ParameterExtractor {
      * Resolves a context parameter of the given {@code declaredType} through the
      * {@link RestContextResolution} chain, throwing
      * {@link dev.vertique.rest.core.context.RestContextUnavailableException} if no resolver can
-     * supply a value (FR-REST-185).
+     * supply a value.
      *
      * <p>Promoted to package-private so that {@link dev.vertique.rest.jaxrs.runtime.GeneratedJaxRsSupport}
      * can expose it to generated execution plans without duplicating the logic.
@@ -594,7 +594,7 @@ final class ParameterExtractor {
     /**
      * Extracts a single parameter value from the bound request using a precomputed
      * {@link EffectiveInputPolicies} argument, bypassing per-call annotation re-resolution. This is
-     * the reflective dispatch path (FR-024): values come from {@link BoundRequest}'s
+     * the reflective dispatch path: values come from {@link BoundRequest}'s
      * {@link RequestValue} maps.
      *
      * @param paramMeta    metadata describing the parameter source and type
@@ -640,7 +640,7 @@ final class ParameterExtractor {
     private Object extractScalarValue(
             ResourceMethodMeta.ParamMeta paramMeta, EffectiveInputPolicies policies, RequestValue rv) {
         if (rv == null || rv.isNull()) {
-            // A collection-valued parameter has its own absence contract (ADR-0191 / Jakarta REST 4.0):
+            // A collection-valued parameter has its own absence contract (Jakarta REST 4.0):
             // it must never ask for a converter targeting the *collection* type, which is what
             // coerceString would do (there is none, so it would 500).
             if (paramMeta.componentType() != null) {
@@ -851,7 +851,7 @@ final class ParameterExtractor {
      * Applies the absence contract for a collection-valued parameter — a parameter whose
      * {@code componentType()} is non-{@code null} — when the request supplied no value for its name.
      *
-     * <p>Per Jakarta REST 4.0 (and ADR-0191):
+     * <p>Per Jakarta REST 4.0:
      * <ul>
      *   <li>with a {@code @DefaultValue}, the result is a <em>single-entry</em> collection holding the
      *       default converted through the same per-element context {@link #coerceCollection} uses (the
@@ -864,7 +864,7 @@ final class ParameterExtractor {
      * </ul>
      *
      * <p>A {@code @DefaultValue} on an array is not covered by the spec; the framework materialises a
-     * single-element array by analogy with the single-entry collection rule (ADR-0191). Defaults are
+     * single-element array by analogy with the single-entry collection rule. Defaults are
      * <em>not</em> submitted to the input-policy chain, mirroring the scalar rule in
      * {@link #extractScalarValue}. A converter that returns null for the default fails the request;
      * the result is not a one-element collection holding null.
@@ -1102,8 +1102,8 @@ final class ParameterExtractor {
         if (objectProcessor != null && isStructuredBodyTarget(targetType)) {
 
             String lowerContentType = contentType != null ? contentType.toLowerCase(Locale.ROOT) : "";
-            // FR-JSON-024B/022/023: a JSON profile whose mapper differs from the process codec's,
-            // resolved for this method (slice 2.1), is stashed on the routing context under
+            // A JSON profile whose mapper differs from the process codec's,
+            // resolved for this method, is stashed on the routing context under
             // KEY_RESOLVED_BODY_MAPPER. When present it owns the two-phase MATERIALIZATION of the
             // processed body; when absent the calls below run the process codec (JsonObject.mapTo /
             // VertiqueJson.mapper()), which is exactly the mapper that route resolved to.
@@ -1314,7 +1314,7 @@ final class ParameterExtractor {
      *   <li>a native multipart <em>collection</em> target — {@code List<FileUpload>} or
      *       {@code List<EntityPart>}. These guards are keyed on the native component type
      *       <em>together with</em> {@code type() == List.class}: {@link List} is the only collection
-     *       shape with a native materialization (ADR-0191 decision 6), and any other collection shape
+     *       shape with a native materialization, and any other collection shape
      *       carrying a native component type is rejected at startup by {@link RouteValidator} rather
      *       than silently falling through to string conversion here;</li>
      *   <li>a text collection target — any {@code componentType() != null} shape
@@ -1353,7 +1353,7 @@ final class ParameterExtractor {
             return null;
         }
         // Native multipart collections: List-only by contract, and read-only like every other
-        // injected collection (ADR-0191 decision 3).
+        // injected collection.
         if (pm.componentType() == FileUpload.class && pm.type() == List.class) {
             // Stream.toList() is already unmodifiable.
             return ctx.fileUploads().stream()
@@ -1377,7 +1377,7 @@ final class ParameterExtractor {
         }
         // Text collection form field: bind ALL submitted values for the name, so a repeated
         // x-www-form-urlencoded/multipart field materialises the declared collection shape exactly as
-        // the equivalent @QueryParam would (ADR-0191 decision 2).
+        // the equivalent @QueryParam would.
         if (pm.componentType() != null) {
             // getAll() returns an EMPTY list — never null — for an absent field, so emptiness MUST be
             // tested before materializing: otherwise the absence contract (empty collection, or a
@@ -1411,7 +1411,7 @@ final class ParameterExtractor {
      *
      * <p>The returned list is <em>read-only</em>: an aggregate {@code List<EntityPart>} is a
      * {@code @FormParam} collection injection target like any other, so it carries the same
-     * read-only guarantee (ADR-0191 decision 3).
+     * read-only guarantee.
      *
      * @param ctx the current routing context
      * @return an unmodifiable list of all entity parts

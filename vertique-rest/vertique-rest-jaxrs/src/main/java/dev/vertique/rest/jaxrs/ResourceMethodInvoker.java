@@ -71,7 +71,7 @@ public class ResourceMethodInvoker implements Handler<RoutingContext> {
 
     /**
      * Effective request-body {@link ObjectMapper} resolved once at router-build time for this method
-     * (FR-JSON-020), or {@code null} when the effective JSON profile is {@code vertx} (the default).
+     * or {@code null} when the effective JSON profile is {@code vertx} (the default).
      * When non-null it is stashed on the {@link RoutingContext} under
      * {@link BoundRequest#KEY_RESOLVED_BODY_MAPPER} so the binding/materialization layers can use the
      * selected profile mapper; when {@code null} the existing default body path runs unchanged.
@@ -95,7 +95,7 @@ public class ResourceMethodInvoker implements Handler<RoutingContext> {
     /**
      * Operation descriptor derived once from {@link #meta} via
      * {@link ResourceMethodMetaToDescriptorAdapter}. Drives the {@link DefaultBoundRequest} binding
-     * model on the reflective dispatch path (FR-024) so multiplicity and scalar coercion follow the
+     * model on the reflective dispatch path so multiplicity and scalar coercion follow the
      * route's declared parameters.
      */
     private final JaxRsOperationDescriptor descriptor;
@@ -115,7 +115,7 @@ public class ResourceMethodInvoker implements Handler<RoutingContext> {
      *                              {@code null} when {@code SanitizationModule} is not included —
      *                              input processing is skipped
      * @param resolvedBodyMapper    effective request-body {@link ObjectMapper} resolved once at
-     *                              router-build time for this method (FR-JSON-020); {@code null} when
+     *                              router-build time for this method; {@code null} when
      *                              the effective JSON profile is {@code vertx} (the default), in which
      *                              case the existing default body path runs unchanged
      * @param paramConversionResolver the framework parameter-conversion resolver threaded into the
@@ -160,7 +160,7 @@ public class ResourceMethodInvoker implements Handler<RoutingContext> {
      * @param decoders              priority-sorted list of request body decoders
      * @param beanValidator         optional Bean Validation implementation; {@code null} skips validation
      * @param objectProcessor       optional input object processor; {@code null} skips input processing
-     * @param resolvedBodyMapper    effective request-body mapper (FR-JSON-020), or {@code null} when the
+     * @param resolvedBodyMapper    effective request-body mapper, or {@code null} when the
      *                              route's profile resolved to the process codec's own mapper
      * @param paramConversionResolver the framework parameter-conversion resolver; must not be {@code null}
      * @param bodyNameResolver      the wire &rarr; Java property-name projection for this route's OBJECT
@@ -308,9 +308,9 @@ public class ResourceMethodInvoker implements Handler<RoutingContext> {
                 objectProcessor,
                 paramConversionResolver,
                 bodyNameResolver);
-        // Slice 2 adapter: wraps the per-route ParameterExtractor and exposes its policy-accepting
+        // Adapter: wraps the per-route ParameterExtractor and exposes its policy-accepting
         // helpers to any generated ResourceExecutionPlan. Always wired; whether it actually runs
-        // depends on whether meta.executionPlan() is non-null (which only happens when CG-010's
+        // depends on whether meta.executionPlan() is non-null (which only happens when the
         // ExecutionPlanEmitter has produced a plan for this method).
         this.generatedSupport = new ParameterExtractorBackedSupport(this.parameterExtractor);
         // The descriptor is built once, so the reflective path can construct a DefaultBoundRequest per
@@ -371,7 +371,7 @@ public class ResourceMethodInvoker implements Handler<RoutingContext> {
      * @param decoders              priority-sorted list of request body decoders
      * @param beanValidator         optional Bean Validation implementation; {@code null} skips validation
      * @param objectProcessor       optional input object processor; {@code null} skips input processing
-     * @param resolvedBodyMapper    effective request-body mapper (FR-JSON-020), or {@code null} for the
+     * @param resolvedBodyMapper    effective request-body mapper, or {@code null} for the
      *                              {@code vertx} default
      */
     public ResourceMethodInvoker(
@@ -443,7 +443,7 @@ public class ResourceMethodInvoker implements Handler<RoutingContext> {
                 ctx.data().put(CTX_KEY_PRODUCES, meta.mediaTypes().produces());
             }
 
-            // CG-010 slice 2: plan-or-reflective dispatch. When meta carries a generated execution
+            // Plan-or-reflective dispatch. When meta carries a generated execution
             // plan AND a runtime support adapter is wired, the plan owns argument extraction and
             // direct invocation. Otherwise the reflective path runs (ParameterExtractor +
             // Method.invoke), unchanged. Bean Validation, interceptors, and the response/error
@@ -451,7 +451,7 @@ public class ResourceMethodInvoker implements Handler<RoutingContext> {
             final ResourceExecutionPlan plan = meta.executionPlan();
             final GeneratedJaxRsSupport support = generatedSupport;
 
-            // FR-JSON-020/024: the resolved request-body profile mapper (when a profile other than the process codec's
+            // The resolved request-body profile mapper (when a profile other than the process codec's
             // applies
             // to this method) is stashed on the RoutingContext by a per-route handler installed AHEAD of
             // the validation gate in JaxRsRouteRegistrar — not here — so the gate's own body bind (which
@@ -464,7 +464,7 @@ public class ResourceMethodInvoker implements Handler<RoutingContext> {
                 ctx.put(BoundRequest.KEY_RESOLVED_BODY_MAPPER, resolvedBodyMapper);
             }
 
-            // FR-024: bind the request once and stash it so the generated path's deserializeBody can
+            // Bind the request once and stash it so the generated path's deserializeBody can
             // reuse the same bound body the reflective path reads — both paths run on BoundRequest.
             // Read-if-present: a pre-dispatch validation gate may have already built and stashed the
             // bound request, in which case the gate and the invoker must share that one instance (one

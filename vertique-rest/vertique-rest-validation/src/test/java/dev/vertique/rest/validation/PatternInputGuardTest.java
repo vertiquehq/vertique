@@ -85,7 +85,7 @@ import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.invocation.Invocation;
 
 /**
- * Proofs for the {@code web-validation} gate's pattern-input guard (rest-022 T004, FR-020): the bound
+ * Proofs for the {@code web-validation} gate's pattern-input guard: the bound
  * the gate places ahead of every {@code pattern}, {@code patternProperties}, pattern-bearing
  * {@code propertyNames} position and every bounded format, and the vertx-json-schema behaviors
  * that bound relies on.

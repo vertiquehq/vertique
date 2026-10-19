@@ -49,10 +49,10 @@ import lombok.extern.slf4j.Slf4j;
 /**
  * The opt-in {@code openapi-contract} {@link RequestValidationStrategy}: validates each request against
  * the application's OpenAPI contract using the standalone vertx-openapi {@link RequestValidator}, rather
- * than the annotation-synthesized schemas the {@code web-validation} strategy uses (FR-020). Selecting
+ * than the annotation-synthesized schemas the {@code web-validation} strategy uses. Selecting
  * this strategy (via {@code jaxrs.validationStrategy = "openapi-contract"}) requires
  * {@code vertique-rest-openapi-validation} on the classpath — the only module that depends on the
- * preview {@code vertx-openapi} artifact (FR-025).
+ * preview {@code vertx-openapi} artifact.
  *
  * <p><strong>Contract loads are asynchronous and cached per {@code openapiPath}.</strong>
  * {@link OpenAPIContract#from(Vertx, String)} returns a {@link Future}; this strategy is a singleton and
@@ -462,7 +462,7 @@ public final class OpenApiContractValidationStrategy implements RequestValidatio
             JaxRsOperationDescriptor op, Future<Loaded> loaded, String boundContractPath, String mountPath) {
         String operationId = op.operationId();
         return ctx -> {
-            // FR-JSON-024/024A — profile first-parse contract (review finding W-A). When a non-vertx JSON
+            // Profile first-parse contract. When a non-vertx JSON
             // profile mapper was stashed on the context (by JaxRsRouteRegistrar, ahead of this gate, for
             // EVERY strategy), the profile mapper must own the FIRST PARSE of the request body — applying
             // its strict parser features — BEFORE OpenAPI schema validation runs. Trigger it here so a
@@ -604,7 +604,7 @@ public final class OpenApiContractValidationStrategy implements RequestValidatio
     /**
      * Triggers the JSON-profile request-body FIRST PARSE when a non-{@code vertx} profile mapper is
      * stashed on the routing context under {@link BoundRequest#KEY_RESOLVED_BODY_MAPPER}
-     * (FR-JSON-024/024A, review finding W-A). The production {@code JaxRsRouteRegistrar} installs that
+     * The production {@code JaxRsRouteRegistrar} installs that
      * stash ahead of this gate for <em>every</em> validation strategy, so a non-{@code vertx} profile's
      * strict parser features must apply to the body's first parse here — before OpenAPI schema
      * validation — exactly as the {@code web-validation} strategy does via its

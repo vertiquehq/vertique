@@ -446,7 +446,7 @@ public final class JacksonFieldNameResolver implements InputFieldNameResolver {
         // of THIS object while their declared policies live on the inner type, and the engine — which
         // keys metadata on the declaring type — would find nothing. These keys are recorded SEPARATELY
         // and never enter `names`: a promoted key is not a name of this type, and injecting it would
-        // let it collide with a same-named field of this type (ADR-0247 Amendment 2).
+        // let it collide with a same-named field of this type.
         // A key the owner ignores is one Jackson drops before any unwrapped member sees it, so it
         // claims the key exactly as an own property does — promoting it would apply a policy to a
         // value the codec discards.
@@ -579,7 +579,7 @@ public final class JacksonFieldNameResolver implements InputFieldNameResolver {
             NameTransformer chained = chain(outer, unwrapper);
             // getPrimaryType(), never member.getType(): on a deserialization introspection the primary
             // member is the MUTATOR, and a setter's type is void — which introspects to no properties
-            // at all, so every DTO with a setter silently promoted nothing (ADR-0247 Amendment 2).
+            // at all, so every DTO with a setter silently promoted nothing.
             JavaType innerType = property.getPrimaryType();
             Class<?> innerClass = innerType.getRawClass();
             List<BeanPropertyDefinition> innerProperties =

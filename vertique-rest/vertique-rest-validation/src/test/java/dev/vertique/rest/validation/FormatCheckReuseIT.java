@@ -50,7 +50,7 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 /**
- * TP-005 (rest-022 T021, FR-020, AC-020.3). Over a real HTTP round trip through the {@code
+ * TP-005. Over a real HTTP round trip through the {@code
  * web-validation} gate, on a {@link MountFixtures#validatorBackedMount validator-backed mount}: a body
  * whose DTO carries Hibernate Validator's {@code @URL} (rendered {@code format: uri} plus the composed
  * {@code @Pattern}'s {@code allOf} entries by T004's {@code MetadataConstraintSource} supplement)

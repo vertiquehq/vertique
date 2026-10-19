@@ -51,7 +51,7 @@ import org.mockito.ArgumentCaptor;
  * schema declares every segment of it — through {@code allOf}/{@code anyOf}/{@code oneOf} branches,
  * {@code prefixItems} tuple positions and property names the validator reports RFC 6901-escaped and
  * percent-encoded — and the containing location, cut at the first segment the schema does not
- * declare, wherever the client chose the key (vertiquehq/vertique-dev#598). It also pins the
+ * declare, wherever the client chose the key. It also pins the
  * declared constraint value a concrete detail names in its {@code args} and message at those same
  * composed, referenced, tuple and escaped positions.
  *

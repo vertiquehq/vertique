@@ -39,7 +39,7 @@ import java.util.concurrent.ConcurrentMap;
  *   <li>Any other type — maps the JSON object to the target type via the resolved mapper</li>
  * </ul>
  *
- * <p><b>Profile-aware materialization (FR-JSON-024B/022/023):</b> POJO and collection binding use the
+ * <p><b>Profile-aware materialization:</b> POJO and collection binding use the
  * JSON profile mapper resolved for the method (stashed on the {@link RoutingContext}
  * under {@link BoundRequest#KEY_RESOLVED_BODY_MAPPER}) when present, applying the profile's strict
  * materialization features; when absent — the route's profile resolved to the process codec's own
@@ -111,8 +111,8 @@ class JsonRequestBodyDecoder implements RequestBodyDecoder {
             return body.getString();
         }
 
-        // FR-JSON-024B/022/023: a JSON profile whose mapper differs from the process codec's, resolved
-        // for this method (slice 2.1), is stashed on the routing context under
+        // A JSON profile whose mapper differs from the process codec's, resolved
+        // for this method, is stashed on the routing context under
         // KEY_RESOLVED_BODY_MAPPER. When present, that profile mapper owns MATERIALIZATION (POJO +
         // collection binding); when absent, the calls below run the process codec (JsonObject.mapTo /
         // VertiqueJson.mapper()), which is the mapper that route resolved to.
@@ -187,7 +187,7 @@ class JsonRequestBodyDecoder implements RequestBodyDecoder {
      *
      * <p>The {@link JavaType} is built the same way regardless of profile; the element binding then
      * routes through {@code profileMapper} when the route's profile differs from the process codec's
-     * (FR-JSON-022/023), or through {@code VertiqueJson.mapper()} when {@code profileMapper} is
+     * or through {@code VertiqueJson.mapper()} when {@code profileMapper} is
      * {@code null} (the process-codec path). A profile-mapper rejection is translated to a
      * {@link dev.vertique.core.exception.ValidationException} (HTTP 400).
      *

@@ -29,7 +29,7 @@ import org.junit.jupiter.api.extension.RegisterExtension;
 
 /**
  * Server-boot integration tests for {@code JsonProfilesDemoResource}, proving the {@code vertique}
- * and {@code vertique-strict} JSON mapper profiles' wire behavior end to end (json-004, slice S6).
+ * and {@code vertique-strict} JSON mapper profiles' wire behavior end to end.
  *
  * <p>Mirrors {@link HelloResourceIT}'s harness — a real {@code VertiqueAppExtension}-booted server,
  * RestAssured, and the same {@link OpenApiValidationFilter} wired against the compile-time
@@ -149,7 +149,7 @@ class JsonProfilesDemoIT {
      *
      * <p>The runtime {@code null} → {@link java.util.Optional#empty()} binding still holds on
      * non-contract-validated paths (the default {@code web-validation} strategy synthesizes schemas
-     * from the Java types and does not read {@code openapi.json}; ADR-0121) — which is precisely why
+     * from the Java types and does not read {@code openapi.json}) — which is precisely why
      * omission, not {@code null}, is the portable form.
      */
     @Test

@@ -44,7 +44,7 @@ import org.mockito.ArgumentCaptor;
 
 /**
  * Verifies enrichment of {@link ValidationErrorDetail} with JSON Pointer, failed keyword, and
- * expected constraint values produced by {@link WebValidationStrategy} (Slice 11, FR-010/FR-011).
+ * expected constraint values produced by {@link WebValidationStrategy}.
  *
  * <p>Tests cover:
  * <ul>

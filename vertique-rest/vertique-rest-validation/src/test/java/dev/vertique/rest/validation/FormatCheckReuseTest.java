@@ -70,7 +70,7 @@ import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.invocation.Invocation;
 
 /**
- * Proofs for the {@code web-validation} gate's reused format checks (rest-022 T021, FR-020): TP-001,
+ * Proofs for the {@code web-validation} gate's reused format checks: TP-001,
  * TP-002, TP-003, TP-006, and TP-007. TP-004 ({@code url}'s filtering corpus) and TP-005 (the HTTP
  * integration test) live in their own classes.
  *

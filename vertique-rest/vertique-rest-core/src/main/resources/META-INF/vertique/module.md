@@ -1119,13 +1119,13 @@ Completion is dual-channel, and the two channels mean different things:
 
 | Signal | Meaning | Caller behavior |
 |---|---|---|
-| synchronous throw | nothing was written or ended — an encode-time failure | may retry once against the same response head (fail-open, FR-JSON-058A) |
+| synchronous throw | nothing was written or ended — an encode-time failure | may retry once against the same response head (fail-open) |
 | returned future succeeds | the response was fully written and ended | done |
 | returned future fails | the wire write failed after handoff; zero or more bytes may already be on the wire | never retried; the caller owns terminal cleanup |
 
 The returned future may complete on any thread — do not assume context affinity; the framework
 pipeline redispatches handling back onto the request context. A `StreamingBody` must be piped, never
-buffered (FR-RESTSER-013 / NFR-003), and the response must not be ended on pipe failure.
+buffered, and the response must not be ended on pipe failure.
 
 ### `RestContextResolver`
 
@@ -1151,7 +1151,7 @@ An application resolver takes the default phase and priority `0`, so it already 
 every built-in** and may shadow a framework-provided value for the same type. Give it a priority
 above 120 to act as a fallback instead.
 
-**Contract (FR-REST-172):** `resolve` is a pure read. An implementation must not create, mutate,
+**Contract:** `resolve` is a pure read. An implementation must not create, mutate,
 enrich, replace, or propagate context as a side effect — it observes request state and reports back.
 
 `RestContextResolution` is the injectable coordinator: `resolve(Class, RoutingContext)` returns an
