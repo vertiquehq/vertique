@@ -448,6 +448,36 @@ public class MixedDefinitionBootstrapIT {
     }
 
     @Test
+    @DisplayName("control characters of a source label are escaped in the startup failure message")
+    void escapesControlCharactersOfProvenanceInStartupFailures(Vertx vertx) {
+        String id = "mixed-bootstrap-static-drift";
+
+        try (DefinitionScenario scenario = new DefinitionScenario(vertx, db)) {
+            scenario.ownRows(id);
+
+            // Given a stored document row with a different hash, and a packaged label that tries to forge a log line
+            String text = documentText(id, 1, StaticDriftV1.class);
+            scenario.seedDocument(null, id, 1, "f".repeat(64), "SUPERSEDED", text);
+            String label = "forged\r\nERROR injected line";
+
+            // When the application starts with that packaged document
+            Boot drifted = scenario.attempt(packaged(text, label, Instant.parse("2026-10-18T12:00:00Z")), unobserved());
+
+            // Then startup fails as drift, and the message carries the label with its control characters escaped
+            assertThat(drifted.failure())
+                    .isNotNull()
+                    .isInstanceOfSatisfying(WorkflowDefinitionLifecycleException.class, failure -> {
+                        assertThat(failure.reason()).isEqualTo(Reason.DRIFT);
+                        assertThat(failure.getMessage())
+                                .contains("forged\\u000D\\u000AERROR injected line")
+                                .doesNotContain("\r")
+                                .doesNotContain("\n");
+                    });
+            drifted.close();
+        }
+    }
+
+    @Test
     @DisplayName("static documents stay document rows, and drift, kind, missing code and held owners fail precisely")
     void reconcilesStaticDocumentsAndFailsConflicts(Vertx vertx) {
         String equalId = "mixed-bootstrap-static-equal";

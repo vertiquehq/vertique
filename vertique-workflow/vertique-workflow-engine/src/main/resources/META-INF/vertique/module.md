@@ -279,7 +279,11 @@ transaction (the version may become ACTIVE when it is the highest eligible one; 
 current ACTIVE one). If the transaction fails, only the runtime this call published is removed; a registration that was already
 present and attributed to the owner is kept. Failures are typed: `CODE_UNAVAILABLE`, `OWNER_CONFLICT`, `DRIFT`,
 `LOADER_MISSING` or `INVALID_TRANSITION` (also for a runtime that was registered directly rather than by the lifecycle). Between
-the local publication and the commit, new pins on the version are still refused by the database.
+the local publication and the commit, new pins on the version are still refused by the database. Reinstating code needs a
+registry that retains definition sources; with one that does not, the deployed code is reported as `CODE_UNAVAILABLE`. As with
+activation, a failure of the loader hand-off after the commit does not undo the reinstatement, and a retry then reports the
+row's current status rather than repeating the hand-off. `retire` and `reinstate` rely on every node running a release that
+takes the shared id lock when admitting a pin, so finish a rolling upgrade before using them.
 
 A registration that already stands for the owner is checked by plan hash against the stored hash and is not recompiled; this
 is deliberate, because a runtime this lifecycle published for the owner already passed that check. The owner check before
@@ -296,7 +300,8 @@ from then on every old-code node refuses new starts, migrations and failed-insta
 code, including a rollback, then fails startup with `CODE_UNAVAILABLE` or drift for a row its code does not carry.
 Prefer a new version over editing a deployed version; to remove a version, deprecate it, wait out the cooling window and
 retire it while no live instance is pinned, before removing its code. A packaged document registered over a CANDIDATE row of
-the same id, version, plan hash and text stays CANDIDATE while its runtime is registered: activate or retire it explicitly.
+the same id, version, plan hash and text stays CANDIDATE while its runtime is registered. Starts of that version are refused, and
+`activate` fails because the registration already stands: retire the row and reinstate it, or publish the document under a new version.
 Do not register definitions directly at runtime, from other threads or startup steps, while the bootstrap step runs; a
 runtime it did not attribute fails the apply with `INVALID_TRANSITION` for DEPRECATED and RETIRED rows.
 

@@ -447,23 +447,42 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
 
     /**
      * Refuses an unattributed or replaced registration, commits the retirement, and only then removes the local
-     * registration, when it is the very instance this lifecycle published for the same owner.
+     * registration, when it is the very instance this lifecycle published for the same owner. A retirement that
+     * fails is read back: a row that is retired means the commit won, so the local removal still runs.
      */
     private Future<Void> retireQueued(DefinitionKey key) {
         preflight(key);
-        return store.orElseThrow().retire(key).compose(ignored -> {
-            WorkflowRegistry local = registry.get();
-            String id = key.definitionId();
-            long version = key.definitionVersion();
-            RuntimeWorkflow held = held(local, id, version);
-            if (registrations.classify(key.tenantKey(), id, version, held) == ManagedRegistrations.Standing.OWN) {
-                local.unregister(id, version);
-                registrations.clear(id, version, held);
-                uncertain.remove(key, held);
-                unresolvedReinstatements.remove(key, held);
-            }
-            return Future.<Void>succeededFuture();
-        });
+        WorkflowDefinitionRegistryStore durable = store.orElseThrow();
+        return durable.retire(key)
+                .recover(original -> {
+                    if (original instanceof Error) return Future.failedFuture(original);
+                    return durable.find(key).transform(read -> {
+                        boolean retired = read.succeeded()
+                                && read.result()
+                                        .map(WorkflowDefinitionRecord::status)
+                                        .filter(DefinitionStatus.RETIRED::equals)
+                                        .isPresent();
+                        if (retired) return Future.<Void>succeededFuture();
+                        if (read.failed() && read.cause() != original) original.addSuppressed(read.cause());
+                        return Future.<Void>failedFuture(original);
+                    });
+                })
+                .compose(ignored -> removeRetired(key));
+    }
+
+    /** Removes the runtime this lifecycle published for the retired key's owner; any other registration stays. */
+    private Future<Void> removeRetired(DefinitionKey key) {
+        WorkflowRegistry local = registry.get();
+        String id = key.definitionId();
+        long version = key.definitionVersion();
+        RuntimeWorkflow held = held(local, id, version);
+        if (registrations.classify(key.tenantKey(), id, version, held) == ManagedRegistrations.Standing.OWN) {
+            local.unregister(id, version);
+            registrations.clear(id, version, held);
+            uncertain.remove(key, held);
+            unresolvedReinstatements.remove(key, held);
+        }
+        return Future.succeededFuture();
     }
 
     /**

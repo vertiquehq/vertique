@@ -36,7 +36,12 @@ import dev.vertique.workflow.postgresql.registry.ManagedDefinitionDatabase.BootO
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowRegistry;
 import dev.vertique.workflow.registry.store.DefinitionKey;
+import dev.vertique.workflow.registry.store.DefinitionKind;
+import dev.vertique.workflow.registry.store.DefinitionProvenance;
 import dev.vertique.workflow.registry.store.DefinitionStatus;
+import dev.vertique.workflow.registry.store.ReconcileOutcome;
+import dev.vertique.workflow.registry.store.WorkflowDefinitionDocument;
+import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.state.WorkflowStatus;
 import io.vertx.core.Future;
@@ -106,6 +111,9 @@ public class DefinitionReinstatementIT {
 
     @WorkflowContract(definitionId = "reinstatement-it-isolation", definitionVersion = 1)
     public interface IsolationDocV1 {}
+
+    @WorkflowContract(definitionId = "reinstatement-it-reconcile-isolation", definitionVersion = 1)
+    public interface ReconcileIsolationDocV1 {}
 
     @WorkflowContract(definitionId = "reinstatement-it-store-owner", definitionVersion = 1)
     public interface StoreOwnerDocV1 {}
@@ -794,6 +802,64 @@ public class DefinitionReinstatementIT {
 
             // And the retired row is unchanged
             assertThat(scenario.stored(id, 1)).isEqualTo(before);
+        }
+    }
+
+    @Test
+    @DisplayName("a startup reconciliation sees an owner that commits while it waits, whatever the server default is")
+    void reconciliationSeesAnOwnerThatCommitsWhileItWaitsEvenWithRepeatableReadServerDefault(Vertx vertx) {
+        String id = "reinstatement-it-reconcile-isolation";
+        DefinitionKey globalKey = new DefinitionKey(null, id, 1);
+        String hash = "e".repeat(64);
+        String text = documentText(id, 1, ReconcileIsolationDocV1.class);
+
+        try (DefinitionScenario scenario = new DefinitionScenario(vertx, db)) {
+            scenario.ownRows(id);
+
+            // Given a database whose default isolation is REPEATABLE READ, restored when the scenario ends
+            String database = await(scenario.admin()
+                            .query("SELECT current_database() AS name")
+                            .execute())
+                    .iterator()
+                    .next()
+                    .getString("name");
+            await(scenario.admin()
+                    .query("ALTER DATABASE \"" + database + "\" SET default_transaction_isolation = 'repeatable read'")
+                    .execute());
+            scenario.onClose(() -> await(scenario.admin()
+                    .query("ALTER DATABASE \"" + database + "\" RESET default_transaction_isolation")
+                    .execute()));
+
+            // And a node started afterwards, whose fresh pool connections inherit that default
+            AppComponent app = scenario.node(none()).app();
+            WorkflowDefinitionRegistryStore store = app.definitionRegistryStore();
+
+            // And a transaction that holds the exclusive lock of an id without rows
+            Tx holder = Tx.beginExclusive(scenario, id);
+
+            // When the store reconciles a global document row, and is proven queued behind that lock
+            Instant now = Instant.now();
+            WorkflowDefinitionRecord record = new WorkflowDefinitionRecord(
+                    globalKey,
+                    DefinitionKind.DOCUMENT,
+                    hash,
+                    DefinitionStatus.SUPERSEDED,
+                    new DefinitionProvenance("static-source", "memory:static", "revision-static", null, null, now),
+                    "YAML",
+                    now,
+                    now);
+            Future<ReconcileOutcome> reconcile =
+                    store.upsertDocument(record, new WorkflowDefinitionDocument(globalKey, text, "YAML"));
+            scenario.awaitAdvisory(id, "ExclusiveLock", false, 1);
+            assertThat(reconcile.isComplete()).isFalse();
+
+            // And another owner's version of the id commits while it waits, and the lock is released
+            scenario.seedDocument("tenant-two", id, 1, hash, "SUPERSEDED", text);
+            holder.commit();
+
+            // Then the owner check sees the committed row, so no global row is inserted beside it
+            assertThat(await(reconcile)).isEqualTo(ReconcileOutcome.OWNER_CONFLICT);
+            assertThat(scenario.rowCount(id)).isEqualTo(1);
         }
     }
 

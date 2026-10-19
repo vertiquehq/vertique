@@ -460,6 +460,48 @@ class DefaultWorkflowDefinitionLifecycleTest {
     }
 
     @Test
+    @DisplayName("a retirement whose response was lost but whose row is retired still removes the runtime")
+    void retireWithLostResponseRemovesOwnRuntimeWhenTheRowIsRetired() {
+        // Given a runtime attributed to this owner and a retirement that fails after it committed
+        DeprecationScenario scenario = new DeprecationScenario();
+        RuntimeWorkflow own = Mockito.mock(RuntimeWorkflow.class);
+        scenario.registryHolds(own);
+        ManagedRegistrations registrations = new ManagedRegistrations();
+        registrations.attribute(null, "wf", 1, own);
+        scenario.retirements.add(Future.failedFuture(new IllegalStateException("commit outcome unknown")));
+        scenario.reads.add(Future.succeededFuture(Optional.of(row(DefinitionStatus.RETIRED))));
+
+        // When the row is retired
+        Future<Void> result = scenario.lifecycle(registrations).retire(KEY);
+
+        // Then the read-back found the retirement committed, so the runtime was unregistered and the call succeeded
+        assertThat(result.succeeded()).isTrue();
+        assertThat(scenario.events).containsExactly("retire", "find", "unregister wf 1");
+    }
+
+    @Test
+    @DisplayName("a failed retirement whose row is not retired keeps the runtime and reports the original failure")
+    void retireThatDidNotCommitKeepsTheRuntimeAndFailsWithTheOriginalError() {
+        // Given a runtime attributed to this owner and a retirement that failed without committing
+        DeprecationScenario scenario = new DeprecationScenario();
+        RuntimeWorkflow own = Mockito.mock(RuntimeWorkflow.class);
+        scenario.registryHolds(own);
+        ManagedRegistrations registrations = new ManagedRegistrations();
+        registrations.attribute(null, "wf", 1, own);
+        IllegalStateException original = new IllegalStateException("pins exist");
+        scenario.retirements.add(Future.failedFuture(original));
+        scenario.reads.add(Future.succeededFuture(Optional.of(row(DefinitionStatus.DEPRECATED))));
+
+        // When the row is retired
+        Future<Void> result = scenario.lifecycle(registrations).retire(KEY);
+
+        // Then the original failure is reported and nothing was unregistered
+        assertThat(result.failed()).isTrue();
+        assertThat(result.cause()).isSameAs(original);
+        assertThat(scenario.events).containsExactly("retire", "find");
+    }
+
+    @Test
     @DisplayName("a null key fails the returned future instead of throwing, and marks nothing")
     void failsFutureForNullKey() {
         // Given a lifecycle with a store

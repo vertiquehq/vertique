@@ -250,9 +250,10 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
                         Reason.INVALID_TRANSITION,
                         key,
                         subject + " reconciliation " + outcome + ": the stored row is "
-                                + previous.map(row -> row.kind() + " from " + row.provenance())
+                                + previous.map(row -> row.kind() + " from " + described(row.provenance()))
                                         .orElse("of another kind")
-                                + ", but this start provides " + source.kind() + " from " + source.provenance()
+                                + ", but this start provides " + source.kind() + " from "
+                                + described(source.provenance())
                                 + "; a definition id and version belongs either to code or to a document"));
             }
             case DRIFT -> {
@@ -266,9 +267,9 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
                                     + " differs from deployed code hash " + source.planHash()
                                     + ", and instances pinned to this exact version are still running, waiting or"
                                     + " compensating; stored "
-                                    + previous.map(row -> row.provenance().toString())
+                                    + previous.map(row -> described(row.provenance()))
                                             .orElse("source unavailable")
-                                    + ", deployed " + source.provenance()
+                                    + ", deployed " + described(source.provenance())
                                     + ". Keep the code of this version unchanged until those instances finish, or"
                                     + " bump the version."));
                 if (previous.filter(row -> row.planHash().equals(source.planHash()))
@@ -279,15 +280,17 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
                             "static DOCUMENT reconciliation " + outcome + ": the text digest of the packaged document"
                                     + " differs from the stored text under an equal plan hash " + source.planHash()
                                     + "; stored from "
-                                    + previous.orElseThrow().provenance() + ", packaged from " + source.provenance()
+                                    + described(previous.orElseThrow().provenance()) + ", packaged from "
+                                    + described(source.provenance())
                                     + ". Bump the version of the changed document or retire the old row."));
-                String stored = previous.map(row -> "stored hash " + row.planHash() + " from " + row.provenance())
+                String stored = previous.map(
+                                row -> "stored hash " + row.planHash() + " from " + described(row.provenance()))
                         .orElse("stored source unavailable");
                 return Future.failedFuture(failure(
                         Reason.DRIFT,
                         key,
                         "static DOCUMENT reconciliation " + outcome + ": " + stored + "; static hash "
-                                + source.planHash() + " from " + source.provenance()));
+                                + source.planHash() + " from " + described(source.provenance())));
             }
         }
         throw new IllegalStateException("Unhandled reconcile outcome " + outcome);
@@ -311,7 +314,7 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
                     "reconciliation OWNER_CONFLICT: the " + owner(key.tenantKey()) + " owner cannot take this id"
                             + " because it is held by "
                             + (holders.isEmpty() ? "another owner" : holders) + "; this start provides "
-                            + source.kind() + " from " + source.provenance()));
+                            + source.kind() + " from " + described(source.provenance())));
         });
     }
 
@@ -332,7 +335,7 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
                         Reason.CODE_UNAVAILABLE,
                         row.key(),
                         "the stored " + row.status() + " CODE definition (hash " + row.planHash() + ", "
-                                + row.provenance() + ") is not provided by the deployed code any more;"
+                                + described(row.provenance()) + ") is not provided by the deployed code any more;"
                                 + " restore the code, or retire the definition before removing its code"));
         }
         return Future.succeededFuture();
@@ -543,6 +546,11 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
         } catch (RuntimeException failure) {
             return Future.failedFuture(failure);
         }
+    }
+
+    /** Renders a source record for a message, with every non-printable character of its labels escaped. */
+    private static String described(Object provenance) {
+        return printable(String.valueOf(provenance));
     }
 
     /** Renders text for a message with every non-printable character escaped, so that it cannot forge log lines. */

@@ -124,11 +124,11 @@ default, so the owner check sees every row another owner committed while the cal
 that an executable source exists or that its hash matches; the lifecycle does that before it calls the store.
 
 `retire(key)` moves a CANDIDATE row, or a DEPRECATED row past the cooling window (`maxStalenessSeconds`, database
-clock), to RETIRED. Its transaction always runs at READ COMMITTED, whatever the server default, so the pin count sees
-every pin committed while retirement waited for the id lock. Under the id lock it checks the row, the status, and for a
+clock), to RETIRED. Every registry mutation runs at READ COMMITTED, whatever the server default, so the owner checks and the pin count see
+every row and pin committed while the mutation waited for the id lock. Under the id lock it checks the row, the status, and for a
 DEPRECATED row the cooling age and then the exact-version count of RUNNING, WAITING and COMPENSATING instances (archived
-rows included), in that order; a CANDIDATE row is retired without the pin check because only a held version can be
-pinned. ACTIVE and SUPERSEDED rows cannot retire. The count scans `workflow_instances` by definition id and version while
+rows included), in that order; a CANDIDATE row is retired without the pin check because a candidate is not admitted for
+pinning (a runtime registered directly for the same version is outside the guard). ACTIVE and SUPERSEDED rows cannot retire. The count scans `workflow_instances` by definition id and version while
 retirement holds the exclusive id lock and no index covers that predicate, so on a very large live instance table a
 retirement can delay new starts of that id. `PgWorkflowInstanceQueryService.countNonTerminal(definitionId, version)` exposes the same
 informational count; it is not the retirement guard.

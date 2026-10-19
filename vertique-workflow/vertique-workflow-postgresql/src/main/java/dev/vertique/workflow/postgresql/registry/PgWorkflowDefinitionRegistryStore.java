@@ -184,7 +184,7 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
             validateCode(record);
             DefinitionKey key = record.key();
             // Read committed, so that the pinned count taken after the lock wait sees everything committed meanwhile.
-            return mutateReadCommitted(key.definitionId(), (tx, rows) -> {
+            return mutate(key.definitionId(), (tx, rows) -> {
                 if (ownerConflict(rows, key)) return Future.succeededFuture(ReconcileOutcome.OWNER_CONFLICT);
                 Optional<Row> current = row(rows, key);
                 if (current.isEmpty())
@@ -328,7 +328,7 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
      * row another owner committed meanwhile, whatever the server default isolation is.
      */
     private Future<Void> reinstate(DefinitionKey key) {
-        return mutateReadCommitted(key.definitionId(), (tx, rows) -> {
+        return mutate(key.definitionId(), (tx, rows) -> {
             Row current = row(rows, key).orElseThrow(() -> invalid(key, "definition not found"));
             String status = current.getString("status");
             if (!"RETIRED".equals(status)) throw invalid(key, "expected status RETIRED but found " + status);
@@ -358,7 +358,7 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
     public Future<Void> retire(DefinitionKey key) {
         return attempt(() -> {
             Objects.requireNonNull(key, "key");
-            return mutateReadCommitted(key.definitionId(), (tx, rows) -> {
+            return mutate(key.definitionId(), (tx, rows) -> {
                 Row current = row(rows, key).orElseThrow(() -> invalid(key, "definition not found"));
                 String status = current.getString("status");
                 if (!"CANDIDATE".equals(status) && !"DEPRECATED".equals(status))
@@ -580,16 +580,13 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
         return mutate(key.definitionId(), action);
     }
 
-    private <T> Future<T> mutate(String definitionId, LockedOperation<T> action) {
-        return transaction(definitionId, tx -> lockedRows(tx, definitionId).compose(rows -> action.apply(tx, rows)));
-    }
-
     /**
-     * Like {@link #mutate(String, LockedOperation)}, but the transaction is first pinned to READ COMMITTED, so the
-     * reads taken after a lock wait are current whatever the server default isolation is. The isolation statement
-     * must be the first statement of the transaction, before the lock bound and the advisory lock.
+     * Runs the operation under the exclusive lock of the id. The transaction is first pinned to READ COMMITTED, so
+     * the rows read after a lock wait are current whatever the server default isolation is; a snapshot taken before
+     * the wait would miss a row that another owner committed meanwhile. The isolation statement must be the first
+     * statement of the transaction, before the lock bound and the advisory lock.
      */
-    private <T> Future<T> mutateReadCommitted(String definitionId, LockedOperation<T> action) {
+    private <T> Future<T> mutate(String definitionId, LockedOperation<T> action) {
         return transaction(definitionId, tx -> tx.query("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
                 .execute()
                 .compose(ignored -> lockedRows(tx, definitionId))
