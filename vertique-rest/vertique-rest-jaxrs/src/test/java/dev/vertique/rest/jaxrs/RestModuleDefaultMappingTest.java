@@ -8,6 +8,8 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.vertique.core.exception.BusinessRuleException;
 import dev.vertique.core.exception.ConflictException;
 import dev.vertique.core.exception.TooManyRequestsException;
@@ -90,10 +92,10 @@ class RestModuleDefaultMappingTest {
 
     /**
      * {@link BusinessRuleException} subclass (two levels below {@link ValidationException}) that
-     * carries structured violations, used to verify the carrier branch is reached through
-     * hierarchy walking.
+     * carries structured violations and does not override the path form, used to verify the carrier
+     * branch is reached through hierarchy walking and that the default form applies.
      */
-    private static final class CarrierValidationException extends BusinessRuleException implements ViolationCarrier {
+    private static class CarrierValidationException extends BusinessRuleException implements ViolationCarrier {
         private final List<ViolationDetail> violations;
 
         CarrierValidationException(String message, List<ViolationDetail> violations) {
@@ -105,6 +107,19 @@ class RestModuleDefaultMappingTest {
         public List<ViolationDetail> violations() {
             return violations;
         }
+    }
+
+    private static final ObjectMapper JSON = new ObjectMapper();
+
+    /** Renders {@code exception} through the default mapping and returns each error entry as JSON. */
+    private static List<JsonNode> render(ValidationException exception) {
+        Response response = RestModule.defaultExceptionMapper().toResponse(exception);
+
+        assertEquals(400, response.getStatus());
+        ValidationProblemDetail body = assertInstanceOf(ValidationProblemDetail.class, response.getEntity());
+        return body.errors().stream()
+                .map(error -> JSON.<JsonNode>valueToTree(error))
+                .toList();
     }
 
     // --- Tests ---
@@ -238,7 +253,7 @@ class RestModuleDefaultMappingTest {
         DefaultExceptionMapper mapper = RestModule.defaultExceptionMapper();
         CarrierValidationException exception = new CarrierValidationException(
                 "invalid decision payload",
-                List.of(new ViolationDetail(
+                List.of(ViolationDetail.atPointer(
                         "/comment", "must have a maximum length of 3", "maxLength", Map.of("maxLength", 3))));
 
         Response response = mapper.toResponse(exception);
@@ -250,7 +265,8 @@ class RestModuleDefaultMappingTest {
         assertEquals("invalid decision payload", body.detail());
         assertEquals(1, body.errors().size());
         ValidationErrorDetail error = body.errors().get(0);
-        assertEquals("/comment", error.path());
+        assertNull(error.pointer());
+        assertNull(error.parameter());
         assertEquals("must have a maximum length of 3", error.detail());
         assertNull(error.location());
         assertEquals("maxLength", error.type());
@@ -275,8 +291,8 @@ class RestModuleDefaultMappingTest {
     }
 
     @Test
-    @DisplayName("plain ValidationException stays message-only and BeanValidationException output is unchanged")
-    void plainValidationExceptionStaysMessageOnlyAndBeanValidationExceptionIsUnchanged() {
+    @DisplayName("plain ValidationException stays message-only and BeanValidationException entries carry no location")
+    void plainValidationExceptionStaysMessageOnlyAndBeanValidationExceptionCarriesNoLocation() {
         DefaultExceptionMapper mapper = RestModule.defaultExceptionMapper();
 
         Response plain = mapper.toResponse(new ValidationException("bad"));
@@ -295,10 +311,72 @@ class RestModuleDefaultMappingTest {
         assertEquals("validation failed", beanBody.detail());
         assertEquals(1, beanBody.errors().size());
         ValidationErrorDetail error = beanBody.errors().get(0);
-        assertEquals("name", error.path());
+        assertNull(error.pointer());
+        assertNull(error.parameter());
         assertEquals("must not be blank", error.detail());
         assertNull(error.location());
         assertEquals("required", error.type());
         assertEquals(Map.of("min", 1), error.args());
+    }
+
+    @Test
+    @DisplayName("the default mapping reports no location for a carrier, whatever its details' path forms")
+    void carriersGetNoLocationFromTheDefaultMapping() {
+        // Given: a carrier holding a pointer detail, the empty pointer, an unlocated marker and a Java path
+        // shaped like a pointer
+        CarrierValidationException carrier = new CarrierValidationException(
+                "invalid payload",
+                List.of(
+                        ViolationDetail.atPointer("/comment", "must have a maximum length of 3", "maxLength", null),
+                        ViolationDetail.atPointer("", "whole payload", "type", null),
+                        ViolationDetail.unlocated("further violations omitted", "truncated"),
+                        new ViolationDetail("/looks/like/a/pointer", "must be valid", "pattern", null)));
+
+        // When: the default mapping renders it
+        List<JsonNode> entries = render(carrier);
+
+        // Then: every entry keeps its detail and type and carries no pointer, parameter, location or path
+        assertEquals(4, entries.size());
+        for (JsonNode entry : entries) {
+            assertFalse(entry.has("pointer"), () -> "unexpected pointer in " + entry);
+            assertFalse(entry.has("parameter"), () -> "unexpected parameter in " + entry);
+            assertFalse(entry.has("path"), () -> "unexpected path in " + entry);
+            assertFalse(entry.has("location"), () -> "unexpected location in " + entry);
+        }
+        assertEquals(
+                "must have a maximum length of 3", entries.get(0).path("detail").asText());
+        assertEquals("maxLength", entries.get(0).path("type").asText());
+        assertEquals("truncated", entries.get(2).path("type").asText());
+        assertEquals("pattern", entries.get(3).path("type").asText());
+    }
+
+    @Test
+    @DisplayName("BeanValidationException entries carry no location member and keep detail and type")
+    void beanValidationExceptionEntriesCarryNoLocationMember() {
+        // Given: Java paths holding a map key shaped to break a naive renderer, a nested list in a map, and
+        // the root
+        BeanValidationException exception = new BeanValidationException(
+                "validation failed",
+                List.of(
+                        new ViolationDetail("byKey[ZZKEY].name", "ZZMESSAGE", "required", null),
+                        new ViolationDetail("byKey[a]ZZKEY].name", "ZZMESSAGE", "required", null),
+                        new ViolationDetail("x[a].ZZKEY", "ZZMESSAGE", "required", null),
+                        new ViolationDetail("x[a][0].ZZKEY", "ZZMESSAGE", "required", null),
+                        new ViolationDetail("x[a].x", "ZZMESSAGE", "required", null),
+                        new ViolationDetail("", "ZZMESSAGE", "required", null)));
+
+        // When: rendered
+        List<JsonNode> entries = render(exception);
+
+        // Then: every entry has no location member and keeps detail and type
+        assertEquals(6, entries.size());
+        for (JsonNode entry : entries) {
+            assertFalse(entry.has("pointer"), () -> "unexpected pointer in " + entry);
+            assertFalse(entry.has("parameter"), () -> "unexpected parameter in " + entry);
+            assertFalse(entry.has("path"), () -> "unexpected path in " + entry);
+            assertFalse(entry.has("location"), () -> "unexpected location in " + entry);
+            assertEquals("ZZMESSAGE", entry.path("detail").asText());
+            assertEquals("required", entry.path("type").asText());
+        }
     }
 }

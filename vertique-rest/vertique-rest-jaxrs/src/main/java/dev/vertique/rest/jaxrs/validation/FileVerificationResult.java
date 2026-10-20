@@ -8,7 +8,8 @@ import java.util.Map;
 
 /**
  * Outcome of deep uploaded-file verification. A rejection is validation data that maps to a 400
- * response with a pointer to the part; a failed future is an infrastructure error that maps to 500.
+ * response, reported with the part's declared name as {@code parameter} and with no location member when
+ * the part's name is not declared; a failed future is an infrastructure error that maps to 500.
  */
 public sealed interface FileVerificationResult {
 

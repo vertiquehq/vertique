@@ -12,6 +12,9 @@ import dev.vertique.core.config.ConfigParser;
 import dev.vertique.core.config.JsonConfigPaths;
 import dev.vertique.core.lifecycle.ComposeValidator;
 import dev.vertique.core.lifecycle.LifecyclePhase;
+import dev.vertique.db.DbSchemas;
+import dev.vertique.db.DbSchemasModule;
+import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.deploy.VerticleDeployment;
 import dev.vertique.inboxoutbox.ClaimScope;
 import dev.vertique.inboxoutbox.DestinationType;
@@ -32,9 +35,11 @@ import dev.vertique.services.Services;
 import io.vertx.core.DeploymentOptions;
 import io.vertx.core.json.JsonObject;
 import io.vertx.pgclient.PgConnectOptions;
+import io.vertx.sqlclient.Pool;
 import jakarta.inject.Singleton;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -44,6 +49,12 @@ import java.util.concurrent.atomic.AtomicInteger;
  * <p>Binds both repository interfaces to {@link PgInboxOutboxRepository}, registers the service
  * implementations, and contributes a set of {@link VerticleDeployment} descriptors for the
  * {@link OutboxRelay} verticle.
+ *
+ * <p>The repository is built with the optional {@link DbSchemas} placement, so the inbox and outbox
+ * tables are read and written in the schema mapped for the {@code inbox-outbox} instance and resolve
+ * through the connection's default schema when no mapping exists. The module also includes
+ * {@link InboxOutboxMigrationsModule}, which contributes the inbox/outbox migration declaration,
+ * and {@link DbSchemasModule}, which declares the optional {@link DbSchemas} binding.
  *
  * <p>Includes {@link TransactionalMessagingModule} so that the {@link OutboxDestinationHandler}
  * multibinding is available for adapter modules to contribute to. Each registered handler declares
@@ -68,9 +79,31 @@ import java.util.concurrent.atomic.AtomicInteger;
         includes = {
             TransactionalMessagingModule.class,
             dev.vertique.context.ContextRuntimeModule.class,
-            LoggingContextModule.class
+            LoggingContextModule.class,
+            InboxOutboxMigrationsModule.class,
+            DbSchemasModule.class
         })
 public abstract class TransactionalMessagingPostgresqlModule {
+
+    /**
+     * Provides the {@link PgInboxOutboxRepository}, applying the schema mapping for the
+     * {@code inbox-outbox} instance when a {@link DbSchemas} binding exists.
+     *
+     * <p>The {@link InboxRepository} and {@link OutboxRepository} bindings, the services, the
+     * maintenance cron and the relay deployments all resolve to this single scoped instance, so they
+     * share one {@code nodeId} as claim identity.
+     *
+     * @param pool    the PostgreSQL connection pool
+     * @param mapper  the PostgreSQL failure mapper
+     * @param schemas the optional schema placement; absent means unqualified table names
+     * @return the scoped PostgreSQL inbox/outbox repository
+     */
+    @Provides
+    @Singleton
+    static PgInboxOutboxRepository pgInboxOutboxRepository(
+            Pool pool, PgDbExceptionMapper mapper, Optional<DbSchemas> schemas) {
+        return new PgInboxOutboxRepository(pool, mapper, schemas.orElseGet(DbSchemas::empty));
+    }
 
     /**
      * Provides the {@link InboxRepository} binding, delegating to the shared PostgreSQL

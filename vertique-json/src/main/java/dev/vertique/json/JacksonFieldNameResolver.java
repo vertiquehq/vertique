@@ -3,7 +3,6 @@
 
 package dev.vertique.json;
 
-import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.databind.AnnotationIntrospector;
 import com.fasterxml.jackson.databind.BeanDescription;
@@ -14,11 +13,11 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.PropertyName;
 import com.fasterxml.jackson.databind.introspect.AnnotatedClass;
 import com.fasterxml.jackson.databind.introspect.AnnotatedMember;
-import com.fasterxml.jackson.databind.introspect.AnnotatedWithParams;
 import com.fasterxml.jackson.databind.introspect.BeanPropertyDefinition;
 import com.fasterxml.jackson.databind.jsontype.NamedType;
 import com.fasterxml.jackson.databind.util.NameTransformer;
 import dev.vertique.core.exception.ConfigurationException;
+import dev.vertique.core.json.JacksonBindings;
 import dev.vertique.core.json.VertiqueJson;
 import dev.vertique.core.sanitization.InputFieldNameResolver;
 import dev.vertique.core.sanitization.InputFieldNameResolver.PromotedField;
@@ -447,7 +446,7 @@ public final class JacksonFieldNameResolver implements InputFieldNameResolver {
         // of THIS object while their declared policies live on the inner type, and the engine — which
         // keys metadata on the declaring type — would find nothing. These keys are recorded SEPARATELY
         // and never enter `names`: a promoted key is not a name of this type, and injecting it would
-        // let it collide with a same-named field of this type (ADR-0247 Amendment 2).
+        // let it collide with a same-named field of this type.
         // A key the owner ignores is one Jackson drops before any unwrapped member sees it, so it
         // claims the key exactly as an own property does — promoting it would apply a policy to a
         // value the codec discards.
@@ -488,7 +487,9 @@ public final class JacksonFieldNameResolver implements InputFieldNameResolver {
                 unroutable.add(key(property.getName()));
             }
         }
-        boolean enumerable = bindsThroughItsProperties(description);
+        // A custom deserializer, a builder or a delegating creator binds outside the declaration view;
+        // the rule is shared with the JSON pointer resolver so one answer decides both.
+        boolean enumerable = JacksonBindings.bindsThroughItsProperties(config, description);
 
         // A case-folding mapper never short-circuits: the wire key it binds may differ in case from
         // the Java name, so the folded lookup has to run even when every name maps onto itself.
@@ -521,39 +522,6 @@ public final class JacksonFieldNameResolver implements InputFieldNameResolver {
             }
         }
         return false;
-    }
-
-    /**
-     * Reports whether the mapper binds a type through the properties its introspection reports,
-     * which is the only case in which those properties say what the mapper binds into.
-     *
-     * <p>A custom deserializer, a builder, or a delegating creator — one declared
-     * {@link JsonCreator.Mode#DELEGATING}, or a single-parameter creator whose parameter carries no
-     * name — binds whatever it reads, and the declaration view says nothing about it.
-     *
-     * @param description the type's deserialization-side bean description
-     * @return {@code true} when the reported properties are what the mapper binds
-     */
-    private boolean bindsThroughItsProperties(BeanDescription description) {
-        AnnotationIntrospector introspector = config.getAnnotationIntrospector();
-        if (introspector.findDeserializer(description.getClassInfo()) != null
-                || description.findPOJOBuilder() != null) {
-            return false;
-        }
-        List<AnnotatedWithParams> creators = new ArrayList<>(description.getConstructors());
-        creators.addAll(description.getFactoryMethods());
-        for (AnnotatedWithParams creator : creators) {
-            JsonCreator.Mode mode = introspector.findCreatorAnnotation(config, creator);
-            if (mode == JsonCreator.Mode.DELEGATING) {
-                return false;
-            }
-            if (mode == JsonCreator.Mode.DEFAULT
-                    && creator.getParameterCount() == 1
-                    && introspector.findNameForDeserialization(creator.getParameter(0)) == null) {
-                return false;
-            }
-        }
-        return true;
     }
 
     /**
@@ -611,7 +579,7 @@ public final class JacksonFieldNameResolver implements InputFieldNameResolver {
             NameTransformer chained = chain(outer, unwrapper);
             // getPrimaryType(), never member.getType(): on a deserialization introspection the primary
             // member is the MUTATOR, and a setter's type is void — which introspects to no properties
-            // at all, so every DTO with a setter silently promoted nothing (ADR-0247 Amendment 2).
+            // at all, so every DTO with a setter silently promoted nothing.
             JavaType innerType = property.getPrimaryType();
             Class<?> innerClass = innerType.getRawClass();
             List<BeanPropertyDefinition> innerProperties =

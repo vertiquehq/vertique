@@ -11,6 +11,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
+import com.fasterxml.jackson.databind.annotation.JsonPOJOBuilder;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import dev.vertique.core.json.KeyedBy;
@@ -42,7 +44,9 @@ import org.junit.jupiter.api.Test;
  *   <li>nested {@code @KeyedBy} collections inject both outer and inner keys (the field-keyed path);
  *   <li>empty objects, non-object values for a keyed field, and blank keys are handled;
  *   <li>fixed (constant) properties are injected alongside the key so a validating compact
- *       constructor sees every required field.
+ *       constructor sees every required field;
+ *   <li>{@code @KeyedBy} on a builder setter method binds a keyed object for a builder-bound class;
+ *   <li>the keyed value itself must be an object: a scalar or an array, even an empty one, is rejected.
  * </ul>
  */
 class KeyedCollectionDeserializerTest {
@@ -155,6 +159,66 @@ class KeyedCollectionDeserializerTest {
      * @param weight a fixed (constant) floating-point property
      */
     record Weighted(String name, double weight) {}
+
+    /**
+     * A builder-bound class, shaped like a Lombok {@code @Builder @Jacksonized} class: Jackson reads
+     * annotations from the builder's setter method, so the keyed binding sits on that method and not on
+     * the field.
+     */
+    @JsonDeserialize(builder = Registry.Builder.class)
+    static final class Registry {
+        private final List<Item> items;
+
+        private Registry(List<Item> items) {
+            this.items = items;
+        }
+
+        List<Item> items() {
+            return items;
+        }
+
+        @JsonPOJOBuilder(withPrefix = "")
+        static final class Builder {
+            private List<Item> items;
+
+            @KeyedBy("id")
+            public Builder items(List<Item> items) {
+                this.items = items == null ? null : List.copyOf(items);
+                return this;
+            }
+
+            public Registry build() {
+                return new Registry(items);
+            }
+        }
+    }
+
+    /**
+     * The same builder-bound shape without the keyed annotation, proving the annotation on the builder
+     * method is what switches the binding on.
+     */
+    @JsonDeserialize(builder = PlainRegistry.Builder.class)
+    static final class PlainRegistry {
+        private final List<Item> items;
+
+        private PlainRegistry(List<Item> items) {
+            this.items = items;
+        }
+
+        @JsonPOJOBuilder(withPrefix = "")
+        static final class Builder {
+            private List<Item> items;
+
+            public Builder items(List<Item> items) {
+                this.items = items;
+                return this;
+            }
+
+            public PlainRegistry build() {
+                return new PlainRegistry(items);
+            }
+        }
+    }
 
     // --- key injection ---
 
@@ -326,6 +390,94 @@ class KeyedCollectionDeserializerTest {
             assertEquals("create", parent.operations().get(0).operation());
             assertTrue(parent.operations().get(0).enabled());
             assertEquals("delete", parent.operations().get(1).operation());
+        }
+    }
+
+    // --- builder-bound classes ---
+
+    @Nested
+    @DisplayName("builder setter method")
+    class BuilderSetterMethod {
+
+        @Test
+        @DisplayName("@KeyedBy on a builder setter binds a keyed object and injects each key")
+        void keyedByOnBuilderMethod_bindsKeyedObject() throws Exception {
+            Registry registry = keyedMapper()
+                    .readValue("{\"items\":{\"a\":{\"weight\":1},\"b\":{\"id\":\"b\",\"weight\":2}}}", Registry.class);
+
+            assertEquals(2, registry.items().size());
+            assertEquals("a", registry.items().get(0).id());
+            assertEquals(1, registry.items().get(0).weight());
+            assertEquals("b", registry.items().get(1).id());
+            assertEquals(2, registry.items().get(1).weight());
+        }
+
+        @Test
+        @DisplayName("an explicit identity that conflicts with the key is rejected through a builder setter too")
+        void conflictingIdentity_rejected() {
+            Exception ex = assertThrows(Exception.class, () -> keyedMapper()
+                    .readValue("{\"items\":{\"a\":{\"id\":\"other\",\"weight\":1}}}", Registry.class));
+
+            assertTrue(
+                    String.valueOf(ex.getMessage()).contains("conflicts"),
+                    "the identity conflict is what rejects it: " + ex.getMessage());
+            assertFalse(String.valueOf(ex.getMessage()).contains("other"), "never embeds the conflicting value");
+        }
+
+        @Test
+        @DisplayName("an empty object binds to an empty list, JSON null and absence to no list")
+        void emptyNullAndAbsent() throws Exception {
+            assertEquals(
+                    List.of(),
+                    keyedMapper().readValue("{\"items\":{}}", Registry.class).items());
+            assertEquals(
+                    null,
+                    keyedMapper().readValue("{\"items\":null}", Registry.class).items());
+            assertEquals(null, keyedMapper().readValue("{}", Registry.class).items());
+        }
+
+        @Test
+        @DisplayName("the same builder shape without the annotation does not bind a keyed object")
+        void withoutAnnotation_keyedObjectNotBound() {
+            assertThrows(Exception.class, () -> keyedMapper()
+                    .readValue("{\"items\":{\"a\":{\"weight\":1}}}", PlainRegistry.class));
+        }
+    }
+
+    // --- shape of the annotated value ---
+
+    @Nested
+    @DisplayName("shape of the keyed value")
+    class KeyedValueShape {
+
+        @Test
+        @DisplayName("a scalar or an array in place of the keyed object is rejected, even when empty")
+        void nonObjectValue_rejected() {
+            for (String value : List.of("7", "true", "\"s3cr3t-text\"", "[]", "[{\"operation\":\"x\"}]")) {
+                Exception ex = assertThrows(
+                        Exception.class,
+                        () -> keyedMapper().readValue("{\"name\":\"p\",\"operations\":" + value + "}", Parent.class),
+                        value);
+                assertTrue(
+                        String.valueOf(ex.getMessage()).contains("expects a JSON object"),
+                        value + ": expected the keyed-object message, got: " + ex.getMessage());
+                assertFalse(String.valueOf(ex.getMessage()).contains("s3cr3t"), "never echoes the value");
+            }
+        }
+
+        @Test
+        @DisplayName("an empty object binds to an empty list and JSON null to no value")
+        void emptyObjectAndNull() throws Exception {
+            assertEquals(
+                    List.of(),
+                    keyedMapper()
+                            .readValue("{\"name\":\"p\",\"operations\":{}}", Parent.class)
+                            .operations());
+            assertEquals(
+                    null,
+                    keyedMapper()
+                            .readValue("{\"name\":\"p\",\"operations\":null}", Parent.class)
+                            .operations());
         }
     }
 

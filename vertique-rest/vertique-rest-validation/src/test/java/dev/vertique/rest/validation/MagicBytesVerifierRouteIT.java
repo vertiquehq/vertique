@@ -131,6 +131,7 @@ public class MagicBytesVerifierRouteIT {
                         assertEquals(1, errors.size());
                         assertEquals(
                                 new ValidationErrorDetail(
+                                        null,
                                         "upload",
                                         "file content does not match the declared content type",
                                         "file",

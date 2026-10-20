@@ -107,6 +107,15 @@ SPDX-License-Identifier: EUPL-1.2
             <artifactId>vertique-db-flyway</artifactId>
             <scope>test</scope>
         </dependency>
+        <!--
+            Test-scope only: NamedJobMigrationIT builds real generated Dagger components that need the
+            canonical ConfigParser binding (ConfigParsingModule) for DbModule and the Flyway module.
+        -->
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-config-core</artifactId>
+            <scope>test</scope>
+        </dependency>
         <dependency>
             <groupId>org.testcontainers</groupId>
             <artifactId>testcontainers-postgresql</artifactId>

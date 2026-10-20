@@ -3,8 +3,10 @@
 
 package dev.vertique.workflow.postgresql.retention;
 
+import dev.vertique.db.DbSchemas;
 import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.postgresql.PgSqlRepository;
+import dev.vertique.db.postgresql.PgTableNames;
 import io.vertx.core.Future;
 import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.Tuple;
@@ -51,24 +53,22 @@ import java.time.OffsetDateTime;
 @Singleton
 public final class PgWorkflowRetentionRepository extends PgSqlRepository {
 
+    /** Name of the migration instance whose schema mapping places the workflow tables. */
+    private static final String INSTANCE_NAME = "workflow";
+
+    // --- SQL statements ---
+    //
+    // The statements are built once at construction because every table reference is qualified with
+    // the schema mapped for the workflow instance (when there is one), so the text depends on the
+    // configured placement rather than being a compile-time constant.
+
     /**
      * Archive SQL: sets {@code archived_at = NOW()} on up to {@code $4} unarchived rows of the
      * given status whose {@code completed_at <= $2}, optionally filtered by {@code definition_id}.
      *
      * <p>Parameters: $1=status, $2=completed_at cutoff, $3=definition_id (nullable text), $4=limit.
      */
-    private static final String SQL_ARCHIVE = "UPDATE workflow_instances"
-            + " SET archived_at = NOW()"
-            + " WHERE id IN ("
-            + "  SELECT id FROM workflow_instances"
-            + "  WHERE status = $1"
-            + "    AND completed_at <= $2"
-            + "    AND archived_at IS NULL"
-            + "    AND ($3::text IS NULL OR definition_id = $3)"
-            + "  ORDER BY completed_at ASC, id ASC"
-            + "  LIMIT $4"
-            + "  FOR UPDATE SKIP LOCKED"
-            + ")";
+    private final String sqlArchive;
 
     /**
      * Purge SQL: deletes up to {@code $3} archived rows whose {@code archived_at <= $1},
@@ -76,19 +76,11 @@ public final class PgWorkflowRetentionRepository extends PgSqlRepository {
      *
      * <p>Parameters: $1=archived_at cutoff, $2=definition_id (nullable text), $3=limit.
      */
-    private static final String SQL_PURGE = "DELETE FROM workflow_instances"
-            + " WHERE id IN ("
-            + "  SELECT id FROM workflow_instances"
-            + "  WHERE archived_at IS NOT NULL"
-            + "    AND archived_at <= $1"
-            + "    AND ($2::text IS NULL OR definition_id = $2)"
-            + "  ORDER BY archived_at ASC, id ASC"
-            + "  LIMIT $3"
-            + "  FOR UPDATE SKIP LOCKED"
-            + ")";
+    private final String sqlPurge;
 
     /**
-     * Constructs a retention repository.
+     * Constructs a retention repository whose table is not schema-qualified, so it resolves
+     * through the connection's default schema.
      *
      * @param pool            the PostgreSQL connection pool used to open transactions
      * @param exceptionMapper the PostgreSQL exception mapper used to translate SQL errors to
@@ -96,7 +88,50 @@ public final class PgWorkflowRetentionRepository extends PgSqlRepository {
      */
     @Inject
     public PgWorkflowRetentionRepository(Pool pool, PgDbExceptionMapper exceptionMapper) {
+        this(pool, exceptionMapper, DbSchemas.empty());
+    }
+
+    /**
+     * Constructs a retention repository that qualifies every table reference, including the
+     * subselects, with the schema mapped to the {@code workflow} instance, when {@code schemas}
+     * holds one. Without a mapping the statements are identical to those of the two-argument
+     * constructor.
+     *
+     * @param pool            the PostgreSQL connection pool used to open transactions
+     * @param exceptionMapper the PostgreSQL exception mapper used to translate SQL errors to
+     *                        typed domain exceptions
+     * @param schemas         the schema placement; an empty mapping leaves table names unqualified
+     * @throws IllegalArgumentException if the mapped schema name is not a valid single-segment
+     *                                  PostgreSQL identifier
+     */
+    public PgWorkflowRetentionRepository(Pool pool, PgDbExceptionMapper exceptionMapper, DbSchemas schemas) {
         super(pool, exceptionMapper);
+
+        String instances = PgTableNames.qualify(schemas, INSTANCE_NAME, "workflow_instances");
+
+        this.sqlArchive = "UPDATE " + instances
+                + " SET archived_at = NOW()"
+                + " WHERE id IN ("
+                + "  SELECT id FROM " + instances
+                + "  WHERE status = $1"
+                + "    AND completed_at <= $2"
+                + "    AND archived_at IS NULL"
+                + "    AND ($3::text IS NULL OR definition_id = $3)"
+                + "  ORDER BY completed_at ASC, id ASC"
+                + "  LIMIT $4"
+                + "  FOR UPDATE SKIP LOCKED"
+                + ")";
+
+        this.sqlPurge = "DELETE FROM " + instances
+                + " WHERE id IN ("
+                + "  SELECT id FROM " + instances
+                + "  WHERE archived_at IS NOT NULL"
+                + "    AND archived_at <= $1"
+                + "    AND ($2::text IS NULL OR definition_id = $2)"
+                + "  ORDER BY archived_at ASC, id ASC"
+                + "  LIMIT $3"
+                + "  FOR UPDATE SKIP LOCKED"
+                + ")";
     }
 
     /**
@@ -117,7 +152,7 @@ public final class PgWorkflowRetentionRepository extends PgSqlRepository {
     public Future<Integer> archiveBefore(
             String status, OffsetDateTime cutoff, @Nullable String definitionId, int limit) {
         Tuple params = Tuple.of(status, cutoff, definitionId, limit);
-        return transaction().execute("workflow_instances archiveBefore", conn -> conn.preparedQuery(SQL_ARCHIVE)
+        return transaction().execute("workflow_instances archiveBefore", conn -> conn.preparedQuery(sqlArchive)
                 .execute(params)
                 .map(rs -> rs.rowCount()));
     }
@@ -137,7 +172,7 @@ public final class PgWorkflowRetentionRepository extends PgSqlRepository {
      */
     public Future<Integer> purgeArchivedBefore(OffsetDateTime cutoff, @Nullable String definitionId, int limit) {
         Tuple params = Tuple.of(cutoff, definitionId, limit);
-        return transaction().execute("workflow_instances purgeArchived", conn -> conn.preparedQuery(SQL_PURGE)
+        return transaction().execute("workflow_instances purgeArchived", conn -> conn.preparedQuery(sqlPurge)
                 .execute(params)
                 .map(rs -> rs.rowCount()));
     }

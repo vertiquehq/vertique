@@ -9,8 +9,10 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 
 import dev.vertique.core.exception.BusinessRuleException;
 import dev.vertique.core.exception.ValidationException;
+import dev.vertique.core.validation.BeanValidationException;
 import dev.vertique.core.validation.ViolationCarrier;
 import dev.vertique.core.validation.ViolationDetail;
+import dev.vertique.core.validation.ViolationPathForm;
 import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.DisplayName;
@@ -47,6 +49,24 @@ class WorkflowInvalidPayloadExceptionTest {
         }
         assertThat(withCause.getCause()).isSameAs(cause);
         assertThat(withoutCause.getCause()).isNull();
+    }
+
+    @Test
+    @DisplayName("keeps each detail's own path form, pointer or none, and a bean validation exception keeps Java paths")
+    void keepsEachDetailsPathForm() {
+        // Given: a rejection holding a pointer detail and an unlocated one, and a bean validation exception
+        ViolationDetail pointer = ViolationDetail.atPointer("/comment", "too long", "maxLength", null);
+        ViolationDetail unlocated = ViolationDetail.unlocated("further violations omitted", "truncated");
+        WorkflowInvalidPayloadException rejection =
+                new WorkflowInvalidPayloadException("invalid decision payload", List.of(pointer, unlocated));
+        BeanValidationException beanValidation = new BeanValidationException(
+                "validation failed", List.of(ViolationDetail.of("name", "must not be blank")));
+
+        // When / Then: each detail reports its own form and path
+        assertThat(rejection.violations().get(0).form()).isEqualTo(ViolationPathForm.JSON_POINTER);
+        assertThat(rejection.violations().get(0).path()).isEqualTo("/comment");
+        assertThat(rejection.violations().get(1).path()).isNull();
+        assertThat(beanValidation.violations().get(0).form()).isEqualTo(ViolationPathForm.JAVA_PROPERTY_PATH);
     }
 
     @Nested

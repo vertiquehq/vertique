@@ -3,8 +3,10 @@
 
 package dev.vertique.inboxoutbox.postgresql;
 
+import dev.vertique.db.DbSchemas;
 import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.postgresql.PgSqlRepository;
+import dev.vertique.db.postgresql.PgTableNames;
 import dev.vertique.inboxoutbox.ClaimScope;
 import dev.vertique.inboxoutbox.DestinationType;
 import dev.vertique.inboxoutbox.InboxRepository;
@@ -55,23 +57,21 @@ import lombok.extern.slf4j.Slf4j;
 @Singleton
 public class PgInboxOutboxRepository extends PgSqlRepository implements InboxRepository, OutboxRepository {
 
-    // --- SQL constants: Inbox ---
+    // --- SQL statements ---
+    //
+    // The statements are built once at construction because every table reference is qualified with
+    // the schema mapped for the inbox-outbox instance (when there is one), so the text depends on the
+    // configured placement rather than being a compile-time constant. Column qualifiers such as
+    // inbox.message_id and outbox.id stay bare: they name the table in the statement, not its schema.
 
-    private static final String SQL_INBOX_TRY_INSERT =
-            "INSERT INTO inbox (message_id, source) VALUES ($1, $2) ON CONFLICT DO NOTHING";
+    // Inbox
 
-    private static final String SQL_INBOX_CLEANUP =
-            "WITH batch AS (SELECT message_id, source FROM inbox WHERE processed_at < NOW() - ($1 * interval '1 day')"
-                    + " LIMIT $2) DELETE FROM inbox USING batch"
-                    + " WHERE inbox.message_id = batch.message_id AND inbox.source = batch.source";
+    private final String sqlInboxTryInsert;
+    private final String sqlInboxCleanup;
 
-    // --- SQL constants: Outbox ---
+    // Outbox
 
-    private static final String SQL_OUTBOX_INSERT =
-            "INSERT INTO outbox (carrier_id, aggregate_type, aggregate_id, event_type, destination,"
-                    + " destination_type, payload, headers, metadata, scheduled_at, available_at, max_attempts)"
-                    + " VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9::jsonb, $10, COALESCE($11, NOW()), $12)"
-                    + " RETURNING id";
+    private final String sqlOutboxInsert;
 
     /**
      * Prefix of the dynamic claim query, up to and including the {@code AND (} that opens the
@@ -85,35 +85,14 @@ public class PgInboxOutboxRepository extends PgSqlRepository implements InboxRep
      *   <li>the opening {@code AND (} for the destination-type disjunction</li>
      * </ul>
      */
-    private static final String SQL_OUTBOX_CLAIM_PREFIX = "WITH eligible AS ("
-            + "SELECT o.id FROM outbox o"
-            + " WHERE o.state = 'PENDING'"
-            + "   AND o.available_at <= NOW()"
-            + "   AND (o.scheduled_at IS NULL OR o.scheduled_at <= NOW())"
-            + "   AND (";
+    private final String sqlOutboxClaimPrefix;
 
     /**
      * Suffix of the dynamic claim query, from the {@code )} that closes the destination predicate
      * group onward. Includes the head-of-line subquery, ORDER BY, LIMIT $1, FOR UPDATE SKIP LOCKED,
      * and the UPDATE…RETURNING clause.
      */
-    private static final String SQL_OUTBOX_CLAIM_SUFFIX = ")"
-            + "   AND ("
-            + "       o.aggregate_id IS NULL"
-            + "       OR o.id = ("
-            + "           SELECT MIN(head.id) FROM outbox head"
-            + "           WHERE head.aggregate_id = o.aggregate_id"
-            + "             AND head.state IN ('PENDING', 'PROCESSING')"
-            + "       )"
-            + "   )"
-            + " ORDER BY o.available_at ASC, o.id ASC"
-            + " LIMIT $1"
-            + " FOR UPDATE SKIP LOCKED"
-            + ")"
-            + " UPDATE outbox"
-            + " SET state = 'PROCESSING', claimed_at = NOW(), claimed_by = $2, updated_at = NOW()"
-            + " FROM eligible WHERE outbox.id = eligible.id"
-            + " RETURNING outbox.*";
+    private final String sqlOutboxClaimSuffix;
 
     // --- Claim-scope validation limits ---
 
@@ -130,35 +109,13 @@ public class PgInboxOutboxRepository extends PgSqlRepository implements InboxRep
      */
     private static final int MAX_TARGET_LENGTH = 255;
 
-    private static final String SQL_MARK_PUBLISHED =
-            "UPDATE outbox SET state = 'PUBLISHED', published_at = NOW(), updated_at = NOW()"
-                    + " WHERE id = $1 AND state = 'PROCESSING' AND claimed_by = $2";
-
-    private static final String SQL_MARK_RETRY = "UPDATE outbox SET state = 'PENDING', attempt = $3, available_at = $4,"
-            + " last_error = $5, error_type = $6, claimed_at = NULL, claimed_by = NULL, updated_at = NOW()"
-            + " WHERE id = $1 AND state = 'PROCESSING' AND claimed_by = $2";
-
-    private static final String SQL_MARK_DEAD_LETTER =
-            "UPDATE outbox SET state = 'DEAD_LETTER', last_error = $3, error_type = $4, updated_at = NOW()"
-                    + " WHERE id = $1 AND state = 'PROCESSING' AND claimed_by = $2";
-
-    private static final String SQL_MARK_UNRESOLVABLE = "UPDATE outbox SET state = 'PENDING',"
-            + " available_at = NOW() + ($3 * interval '1 millisecond'),"
-            + " claimed_at = NULL, claimed_by = NULL, updated_at = NOW()"
-            + " WHERE id = $1 AND state = 'PROCESSING' AND claimed_by = $2";
-
-    private static final String SQL_RECLAIM_STALE =
-            "UPDATE outbox SET state = 'PENDING', claimed_at = NULL, claimed_by = NULL, updated_at = NOW()"
-                    + " WHERE state = 'PROCESSING' AND claimed_at < NOW() - ($1 * interval '1 millisecond')";
-
-    private static final String SQL_CLEANUP_PUBLISHED = "WITH batch AS (SELECT id FROM outbox WHERE state = 'PUBLISHED'"
-            + " AND published_at < NOW() - ($1 * interval '1 day') LIMIT $2)"
-            + " DELETE FROM outbox WHERE id IN (SELECT id FROM batch)";
-
-    private static final String SQL_CLEANUP_DEAD_LETTER =
-            "WITH batch AS (SELECT id FROM outbox WHERE state = 'DEAD_LETTER'"
-                    + " AND updated_at < NOW() - ($1 * interval '1 day') LIMIT $2)"
-                    + " DELETE FROM outbox WHERE id IN (SELECT id FROM batch)";
+    private final String sqlMarkPublished;
+    private final String sqlMarkRetry;
+    private final String sqlMarkDeadLetter;
+    private final String sqlMarkUnresolvable;
+    private final String sqlReclaimStale;
+    private final String sqlCleanupPublished;
+    private final String sqlCleanupDeadLetter;
 
     // --- Node identity ---
 
@@ -172,15 +129,102 @@ public class PgInboxOutboxRepository extends PgSqlRepository implements InboxRep
     // --- Constructor ---
 
     /**
-     * Creates a new PostgreSQL inbox/outbox repository.
+     * Creates a new PostgreSQL inbox/outbox repository whose tables are not schema-qualified, so
+     * they resolve through the connection's default schema.
      *
      * @param pool          the PostgreSQL connection pool
      * @param exceptionMapper the PostgreSQL failure mapper for exception translation
      */
     @Inject
     public PgInboxOutboxRepository(Pool pool, PgDbExceptionMapper exceptionMapper) {
+        this(pool, exceptionMapper, DbSchemas.empty());
+    }
+
+    /**
+     * Creates a new PostgreSQL inbox/outbox repository that qualifies every table reference with
+     * the schema mapped to the {@code inbox-outbox} instance, when {@code schemas} holds one.
+     * Without a mapping the statements are identical to those of the two-argument constructor.
+     *
+     * @param pool          the PostgreSQL connection pool
+     * @param exceptionMapper the PostgreSQL failure mapper for exception translation
+     * @param schemas       the schema placement; an empty mapping leaves table names unqualified
+     * @throws IllegalArgumentException if the mapped schema name is not a valid single-segment
+     *                                  PostgreSQL identifier
+     */
+    public PgInboxOutboxRepository(Pool pool, PgDbExceptionMapper exceptionMapper, DbSchemas schemas) {
         super(pool, exceptionMapper);
         this.nodeId = resolveNodeId();
+
+        String inbox = PgTableNames.qualify(schemas, InboxOutboxMigrationsModule.INSTANCE_NAME, "inbox");
+        String outbox = PgTableNames.qualify(schemas, InboxOutboxMigrationsModule.INSTANCE_NAME, "outbox");
+
+        this.sqlInboxTryInsert =
+                "INSERT INTO " + inbox + " (message_id, source) VALUES ($1, $2) ON CONFLICT DO NOTHING";
+
+        this.sqlInboxCleanup = "WITH batch AS (SELECT message_id, source FROM " + inbox
+                + " WHERE processed_at < NOW() - ($1 * interval '1 day')"
+                + " LIMIT $2) DELETE FROM " + inbox + " USING batch"
+                + " WHERE inbox.message_id = batch.message_id AND inbox.source = batch.source";
+
+        this.sqlOutboxInsert = "INSERT INTO " + outbox
+                + " (carrier_id, aggregate_type, aggregate_id, event_type, destination,"
+                + " destination_type, payload, headers, metadata, scheduled_at, available_at, max_attempts)"
+                + " VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9::jsonb, $10, COALESCE($11, NOW()), $12)"
+                + " RETURNING id";
+
+        this.sqlOutboxClaimPrefix = "WITH eligible AS ("
+                + "SELECT o.id FROM " + outbox + " o"
+                + " WHERE o.state = 'PENDING'"
+                + "   AND o.available_at <= NOW()"
+                + "   AND (o.scheduled_at IS NULL OR o.scheduled_at <= NOW())"
+                + "   AND (";
+
+        this.sqlOutboxClaimSuffix = ")"
+                + "   AND ("
+                + "       o.aggregate_id IS NULL"
+                + "       OR o.id = ("
+                + "           SELECT MIN(head.id) FROM " + outbox + " head"
+                + "           WHERE head.aggregate_id = o.aggregate_id"
+                + "             AND head.state IN ('PENDING', 'PROCESSING')"
+                + "       )"
+                + "   )"
+                + " ORDER BY o.available_at ASC, o.id ASC"
+                + " LIMIT $1"
+                + " FOR UPDATE SKIP LOCKED"
+                + ")"
+                + " UPDATE " + outbox
+                + " SET state = 'PROCESSING', claimed_at = NOW(), claimed_by = $2, updated_at = NOW()"
+                + " FROM eligible WHERE outbox.id = eligible.id"
+                + " RETURNING outbox.*";
+
+        this.sqlMarkPublished = "UPDATE " + outbox
+                + " SET state = 'PUBLISHED', published_at = NOW(), updated_at = NOW()"
+                + " WHERE id = $1 AND state = 'PROCESSING' AND claimed_by = $2";
+
+        this.sqlMarkRetry = "UPDATE " + outbox + " SET state = 'PENDING', attempt = $3, available_at = $4,"
+                + " last_error = $5, error_type = $6, claimed_at = NULL, claimed_by = NULL, updated_at = NOW()"
+                + " WHERE id = $1 AND state = 'PROCESSING' AND claimed_by = $2";
+
+        this.sqlMarkDeadLetter = "UPDATE " + outbox
+                + " SET state = 'DEAD_LETTER', last_error = $3, error_type = $4, updated_at = NOW()"
+                + " WHERE id = $1 AND state = 'PROCESSING' AND claimed_by = $2";
+
+        this.sqlMarkUnresolvable = "UPDATE " + outbox + " SET state = 'PENDING',"
+                + " available_at = NOW() + ($3 * interval '1 millisecond'),"
+                + " claimed_at = NULL, claimed_by = NULL, updated_at = NOW()"
+                + " WHERE id = $1 AND state = 'PROCESSING' AND claimed_by = $2";
+
+        this.sqlReclaimStale = "UPDATE " + outbox
+                + " SET state = 'PENDING', claimed_at = NULL, claimed_by = NULL, updated_at = NOW()"
+                + " WHERE state = 'PROCESSING' AND claimed_at < NOW() - ($1 * interval '1 millisecond')";
+
+        this.sqlCleanupPublished = "WITH batch AS (SELECT id FROM " + outbox + " WHERE state = 'PUBLISHED'"
+                + " AND published_at < NOW() - ($1 * interval '1 day') LIMIT $2)"
+                + " DELETE FROM " + outbox + " WHERE id IN (SELECT id FROM batch)";
+
+        this.sqlCleanupDeadLetter = "WITH batch AS (SELECT id FROM " + outbox + " WHERE state = 'DEAD_LETTER'"
+                + " AND updated_at < NOW() - ($1 * interval '1 day') LIMIT $2)"
+                + " DELETE FROM " + outbox + " WHERE id IN (SELECT id FROM batch)";
     }
 
     /**
@@ -221,7 +265,7 @@ public class PgInboxOutboxRepository extends PgSqlRepository implements InboxRep
      */
     @Override
     public Future<Boolean> tryInsert(String messageId, String source, SqlClient tx) {
-        return tx.preparedQuery(SQL_INBOX_TRY_INSERT)
+        return tx.preparedQuery(sqlInboxTryInsert)
                 .execute(Tuple.of(messageId, source))
                 .map(rs -> rs.rowCount() > 0)
                 .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "inbox tryInsert")));
@@ -234,7 +278,7 @@ public class PgInboxOutboxRepository extends PgSqlRepository implements InboxRep
      */
     @Override
     public Future<Integer> cleanup(int retentionDays, int batchSize) {
-        return pool.preparedQuery(SQL_INBOX_CLEANUP)
+        return pool.preparedQuery(sqlInboxCleanup)
                 .execute(Tuple.of(retentionDays, batchSize))
                 .map(rs -> rs.rowCount())
                 .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "inbox cleanup")));
@@ -259,7 +303,7 @@ public class PgInboxOutboxRepository extends PgSqlRepository implements InboxRep
         OffsetDateTime scheduledAt = toOffsetDateTime(entry.scheduledAt());
         OffsetDateTime availableAt = toOffsetDateTime(entry.availableAt());
 
-        return tx.preparedQuery(SQL_OUTBOX_INSERT)
+        return tx.preparedQuery(sqlOutboxInsert)
                 .execute(Tuple.of(
                         carrierId,
                         entry.aggregateType(),
@@ -309,7 +353,7 @@ public class PgInboxOutboxRepository extends PgSqlRepository implements InboxRep
             return Future.failedFuture(e);
         }
 
-        String sql = SQL_OUTBOX_CLAIM_PREFIX + disjunction + SQL_OUTBOX_CLAIM_SUFFIX;
+        String sql = sqlOutboxClaimPrefix + disjunction + sqlOutboxClaimSuffix;
 
         return pool.withTransaction(
                         conn -> conn.preparedQuery(sql).execute(params).map(rs -> {
@@ -471,7 +515,7 @@ public class PgInboxOutboxRepository extends PgSqlRepository implements InboxRep
      */
     @Override
     public Future<Boolean> markPublished(long entryId, String claimedBy) {
-        return pool.preparedQuery(SQL_MARK_PUBLISHED)
+        return pool.preparedQuery(sqlMarkPublished)
                 .execute(Tuple.of(entryId, claimedBy))
                 .map(rs -> rs.rowCount() > 0)
                 .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "outbox markPublished")));
@@ -486,7 +530,7 @@ public class PgInboxOutboxRepository extends PgSqlRepository implements InboxRep
     @Override
     public Future<Boolean> markRetry(
             long entryId, String claimedBy, int newAttempt, Instant availableAt, String lastError, String errorType) {
-        return pool.preparedQuery(SQL_MARK_RETRY)
+        return pool.preparedQuery(sqlMarkRetry)
                 .execute(Tuple.of(entryId, claimedBy, newAttempt, toOffsetDateTime(availableAt), lastError, errorType))
                 .map(rs -> rs.rowCount() > 0)
                 .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "outbox markRetry")));
@@ -500,7 +544,7 @@ public class PgInboxOutboxRepository extends PgSqlRepository implements InboxRep
      */
     @Override
     public Future<Boolean> markDeadLetter(long entryId, String claimedBy, String lastError, String errorType) {
-        return pool.preparedQuery(SQL_MARK_DEAD_LETTER)
+        return pool.preparedQuery(sqlMarkDeadLetter)
                 .execute(Tuple.of(entryId, claimedBy, lastError, errorType))
                 .map(rs -> rs.rowCount() > 0)
                 .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "outbox markDeadLetter")));
@@ -515,7 +559,7 @@ public class PgInboxOutboxRepository extends PgSqlRepository implements InboxRep
      */
     @Override
     public Future<Boolean> markUnresolvable(long entryId, String claimedBy, Duration delay) {
-        return pool.preparedQuery(SQL_MARK_UNRESOLVABLE)
+        return pool.preparedQuery(sqlMarkUnresolvable)
                 .execute(Tuple.of(entryId, claimedBy, delay.toMillis()))
                 .map(rs -> rs.rowCount() > 0)
                 .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "outbox markUnresolvable")));
@@ -530,7 +574,7 @@ public class PgInboxOutboxRepository extends PgSqlRepository implements InboxRep
      */
     @Override
     public Future<Void> reclaimStale(Duration leaseTimeout) {
-        return pool.preparedQuery(SQL_RECLAIM_STALE)
+        return pool.preparedQuery(sqlReclaimStale)
                 .execute(Tuple.of(leaseTimeout.toMillis()))
                 .map(rs -> {
                     int count = rs.rowCount();
@@ -549,7 +593,7 @@ public class PgInboxOutboxRepository extends PgSqlRepository implements InboxRep
      */
     @Override
     public Future<Integer> cleanupPublished(int retentionDays, int batchSize) {
-        return pool.preparedQuery(SQL_CLEANUP_PUBLISHED)
+        return pool.preparedQuery(sqlCleanupPublished)
                 .execute(Tuple.of(retentionDays, batchSize))
                 .map(rs -> rs.rowCount())
                 .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "outbox cleanupPublished")));
@@ -562,7 +606,7 @@ public class PgInboxOutboxRepository extends PgSqlRepository implements InboxRep
      */
     @Override
     public Future<Integer> cleanupDeadLetter(int retentionDays, int batchSize) {
-        return pool.preparedQuery(SQL_CLEANUP_DEAD_LETTER)
+        return pool.preparedQuery(sqlCleanupDeadLetter)
                 .execute(Tuple.of(retentionDays, batchSize))
                 .map(rs -> rs.rowCount())
                 .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "outbox cleanupDeadLetter")));

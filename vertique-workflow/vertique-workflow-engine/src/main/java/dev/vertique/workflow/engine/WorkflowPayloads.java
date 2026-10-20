@@ -192,7 +192,7 @@ final class WorkflowPayloads {
 
     private static WorkflowInvalidPayloadException invalidPayload(
             String message, String detailMessage, String detailType, @Nullable Throwable cause) {
-        List<ViolationDetail> details = List.of(new ViolationDetail("", detailMessage, detailType, null));
+        List<ViolationDetail> details = List.of(ViolationDetail.unlocated(detailMessage, detailType));
         return cause == null
                 ? new WorkflowInvalidPayloadException(message, details)
                 : new WorkflowInvalidPayloadException(message, details, cause);

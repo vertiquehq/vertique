@@ -54,10 +54,10 @@ import java.util.concurrent.TimeUnit;
 /**
  * The {@code web-validation} {@link RequestValidationStrategy}: validates each request body and
  * declared parameter against vertx-json-schema validators synthesized from the operation's
- * {@link OperationSchemas} (FR-005), and validates declared file-part constraints. It is the default
+ * {@link OperationSchemas}, and validates declared file-part constraints. It is the default
  * request-validation strategy.
  *
- * <p><strong>Validators are built once, at {@code gateFor} time (startup).</strong> For NFR-002
+ * <p><strong>Validators are built once, at {@code gateFor} time (startup).</strong> For
  * efficiency the body validator and each per-parameter validator are compiled when the gate is
  * produced and closed over by the returned handler, so no schema is compiled on the request hot path.
  * Each is compiled from a private copy of its schema; the objects {@link OperationSchemas} holds are
@@ -108,22 +108,34 @@ import java.util.concurrent.TimeUnit;
  * maximum size before comparing the client-declared media type directionally against the configured
  * allowed types. Only the configured subtype may be a wildcard.
  *
- * <p><strong>Enrichment (FR-010).</strong> Each {@link ValidationErrorDetail} carries:
+ * <p><strong>Enrichment.</strong> Each {@link ValidationErrorDetail} carries:
  * <ul>
- *   <li>{@code path} — the JSON Pointer instance location of the failing value (e.g. {@code /code})</li>
+ *   <li>{@code pointer} — for a body failure, the location of the failing value as an RFC 6901 JSON
+ *       Pointer (e.g. {@code /code}, or {@code ""} for the whole body), cut back to the part the schema
+ *       itself declares so that no member name the client chose is reported</li>
+ *   <li>{@code parameter} — for a failure of any other request location, the declared parameter name
+ *       followed by {@code [n]} for each leading array index of the location inside the value (e.g.
+ *       {@code ids[1]}); an object member name inside the value is never added. A failure of a
+ *       declared file part carries the declared part name with its occurrence index (e.g. {@code avatar},
+ *       {@code avatar[1]}) and {@code "file"} as its {@code location}; an upload whose part name is not
+ *       declared carries neither {@code pointer} nor {@code parameter}. An entry carries at most one of
+ *       {@code pointer} and {@code parameter}</li>
  *   <li>{@code type} — the failed JSON Schema keyword (e.g. {@code "minLength"}, {@code "required"},
  *       {@code "type"}), extracted from the last segment of the {@code keywordLocation} field
  *       returned by the vertx-json-schema {@link OutputUnit}</li>
  *   <li>{@code args} — the expected constraint value for common keywords (e.g.
  *       {@code {"minLength": 3}}), resolved by navigating the schema {@link JsonObject} along the
  *       keyword location; keywords whose value cannot be resolved appear as {@code {keyword: true}}</li>
- *   <li>{@code location} — the parameter-location token ({@code "body"}, {@code "query"}, etc.)</li>
+ *   <li>{@code location} — the location token ({@code "body"}, {@code "query"}, {@code "path"},
+ *       {@code "header"}, {@code "cookie"}, {@code "form"} or {@code "file"})</li>
+ *   <li>{@code detail} — the human-readable description of the failure; it never contains the submitted
+ *       value</li>
  * </ul>
  *
  * <p>The serialized error response <strong>never</strong> contains the submitted request value;
  * only the schema constraint and its expected value are included in {@code args}.
  *
- * <p><strong>Validation mode (FR-011).</strong> The {@link JaxRsConfig#validationMode()} field
+ * <p><strong>Validation mode.</strong> The {@link JaxRsConfig#validationMode()} field
  * selects the collection strategy:
  * <ul>
  *   <li>{@code "aggregate"} (default) — all violations across params, body, and file parts are
@@ -145,7 +157,7 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
     /** The selection id for the web-validation strategy. */
     public static final String ID = "web-validation";
 
-    /** FR-JSON-075's message bound, applied at this module's boundary, in UTF-16 code units. */
+    /** The message bound, applied at this module's boundary, in UTF-16 code units. */
     private static final int MAX_MESSAGE_LENGTH = 512;
 
     /** Marker appended in place of the elided tail of a truncated description. */
@@ -358,14 +370,15 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
 
     /**
      * Converts a pattern-input guard exception, thrown directly or as the cause of the thrown exception, into
-     * the one value-free detail of the rejected validator call: {@code path} {@code ""} for the body and the
-     * parameter name otherwise; the location token; {@code type} {@code patternInputLength} or {@code
-     * patternInputTotalLength}; the fixed detail naming the configured limit; and {@code args} {@code
-     * {"maxChars": N}} or {@code {"maxTotalChars": N}}. The value, the key, and the pattern never appear.
+     * the one value-free detail of the rejected validator call: {@code pointer} {@code ""} for the body and
+     * {@code parameter} with the parameter name otherwise; the location token; {@code type} {@code
+     * patternInputLength} or {@code patternInputTotalLength}; the fixed detail naming the configured limit; and
+     * {@code args} {@code {"maxChars": N}} or {@code {"maxTotalChars": N}}. The value, the key, and the pattern
+     * never appear.
      *
      * <p>The type, the message and the limit come from the shared {@link
-     * ViolationDetails#patternInputBound(Throwable)}; the path and the argument name are the response
-     * shape this strategy has always reported.
+     * ViolationDetails#patternInputBound(Throwable)}; the location member and the argument name are the
+     * response shape this strategy has always reported.
      *
      * @param thrown        the exception a validator call threw
      * @param location      the call's location token ({@code body}, {@code path}, {@code query}, {@code
@@ -377,13 +390,60 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
     static Optional<ValidationErrorDetail> patternInputBoundDetail(
             Throwable thrown, String location, @Nullable String parameterName) {
         return ViolationDetails.patternInputBound(thrown).map(detail -> {
-            String path = parameterName == null ? "" : parameterName;
             Object limit = detail.args().get("limit");
             String argumentName =
                     ViolationDetails.PATTERN_INPUT_LENGTH_TYPE.equals(detail.type()) ? "maxChars" : "maxTotalChars";
             return new ValidationErrorDetail(
-                    path, detail.message(), location, detail.type(), Map.of(argumentName, limit));
+                    parameterName == null ? "" : null,
+                    parameterName,
+                    detail.message(),
+                    location,
+                    detail.type(),
+                    Map.of(argumentName, limit));
         });
+    }
+
+    /**
+     * Names the parameter a violation inside a parameter's value belongs to: the declared name followed by
+     * {@code [n]} for each leading segment of the violation's pointer that is an array index, and nothing
+     * after the first segment that is not one. A member name inside an object-valued parameter is never
+     * rendered, because the client chooses it.
+     *
+     * @param name    the declared parameter name
+     * @param pointer the violation's location inside the value as an RFC 6901 pointer; {@code ""} for the
+     *     value itself
+     * @return the parameter name, for example {@code ids} or {@code ids[1]}
+     */
+    static String parameterName(String name, String pointer) {
+        StringBuilder parameter = new StringBuilder(name);
+        int start = 0;
+        while (start < pointer.length() && pointer.charAt(start) == '/') {
+            int end = pointer.indexOf('/', start + 1);
+            String segment = pointer.substring(start + 1, end < 0 ? pointer.length() : end);
+            if (!isArrayIndex(segment)) {
+                break;
+            }
+            parameter.append('[').append(segment).append(']');
+            if (end < 0) {
+                break;
+            }
+            start = end;
+        }
+        return parameter.toString();
+    }
+
+    /** Whether a segment is the canonical spelling of an array index: {@code 0}, or digits with no leading zero. */
+    private static boolean isArrayIndex(String segment) {
+        if (segment.isEmpty() || (segment.length() > 1 && segment.charAt(0) == '0')) {
+            return false;
+        }
+        for (int index = 0; index < segment.length(); index++) {
+            char c = segment.charAt(index);
+            if (c < '0' || c > '9') {
+                return false;
+            }
+        }
+        return true;
     }
 
     // --- Regex precompilation diagnostic ---
@@ -651,8 +711,10 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
 
         /**
          * Snapshots physical uploads in request order. Each upload instance is included at most once,
-         * and occurrence pointers count all earlier unique uploads with the same part name. The same
-         * frozen snapshot feeds synchronous constraints and deep verification.
+         * and occurrence indexes count all earlier unique uploads with the same part name. An upload
+         * whose part name is declared is named by that declared name plus its occurrence index; an
+         * upload whose part name is not declared is not named at all, because the name is the
+         * client's. The same frozen snapshot feeds synchronous constraints and deep verification.
          */
         private List<ApplicableUpload> snapshotUploads(RoutingContext ctx) {
             if (namedFileDescriptors.isEmpty() && aggregateFileDescriptor == null) {
@@ -669,8 +731,11 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
 
                 String partName = upload.name();
                 int occurrence = occurrencesByName.merge(partName, 1, Integer::sum) - 1;
-                String pointer = occurrence == 0 ? partName : partName + "[" + occurrence + "]";
-                uploads.add(new ApplicableUpload(upload, pointer));
+                String parameter = null;
+                if (namedFileDescriptors.containsKey(partName)) {
+                    parameter = occurrence == 0 ? partName : partName + "[" + occurrence + "]";
+                }
+                uploads.add(new ApplicableUpload(upload, parameter));
             }
             return List.copyOf(uploads);
         }
@@ -720,8 +785,8 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
                                 new IllegalStateException("FileContentVerifier completed with a null result"));
                     }
                     if (result instanceof FileVerificationResult.Rejected rejected) {
-                        ValidationErrorDetail detail = new ValidationErrorDetail(
-                                upload.pointer(), rejected.detail(), "file", rejected.type(), rejected.args());
+                        ValidationErrorDetail detail =
+                                fileDetail(upload.parameter(), rejected.detail(), rejected.type(), rejected.args());
                         return Future.failedFuture(
                                 new RestValidationException("Request validation failed", List.of(detail)));
                     }
@@ -733,7 +798,7 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
         /**
          * Validates each physical upload at most once, in request order. Exact case-sensitive named
          * constraints take precedence; the aggregate constraint applies only when no named constraint
-         * matches. Occurrence pointers count every earlier physical upload with the same part name,
+         * matches. Occurrence indexes count every earlier physical upload with the same part name,
          * including conforming ones. Size is checked before declared content type.
          *
          * @param uploads  the frozen physical-upload snapshot
@@ -752,10 +817,9 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
 
                 FilePartDescriptor descriptor = filePart.descriptor();
                 if (descriptor.maxSizeBytes() >= 0 && upload.size() > descriptor.maxSizeBytes()) {
-                    failures.add(new ValidationErrorDetail(
-                            applicable.pointer(),
+                    failures.add(fileDetail(
+                            applicable.parameter(),
                             "file part exceeds the maximum allowed size",
-                            "file",
                             "fileMaxSize",
                             Map.of("maxSizeBytes", descriptor.maxSizeBytes())));
                     if (failFast) {
@@ -764,12 +828,22 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
                 }
 
                 if (!descriptor.allowedTypes().isEmpty()) {
-                    validateDeclaredContentType(upload.contentType(), applicable.pointer(), filePart, failures);
+                    validateDeclaredContentType(upload.contentType(), applicable.parameter(), filePart, failures);
                     if (failFast && !failures.isEmpty()) {
                         return;
                     }
                 }
             }
+        }
+
+        /**
+         * Builds one file-part entry: {@code parameter} is the declared part name with its occurrence
+         * index, or {@code null} for an upload whose part name is not declared, which then carries
+         * no name at all.
+         */
+        private static ValidationErrorDetail fileDetail(
+                @Nullable String parameter, String detail, String type, @Nullable Map<String, Object> args) {
+            return new ValidationErrorDetail(null, parameter, detail, "file", type, args);
         }
 
         /**
@@ -779,15 +853,14 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
          */
         private static void validateDeclaredContentType(
                 String rawContentType,
-                String pointer,
+                @Nullable String parameter,
                 PreparedFilePart filePart,
                 List<ValidationErrorDetail> failures) {
             List<String> allowedTypes = filePart.descriptor().allowedTypes();
             if (rawContentType == null || rawContentType.isBlank()) {
-                failures.add(new ValidationErrorDetail(
-                        pointer,
+                failures.add(fileDetail(
+                        parameter,
                         "file part declares no content type",
-                        "file",
                         "fileContentTypeMissing",
                         Map.of("allowedTypes", allowedTypes)));
                 return;
@@ -795,20 +868,18 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
 
             MediaType declared = parseStrictDeclaredMediaType(rawContentType);
             if (declared == null || declared.isWildcardType() || declared.isWildcardSubtype()) {
-                failures.add(new ValidationErrorDetail(
-                        pointer,
+                failures.add(fileDetail(
+                        parameter,
                         "file part declares a malformed or wildcard content type",
-                        "file",
                         "fileContentTypeMalformed",
                         Map.of("allowedTypes", allowedTypes)));
                 return;
             }
 
             if (!isAllowedDeclaredType(declared, filePart.allowedTypes())) {
-                failures.add(new ValidationErrorDetail(
-                        pointer,
+                failures.add(fileDetail(
+                        parameter,
                         "file part content type is not allowed",
-                        "file",
                         "fileContentTypeNotAllowed",
                         Map.of("allowedTypes", allowedTypes)));
             }
@@ -948,8 +1019,12 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
             }
         }
 
-        /** One physical upload and its frozen request-occurrence pointer. */
-        private record ApplicableUpload(FileUpload part, String pointer) {}
+        /**
+         * One physical upload and its frozen report name: the declared part name with its occurrence
+         * index, or {@code null} when the upload's part name is not declared.
+         */
+        private record ApplicableUpload(
+                FileUpload part, @Nullable String parameter) {}
 
         /** One file-part declaration with its allowed types parsed once when the gate is built. */
         private record PreparedFilePart(FilePartDescriptor descriptor, List<MediaType> allowedTypes) {
@@ -1059,25 +1134,30 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
                 failures.add(rejection.get());
                 return true;
             }
-            for (ViolationDetail detail : ViolationDetails.collect(result, schema, failFast, PathForm.URI_FRAGMENT)) {
+            for (ViolationDetail detail : ViolationDetails.collect(result, schema, failFast, PathForm.RFC6901)) {
                 failures.add(toValidationErrorDetail(detail, location, fallbackPath));
             }
             return false;
         }
 
         /**
-         * Turns one shared violation detail into the response detail for a location, naming the parameter
-         * for a violation at the document root.
+         * Turns one shared violation detail into the response detail for a location: a body violation is
+         * reported in {@code pointer}, any other in {@code parameter}.
          *
-         * @param detail       the shared detail
+         * @param detail       the shared detail, with its path as an RFC 6901 pointer
          * @param location     the location token for the error ({@code body}, {@code query}, etc.)
-         * @param fallbackPath the parameter-name fallback, or {@code null} for a body error
+         * @param fallbackPath the parameter name, or {@code null} for a body error
          * @return the response detail
          */
         private static ValidationErrorDetail toValidationErrorDetail(
                 ViolationDetail detail, String location, String fallbackPath) {
             return new ValidationErrorDetail(
-                    pathFor(detail.path(), fallbackPath), detail.message(), location, detail.type(), detail.args());
+                    fallbackPath == null ? detail.path() : null,
+                    fallbackPath == null ? null : parameterName(fallbackPath, detail.path()),
+                    detail.message(),
+                    location,
+                    detail.type(),
+                    detail.args());
         }
 
         /**
@@ -1209,26 +1289,6 @@ public final class WebValidationStrategy implements RequestValidationStrategy {
                 }
             }
             return null;
-        }
-
-        /**
-         * Chooses the {@code path} for an error: the schema instance location when it points inside the
-         * instance, otherwise the parameter-name fallback (for a root-level scalar parameter violation
-         * the instance location is the document root, e.g. {@code "#"} or {@code ""}).
-         *
-         * @param instanceLocation the schema error's instance location, possibly {@code null}
-         * @param fallbackPath     the parameter-name fallback, or {@code null} for a body error
-         * @return the chosen path string
-         */
-        private static String pathFor(String instanceLocation, String fallbackPath) {
-            boolean rootLocation = instanceLocation == null
-                    || instanceLocation.isEmpty()
-                    || "#".equals(instanceLocation)
-                    || "/".equals(instanceLocation);
-            if (rootLocation) {
-                return fallbackPath != null ? fallbackPath : (instanceLocation != null ? instanceLocation : "");
-            }
-            return instanceLocation;
         }
     }
 }

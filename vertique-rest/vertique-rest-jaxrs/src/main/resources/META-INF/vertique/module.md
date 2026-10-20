@@ -537,8 +537,19 @@ The framework's `ExceptionMapper<Throwable>`, pre-configured by `RestModule`:
 | `UnavailableException` (core.exception) | 503 | `ProblemDetail` |
 | `Throwable` (catch-all) | 500 | `ProblemDetail` with the fixed detail `"Internal Server Error"` — the exception message is never echoed. Logging is deferred to `ErrorPipeline` (see below) so a Vert.x 4xx fallback is not recorded as an unhandled server fault |
 
-`errors[].path` is producer-defined: Jakarta dotted paths from `BeanValidationException`, `#/...`
-fragments from `RestValidationException`, and RFC 6901 pointers from workflow payload exceptions.
+A `ViolationCarrier` detail renders with `detail`, `type` and `args` and neither `pointer` nor `parameter` nor
+`location`, whatever its path form: a detail's path is a location in the value its producer validated, not in
+the request, and the default mapping cannot know where that value sits. The rendering is
+`ValidationErrorDetail.ofViolations(carrier)`, which an application's own exception mapper can call. To report
+the pointer details of a carrier as body locations, a mapper that knows the validated value is the request body
+(or sits at a known place in it) calls `ValidationErrorDetail.ofViolations(carrier, basePointer)` with `""`
+or the member's pointer such as `"/payload"`; a `JSON_POINTER` detail whose joined pointer is accepted by
+`ViolationPathForm.accepts` then gets `pointer` and `location` `"body"`, and every other detail stays without a
+location. Neither method logs. `ErrorPipeline` logs a carrier's violations at DEBUG once per response, at most
+100 events: for a detail with a Java path the non-empty path (a string path stops at its first bracket and has
+control and format characters removed) with its type, for a pointer detail only its type, and nothing for a
+detail with no path; never a pointer, a message, a key or an index.
+Entries of a `RestValidationException` are rendered as built.
 
 The mapper dispatches by class and checks for `ViolationCarrier` inside the `ValidationException`
 handler. Overriding the `ValidationException` mapping changes how every carrier that is not itself
@@ -812,6 +823,58 @@ public class ItemNotFoundMapper implements ExceptionMapper<ItemNotFoundException
 @Provides @IntoSet
 ExceptionMapper<?> itemNotFoundMapper(ItemNotFoundMapper mapper) { return mapper; }
 ```
+
+### Business-rule errors with their own code
+
+A rule that is not a constraint on a field (for example "credit limit exceeded") is not a validation
+violation. Give it its own exception and map it to a problem document that carries the rule's code as an
+extension member; do not put the code into a `ValidationErrorDetail` or a `ViolationDetail`, which locate
+failures in the request and have no member for a rule identifier. `ProblemDetail` is built for this:
+the builder's `extension(name, value)` adds a sibling JSON member, and a subclass declared with Lombok's
+`@SuperBuilder` adds typed members (`ValidationProblemDetail` does exactly that for `errors`).
+
+```java
+public class CreditLimitExceededException extends BusinessRuleException {
+    private final String code;
+
+    public CreditLimitExceededException(String message, String code) {
+        super(message);
+        this.code = code;
+    }
+
+    public String code() {
+        return code;
+    }
+}
+
+public class CreditLimitExceededMapper implements ExceptionMapper<CreditLimitExceededException> {
+    @Inject public CreditLimitExceededMapper() {}
+
+    @Override
+    public Response toResponse(CreditLimitExceededException ex) {
+        return Response.status(422)
+                .entity(ProblemDetail.builder()
+                        .type("about:blank")
+                        .title("Business rule violated")
+                        .status(422)
+                        .detail(ex.getMessage())
+                        .extension("code", ex.code())
+                        .build())
+                .type("application/problem+json")
+                .build();
+    }
+}
+
+@Provides @IntoSet
+ExceptionMapper<?> creditLimitMapper(CreditLimitExceededMapper mapper) { return mapper; }
+```
+
+The response is `{"type":"about:blank","title":"Business rule violated","status":422,"detail":"...","code":"RULE001",
+"instance":"urn:uuid:..."}`; the error pipeline stamps the `instance`. Keep the message free of submitted
+values, as for every mapper. To report several rule failures in one response, extend `ProblemDetail` with a
+typed list member the same way `ValidationProblemDetail` carries `errors`. Throwing a
+`RestValidationException` with `type = "business"` and the code in `args` also works, but it bends `args`
+(documented as constraint arguments) into an identifier, so prefer the dedicated exception.
 
 ### Framework decoders and encoders
 
@@ -1128,6 +1191,81 @@ Violations become a 400 `ValidationProblemDetail`. Each `ValidationErrorDetail` 
 or, for a `@BeanParam`, the location of the JAX-RS annotation on the violated field or record
 component; anything else is `null`.
 
+A violation on the request body is reported in `pointer`: an RFC 6901 JSON Pointer into the request
+document, over the wire names the route's body mapper reads (`@JsonProperty`, a naming strategy and the
+route's JSON profile all apply), when a framework binder materialized a JSON body with that mapper. The
+pointer is verified against the bound body and is shorter than the violated position, never different,
+wherever the mapper or the document cannot confirm a segment: it then stops at the deepest ancestor that
+it can confirm, and `""` is the whole document, which is also what a class-level constraint on the body
+reports.
+
+- A renamed property is reported under its wire name (`/zip_code`), a list element by its position
+  (`/items/1/name`, `/1/name` for a list body), a nested object by its member names.
+- A map entry or a set member is reported as the map or set itself (`/byKey`): a key the client chose
+  never appears in an error.
+- A member the client sent under an alias or a case variant is reported under the spelling it sent.
+- Hidden bound required members are named on omission: when the client leaves out a member that a
+  constraint such as `@NotBlank` or `@NotNull` requires, the pointer names that member (`/name`,
+  `/items/1/name`) if its parent object is in the document and the mapper binds the member through a
+  setter, a creator parameter or a record component. A member the mapper binds only through a field is
+  named when the client sent it, and otherwise the pointer stops at its parent. A shape the resolver
+  cannot read (a custom deserializer, a builder, an unwrapped or any-setter member, a wrapper type id)
+  also stops at the holding property; a deserializer installed by a Jackson module is not detected.
+- A body bound by an application `RequestBodyDecoder`, a body bound with a mapper other than the one the
+  route's wire names come from, a body of which no readable JSON document is available, a violation a
+  validator reports without a structured path, and a body violation beyond the first 100 of a response
+  carry neither `pointer` nor `parameter` and keep `location: "body"`; the validator's Java path is
+  never offered in its place, and a path given only as text is not resolved. A violation without a
+  structured path counts toward the 100. The mappers are compared by identity, the route's mapper being the one in force for the
+  request. The route's name projection is built from its mapper when the router is built, so after the
+  process JSON mapper is re-installed under the same profile id, routes on the default profile report no
+  pointer until the router is rebuilt.
+- The `errors` of a response are sorted by parameter index, then by the lexicographic text of the
+  violation's loggable Java path (the path with control and format characters removed, compared
+  character by character, so `items[10]` precedes `items[2]`), then by constraint type, message and
+  arrival position. The cap counts body violations in that order, so the 100 that are resolved are the
+  same on every request with the same body.
+
+```json
+{ "pointer": "/items/1/name", "detail": "must not be blank", "location": "body", "type": "required" }
+```
+
+A form-urlencoded body bound to a POJO is a set of request parameters, so its violations are reported
+in `parameter`, never in `pointer`, with `location: "form"`: the form field's name followed by the
+leading `[n]` positions of the violation's path. The name is the primary wire name that the mapper
+which bound the body gives the first property of the path. `FormUrlencodedRequestBodyDecoder` binds with
+the process JSON mapper whatever the route's profile; the form branch that runs when an input object
+processor is bound uses the route's mapper. The name is resolved from the mapper alone, with no request
+document to confirm it, so an entry carries neither member, by design, when the first property of the
+violation's path is one the mapper does not bind, when the mapper binds it only through a field (for
+example a `public` field with no setter, creator parameter or record component), or when the mapper binds
+the bean through a builder or another shape that is not its reported properties. A form-bound DTO whose
+properties are all bound only through fields therefore never reports a `parameter`, and a violation on it
+carries only `detail`, `type`, `args` and `location: "form"`. Form entries are neither capped nor logged.
+
+At DEBUG the mapper logs one `body violation path=… pointer=… rootType=…` event for each of the first 100
+body violations of a response, in the sorted order: the Java path rendered without map keys, with
+control and format characters removed and cut to 512 characters; the pointer, likewise stripped and
+suffixed `(truncated)` when it stops before the end of the path, or `<omitted:unbound>` when no
+framework binder materialized the body or no readable document of it is available,
+`<omitted:mismatch>` for a mapper mismatch and `<omitted:unstructured>` for a violation a validator
+reports without a structured path, which gets no pointer; and the body's declared type. A violation
+beyond the 100th logs nothing, and a form-urlencoded body logs nothing. No message, argument, value or raw validator path is
+logged.
+
+A violation on a `query`, `path`, `header`, `cookie` or `form` parameter is reported in `parameter`
+and never in `pointer`: the declared parameter name, followed by the leading `[n]` run of list or
+array positions at the start of the violation's path (`@QueryParam("ids") List<@Min(1) Integer>`
+reports `ids[1]`). Nothing after the first segment that is not a position is rendered, so a nested
+property, a map entry or a set member adds nothing. For a `@BeanParam`, the violated member is the
+first property of the path; the entry carries that member's JAX-RS annotation name and location,
+then the position run that follows the member (`@FormParam("tag") List<@NotBlank String> tags`
+reports `tag[0]`). Without a structured path only the name is rendered, and the validator's path text
+is never echoed. A violation that cannot be tied to a parameter — a cross-parameter or return-value
+constraint, a `@BeanParam` member without a JAX-RS annotation or with an empty annotation name, or a
+parameter that is not a request location (`@Context`, preconditions, file uploads, entity parts) —
+carries neither `parameter` nor `pointer` and no `location`, only `detail` and `type`.
+
 ```json
 {
   "type": "about:blank",
@@ -1135,8 +1273,8 @@ component; anything else is `null`.
   "status": 400,
   "detail": "Validation failed",
   "errors": [
-    { "path": "email", "detail": "must be a well-formed email address", "location": "query", "type": "email" },
-    { "path": "limit", "detail": "must be less than or equal to 100", "location": "query", "type": "max", "args": { "value": 100 } }
+    { "parameter": "email", "detail": "must be a well-formed email address", "location": "query", "type": "email" },
+    { "parameter": "limit", "detail": "must be less than or equal to 100", "location": "query", "type": "max", "args": { "value": 100 } }
   ]
 }
 ```
