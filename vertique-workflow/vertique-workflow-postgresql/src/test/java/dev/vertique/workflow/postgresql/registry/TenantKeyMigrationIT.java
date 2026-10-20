@@ -46,6 +46,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.LockSupport;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.MigrationInfo;
 import org.flywaydb.core.api.MigrationVersion;
@@ -339,19 +340,20 @@ public class TenantKeyMigrationIT {
                     .extracting(row -> row.id().value().toString())
                     .containsExactlyElementsOf(expectedInstanceIds);
             assertThat(taskRows).extracting(row -> row.taskId().toString()).containsExactlyElementsOf(expectedTaskIds);
-
-            // And the scan counter of each tenant index rises
-            // (backend statistics are published asynchronously, so the counters are polled until the deadline)
-            try (Connection stats = connection(indexDb)) {
-                assertThat(awaitScansAbove(stats, INSTANCE_INDEX, instanceScansBefore))
-                        .as("scans of %s", INSTANCE_INDEX)
-                        .isGreaterThan(instanceScansBefore);
-                assertThat(awaitScansAbove(stats, TASK_INDEX, taskScansBefore))
-                        .as("scans of %s", TASK_INDEX)
-                        .isGreaterThan(taskScansBefore);
-            }
         } finally {
             await(pool.close());
+        }
+
+        // And the scan counter of each tenant index rises
+        // (an idle backend publishes its statistics lazily but a closing backend publishes them at once, so the
+        // pool is closed first and the counters are then polled until the deadline)
+        try (Connection stats = connection(indexDb)) {
+            assertThat(awaitScansAbove(stats, INSTANCE_INDEX, instanceScansBefore))
+                    .as("scans of %s", INSTANCE_INDEX)
+                    .isGreaterThan(instanceScansBefore);
+            assertThat(awaitScansAbove(stats, TASK_INDEX, taskScansBefore))
+                    .as("scans of %s", TASK_INDEX)
+                    .isGreaterThan(taskScansBefore);
         }
     }
 
@@ -572,10 +574,10 @@ public class TenantKeyMigrationIT {
 
     /** Polls the index scan counter until it exceeds the given value or a deadline passes; returns the last value. */
     private static long awaitScansAbove(Connection connection, String indexName, long above) throws SQLException {
-        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(8);
         long seen = indexScans(connection, indexName);
         while (seen <= above && System.nanoTime() < deadline) {
-            Thread.onSpinWait();
+            LockSupport.parkNanos(TimeUnit.MILLISECONDS.toNanos(25));
             seen = indexScans(connection, indexName);
         }
         return seen;

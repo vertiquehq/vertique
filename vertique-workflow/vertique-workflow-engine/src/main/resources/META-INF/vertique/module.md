@@ -237,7 +237,7 @@ public interface AppComponent {
 
 ### Instance Tenant
 
-`WorkflowEngine.doCreateInstance` sets no tenant: a new instance has a `null` tenant until the tenant context stamps it, and no engine setting exists yet. `MigrationExecutor` carries the instance's tenant into the re-pinned snapshot, and resurrection keeps it, so a tenant written by another writer stays with the instance. The tenant is information and a filter, not an isolation boundary.
+`WorkflowEngine.doCreateInstance` sets no tenant: a new instance has a `null` tenant unless another writer stamps it, and no engine setting exists yet. `MigrationExecutor` carries the instance's tenant into the re-pinned snapshot, and resurrection keeps it, so a tenant written by another writer stays with the instance. The tenant is information and a filter, not an isolation boundary.
 
 ### Document Activation And Startup Restoration
 

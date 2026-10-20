@@ -6,7 +6,7 @@
 -- wait for those locks: while a statement waits, new statements on that table queue behind it for up
 -- to the timeout, then the migration fails and can be rerun.
 -- Run the script in one transaction (Flyway does), or SET LOCAL has no effect.
--- Every column and index statement is IF NOT EXISTS, so an operator of a very large installation can
+-- Every tenant column and tenant index statement is IF NOT EXISTS, so an operator of a very large installation can
 -- apply the two ALTER statements and build the two indexes ahead of the upgrade, outside this
 -- transaction, with CREATE INDEX CONCURRENTLY IF NOT EXISTS, and the migration then builds nothing.
 SET LOCAL lock_timeout = '30s';

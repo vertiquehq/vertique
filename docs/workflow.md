@@ -482,11 +482,13 @@ changes startup for every PostgreSQL application. Do the following in order.
   table queue behind it, and then fails, so rerun it after the blocking transaction ends. A manual run must be one
   transaction (`psql --single-transaction -f V002__create_workflow_definitions_and_tenant_key.sql`), or the timeout has no
   effect.
-- **Large installations.** Every column and index statement is `IF NOT EXISTS`, so you can do the table work ahead of the
-  upgrade and let the migration find it done. Run these exact statements outside a transaction (each on an autocommit
-  connection), with the `ALTER` statements first:
+- **Large installations.** Every tenant column and tenant index statement is `IF NOT EXISTS`, so you can do the table work
+  ahead of the upgrade and let the migration find it done. Run these exact statements outside a transaction (each on an
+  autocommit connection), with the `ALTER` statements first. A statement that times out on its lock changes nothing and can
+  be rerun:
 
   ```sql
+  SET lock_timeout = '30s';
   ALTER TABLE workflow_tasks     ADD COLUMN IF NOT EXISTS tenant_key VARCHAR(255);
   ALTER TABLE workflow_instances ADD COLUMN IF NOT EXISTS tenant_key VARCHAR(255);
   CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_workflow_tasks_tenant_updated_at
@@ -498,7 +500,9 @@ changes startup for every PostgreSQL application. Do the following in order.
   The migration then adds no scan. `ADD COLUMN IF NOT EXISTS` still takes the exclusive lock briefly. Both `IF NOT EXISTS`
   forms match by name only, so a column or index of that name with a different definition is silently accepted: use the
   statements above unchanged. A failed concurrent build leaves an `INVALID` index that `IF NOT EXISTS` would skip: check
-  `pg_index.indisvalid` for both index names and drop an invalid one before the migration runs.
+  `pg_index.indisvalid` for both index names and drop an invalid one before the migration runs. To confirm the result, read
+  `pg_get_indexdef('idx_workflow_tasks_tenant_updated_at'::regclass)` and the same for the instances index, and check that
+  `information_schema.columns` shows `tenant_key` as `character varying(255)` on both tables.
 - **Rolling upgrade.** Instances started and tasks created by nodes of the previous release keep `tenant_key = null`
   permanently, and the engine sets no tenant on new instances yet, so every engine-started instance is `null` too. For
   tasks created earlier from an instance that another writer stamped, run `UPDATE workflow_tasks t SET tenant_key =
@@ -623,11 +627,11 @@ Existing configuration needs no change. See [Configuration](#configuration).
 
 ## Instance Tenant
 
-`WorkflowInstance`, `TaskRecord`, `WorkflowInstanceQuery` and `TaskFilter` carry a nullable `tenantKey`. The engine sets no tenant when it starts an instance, and no engine setting exists yet: the instance tenant is `NULL` until the tenant context stamps it. Migration and resurrection keep an instance's tenant for its life.
+`WorkflowInstance`, `TaskRecord`, `WorkflowInstanceQuery` and `TaskFilter` carry a nullable `tenantKey`. The engine sets no tenant when it starts an instance, and no engine setting exists yet: an instance tenant is `NULL` unless another writer stamps it, so a tenant filter matches nothing for engine-started instances. The value is stored as given and is not validated beyond the column length of 255. Migration and resurrection keep an instance's tenant for its life.
 
 - **Tasks follow the instance.** The PostgreSQL task store writes the owning instance row's tenant on every task insert, whatever the `TaskRecord` carries, so a task created after another writer stamped its instance carries that tenant and a task created earlier stays `NULL`.
 - **Filters.** `WorkflowInstanceQuery.tenantKey` and `TaskFilter.tenantKey` match exactly when non-null; `null` matches every tenant. Never pass an unresolved tenant as `null` expecting scoping.
-- **Information, not isolation.** The tenant is a label and a filter. Operations addressed by instance or task id (query, signal, cancel, retry, migrate, task complete or reassign) do not check it, and timers, branch tokens and definition resolution are global: before acting on a caller-supplied id, load the instance and compare its `tenantKey()` with the caller's tenant.
+- **Information, not isolation.** The tenant is a label and a filter. Operations addressed by instance or task id (query, signal, cancel, retry, migrate, task complete or reassign) do not check it, and timers, branch tokens and definition resolution are global: before acting on a caller-supplied id, load the instance and compare its `tenantKey()` with the caller's tenant. Definition-lifecycle refusal messages can name another owner's tenant, status and plan hashes: do not forward them to tenants.
 - **Global keys.** Start idempotency keys and business keys are global: a start that reuses another tenant's key returns that tenant's instance.
 - **No definition cross-check.** Nothing ties an instance tenant to a definition owner: a stamped instance may run another tenant's namespaced definition or a global one.
 
