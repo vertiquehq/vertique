@@ -128,7 +128,7 @@ class NamedJobMigrationIT {
             assertPlacementEqualsConfiguration(migration, runtime);
             assertConnectionFreeInstanceViews(migration.runner());
             assertFlywayListsCreateNoPlacement(vertx);
-            assertMalformedPlacementFailsOnlyWhenRequested(vertx);
+            assertMalformedPlacementFailsTheDbConfiguration(vertx);
             assertCompatibilityGraphHasNoPlacement();
 
             // When: the migration-only component runs for the first time
@@ -436,19 +436,17 @@ class NamedJobMigrationIT {
         }
     }
 
-    private static void assertMalformedPlacementFailsOnlyWhenRequested(Vertx vertx) throws Exception {
+    private static void assertMalformedPlacementFailsTheDbConfiguration(Vertx vertx) {
         // Given: a non-string value for the job entry
         JsonObject malformed = new JsonObject().put("job", MALFORMED_PLACEMENT_VALUE);
 
         // When: the runtime graph is created
         RuntimeComponent component = assertDoesNotThrow(() -> runtimeComponent(vertx, runtimeConfig(malformed)));
-        try {
-            // Then: creation succeeded; the binding and the repository fail naming the key only when requested
-            assertNamesKeyWithoutValue(assertThrows(ConfigurationException.class, component::dbSchemas));
-            assertNamesKeyWithoutValue(assertThrows(ConfigurationException.class, component::pgJobRepository));
-        } finally {
-            await(component.pool().close());
-        }
+
+        // Then: creation succeeded; every binding built from the db section fails naming the key only
+        assertNamesKeyWithoutValue(assertThrows(ConfigurationException.class, component::dbSchemas));
+        assertNamesKeyWithoutValue(assertThrows(ConfigurationException.class, component::pool));
+        assertNamesKeyWithoutValue(assertThrows(ConfigurationException.class, component::pgJobRepository));
     }
 
     private static void assertNamesKeyWithoutValue(ConfigurationException failure) {

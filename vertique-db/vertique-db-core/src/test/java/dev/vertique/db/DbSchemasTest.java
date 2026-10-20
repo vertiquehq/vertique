@@ -6,6 +6,7 @@ package dev.vertique.db;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
+import dev.vertique.core.exception.ConfigurationException;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
@@ -70,14 +71,14 @@ class DbSchemasTest {
     private static DynamicTest blankKeyIsRejected(String key, String shape) {
         return DynamicTest.dynamicTest("rejects a blank key: " + shape, () -> {
             // Given a map with a blank key; When constructing; Then it is rejected
-            assertThrows(IllegalArgumentException.class, () -> new DbSchemas(Map.of(key, "jobs")));
+            assertThrows(ConfigurationException.class, () -> new DbSchemas(Map.of(key, "jobs")));
         });
     }
 
     private static DynamicTest blankValueIsRejected(String value, String shape) {
         return DynamicTest.dynamicTest("rejects a blank value: " + shape, () -> {
             // Given a map with a blank value; When constructing; Then it is rejected
-            assertThrows(IllegalArgumentException.class, () -> new DbSchemas(Map.of("job", value)));
+            assertThrows(ConfigurationException.class, () -> new DbSchemas(Map.of("job", value)));
         });
     }
 

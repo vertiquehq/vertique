@@ -68,9 +68,9 @@ types when tamper-evidence is required.)
 Column names — the one place a string reaches SQL — go through `SqlIdentifier` at construction time
 and are quoted again by vendor builders during composition.
 
-**Schema placement is optional metadata, not pool configuration.** The `db.schemas` setting maps a
-placement name (`job`, `workflow`, or any name an application picks) to a schema name. `DbModule`
-exposes it as `DbSchemas`; framework adapters, the migration runner and application code read the
+**Schema placement is optional metadata, read with the pool configuration.** The `db.schemas` setting
+maps a placement name (`job`, `workflow`, or any name an application picks) to a schema name. It is
+the typed `DbPoolConfig.schemas()` and `DbModule` exposes it as `DbSchemas`; framework adapters, the migration runner and application code read the
 same value, so migrations and queries agree on where a module's tables live. Without an entry,
 SQL stays unqualified and tables resolve through the connection's default schema. This module stores
 the names verbatim and applies no vendor identifier rules — those belong to the vendor module.
@@ -503,16 +503,14 @@ diagnostic at startup.
 Immutable placement metadata: a schema name per placement name.
 
 ```java
-public final class DbSchemas {
-    public DbSchemas(Map<String, String> mappings);
+public record DbSchemas(Map<String, String> mappings) {
     public static DbSchemas empty();
-    public Map<String, String> mappings();
     public Optional<String> schema(String instanceName);
 }
 ```
 
 The constructor copies the map defensively; `mappings()` is immutable. It throws
-`NullPointerException` for a null map, key or value and `IllegalArgumentException` for a blank key or
+`NullPointerException` for a null map, key or value and `ConfigurationException` for a blank key or
 value. `schema(name)` is empty for a name with no mapping. The class holds no SQL rendering, JDBC,
 Flyway or PostgreSQL types.
 
@@ -580,10 +578,11 @@ Provides `DbPoolConfig` as a `@Singleton`, parsed from the `db` config section. 
 `DISABLE` — is logged at WARN when the binding is created; a warning never fails startup. Include it
 alongside a vendor module.
 
-It also provides `DbSchemas` as a `@Singleton`, read from `db.schemas` (see
+It also provides `DbSchemas`, the `schemas` of that same `DbPoolConfig` (see
 [Schema placement](#schema-placement-dbschemas)). The binding is created when first requested and
-opens no connection, so a malformed `db.schemas` fails the request for `DbSchemas` (or for an adapter
-that needs it), not component creation.
+opens no connection. Because `db.schemas` is part of the `db` section, a malformed `db.schemas` fails
+the `DbPoolConfig` binding, and with it the pool and every adapter that needs it, not component
+creation.
 
 An application that supplies its own `DbSchemas` binding must not include `DbModule`: Dagger reports
 the duplicate binding at compile time and there is no silent precedence. Such a component also
@@ -734,6 +733,7 @@ produced.
 | `reconnectAttempts` | int | `0` | Reconnect attempts; `0` disables |
 | `reconnectIntervalMs` | long | `1000` | Delay between reconnect attempts |
 | `properties` | map | `{}` | Vendor-specific connection properties |
+| `schemas` | object | `{}` | Schema per placement name; see [Schema placement](#schema-placement-dbschemas) |
 | `sslMode` | string | `"DISABLE"` | Vendor SSL mode; PostgreSQL accepts `DISABLE`, `ALLOW`, `PREFER`, `REQUIRE`, `VERIFY_CA`, `VERIFY_FULL` |
 | `trustAll` | boolean | `false` | Skip certificate verification — development only |
 | `trustStorePath` | string | — | Trust store file (PEM, JKS, PKCS12); type inferred from the extension |
@@ -749,8 +749,8 @@ but never serialized back out by Jackson, and `toString()` renders them as `<red
 
 ### Schema placement (`db.schemas`)
 
-`DbModule` also reads the optional `db.schemas` object into `DbSchemas`. It is not a `DbPoolConfig`
-field.
+The optional `db.schemas` object is bound into `DbPoolConfig.schemas()` as a `DbSchemas`, and
+`DbModule` exposes it as a separate binding.
 
 ```json
 {
@@ -771,9 +771,10 @@ field.
   `PgTableNames.qualify` when an adapter is constructed).
 - **Absent means unqualified.** No `db` section, an absent or JSON-null `schemas`, `{}` or an absent
   key yield no entry, and SQL for that name stays unqualified.
-- **Malformed input fails with a `ConfigurationException`** that names the setting and never echoes
-  a value: a `db` that is not an object names `db`; a `schemas` that is not an object, or a blank key,
-  names `db.schemas`; a null, non-string or blank value names `db.schemas.<key>`.
+- **Malformed input fails the `db` section with a `ConfigurationException`** that never echoes a
+  value: a blank key names `db.schemas`; a null, non-string or blank value names `db.schemas.<key>`.
+  A `db` or `schemas` that is not an object fails with the parser's generic message for the `db`
+  section.
 
 **Check the keys yourself.** Open keys cannot be validated, so a misspelled key (`workflows` for
 `workflow`) leaves the intended placement unmapped and its SQL unqualified, with no error. Compare
@@ -896,7 +897,8 @@ compile-time constant or a developer-controlled string, never anything derived f
 | `IllegalStateException: A mapper must be configured via .mapping() …` | A row-mapping terminal called without `.mapping(...)` |
 | Statement runs outside its transaction | A builder inside `transaction().execute(...)` missing `.on(conn)` |
 | Pool never grows past the first connection | A `PoolConnectHandler` that does not call `conn.close()` |
-| `ConfigurationException` naming `db.schemas` or `db.schemas.<key>` | `db.schemas` is not an object, has a blank key, or a value that is null, not a string, or blank |
+| `ConfigurationException` naming `db.schemas` or `db.schemas.<key>` | `db.schemas` has a blank key, or a value that is null, not a string, or blank |
+| Generic parse failure for the `db` section | `db` or `db.schemas` is not an object |
 | Tables land in the default schema although `db.schemas` is set | The key is misspelled or does not match the instance name; `DbSchemas.mappings()` shows what was read |
 | Dagger duplicate-binding error for `DbSchemas` | The application provides its own `DbSchemas` and also includes `DbModule`; pick one source |
 | Application queries miss the schema the migrations used | Hand-written SQL names the table without `PgTableNames.qualify(schemas, name, table)` |
