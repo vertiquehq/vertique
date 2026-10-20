@@ -3,8 +3,10 @@
 
 package dev.vertique.workflow.postgresql.repository;
 
+import dev.vertique.db.DbSchemas;
 import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.postgresql.PgSqlRepository;
+import dev.vertique.db.postgresql.PgTableNames;
 import dev.vertique.db.query.OrderKey;
 import dev.vertique.db.query.PageCursor;
 import dev.vertique.db.query.PagedResult;
@@ -43,29 +45,20 @@ import java.util.Optional;
 public final class PgWorkflowInstanceRepository extends PgSqlRepository
         implements WorkflowInstanceRepository<SqlClient> {
 
-    // --- SQL constants ---
+    /** Name of the migration instance whose schema mapping places the workflow tables. */
+    private static final String INSTANCE_NAME = "workflow";
 
-    private static final String SQL_INSERT = "INSERT INTO workflow_instances"
-            + " (id, definition_id, definition_version, plan_hash, version, status,"
-            + " business_key, subject_type, subject_id, subject_version,"
-            + " current_step_id, wait_type, wait_key, wait_aux_id, state_json,"
-            + " error_type, error_message, metadata, created_at, updated_at)"
-            + " VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::jsonb, $16, $17,"
-            + " $18::jsonb, $19, $20)";
+    // --- SQL statements ---
+    //
+    // The statements are built once at construction because every table reference is qualified with
+    // the schema mapped for the workflow instance (when there is one), so the text depends on the
+    // configured placement rather than being a compile-time constant.
 
-    private static final String SQL_SELECT_ALL_COLUMNS =
-            "SELECT id, definition_id, definition_version, plan_hash, version, status,"
-                    + " business_key, subject_type, subject_id, subject_version,"
-                    + " current_step_id, wait_type, wait_key, wait_aux_id, state_json,"
-                    + " error_type, error_message, metadata, created_at, updated_at, completed_at"
-                    + " FROM workflow_instances";
-
-    private static final String SQL_FIND_BY_ID = SQL_SELECT_ALL_COLUMNS + " WHERE id = $1";
-
-    private static final String SQL_FIND_BY_ID_FOR_UPDATE = SQL_SELECT_ALL_COLUMNS + " WHERE id = $1 FOR UPDATE";
-
-    private static final String SQL_FIND_BY_BUSINESS_KEY =
-            SQL_SELECT_ALL_COLUMNS + " WHERE definition_id = $1 AND business_key = $2";
+    private final String sqlInsert;
+    private final String sqlSelectAllColumns;
+    private final String sqlFindById;
+    private final String sqlFindByIdForUpdate;
+    private final String sqlFindByBusinessKey;
 
     /**
      * Optimistic-concurrency UPDATE. Sets {@code completed_at} to {@code NOW()} on terminal-status
@@ -77,13 +70,7 @@ public final class PgWorkflowInstanceRepository extends PgSqlRepository
      * $6=wait_key, $7=wait_aux_id, $8=state_json, $9=error_type, $10=error_message,
      * $11=expected (old) version.
      */
-    private static final String SQL_UPDATE_OPTIMISTIC = "UPDATE workflow_instances"
-            + " SET version = $2, status = $3, current_step_id = $4,"
-            + " wait_type = $5, wait_key = $6, wait_aux_id = $7, state_json = $8::jsonb,"
-            + " error_type = $9, error_message = $10, updated_at = NOW(),"
-            + " completed_at = CASE WHEN $3::varchar IN ('COMPLETED','FAILED','COMPENSATED','CANCELLED','EXPIRED')"
-            + "   THEN NOW() ELSE NULL END"
-            + " WHERE id = $1 AND version = $11";
+    private final String sqlUpdateOptimistic;
 
     /**
      * Migration-specific optimistic UPDATE. Re-pins the instance to a new definition version and
@@ -94,26 +81,74 @@ public final class PgWorkflowInstanceRepository extends PgSqlRepository
      * <p>Parameters: $1=id, $2=definition_version, $3=plan_hash, $4=new version,
      * $5=current_step_id, $6=state_json, $7=expected (old) version.
      */
-    private static final String SQL_MIGRATE_PIN_AND_STATE = "UPDATE workflow_instances"
-            + " SET definition_version = $2, plan_hash = $3, version = $4,"
-            + " status = 'RUNNING', current_step_id = $5,"
-            + " wait_type = NULL, wait_key = NULL, wait_aux_id = NULL,"
-            + " state_json = $6::jsonb,"
-            + " error_type = NULL, error_message = NULL,"
-            + " updated_at = NOW(), completed_at = NULL"
-            + " WHERE id = $1 AND version = $7";
+    private final String sqlMigratePinAndState;
 
     // --- Constructor ---
 
     /**
-     * Creates a new repository with the given connection pool and exception mapper.
+     * Creates a new repository whose table is not schema-qualified, so it resolves through the
+     * connection's default schema.
      *
      * @param pool   the PostgreSQL connection pool
      * @param mapper the exception mapper for translating SQL errors to domain exceptions
      */
     @Inject
     public PgWorkflowInstanceRepository(Pool pool, PgDbExceptionMapper mapper) {
+        this(pool, mapper, DbSchemas.empty());
+    }
+
+    /**
+     * Creates a new repository that qualifies every table reference with the schema mapped to the
+     * {@code workflow} instance, when {@code schemas} holds one. Without a mapping the statements
+     * are identical to those of the two-argument constructor.
+     *
+     * @param pool    the PostgreSQL connection pool
+     * @param mapper  the exception mapper for translating SQL errors to domain exceptions
+     * @param schemas the schema placement; an empty mapping leaves table names unqualified
+     * @throws IllegalArgumentException if the mapped schema name is not a valid single-segment
+     *                                  PostgreSQL identifier
+     */
+    public PgWorkflowInstanceRepository(Pool pool, PgDbExceptionMapper mapper, DbSchemas schemas) {
         super(pool, mapper);
+
+        String instances = PgTableNames.qualify(schemas, INSTANCE_NAME, "workflow_instances");
+
+        this.sqlInsert = "INSERT INTO " + instances
+                + " (id, definition_id, definition_version, plan_hash, version, status,"
+                + " business_key, subject_type, subject_id, subject_version,"
+                + " current_step_id, wait_type, wait_key, wait_aux_id, state_json,"
+                + " error_type, error_message, metadata, created_at, updated_at)"
+                + " VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::jsonb, $16, $17,"
+                + " $18::jsonb, $19, $20)";
+
+        this.sqlSelectAllColumns = "SELECT id, definition_id, definition_version, plan_hash, version, status,"
+                + " business_key, subject_type, subject_id, subject_version,"
+                + " current_step_id, wait_type, wait_key, wait_aux_id, state_json,"
+                + " error_type, error_message, metadata, created_at, updated_at, completed_at"
+                + " FROM " + instances;
+
+        this.sqlFindById = sqlSelectAllColumns + " WHERE id = $1";
+
+        this.sqlFindByIdForUpdate = sqlSelectAllColumns + " WHERE id = $1 FOR UPDATE";
+
+        this.sqlFindByBusinessKey = sqlSelectAllColumns + " WHERE definition_id = $1 AND business_key = $2";
+
+        this.sqlUpdateOptimistic = "UPDATE " + instances
+                + " SET version = $2, status = $3, current_step_id = $4,"
+                + " wait_type = $5, wait_key = $6, wait_aux_id = $7, state_json = $8::jsonb,"
+                + " error_type = $9, error_message = $10, updated_at = NOW(),"
+                + " completed_at = CASE WHEN $3::varchar IN ('COMPLETED','FAILED','COMPENSATED','CANCELLED','EXPIRED')"
+                + "   THEN NOW() ELSE NULL END"
+                + " WHERE id = $1 AND version = $11";
+
+        this.sqlMigratePinAndState = "UPDATE " + instances
+                + " SET definition_version = $2, plan_hash = $3, version = $4,"
+                + " status = 'RUNNING', current_step_id = $5,"
+                + " wait_type = NULL, wait_key = NULL, wait_aux_id = NULL,"
+                + " state_json = $6::jsonb,"
+                + " error_type = NULL, error_message = NULL,"
+                + " updated_at = NOW(), completed_at = NULL"
+                + " WHERE id = $1 AND version = $7";
     }
 
     // --- Write operations ---
@@ -150,7 +185,7 @@ public final class PgWorkflowInstanceRepository extends PgSqlRepository
                 toOffsetDateTime(inst.createdAt()),
                 toOffsetDateTime(inst.updatedAt()));
 
-        return tx.preparedQuery(SQL_INSERT)
+        return tx.preparedQuery(sqlInsert)
                 .execute(params)
                 .<Void>mapEmpty()
                 .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_instances insert")));
@@ -186,7 +221,7 @@ public final class PgWorkflowInstanceRepository extends PgSqlRepository
                 updated.errorMessage(),
                 expectedVersion);
 
-        return tx.preparedQuery(SQL_UPDATE_OPTIMISTIC)
+        return tx.preparedQuery(sqlUpdateOptimistic)
                 .execute(params)
                 .map(rs -> rs.rowCount())
                 .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_instances updateOptimistic")));
@@ -222,7 +257,7 @@ public final class PgWorkflowInstanceRepository extends PgSqlRepository
                 updated.stateJson(),
                 expectedVersion);
 
-        return tx.preparedQuery(SQL_MIGRATE_PIN_AND_STATE)
+        return tx.preparedQuery(sqlMigratePinAndState)
                 .execute(params)
                 .map(rs -> rs.rowCount())
                 .recover(t ->
@@ -239,7 +274,7 @@ public final class PgWorkflowInstanceRepository extends PgSqlRepository
      */
     @Override
     public Future<Optional<WorkflowInstance>> findById(WorkflowInstanceId id) {
-        return pool.preparedQuery(SQL_FIND_BY_ID)
+        return pool.preparedQuery(sqlFindById)
                 .execute(Tuple.of(id.value()))
                 .<Optional<WorkflowInstance>>map(rs -> {
                     var it = rs.iterator();
@@ -262,7 +297,7 @@ public final class PgWorkflowInstanceRepository extends PgSqlRepository
      */
     @Override
     public Future<Optional<WorkflowInstance>> findById(WorkflowInstanceId id, SqlClient tx) {
-        return tx.preparedQuery(SQL_FIND_BY_ID)
+        return tx.preparedQuery(sqlFindById)
                 .execute(Tuple.of(id.value()))
                 .<Optional<WorkflowInstance>>map(rs -> {
                     var it = rs.iterator();
@@ -283,7 +318,7 @@ public final class PgWorkflowInstanceRepository extends PgSqlRepository
      */
     @Override
     public Future<Optional<WorkflowInstance>> findByIdForUpdate(WorkflowInstanceId id, SqlClient tx) {
-        return tx.preparedQuery(SQL_FIND_BY_ID_FOR_UPDATE)
+        return tx.preparedQuery(sqlFindByIdForUpdate)
                 .execute(Tuple.of(id.value()))
                 .<Optional<WorkflowInstance>>map(rs -> {
                     var it = rs.iterator();
@@ -312,7 +347,7 @@ public final class PgWorkflowInstanceRepository extends PgSqlRepository
         if (bk == null) {
             return Future.succeededFuture(Optional.empty());
         }
-        return tx.preparedQuery(SQL_FIND_BY_BUSINESS_KEY)
+        return tx.preparedQuery(sqlFindByBusinessKey)
                 .execute(Tuple.of(defId, bk))
                 .<Optional<WorkflowInstance>>map(rs -> {
                     var it = rs.iterator();
@@ -347,7 +382,7 @@ public final class PgWorkflowInstanceRepository extends PgSqlRepository
      */
     @Override
     public Future<PagedResult<WorkflowInstance>> findFiltered(WorkflowInstanceQuery query, PageCursor cursor) {
-        StringBuilder sql = new StringBuilder(SQL_SELECT_ALL_COLUMNS);
+        StringBuilder sql = new StringBuilder(sqlSelectAllColumns);
         List<Object> paramValues = new ArrayList<>();
 
         // --- Dynamic WHERE clause ---

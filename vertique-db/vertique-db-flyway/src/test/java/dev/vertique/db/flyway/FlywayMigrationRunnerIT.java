@@ -4,11 +4,14 @@
 package dev.vertique.db.flyway;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vertique.db.DbPoolConfig;
+import dev.vertique.db.DbSchemas;
+import dev.vertique.db.MigrationDefinition;
 import dev.vertique.db.MigrationException;
 import dev.vertique.db.MigrationResult;
 import io.vertx.core.Vertx;
@@ -16,9 +19,12 @@ import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.Statement;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import org.flywaydb.core.api.FlywayException;
 import org.junit.jupiter.api.AfterAll;
@@ -226,6 +232,253 @@ class FlywayMigrationRunnerIT {
                     MigrationException wrapped = assertInstanceOf(MigrationException.class, failure);
                     assertTrue(wrapped.getMessage().startsWith("Schema validation failed: "), wrapped.getMessage());
                     assertInstanceOf(FlywayException.class, wrapped.getCause());
+                    ctx.completeNow();
+                })));
+    }
+
+    // --- single-history run(): the report of the unchanged single-Flyway path ---
+
+    private static boolean historyExists(String database, String schema, String table) throws Exception {
+        try (Connection connection =
+                        DriverManager.getConnection(jdbcUrl(database), postgres.getUsername(), postgres.getPassword());
+                PreparedStatement statement = connection.prepareStatement(
+                        "SELECT count(*) FROM information_schema.tables WHERE table_schema = ? AND table_name = ?")) {
+            statement.setString(1, schema);
+            statement.setString(2, table);
+            try (ResultSet rows = statement.executeQuery()) {
+                rows.next();
+                return rows.getInt(1) > 0;
+            }
+        }
+    }
+
+    private static void createSchema(String database, String schema) throws Exception {
+        try (Connection connection =
+                        DriverManager.getConnection(jdbcUrl(database), postgres.getUsername(), postgres.getPassword());
+                Statement statement = connection.createStatement()) {
+            statement.execute("CREATE SCHEMA " + schema);
+        }
+    }
+
+    /** The one entry every single-history report holds: the reserved name, the first configured schema (or null) and the table. */
+    private static MigrationInstanceResult onlySingleEntry(MigrationReport report, String schema, String table) {
+        assertEquals(1, report.instances().size(), "single mode reports exactly one entry");
+        MigrationInstanceResult entry = report.instances().get(0);
+        assertEquals("single", entry.instance().name());
+        assertEquals(schema, entry.instance().schema(), "the first configured schema, null when none is configured");
+        assertEquals(table, entry.instance().table(), "the effective history table");
+        return entry;
+    }
+
+    @Test
+    @DisplayName("single-history run() reports one entry named single for the default history and migrate() agrees")
+    void run_singleReportsTheDefaultHistory(Vertx vertx, VertxTestContext ctx) throws Exception {
+        String database = freshDatabase();
+        String compared = freshDatabase();
+        FlywayConfig config = FlywayConfig.builder()
+                .mode(FlywayMode.MIGRATE)
+                .locations(List.of(GOOD))
+                .build(); // named is not set: single-history mode
+
+        FlywayMigrationRunner runner = runner(config, database);
+        runner(config, compared)
+                .migrate(vertx)
+                .compose(original -> {
+                    ctx.verify(() -> assertEquals(new MigrationResult(1, "1"), original));
+                    return runner.run(vertx);
+                })
+                .compose(first -> {
+                    ctx.verify(() -> {
+                        MigrationInstanceResult entry = onlySingleEntry(first, null, "flyway_schema_history");
+                        assertEquals(MigrationStatus.MIGRATED, entry.status());
+                        assertEquals(1, entry.migrationsApplied(), "the same count migrate() reports");
+                        assertEquals("1", entry.currentVersion());
+                        assertEquals(List.of(GOOD), entry.instance().locations(), "the original locations");
+                        assertTrue(historyExists(database, "public", "flyway_schema_history"));
+                        assertEquals(1, countRows(database, "flyway_it_marker"));
+                    });
+                    return runner.run(vertx);
+                })
+                .onComplete(ctx.succeeding(second -> ctx.verify(() -> {
+                    MigrationInstanceResult entry = onlySingleEntry(second, null, "flyway_schema_history");
+                    assertEquals(MigrationStatus.MIGRATED, entry.status());
+                    assertEquals(0, entry.migrationsApplied(), "a second run applies nothing, like migrate()");
+                    assertEquals("1", entry.currentVersion());
+                    assertEquals(1, countRows(database, "flyway_it_marker"));
+                    assertEquals(List.of(), runner.instances(), "single mode resolves no connection-free views");
+                    ctx.completeNow();
+                })));
+    }
+
+    @Test
+    @DisplayName("single-history run() reports the first managed schema as the history schema")
+    void run_singleReportsTheFirstManagedSchema(Vertx vertx, VertxTestContext ctx) throws Exception {
+        String database = freshDatabase();
+        FlywayConfig config = FlywayConfig.builder()
+                .mode(FlywayMode.MIGRATE)
+                .locations(List.of(GOOD))
+                .schemas(List.of("single_it"))
+                .build();
+
+        runner(config, database)
+                .run(vertx)
+                .onComplete(ctx.succeeding(report -> ctx.verify(() -> {
+                    MigrationInstanceResult entry = onlySingleEntry(report, "single_it", "flyway_schema_history");
+                    assertEquals(MigrationStatus.MIGRATED, entry.status());
+                    assertEquals(1, entry.migrationsApplied());
+                    assertTrue(historyExists(database, "single_it", "flyway_schema_history"));
+                    assertFalse(historyExists(database, "public", "flyway_schema_history"));
+                    assertEquals(1, countRows(database, "single_it.flyway_it_marker"));
+                    ctx.completeNow();
+                })));
+    }
+
+    @Test
+    @DisplayName(
+            "single-history run() reports no schema when none is configured and the history lands where the connection points")
+    void run_singleReportsTheConnectionSchema(Vertx vertx, VertxTestContext ctx) throws Exception {
+        String database = freshDatabase();
+        createSchema(database, "connection_it");
+        FlywayConfig config = FlywayConfig.builder()
+                .mode(FlywayMode.MIGRATE)
+                .jdbcUrl(jdbcUrl(database) + "?currentSchema=connection_it")
+                .user(postgres.getUsername())
+                .password(postgres.getPassword())
+                .locations(List.of(GOOD))
+                .build(); // no schemas: the history lands where the connection points
+
+        runner(config, database)
+                .run(vertx)
+                .onComplete(ctx.succeeding(report -> ctx.verify(() -> {
+                    MigrationInstanceResult entry = onlySingleEntry(report, null, "flyway_schema_history");
+                    assertEquals(MigrationStatus.MIGRATED, entry.status());
+                    assertTrue(historyExists(database, "connection_it", "flyway_schema_history"));
+                    assertFalse(historyExists(database, "public", "flyway_schema_history"));
+                    ctx.completeNow();
+                })));
+    }
+
+    @Test
+    @DisplayName("single-history run() keeps the VALIDATE and DISABLED outcomes of migrate()")
+    void run_singleKeepsValidateAndDisabledOutcomes(Vertx vertx, VertxTestContext ctx) throws Exception {
+        String database = freshDatabase();
+        FlywayConfig migrate = FlywayConfig.builder()
+                .mode(FlywayMode.MIGRATE)
+                .locations(List.of(GOOD))
+                .build();
+        FlywayConfig validate = FlywayConfig.builder()
+                .mode(FlywayMode.VALIDATE)
+                .locations(List.of(GOOD))
+                .build();
+        FlywayConfig disabled = FlywayConfig.builder()
+                .mode(FlywayMode.DISABLED)
+                .locations(List.of(GOOD))
+                .build();
+
+        runner(migrate, database)
+                .run(vertx)
+                .compose(ignored -> runner(validate, database).run(vertx))
+                .compose(validated -> {
+                    ctx.verify(() -> {
+                        MigrationInstanceResult entry = onlySingleEntry(validated, null, "flyway_schema_history");
+                        assertEquals(MigrationStatus.VALIDATED, entry.status());
+                        assertEquals(0, entry.migrationsApplied(), "VALIDATE never applies");
+                        assertEquals(1, countRows(database, "flyway_it_marker"));
+                    });
+                    return runner(disabled, database).run(vertx);
+                })
+                .onComplete(ctx.succeeding(off -> ctx.verify(() -> {
+                    assertEquals(1, off.instances().size());
+                    MigrationInstanceResult entry = off.instances().get(0);
+                    assertEquals("single", entry.instance().name());
+                    assertEquals(MigrationStatus.DISABLED, entry.status());
+                    assertEquals(0, entry.migrationsApplied());
+                    assertNull(entry.currentVersion());
+                    ctx.completeNow();
+                })));
+    }
+
+    @Test
+    @DisplayName("a single-history runner applies once through run() and reports nothing pending through migrate()")
+    void single_runThenMigrateAppliesOnce(Vertx vertx, VertxTestContext ctx) throws Exception {
+        String database = freshDatabase();
+        FlywayConfig config = FlywayConfig.builder()
+                .mode(FlywayMode.MIGRATE)
+                .locations(List.of(GOOD))
+                .build();
+        FlywayMigrationRunner runner = runner(config, database);
+
+        runner.run(vertx)
+                .compose(report -> {
+                    ctx.verify(() -> assertEquals(1, report.instances().get(0).migrationsApplied()));
+                    return runner.migrate(vertx);
+                })
+                .onComplete(ctx.succeeding(second -> ctx.verify(() -> {
+                    assertEquals(new MigrationResult(0, null), second);
+                    assertEquals(1, countRows(database, "flyway_it_marker"));
+                    ctx.completeNow();
+                })));
+    }
+
+    @Test
+    @DisplayName("named false with empty instances runs the single-history Flyway and ignores wired declarations")
+    void run_namedFalseWithEmptyInstancesRunsSingleHistory(Vertx vertx, VertxTestContext ctx) throws Exception {
+        String database = freshDatabase();
+        FlywayConfig config = FlywayConfig.builder()
+                .mode(FlywayMode.MIGRATE)
+                .locations(List.of(GOOD))
+                .named(false)
+                .instances(List.of())
+                .build();
+        // a wired declaration whose location holds a failing migration: it must never run
+        MigrationDefinition wired = new MigrationDefinition("wired", List.of(BROKEN), List.of());
+        FlywayMigrationRunner runner = new FlywayMigrationRunner(
+                config, poolConfig(database), new LinkedHashSet<>(List.of(wired)), new DbSchemas(Map.of()));
+
+        runner.run(vertx)
+                .onComplete(ctx.succeeding(report -> ctx.verify(() -> {
+                    MigrationInstanceResult entry = onlySingleEntry(report, null, "flyway_schema_history");
+                    assertEquals(MigrationStatus.MIGRATED, entry.status());
+                    assertEquals(1, entry.migrationsApplied());
+                    assertEquals(
+                            List.of(GOOD), entry.instance().locations(), "the root locations, not the declaration's");
+                    assertTrue(historyExists(database, "public", "flyway_schema_history"));
+                    assertFalse(historyExists(database, "public", "flyway_schema_history_wired"));
+                    assertEquals(List.of(), runner.instances());
+                    ctx.completeNow();
+                })));
+    }
+
+    @Test
+    @DisplayName("instance overrides without named fail run() and migrate() as configuration and touch nothing")
+    void overridesWithoutNamedFailBeforeAnythingIsWritten(Vertx vertx, VertxTestContext ctx) throws Exception {
+        String database = freshDatabase();
+        FlywayConfig config = FlywayConfig.builder()
+                .mode(FlywayMode.MIGRATE)
+                .locations(List.of(GOOD))
+                .instances(List.of(new FlywayInstanceConfig(
+                        "job", null, null, null, null, null, null, null, null, null, null, null, null, null)))
+                .build();
+        FlywayMigrationRunner runner = runner(config, database);
+        String expected = "Named migration configuration failed: flyway.instances overrides require flyway.named";
+
+        runner.run(vertx)
+                .transform(ran -> {
+                    ctx.verify(() -> {
+                        assertTrue(ran.failed(), "run() must not run the single-history Flyway");
+                        MigrationRunException failure = assertInstanceOf(MigrationRunException.class, ran.cause());
+                        assertEquals(MigrationRunException.Stage.CONFIGURATION, failure.stage());
+                        assertEquals(expected, failure.getMessage());
+                        assertNull(failure.report());
+                    });
+                    return runner.migrate(vertx);
+                })
+                .onComplete(ctx.failing(failure -> ctx.verify(() -> {
+                    MigrationRunException migrated = assertInstanceOf(MigrationRunException.class, failure);
+                    assertEquals(MigrationRunException.Stage.CONFIGURATION, migrated.stage());
+                    assertEquals(expected, migrated.getMessage());
+                    assertFalse(historyExists(database, "public", "flyway_schema_history"));
+                    assertFalse(historyExists(database, "public", "flyway_it_marker"));
                     ctx.completeNow();
                 })));
     }

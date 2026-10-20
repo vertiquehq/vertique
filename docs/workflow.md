@@ -92,7 +92,7 @@ Common side effects are service dispatch, timer scheduling, and workflow events.
 | Module doc | Artifact | Purpose |
 |---|---|---|
 | [workflow-core.md](../vertique-workflow/vertique-workflow-core/src/main/resources/META-INF/vertique/module.md) | `vertique-workflow-core` | Public APIs, builder DSL, registry, contracts, task/timer/side-effect SPIs |
-| [workflow-postgresql.md](../vertique-workflow/vertique-workflow-postgresql/src/main/resources/META-INF/vertique/module.md) | `vertique-workflow-postgresql` | Durable Postgres engine and stores |
+| [workflow-postgresql.md](../vertique-workflow/vertique-workflow-postgresql/src/main/resources/META-INF/vertique/module.md) | `vertique-workflow-postgresql` | Durable Postgres engine and stores, the workflow schema migration declaration (`WorkflowMigrationsModule`) and the optional `db.schemas.workflow` placement |
 | [workflow-services.md](../vertique-workflow/vertique-workflow-services/src/main/resources/META-INF/vertique/module.md) | `vertique-workflow-services` | Service-dispatch outbox recorder and workflow signal service contract |
 | [workflow-delayed.md](../vertique-workflow/vertique-workflow-delayed/src/main/resources/META-INF/vertique/module.md) | `vertique-workflow-delayed` | Durable timers through delayed jobs and cron recovery |
 | [workflow-tasks.md](../vertique-workflow/vertique-workflow-tasks/src/main/resources/META-INF/vertique/module.md) | `vertique-workflow-tasks` | Application-facing task list/get/complete/reassign API |
@@ -107,14 +107,15 @@ Common side effects are service dispatch, timer scheduling, and workflow events.
 | Need | Install |
 |---|---|
 | Define workflows and use core APIs | `WorkflowCoreModule` |
-| Persist and execute workflows | `WorkflowPostgresqlModule` |
+| Persist and execute workflows | `WorkflowPostgresqlModule` (also contributes the workflow schema migration declaration) |
+| Run the workflow schema migration without starting the application | `WorkflowMigrationsModule` in a migration-only component (see below) |
 | Dispatch workflow service calls | `WorkflowServicesModule` plus transactional messaging service relay |
 | Wait on timers or signal timeouts | `WorkflowDelayedModule`, delayed jobs, persistent cron |
 | Human task inbox/actions | `WorkflowTasksModule` |
 | Emit workflow lifecycle events | `WorkflowEventsModule` plus an outbox destination binding |
 | Load YAML/JSON definitions | `WorkflowDefinitionModule` |
 | Describe and pre-validate decision and start payloads | `WorkflowSchemaModule` |
-| Migrate in-flight instances between versions | `WorkflowMigrationModule` with migration handlers |
+| Migrate in-flight instances between versions | `WorkflowMigrationModule` with migration handlers (not `WorkflowMigrationsModule`: see below) |
 
 Most production workflow apps install core, postgresql, services, transactional messaging, database modules, and then add delayed/tasks/events/definition based on the workflow features they use.
 
@@ -133,8 +134,9 @@ Minimal durable service-orchestration setup:
     WorkflowServicesModule.class,
     TransactionalMessagingPostgresqlModule.class,
     TransactionalMessagingServiceModule.class,
+    DbModule.class,           // pool configuration and the optional db.schemas placement
     DbPostgresqlModule.class,
-    DbFlywayModule.class,
+    DbFlywayModule.class,     // only when the application runs the migration at startup
     AppModule.class
 })
 public interface AppComponent {
@@ -158,6 +160,7 @@ Add human tasks and timers:
     CronPersistenceModule.class,
     TransactionalMessagingPostgresqlModule.class,
     TransactionalMessagingServiceModule.class,
+    DbModule.class,
     DbPostgresqlModule.class,
     DbFlywayModule.class,
     AppModule.class
@@ -189,6 +192,14 @@ public interface AppComponent {
 ```
 
 Exact wiring depends on the application's persistence, messaging, delayed-job, and event-destination modules.
+
+### Schema placement and migrations
+
+The workflow tables live in the connection's default schema unless `db.schemas.workflow` maps them to another one. With `DbModule` installed, that single setting places all eight PostgreSQL workflow stores and, in named Flyway mode (`flyway.named`), the migration itself, so the migration and every statement agree. Without the entry, SQL stays unqualified. Components that migrate and components that run the workflows read the same `db.schemas` configuration.
+
+The migration can run without the application: a migration-only component installs `DbModule`, `DbFlywayModule` and `WorkflowMigrationsModule` (plus the declaration modules of the other instances it migrates), needs no connection pool, and calls `FlywayMigrationRunner.run(vertx)` from a deploy step or job. The runtime component then installs `DbModule` and `DbPostgresqlModule` and needs no Flyway module unless it migrates at startup. See the [workflow-postgresql reference](../vertique-workflow/vertique-workflow-postgresql/src/main/resources/META-INF/vertique/module.md#flyway-configuration) for the configuration, the legacy single-Flyway mode and the class loader the runner uses.
+
+Do not confuse the two similarly named modules: `WorkflowMigrationsModule` (plural, in `vertique-workflow-postgresql`) declares the database schema migration, while `WorkflowMigrationModule` (singular, in `vertique-workflow-core`) wires migration of in-flight workflow instances between definition versions.
 
 ---
 
