@@ -3,8 +3,10 @@
 
 package dev.vertique.workflow.postgresql.tasks;
 
+import dev.vertique.db.DbSchemas;
 import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.postgresql.PgSqlRepository;
+import dev.vertique.db.postgresql.PgTableNames;
 import dev.vertique.db.query.OrderKey;
 import dev.vertique.db.query.PageCursor;
 import dev.vertique.db.query.PagedResult;
@@ -59,43 +61,37 @@ import java.util.UUID;
 @Singleton
 public final class PgTaskStore extends PgSqlRepository implements TaskStore<SqlClient> {
 
-    // --- SQL constants ---
+    /** Name of the migration instance whose schema mapping places the workflow tables. */
+    private static final String INSTANCE_NAME = "workflow";
 
-    private static final String SQL_INSERT = "INSERT INTO workflow_tasks"
-            + " (task_id, workflow_id, step_id, status, assignee_type, assignee_key,"
-            + " decisions_snapshot_json, due_at, due_date_timer_id, subject_version_at_creation,"
-            + " created_at, updated_at, branch_token_id, fork_step_id, branch_id, tenant_key)"
-            + " VALUES ($1, $2, $3, 'OPEN', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,"
-            + " (SELECT tenant_key FROM workflow_instances WHERE id = $2))";
+    // --- SQL statements ---
+    //
+    // The statements are built once at construction because every table reference is qualified with
+    // the schema mapped for the workflow instance (when there is one), so the text depends on the
+    // configured placement rather than being a compile-time constant.
 
-    private static final String SQL_SELECT_ALL_COLUMNS =
-            "SELECT task_id, workflow_id, step_id, status, assignee_type, assignee_key,"
-                    + " decisions_snapshot_json, decision_name, decision_payload_json,"
-                    + " completed_by, cancelled_by, reassigned_by, reassignment_reason,"
-                    + " due_at, due_date_timer_id,"
-                    + " completed_at, cancelled_at, expired_at, cancellation_reason,"
-                    + " subject_version_at_creation,"
-                    + " branch_token_id, fork_step_id, branch_id,"
-                    + " created_at, updated_at, tenant_key"
-                    + " FROM workflow_tasks";
+    private final String sqlInsert;
+    private final String sqlSelectAllColumns;
 
-    private static final String SQL_FIND_BY_ID = SQL_SELECT_ALL_COLUMNS + " WHERE task_id = $1";
+    /**
+     * Column list of {@link #findByFilter} when a subject filter joins the owning workflow instance:
+     * every task column qualified by the {@code wt} correlation name, from the tasks table joined to
+     * the instances table as {@code wi}.
+     */
+    private final String sqlSelectJoinedColumns;
 
-    private static final String SQL_LOCK_FOR_COMPLETION = SQL_SELECT_ALL_COLUMNS + " WHERE task_id = $1 FOR UPDATE";
+    /**
+     * Opening of the correlated {@code NOT EXISTS} predicate that {@link #findByFilter} uses to
+     * exclude tasks of archived workflow instances when no subject filter joins the instances
+     * table; the caller appends the correlated {@code workflow_id} column and the closing predicate.
+     */
+    private final String sqlNotArchivedPrefix;
 
-    private static final String SQL_MARK_COMPLETED = "UPDATE workflow_tasks"
-            + " SET status = 'COMPLETED', decision_name = $2, decision_payload_json = $3::jsonb,"
-            + " completed_at = $4, completed_by = $5, updated_at = $6"
-            + " WHERE task_id = $1 AND status = 'OPEN'";
-
-    private static final String SQL_MARK_CANCELLED = "UPDATE workflow_tasks"
-            + " SET status = 'CANCELLED', cancellation_reason = $2,"
-            + " cancelled_at = $3, cancelled_by = $4, updated_at = $5"
-            + " WHERE task_id = $1 AND status = 'OPEN'";
-
-    private static final String SQL_MARK_EXPIRED =
-            "UPDATE workflow_tasks SET status = 'EXPIRED', expired_at = $2, updated_at = $3"
-                    + " WHERE task_id = $1 AND status = 'OPEN'";
+    private final String sqlFindById;
+    private final String sqlLockForCompletion;
+    private final String sqlMarkCompleted;
+    private final String sqlMarkCancelled;
+    private final String sqlMarkExpired;
 
     /**
      * Race-safe atomic increment of {@code reminders_fired_count}, gated on the task still being
@@ -103,15 +99,10 @@ public final class PgTaskStore extends PgSqlRepository implements TaskStore<SqlC
      * has already terminated. The single UPDATE acquires a row lock per fire, naturally serializing
      * concurrent reminder fires for the same task without an external lock.
      */
-    private static final String SQL_INCREMENT_REMINDERS_FIRED_COUNT =
-            "UPDATE workflow_tasks SET reminders_fired_count = reminders_fired_count + 1, updated_at = $2"
-                    + " WHERE task_id = $1 AND status = 'OPEN'"
-                    + " RETURNING reminders_fired_count";
+    private final String sqlIncrementRemindersFiredCount;
 
-    private static final String SQL_SELECT_STATUS = "SELECT status FROM workflow_tasks WHERE task_id = $1";
-
-    private static final String SQL_FIND_OPEN_BY_BRANCH_TOKEN =
-            SQL_SELECT_ALL_COLUMNS + " WHERE branch_token_id = $1 AND status = 'OPEN'";
+    private final String sqlSelectStatus;
+    private final String sqlFindOpenByBranchToken;
 
     /**
      * Single-round-trip reassignment: returns old assignment + new assignment + FK references so
@@ -120,21 +111,13 @@ public final class PgTaskStore extends PgSqlRepository implements TaskStore<SqlC
      *
      * <p>Uses a CTE to capture the pre-update state and exposes it via subquery in {@code RETURNING}.
      */
-    private static final String SQL_REASSIGN =
-            "WITH old AS (SELECT assignee_type, assignee_key FROM workflow_tasks WHERE task_id = $1)"
-                    + " UPDATE workflow_tasks SET"
-                    + " assignee_type = $2, assignee_key = $3,"
-                    + " reassigned_by = $4,"
-                    + " reassignment_reason = $5, updated_at = $6"
-                    + " WHERE task_id = $1 AND status = 'OPEN'"
-                    + " RETURNING workflow_id, step_id,"
-                    + " (SELECT assignee_type FROM old) AS old_kind,"
-                    + " (SELECT assignee_key FROM old) AS old_value";
+    private final String sqlReassign;
 
     // --- Constructor ---
 
     /**
-     * Creates a new store with the given pool and exception mapper.
+     * Creates a new store with the given pool and exception mapper, whose tables are not
+     * schema-qualified, so they resolve through the connection's default schema.
      *
      * <p>JSONB columns ({@code decisions_snapshot_json}, {@code completed_by}, {@code cancelled_by},
      * {@code reassigned_by}) are read and written as Vert.x {@link JsonObject} / {@link JsonArray},
@@ -147,7 +130,97 @@ public final class PgTaskStore extends PgSqlRepository implements TaskStore<SqlC
      */
     @Inject
     public PgTaskStore(Pool pool, PgDbExceptionMapper exceptionMapper) {
+        this(pool, exceptionMapper, DbSchemas.empty());
+    }
+
+    /**
+     * Creates a new store that qualifies every table reference with the schema mapped to the
+     * {@code workflow} instance, when {@code schemas} holds one. Without a mapping the statements
+     * are identical to those of the two-argument constructor. Correlation names such as {@code wt}
+     * and {@code wi} are unchanged.
+     *
+     * @param pool            the PostgreSQL connection pool (used by the paged-query builder for
+     *                        {@link #findByFilter})
+     * @param exceptionMapper the mapper used to translate SQL errors into typed domain exceptions
+     * @param schemas         the schema placement; an empty mapping leaves table names unqualified
+     * @throws IllegalArgumentException if the mapped schema name is not a valid single-segment
+     *                                  PostgreSQL identifier
+     */
+    public PgTaskStore(Pool pool, PgDbExceptionMapper exceptionMapper, DbSchemas schemas) {
         super(pool, exceptionMapper);
+
+        String tasks = PgTableNames.qualify(schemas, INSTANCE_NAME, "workflow_tasks");
+        String instances = PgTableNames.qualify(schemas, INSTANCE_NAME, "workflow_instances");
+
+        this.sqlInsert = "INSERT INTO " + tasks
+                + " (task_id, workflow_id, step_id, status, assignee_type, assignee_key,"
+                + " decisions_snapshot_json, due_at, due_date_timer_id, subject_version_at_creation,"
+                + " created_at, updated_at, branch_token_id, fork_step_id, branch_id, tenant_key)"
+                + " VALUES ($1, $2, $3, 'OPEN', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,"
+                + " (SELECT tenant_key FROM " + instances + " WHERE id = $2))";
+
+        this.sqlSelectAllColumns = "SELECT task_id, workflow_id, step_id, status, assignee_type, assignee_key,"
+                + " decisions_snapshot_json, decision_name, decision_payload_json,"
+                + " completed_by, cancelled_by, reassigned_by, reassignment_reason,"
+                + " due_at, due_date_timer_id,"
+                + " completed_at, cancelled_at, expired_at, cancellation_reason,"
+                + " subject_version_at_creation,"
+                + " branch_token_id, fork_step_id, branch_id,"
+                + " created_at, updated_at, tenant_key"
+                + " FROM " + tasks;
+
+        this.sqlSelectJoinedColumns = "SELECT wt.task_id, wt.workflow_id, wt.step_id, wt.status,"
+                + " wt.assignee_type, wt.assignee_key,"
+                + " wt.decisions_snapshot_json, wt.decision_name, wt.decision_payload_json,"
+                + " wt.completed_by, wt.cancelled_by, wt.reassigned_by, wt.reassignment_reason,"
+                + " wt.due_at, wt.due_date_timer_id,"
+                + " wt.completed_at, wt.cancelled_at, wt.expired_at, wt.cancellation_reason,"
+                + " wt.subject_version_at_creation,"
+                + " wt.branch_token_id, wt.fork_step_id, wt.branch_id,"
+                + " wt.created_at, wt.updated_at, wt.tenant_key"
+                + " FROM " + tasks + " wt"
+                // The joined side exposes only the columns the filters read, so the unqualified
+                // keyset columns (updated_at, task_id) stay unambiguous on every page.
+                + " JOIN (SELECT id, subject_type, subject_id, archived_at FROM " + instances + ") wi"
+                + " ON wt.workflow_id = wi.id";
+
+        this.sqlNotArchivedPrefix = " NOT EXISTS (SELECT 1 FROM " + instances + " wi2 WHERE wi2.id = ";
+
+        this.sqlFindById = sqlSelectAllColumns + " WHERE task_id = $1";
+
+        this.sqlLockForCompletion = sqlSelectAllColumns + " WHERE task_id = $1 FOR UPDATE";
+
+        this.sqlMarkCompleted = "UPDATE " + tasks
+                + " SET status = 'COMPLETED', decision_name = $2, decision_payload_json = $3::jsonb,"
+                + " completed_at = $4, completed_by = $5, updated_at = $6"
+                + " WHERE task_id = $1 AND status = 'OPEN'";
+
+        this.sqlMarkCancelled = "UPDATE " + tasks
+                + " SET status = 'CANCELLED', cancellation_reason = $2,"
+                + " cancelled_at = $3, cancelled_by = $4, updated_at = $5"
+                + " WHERE task_id = $1 AND status = 'OPEN'";
+
+        this.sqlMarkExpired = "UPDATE " + tasks + " SET status = 'EXPIRED', expired_at = $2, updated_at = $3"
+                + " WHERE task_id = $1 AND status = 'OPEN'";
+
+        this.sqlIncrementRemindersFiredCount = "UPDATE " + tasks
+                + " SET reminders_fired_count = reminders_fired_count + 1, updated_at = $2"
+                + " WHERE task_id = $1 AND status = 'OPEN'"
+                + " RETURNING reminders_fired_count";
+
+        this.sqlSelectStatus = "SELECT status FROM " + tasks + " WHERE task_id = $1";
+
+        this.sqlFindOpenByBranchToken = sqlSelectAllColumns + " WHERE branch_token_id = $1 AND status = 'OPEN'";
+
+        this.sqlReassign = "WITH old AS (SELECT assignee_type, assignee_key FROM " + tasks + " WHERE task_id = $1)"
+                + " UPDATE " + tasks + " SET"
+                + " assignee_type = $2, assignee_key = $3,"
+                + " reassigned_by = $4,"
+                + " reassignment_reason = $5, updated_at = $6"
+                + " WHERE task_id = $1 AND status = 'OPEN'"
+                + " RETURNING workflow_id, step_id,"
+                + " (SELECT assignee_type FROM old) AS old_kind,"
+                + " (SELECT assignee_key FROM old) AS old_value";
     }
 
     // --- TaskStore implementation ---
@@ -191,7 +264,7 @@ public final class PgTaskStore extends PgSqlRepository implements TaskStore<SqlC
                 record.forkStepId(),
                 record.branchId());
 
-        return tx.preparedQuery(SQL_INSERT)
+        return tx.preparedQuery(sqlInsert)
                 .execute(params)
                 .<Void>mapEmpty()
                 .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_tasks insertOpen")));
@@ -207,7 +280,7 @@ public final class PgTaskStore extends PgSqlRepository implements TaskStore<SqlC
      */
     @Override
     public Future<Optional<TaskRecord>> lockForCompletion(UUID taskId, SqlClient tx) {
-        return tx.preparedQuery(SQL_LOCK_FOR_COMPLETION)
+        return tx.preparedQuery(sqlLockForCompletion)
                 .execute(Tuple.of(taskId))
                 .<Optional<TaskRecord>>map(rs -> {
                     var it = rs.iterator();
@@ -234,7 +307,7 @@ public final class PgTaskStore extends PgSqlRepository implements TaskStore<SqlC
         Instant now = completedAt != null ? completedAt : Instant.now();
         Tuple params =
                 Tuple.of(taskId, decisionName, payloadJson, toOffsetDateTime(now), actorJson, toOffsetDateTime(now));
-        return tx.preparedQuery(SQL_MARK_COMPLETED)
+        return tx.preparedQuery(sqlMarkCompleted)
                 .execute(params)
                 .compose(rs -> rs.rowCount() == 1
                         ? Future.succeededFuture(TaskTransition.APPLIED)
@@ -254,7 +327,7 @@ public final class PgTaskStore extends PgSqlRepository implements TaskStore<SqlC
         JsonObject actorJson = actorJson(cancelledBy);
         Instant now = cancelledAt != null ? cancelledAt : Instant.now();
         Tuple params = Tuple.of(taskId, reason, toOffsetDateTime(now), actorJson, toOffsetDateTime(now));
-        return tx.preparedQuery(SQL_MARK_CANCELLED)
+        return tx.preparedQuery(sqlMarkCancelled)
                 .execute(params)
                 .compose(rs -> rs.rowCount() == 1
                         ? Future.succeededFuture(TaskTransition.APPLIED)
@@ -272,7 +345,7 @@ public final class PgTaskStore extends PgSqlRepository implements TaskStore<SqlC
     public Future<TaskTransition> markExpired(UUID taskId, Instant expiredAt, SqlClient tx) {
         Instant now = expiredAt != null ? expiredAt : Instant.now();
         Tuple params = Tuple.of(taskId, toOffsetDateTime(now), toOffsetDateTime(now));
-        return tx.preparedQuery(SQL_MARK_EXPIRED)
+        return tx.preparedQuery(sqlMarkExpired)
                 .execute(params)
                 .compose(rs -> rs.rowCount() == 1
                         ? Future.succeededFuture(TaskTransition.APPLIED)
@@ -303,7 +376,7 @@ public final class PgTaskStore extends PgSqlRepository implements TaskStore<SqlC
         Instant now = updatedAt != null ? updatedAt : Instant.now();
         Tuple params = Tuple.of(taskId, newKind, newValue, actorJson, normalizedReason, toOffsetDateTime(now));
 
-        return tx.preparedQuery(SQL_REASSIGN)
+        return tx.preparedQuery(sqlReassign)
                 .execute(params)
                 .compose(rs -> {
                     if (rs.rowCount() == 0) {
@@ -345,22 +418,9 @@ public final class PgTaskStore extends PgSqlRepository implements TaskStore<SqlC
         // archived-filter uses a NOT EXISTS subquery instead of a JOIN for the same reason.
         boolean needsInstanceJoin = filter.subjectType() != null || filter.subjectId() != null;
 
-        StringBuilder sql = new StringBuilder(SQL_SELECT_ALL_COLUMNS);
+        StringBuilder sql = new StringBuilder(sqlSelectAllColumns);
         if (needsInstanceJoin) {
-            sql = new StringBuilder("SELECT wt.task_id, wt.workflow_id, wt.step_id, wt.status,"
-                    + " wt.assignee_type, wt.assignee_key,"
-                    + " wt.decisions_snapshot_json, wt.decision_name, wt.decision_payload_json,"
-                    + " wt.completed_by, wt.cancelled_by, wt.reassigned_by, wt.reassignment_reason,"
-                    + " wt.due_at, wt.due_date_timer_id,"
-                    + " wt.completed_at, wt.cancelled_at, wt.expired_at, wt.cancellation_reason,"
-                    + " wt.subject_version_at_creation,"
-                    + " wt.branch_token_id, wt.fork_step_id, wt.branch_id,"
-                    + " wt.created_at, wt.updated_at, wt.tenant_key"
-                    + " FROM workflow_tasks wt"
-                    // The joined side exposes only the columns the filters read, so the unqualified
-                    // keyset columns (updated_at, task_id) stay unambiguous on every page.
-                    + " JOIN (SELECT id, subject_type, subject_id, archived_at FROM workflow_instances) wi"
-                    + " ON wt.workflow_id = wi.id");
+            sql = new StringBuilder(sqlSelectJoinedColumns);
         }
 
         List<Object> paramValues = new ArrayList<>();
@@ -437,7 +497,7 @@ public final class PgTaskStore extends PgSqlRepository implements TaskStore<SqlC
             if (needsInstanceJoin) {
                 sql.append(" wi.archived_at IS NULL");
             } else {
-                sql.append(" NOT EXISTS (SELECT 1 FROM workflow_instances wi2 WHERE wi2.id = ")
+                sql.append(sqlNotArchivedPrefix)
                         .append(colPrefix)
                         .append("workflow_id AND wi2.archived_at IS NOT NULL)");
             }
@@ -466,7 +526,7 @@ public final class PgTaskStore extends PgSqlRepository implements TaskStore<SqlC
      */
     @Override
     public Future<Optional<TaskRecord>> findById(UUID taskId, SqlClient tx) {
-        return tx.preparedQuery(SQL_FIND_BY_ID)
+        return tx.preparedQuery(sqlFindById)
                 .execute(Tuple.of(taskId))
                 .<Optional<TaskRecord>>map(rs -> {
                     var it = rs.iterator();
@@ -483,7 +543,7 @@ public final class PgTaskStore extends PgSqlRepository implements TaskStore<SqlC
      */
     @Override
     public Future<List<TaskRecord>> findOpenByBranchToken(UUID branchTokenId, SqlClient tx) {
-        return tx.preparedQuery(SQL_FIND_OPEN_BY_BRANCH_TOKEN)
+        return tx.preparedQuery(sqlFindOpenByBranchToken)
                 .execute(Tuple.of(branchTokenId))
                 .<List<TaskRecord>>map(rs -> {
                     List<TaskRecord> records = new ArrayList<>();
@@ -499,7 +559,7 @@ public final class PgTaskStore extends PgSqlRepository implements TaskStore<SqlC
     @Override
     public Future<Optional<Integer>> incrementRemindersFiredCount(UUID taskId, SqlClient tx) {
         Tuple params = Tuple.of(taskId, toOffsetDateTime(Instant.now()));
-        return tx.preparedQuery(SQL_INCREMENT_REMINDERS_FIRED_COUNT)
+        return tx.preparedQuery(sqlIncrementRemindersFiredCount)
                 .execute(params)
                 .<Optional<Integer>>map(rs -> {
                     var it = rs.iterator();
@@ -524,7 +584,7 @@ public final class PgTaskStore extends PgSqlRepository implements TaskStore<SqlC
      * @return a {@link Future} resolving to the appropriate {@code LOST_TO_*} transition
      */
     private Future<TaskTransition> classifyLostTransition(UUID taskId, SqlClient tx) {
-        return tx.preparedQuery(SQL_SELECT_STATUS).execute(Tuple.of(taskId)).map(rs -> {
+        return tx.preparedQuery(sqlSelectStatus).execute(Tuple.of(taskId)).map(rs -> {
             var it = rs.iterator();
             if (!it.hasNext()) {
                 // Row no longer exists — treat as LOST_TO_COMPLETED (already past OPEN).

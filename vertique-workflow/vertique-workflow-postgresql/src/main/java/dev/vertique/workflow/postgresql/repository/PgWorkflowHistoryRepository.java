@@ -3,8 +3,10 @@
 
 package dev.vertique.workflow.postgresql.repository;
 
+import dev.vertique.db.DbSchemas;
 import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.postgresql.PgSqlRepository;
+import dev.vertique.db.postgresql.PgTableNames;
 import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.state.WorkflowHistoryEntry;
@@ -33,35 +35,62 @@ import java.util.List;
 @Singleton
 public final class PgWorkflowHistoryRepository extends PgSqlRepository implements WorkflowHistoryRepository<SqlClient> {
 
-    // --- SQL constants ---
+    /** Name of the migration instance whose schema mapping places the workflow tables. */
+    private static final String INSTANCE_NAME = "workflow";
 
-    private static final String SQL_APPEND =
-            "INSERT INTO workflow_history (workflow_id, sequence, entry_type, payload_json, recorded_at)"
-                    + " VALUES ($1, $2, $3, $4, $5)";
+    // --- SQL statements ---
+    //
+    // The statements are built once at construction because every table reference is qualified with
+    // the schema mapped for the workflow instance (when there is one), so the text depends on the
+    // configured placement rather than being a compile-time constant.
 
-    private static final String SQL_NEXT_SEQUENCE =
-            "SELECT COALESCE(MAX(sequence), 0) + 1 AS next_seq FROM workflow_history WHERE workflow_id = $1";
-
-    private static final String SQL_LIST_BY_INSTANCE =
-            "SELECT workflow_id, sequence, entry_type, payload_json, recorded_at"
-                    + " FROM workflow_history WHERE workflow_id = $1 ORDER BY sequence ASC";
-
-    private static final String SQL_LIST_RECENT_BY_INSTANCE =
-            "SELECT workflow_id, sequence, entry_type, payload_json, recorded_at"
-                    + " FROM workflow_history WHERE workflow_id = $1"
-                    + " ORDER BY sequence DESC LIMIT $2";
+    private final String sqlAppend;
+    private final String sqlNextSequence;
+    private final String sqlListByInstance;
+    private final String sqlListRecentByInstance;
 
     // --- Constructor ---
 
     /**
-     * Creates a new repository with the given connection pool and exception mapper.
+     * Creates a new repository whose table is not schema-qualified, so it resolves through the
+     * connection's default schema.
      *
      * @param pool   the PostgreSQL connection pool
      * @param mapper the exception mapper for translating SQL errors to domain exceptions
      */
     @Inject
     public PgWorkflowHistoryRepository(Pool pool, PgDbExceptionMapper mapper) {
+        this(pool, mapper, DbSchemas.empty());
+    }
+
+    /**
+     * Creates a new repository that qualifies every table reference with the schema mapped to the
+     * {@code workflow} instance, when {@code schemas} holds one. Without a mapping the statements
+     * are identical to those of the two-argument constructor.
+     *
+     * @param pool    the PostgreSQL connection pool
+     * @param mapper  the exception mapper for translating SQL errors to domain exceptions
+     * @param schemas the schema placement; an empty mapping leaves table names unqualified
+     * @throws IllegalArgumentException if the mapped schema name is not a valid single-segment
+     *                                  PostgreSQL identifier
+     */
+    public PgWorkflowHistoryRepository(Pool pool, PgDbExceptionMapper mapper, DbSchemas schemas) {
         super(pool, mapper);
+
+        String history = PgTableNames.qualify(schemas, INSTANCE_NAME, "workflow_history");
+
+        this.sqlAppend = "INSERT INTO " + history + " (workflow_id, sequence, entry_type, payload_json, recorded_at)"
+                + " VALUES ($1, $2, $3, $4, $5)";
+
+        this.sqlNextSequence =
+                "SELECT COALESCE(MAX(sequence), 0) + 1 AS next_seq FROM " + history + " WHERE workflow_id = $1";
+
+        this.sqlListByInstance = "SELECT workflow_id, sequence, entry_type, payload_json, recorded_at" + " FROM "
+                + history + " WHERE workflow_id = $1 ORDER BY sequence ASC";
+
+        this.sqlListRecentByInstance = "SELECT workflow_id, sequence, entry_type, payload_json, recorded_at"
+                + " FROM " + history + " WHERE workflow_id = $1"
+                + " ORDER BY sequence DESC LIMIT $2";
     }
 
     // --- Write operations ---
@@ -84,7 +113,7 @@ public final class PgWorkflowHistoryRepository extends PgSqlRepository implement
         // any future query predicates that need them.
         JsonObject payloadJsonObject = new JsonObject(e.payloadJson());
         Tuple params = Tuple.of(e.instanceId().value(), e.sequence(), e.entryType(), payloadJsonObject, recordedAt);
-        return tx.preparedQuery(SQL_APPEND)
+        return tx.preparedQuery(sqlAppend)
                 .execute(params)
                 .<Void>mapEmpty()
                 .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_history append")));
@@ -105,7 +134,7 @@ public final class PgWorkflowHistoryRepository extends PgSqlRepository implement
      */
     @Override
     public Future<Long> nextSequence(WorkflowInstanceId id, SqlClient tx) {
-        return tx.preparedQuery(SQL_NEXT_SEQUENCE)
+        return tx.preparedQuery(sqlNextSequence)
                 .execute(Tuple.of(id.value()))
                 .map(rs -> rs.iterator().next().getLong("next_seq"))
                 .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_history nextSequence")));
@@ -128,7 +157,7 @@ public final class PgWorkflowHistoryRepository extends PgSqlRepository implement
      */
     @Override
     public Future<List<WorkflowHistoryEntry>> listRecentByInstance(WorkflowInstanceId id, int limit, SqlClient tx) {
-        return tx.preparedQuery(SQL_LIST_RECENT_BY_INSTANCE)
+        return tx.preparedQuery(sqlListRecentByInstance)
                 .execute(Tuple.of(id.value(), limit))
                 .map(rs -> {
                     List<WorkflowHistoryEntry> entries = new ArrayList<>();
@@ -165,7 +194,7 @@ public final class PgWorkflowHistoryRepository extends PgSqlRepository implement
      */
     @Override
     public Future<List<WorkflowHistoryEntry>> listByInstance(WorkflowInstanceId id, SqlClient tx) {
-        return tx.preparedQuery(SQL_LIST_BY_INSTANCE)
+        return tx.preparedQuery(sqlListByInstance)
                 .execute(Tuple.of(id.value()))
                 .map(rs -> {
                     List<WorkflowHistoryEntry> entries = new ArrayList<>();

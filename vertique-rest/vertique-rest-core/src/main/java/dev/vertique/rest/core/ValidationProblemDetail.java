@@ -29,8 +29,8 @@ import lombok.experimental.SuperBuilder;
  *   "detail": "Request validation failed",
  *   "instance": "urn:uuid:5f1c3e0a-7b6d-4c1e-9d3a-2b8e4a7c9f10",
  *   "errors": [
- *     { "path": "/name", "detail": "must not be blank", "location": "body" },
- *     { "path": "/age",  "detail": "must be a positive integer", "location": "body" }
+ *     { "pointer": "/name", "detail": "must not be blank", "location": "body", "type": "required" },
+ *     { "parameter": "page", "detail": "must be greater than or equal to 1", "location": "query", "type": "min" }
  *   ]
  * }
  * }</pre>

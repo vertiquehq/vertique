@@ -4,8 +4,10 @@
 package dev.vertique.workflow.postgresql.repository;
 
 import dev.vertique.core.context.DurableMetadata;
+import dev.vertique.db.DbSchemas;
 import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.postgresql.PgSqlRepository;
+import dev.vertique.db.postgresql.PgTableNames;
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.state.BranchStatus;
@@ -38,44 +40,24 @@ import java.util.UUID;
 @Singleton
 public final class PgBranchTokenRepository extends PgSqlRepository implements BranchTokenRepository<SqlClient> {
 
-    private static final String SQL_INSERT =
-            "INSERT INTO workflow_branch_tokens (id, workflow_id, fork_step_id, branch_id, current_step_id, status,"
-                    + " wait_type, wait_key, wait_aux_id, result_json, error_type, error_message,"
-                    + " attempt_count, max_attempts, next_retry_at, last_error_type, last_error_message,"
-                    + " last_error_at, version, created_at, updated_at, metadata)"
-                    + " VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, $12, $13, $14, $15, $16, $17,"
-                    + " $18, $19, $20, $21, $22::jsonb)";
+    /** Name of the migration instance whose schema mapping places the workflow tables. */
+    private static final String INSTANCE_NAME = "workflow";
 
-    private static final String SQL_UPDATE_OPTIMISTIC = "UPDATE workflow_branch_tokens"
-            + " SET current_step_id = $1, status = $2, wait_type = $3, wait_key = $4, wait_aux_id = $5,"
-            + " result_json = $6::jsonb, error_type = $7, error_message = $8, attempt_count = $9,"
-            + " next_retry_at = $10, last_error_type = $11, last_error_message = $12, last_error_at = $13,"
-            + " version = $14, updated_at = $15, metadata = $16::jsonb"
-            + " WHERE id = $17 AND version = $18";
+    // --- SQL statements ---
+    //
+    // The statements are built once at construction because every table reference is qualified with
+    // the schema mapped for the workflow instance (when there is one), so the text depends on the
+    // configured placement rather than being a compile-time constant.
 
-    private static final String SQL_FIND_BY_ID = "SELECT * FROM workflow_branch_tokens WHERE id = $1";
-
-    private static final String SQL_FIND_BY_ID_FOR_UPDATE =
-            "SELECT * FROM workflow_branch_tokens WHERE id = $1 FOR UPDATE";
-
-    private static final String SQL_FIND_BY_WORKFLOW_AND_FORK =
-            "SELECT * FROM workflow_branch_tokens WHERE workflow_id = $1 AND fork_step_id = $2"
-                    + " ORDER BY created_at ASC, branch_id ASC";
-
-    private static final String SQL_FIND_BY_WORKFLOW =
-            "SELECT * FROM workflow_branch_tokens WHERE workflow_id = $1 ORDER BY created_at ASC, branch_id ASC";
-
-    private static final String SQL_FIND_RECOVERABLE =
-            "SELECT * FROM workflow_branch_tokens WHERE status = 'RETRY_SCHEDULED' AND next_retry_at <= $1"
-                    + " ORDER BY next_retry_at ASC LIMIT $2";
-
-    private static final String SQL_FIND_STALE_RUNNING =
-            "SELECT * FROM workflow_branch_tokens WHERE status = 'RUNNING' AND updated_at < $1"
-                    + " ORDER BY updated_at ASC LIMIT $2";
-
-    private static final String SQL_FIND_BY_WAIT =
-            "SELECT * FROM workflow_branch_tokens WHERE workflow_id = $1 AND fork_step_id = $2"
-                    + " AND branch_id = $3 AND wait_type = $4 AND wait_key = $5";
+    private final String sqlInsert;
+    private final String sqlUpdateOptimistic;
+    private final String sqlFindById;
+    private final String sqlFindByIdForUpdate;
+    private final String sqlFindByWorkflowAndFork;
+    private final String sqlFindByWorkflow;
+    private final String sqlFindRecoverable;
+    private final String sqlFindStaleRunning;
+    private final String sqlFindByWait;
 
     /**
      * Non-terminal statuses: RUNNING, WAITING, RETRY_SCHEDULED, COMPENSATING. SUPERSEDED is
@@ -83,20 +65,77 @@ public final class PgBranchTokenRepository extends PgSqlRepository implements Br
      * should already have been closed by that path; including it here would re-close already-closed
      * rows under workflow cancel.
      */
-    private static final String SQL_FIND_ACTIVE_BY_WORKFLOW =
-            "SELECT * FROM workflow_branch_tokens WHERE workflow_id = $1"
-                    + " AND status NOT IN ('COMPLETED','FAILED','CANCELLED','EXPIRED','SUPERSEDED','COMPENSATED')"
-                    + " ORDER BY created_at ASC, branch_id ASC";
+    private final String sqlFindActiveByWorkflow;
+
+    private final String sqlFindByStatus;
 
     /**
-     * Creates a new repository.
+     * Creates a new repository whose table is not schema-qualified, so it resolves through the
+     * connection's default schema.
      *
      * @param pool the connection pool
      * @param mapper exception mapper for translating SQL errors
      */
     @Inject
     public PgBranchTokenRepository(Pool pool, PgDbExceptionMapper mapper) {
+        this(pool, mapper, DbSchemas.empty());
+    }
+
+    /**
+     * Creates a new repository that qualifies every table reference with the schema mapped to the
+     * {@code workflow} instance, when {@code schemas} holds one. Without a mapping the statements
+     * are identical to those of the two-argument constructor.
+     *
+     * @param pool the connection pool
+     * @param mapper exception mapper for translating SQL errors
+     * @param schemas the schema placement; an empty mapping leaves table names unqualified
+     * @throws IllegalArgumentException if the mapped schema name is not a valid single-segment
+     *     PostgreSQL identifier
+     */
+    public PgBranchTokenRepository(Pool pool, PgDbExceptionMapper mapper, DbSchemas schemas) {
         super(pool, mapper);
+
+        String tokens = PgTableNames.qualify(schemas, INSTANCE_NAME, "workflow_branch_tokens");
+
+        this.sqlInsert =
+                "INSERT INTO " + tokens + " (id, workflow_id, fork_step_id, branch_id, current_step_id, status,"
+                        + " wait_type, wait_key, wait_aux_id, result_json, error_type, error_message,"
+                        + " attempt_count, max_attempts, next_retry_at, last_error_type, last_error_message,"
+                        + " last_error_at, version, created_at, updated_at, metadata)"
+                        + " VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, $12, $13, $14, $15, $16, $17,"
+                        + " $18, $19, $20, $21, $22::jsonb)";
+
+        this.sqlUpdateOptimistic = "UPDATE " + tokens
+                + " SET current_step_id = $1, status = $2, wait_type = $3, wait_key = $4, wait_aux_id = $5,"
+                + " result_json = $6::jsonb, error_type = $7, error_message = $8, attempt_count = $9,"
+                + " next_retry_at = $10, last_error_type = $11, last_error_message = $12, last_error_at = $13,"
+                + " version = $14, updated_at = $15, metadata = $16::jsonb"
+                + " WHERE id = $17 AND version = $18";
+
+        this.sqlFindById = "SELECT * FROM " + tokens + " WHERE id = $1";
+
+        this.sqlFindByIdForUpdate = "SELECT * FROM " + tokens + " WHERE id = $1 FOR UPDATE";
+
+        this.sqlFindByWorkflowAndFork = "SELECT * FROM " + tokens + " WHERE workflow_id = $1 AND fork_step_id = $2"
+                + " ORDER BY created_at ASC, branch_id ASC";
+
+        this.sqlFindByWorkflow =
+                "SELECT * FROM " + tokens + " WHERE workflow_id = $1 ORDER BY created_at ASC, branch_id ASC";
+
+        this.sqlFindRecoverable = "SELECT * FROM " + tokens
+                + " WHERE status = 'RETRY_SCHEDULED' AND next_retry_at <= $1" + " ORDER BY next_retry_at ASC LIMIT $2";
+
+        this.sqlFindStaleRunning = "SELECT * FROM " + tokens + " WHERE status = 'RUNNING' AND updated_at < $1"
+                + " ORDER BY updated_at ASC LIMIT $2";
+
+        this.sqlFindByWait = "SELECT * FROM " + tokens + " WHERE workflow_id = $1 AND fork_step_id = $2"
+                + " AND branch_id = $3 AND wait_type = $4 AND wait_key = $5";
+
+        this.sqlFindActiveByWorkflow = "SELECT * FROM " + tokens + " WHERE workflow_id = $1"
+                + " AND status NOT IN ('COMPLETED','FAILED','CANCELLED','EXPIRED','SUPERSEDED','COMPENSATED')"
+                + " ORDER BY created_at ASC, branch_id ASC";
+
+        this.sqlFindByStatus = "SELECT * FROM " + tokens + " WHERE status = $1" + " ORDER BY created_at ASC LIMIT $2";
     }
 
     // --- Mutations ---
@@ -110,7 +149,7 @@ public final class PgBranchTokenRepository extends PgSqlRepository implements Br
      */
     @Override
     public Future<Void> insert(BranchToken token, SqlClient tx) {
-        return tx.preparedQuery(SQL_INSERT)
+        return tx.preparedQuery(sqlInsert)
                 .execute(insertTuple(token))
                 .<Void>mapEmpty()
                 .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_branch_tokens insert")));
@@ -127,7 +166,7 @@ public final class PgBranchTokenRepository extends PgSqlRepository implements Br
      */
     @Override
     public Future<Integer> updateOptimistic(BranchToken updated, long expectedVersion, SqlClient tx) {
-        return tx.preparedQuery(SQL_UPDATE_OPTIMISTIC)
+        return tx.preparedQuery(sqlUpdateOptimistic)
                 .execute(Tuple.from(Arrays.asList(
                         updated.currentStepId(),
                         updated.status().name(),
@@ -163,7 +202,7 @@ public final class PgBranchTokenRepository extends PgSqlRepository implements Br
      */
     @Override
     public Future<Optional<BranchToken>> findById(UUID id, SqlClient tx) {
-        return tx.preparedQuery(SQL_FIND_BY_ID)
+        return tx.preparedQuery(sqlFindById)
                 .execute(Tuple.of(id))
                 .map(rs -> mapFirst(rs))
                 .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_branch_tokens findById")));
@@ -178,7 +217,7 @@ public final class PgBranchTokenRepository extends PgSqlRepository implements Br
      */
     @Override
     public Future<Optional<BranchToken>> findByIdForUpdate(UUID id, SqlClient tx) {
-        return tx.preparedQuery(SQL_FIND_BY_ID_FOR_UPDATE)
+        return tx.preparedQuery(sqlFindByIdForUpdate)
                 .execute(Tuple.of(id))
                 .map(rs -> mapFirst(rs))
                 .recover(t ->
@@ -195,7 +234,7 @@ public final class PgBranchTokenRepository extends PgSqlRepository implements Br
      */
     @Override
     public Future<List<BranchToken>> findByWorkflow(WorkflowInstanceId workflowId, SqlClient tx) {
-        return tx.preparedQuery(SQL_FIND_BY_WORKFLOW)
+        return tx.preparedQuery(sqlFindByWorkflow)
                 .execute(Tuple.of(workflowId.value()))
                 .map(rs -> mapAll(rs))
                 .recover(t ->
@@ -219,7 +258,7 @@ public final class PgBranchTokenRepository extends PgSqlRepository implements Br
      */
     @Override
     public Future<List<BranchToken>> findActiveByWorkflow(WorkflowInstanceId workflowId, SqlClient tx) {
-        return tx.preparedQuery(SQL_FIND_ACTIVE_BY_WORKFLOW)
+        return tx.preparedQuery(sqlFindActiveByWorkflow)
                 .execute(Tuple.of(workflowId.value()))
                 .map(rs -> mapAll(rs))
                 .recover(t -> Future.failedFuture(
@@ -238,7 +277,7 @@ public final class PgBranchTokenRepository extends PgSqlRepository implements Br
     @Override
     public Future<List<BranchToken>> findByWorkflowAndFork(
             WorkflowInstanceId workflowId, String forkStepId, SqlClient tx) {
-        return tx.preparedQuery(SQL_FIND_BY_WORKFLOW_AND_FORK)
+        return tx.preparedQuery(sqlFindByWorkflowAndFork)
                 .execute(Tuple.of(workflowId.value(), forkStepId))
                 .map(rs -> mapAll(rs))
                 .recover(t -> Future.failedFuture(
@@ -266,7 +305,7 @@ public final class PgBranchTokenRepository extends PgSqlRepository implements Br
             String waitType,
             String waitKey,
             SqlClient tx) {
-        return tx.preparedQuery(SQL_FIND_BY_WAIT)
+        return tx.preparedQuery(sqlFindByWait)
                 .execute(Tuple.of(workflowId.value(), forkStepId, branchId, waitType, waitKey))
                 .map(rs -> mapFirst(rs))
                 .recover(t -> Future.failedFuture(
@@ -284,7 +323,7 @@ public final class PgBranchTokenRepository extends PgSqlRepository implements Br
      */
     @Override
     public Future<List<BranchToken>> findRecoverable(Instant now, int limit, SqlClient tx) {
-        return tx.preparedQuery(SQL_FIND_RECOVERABLE)
+        return tx.preparedQuery(sqlFindRecoverable)
                 .execute(Tuple.of(toOdt(now), limit))
                 .map(rs -> mapAll(rs))
                 .recover(t ->
@@ -302,7 +341,7 @@ public final class PgBranchTokenRepository extends PgSqlRepository implements Br
      */
     @Override
     public Future<List<BranchToken>> findStaleRunning(Instant before, int limit, SqlClient tx) {
-        return tx.preparedQuery(SQL_FIND_STALE_RUNNING)
+        return tx.preparedQuery(sqlFindStaleRunning)
                 .execute(Tuple.of(toOdt(before), limit))
                 .map(rs -> mapAll(rs))
                 .recover(t ->
@@ -381,8 +420,7 @@ public final class PgBranchTokenRepository extends PgSqlRepository implements Br
      */
     @Override
     public Future<List<BranchToken>> findByStatus(BranchStatus status, int limit, SqlClient tx) {
-        return tx.preparedQuery(
-                        "SELECT * FROM workflow_branch_tokens WHERE status = $1" + " ORDER BY created_at ASC LIMIT $2")
+        return tx.preparedQuery(sqlFindByStatus)
                 .execute(Tuple.of(status.name(), limit))
                 .map(rs -> mapAll(rs))
                 .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_branch_tokens findByStatus")));

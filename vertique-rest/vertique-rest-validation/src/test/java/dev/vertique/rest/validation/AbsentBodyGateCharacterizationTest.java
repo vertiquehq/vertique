@@ -4,6 +4,7 @@
 package dev.vertique.rest.validation;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dagger.Binds;
@@ -227,6 +228,8 @@ class AbsentBodyGateCharacterizationTest {
             JsonArray errors = response.bodyAsJsonObject().getJsonArray("errors");
             assertEquals(1, errors.size(), shapeName + ": exactly one detail");
             ValidationErrorDetail detail = errors.getJsonObject(0).mapTo(ValidationErrorDetail.class);
+            assertEquals("", detail.pointer(), shapeName + ": the whole document is the empty pointer, present");
+            assertNull(detail.parameter(), shapeName + ": a body detail names no parameter");
             assertEquals("body", detail.location(), shapeName + ": detail location");
             assertEquals("type", detail.type(), shapeName + ": detail type");
             assertEquals(0, resource.invocations.get(), shapeName + ": the resource must not be reached");

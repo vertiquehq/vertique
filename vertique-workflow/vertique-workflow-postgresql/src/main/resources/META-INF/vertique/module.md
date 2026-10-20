@@ -8,9 +8,12 @@ SPDX-License-Identifier: EUPL-1.2
 > **Status:** Stable
 > **Package:** `dev.vertique.workflow.postgresql`
 > **Artifact:** `vertique-workflow-postgresql`
-> **Depends on:** workflow-engine, workflow-core, db-postgresql, vertx-sql-client, jackson-databind
+> **Depends on:** workflow-engine, workflow-core, db-postgresql (which brings `dev.vertique:vertique-db-core` for
+> `DbSchemas` and `MigrationDefinition`), vertx-sql-client, jackson-databind. `dev.vertique:vertique-db-flyway`
+> is a declared dependency, but no type of this module references Flyway: the application supplies the
+> migration runner.
 
-`vertique-workflow-postgresql` is the **PostgreSQL adapter** for the Vertique Workflow engine. It provides PostgreSQL implementations of the engine's internal repository and transaction-runner SPIs, owns the schema and Flyway migrations, and supplies Pg-specific query, retention, and recovery services.
+`vertique-workflow-postgresql` is the **PostgreSQL adapter** for the Vertique Workflow engine. It provides PostgreSQL implementations of the engine's internal repository and transaction-runner SPIs, owns the schema and Flyway migrations, and supplies Pg-specific query, retention, and recovery services. `WorkflowMigrationsModule` declares those migrations as the `workflow` migration instance for named Flyway instances, and the optional `db.schemas.workflow` setting places every workflow table in one schema for the migrations and for all nine stores.
 
 For the dialect-neutral orchestration logic — `WorkflowEngine`, the 6 SPI interfaces (`WorkflowInstanceRepository`, `WorkflowHistoryRepository`, `WorkflowDedupRepository`, `BranchTokenRepository`, `JoinStateRepository`, `WorkflowTransactionRunner`), `RecorderRouter`, `WorkflowReminderComposeValidator`, and the Dagger module that binds `WorkflowOperations` — see `dev.vertique:vertique-workflow-engine`.
 
@@ -22,18 +25,56 @@ Install this module when workflows must survive process restarts, run across mor
 
 | Binding | Purpose |
 |---|---|
-| Pg repo impls | `PgWorkflowInstanceRepository`, `PgWorkflowHistoryRepository`, `PgWorkflowDedupRepository`, `PgBranchTokenRepository`, `PgJoinStateRepository` — implement the engine SPIs |
-| `TaskStore<SqlClient>` | Human task persistence (`PgTaskStore`) |
-| `TimerStore<SqlClient>` | Workflow timer persistence (`PgTimerStore`) |
-| `WorkflowDefinitionRegistryStore` | Durable definition metadata, TEXT sources, and fenced activation (`PgWorkflowDefinitionRegistryStore`) |
+| Pg repo impls | `PgWorkflowInstanceRepository`, `PgWorkflowHistoryRepository`, `PgWorkflowDedupRepository`, `PgBranchTokenRepository`, `PgJoinStateRepository` — implement the engine SPIs; each is one scoped instance built with the optional `DbSchemas` placement |
+| `TaskStore<SqlClient>` | Human task persistence (`PgTaskStore`), one scoped instance built with the placement |
+| `TimerStore<SqlClient>` | Workflow timer persistence (`PgTimerStore`), one scoped instance built with the placement |
+| `WorkflowDefinitionRegistryStore` | Durable definition metadata, TEXT sources, and fenced activation (`PgWorkflowDefinitionRegistryStore`), one scoped instance built with the placement |
 | `WorkflowTransactionRunner<SqlClient>` | Pg implementation of the engine's transaction seam |
 | Query services | `PgWorkflowInstanceQueryService` — read model for workflow instances and branch state |
-| Retention service | `PgWorkflowRetentionService` — SKIP LOCKED archive + purge sweep; the application drives the batch loop and cadence, there is no built-in scheduler |
+| Retention service | `PgWorkflowRetentionService` — SKIP LOCKED archive + purge sweep; the application drives the batch loop and cadence, there is no built-in scheduler. It archives and purges through the scoped `PgWorkflowRetentionRepository`, so it follows the same placement |
 | Recovery service | `PgWorkflowBranchRecoveryService` — opt-in cluster-singleton branch recovery cron |
-| Migration support | Optional in-flight workflow definition migration (`WorkflowMigrationModule`) |
+| Migration declaration | `WorkflowMigrationsModule` — contributes the `workflow` `MigrationDefinition` (`classpath:db/migration/workflow`) with `@IntoSet`; see [Flyway Configuration](#flyway-configuration) |
 | Flyway schema | Shipped `V1__create_workflow_tables.sql` plus the additive `V002__create_workflow_definitions_and_tenant_key.sql` |
 
-The module `includes WorkflowEngineModule`, which provides the `WorkflowOperations` binding and recorder-router wiring. It does not deliver downstream service calls or execute delayed jobs by itself; those are separate modules.
+The module `includes WorkflowEngineModule`, which provides the `WorkflowOperations` binding and recorder-router wiring. It also includes `WorkflowMigrationsModule` and `DbSchemasModule` (the optional `DbSchemas` binding). It does not deliver downstream service calls or execute delayed jobs by itself; those are separate modules.
+
+> **Two similarly named modules.** `WorkflowMigrationsModule` (plural, in `dev.vertique.workflow.postgresql.engine`) declares the *database schema* migrations of this module for Flyway. `WorkflowMigrationModule` (singular, in `dev.vertique:vertique-workflow-core`) is the optional wiring for *in-flight workflow definition migration*, which moves running instances from one definition version to another. They are unrelated; install the second only when you use in-flight migration (see [Required App Wiring](#required-app-wiring)).
+
+---
+
+## Key Classes
+
+### The nine stores and their constructors
+
+Nine PostgreSQL classes own every workflow SQL statement: `PgWorkflowInstanceRepository`, `PgWorkflowHistoryRepository`, `PgWorkflowDedupRepository`, `PgBranchTokenRepository`, `PgJoinStateRepository`, `PgTaskStore`, `PgTimerStore`, `PgWorkflowDefinitionRegistryStore` and `PgWorkflowRetentionRepository`. Each has two public constructors:
+
+```java
+// the other six stores: (Pool pool, PgDbExceptionMapper mapper)
+@Inject
+public PgWorkflowInstanceRepository(Pool pool, PgDbExceptionMapper mapper)
+
+public PgWorkflowInstanceRepository(Pool pool, PgDbExceptionMapper mapper, DbSchemas schemas)
+
+// PgTimerStore takes no Pool
+@Inject
+public PgTimerStore(PgDbExceptionMapper exceptionMapper)
+
+public PgTimerStore(PgDbExceptionMapper exceptionMapper, DbSchemas schemas)
+
+// PgWorkflowDefinitionRegistryStore also takes the optional shared document policy
+@Inject
+public PgWorkflowDefinitionRegistryStore(
+        Pool pool, PgDbExceptionMapper mapper, Optional<WorkflowDefinitionsConfig> config)
+
+public PgWorkflowDefinitionRegistryStore(
+        Pool pool, PgDbExceptionMapper mapper, Optional<WorkflowDefinitionsConfig> config, DbSchemas schemas)
+```
+
+- **Unmapped means unchanged.** The constructors without `DbSchemas` leave every table unqualified, so the workflow tables resolve through the connection's default schema. With no `workflow` entry in the `DbSchemas` passed to the other constructor, the SQL is the same as theirs.
+- **Mapped means every reference is qualified.** The `DbSchemas` constructors qualify every workflow table reference, in every statement, with the schema that `schemas` maps to `workflow`. This covers lifecycle, history, dedup, branch and join, task, timer, definition registry, query, recovery and retention statements, including the joins and subqueries between workflow tables (the task insert's tenant subselect on `workflow_instances` and the narrowed instances projection that `PgTaskStore.findByFilter` joins for a subject filter among them) and the pin-admission and retirement-guard statements that read `workflow_definitions` and `workflow_instances`. Statements are built once at construction.
+- **Invalid mappings fail at construction.** A schema that is not a single valid PostgreSQL identifier (or is reserved by PostgreSQL) throws `IllegalArgumentException` when the store is created, before any query runs (see `PgTableNames` in `dev.vertique:vertique-db-postgresql`).
+- **Column qualifiers are never schema-qualified.** Qualifiers inside the SQL, such as `workflow_dedup.workflow_id` in the dedup upsert, name the table within the statement. SQL in this document is shown with unqualified table names.
+- **Transactions are unchanged.** Placement changes only where tables are named. Every method that takes a `SqlClient` still runs on the client the caller passes, so workflow rows commit or roll back with the application's and the outbox's own writes.
 
 ---
 
@@ -72,10 +113,11 @@ The module owns workflow persistence tables, including:
 | `workflow_tasks` | Human task rows |
 | `workflow_branch_tokens` | Active branch execution state; includes `metadata JSONB` for durable context |
 | `workflow_join_states` | Fan-in state for fork/join workflows |
+| `workflow_definitions` | Durable definition metadata and DOCUMENT source text, added by `V002__create_workflow_definitions_and_tenant_key.sql` (see [Definition Registry And Source Storage](#definition-registry-and-source-storage)) |
 
 The migration files live with the module under `db/migration/workflow`. The shipped `V1__create_workflow_tables.sql` contains the instance/runtime tables, including branch tokens and durable metadata. The additive `V002__create_workflow_definitions_and_tenant_key.sql` adds the definition registry with its `document_digest` column, a nullable `tenant_key VARCHAR(255)` column on `workflow_tasks` and `workflow_instances` (existing rows read `null`) and one partial index per table for tenant-filtered keyset queries, `idx_workflow_tasks_tenant_updated_at` and `idx_workflow_instances_tenant_updated_at`, each on `(tenant_key, updated_at DESC, <id>)` where `tenant_key IS NOT NULL`. Each `ALTER TABLE` and `CREATE INDEX` takes an `ACCESS EXCLUSIVE` lock on its table until the migration commits, and each index build is a sequential scan of its table under that lock, so the blocked time grows with table size. The script bounds its wait for each lock with `SET LOCAL lock_timeout = '30s'`: run it when no long transaction (a retention sweep, a long read) is open. While a statement waits for its lock, new statements on that table queue behind it for up to the timeout, per table, and then the migration fails and can be rerun; a manual run must be one transaction (`psql --single-transaction`), or the timeout has no effect. Every tenant column and tenant index statement is `IF NOT EXISTS`, so an operator of a very large installation can run the two `ALTER TABLE ... ADD COLUMN IF NOT EXISTS tenant_key VARCHAR(255)` statements (tasks first; each still takes the exclusive lock briefly) and build the two indexes with the exact statements of the migration as `CREATE INDEX CONCURRENTLY IF NOT EXISTS` on an autocommit connection ahead of the upgrade (set `lock_timeout` on that session too; a statement that times out changes nothing and can be rerun), and the migration then adds no scan. Both `IF NOT EXISTS` forms match by name only, so use the exact statements; a failed concurrent build leaves an `INVALID` index that `IF NOT EXISTS` skips, so check `pg_index.indisvalid` and drop it first. Instances started and tasks created by nodes of the previous release keep a null tenant permanently (nothing backfills the column), so any writer that starts stamping a tenant should do so only after every node runs this release; tasks of a stamped instance that were created earlier can be backfilled with `UPDATE workflow_tasks t SET tenant_key = i.tenant_key FROM workflow_instances i WHERE t.workflow_id = i.id AND t.tenant_key IS NULL AND i.tenant_key IS NOT NULL`. `V1__` is unchanged. A development database that applied an earlier snapshot of this release must be recreated, because Flyway validation fails on the changed checksum and description of version 2.
 
-`PgWorkflowInstanceRepository.insert` writes `tenant_key` from `WorkflowInstance.tenantKey()` and no update statement changes it. `PgTaskStore.insertOpen` writes the task's `tenant_key` from the owning instance row (`SELECT tenant_key FROM workflow_instances WHERE id = …`) and ignores the value on the `TaskRecord`, so every task creation path inherits the instance tenant; the guarantee belongs to this store, not to the `TaskStore` SPI. `WorkflowInstanceQuery.tenantKey()` and `TaskFilter.tenantKey()` add an exact-match `tenant_key = ?` condition when non-null and leave keyset order and archived handling unchanged; `null` matches every tenant. The column and the filters are information and a filter, not an isolation or authorization boundary: callers must not pass an unresolved tenant as `null` expecting scoping, and start idempotency and business keys stay global. No operation addressed by instance or task id checks the tenant either. This module only stores the tenant; the engine sets none at start, so an engine-started instance stays `null` until the tenant context stamps it.
+`PgWorkflowInstanceRepository.insert` writes `tenant_key` from `WorkflowInstance.tenantKey()` and no update statement changes it. `PgTaskStore.insertOpen` writes the task's `tenant_key` from the owning instance row (`SELECT tenant_key FROM workflow_instances WHERE id = …`; the instances table is qualified like every other reference when a `workflow` schema is mapped) and ignores the value on the `TaskRecord`, so every task creation path inherits the instance tenant; the guarantee belongs to this store, not to the `TaskStore` SPI. `WorkflowInstanceQuery.tenantKey()` and `TaskFilter.tenantKey()` add an exact-match `tenant_key = ?` condition when non-null and leave keyset order and archived handling unchanged; `null` matches every tenant. The column and the filters are information and a filter, not an isolation or authorization boundary: callers must not pass an unresolved tenant as `null` expecting scoping, and start idempotency and business keys stay global. No operation addressed by instance or task id checks the tenant either. This module only stores the tenant; the engine sets none at start, so an engine-started instance stays `null` until the tenant context stamps it.
 
 ---
 
@@ -176,6 +218,81 @@ instructions. Configure the same policy on every node; raising the input limit i
 parse cost, and lowering it below required stored sources makes startup fail. The stored envelope is
 floor(3L/2) UTF-8 bytes and L code points for configured raw input limit L (default 262144 bytes).
 
+**Placement.** The migration script is unqualified, so the migration instance's default schema decides where the eight tables and their indexes land. In named Flyway mode with a `db.schemas.workflow` entry, that schema is the default, and the stores qualify every table with it, so both agree. In single mode the migration lands where the single-run configuration says (see [Flyway Configuration](#flyway-configuration)). The module creates no sequences, views, functions or triggers and uses no notification channel, so tables and indexes are everything a mapped schema receives.
+
+---
+
+## Flyway Configuration
+
+The workflow migration is declared once, by `WorkflowMigrationsModule`, and can be run two ways. The declaration is metadata only: it names the `workflow` instance and the location `classpath:db/migration/workflow`, has no dependencies and needs no connection pool, so a migration-only component can include it on its own. `WorkflowPostgresqlModule` includes it, so an application that wires the workflow stores contributes the declaration automatically.
+
+### Named instances
+
+Give the workflow tables their own schema and history table:
+
+```json
+{
+  "db": {
+    "schemas": { "workflow": "workflow_data" }
+  },
+  "flyway": {
+    "mode": "MIGRATE",
+    "named": true,
+    "instances": { "workflow": {} }
+  }
+}
+```
+
+`"named": true` turns on named mode; `instances` only carries per-instance overrides and may be omitted (`"named": true` alone runs every wired declaration with the root settings). `instances` without `"named": true` is a configuration error.
+
+- **One setting places everything.** `db.schemas.workflow` is the instance's default schema and history schema, and the nine stores qualify every workflow table with it, so the migration and every statement use one schema. The tables and indexes land there, and the history table is `flyway_schema_history_workflow` in that schema.
+- **Run it through the named runner.** A migration component installs `DbModule`, `DbFlywayModule` and `WorkflowMigrationsModule` (plus the configuration and Vert.x modules the application already uses), and calls `FlywayMigrationRunner.run(vertx)`; `FlywayMigrationStartupStep` runs the same engine at startup. `dev.vertique:vertique-db-flyway` documents `instances()`, `run(Vertx)`, reports and failures.
+- **Without a `db.schemas.workflow` entry** the migration uses the first entry of the instance's Flyway `schemas` list, or the connection's default schema, and the stores stay unqualified. Configure the migration and runtime connections to the same default schema.
+- **Include `DbModule` in the migration component** (or bind `DbSchemas` yourself). A named migration component without either ignores `db.schemas`, and the tables can land in a different schema than a runtime component with `DbModule` queries.
+- **The application's own migrations** are a separate instance with a disjoint location such as `classpath:db/migration/app`. A broad `classpath:db/migration` location overlaps `classpath:db/migration/workflow` and is rejected.
+- **A dedicated DDL user** is set with `flyway.user` and `flyway.password` (both, or neither), or per instance with `flyway.instances.workflow.user` and `flyway.instances.workflow.password`. Without them the migration uses the `db` pool credentials.
+
+`dev.vertique:vertique-db-flyway` documents the full instance configuration, the agreement rules between `db.schemas` and Flyway schema lists, and the failure model.
+
+### Running the migration without the application
+
+The migration does not need the application to start. A migration-only component is an ordinary Dagger component that:
+
+- installs `DbModule`, `DbFlywayModule`, `WorkflowMigrationsModule` and the configuration module, together with the declaration modules of every other instance the deployment migrates (for example the job and inbox/outbox migration modules, and a module contributing the application's own `MigrationDefinition`);
+- binds the caller's `Vertx` and the application configuration, and exposes `FlywayMigrationRunner`;
+- installs no `DbPostgresqlModule`, no `WorkflowPostgresqlModule` and no worker or HTTP modules, so no connection pool, HTTP server or worker deployment is ever created.
+
+A one-off deploy step or job builds that component, calls `FlywayMigrationRunner.run(vertx)` and reads the `MigrationReport`; the runtime replicas then start in `VALIDATE` or `DISABLED` mode against the migrated schemas. The runner uses the `Vertx` instance it is given for blocking work only and never closes it, so the caller keeps using it afterwards. `dev.vertique:vertique-db-flyway` documents the concurrent-start behavior of the runner and the `lockRetryCount` setting.
+
+**Class loader.** The runner captures the calling thread's context class loader when `run` or `migrate` is called (its own class loader when the thread has none), and resolves packaged scripts and application locations through that loader, not through the ambient loader of the Vert.x worker thread that executes the migration. Call it from a thread whose context class loader can see the migration scripts, normally the application class path. Instance locations are independent per directory prefix: `classpath:db/migration/job` and a sibling such as `classpath:db/migration/job-v2` never read each other's scripts.
+
+### Single Flyway configuration
+
+Without `flyway.named`, the default `classpath:db/migration` location already includes the bundled `db/migration/workflow` scripts, so no extra location is needed. Every bundled adapter ships its own `V1` script, so one history can hold only one of them (a second would fail with a duplicate version); to run several adapters, set `"named": true`. Wired migration declarations are ignored in a single run, so adding another adapter module never switches the mode. The single-history example:
+
+```json
+{
+  "flyway": {
+    "mode": "MIGRATE",
+    "user": "ddl_user",
+    "password": "ddl_secret"
+  }
+}
+```
+
+If you override `locations`, list the workflow directory next to an application directory that does not contain it, for example `["classpath:db/migration/workflow", "classpath:db/app"]`. Do not list both `classpath:db/migration` and `classpath:db/migration/workflow`: the first already covers the second.
+
+In this mode the migration lands where the single-run configuration says, and nothing checks it against `db.schemas`. If `db.schemas.workflow` is also set, the stores query that schema, so make the `flyway.schemas` list (first entry) or the connection default match it, or the stores will look in a schema the migration never filled.
+
+### Runtime placement
+
+- **The stores read placement from `DbSchemas`.** A runtime component that installs `DbModule` gets it from `db.schemas`, with no Flyway module or Flyway configuration. A component that installs neither `DbModule` nor its own `DbSchemas` binding keeps unqualified SQL.
+- **Check the keys yourself.** `db.schemas` keys are open and are not validated, so a misspelled key (`workflows` for `workflow`) leaves the placement unmapped and the SQL unqualified, with no error. Compare `DbSchemas.mappings()` with the instance names before deploying.
+- **The runtime database role needs `USAGE` on the mapped schema**, besides the usual privileges on the tables.
+- **An invalid mapping fails at construction.** A mapped schema that is not a single valid PostgreSQL identifier throws `IllegalArgumentException` when a store is created, not on the first query.
+- **Your own tables.** An application can inject `DbSchemas` and place its own tables with the same mapping mechanism; see `dev.vertique:vertique-db-core` (`DbSchemas`) and `PgTableNames` in `dev.vertique:vertique-db-postgresql`.
+- **One source of `DbSchemas`.** A component that binds `DbSchemas` itself cannot also install `DbModule`: Dagger reports a duplicate binding at compile time, with no silent precedence.
+
 ---
 
 ## Required App Wiring
@@ -191,8 +308,9 @@ A typical durable workflow application includes:
     WorkflowServicesModule.class,
     TransactionalMessagingPostgresqlModule.class,
     TransactionalMessagingServiceModule.class,
+    DbModule.class,                              // supplies DbPoolConfig and DbSchemas (from db.schemas)
     DbPostgresqlModule.class,
-    DbFlywayModule.class,
+    DbFlywayModule.class,                        // only to run the migration at startup
     AppModule.class
 })
 public interface AppComponent {
@@ -200,6 +318,8 @@ public interface AppComponent {
     WorkflowInstanceQueryService workflowInstanceQueryService();
 }
 ```
+
+The runtime needs `DbPostgresqlModule` (the `Pool` and the PostgreSQL failure mapper) and `DbModule` (the pool configuration and the optional `db.schemas` placement). `DbFlywayModule` is needed only when the application runs the migration itself at startup; a runtime that migrates elsewhere installs no Flyway module and no Flyway configuration.
 
 Add optional modules based on behavior:
 
@@ -209,7 +329,25 @@ Add optional modules based on behavior:
 | Human task service API | `WorkflowTasksModule` |
 | External workflow event stream | `WorkflowEventsModule` |
 | YAML/JSON definition loading | `WorkflowDefinitionModule` |
-| In-flight definition migration | `WorkflowMigrationModule` |
+| In-flight definition migration | `WorkflowMigrationModule` (from `dev.vertique:vertique-workflow-core`; not the schema-migration declaration `WorkflowMigrationsModule`, which this module already includes) |
+
+---
+
+## Module Dagger Bindings
+
+`WorkflowPostgresqlModule` includes `WorkflowEngineModule`, `LoggingContextModule`, `WorkflowMigrationsModule` (the `workflow` migration declaration) and `DbSchemasModule` (the optional `DbSchemas` binding), and provides:
+
+| Binding | Scope | Description |
+|---|---|---|
+| `PgWorkflowInstanceRepository`, `PgWorkflowHistoryRepository`, `PgWorkflowDedupRepository`, `PgBranchTokenRepository`, `PgJoinStateRepository`, `PgTaskStore`, `PgTimerStore`, `PgWorkflowDefinitionRegistryStore`, `PgWorkflowRetentionRepository` | Singleton | Nine explicit providers, each built from `Optional<DbSchemas>`: placed in the schema mapped to `workflow` when the component supplies `DbSchemas` (a component that installs `DbModule` gets it from `db.schemas.workflow`), unqualified when it does not |
+| The five repository SPIs, `TaskStore<SqlClient>`, `TimerStore<SqlClient>` | Singleton | Aliases of the concrete instances above, so a concrete lookup and an SPI lookup return the same instance |
+| `WorkflowTransactionRunner<SqlClient>` | Singleton | The PostgreSQL transaction seam |
+| `WorkflowInstanceQueryService`, `WorkflowRetentionService` | Singleton | Services over the same scoped instances (as is the branch query service), so queries, archive and purge follow the placement |
+| `Set<MigrationDefinition>` | `@IntoSet` | The `workflow` declaration from `WorkflowMigrationsModule`: location `classpath:db/migration/workflow`, no dependencies |
+
+The branch-recovery cron installed by `WorkflowBranchRecoveryModule` reaches the same scoped repositories, so recovery sweeps follow the placement too.
+
+**Compatibility note.** The nine concrete store types are now provided by explicit `@Provides` methods. A component that installs this module and also provides any of them itself sees a duplicate binding; remove its own provider. The `@Inject` constructors remain for components that do not install this module; they leave the SQL unqualified.
 
 ---
 
@@ -319,6 +457,8 @@ Before each row's scope opens, the sweep loads the owning `WorkflowInstance` (a 
 
 - **workflow-engine** - portable orchestration runtime: `WorkflowEngine`, the 6 internal repository SPIs, `WorkflowTransactionRunner`, `RecorderRouter`, `WorkflowReminderComposeValidator`, `WorkflowEngineModule`. This module includes `WorkflowEngineModule`.
 - **workflow-core** - public workflow APIs, plans, tasks, timers, and side-effect SPIs.
-- **db-postgresql** - Postgres pool, `PgDbExceptionMapper`, and `PgSqlRepository` base.
+- **db-postgresql** - Postgres pool, `PgDbExceptionMapper`, `PgSqlRepository` base, and `PgTableNames`, which qualifies every table reference.
+- **db-core** - `DbSchemas`, `DbSchemasModule` and `MigrationDefinition` (through db-postgresql).
+- **db-flyway** - `FlywayMigrationRunner` applies the packaged migration. Declared as a dependency, but no type of this module references Flyway, so the application supplies and wires the runner.
 - **vertx-sql-client** - SQL connection, pool, and transaction types.
 - **jackson-databind** - workflow state and history payload serialization.

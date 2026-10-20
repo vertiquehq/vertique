@@ -12,7 +12,7 @@ SPDX-License-Identifier: EUPL-1.2
 > `dev.vertique:vertique-core`. `dev.vertique:vertique-db-flyway` is test-scope here; the application
 > supplies the migration runner.
 
-PostgreSQL implementation of the `JobRepository` SPI defined in `job-core`. Persists job execution state, logs, cron schedule definitions, and node heartbeats. Uses `FOR UPDATE SKIP LOCKED` for concurrent-safe job claiming without external coordination. Provides a transactional `save(execution, SqlClient)` overload for outbox-pattern enqueue. Flyway migrations are bundled at `classpath:db/migration/job`.
+PostgreSQL implementation of the `JobRepository` SPI defined in `job-core`. Persists job execution state, logs, cron schedule definitions, and node heartbeats. Uses `FOR UPDATE SKIP LOCKED` for concurrent-safe job claiming without external coordination. Provides a transactional `save(execution, SqlClient)` overload for outbox-pattern enqueue. Flyway migrations are bundled at `classpath:db/migration/job`. `JobMigrationsModule` declares them as the `job` migration instance for named Flyway instances, and the optional `db.schemas.job` setting places the job tables in one schema for both the migrations and the repository.
 
 ---
 
@@ -24,12 +24,16 @@ Extends `PgSqlRepository` and implements `JobRepository`. All SQL operations use
 
 Generates a stable `nodeId` from the hostname and a random 8-character suffix, used as the `locked_by` value during job claiming and as the server identity for heartbeats.
 
-**Constructor:**
+**Constructors:**
 
 ```java
 @Inject
 public PgJobRepository(Pool pool, PgDbExceptionMapper exceptionMapper)
+
+public PgJobRepository(Pool pool, PgDbExceptionMapper exceptionMapper, DbSchemas schemas)
 ```
+
+The two-argument constructor leaves every table unqualified, so tables resolve through the connection's default schema. The three-argument constructor qualifies every job table (`job_executions`, `job_logs`, `job_schedules`, `job_server_heartbeats`) with the schema that `schemas` maps to `job`; with no `job` entry its SQL is the same as the two-argument constructor's. The mapping is validated when the repository is constructed: a schema that is not a single valid PostgreSQL identifier throws `IllegalArgumentException` before any query runs (see `PgTableNames` in `dev.vertique:vertique-db-postgresql`). SQL in this document is shown with unqualified table names.
 
 **Transactional save overload:**
 
@@ -78,19 +82,26 @@ Dagger qualifier that marks the undecorated `PgJobRepository` binding inside `Jo
 
 ### `JobPostgresqlModule`
 
-Dagger module that wires the repository decorator pattern. Annotated `@Module(includes = JobModule.class)` to pull in `JobModule`'s `@Multibinds Set<JobExecutionStateTransitionListener>` declaration, so the listener set resolves (empty) even in standalone cron-only setups where no listeners are contributed.
+Dagger module that wires the repository decorator pattern. It includes `JobModule` to pull in `JobModule`'s `@Multibinds Set<JobExecutionStateTransitionListener>` declaration, so the listener set resolves (empty) even in standalone cron-only setups where no listeners are contributed. It also includes `JobMigrationsModule` (the `job` migration declaration) and `DbSchemasModule` (the optional `DbSchemas` binding).
 
-The module provides two bindings:
+The module provides three bindings:
 
-1. `@RawJobRepository JobRepository` → `PgJobRepository` (singleton): the bare PostgreSQL implementation, exposed only for use by the decorator.
-2. `JobRepository` (unqualified, singleton) → `NotifyingJobRepository`: the listener-firing decorator that all application code and framework components receive.
+1. `PgJobRepository` (singleton): built with the `job` mapping from `Optional<DbSchemas>`, or unqualified when no `DbSchemas` binding exists. A component that includes `DbModule` gets its placement from `db.schemas.job`.
+2. `@RawJobRepository JobRepository` → the same `PgJobRepository` (singleton): the bare PostgreSQL implementation, exposed only for use by the decorator.
+3. `JobRepository` (unqualified, singleton) → `NotifyingJobRepository`: the listener-firing decorator that all application code and framework components receive. It delegates to the one raw repository, so notifications and node identity stay as before.
 
 Automatically included by `DelayedJobModule`.
+
+**Compatibility note.** `PgJobRepository` is now provided by an explicit `@Provides` method. A component that includes this module and also provides `PgJobRepository` itself sees a duplicate binding; remove its own provider. The `@Inject` two-argument constructor remains for components that do not include this module.
 
 ```java
 @Component(modules = {DbPostgresqlModule.class, DbFlywayModule.class, JobPostgresqlModule.class, ...})
 public interface AppComponent { ... }
 ```
+
+### `JobMigrationsModule`
+
+Metadata-only Dagger module that contributes one `MigrationDefinition` (from `dev.vertique:vertique-db-core`) with `@IntoSet`: the instance name `job`, the location `classpath:db/migration/job`, and no dependencies. It needs no pool or other bindings, so a migration-only component can include it on its own; `JobPostgresqlModule` includes it, so an application that wires the repository contributes the declaration automatically. The name `job` is also the key of the `db.schemas.job` setting.
 
 ---
 
@@ -194,17 +205,70 @@ One row per live application instance. Used by `JobCoordinator` for dead-node de
 
 ## Flyway Configuration
 
-Configure `DbFlywayModule` to include the job migration location alongside the application's own migrations:
+The job migration is declared once and can be run two ways: one single-history Flyway run (the default), or [named instances](#named-instances) selected with `flyway.named`.
+
+### Named instances
+
+Give the job tables their own schema and history table:
 
 ```json
 {
+  "db": {
+    "schemas": { "job": "jobs" }
+  },
   "flyway": {
-    "locations": ["classpath:db/migration", "classpath:db/migration/job"]
+    "mode": "MIGRATE",
+    "named": true,
+    "instances": { "job": {} }
   }
 }
 ```
 
-If using a dedicated DDL user for migrations, set `flyway.ddlUsername` and `flyway.ddlPassword` in `FlywayConfig`.
+`"named": true` turns on named mode; `instances` only carries per-instance overrides and may be omitted
+(`"named": true` alone runs every wired declaration with the root settings). `instances` without
+`"named": true` is a configuration error.
+
+- **One setting places everything.** `db.schemas.job` is the job instance's default schema and history
+  schema, and `PgJobRepository` qualifies every job table with it, so the migrations and every job
+  statement use one schema. The history table is `flyway_schema_history_job` in that schema.
+- **Without a `db.schemas.job` entry** the migration uses the first entry of the instance's Flyway
+  `schemas` list, or the connection's default schema, and the repository stays unqualified. Configure
+  the migration and runtime connections to the same default schema.
+- **Include `DbModule` in the migration component** (or bind `DbSchemas` yourself). A named migration
+  component without either ignores `db.schemas`, and the tables can land in a different schema than a
+  runtime component with `DbModule` queries.
+- **The application's own migrations** are a separate instance with a disjoint location such as
+  `classpath:db/migration/app`. A broad `classpath:db/migration` location overlaps
+  `classpath:db/migration/job` and is rejected.
+- **A dedicated DDL user** is set with `flyway.user` and `flyway.password` (both, or neither), or per
+  instance with `flyway.instances.job.user` and `flyway.instances.job.password`. Without them the
+  migration uses the `db` pool credentials.
+
+`dev.vertique:vertique-db-flyway` documents the full instance configuration, the agreement rules between
+`db.schemas` and Flyway schema lists, and the failure model.
+
+### Single Flyway configuration
+
+Without `flyway.named`, the default `classpath:db/migration` location already includes the
+bundled `db/migration/job` scripts, so no extra location is needed. Every bundled adapter ships its own `V1` script, so one history can hold only one of them (a second would fail with a duplicate version); to run several adapters, set `"named": true`. Wired migration declarations are ignored in a single run, so adding another adapter module never switches the mode. The single-history example:
+
+```json
+{
+  "flyway": {
+    "mode": "MIGRATE",
+    "user": "ddl_user",
+    "password": "ddl_secret"
+  }
+}
+```
+
+If you override `locations`, list the job directory next to an application directory that does not
+contain it, for example `["classpath:db/migration/job", "classpath:db/app"]`. Do not list both
+`classpath:db/migration` and `classpath:db/migration/job`: the first already covers the second.
+
+In this mode the migration lands where the single-run configuration says. If `db.schemas.job` is also
+set, the repository queries that schema, so make the `flyway.schemas` list (first entry) or the
+connection default match it, or the repository will look in a schema the migration never filled.
 
 ---
 
@@ -230,5 +294,6 @@ public interface AppComponent { ... }
 ## Dependencies
 
 - **job-core** — `JobRepository` SPI, `JobExecution`, `JobExecutionStateTransitionListener`, `JobState`, `JobType`, `ProgressSnapshot`, `LogEntry`, `CronJobSchedule`
-- **db-postgresql** — `PgSqlRepository`, `PgDbExceptionMapper`, `Pool`
-- **db-flyway** — `FlywayMigrationRunner` (required to apply the bundled migration)
+- **db-core** — `DbSchemas`, `DbSchemasModule`, `MigrationDefinition` (through db-postgresql)
+- **db-postgresql** — `PgSqlRepository`, `PgDbExceptionMapper`, `PgTableNames`, `Pool`
+- **db-flyway** — `FlywayMigrationRunner` applies the bundled migration; test-scope here, so the application supplies it

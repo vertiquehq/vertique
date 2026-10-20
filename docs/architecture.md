@@ -58,6 +58,16 @@ builder. It depends only on `vertique-core` and `vertx-json-schema` — it has n
 REST, MCP, Vert.x Web, or Dagger — and `vertique-json-schema` does not depend on it. `vertique-rest-validation` consumes it
 for the pattern-input bound, the regular-expression check and the violation translation.
 
+The persistence family splits migration and schema placement by owner. `vertique-db-core` owns the
+vendor-neutral `MigrationDefinition` and `DbSchemas` types and the optional `db.schemas` binding that
+`DbModule` provides. `vertique-db-postgresql` owns `PgTableNames`, the PostgreSQL table qualification
+that adapters and applications share. `vertique-db-flyway` owns named-instance migration execution:
+configuration, dependency ordering, per-instance histories and reporting. Persistence adapters such as
+`vertique-job-postgresql` contribute a `MigrationDefinition` through a metadata-only Dagger module, and
+applications contribute their own the same way. Placement-aware adapters read placement through the
+optional `DbSchemas` binding and reference no Flyway types, so a runtime component needs no Flyway
+module or configuration.
+
 `vertique-workflow-schema` owns the schemas of workflow decision and start payloads. It consumes
 `vertique-workflow-core`, `vertique-json-schema` and `vertique-json-schema-validation`, and plugs
 into definition registration through the core validator set. The workflow engine, tasks,
@@ -191,7 +201,7 @@ compatibility-affecting release, never as an internal refactor.
 | `vertique-starter-core` | the Vert.x seam, config parsing, verticle deployment, and core lifecycle steps | `vertique-application`, `vertique-core`, `vertique-config-core`, `vertique-deploy` |
 | `vertique-starter-rest` | the core starter plus JAX-RS routing, request validation, the REST security runtime, and management | `vertique-starter-core`, `vertique-management`, `vertique-rest-jaxrs`, `vertique-rest-security`, `vertique-rest-validation` |
 | `vertique-starter-services` | the core starter plus the event-bus dispatch runtime and management | `vertique-starter-core`, `vertique-management`, `vertique-services` |
-| `vertique-starter-postgresql` | PostgreSQL connection pooling and application-owned Flyway migration wiring | `vertique-db-core`, `vertique-db-postgresql`, `vertique-db-flyway` |
+| `vertique-starter-postgresql` | PostgreSQL connection pooling and Flyway migration execution wiring; migration scripts and schema layout stay application-owned | `vertique-db-core`, `vertique-db-postgresql`, `vertique-db-flyway` |
 
 Every starter stops at composition: launcher choice, test libraries, deployment entries, and the
 annotation-processor-generated application module stay explicit application decisions, never

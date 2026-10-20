@@ -70,7 +70,7 @@ import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.invocation.Invocation;
 
 /**
- * Proofs for the {@code web-validation} gate's reused format checks (rest-022 T021, FR-020): TP-001,
+ * Proofs for the {@code web-validation} gate's reused format checks: TP-001,
  * TP-002, TP-003, TP-006, and TP-007. TP-004 ({@code url}'s filtering corpus) and TP-005 (the HTTP
  * integration test) live in their own classes.
  *
@@ -298,7 +298,8 @@ class FormatCheckReuseTest {
             ValidationErrorDetail actual = details.get(0);
             assertAll(
                     "(" + format + ") the invalid value's detail must match its short invalid value's detail",
-                    () -> assertEquals(oracle.path(), actual.path(), "path"),
+                    () -> assertEquals(oracle.pointer(), actual.pointer(), "pointer"),
+                    () -> assertEquals(oracle.parameter(), actual.parameter(), "parameter"),
                     () -> assertEquals(oracle.location(), actual.location(), "location"),
                     () -> assertEquals(oracle.type(), actual.type(), "type"),
                     () -> assertEquals(oracle.detail(), actual.detail(), "detail"));
@@ -1990,7 +1991,9 @@ class FormatCheckReuseTest {
     }
 
     private static List<String> types(List<ValidationErrorDetail> details) {
-        return details.stream().map(d -> d.type() + "@" + abbreviate(d.path())).toList();
+        return details.stream()
+                .map(d -> d.type() + "@" + abbreviate(d.pointer() != null ? d.pointer() : d.parameter()))
+                .toList();
     }
 
     private static String abbreviate(String text) {
