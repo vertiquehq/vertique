@@ -142,7 +142,7 @@ violation:
 - **message** is exactly what the validator produced.
 
 At most 100 violations are returned, in the order the validator produced them. When more were produced, one
-final detail follows with an empty path, the message `further violations omitted` and the type `truncated`,
+final detail follows with no path, the message `further violations omitted` and the type `truncated`,
 so an exception carries at most 101 details; exactly 100 violations carry no truncation detail. Pointers are
 converted only for the retained violations. The cap bounds the response, not the request: the transport must
 still cap the request body before calling the engine.

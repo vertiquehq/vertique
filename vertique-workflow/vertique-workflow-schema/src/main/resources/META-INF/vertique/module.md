@@ -260,7 +260,7 @@ parent.
 ### Violation cap
 
 At most 100 violations are returned, in the order they were produced. When more were produced, one
-final detail follows with an empty `path`, the message `further violations omitted` and the type
+final detail follows with no `path`, the message `further violations omitted` and the type
 `truncated`, so a result has at most 101 entries. Exactly 100 violations carry no truncation detail; 101
 carry the first 100 and the truncation detail. The cap bounds the answer, not the request: the
 transport must still cap the request body before it calls the validation methods. A single

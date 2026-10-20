@@ -26,7 +26,7 @@ import org.slf4j.LoggerFactory;
  * validator is bound the check does nothing and the engine behaves as before.
  *
  * <p>At most 100 violations are returned, in the order the validator produced them. When more were produced, one
- * final detail with an empty path, the message {@code further violations omitted} and the type {@code truncated}
+ * final detail with no path, the message {@code further violations omitted} and the type {@code truncated}
  * follows, so the exception carries at most 101 details. Pointers are converted only for the retained violations,
  * which bounds the conversion work. The transport must still cap the request body before the engine is called.
  *
