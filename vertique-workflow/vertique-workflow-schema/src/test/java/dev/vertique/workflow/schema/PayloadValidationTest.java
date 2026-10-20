@@ -13,7 +13,6 @@ import dev.vertique.workflow.schema.fixtures.ValidationPayloads;
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 import java.util.LinkedHashMap;
-import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -228,9 +227,6 @@ class PayloadValidationTest {
                         Map.of("limit", 262_144)));
     }
 
-    private static final ViolationDetail TRUNCATED =
-            ViolationDetail.unlocated("further violations omitted", "truncated");
-
     private static JsonObject itemsOfWhichTheFirstAreTooLong(int total, int tooLong) {
         JsonArray items = new JsonArray();
         for (int index = 0; index < total; index++) {
@@ -240,57 +236,29 @@ class PayloadValidationTest {
     }
 
     @Test
-    @DisplayName("a payload with many violations is capped at 100 followed by one truncation detail")
-    void aPayloadWithManyViolationsIsCappedWithOneTruncationDetail() {
+    @DisplayName("a payload with many violations reports every one, in order, with no truncation marker")
+    void aPayloadWithManyViolationsReportsEveryOne() {
         // Given: a list of 150 items of which every one is longer than the three characters allowed
         JsonObject payload = itemsOfWhichTheFirstAreTooLong(150, 150);
 
         // When: the payload is validated
         PayloadValidationResult result = validate("items", payload);
 
-        // Then: it is invalid with exactly 101 details
+        // Then: it is invalid with all 150 details
         assertThat(result.valid()).isFalse();
-        assertThat(result.violations()).hasSize(101);
+        assertThat(result.violations()).hasSize(150);
 
-        // And: the last one is the fixed truncation detail and the 100 before it are real violations of the list
-        List<ViolationDetail> real = result.violations().subList(0, 100);
-        assertThat(result.violations().get(100)).isEqualTo(TRUNCATED);
-        assertThat(real)
-                .allSatisfy(detail -> {
-                    assertThat(detail.path()).startsWith("/items/");
-                    assertThat(detail.type()).isEqualTo("maxLength");
-                })
+        // And: each is a real maxLength violation of its own item, in item order
+        assertThat(result.violations())
+                .allSatisfy(detail -> assertThat(detail.type()).isEqualTo("maxLength"));
+        assertThat(result.violations())
                 .extracting(ViolationDetail::path)
-                .doesNotHaveDuplicates();
-        assertThat(result.violations().stream().filter(TRUNCATED::equals)).hasSize(1);
+                .containsExactlyElementsOf(java.util.stream.IntStream.range(0, 150)
+                        .mapToObj(index -> "/items/" + index)
+                        .toList());
 
         // And: no submitted value appears in any field
         Validations.assertNoValueIn(result, SENTINEL);
-    }
-
-    @Test
-    @DisplayName("the violation cap is exact: 100 violations carry no truncation detail and 101 carry one")
-    void theViolationCapIsExactAtTheBoundary() {
-        // Given: payloads with exactly 100 and exactly 101 violating items
-        JsonObject atCap = itemsOfWhichTheFirstAreTooLong(100, 100);
-        JsonObject overCap = itemsOfWhichTheFirstAreTooLong(101, 101);
-
-        // When: both are validated
-        PayloadValidationResult atCapResult = validate("items", atCap);
-        PayloadValidationResult overCapResult = validate("items", overCap);
-
-        // Then: 100 violations are all real and none is the truncation detail
-        assertThat(atCapResult.violations()).hasSize(100).doesNotContain(TRUNCATED);
-        assertThat(atCapResult.violations())
-                .allSatisfy(detail -> assertThat(detail.path()).startsWith("/items/"));
-
-        // And: 101 violations are 100 real ones followed by exactly one truncation detail
-        assertThat(overCapResult.violations()).hasSize(101);
-        assertThat(overCapResult.violations().get(100)).isEqualTo(TRUNCATED);
-        assertThat(overCapResult.violations().subList(0, 100))
-                .allSatisfy(detail -> assertThat(detail.path()).startsWith("/items/"));
-        Validations.assertNoValueIn(atCapResult, SENTINEL);
-        Validations.assertNoValueIn(overCapResult, SENTINEL);
     }
 
     @Test

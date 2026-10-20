@@ -56,7 +56,7 @@ class WorkflowInvalidPayloadExceptionTest {
     void keepsEachDetailsPathForm() {
         // Given: a rejection holding a pointer detail and an unlocated one, and a bean validation exception
         ViolationDetail pointer = ViolationDetail.atPointer("/comment", "too long", "maxLength", null);
-        ViolationDetail unlocated = ViolationDetail.unlocated("further violations omitted", "truncated");
+        ViolationDetail unlocated = ViolationDetail.unlocated("payload is required", "payload");
         WorkflowInvalidPayloadException rejection =
                 new WorkflowInvalidPayloadException("invalid decision payload", List.of(pointer, unlocated));
         BeanValidationException beanValidation = new BeanValidationException(

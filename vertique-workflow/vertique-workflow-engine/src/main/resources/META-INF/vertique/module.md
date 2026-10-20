@@ -141,11 +141,8 @@ violation:
   An unmapped constraint keeps the annotation simple name.
 - **message** is exactly what the validator produced.
 
-At most 100 violations are returned, in the order the validator produced them. When more were produced, one
-final detail follows with no path, the message `further violations omitted` and the type `truncated`,
-so an exception carries at most 101 details; exactly 100 violations carry no truncation detail. Pointers are
-converted only for the retained violations. The cap bounds the response, not the request: the transport must
-still cap the request body before calling the engine.
+Every violation is returned, in the order the validator produced them, and every pointer is converted.
+The transport must still cap the request body before calling the engine.
 
 The rejection happens inside the transaction, so any earlier side effect of the same transaction rolls
 back together with the deduplication claim. An idempotent replay or a stale or already-completed task
