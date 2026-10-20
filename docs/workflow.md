@@ -195,7 +195,7 @@ Exact wiring depends on the application's persistence, messaging, delayed-job, a
 
 ### Schema placement and migrations
 
-The workflow tables live in the connection's default schema unless `db.schemas.workflow` maps them to another one. With `DbModule` installed, that single setting places all eight PostgreSQL workflow stores and, in named Flyway mode (`flyway.named`), the migration itself, so the migration and every statement agree. Without the entry, SQL stays unqualified. Components that migrate and components that run the workflows read the same `db.schemas` configuration.
+The workflow tables live in the connection's default schema unless `db.schemas.workflow` maps them to another one. With `DbModule` installed, that single setting places all nine PostgreSQL workflow stores and, in named Flyway mode (`flyway.named`), the migration itself, so the migration and every statement agree. Without the entry, SQL stays unqualified. Components that migrate and components that run the workflows read the same `db.schemas` configuration.
 
 The migration can run without the application: a migration-only component installs `DbModule`, `DbFlywayModule` and `WorkflowMigrationsModule` (plus the declaration modules of the other instances it migrates), needs no connection pool, and calls `FlywayMigrationRunner.run(vertx)` from a deploy step or job. The runtime component then installs `DbModule` and `DbPostgresqlModule` and needs no Flyway module unless it migrates at startup. See the [workflow-postgresql reference](../vertique-workflow/vertique-workflow-postgresql/src/main/resources/META-INF/vertique/module.md#flyway-configuration) for the configuration, the legacy single-Flyway mode and the class loader the runner uses.
 

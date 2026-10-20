@@ -68,6 +68,7 @@ import dev.vertique.workflow.postgresql.query.PgBranchTokenQueryService;
 import dev.vertique.workflow.postgresql.query.PgWorkflowInstanceQueryService;
 import dev.vertique.workflow.postgresql.recovery.PgWorkflowBranchRecoveryCron;
 import dev.vertique.workflow.postgresql.recovery.WorkflowBranchRecoveryModule;
+import dev.vertique.workflow.postgresql.registry.PgWorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.postgresql.repository.PgBranchTokenRepository;
 import dev.vertique.workflow.postgresql.repository.PgJoinStateRepository;
 import dev.vertique.workflow.postgresql.repository.PgWorkflowDedupRepository;
@@ -80,6 +81,17 @@ import dev.vertique.workflow.postgresql.timer.PgTimerStore;
 import dev.vertique.workflow.query.WorkflowInstanceQuery;
 import dev.vertique.workflow.query.WorkflowInstanceQueryService;
 import dev.vertique.workflow.registry.WorkflowContributor;
+import dev.vertique.workflow.registry.store.ActivationClaim;
+import dev.vertique.workflow.registry.store.ActivationOutcome;
+import dev.vertique.workflow.registry.store.DefinitionFilter;
+import dev.vertique.workflow.registry.store.DefinitionKey;
+import dev.vertique.workflow.registry.store.DefinitionKind;
+import dev.vertique.workflow.registry.store.DefinitionProvenance;
+import dev.vertique.workflow.registry.store.DefinitionStatus;
+import dev.vertique.workflow.registry.store.ReconcileOutcome;
+import dev.vertique.workflow.registry.store.WorkflowDefinitionDocument;
+import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
+import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.retention.WorkflowRetentionService;
 import dev.vertique.workflow.retention.WorkflowRetentionService.PurgeResult;
 import dev.vertique.workflow.retention.WorkflowRetentionService.RetentionResult;
@@ -198,7 +210,8 @@ public class PgWorkflowSchemaIT {
             "workflow_timers",
             "workflow_tasks",
             "workflow_branch_tokens",
-            "workflow_join_states");
+            "workflow_join_states",
+            "workflow_definitions");
     private static final Set<String> TRANSACTION_DECOY_TABLES = with(WORKFLOW_TABLES, "outbox", "inbox", "orders");
 
     private static final Set<String> MIGRATED_INDEXES = Set.of(
@@ -225,7 +238,9 @@ public class PgWorkflowSchemaIT {
             "idx_workflow_branch_tokens_status_lookup",
             "idx_workflow_branch_tokens_recovery",
             "idx_workflow_branch_tokens_wait",
-            "idx_workflow_join_states_status");
+            "idx_workflow_join_states_status",
+            "idx_workflow_definitions_id",
+            "uq_workflow_definitions_one_active");
     private static final Set<String> MIGRATED_CONSTRAINTS =
             Set.of("fk_workflow_dedup_workflow_id", "ck_workflow_timers_task_id_purpose");
 
@@ -242,6 +257,7 @@ public class PgWorkflowSchemaIT {
     private static final String JOIN_STEP = "join";
     private static final String PLAN_HASH = "schema-placement-plan";
     private static final String RETENTION_DEFINITION = "schema-placement-retention";
+    private static final String REGISTRY_DEFINITION = "schema-placement-registry";
     private static final String SUBJECT_TYPE = "order";
     private static final List<TaskDecisionDescriptor> DECISIONS =
             List.of(new TaskDecisionDescriptor("approve", "java.lang.String", "done"));
@@ -305,6 +321,7 @@ public class PgWorkflowSchemaIT {
             UUID openTask = exerciseTaskStore(runtime, instances, branches);
             exerciseTimerStore(runtime, instances, branches, openTask);
             exerciseRecoveryCron(runtime, branches);
+            exerciseDefinitionRegistry(runtime);
             exerciseRetentionAndArchivedFilters(runtime);
 
             // Then: the decoy schema is exactly as it was, and no new object appeared outside the mapping
@@ -478,6 +495,10 @@ public class PgWorkflowSchemaIT {
         PgTimerStore pgTimerStore();
 
         TimerStore<SqlClient> timerStore();
+
+        PgWorkflowDefinitionRegistryStore pgWorkflowDefinitionRegistryStore();
+
+        WorkflowDefinitionRegistryStore workflowDefinitionRegistryStore();
 
         PgWorkflowRetentionRepository pgWorkflowRetentionRepository();
 
@@ -732,7 +753,7 @@ public class PgWorkflowSchemaIT {
     }
 
     private static void assertWorkflowObjectsLiveOnlyInMappedSchema() throws SQLException {
-        // The mapped schema holds the history, the seven tables, their indexes and named constraints, and
+        // The mapped schema holds the history, the eight tables, their indexes and named constraints, and
         // nothing that the packaged scripts do not create
         assertEquals(with(WORKFLOW_TABLES, WORKFLOW_HISTORY), tablesIn(MAPPED_SCHEMA));
         assertTrue(
@@ -814,6 +835,12 @@ public class PgWorkflowSchemaIT {
                 runtime.pgTimerStore(),
                 runtime.timerStore(),
                 runtime.timerStore());
+        assertOneScopedInstance(
+                "definition registry store",
+                runtime.pgWorkflowDefinitionRegistryStore(),
+                runtime.pgWorkflowDefinitionRegistryStore(),
+                runtime.workflowDefinitionRegistryStore(),
+                runtime.workflowDefinitionRegistryStore());
         assertOneScopedInstance(
                 "retention repository",
                 runtime.pgWorkflowRetentionRepository(),
@@ -1124,6 +1151,58 @@ public class PgWorkflowSchemaIT {
                         query.findByWorkflow(workflowId, new BranchTokenFilter(BranchStatus.WAITING, null, null)))));
 
         return new SeededBranches(advanced, waiting, retryScheduled, completed, stale);
+    }
+
+    // --- Definition registry store ---
+
+    /** Reads and writes definition rows through the shipped SPI binding while the decoy table exists. */
+    private static void exerciseDefinitionRegistry(RuntimeComponent runtime) throws Exception {
+        WorkflowDefinitionRegistryStore registry = runtime.workflowDefinitionRegistryStore();
+        String planHash = "c".repeat(64);
+        Instant now = Instant.parse("2026-01-01T00:00:00Z");
+        DefinitionKey first = new DefinitionKey(null, REGISTRY_DEFINITION, 1);
+        DefinitionKey second = new DefinitionKey(null, REGISTRY_DEFINITION, 2);
+
+        await(registry.insertCandidate(
+                registryRecord(first, planHash, DefinitionStatus.CANDIDATE, now), registryDocument(first)));
+        ActivationClaim claim = await(registry.claim(first));
+        assertEquals(ActivationOutcome.ACTIVE, await(registry.complete(claim)));
+        assertEquals(
+                ReconcileOutcome.INSERTED,
+                await(registry.upsertDocument(
+                        registryRecord(second, planHash, DefinitionStatus.SUPERSEDED, now), registryDocument(second))));
+        await(registry.recomputeActive(null, REGISTRY_DEFINITION));
+        await(registry.transition(first, DefinitionStatus.SUPERSEDED, DefinitionStatus.DEPRECATED));
+
+        assertEquals(
+                DefinitionStatus.ACTIVE,
+                await(registry.find(second)).orElseThrow().status());
+        assertEquals(
+                "{\"v\":1}", await(registry.findDocument(first)).orElseThrow().document());
+        assertEquals(
+                2,
+                await(registry.list(new DefinitionFilter(DefinitionFilter.TenantScope.ALL, null, null)))
+                        .size());
+        assertEquals("DEPRECATED", mappedValue("workflow_definitions", "definition_version", 1, "status"));
+        assertEquals("ACTIVE", mappedValue("workflow_definitions", "definition_version", 2, "status"));
+        assertEquals("{\"v\":2}", mappedValue("workflow_definitions", "definition_version", 2, "document"));
+    }
+
+    private static WorkflowDefinitionRecord registryRecord(
+            DefinitionKey key, String planHash, DefinitionStatus status, Instant now) {
+        return new WorkflowDefinitionRecord(
+                key,
+                DefinitionKind.DOCUMENT,
+                planHash,
+                status,
+                new DefinitionProvenance("test", "memory://" + key.definitionVersion(), null, null, null, now),
+                "JSON",
+                now,
+                now);
+    }
+
+    private static WorkflowDefinitionDocument registryDocument(DefinitionKey key) {
+        return new WorkflowDefinitionDocument(key, "{\"v\":" + key.definitionVersion() + "}", "JSON");
     }
 
     // --- Join-state repository ---
