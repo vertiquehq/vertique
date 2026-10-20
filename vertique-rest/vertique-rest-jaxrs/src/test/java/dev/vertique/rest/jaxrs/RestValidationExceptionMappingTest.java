@@ -32,7 +32,7 @@ class RestValidationExceptionMappingTest {
         DefaultExceptionMapper mapper = RestModule.defaultExceptionMapper();
         RestValidationException ex = new RestValidationException(
                 "Request validation failed",
-                List.of(new ValidationErrorDetail("/name", "is required", "body", "required", null)));
+                List.of(new ValidationErrorDetail("/name", null, "is required", "body", "required", null)));
 
         Response response = mapper.toResponse(ex);
 
@@ -40,6 +40,6 @@ class RestValidationExceptionMappingTest {
         assertEquals("application/problem+json", response.getMediaType().toString());
         ValidationProblemDetail problem = assertInstanceOf(ValidationProblemDetail.class, response.getEntity());
         assertFalse(problem.errors().isEmpty(), "the problem body must carry at least one error entry");
-        assertEquals("/name", problem.errors().get(0).path());
+        assertEquals("/name", problem.errors().get(0).pointer());
     }
 }

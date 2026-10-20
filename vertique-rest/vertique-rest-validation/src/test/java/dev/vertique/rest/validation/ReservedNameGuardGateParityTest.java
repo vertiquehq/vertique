@@ -134,24 +134,29 @@ class ReservedNameGuardGateParityTest {
      * message for a {@code propertyNames} refusal, naming neither the offending key nor the pattern
      * that refused it.
      */
-    private static final ValidationErrorDetail PROPERTY_NAME_REFUSED = new ValidationErrorDetail(
-            "#",
-            "contains a property name the schema does not allow",
-            "body",
-            "propertyNames",
-            Map.of("propertyNames", true));
+    private static final ValidationErrorDetail PROPERTY_NAME_REFUSED = ValidationErrorDetail.ofPointer(
+                    "", "contains a property name the schema does not allow")
+            .withLocation("body")
+            .withType("propertyNames")
+            .withArgs(Map.of("propertyNames", true));
 
     /**
      * The gate's fixed, value-free message for a {@code patternProperties} match whose associated
      * schema the value then fails — reported before the concrete constraint detail below, since the
      * validator visits the {@code patternProperties} match first.
      */
-    private static final ValidationErrorDetail PATTERN_PROPERTIES_VALUE_REJECTED = new ValidationErrorDetail(
-            "#", "does not satisfy the schema", "body", "patternProperties", Map.of("patternProperties", true));
+    private static final ValidationErrorDetail PATTERN_PROPERTIES_VALUE_REJECTED = ValidationErrorDetail.ofPointer(
+                    "", "does not satisfy the schema")
+            .withLocation("body")
+            .withType("patternProperties")
+            .withArgs(Map.of("patternProperties", true));
 
     /** The concrete {@code maxLength} detail for the published {@code name} member's own size bound. */
-    private static final ValidationErrorDetail NAME_TOO_LONG = new ValidationErrorDetail(
-            "#", "must have a maximum length of 3", "body", "maxLength", Map.of("maxLength", 3));
+    private static final ValidationErrorDetail NAME_TOO_LONG = ValidationErrorDetail.ofPointer(
+                    "", "must have a maximum length of 3")
+            .withLocation("body")
+            .withType("maxLength")
+            .withArgs(Map.of("maxLength", 3));
 
     private static List<ValidationErrorDetail> details(ValidationErrorDetail... items) {
         return List.of(items);
