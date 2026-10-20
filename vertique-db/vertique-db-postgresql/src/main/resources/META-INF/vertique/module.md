@@ -191,6 +191,43 @@ this.<Job>query("SELECT id, payload FROM work_queue WHERE status = $1")
     .list();
 ```
 
+### `PgTableNames`
+
+Builds the SQL reference for a table placed by `DbSchemas` (see `dev.vertique:vertique-db-core`). Framework
+adapters and application repositories share it, so queries and migrations agree on the schema.
+
+```java
+public final class PgTableNames {
+    public static String qualify(DbSchemas schemas, String instanceName, String table);
+}
+```
+
+| Input | Result |
+|-------|--------|
+| `schemas` maps `instanceName` | the quoted schema and quoted table joined by a dot, for example `"jobs"."job_executions"` |
+| no mapping for `instanceName` | the validated table name, unquoted and unqualified: `job_executions` |
+
+- **Single-segment rule.** The table name and the mapped schema each match `[A-Za-z_][A-Za-z0-9_]{0,62}`:
+  a letter or underscore first, then letters, digits or underscores, at most 63 characters. A dotted
+  value is rejected, never split. Case is preserved.
+- **Quoting and case.** A mapped schema quotes both segments, so case is preserved exactly. An unmapped
+  name is returned unquoted, so PostgreSQL folds it to lower case: pass lowercase application table names
+  to `qualify`, or a mapped and an unmapped deployment will address different tables.
+- **Reserved schemas.** A mapped schema beginning with `pg_`, or equal to `information_schema`, is
+  rejected. Table names carry no such restriction.
+- **Exceptions.** `NullPointerException` for a null argument; `IllegalArgumentException` for an invalid
+  table or schema segment. Call it when you build SQL — for an adapter, in its constructor — so a bad
+  mapping fails before the first query. It never changes the connection's search path.
+
+An application repository computes each reference once and uses it in its statements:
+
+```java
+this.orders = PgTableNames.qualify(schemas, "app", "orders");
+```
+
+Qualification covers only the SQL you build with it; statements that already name a schema stay
+yours.
+
 ### `DbPostgresqlModule`
 
 Dagger `@Module` that provides the PostgreSQL connection pool, exception mapper singleton, optional connection handler binding, and the database readiness health check.

@@ -89,14 +89,25 @@ entries:
 - **`path`** — the engine's instance location after cut-back to a declared location, in the
   `PathForm` the caller requests: `URI_FRAGMENT` is the engine's own form, verbatim, including its
   percent-encoding (`#/a%20b`); `RFC6901` is the JSON Pointer form (`/a b`), with the document root as
-  the empty string. A missing location is the empty string.
+  the empty string and the member named `""` as `/`. A missing location is the empty string. An omitted
+  `required` member is reported at its parent by the engine; the path names it as `<parent>/<name>`
+  (RFC 6901: the name escaped as one segment, `~` as `~0` and `/` as `~1`, and never decoded; the fragment
+  form: percent-encoded as the engine spells a location). The name is taken from the schema's `required`
+  array, never from the request, and is added only when the schema confirms it: the name is an entry of
+  the `required` array at the unit's keyword location, the reported location needed no cut-back, and the
+  keyword location passes through no `oneOf` or `not` and no `anyOf` other than a two-entry one whose
+  other entry is exactly `{"type":"null"}` (an optional value) that no `$ref` step precedes. Every other case,
+  such as one of several alternatives or a parent under a key the client chose, keeps the parent
+  location. `allOf` branches, `$ref`, `then` and `else` are named.
 - **`type`** — the violated constraint keyword (`maxLength`, `minimum`, `required`, ...), or `null`
   when no actionable keyword exists.
 - **`message`** — a value-free message for that keyword, rendered from the schema's own arguments.
 - **`args`** — the constraint arguments resolved from the schema (for example `{maxLength: 3}`), or
   `null` when there are none. Resolution reads at most 10 index digits in an array-index segment;
   beyond that it returns no arguments rather than guessing. The cut-back to a declared location
-  follows at most 16 `$ref` hops and 64 composed subschemas, and shares the 10-digit index bound.
+  follows at most 16 `$ref` hops and 64 composed subschemas, and shares the 10-digit index bound. A
+  segment with the empty name after the first is the member `""`: it is kept when the schema declares
+  it and otherwise ends the location there, so a cut-back location is shorter, never different.
 
 A keyword that only traverses structure (`properties`, `items`, `allOf`, `anyOf`, `additionalProperties`,
 and the like — `SchemaKeywords.STRUCTURAL_KEYWORDS`) is a wrapper, not a violation: `collect` looks
@@ -110,9 +121,19 @@ Pattern-bound rejections have their own two types, `patternInputLength` and
 
 ### `rfc6901` conversion
 
-`ViolationDetails.rfc6901` converts an engine location to RFC 6901 form: it strips a leading `#`,
+`ViolationDetails.rfc6901` converts an engine location to RFC 6901 form: it strips one leading `#`,
 splits on `/`, percent-decodes each segment as UTF-8 (an invalid escape is left as it is), and keeps
-`~0` and `~1` untouched. `#`, the empty string, `/`, and `null` all become the empty string.
+`~0` and `~1` untouched. `#`, the empty string, and `null` become the empty string (the document
+root); `/` and `#/` stay `/`, the member with the empty name.
+
+An escape the engine never writes is not honoured. The engine never percent-escapes an ASCII letter,
+digit or the punctuation it writes as itself (`!`, `#`, `$`, `&` to `;`, `=`, `?`, `@`, `_`, `~` and, as
+`~1`, `/`), and it spells a byte below `0x10` with one hex digit, so a client key such as a control
+character followed by `Eame` is located as `%6Eame`. The conversion keeps such an escape as written, with
+the case of its hex digits, so `%6Eame` stays `%6Eame` and never becomes `name`; an escape beside a
+multi-byte run does not join it (`%41%C3%A9` becomes `%41é`). Every other escape decodes as above. The
+declared-name check cuts the location back before a segment that holds such an escape, as it does for an
+undeclared segment, so a client key can never pass as a declared name.
 
 ### No configuration
 

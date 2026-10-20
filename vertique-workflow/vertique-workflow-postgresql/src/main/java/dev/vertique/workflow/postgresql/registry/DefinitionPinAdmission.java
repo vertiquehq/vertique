@@ -93,6 +93,9 @@ public final class DefinitionPinAdmission {
      * Admits a new pin, or the move of a pin onto another version, to the given definition version.
      *
      * @param client the caller's transaction connection
+     * @param definitionsTable the {@code workflow_definitions} table name as the caller's statements address it,
+     *     already qualified with the mapped schema when there is one; it is placed in SQL as given, so it must
+     *     come from {@code PgTableNames.qualify}
      * @param definitionId the definition id the instance is pinned to
      * @param definitionVersion the version the instance is being pinned to
      * @param planHash the plan hash the instance carries, or {@code null} when it carries none
@@ -100,14 +103,22 @@ public final class DefinitionPinAdmission {
      * @return a future completed when admitted, or failed when refused or when the database failed
      */
     public static Future<Void> admitPin(
-            SqlClient client, String definitionId, long definitionVersion, String planHash, DbExceptionMapper mapper) {
-        return admit(client, definitionId, definitionVersion, planHash, NEW_PIN, mapper);
+            SqlClient client,
+            String definitionsTable,
+            String definitionId,
+            long definitionVersion,
+            String planHash,
+            DbExceptionMapper mapper) {
+        return admit(client, definitionsTable, definitionId, definitionVersion, planHash, NEW_PIN, mapper);
     }
 
     /**
      * Admits the resurrection of a finished instance onto its existing pin.
      *
      * @param client the caller's transaction connection
+     * @param definitionsTable the {@code workflow_definitions} table name as the caller's statements address it,
+     *     already qualified with the mapped schema when there is one; it is placed in SQL as given, so it must
+     *     come from {@code PgTableNames.qualify}
      * @param definitionId the definition id the instance is pinned to
      * @param definitionVersion the version the instance is pinned to
      * @param planHash the plan hash the instance carries, or {@code null} when it carries none
@@ -115,12 +126,18 @@ public final class DefinitionPinAdmission {
      * @return a future completed when admitted, or failed when refused or when the database failed
      */
     public static Future<Void> admitResurrection(
-            SqlClient client, String definitionId, long definitionVersion, String planHash, DbExceptionMapper mapper) {
-        return admit(client, definitionId, definitionVersion, planHash, RESURRECTION, mapper);
+            SqlClient client,
+            String definitionsTable,
+            String definitionId,
+            long definitionVersion,
+            String planHash,
+            DbExceptionMapper mapper) {
+        return admit(client, definitionsTable, definitionId, definitionVersion, planHash, RESURRECTION, mapper);
     }
 
     private static Future<Void> admit(
             SqlClient client,
+            String definitionsTable,
             String definitionId,
             long version,
             String planHash,
@@ -128,6 +145,7 @@ public final class DefinitionPinAdmission {
             DbExceptionMapper mapper) {
         Future<Void> valid = requireTransaction(client);
         if (valid.failed()) return valid;
+        Objects.requireNonNull(definitionsTable, "definitionsTable");
         Objects.requireNonNull(definitionId, "definitionId");
         Objects.requireNonNull(mapper, "mapper");
         SqlConnection tx = (SqlConnection) client;
@@ -145,7 +163,7 @@ public final class DefinitionPinAdmission {
                 .map(rows -> rows.iterator().next().getString("isolation"));
         return locked.compose(isolation -> {
             boolean snapshot = !"read committed".equals(isolation) && !"read uncommitted".equals(isolation);
-            String read = "SELECT tenant_key, definition_version, plan_hash, status FROM workflow_definitions"
+            String read = "SELECT tenant_key, definition_version, plan_hash, status FROM " + definitionsTable
                     + " WHERE definition_id = $1" + (snapshot ? " FOR SHARE" : "");
             return translated(tx.preparedQuery(read).execute(Tuple.of(definitionId)), mapper, context)
                     .compose(rows -> {

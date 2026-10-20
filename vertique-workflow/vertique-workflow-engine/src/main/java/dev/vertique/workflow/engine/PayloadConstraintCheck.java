@@ -76,14 +76,14 @@ final class PayloadConstraintCheck {
         int retained = Math.min(violations.size(), MAX_VIOLATIONS);
         List<ViolationDetail> converted = new ArrayList<>(retained + 1);
         for (ViolationDetail detail : violations.subList(0, retained)) {
-            converted.add(new ViolationDetail(
+            converted.add(ViolationDetail.atPointer(
                     JakartaPathPointers.toPointer(detail.path(), rootType, VertiqueJson.mapper()),
                     detail.message(),
                     detail.type(),
                     detail.args()));
         }
         if (violations.size() > MAX_VIOLATIONS) {
-            converted.add(new ViolationDetail("", TRUNCATED_MESSAGE, TRUNCATED_TYPE, null));
+            converted.add(ViolationDetail.unlocated(TRUNCATED_MESSAGE, TRUNCATED_TYPE));
         }
         throw new WorkflowInvalidPayloadException(message, converted);
     }

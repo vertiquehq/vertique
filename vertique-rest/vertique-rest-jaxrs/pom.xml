@@ -76,6 +76,13 @@ SPDX-License-Identifier: EUPL-1.2
             <artifactId>jakarta.validation-api</artifactId>
             <scope>test</scope>
         </dependency>
+        <!-- Test-only: the body pointer proofs run the real Hibernate Validator-backed BeanValidator
+             through a test Dagger component installing ValidationModule. -->
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-validation</artifactId>
+            <scope>test</scope>
+        </dependency>
         <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter</artifactId>

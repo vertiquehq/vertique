@@ -29,7 +29,7 @@ import org.junit.jupiter.api.extension.RegisterExtension;
 
 /**
  * Server-boot integration tests for {@code JsonProfilesDemoResource}, proving the {@code vertique}
- * and {@code vertique-strict} JSON mapper profiles' wire behavior end to end (json-004, slice S6).
+ * and {@code vertique-strict} JSON mapper profiles' wire behavior end to end.
  *
  * <p>Mirrors {@link HelloResourceIT}'s harness — a real {@code VertiqueAppExtension}-booted server,
  * RestAssured, and the same {@link OpenApiValidationFilter} wired against the compile-time
@@ -149,7 +149,7 @@ class JsonProfilesDemoIT {
      *
      * <p>The runtime {@code null} → {@link java.util.Optional#empty()} binding still holds on
      * non-contract-validated paths (the default {@code web-validation} strategy synthesizes schemas
-     * from the Java types and does not read {@code openapi.json}; ADR-0121) — which is precisely why
+     * from the Java types and does not read {@code openapi.json}) — which is precisely why
      * omission, not {@code null}, is the portable form.
      */
     @Test
@@ -227,7 +227,7 @@ class JsonProfilesDemoIT {
      * Proves the <em>server-side</em> rejection of a JSON number for a {@code vertique-strict}
      * {@code BigDecimal} property. Under the {@code openapi-contract} strategy the rejecting gate is
      * the contract validator — the response is the sanitized {@code "Request validation failed"}
-     * problem with {@code #/amount … "type": "type"}, not the strict deserializer's
+     * problem with {@code /amount … "type": "type"}, not the strict deserializer's
      * {@code "Request body rejected by JSON profile"}, because the contract gate runs before the
      * body is bound. The strict deserializer remains the second line of defence on paths that do not
      * validate against the contract.

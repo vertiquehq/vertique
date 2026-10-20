@@ -4,7 +4,9 @@
 package dev.vertique.workflow.postgresql.timer;
 
 import dev.vertique.core.context.DurableMetadata;
+import dev.vertique.db.DbSchemas;
 import dev.vertique.db.postgresql.PgDbExceptionMapper;
+import dev.vertique.db.postgresql.PgTableNames;
 import dev.vertique.workflow.exception.WorkflowConflictException;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.timer.TimerPurpose;
@@ -46,46 +48,27 @@ import java.util.UUID;
 @Singleton
 public final class PgTimerStore implements TimerStore<SqlClient> {
 
-    // --- SQL constants ---
+    /** Name of the migration instance whose schema mapping places the workflow tables. */
+    private static final String INSTANCE_NAME = "workflow";
 
-    private static final String SQL_INSERT = "INSERT INTO workflow_timers"
-            + " (timer_id, workflow_id, step_id, status, fire_at, delayed_job_execution_id,"
-            + " scheduled_at, purpose, task_id, branch_token_id, fork_step_id, branch_id, metadata)"
-            + " VALUES ($1, $2, $3, 'SCHEDULED', $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb)";
+    // --- SQL statements ---
+    //
+    // The statements are built once at construction because every table reference is qualified with
+    // the schema mapped for the workflow instance (when there is one), so the text depends on the
+    // configured placement rather than being a compile-time constant.
 
-    private static final String SQL_SELECT_ALL_COLUMNS =
-            "SELECT timer_id, workflow_id, step_id, status, fire_at, delayed_job_execution_id,"
-                    + " scheduled_at, fired_at, cancelled_at, failed_at, failure_reason,"
-                    + " purpose, task_id, branch_token_id, fork_step_id, branch_id, metadata"
-                    + " FROM workflow_timers";
-
-    private static final String SQL_LOCK_FOR_FIRING = SQL_SELECT_ALL_COLUMNS + " WHERE timer_id = $1 FOR UPDATE";
-
-    private static final String SQL_MARK_FIRED = "UPDATE workflow_timers SET status = 'FIRED', fired_at = $2"
-            + " WHERE timer_id = $1 AND status = 'SCHEDULED'";
-
-    private static final String SQL_MARK_CANCELLED =
-            "UPDATE workflow_timers SET status = 'CANCELLED', cancelled_at = $2"
-                    + " WHERE timer_id = $1 AND status = 'SCHEDULED'";
-
-    private static final String SQL_MARK_FAILED =
-            "UPDATE workflow_timers SET status = 'FAILED', failed_at = $2, failure_reason = $3"
-                    + " WHERE timer_id = $1 AND status = 'SCHEDULED'";
-
-    private static final String SQL_SELECT_STATUS = "SELECT status FROM workflow_timers WHERE timer_id = $1";
-
-    private static final String SQL_FIND_RECOVERABLE_SCHEDULED = SQL_SELECT_ALL_COLUMNS
-            + " WHERE status = 'SCHEDULED' AND fire_at < $1"
-            + " ORDER BY fire_at ASC"
-            + " LIMIT $2";
-
-    private static final String SQL_UPDATE_EXECUTION_ID = "UPDATE workflow_timers SET delayed_job_execution_id = $2"
-            + " WHERE timer_id = $1 AND status = 'SCHEDULED'";
-
-    private static final String SQL_FIND_BY_ID = SQL_SELECT_ALL_COLUMNS + " WHERE timer_id = $1";
-
-    private static final String SQL_FIND_SCHEDULED_BY_BRANCH_TOKEN =
-            SQL_SELECT_ALL_COLUMNS + " WHERE branch_token_id = $1 AND status = 'SCHEDULED'";
+    private final String sqlInsert;
+    private final String sqlSelectAllColumns;
+    private final String sqlLockForFiring;
+    private final String sqlMarkFired;
+    private final String sqlMarkCancelled;
+    private final String sqlMarkFailed;
+    private final String sqlSelectStatus;
+    private final String sqlFindRecoverableScheduled;
+    private final String sqlUpdateExecutionId;
+    private final String sqlFindById;
+    private final String sqlFindScheduledByBranchToken;
+    private final String sqlFindScheduledRemindersForTask;
 
     // --- Fields ---
 
@@ -94,13 +77,69 @@ public final class PgTimerStore implements TimerStore<SqlClient> {
     // --- Constructor ---
 
     /**
-     * Creates a new store with the given exception mapper.
+     * Creates a new store with the given exception mapper, whose table is not schema-qualified, so
+     * it resolves through the connection's default schema.
      *
      * @param exceptionMapper the mapper used to translate SQL errors into typed domain exceptions
      */
     @Inject
     public PgTimerStore(PgDbExceptionMapper exceptionMapper) {
+        this(exceptionMapper, DbSchemas.empty());
+    }
+
+    /**
+     * Creates a new store that qualifies every table reference with the schema mapped to the
+     * {@code workflow} instance, when {@code schemas} holds one. Without a mapping the statements
+     * are identical to those of the one-argument constructor.
+     *
+     * @param exceptionMapper the mapper used to translate SQL errors into typed domain exceptions
+     * @param schemas         the schema placement; an empty mapping leaves table names unqualified
+     * @throws IllegalArgumentException if the mapped schema name is not a valid single-segment
+     *                                  PostgreSQL identifier
+     */
+    public PgTimerStore(PgDbExceptionMapper exceptionMapper, DbSchemas schemas) {
         this.exceptionMapper = exceptionMapper;
+
+        String timers = PgTableNames.qualify(schemas, INSTANCE_NAME, "workflow_timers");
+
+        this.sqlInsert = "INSERT INTO " + timers
+                + " (timer_id, workflow_id, step_id, status, fire_at, delayed_job_execution_id,"
+                + " scheduled_at, purpose, task_id, branch_token_id, fork_step_id, branch_id, metadata)"
+                + " VALUES ($1, $2, $3, 'SCHEDULED', $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb)";
+
+        this.sqlSelectAllColumns = "SELECT timer_id, workflow_id, step_id, status, fire_at, delayed_job_execution_id,"
+                + " scheduled_at, fired_at, cancelled_at, failed_at, failure_reason,"
+                + " purpose, task_id, branch_token_id, fork_step_id, branch_id, metadata"
+                + " FROM " + timers;
+
+        this.sqlLockForFiring = sqlSelectAllColumns + " WHERE timer_id = $1 FOR UPDATE";
+
+        this.sqlMarkFired = "UPDATE " + timers + " SET status = 'FIRED', fired_at = $2"
+                + " WHERE timer_id = $1 AND status = 'SCHEDULED'";
+
+        this.sqlMarkCancelled = "UPDATE " + timers + " SET status = 'CANCELLED', cancelled_at = $2"
+                + " WHERE timer_id = $1 AND status = 'SCHEDULED'";
+
+        this.sqlMarkFailed = "UPDATE " + timers + " SET status = 'FAILED', failed_at = $2, failure_reason = $3"
+                + " WHERE timer_id = $1 AND status = 'SCHEDULED'";
+
+        this.sqlSelectStatus = "SELECT status FROM " + timers + " WHERE timer_id = $1";
+
+        this.sqlFindRecoverableScheduled = sqlSelectAllColumns
+                + " WHERE status = 'SCHEDULED' AND fire_at < $1"
+                + " ORDER BY fire_at ASC"
+                + " LIMIT $2";
+
+        this.sqlUpdateExecutionId = "UPDATE " + timers + " SET delayed_job_execution_id = $2"
+                + " WHERE timer_id = $1 AND status = 'SCHEDULED'";
+
+        this.sqlFindById = sqlSelectAllColumns + " WHERE timer_id = $1";
+
+        this.sqlFindScheduledByBranchToken =
+                sqlSelectAllColumns + " WHERE branch_token_id = $1 AND status = 'SCHEDULED'";
+
+        this.sqlFindScheduledRemindersForTask = "SELECT timer_id FROM " + timers
+                + " WHERE task_id = $1 AND purpose = 'TASK_REMINDER' AND status = 'SCHEDULED'";
     }
 
     // --- TimerStore implementation ---
@@ -129,7 +168,7 @@ public final class PgTimerStore implements TimerStore<SqlClient> {
                 record.forkStepId(),
                 record.branchId(),
                 toJsonObject(record.metadata()));
-        return tx.preparedQuery(SQL_INSERT)
+        return tx.preparedQuery(sqlInsert)
                 .execute(params)
                 .<Void>mapEmpty()
                 .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_timers insertScheduled")));
@@ -144,7 +183,7 @@ public final class PgTimerStore implements TimerStore<SqlClient> {
      */
     @Override
     public Future<Optional<TimerRecord>> findById(UUID timerId, SqlClient tx) {
-        return tx.preparedQuery(SQL_FIND_BY_ID)
+        return tx.preparedQuery(sqlFindById)
                 .execute(Tuple.of(timerId))
                 .<Optional<TimerRecord>>map(rs -> {
                     var it = rs.iterator();
@@ -162,7 +201,7 @@ public final class PgTimerStore implements TimerStore<SqlClient> {
      */
     @Override
     public Future<Optional<TimerRecord>> lockForFiring(UUID timerId, SqlClient tx) {
-        return tx.preparedQuery(SQL_LOCK_FOR_FIRING)
+        return tx.preparedQuery(sqlLockForFiring)
                 .execute(Tuple.of(timerId))
                 .<Optional<TimerRecord>>map(rs -> {
                     var it = rs.iterator();
@@ -180,7 +219,7 @@ public final class PgTimerStore implements TimerStore<SqlClient> {
     @Override
     public Future<TimerStatusTransition> markFired(UUID timerId, Instant firedAt, SqlClient tx) {
         Tuple params = Tuple.of(timerId, toOffsetDateTime(firedAt));
-        return tx.preparedQuery(SQL_MARK_FIRED)
+        return tx.preparedQuery(sqlMarkFired)
                 .execute(params)
                 .compose(rs -> rs.rowCount() == 1
                         ? Future.succeededFuture(TimerStatusTransition.APPLIED)
@@ -197,7 +236,7 @@ public final class PgTimerStore implements TimerStore<SqlClient> {
     @Override
     public Future<TimerStatusTransition> markCancelled(UUID timerId, Instant cancelledAt, SqlClient tx) {
         Tuple params = Tuple.of(timerId, toOffsetDateTime(cancelledAt));
-        return tx.preparedQuery(SQL_MARK_CANCELLED)
+        return tx.preparedQuery(sqlMarkCancelled)
                 .execute(params)
                 .compose(rs -> rs.rowCount() == 1
                         ? Future.succeededFuture(TimerStatusTransition.APPLIED)
@@ -215,7 +254,7 @@ public final class PgTimerStore implements TimerStore<SqlClient> {
     public Future<TimerStatusTransition> markFailed(
             UUID timerId, Instant failedAt, String failureReason, SqlClient tx) {
         Tuple params = Tuple.of(timerId, toOffsetDateTime(failedAt), failureReason);
-        return tx.preparedQuery(SQL_MARK_FAILED)
+        return tx.preparedQuery(sqlMarkFailed)
                 .execute(params)
                 .compose(rs -> rs.rowCount() == 1
                         ? Future.succeededFuture(TimerStatusTransition.APPLIED)
@@ -229,7 +268,7 @@ public final class PgTimerStore implements TimerStore<SqlClient> {
     @Override
     public Future<List<TimerRecord>> findRecoverableScheduled(Instant beforeFireAt, int limit, SqlClient tx) {
         Tuple params = Tuple.of(toOffsetDateTime(beforeFireAt), limit);
-        return tx.preparedQuery(SQL_FIND_RECOVERABLE_SCHEDULED)
+        return tx.preparedQuery(sqlFindRecoverableScheduled)
                 .execute(params)
                 .map(rs -> {
                     List<TimerRecord> records = new ArrayList<>();
@@ -248,7 +287,7 @@ public final class PgTimerStore implements TimerStore<SqlClient> {
     @Override
     public Future<Void> updateExecutionId(UUID timerId, UUID delayedJobExecutionId, SqlClient tx) {
         Tuple params = Tuple.of(timerId, delayedJobExecutionId);
-        return tx.preparedQuery(SQL_UPDATE_EXECUTION_ID)
+        return tx.preparedQuery(sqlUpdateExecutionId)
                 .execute(params)
                 // Translate SQL errors to typed DB exceptions BEFORE the row-count check, so the
                 // domain WorkflowConflictException raised below isn't itself swept into the DB
@@ -279,9 +318,7 @@ public final class PgTimerStore implements TimerStore<SqlClient> {
      */
     @Override
     public Future<List<UUID>> findScheduledRemindersForTask(UUID taskId, SqlClient tx) {
-        String sql = "SELECT timer_id FROM workflow_timers"
-                + " WHERE task_id = $1 AND purpose = 'TASK_REMINDER' AND status = 'SCHEDULED'";
-        return tx.preparedQuery(sql)
+        return tx.preparedQuery(sqlFindScheduledRemindersForTask)
                 .execute(Tuple.of(taskId))
                 .recover(t -> Future.failedFuture(
                         exceptionMapper.translate(t, "workflow_timers findScheduledRemindersForTask")))
@@ -301,7 +338,7 @@ public final class PgTimerStore implements TimerStore<SqlClient> {
      */
     @Override
     public Future<List<TimerRecord>> findScheduledByBranchToken(UUID branchTokenId, SqlClient tx) {
-        return tx.preparedQuery(SQL_FIND_SCHEDULED_BY_BRANCH_TOKEN)
+        return tx.preparedQuery(sqlFindScheduledByBranchToken)
                 .execute(Tuple.of(branchTokenId))
                 .map(rs -> {
                     List<TimerRecord> records = new ArrayList<>();
@@ -392,7 +429,7 @@ public final class PgTimerStore implements TimerStore<SqlClient> {
      * @return a {@link Future} resolving to the appropriate {@code LOST_TO_*} transition
      */
     private Future<TimerStatusTransition> classifyLostTransition(UUID timerId, SqlClient tx) {
-        return tx.preparedQuery(SQL_SELECT_STATUS).execute(Tuple.of(timerId)).map(rs -> {
+        return tx.preparedQuery(sqlSelectStatus).execute(Tuple.of(timerId)).map(rs -> {
             var it = rs.iterator();
             if (!it.hasNext()) {
                 // Row no longer exists — treat as LOST_TO_FIRED (already past SCHEDULED).

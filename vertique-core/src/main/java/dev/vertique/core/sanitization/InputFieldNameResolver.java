@@ -41,9 +41,13 @@ import java.util.Set;
  * Java property names — including every call site that processes a bare {@code String}, where there
  * is no object whose fields could be renamed.
  *
- * <p>The projection is consulted by the input-processing engine's traversal context
- * ({@code dev.vertique.input.processing.InputTraversalContext#logicalFieldName(Class, String)}),
- * which resolves each intermediate key before looking its policies up.
+ * <p>The projection has two consumers. The input-processing engine's traversal context
+ * ({@code dev.vertique.input.processing.InputTraversalContext#logicalFieldName(Class, String)})
+ * resolves each intermediate key before looking its policies up. The JSON pointer resolver
+ * ({@code dev.vertique.core.validation.JakartaPathPointers}) may read {@link #logicalName},
+ * {@link #boundJavaNames}, {@link #promotedFields} and {@link #polymorphicSubtypes} on the error path,
+ * when it names the request members a constraint violation concerns; it treats a call that throws as
+ * "cannot be verified" and stops the pointer there.
  *
  * @see InputValueContext
  */
@@ -101,7 +105,8 @@ public interface InputFieldNameResolver {
      *
      * <p>The default is an empty map, for a projection whose codec promotes nothing. Implementations
      * compose the map in {@link #precompute} and serve it from cache: it is read at registration to
-     * enumerate the promoted keys, and {@link #promotedField} may be consulted on the request path.
+     * enumerate the promoted keys and on the error path by the JSON pointer resolver, and
+     * {@link #promotedField} may be consulted on the request path.
      *
      * @param ownerType the type the intermediate is keyed against; must not be {@code null}
      * @return the promoted keys of {@code ownerType}, keyed by wire name; never {@code null}
@@ -145,7 +150,8 @@ public interface InputFieldNameResolver {
      * <p>The default is {@code null}: a resolver that cannot enumerate what the codec binds — the
      * {@link #IDENTITY} projection, whose keys are already Java names — leaves the check to the
      * field names themselves. An implementation that can enumerate returns the complete set,
-     * composed in {@link #precompute} and served from cache, so it is read at registration only.
+     * composed in {@link #precompute} and served from cache: the engine reads it at registration and
+     * the JSON pointer resolver on the error path.
      *
      * @param ownerType the type the intermediate is keyed against; must not be {@code null}
      * @return the Java property names the codec binds into on {@code ownerType}, or {@code null}
@@ -199,7 +205,8 @@ public interface InputFieldNameResolver {
      * <p>The default is the empty set: a projection that knows no polymorphism — including
      * {@link #IDENTITY} — is trusted as a whole, as with {@link #boundJavaNames}. An implementation
      * must answer from the class's annotations alone: this is asked of every reachable type,
-     * including ones whose property projection was deliberately never composed.
+     * including ones whose property projection was deliberately never composed, at registration by the
+     * engine, and it may be asked on the error path by the JSON pointer resolver.
      *
      * @param ownerType the type the intermediate is keyed against; must not be {@code null}
      * @return the subtypes the codec may bind for {@code ownerType}; never {@code null}

@@ -120,13 +120,18 @@ public final class KeyedCollectionDeserializer extends JsonDeserializer<List<?>>
     @Override
     public List<?> deserialize(JsonParser p, DeserializationContext ctxt) throws IOException {
         JsonNode node = p.readValueAsTree();
-        if (node == null || node.isNull() || node.isEmpty()) {
+        if (node == null || node.isNull()) {
             return List.of();
         }
         if (!node.isObject()) {
+            // Not isEmpty(): a scalar and an empty array also report size 0, and must not pass as an
+            // empty keyed object.
             throw JsonMappingException.from(
                     ctxt,
                     "@KeyedBy collection '" + identityProp + "' expects a JSON object, got " + node.getNodeType());
+        }
+        if (node.isEmpty()) {
+            return List.of();
         }
         ObjectMapper mapper = (ObjectMapper) p.getCodec();
         List<Object> result = new ArrayList<>();

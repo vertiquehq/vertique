@@ -480,7 +480,7 @@ public class JaxRsRouteRegistrar {
             String applicationName = mount != null ? mount.applicationName() : null;
             JaxRsOperationDescriptor descriptor = ResourceMethodMetaToDescriptorAdapter.adapt(meta, applicationName);
 
-            // PRD-REST-018: fail-fast startup validation. Every declared parameter whose runtime
+            // Fail-fast startup validation. Every declared parameter whose runtime
             // extraction uses string conversion must be resolvable by the FULL conversion chain (native
             // registry + JAX-RS providers). Native multipart form targets are materialized directly by
             // ParameterExtractor and therefore do not require a converter. A conversion-backed type no
@@ -502,7 +502,7 @@ public class JaxRsRouteRegistrar {
                 }
             }
 
-            // PRD-REST-018 (fix H): descriptor.parameters() exposes only TOP-LEVEL path/query/header/
+            // Fail-fast startup validation: descriptor.parameters() exposes only TOP-LEVEL path/query/header/
             // cookie/form params — a @BeanParam's own FIELDS are not members of that SPI, so the loop
             // above never sees them. But bean-param fields DO go through this same resolver at request
             // time (ParameterExtractor.materializeBean -> extractScalarParam -> resolver.fromString), so
@@ -510,7 +510,7 @@ public class JaxRsRouteRegistrar {
             // on the first request. Walk each @BeanParam's convertible fields here too.
             validateBeanParamFields(meta, paramConversionResolver, routeViolations);
 
-            // ALWAYS-ON fail-closed gate (ADR-0124). Compute the operation's effective security policy
+            // ALWAYS-ON fail-closed gate. Compute the operation's effective security policy
             // up front, unconditionally — accessing it runs EffectiveSecurityPolicy.enforceSupportedShape
             // (via the descriptor default), which throws RestConfigurationException for a multi-scheme
             // set, a scoped-OR, or the both-scopes shape. This is independent of the optional
@@ -702,9 +702,9 @@ public class JaxRsRouteRegistrar {
             // here is an EDGE-phase capture, after CONFIGURE installed the process mapper, and the
             // built-in registry hands out one stable instance per profile, so routes sharing a profile
             // share one entry.
-            JacksonFieldNameResolver bodyNameResolver = bodyNameResolvers.computeIfAbsent(
-                    resolvedBodyMapper != null ? resolvedBodyMapper : VertiqueJson.mapper(),
-                    JacksonFieldNameResolver::forMapper);
+            ObjectMapper projectionMapper = resolvedBodyMapper != null ? resolvedBodyMapper : VertiqueJson.mapper();
+            JacksonFieldNameResolver bodyNameResolver =
+                    bodyNameResolvers.computeIfAbsent(projectionMapper, JacksonFieldNameResolver::forMapper);
             if (objectProcessor != null) {
                 warmBodyNameProjection(meta, objectProcessor, bodyNameResolver);
             }
@@ -725,7 +725,8 @@ public class JaxRsRouteRegistrar {
                     resolvedBodyMapper,
                     paramConversionResolver,
                     bodyNameResolver,
-                    descriptor));
+                    descriptor,
+                    projectionMapper));
 
             // (e) Per-route ERROR-body profile decision. This closes the error-path
             // profiling asymmetry: a failure that fires BEFORE the request-path stash at (a-2) runs
@@ -934,7 +935,7 @@ public class JaxRsRouteRegistrar {
     }
 
     /**
-     * Fail-fast startup validation (PRD-REST-018, fix H) for {@code @BeanParam} FIELDS.
+     * Fail-fast startup validation for {@code @BeanParam} FIELDS.
      *
      * <p>{@link ResourceMethodMetaToDescriptorAdapter#adapt} projects only the resource method's
      * TOP-LEVEL parameters into {@link ParamDescriptor}s — a {@code @BeanParam}'s composite object is

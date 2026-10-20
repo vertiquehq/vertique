@@ -160,7 +160,7 @@ public class PatternBoundAccountingIT {
                     JsonObject detail = found.getJsonObject(0);
                     assertEquals(TOTAL_TYPE, detail.getString("type"), "type");
                     assertEquals("body", detail.getString("location"), "location");
-                    assertEquals("", detail.getString("path"), "path");
+                    assertEquals("", detail.getString("pointer"), "pointer");
                     assertEquals(
                             new JsonObject().put("maxTotalChars", DEFAULT_MAX_TOTAL_CHARS),
                             detail.getJsonObject("args"),

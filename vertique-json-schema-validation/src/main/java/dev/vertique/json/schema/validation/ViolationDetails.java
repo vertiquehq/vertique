@@ -4,8 +4,10 @@
 package dev.vertique.json.schema.validation;
 
 import dev.vertique.core.validation.ViolationDetail;
+import dev.vertique.core.validation.ViolationPathForm;
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
+import io.vertx.core.json.pointer.JsonPointer;
 import io.vertx.json.schema.OutputUnit;
 import java.io.ByteArrayOutputStream;
 import java.nio.ByteBuffer;
@@ -17,6 +19,7 @@ import java.util.Collections;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -31,7 +34,8 @@ import java.util.stream.Collectors;
  * resolved, and a result whose errors are all structural wrappers, yield one fixed value-free detail instead.
  *
  * <p>A reported location is cut back to the part the schema itself declares, so text a client chose, such as the
- * key of an undeclared property, never appears in a path.
+ * key of an undeclared property, never appears in a path. The one name appended to such a location is a missing
+ * required member, and it is taken from the schema's own {@code required} array.
  *
  * <p>INTERNAL framework seam: this type is shared by framework modules and is not an application contract.
  * It is a stateless utility; every member is {@code static}.
@@ -89,6 +93,12 @@ public final class ViolationDetails {
     /** The {@code type} keyword, whose declared value is a type name or a list of type names. */
     private static final String TYPE_KEYWORD = "type";
 
+    /** The engine's message for an omitted required member, up to the opening quote of the member's name. */
+    private static final String MISSING_REQUIRED_PREFIX = "Instance does not have required property \"";
+
+    /** The only schema that makes an {@code anyOf} entry the absent half of an optional value. */
+    private static final JsonObject NULL_BRANCH = new JsonObject().put(TYPE_KEYWORD, "null");
+
     private ViolationDetails() {}
 
     /**
@@ -110,6 +120,14 @@ public final class ViolationDetails {
      * <p>The path of a detail is the engine's instance location, cut back to the part the schema declares, in the
      * requested form. A result without a nested error list is itself the one error and, when its keyword is
      * resolved, is located at the root, spelled as the empty string.
+     *
+     * <p>The engine reports an omitted {@code required} member at its parent. That detail's path is the parent's
+     * followed by the member's name when the schema confirms the name: it is an entry of the {@code required}
+     * array at the unit's keyword location, the reported location needed no cutting back, and the keyword
+     * location passes through no {@code oneOf} or {@code not} and no {@code anyOf} other than a two-entry one whose
+     * other entry is exactly {@code {"type":"null"}}, which only makes the value optional. Otherwise the parent is
+     * the path, so one of several alternatives is never reported as the member that is missing. The name is
+     * escaped as one pointer segment, never decoded, and is never text the client sent.
      *
      * @param result   the engine's result
      * @param schema   the schema the result was produced for, used to resolve constraint values and to tell a
@@ -144,11 +162,15 @@ public final class ViolationDetails {
             String message = safeDetail(keyword, args, error.getError());
             // Cut back exactly as the value-free detail is: a violation under an undeclared key is reported at a
             // location ending in the client's own key, which must never reach a response.
+            String declared = declaredLocation(error.getInstanceLocation(), schema);
+            String detailPath = path(declared, form);
+            String missing = "required".equals(keyword) ? omittedRequiredMember(error, declared, schema) : null;
             failures.add(new ViolationDetail(
-                    path(declaredLocation(error.getInstanceLocation(), schema), form),
+                    missing == null ? detailPath : member(detailPath, missing, form),
                     message,
                     keyword,
-                    args.isEmpty() ? null : args));
+                    args.isEmpty() ? null : args,
+                    pathFormOf(form)));
             if (failFast) {
                 return failures;
             }
@@ -167,6 +189,15 @@ public final class ViolationDetails {
      */
     public static ViolationDetail valueFree(String path) {
         return new ViolationDetail(path, VALUE_FREE_MESSAGE, null, null);
+    }
+
+    private static ViolationDetail valueFree(String path, PathForm form) {
+        return new ViolationDetail(path, VALUE_FREE_MESSAGE, null, null, pathFormOf(form));
+    }
+
+    /** The core path form a detail built in {@code form} states: a pointer only for {@link PathForm#RFC6901}. */
+    private static ViolationPathForm pathFormOf(PathForm form) {
+        return form == PathForm.RFC6901 ? ViolationPathForm.JSON_POINTER : ViolationPathForm.JAVA_PROPERTY_PATH;
     }
 
     /**
@@ -257,10 +288,14 @@ public final class ViolationDetails {
     /**
      * Converts an engine instance location into an RFC 6901 JSON pointer.
      *
-     * <p>A leading {@code #} is removed and each segment is percent-decoded as UTF-8; an escape that is not
-     * well formed, including one written with a non-ASCII digit, is left as written. The pointer escapes
+     * <p>One leading {@code #} is removed and each segment is percent-decoded as UTF-8; an escape that is not
+     * well formed, including one written with a non-ASCII digit, is left as written. So is an escape of a byte
+     * the engine never percent-escapes, such as a letter or a digit, exactly as it was written: the engine
+     * cannot have written it, and the engine's one-digit escape of a byte below {@code 0x10} would otherwise
+     * let a client key read as that byte. The pointer escapes
      * {@code ~0} and {@code ~1} are kept. The root, in any
-     * spelling ({@code #}, the empty string, {@code /}, or {@code null}), becomes the empty string.
+     * spelling ({@code #}, the empty string, or {@code null}), becomes the empty string; {@code /} and
+     * {@code #/} are the member with the empty name and become {@code /}.
      *
      * @param engineLocation the engine's instance location, for example {@code #/a%20b/0/a~1b}; may be
      *     {@code null}
@@ -271,7 +306,7 @@ public final class ViolationDetails {
             return "";
         }
         String pointer = engineLocation.startsWith("#") ? engineLocation.substring(1) : engineLocation;
-        if (pointer.isEmpty() || "/".equals(pointer)) {
+        if (pointer.isEmpty()) {
             return "";
         }
         StringBuilder converted = new StringBuilder(pointer.length());
@@ -302,14 +337,18 @@ public final class ViolationDetails {
         }
         Map<String, Object> args = resolveConstraintArgs(keyword, result.getKeywordLocation(), schema);
         failures.add(new ViolationDetail(
-                path(null, form), safeDetail(keyword, args, result.getError()), keyword, args.isEmpty() ? null : args));
+                path(null, form),
+                safeDetail(keyword, args, result.getError()),
+                keyword,
+                args.isEmpty() ? null : args,
+                pathFormOf(form)));
     }
 
     /**
      * Builds a value-free detail at an instance location, cut back to the part the schema declares.
      */
     private static ViolationDetail valueFreeAt(String instanceLocation, JsonObject schema, PathForm form) {
-        return valueFree(path(declaredLocation(instanceLocation, schema), form));
+        return valueFree(path(declaredLocation(instanceLocation, schema), form), form);
     }
 
     /** Spells a location in the requested form; a missing location is the empty string. */
@@ -317,9 +356,126 @@ public final class ViolationDetails {
         return form == PathForm.RFC6901 ? rfc6901(location) : (location == null ? "" : location);
     }
 
+    /**
+     * Appends a member name to a parent path already spelled in {@code form}. The RFC 6901 form escapes the name
+     * as one pointer segment, {@code ~} first and then {@code /}, and leaves it otherwise as written; the fragment
+     * form spells it as the engine spells a location segment. A name that cannot be spelled leaves the parent.
+     */
+    private static String member(String parent, String name, PathForm form) {
+        if (form == PathForm.RFC6901) {
+            return parent + '/' + name.replace("~", "~0").replace("/", "~1");
+        }
+        try {
+            String segment = JsonPointer.create().append(name).toURI().toString();
+            return segment.startsWith("#/") ? parent + segment.substring(1) : parent;
+        } catch (RuntimeException e) {
+            return parent;
+        }
+    }
+
     private static boolean isGuardFailure(Throwable thrown) {
         return thrown instanceof PatternInputGuard.PatternInputTooLong
                 || thrown instanceof PatternInputGuard.PatternInputTotalExceeded;
+    }
+
+    // --- omitted required member ---
+
+    /**
+     * The name of the member a {@code required} unit reports as omitted, or {@code null} when the schema does not
+     * confirm it and the unit stays at its parent.
+     *
+     * <p>The name is the engine's message with its fixed prefix and the final quote removed. It is returned only
+     * when it is an entry of the {@code required} array the keyword location leads to, so the text that enters a
+     * path is the schema's own, and only when {@code declared}, the reported location after the cut-back, is the
+     * reported location itself: a parent under a key the client chose is not extended.
+     */
+    private static String omittedRequiredMember(OutputUnit error, String declared, JsonObject schema) {
+        String message = error.getError();
+        if (schema == null
+                || message == null
+                || message.length() <= MISSING_REQUIRED_PREFIX.length()
+                || !message.startsWith(MISSING_REQUIRED_PREFIX)
+                || !message.endsWith("\"")
+                || !Objects.equals(declared, error.getInstanceLocation())) {
+            return null;
+        }
+        String name = message.substring(MISSING_REQUIRED_PREFIX.length(), message.length() - 1);
+        JsonObject node = requiredOwner(schema, error.getKeywordLocation());
+        return node != null && node.getValue("required") instanceof JsonArray required && required.contains(name)
+                ? name
+                : null;
+    }
+
+    /**
+     * Navigates a {@code required} keyword location to the subschema that carries the keyword, or {@code null}
+     * when a step cannot be resolved or the location is not one whose unit may be named.
+     *
+     * <p>A {@code oneOf} or {@code not} step ends the walk, as does an {@code anyOf} step after a {@code $ref}
+     * step or one whose array is not a null branch beside the branch the location enters: the unit is then one
+     * of several alternatives. A {@code $ref} step is followed when it is local.
+     */
+    private static JsonObject requiredOwner(JsonObject root, String keywordLocation) {
+        if (keywordLocation == null) {
+            return null;
+        }
+        String location = keywordLocation.startsWith("#") ? keywordLocation.substring(1) : keywordLocation;
+        String keywordStep = "/required";
+        if (!location.endsWith(keywordStep)) {
+            return null;
+        }
+        String path = location.substring(0, location.length() - keywordStep.length());
+        if (path.isEmpty()) {
+            return root;
+        }
+        Object current = root;
+        boolean followedRef = false;
+        boolean enteredAnyOf = false;
+        String[] segments = path.split("/", -1);
+        for (int position = 0; position < segments.length; position++) {
+            String segment = segments[position];
+            if (position == 0 && segment.isEmpty()) {
+                continue;
+            }
+            Object next;
+            if (current instanceof JsonArray array) {
+                long index = arrayIndex(segment);
+                if (index < 0 || index >= array.size()) {
+                    return null;
+                }
+                if (enteredAnyOf) {
+                    enteredAnyOf = false;
+                    if (array.size() != 2 || !NULL_BRANCH.equals(array.getValue(1 - (int) index))) {
+                        return null;
+                    }
+                }
+                next = array.getValue((int) index);
+            } else if (current instanceof JsonObject object) {
+                String name = decodeSegment(segment);
+                if (name == null || "oneOf".equals(name) || "not".equals(name)) {
+                    return null;
+                }
+                next = object.getValue(name);
+                if ("anyOf".equals(name)) {
+                    if (followedRef || !(next instanceof JsonArray)) {
+                        return null;
+                    }
+                    enteredAnyOf = true;
+                } else if ("$ref".equals(name)) {
+                    if (!(next instanceof String ref) || !ref.startsWith("#")) {
+                        return null;
+                    }
+                    followedRef = true;
+                    next = navigateSchema(root, ref.substring(1));
+                }
+            } else {
+                return null;
+            }
+            if (next == null) {
+                return null;
+            }
+            current = next;
+        }
+        return current instanceof JsonObject owner && !enteredAnyOf ? owner : null;
     }
 
     // --- constraint resolution ---
@@ -453,11 +609,12 @@ public final class ViolationDetails {
      * {@code items} schema at that point names it, at the subschema reached so far or in any {@code allOf},
      * {@code anyOf} or {@code oneOf} branch of it. The engine reports each segment escaped and percent-encoded,
      * so a segment is decoded before it is looked up, and the reported spelling is what the path keeps. A segment
-     * counts as an array index only when it is a plausible one.
+     * counts as an array index only when it is a plausible one. Only the empty element before the first
+     * {@code /} is skipped: a later empty segment is the member named {@code ""}, looked up like any other name.
      *
      * <p>Resolution fails closed: a segment that cannot be shown to be declared, under an unresolvable
-     * {@code $ref}, a composition past the subschema bound, a malformed encoding, or a {@code null} schema, ends
-     * the run, which names a shorter location and never a longer one.
+     * {@code $ref}, a composition past the subschema bound, a malformed encoding, an escape of a byte the engine
+     * never escapes, or a {@code null} schema, ends the run, which names a shorter location and never a longer one.
      */
     private static String declaredLocation(String instanceLocation, JsonObject schema) {
         if (instanceLocation == null || instanceLocation.isEmpty()) {
@@ -465,13 +622,15 @@ public final class ViolationDetails {
         }
         String anchor = instanceLocation.startsWith("#") ? "#" : "";
         String pointer = instanceLocation.substring(anchor.length());
-        if (pointer.isEmpty() || "/".equals(pointer)) {
+        if (pointer.isEmpty()) {
             return instanceLocation;
         }
         StringBuilder declared = new StringBuilder(anchor);
         List<JsonObject> nodes = schema == null ? List.of() : List.of(schema);
-        for (String segment : pointer.split("/", -1)) {
-            if (segment.isEmpty()) {
+        String[] segments = pointer.split("/", -1);
+        for (int position = 0; position < segments.length; position++) {
+            String segment = segments[position];
+            if (position == 0 && segment.isEmpty()) {
                 continue;
             }
             String name = decodeSegment(segment);
@@ -565,6 +724,9 @@ public final class ViolationDetails {
      * Decodes one instance-location segment as the engine reports it, percent-encoded UTF-8 over an escaped
      * name, back to the property name the schema would declare.
      *
+     * <p>A segment holding an escape of a byte the engine never escapes is not trusted, see
+     * {@link #neverEscapedByEngine(int)}, and is treated as not well formed.
+     *
      * @return the decoded name, or {@code null} when the segment is not a well-formed encoding
      */
     private static String decodeSegment(String segment) {
@@ -578,12 +740,11 @@ public final class ViolationDetails {
                 if (index + 2 >= segment.length()) {
                     return null;
                 }
-                int high = Character.digit(segment.charAt(index + 1), 16);
-                int low = Character.digit(segment.charAt(index + 2), 16);
-                if (high < 0 || low < 0) {
+                int value = hexEscapeAt(segment, index);
+                if (value < 0 || neverEscapedByEngine(value)) {
                     return null;
                 }
-                bytes.write(high * 16 + low);
+                bytes.write(value);
                 index += 2;
             } else if (c < 0x80) {
                 bytes.write(c);
@@ -685,7 +846,8 @@ public final class ViolationDetails {
 
     /**
      * Percent-decodes one pointer segment as UTF-8. A run of escapes that does not decode to well-formed UTF-8,
-     * and a {@code %} not followed by two hexadecimal digits, are left as written.
+     * and a {@code %} not followed by two hexadecimal digits, are left as written. So is an escape of a byte the
+     * engine never escapes, see {@link #neverEscapedByEngine(int)}; it does not join the run of escapes beside it.
      */
     private static String percentDecode(String segment) {
         if (segment.indexOf('%') < 0) {
@@ -699,10 +861,17 @@ public final class ViolationDetails {
                 index++;
                 continue;
             }
+            if (neverEscapedByEngine(hexEscapeAt(segment, index))) {
+                decoded.append(segment, index, index + 3);
+                index += 3;
+                continue;
+            }
             int start = index;
             ByteArrayOutputStream bytes = new ByteArrayOutputStream();
             int value;
-            while (index < segment.length() && (value = hexEscapeAt(segment, index)) >= 0) {
+            while (index < segment.length()
+                    && (value = hexEscapeAt(segment, index)) >= 0
+                    && !neverEscapedByEngine(value)) {
                 bytes.write(value);
                 index += 3;
             }
@@ -726,6 +895,29 @@ public final class ViolationDetails {
         int high = asciiHexValue(text.charAt(index + 1));
         int low = asciiHexValue(text.charAt(index + 2));
         return high < 0 || low < 0 ? -1 : high * 16 + low;
+    }
+
+    /**
+     * Whether the engine never percent-escapes the byte: an ASCII letter or digit, and the ASCII punctuation the
+     * engine writes as itself. A slash and a tilde are in the set, as the engine spells them {@code ~1} and
+     * {@code ~0}. Control characters, DEL, the space, and the characters it does escape, such as the quote, the
+     * percent sign, the angle brackets, the square brackets and the braces, are not.
+     *
+     * <p>An escape of such a byte cannot have come from the engine, so it is read as text the client wrote, never
+     * as the byte. The engine writes a byte below {@code 0x10} with one hexadecimal digit, so a client key such as
+     * a control character followed by {@code Eame} is located as {@code %6Eame}, and a decoder that honoured that
+     * escape would read the byte {@code n} and let the key forge a declared name.
+     */
+    private static boolean neverEscapedByEngine(int value) {
+        return value == 0x21
+                || value == 0x23
+                || value == 0x24
+                || (value >= 0x26 && value <= 0x3B)
+                || value == 0x3D
+                || (value >= 0x3F && value <= 0x5A)
+                || value == 0x5F
+                || (value >= 0x61 && value <= 0x7A)
+                || value == 0x7E;
     }
 
     /** The value of an ASCII hexadecimal digit ({@code 0-9}, {@code a-f}, {@code A-F}), or {@code -1}. */
