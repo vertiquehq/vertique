@@ -18,6 +18,7 @@ import ch.qos.logback.core.read.ListAppender;
 import dev.vertique.core.config.ConfigParser;
 import io.vertx.core.json.JsonObject;
 import java.util.List;
+import java.util.Map;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -78,6 +79,17 @@ class DbModuleTest {
 
         assertSame(valid, DbModule.dbPoolConfig(appConfig, parser));
         assertEquals(List.of(), warnMessages());
+    }
+
+    @Test
+    @DisplayName("the schema placement is the schemas of the pool configuration")
+    void dbSchemas_isProjectedFromPoolConfig() {
+        DbSchemas placement = new DbSchemas(Map.of("job", "jobs"));
+        DbPoolConfig config = DbPoolConfig.builder().schemas(placement).build();
+
+        assertSame(placement, DbModule.dbSchemas(config));
+        assertEquals(
+                Map.of(), DbModule.dbSchemas(DbPoolConfig.builder().build()).mappings());
     }
 
     private List<String> warnMessages() {

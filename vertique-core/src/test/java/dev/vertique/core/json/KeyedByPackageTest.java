@@ -12,6 +12,7 @@ import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
+import java.util.Set;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -21,7 +22,7 @@ import org.junit.jupiter.api.Test;
  *
  * <p>Proofs:
  * <ul>
- *   <li>{@code dev.vertique.core.json.KeyedBy} loads, is an annotation with {@code @Target(FIELD)}
+ *   <li>{@code dev.vertique.core.json.KeyedBy} loads, is an annotation with {@code @Target({FIELD, METHOD})}
  *       and {@code @Retention(RUNTIME)}, and declares a {@code String value()} method;</li>
  *   <li>{@code dev.vertique.core.config.KeyedBy} throws {@link ClassNotFoundException}, confirming
  *       no lingering copy at the old location.</li>
@@ -30,7 +31,8 @@ import org.junit.jupiter.api.Test;
 class KeyedByPackageTest {
 
     @Test
-    @DisplayName("dev.vertique.core.json.KeyedBy loads and is an annotation with FIELD target and RUNTIME retention")
+    @DisplayName(
+            "dev.vertique.core.json.KeyedBy loads and is an annotation with FIELD and METHOD targets and RUNTIME retention")
     void keyedBy_isInCoreJsonPackage() throws Exception {
         Class<?> cls = Class.forName("dev.vertique.core.json.KeyedBy");
 
@@ -42,8 +44,10 @@ class KeyedByPackageTest {
 
         Target target = cls.getAnnotation(Target.class);
         assertNotNull(target, "KeyedBy must declare @Target");
-        assertEquals(1, target.value().length, "KeyedBy must target exactly one element type");
-        assertEquals(ElementType.FIELD, target.value()[0], "KeyedBy must target FIELD");
+        assertEquals(
+                Set.of(ElementType.FIELD, ElementType.METHOD),
+                Set.of(target.value()),
+                "KeyedBy must target record fields and builder setter methods, and nothing else");
     }
 
     @Test

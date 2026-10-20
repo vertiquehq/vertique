@@ -174,12 +174,12 @@ final class DefaultWorkflowPayloadSchemas implements WorkflowPayloadSchemas {
         }
         List<ViolationDetail> retained = new ArrayList<>(MAX_VIOLATIONS + 1);
         retained.addAll(violations.subList(0, MAX_VIOLATIONS));
-        retained.add(new ViolationDetail("", TRUNCATED_MESSAGE, TRUNCATED_TYPE, null));
+        retained.add(ViolationDetail.unlocated(TRUNCATED_MESSAGE, TRUNCATED_TYPE));
         return retained;
     }
 
     private static PayloadValidationResult single(String message, String type) {
-        return new PayloadValidationResult(List.of(new ViolationDetail("", message, type, null)));
+        return new PayloadValidationResult(List.of(ViolationDetail.unlocated(message, type)));
     }
 
     private static boolean isVoid(String typeName) {

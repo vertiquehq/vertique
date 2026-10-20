@@ -118,10 +118,25 @@ coercion and before the task is completed or the instance started, inside the sa
 violation:
 
 - **path** is an RFC 6901 pointer over the payload's wire (JSON) names, for example `items[0].name`
-  becomes `/items/0/name`. Index segments are numeric, container-element nodes are dropped, and `~` and `/`
-  are escaped as `~0` and `~1`. A map entry ends the pointer at the map property, so the caller's key never
-  appears in the path. A segment uses the payload's wire name where it resolves and the declared member
-  name otherwise; neither is a map key or other caller data.
+  becomes `/items/0/name`. Index segments are numeric, a container-element node contributes only its index
+  (nested lists give `/lists/0/1`), and `~` and `/` are escaped as `~0` and `~1`. A map entry or set member
+  ends the pointer at the map or set property, so the caller's key never appears in the path. A segment
+  uses the payload's primary wire name, and only for a member the mapper writes through a setter or a
+  creator parameter (record components included): the check resolves in mapper-only mode, against the
+  payload type and the process JSON mapper without the submitted document, so a member bound only through
+  a field (a public field, or a private field with a getter and no setter) ends the pointer at its parent,
+  `""` at the root, and a payload bound through a builder gives `""` for every violation, because no
+  member of it can be verified. A segment that cannot be
+  verified against the payload type ends the pointer at the deepest verified ancestor: an unknown member,
+  a member the mapper does not write, a bean or property whose binding Jackson reshapes (a custom
+  deserializer or converter, `@JsonDeserialize(as)`, a builder, a delegating or single-argument scalar
+  creator, an array shape, an any-setter or unwrapped member), a position on anything but a list or
+  array, and a position in a list that skips null elements or accepts a single value as an array. A
+  polymorphic value (`@JsonTypeInfo` on its type or on the holding property) ends the pointer at the
+  property holding it: the check does not know which subtype the mapper bound, and a subtype may bind
+  even an inherited member under another name. A pointer may therefore be shorter than the violated
+  location but never names a different one for the shapes the check detects; a deserializer installed
+  by a registered Jackson module is not detected. The path is never a map key or other caller data.
 - **type** is the validation module's mapped name: `size`, `required`, `min`, `max`, `pattern`, `email`.
   An unmapped constraint keeps the annotation simple name.
 - **message** is exactly what the validator produced.

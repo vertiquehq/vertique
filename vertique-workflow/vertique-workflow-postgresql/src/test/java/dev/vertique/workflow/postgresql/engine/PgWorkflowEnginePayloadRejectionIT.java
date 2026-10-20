@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -626,7 +627,7 @@ public class PgWorkflowEnginePayloadRejectionIT {
         List<ViolationDetail> violations = rejection.violations();
         assertEquals(1, violations.size(), "exactly one detail expected, got " + violations);
         ViolationDetail detail = violations.get(0);
-        assertEquals("", detail.path());
+        assertNull(detail.path());
         assertEquals(message, detail.message());
         assertEquals(type, detail.type());
     }

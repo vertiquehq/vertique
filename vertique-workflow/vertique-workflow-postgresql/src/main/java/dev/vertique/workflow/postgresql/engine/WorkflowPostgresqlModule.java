@@ -5,6 +5,10 @@ package dev.vertique.workflow.postgresql.engine;
 
 import dagger.Binds;
 import dagger.Module;
+import dagger.Provides;
+import dev.vertique.db.DbSchemas;
+import dev.vertique.db.DbSchemasModule;
+import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.logging.LoggingContextModule;
 import dev.vertique.workflow.engine.WorkflowEngineModule;
 import dev.vertique.workflow.engine.spi.BranchTokenRepository;
@@ -14,20 +18,26 @@ import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
 import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
 import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
 import dev.vertique.workflow.postgresql.query.PgWorkflowInstanceQueryService;
+import dev.vertique.workflow.postgresql.registry.PgWorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.postgresql.repository.PgBranchTokenRepository;
 import dev.vertique.workflow.postgresql.repository.PgJoinStateRepository;
 import dev.vertique.workflow.postgresql.repository.PgWorkflowDedupRepository;
 import dev.vertique.workflow.postgresql.repository.PgWorkflowHistoryRepository;
 import dev.vertique.workflow.postgresql.repository.PgWorkflowInstanceRepository;
+import dev.vertique.workflow.postgresql.retention.PgWorkflowRetentionRepository;
 import dev.vertique.workflow.postgresql.retention.PgWorkflowRetentionService;
 import dev.vertique.workflow.postgresql.tasks.PgTaskStore;
 import dev.vertique.workflow.postgresql.timer.PgTimerStore;
 import dev.vertique.workflow.query.WorkflowInstanceQueryService;
+import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
+import dev.vertique.workflow.registry.store.WorkflowDefinitionsConfig;
 import dev.vertique.workflow.retention.WorkflowRetentionService;
 import dev.vertique.workflow.tasks.TaskStore;
 import dev.vertique.workflow.timer.TimerStore;
+import io.vertx.sqlclient.Pool;
 import io.vertx.sqlclient.SqlClient;
 import jakarta.inject.Singleton;
+import java.util.Optional;
 
 /**
  * Dagger module for the workflow-postgresql (dialect) layer.
@@ -37,22 +47,190 @@ import jakarta.inject.Singleton;
  * {@code @WorkflowRecorders} multibinding, the {@code @OptionalIntentKinds} default set, the
  * optional {@link dev.vertique.workflow.migration.WorkflowMigrationRegistry} binding, and the
  * engine's {@code core}/{@code context} includes). This module contributes only the dialect-specific
- * bindings: the five repository SPIs, the task/timer stores, the transaction runner, and the
+ * bindings: the five repository SPIs, the task/timer/definition-registry stores, the transaction runner, and the
  * query/retention services — all bound to their PostgreSQL implementations.
  *
  * <p>Consumers install only {@code WorkflowPostgresqlModule}; the engine wiring arrives transitively
  * through the {@code include}, so application wiring is unchanged.
  *
- * <p>Applications must also include database and connection-pool modules
- * ({@code DbPostgresqlModule}, {@code DbFlywayModule}) so that the {@link io.vertx.sqlclient.Pool}
- * dependency of the PostgreSQL repositories and the {@link WorkflowTxRunnerRepository} (which
- * supplies the {@link PgWorkflowTransactionRunner} with its stage-1 exception mapper) is satisfied.
+ * <p>The five repositories, the three stores (task, timer and definition registry) and
+ * {@link PgWorkflowRetentionRepository} are each
+ * provided as one scoped instance built with the optional {@link DbSchemas} placement, so every
+ * workflow table is read and written in the schema mapped for the {@code workflow} instance and
+ * resolves through the connection's default schema when no mapping exists. The SPI bindings and
+ * the query, retention and recovery services all resolve to those same instances. The module also
+ * includes {@link WorkflowMigrationsModule}, which contributes the workflow migration declaration,
+ * and {@link DbSchemasModule}, which declares the optional {@link DbSchemas} binding.
+ *
+ * <p>Applications must also include {@code DbPostgresqlModule}, which supplies the
+ * {@link io.vertx.sqlclient.Pool} and {@link PgDbExceptionMapper} that the PostgreSQL repositories
+ * and the {@link WorkflowTxRunnerRepository} (which supplies the {@link PgWorkflowTransactionRunner}
+ * with its stage-1 exception mapper) depend on. {@code DbModule} binds the {@link DbSchemas}
+ * placement from the {@code db.schemas} setting; without it the tables stay unqualified. Only an
+ * application that runs the migrations at startup also needs {@code DbFlywayModule}.
  *
  * <p>This module lives in the {@code engine} package to access the package-private dialect runner
  * and repository types it binds.
  */
-@Module(includes = {WorkflowEngineModule.class, LoggingContextModule.class})
+@Module(
+        includes = {
+            WorkflowEngineModule.class,
+            LoggingContextModule.class,
+            WorkflowMigrationsModule.class,
+            DbSchemasModule.class
+        })
 public abstract class WorkflowPostgresqlModule {
+
+    // --- Scoped PostgreSQL implementations ---
+
+    /**
+     * Provides the {@link PgTimerStore}, applying the schema mapping for the {@code workflow}
+     * instance when a {@link DbSchemas} binding exists.
+     *
+     * @param mapper  the PostgreSQL failure mapper
+     * @param schemas the optional schema placement; absent means unqualified table names
+     * @return the scoped PostgreSQL timer store
+     */
+    @Provides
+    @Singleton
+    static PgTimerStore pgTimerStore(PgDbExceptionMapper mapper, Optional<DbSchemas> schemas) {
+        return new PgTimerStore(mapper, schemas.orElseGet(DbSchemas::empty));
+    }
+
+    /**
+     * Provides the {@link PgTaskStore}, applying the schema mapping for the {@code workflow}
+     * instance when a {@link DbSchemas} binding exists.
+     *
+     * @param pool    the PostgreSQL connection pool
+     * @param mapper  the PostgreSQL failure mapper
+     * @param schemas the optional schema placement; absent means unqualified table names
+     * @return the scoped PostgreSQL task store
+     */
+    @Provides
+    @Singleton
+    static PgTaskStore pgTaskStore(Pool pool, PgDbExceptionMapper mapper, Optional<DbSchemas> schemas) {
+        return new PgTaskStore(pool, mapper, schemas.orElseGet(DbSchemas::empty));
+    }
+
+    /**
+     * Provides the {@link PgWorkflowInstanceRepository}, applying the schema mapping for the
+     * {@code workflow} instance when a {@link DbSchemas} binding exists.
+     *
+     * @param pool    the PostgreSQL connection pool
+     * @param mapper  the PostgreSQL failure mapper
+     * @param schemas the optional schema placement; absent means unqualified table names
+     * @return the scoped PostgreSQL workflow instance repository
+     */
+    @Provides
+    @Singleton
+    static PgWorkflowInstanceRepository pgWorkflowInstanceRepository(
+            Pool pool, PgDbExceptionMapper mapper, Optional<DbSchemas> schemas) {
+        return new PgWorkflowInstanceRepository(pool, mapper, schemas.orElseGet(DbSchemas::empty));
+    }
+
+    /**
+     * Provides the {@link PgWorkflowHistoryRepository}, applying the schema mapping for the
+     * {@code workflow} instance when a {@link DbSchemas} binding exists.
+     *
+     * @param pool    the PostgreSQL connection pool
+     * @param mapper  the PostgreSQL failure mapper
+     * @param schemas the optional schema placement; absent means unqualified table names
+     * @return the scoped PostgreSQL workflow history repository
+     */
+    @Provides
+    @Singleton
+    static PgWorkflowHistoryRepository pgWorkflowHistoryRepository(
+            Pool pool, PgDbExceptionMapper mapper, Optional<DbSchemas> schemas) {
+        return new PgWorkflowHistoryRepository(pool, mapper, schemas.orElseGet(DbSchemas::empty));
+    }
+
+    /**
+     * Provides the {@link PgWorkflowDedupRepository}, applying the schema mapping for the
+     * {@code workflow} instance when a {@link DbSchemas} binding exists.
+     *
+     * @param pool    the PostgreSQL connection pool
+     * @param mapper  the PostgreSQL failure mapper
+     * @param schemas the optional schema placement; absent means unqualified table names
+     * @return the scoped PostgreSQL workflow dedup repository
+     */
+    @Provides
+    @Singleton
+    static PgWorkflowDedupRepository pgWorkflowDedupRepository(
+            Pool pool, PgDbExceptionMapper mapper, Optional<DbSchemas> schemas) {
+        return new PgWorkflowDedupRepository(pool, mapper, schemas.orElseGet(DbSchemas::empty));
+    }
+
+    /**
+     * Provides the {@link PgBranchTokenRepository}, applying the schema mapping for the
+     * {@code workflow} instance when a {@link DbSchemas} binding exists.
+     *
+     * @param pool    the PostgreSQL connection pool
+     * @param mapper  the PostgreSQL failure mapper
+     * @param schemas the optional schema placement; absent means unqualified table names
+     * @return the scoped PostgreSQL branch-token repository
+     */
+    @Provides
+    @Singleton
+    static PgBranchTokenRepository pgBranchTokenRepository(
+            Pool pool, PgDbExceptionMapper mapper, Optional<DbSchemas> schemas) {
+        return new PgBranchTokenRepository(pool, mapper, schemas.orElseGet(DbSchemas::empty));
+    }
+
+    /**
+     * Provides the {@link PgJoinStateRepository}, applying the schema mapping for the
+     * {@code workflow} instance when a {@link DbSchemas} binding exists.
+     *
+     * @param pool    the PostgreSQL connection pool
+     * @param mapper  the PostgreSQL failure mapper
+     * @param schemas the optional schema placement; absent means unqualified table names
+     * @return the scoped PostgreSQL join-state repository
+     */
+    @Provides
+    @Singleton
+    static PgJoinStateRepository pgJoinStateRepository(
+            Pool pool, PgDbExceptionMapper mapper, Optional<DbSchemas> schemas) {
+        return new PgJoinStateRepository(pool, mapper, schemas.orElseGet(DbSchemas::empty));
+    }
+
+    /**
+     * Provides the {@link PgWorkflowRetentionRepository}, applying the schema mapping for the
+     * {@code workflow} instance when a {@link DbSchemas} binding exists.
+     *
+     * <p>{@link PgWorkflowRetentionService} archives and purges through this scoped instance.
+     *
+     * @param pool    the PostgreSQL connection pool
+     * @param mapper  the PostgreSQL failure mapper
+     * @param schemas the optional schema placement; absent means unqualified table names
+     * @return the scoped PostgreSQL workflow retention repository
+     */
+    @Provides
+    @Singleton
+    static PgWorkflowRetentionRepository pgWorkflowRetentionRepository(
+            Pool pool, PgDbExceptionMapper mapper, Optional<DbSchemas> schemas) {
+        return new PgWorkflowRetentionRepository(pool, mapper, schemas.orElseGet(DbSchemas::empty));
+    }
+
+    /**
+     * Provides the {@link PgWorkflowDefinitionRegistryStore}, applying the schema mapping for the
+     * {@code workflow} instance when a {@link DbSchemas} binding exists.
+     *
+     * @param pool    the PostgreSQL connection pool
+     * @param mapper  the PostgreSQL failure mapper
+     * @param config  the optional shared document policy; defaults apply when absent
+     * @param schemas the optional schema placement; absent means unqualified table names
+     * @return the scoped PostgreSQL definition registry store
+     */
+    @Provides
+    @Singleton
+    static PgWorkflowDefinitionRegistryStore pgWorkflowDefinitionRegistryStore(
+            Pool pool,
+            PgDbExceptionMapper mapper,
+            Optional<WorkflowDefinitionsConfig> config,
+            Optional<DbSchemas> schemas) {
+        return new PgWorkflowDefinitionRegistryStore(pool, mapper, config, schemas.orElseGet(DbSchemas::empty));
+    }
+
+    // --- Store SPI bindings ---
 
     /**
      * Binds {@link PgTimerStore} as the {@link TimerStore} implementation for the
@@ -178,9 +356,15 @@ public abstract class WorkflowPostgresqlModule {
     @Binds
     @Singleton
     abstract WorkflowRetentionService bindRetentionService(PgWorkflowRetentionService impl);
-    /** Binds the durable definition registry using the existing application pool. */
+
+    /**
+     * Binds {@link PgWorkflowDefinitionRegistryStore} as the {@link WorkflowDefinitionRegistryStore}
+     * implementation, using the existing application pool and the scoped store instance.
+     *
+     * @param store the definition registry store singleton
+     * @return the store as the public SPI interface
+     */
     @Binds
     @Singleton
-    abstract dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore definitionRegistryStore(
-            dev.vertique.workflow.postgresql.registry.PgWorkflowDefinitionRegistryStore store);
+    abstract WorkflowDefinitionRegistryStore definitionRegistryStore(PgWorkflowDefinitionRegistryStore store);
 }

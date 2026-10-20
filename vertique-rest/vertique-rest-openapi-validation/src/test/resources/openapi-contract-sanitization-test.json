@@ -33,6 +33,30 @@
           }
         }
       }
+    },
+    "/tags": {
+      "post": {
+        "operationId": "createTags",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string",
+                  "maxLength": 1
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created"
+          }
+        }
+      }
     }
   }
 }

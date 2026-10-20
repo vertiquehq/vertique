@@ -85,7 +85,7 @@ class WorkflowPayloadsTest {
     private static void assertSingleDetail(WorkflowInvalidPayloadException rejection, String message, String type) {
         List<ViolationDetail> violations = rejection.violations();
         assertEquals(1, violations.size(), "exactly one detail expected, got " + violations);
-        assertEquals("", violations.get(0).path());
+        assertNull(violations.get(0).path(), "a whole-payload rejection locates nothing");
         assertEquals(message, violations.get(0).message());
         assertEquals(type, violations.get(0).type());
         assertEquals("invalid decision payload", rejection.getMessage());
@@ -95,7 +95,7 @@ class WorkflowPayloadsTest {
             WorkflowInvalidPayloadException rejection, String message, String type, String exceptionMessage) {
         List<ViolationDetail> violations = rejection.violations();
         assertEquals(1, violations.size(), "exactly one detail expected, got " + violations);
-        assertEquals("", violations.get(0).path());
+        assertNull(violations.get(0).path(), "a whole-payload rejection locates nothing");
         assertEquals(message, violations.get(0).message());
         assertEquals(type, violations.get(0).type());
         assertEquals(exceptionMessage, rejection.getMessage());

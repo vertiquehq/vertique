@@ -6,6 +6,8 @@ package dev.vertique.db;
 import com.fasterxml.jackson.annotation.JsonAutoDetect;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.annotation.JsonSetter;
+import com.fasterxml.jackson.annotation.Nulls;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -31,7 +33,8 @@ import lombok.extern.jackson.Jacksonized;
  *     "database": "mydb",
  *     "user": "app",
  *     "password": "secret",
- *     "maxPoolSize": 10
+ *     "maxPoolSize": 10,
+ *     "schemas": { "job": "jobs" }
  *   }
  * }
  * }</pre>
@@ -154,6 +157,14 @@ public class DbPoolConfig {
     @Builder.Default
     private final Map<String, String> properties = Map.of();
 
+    /**
+     * Schema placement per named placement, from the {@code schemas} object. Defaults to {@link
+     * DbSchemas#empty()}; an explicit JSON {@code null} keeps the default.
+     */
+    @JsonSetter(nulls = Nulls.SKIP)
+    @Builder.Default
+    private final DbSchemas schemas = DbSchemas.empty();
+
     // --- SSL/TLS ---
 
     /**
@@ -228,6 +239,7 @@ public class DbPoolConfig {
                 + ", reconnectAttempts=" + reconnectAttempts
                 + ", reconnectIntervalMs=" + reconnectIntervalMs
                 + ", properties=" + (properties == null || properties.isEmpty() ? "{}" : "<redacted>")
+                + ", schemas=" + schemas().mappings()
                 + ", sslMode=" + sslMode
                 + ", trustAll=" + trustAll
                 + ", trustStorePath=" + trustStorePath
@@ -236,6 +248,15 @@ public class DbPoolConfig {
                 + ", keyPath=" + keyPath
                 + ", certPath=" + certPath
                 + "]";
+    }
+
+    /**
+     * Returns the schema placement.
+     *
+     * @return the placement metadata, never {@code null}
+     */
+    public DbSchemas schemas() {
+        return schemas != null ? schemas : DbSchemas.empty();
     }
 
     private static String redact(String secret) {

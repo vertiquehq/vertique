@@ -449,8 +449,16 @@ report invalid arguments through failed Futures.
 `WorkflowInvalidPayloadException` reports a caller-supplied payload that is not acceptable. It is a
 `ViolationCarrier`, so the default REST mapping renders it as a structured validation problem with one
 error per violation instead of a message-only 400. `violations()` returns an unmodifiable list of
-`ViolationDetail` (`path`, `message`, `type`, `args`) and is never `null`. Each `path` is an RFC 6901
-JSON pointer. Details built by the engine are value-free (no payload value, decision name, class name,
+`ViolationDetail` (`path`, `message`, `type`, `args`, `form`) and is never `null`. A detail the engine builds for a
+located failure has `form()` `JSON_POINTER`, so its `path` is an RFC 6901 JSON pointer; a detail that concerns the
+whole payload (an unknown decision, a payload that is not accepted or not required, one that does not bind) or marks
+omitted violations has a `null` path. The pointer is relative to the payload the engine validated and is named
+with the engine's own mapper; it can differ from a pointer into the request body that carried the payload, for
+example when the route binds names differently or nests the payload, so the default REST mapping reports no
+location for it. An application whose payload is the request body, or sits at a known place in it, reports the
+pointers with `ValidationErrorDetail.ofViolations(exception, basePointer)` from its own exception mapper. A detail
+an application builds with `ViolationDetail.atPointer` must hold a path that is `""` or starts with `/` and
+contains no key the client chose. Details built by the engine are value-free (no payload value, decision name, class name,
 decode message or map key). Constraint messages produced by an application's constraints pass through
 unchanged, so applications must not interpolate the validated value. A binding failure keeps the decode
 exception as the cause, and it can carry submitted text, so applications must not log the cause of a

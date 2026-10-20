@@ -3,6 +3,8 @@
 
 package dev.vertique.rest.jaxrs;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.vertique.core.json.VertiqueJson;
 import dev.vertique.rest.core.request.RequestBodyDecoder;
 import dev.vertique.rest.core.request.RequestValue;
 import io.vertx.core.buffer.Buffer;
@@ -12,7 +14,7 @@ import java.util.Locale;
 
 /**
  * {@link RequestBodyDecoder} that handles {@code application/x-www-form-urlencoded} request bodies,
- * mapping form attributes to a POJO via {@link JsonObject#mapTo(Class)}.
+ * mapping form attributes to a POJO with the process codec's mapper.
  *
  * <p>Accepts requests with an {@code application/x-www-form-urlencoded} content type when the
  * target type is a POJO (i.e. not {@link String}, {@link Buffer}, {@code byte[]}, or
@@ -53,7 +55,8 @@ class FormUrlencodedRequestBodyDecoder implements RequestBodyDecoder {
      * Decodes form attributes from the routing context into the target POJO type.
      *
      * <p>Builds a {@link JsonObject} from all form attribute key-value pairs and maps it
-     * to the target type via {@link JsonObject#mapTo(Class)}.
+     * to the target type with the process codec's mapper, read once; the binding is recorded on the
+     * context with that same mapper.
      *
      * @param ctx        the current routing context (source of form attributes)
      * @param body       the request body value (unused by this decoder)
@@ -70,6 +73,10 @@ class FormUrlencodedRequestBodyDecoder implements RequestBodyDecoder {
         if (json.isEmpty()) {
             return null;
         }
-        return json.mapTo(targetType);
+        // Read once: the mapper that binds the body is the one the mark names
+        ObjectMapper mapper = VertiqueJson.mapper();
+        Object bound = ProfileBodyMaterialization.convertValue(mapper, json.getMap(), targetType);
+        BodyBindingMark.record(ctx, BodyBindingMark.Kind.FORM, mapper);
+        return bound;
     }
 }

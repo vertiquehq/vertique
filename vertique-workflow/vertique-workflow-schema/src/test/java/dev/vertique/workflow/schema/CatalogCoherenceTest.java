@@ -77,7 +77,7 @@ class CatalogCoherenceTest {
         assertThat(schemas.validateDecision(SHARED_ID, 1L, "review", "note", new JsonObject().put("beta", "b"))
                         .violations())
                 .extracting(ViolationDetail::path, ViolationDetail::type)
-                .containsExactly(tuple("", "required"));
+                .containsExactly(tuple("/alpha", "required"));
     }
 
     @Test
@@ -103,6 +103,6 @@ class CatalogCoherenceTest {
         // And: it is not validatable, whatever the payload
         assertThat(schemas.validateDecision(REJECTED_ID, 1L, "review", "note", new JsonObject().put("comment", "ok"))
                         .violations())
-                .containsExactly(new ViolationDetail("", "definition is not registered", "definition", null));
+                .containsExactly(ViolationDetail.unlocated("definition is not registered", "definition"));
     }
 }

@@ -3,8 +3,10 @@
 
 package dev.vertique.workflow.postgresql.registry;
 
+import dev.vertique.db.DbSchemas;
 import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.postgresql.PgSqlRepository;
+import dev.vertique.db.postgresql.PgTableNames;
 import dev.vertique.workflow.engine.WorkflowExceptionMapper;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
 import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException;
@@ -41,7 +43,14 @@ import java.util.UUID;
 import java.util.function.Function;
 import java.util.function.Supplier;
 
-/** PostgreSQL registry with transaction-owned id locking and fenced activation claims. */
+/**
+ * PostgreSQL registry with transaction-owned id locking and fenced activation claims.
+ *
+ * <p>Every reference to the {@code workflow_definitions} and {@code workflow_instances} tables is qualified with the schema mapped to
+ * the {@code workflow} instance when the {@link DbSchemas} given at construction holds one; otherwise
+ * the tables resolve through the connection's default schema. The statements are built once at
+ * construction.
+ */
 @Singleton
 public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
         implements WorkflowDefinitionRegistryStore {
@@ -51,16 +60,139 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
     private static final String LOCKED_COLUMNS = COLUMNS + ", document_digest";
     private static final String KEY =
             "tenant_key IS NOT DISTINCT FROM $1 AND definition_id = $2 AND definition_version = $3";
+
+    /** Name of the migration instance whose schema mapping places the workflow tables. */
+    private static final String INSTANCE_NAME = "workflow";
+
+    private final String sqlFind;
+    private final String sqlFindDocument;
+    private final String sqlList;
+    private final String sqlInsert;
+    private final String sqlInsertCode;
+    private final String sqlUpdateCodeProvenance;
+    private final String sqlResetStale;
+    private final String sqlUpdateProvenance;
+    private final String sqlClaim;
+    private final String sqlDemoteOlder;
+    private final String sqlComplete;
+    private final String sqlRelease;
+    private final String sqlTransition;
+    private final String sqlReinstate;
+    private final String sqlRetire;
+    private final String sqlCooling;
+    private final String sqlCountNonTerminal;
+    private final String sqlLockRows;
+    private final String sqlRecomputeDemote;
+    private final String sqlRecomputePromote;
     private final WorkflowDefinitionsConfig config;
     private final WorkflowExceptionMapper workflowMapper = new WorkflowExceptionMapper();
     private volatile boolean utf8Confirmed;
 
-    /** Constructs a store using the component's optional shared document policy. */
+    /**
+     * Constructs a store using the component's optional shared document policy. The tables are not
+     * schema-qualified, so they resolve through the connection's default schema.
+     *
+     * @param pool the PostgreSQL connection pool
+     * @param mapper the PostgreSQL failure mapper
+     * @param config the optional shared document policy; defaults apply when absent
+     */
     @Inject
     public PgWorkflowDefinitionRegistryStore(
             Pool pool, PgDbExceptionMapper mapper, Optional<WorkflowDefinitionsConfig> config) {
+        this(pool, mapper, config, DbSchemas.empty());
+    }
+
+    /**
+     * Constructs a store that qualifies the definitions and instances tables with the schema mapped to the
+     * {@code workflow} instance, when {@code schemas} holds one. Without a mapping the statements are
+     * identical to those of the three-argument constructor.
+     *
+     * @param pool the PostgreSQL connection pool
+     * @param mapper the PostgreSQL failure mapper
+     * @param config the optional shared document policy; defaults apply when absent
+     * @param schemas the schema placement; an empty mapping leaves the table names unqualified
+     * @throws IllegalArgumentException if the mapped schema name is not a valid single-segment
+     *     PostgreSQL identifier
+     */
+    public PgWorkflowDefinitionRegistryStore(
+            Pool pool, PgDbExceptionMapper mapper, Optional<WorkflowDefinitionsConfig> config, DbSchemas schemas) {
         super(pool, mapper);
         this.config = config.orElseGet(WorkflowDefinitionsConfig::defaults);
+
+        String definitions = PgTableNames.qualify(schemas, INSTANCE_NAME, "workflow_definitions");
+        String instances = PgTableNames.qualify(schemas, INSTANCE_NAME, "workflow_instances");
+
+        this.sqlFind = "SELECT " + COLUMNS + " FROM " + definitions + " WHERE " + KEY;
+
+        this.sqlFindDocument = """
+                    SELECT tenant_key, definition_id, definition_version, document_format, document_digest,
+                        octet_length(convert_to(document, 'UTF8')) AS document_size_bytes,
+                        char_length(document) AS document_code_points,
+                        CASE WHEN octet_length(convert_to(document, 'UTF8')) <= $4 AND char_length(document) <= $5
+                             THEN document ELSE NULL END AS document
+                    FROM""" + " " + definitions + " WHERE " + KEY + " AND kind = 'DOCUMENT'";
+
+        this.sqlList = "SELECT " + COLUMNS + " FROM " + definitions
+                + " ORDER BY definition_id, tenant_key NULLS FIRST, definition_version";
+
+        this.sqlInsert = "INSERT INTO " + definitions
+                + " (tenant_key, definition_id, definition_version, kind, plan_hash, status, document, document_format, document_digest, source_type, source_uri, source_revision, source_author, source_upload_id, loaded_at) VALUES ($1,$2,$3,'DOCUMENT',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)";
+
+        this.sqlInsertCode = "INSERT INTO " + definitions
+                + " (tenant_key, definition_id, definition_version, kind, plan_hash, status, source_type, source_uri, source_revision, source_author, source_upload_id, loaded_at) VALUES ($1,$2,$3,'CODE',$4,$5,$6,$7,$8,$9,$10,$11)";
+
+        this.sqlUpdateCodeProvenance = "UPDATE " + definitions
+                + " SET plan_hash=CASE WHEN $9::boolean THEN $10 ELSE plan_hash END, source_type=$4, source_uri=$5, source_revision=$6, source_author=$7, source_upload_id=$8, loaded_at=$11 WHERE "
+                + KEY + " AND kind='CODE'";
+
+        this.sqlResetStale = "UPDATE " + definitions
+                + " SET status='CANDIDATE', activation_token=NULL, status_changed_at=clock_timestamp() WHERE definition_id=$1 AND status='ACTIVATING' AND extract(epoch from (clock_timestamp() - status_changed_at)) >= ($2::numeric * 2)";
+
+        this.sqlUpdateProvenance = "UPDATE " + definitions
+                + " SET source_type=$4, source_uri=$5, source_revision=$6, source_author=$7, source_upload_id=$8, loaded_at=$9 WHERE "
+                + KEY;
+
+        this.sqlClaim = "UPDATE " + definitions
+                + " SET status='ACTIVATING', activation_token=$4, status_changed_at=clock_timestamp() WHERE " + KEY;
+
+        this.sqlDemoteOlder = "UPDATE " + definitions
+                + " SET status='SUPERSEDED', status_changed_at=clock_timestamp() WHERE tenant_key IS NOT DISTINCT FROM $1 AND definition_id=$2 AND definition_version<$3 AND status='ACTIVE'";
+
+        this.sqlComplete = "UPDATE " + definitions
+                + " SET status=$4, activation_token=NULL, status_changed_at=clock_timestamp() WHERE " + KEY
+                + " AND status='ACTIVATING' AND activation_token=$5";
+
+        this.sqlRelease = "UPDATE " + definitions
+                + " SET status='CANDIDATE', activation_token=NULL, status_changed_at=clock_timestamp() WHERE " + KEY
+                + " AND status='ACTIVATING' AND activation_token=$4";
+
+        this.sqlTransition = "UPDATE " + definitions + " SET status=$5, status_changed_at=clock_timestamp() WHERE "
+                + KEY + " AND status=$4";
+
+        this.sqlReinstate =
+                "UPDATE " + definitions + " SET status='SUPERSEDED', status_changed_at=clock_timestamp() WHERE " + KEY
+                        + " AND status='RETIRED'";
+
+        this.sqlRetire = "UPDATE " + definitions + " SET status='RETIRED', status_changed_at=clock_timestamp() WHERE "
+                + KEY + " AND status=$4";
+
+        this.sqlCooling =
+                "SELECT (clock_timestamp() - status_changed_at) < ($4::bigint * interval '1 second') AS cooling FROM "
+                        + definitions + " WHERE " + KEY;
+
+        this.sqlCountNonTerminal = "SELECT count(*) AS total FROM " + instances
+                + " WHERE definition_id = $1 AND definition_version = $2 AND status IN ('RUNNING','WAITING','COMPENSATING')";
+
+        this.sqlLockRows = "SELECT " + LOCKED_COLUMNS
+                + ", activation_token, extract(epoch from (clock_timestamp() - status_changed_at)) >= ($2::numeric * 2) AS stale FROM "
+                + definitions
+                + " WHERE definition_id=$1 ORDER BY tenant_key NULLS FIRST, definition_version FOR UPDATE";
+
+        this.sqlRecomputeDemote = "UPDATE " + definitions
+                + " SET status='SUPERSEDED', status_changed_at=clock_timestamp() WHERE tenant_key IS NOT DISTINCT FROM $1 AND definition_id=$2 AND definition_version<>$3 AND status='ACTIVE'";
+
+        this.sqlRecomputePromote = "UPDATE " + definitions
+                + " SET status='ACTIVE', status_changed_at=clock_timestamp() WHERE " + KEY + " AND status='SUPERSEDED'";
     }
 
     @Override
@@ -79,8 +211,7 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
     public Future<Optional<WorkflowDefinitionRecord>> find(DefinitionKey key) {
         return attempt(() -> {
             Objects.requireNonNull(key, "key");
-            return transaction(key.definitionId(), tx -> tx.preparedQuery(
-                            "SELECT " + COLUMNS + " FROM workflow_definitions WHERE " + KEY)
+            return transaction(key.definitionId(), tx -> tx.preparedQuery(sqlFind)
                     .execute(parameters(key))
                     .map(rows -> rows.iterator().hasNext()
                             ? Optional.of(metadata(rows.iterator().next()))
@@ -93,13 +224,7 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
         return attempt(() -> {
             Objects.requireNonNull(key, "key");
             return transaction(key.definitionId(), tx -> encoding(tx).compose(ignored -> tx.preparedQuery(
-                            """
-                    SELECT tenant_key, definition_id, definition_version, document_format, document_digest,
-                        octet_length(convert_to(document, 'UTF8')) AS document_size_bytes,
-                        char_length(document) AS document_code_points,
-                        CASE WHEN octet_length(convert_to(document, 'UTF8')) <= $4 AND char_length(document) <= $5
-                             THEN document ELSE NULL END AS document
-                    FROM workflow_definitions WHERE """ + " " + KEY + " AND kind = 'DOCUMENT'")
+                            sqlFindDocument)
                     .execute(parameters(key)
                             .addInteger(config.maxStoredDocumentSizeBytes())
                             .addInteger(config.maxDocumentSizeBytes()))
@@ -129,11 +254,9 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
     public Future<List<WorkflowDefinitionRecord>> list(DefinitionFilter filter) {
         return attempt(() -> {
             Objects.requireNonNull(filter, "filter");
-            return transaction("list", tx -> tx.query(
-                            "SELECT " + COLUMNS
-                                    + " FROM workflow_definitions ORDER BY definition_id, tenant_key NULLS FIRST, definition_version")
-                    .execute()
-                    .map(rows -> java.util.stream.StreamSupport.stream(rows.spliterator(), false)
+            return transaction(
+                    "list", tx -> tx.query(sqlList).execute().map(rows -> java.util.stream.StreamSupport.stream(
+                                    rows.spliterator(), false)
                             .map(PgWorkflowDefinitionRegistryStore::metadata)
                             .filter(r -> filter.scope() == DefinitionFilter.TenantScope.ALL
                                     || Objects.equals(
@@ -163,9 +286,7 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
                 if (!sha256Hex(document.document()).equals(old.getString("document_digest")))
                     return Future.succeededFuture(ReconcileOutcome.DRIFT);
                 var p = record.provenance();
-                return tx.preparedQuery(
-                                "UPDATE workflow_definitions SET source_type=$4, source_uri=$5, source_revision=$6, source_author=$7, source_upload_id=$8, loaded_at=$9 WHERE "
-                                        + KEY)
+                return tx.preparedQuery(sqlUpdateProvenance)
                         .execute(parameters(record.key())
                                 .addString(p.sourceType())
                                 .addString(p.uri())
@@ -209,8 +330,7 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
             Objects.requireNonNull(definitionId, "definitionId");
             // DefinitionKey enforces the id constraints; the owner and version are irrelevant here.
             new DefinitionKey(null, definitionId, 1);
-            return mutate(definitionId, (tx, rows) -> tx.preparedQuery(
-                            "UPDATE workflow_definitions SET status='CANDIDATE', activation_token=NULL, status_changed_at=clock_timestamp() WHERE definition_id=$1 AND status='ACTIVATING' AND extract(epoch from (clock_timestamp() - status_changed_at)) >= ($2::numeric * 2)")
+            return mutate(definitionId, (tx, rows) -> tx.preparedQuery(sqlResetStale)
                     .execute(Tuple.of(definitionId, config.maxStalenessSeconds()))
                     .mapEmpty());
         });
@@ -231,9 +351,7 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
                 if (!"CANDIDATE".equals(status) && !("ACTIVATING".equals(status) && current.getBoolean("stale")))
                     throw invalid(key, "cannot claim status " + status);
                 ActivationClaim claim = new ActivationClaim(key, UUID.randomUUID());
-                return tx.preparedQuery(
-                                "UPDATE workflow_definitions SET status='ACTIVATING', activation_token=$4, status_changed_at=clock_timestamp() WHERE "
-                                        + KEY)
+                return tx.preparedQuery(sqlClaim)
                         .execute(parameters(key).addUUID(claim.token()))
                         .map(claim);
             });
@@ -263,14 +381,11 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
                                 && r.getLong("definition_version") > key.definitionVersion());
                 Future<Void> demote = higher
                         ? Future.succeededFuture()
-                        : tx.preparedQuery(
-                                        "UPDATE workflow_definitions SET status='SUPERSEDED', status_changed_at=clock_timestamp() WHERE tenant_key IS NOT DISTINCT FROM $1 AND definition_id=$2 AND definition_version<$3 AND status='ACTIVE'")
+                        : tx.preparedQuery(sqlDemoteOlder)
                                 .execute(parameters(key))
                                 .mapEmpty();
                 ActivationOutcome outcome = higher ? ActivationOutcome.SUPERSEDED : ActivationOutcome.ACTIVE;
-                return demote.compose(ignored -> tx.preparedQuery(
-                                "UPDATE workflow_definitions SET status=$4, activation_token=NULL, status_changed_at=clock_timestamp() WHERE "
-                                        + KEY + " AND status='ACTIVATING' AND activation_token=$5")
+                return demote.compose(ignored -> tx.preparedQuery(sqlComplete)
                         .execute(parameters(key).addString(outcome.name()).addUUID(claim.token()))
                         .map(outcome));
             });
@@ -281,9 +396,7 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
     public Future<Void> release(ActivationClaim claim) {
         return attempt(() -> {
             Objects.requireNonNull(claim, "claim");
-            return mutate(claim.key(), (tx, rows) -> tx.preparedQuery(
-                            "UPDATE workflow_definitions SET status='CANDIDATE', activation_token=NULL, status_changed_at=clock_timestamp() WHERE "
-                                    + KEY + " AND status='ACTIVATING' AND activation_token=$4")
+            return mutate(claim.key(), (tx, rows) -> tx.preparedQuery(sqlRelease)
                     .execute(parameters(claim.key()).addUUID(claim.token()))
                     .mapEmpty());
         });
@@ -308,9 +421,7 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
                             "another owner holds this definition id: " + heldOwners(rows, key));
                 String status = current.getString("status");
                 if (!from.name().equals(status)) throw invalid(key, "expected status " + from + " but found " + status);
-                return tx.preparedQuery(
-                                "UPDATE workflow_definitions SET status=$5, status_changed_at=clock_timestamp() WHERE "
-                                        + KEY + " AND status=$4")
+                return tx.preparedQuery(sqlTransition)
                         .execute(parameters(key).addString(from.name()).addString(to.name()))
                         .map(updated -> {
                             if (updated.rowCount() != 1)
@@ -335,22 +446,18 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
             if (ownerConflict(rows, key))
                 throw conflict(
                         Reason.OWNER_CONFLICT, key, "another owner holds this definition id: " + heldOwners(rows, key));
-            return tx.preparedQuery(
-                            "UPDATE workflow_definitions SET status='SUPERSEDED', status_changed_at=clock_timestamp() WHERE "
-                                    + KEY + " AND status='RETIRED'")
-                    .execute(parameters(key))
-                    .compose(updated -> {
-                        if (updated.rowCount() != 1) throw invalid(key, "expected status RETIRED but the row changed");
-                        List<Member> members = java.util.stream.StreamSupport.stream(rows.spliterator(), false)
-                                .filter(r -> Objects.equals(key.tenantKey(), r.getString("tenant_key")))
-                                .map(r -> new Member(
-                                        r.getLong("definition_version"),
-                                        r.getLong("definition_version") == key.definitionVersion()
-                                                ? "SUPERSEDED"
-                                                : r.getString("status")))
-                                .toList();
-                        return recomputeMembership(tx, key.tenantKey(), key.definitionId(), members);
-                    });
+            return tx.preparedQuery(sqlReinstate).execute(parameters(key)).compose(updated -> {
+                if (updated.rowCount() != 1) throw invalid(key, "expected status RETIRED but the row changed");
+                List<Member> members = java.util.stream.StreamSupport.stream(rows.spliterator(), false)
+                        .filter(r -> Objects.equals(key.tenantKey(), r.getString("tenant_key")))
+                        .map(r -> new Member(
+                                r.getLong("definition_version"),
+                                r.getLong("definition_version") == key.definitionVersion()
+                                        ? "SUPERSEDED"
+                                        : r.getString("status")))
+                        .toList();
+                return recomputeMembership(tx, key.tenantKey(), key.definitionId(), members);
+            });
         });
     }
 
@@ -365,9 +472,7 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
                     throw invalid(key, "cannot retire status " + status);
                 // Only a deprecated version can be pinned by instances, so a candidate skips cooling and the count.
                 Future<Void> guard = "DEPRECATED".equals(status) ? guardDeprecated(tx, key) : Future.succeededFuture();
-                return guard.compose(ignored -> tx.preparedQuery(
-                                "UPDATE workflow_definitions SET status='RETIRED', status_changed_at=clock_timestamp() WHERE "
-                                        + KEY + " AND status=$4")
+                return guard.compose(ignored -> tx.preparedQuery(sqlRetire)
                         .execute(parameters(key).addString(status))
                         .map(updated -> {
                             if (updated.rowCount() != 1)
@@ -383,9 +488,7 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
      * locks were acquired, so they see everything committed while the lock was awaited.
      */
     private Future<Void> guardDeprecated(SqlConnection tx, DefinitionKey key) {
-        return tx.preparedQuery(
-                        "SELECT (clock_timestamp() - status_changed_at) < ($4::bigint * interval '1 second') AS cooling FROM workflow_definitions WHERE "
-                                + KEY)
+        return tx.preparedQuery(sqlCooling)
                 .execute(parameters(key).addLong(config.maxStalenessSeconds()))
                 .compose(result -> {
                     if (result.iterator().next().getBoolean("cooling"))
@@ -409,9 +512,8 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
      * compensating, archived ones included. It runs on the caller's locked transaction, after the lock was
      * granted, so it sees every pin committed while the lock was awaited.
      */
-    private static Future<Long> countNonTerminal(SqlConnection tx, DefinitionKey key) {
-        return tx.preparedQuery(
-                        "SELECT count(*) AS total FROM workflow_instances WHERE definition_id = $1 AND definition_version = $2 AND status IN ('RUNNING','WAITING','COMPENSATING')")
+    private Future<Long> countNonTerminal(SqlConnection tx, DefinitionKey key) {
+        return tx.preparedQuery(sqlCountNonTerminal)
                 .execute(Tuple.of(key.definitionId(), key.definitionVersion()))
                 .map(result -> result.iterator().next().getLong("total"));
     }
@@ -438,7 +540,7 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
      * winner is promoted, so the one-active-version rule holds at every statement. Rows that are already correct
      * keep their timestamps.
      */
-    private static Future<Void> recomputeMembership(
+    private Future<Void> recomputeMembership(
             SqlConnection tx,
             @jakarta.annotation.Nullable String tenantKey,
             String definitionId,
@@ -454,17 +556,14 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
         long highestVersion = highest.version();
         Future<Void> demote = eligible.stream()
                         .anyMatch(member -> "ACTIVE".equals(member.status()) && member.version() != highestVersion)
-                ? tx.preparedQuery(
-                                "UPDATE workflow_definitions SET status='SUPERSEDED', status_changed_at=clock_timestamp() WHERE tenant_key IS NOT DISTINCT FROM $1 AND definition_id=$2 AND definition_version<>$3 AND status='ACTIVE'")
+                ? tx.preparedQuery(sqlRecomputeDemote)
                         .execute(Tuple.of(tenantKey, definitionId, highestVersion))
                         .mapEmpty()
                 : Future.succeededFuture();
 
         if ("ACTIVE".equals(highest.status())) return demote;
         DefinitionKey highestKey = new DefinitionKey(tenantKey, definitionId, highestVersion);
-        return demote.compose(ignored -> tx.preparedQuery(
-                        "UPDATE workflow_definitions SET status='ACTIVE', status_changed_at=clock_timestamp() WHERE "
-                                + KEY + " AND status='SUPERSEDED'")
+        return demote.compose(ignored -> tx.preparedQuery(sqlRecomputePromote)
                 .execute(parameters(highestKey))
                 .mapEmpty());
     }
@@ -508,10 +607,9 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
                     "Code metadata for " + record.key() + " must be a global CODE record without a document format");
     }
 
-    private static Future<Void> insertCode(SqlConnection tx, WorkflowDefinitionRecord record, DefinitionStatus status) {
+    private Future<Void> insertCode(SqlConnection tx, WorkflowDefinitionRecord record, DefinitionStatus status) {
         var p = record.provenance();
-        return tx.preparedQuery(
-                        "INSERT INTO workflow_definitions (tenant_key, definition_id, definition_version, kind, plan_hash, status, source_type, source_uri, source_revision, source_author, source_upload_id, loaded_at) VALUES ($1,$2,$3,'CODE',$4,$5,$6,$7,$8,$9,$10,$11)")
+        return tx.preparedQuery(sqlInsertCode)
                 .execute(parameters(record.key())
                         .addString(record.planHash())
                         .addString(status.name())
@@ -525,12 +623,9 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
     }
 
     /** Refreshes the provenance of a code row and, when asked, replaces its plan hash; the status is kept. */
-    private static Future<Void> updateCodeProvenance(
-            SqlConnection tx, WorkflowDefinitionRecord record, boolean replaceHash) {
+    private Future<Void> updateCodeProvenance(SqlConnection tx, WorkflowDefinitionRecord record, boolean replaceHash) {
         var p = record.provenance();
-        return tx.preparedQuery(
-                        "UPDATE workflow_definitions SET plan_hash=CASE WHEN $9::boolean THEN $10 ELSE plan_hash END, source_type=$4, source_uri=$5, source_revision=$6, source_author=$7, source_upload_id=$8, loaded_at=$11 WHERE "
-                                + KEY + " AND kind='CODE'")
+        return tx.preparedQuery(sqlUpdateCodeProvenance)
                 .execute(parameters(record.key())
                         .addString(p.sourceType())
                         .addString(p.uri())
@@ -549,8 +644,7 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
             WorkflowDefinitionDocument document,
             DefinitionStatus status) {
         var p = record.provenance();
-        return tx.preparedQuery(
-                        "INSERT INTO workflow_definitions (tenant_key, definition_id, definition_version, kind, plan_hash, status, document, document_format, document_digest, source_type, source_uri, source_revision, source_author, source_upload_id, loaded_at) VALUES ($1,$2,$3,'DOCUMENT',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)")
+        return tx.preparedQuery(sqlInsert)
                 .execute(parameters(record.key())
                         .addString(record.planHash())
                         .addString(status.name())
@@ -594,9 +688,7 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
     }
 
     private Future<RowSet<Row>> lockedRows(SqlConnection tx, String definitionId) {
-        return DefinitionIdLock.acquire(tx, definitionId).compose(ignored -> tx.preparedQuery(
-                        "SELECT " + LOCKED_COLUMNS
-                                + ", activation_token, extract(epoch from (clock_timestamp() - status_changed_at)) >= ($2::numeric * 2) AS stale FROM workflow_definitions WHERE definition_id=$1 ORDER BY tenant_key NULLS FIRST, definition_version FOR UPDATE")
+        return DefinitionIdLock.acquire(tx, definitionId).compose(ignored -> tx.preparedQuery(sqlLockRows)
                 .execute(Tuple.of(definitionId, config.maxStalenessSeconds())));
     }
 

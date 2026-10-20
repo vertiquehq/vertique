@@ -7,6 +7,8 @@ import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -20,6 +22,8 @@ import dev.vertique.rest.core.ValidationErrorDetail;
 import dev.vertique.rest.core.ValidationProblemDetail;
 import dev.vertique.rest.core.config.JaxRsConfig;
 import dev.vertique.rest.jaxrs.routing.BodyDescriptor;
+import dev.vertique.rest.jaxrs.routing.ParamDescriptor;
+import dev.vertique.rest.jaxrs.routing.ParamLocation;
 import dev.vertique.rest.jaxrs.validation.OperationSchemas;
 import io.vertx.core.MultiMap;
 import io.vertx.core.http.Cookie;
@@ -28,27 +32,32 @@ import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.RequestBody;
 import io.vertx.ext.web.RoutingContext;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.function.Executable;
 import org.mockito.ArgumentCaptor;
 
 /**
- * Pins the {@code path} a concrete validation detail names: the full instance location wherever the
+ * Pins the {@code pointer} (body) or {@code parameter} (any other location) a concrete validation detail
+ * names: the full instance location wherever the
  * schema declares every segment of it — through {@code allOf}/{@code anyOf}/{@code oneOf} branches,
  * {@code prefixItems} tuple positions and property names the validator reports RFC 6901-escaped and
  * percent-encoded — and the containing location, cut at the first segment the schema does not
- * declare, wherever the client chose the key (vertiquehq/vertique-dev#598). It also pins the
+ * declare, wherever the client chose the key. It also pins the
  * declared constraint value a concrete detail names in its {@code args} and message at those same
  * composed, referenced, tuple and escaped positions.
  *
- * <p>Each path asserted is the instance location vertx-json-schema reports for the failing
- * keyword, spelled exactly as the validator spells it.
+ * <p>Each pointer asserted is the instance location vertx-json-schema reports for the failing
+ * keyword, as an RFC 6901 JSON Pointer: no leading {@code #}, no percent-encoding, the root as the
+ * empty string.
  */
 class ValidationDetailPathTest {
 
@@ -78,7 +87,7 @@ class ValidationDetailPathTest {
 
         Outcome outcome = validate(schema, new JsonObject().put("pet", new JsonObject().put("name", "toolong")));
 
-        assertEquals(Set.of("#/pet/name"), outcome.pathsFor("maxLength"), outcome.json);
+        assertEquals(Set.of("/pet/name"), outcome.pointersFor("maxLength"), outcome.json);
     }
 
     @Test
@@ -97,7 +106,7 @@ class ValidationDetailPathTest {
 
         Outcome outcome = validate(schema, new JsonObject().put("pet", new JsonObject().put("name", "toolong")));
 
-        assertEquals(Set.of("#/pet/name"), outcome.pathsFor("maxLength"), outcome.json);
+        assertEquals(Set.of("/pet/name"), outcome.pointersFor("maxLength"), outcome.json);
     }
 
     @Test
@@ -115,7 +124,7 @@ class ValidationDetailPathTest {
 
         Outcome outcome = validate(schema, new JsonObject().put("pet", new JsonObject().put("name", "toolong")));
 
-        assertEquals(Set.of("#/pet/name"), outcome.pathsFor("maxLength"), outcome.json);
+        assertEquals(Set.of("/pet/name"), outcome.pointersFor("maxLength"), outcome.json);
     }
 
     @Test
@@ -135,7 +144,7 @@ class ValidationDetailPathTest {
         Outcome outcome = validate(
                 schema, new JsonObject().put("t", new JsonArray().add("long").add(1)));
 
-        assertEquals(Set.of("#/t/0"), outcome.pathsFor("maxLength"), outcome.json);
+        assertEquals(Set.of("/t/0"), outcome.pointersFor("maxLength"), outcome.json);
     }
 
     @Test
@@ -155,7 +164,7 @@ class ValidationDetailPathTest {
                         .put("a/b", "xx")
                         .put("a~c", "xx"));
 
-        assertEquals(Set.of("#/a%20b", "#/%C3%A9", "#/a~1b", "#/a~0c"), outcome.pathsFor("maxLength"), outcome.json);
+        assertEquals(Set.of("/a b", "/é", "/a~1b", "/a~0c"), outcome.pointersFor("maxLength"), outcome.json);
     }
 
     @Test
@@ -176,7 +185,7 @@ class ValidationDetailPathTest {
                 new JsonObject().put("pet", new JsonObject().put("name", "a").put(CLIENT_KEY, 5)));
 
         assertAll(
-                () -> assertEquals(Set.of("#/pet"), outcome.pathsFor("type"), outcome.json),
+                () -> assertEquals(Set.of("/pet"), outcome.pointersFor("type"), outcome.json),
                 () -> assertFalse(
                         outcome.json.contains(CLIENT_KEY), "the client key must not be echoed: " + outcome.json));
     }
@@ -196,7 +205,7 @@ class ValidationDetailPathTest {
         Outcome outcome = validate(schema, new JsonObject().put("pet", pet));
 
         assertAll(
-                () -> assertEquals(Set.of("#/pet"), outcome.pathsFor("type"), outcome.json),
+                () -> assertEquals(Set.of("/pet"), outcome.pointersFor("type"), outcome.json),
                 () -> assertFalse(
                         outcome.json.contains(CLIENT_KEY), "the client key must not be echoed: " + outcome.json),
                 () -> assertFalse(outcome.json.contains("6Eame"), "the client key must not be echoed: " + outcome.json),
@@ -239,8 +248,8 @@ class ValidationDetailPathTest {
                 () -> assertFalse(mapOutcome.json.contains("0123"), "a zero-led key is no index: " + mapOutcome.json),
                 () -> assertFalse(
                         mapOutcome.json.contains("12345678901"), "an 11-digit key is no index: " + mapOutcome.json),
-                () -> assertEquals(Set.of("#/m"), mapOutcome.pathsFor("maxLength"), mapOutcome.json),
-                () -> assertEquals(Set.of("#/m/12"), listOutcome.pathsFor("maxLength"), listOutcome.json));
+                () -> assertEquals(Set.of("/m"), mapOutcome.pointersFor("maxLength"), mapOutcome.json),
+                () -> assertEquals(Set.of("/m/12"), listOutcome.pointersFor("maxLength"), listOutcome.json));
     }
 
     @Test
@@ -264,7 +273,7 @@ class ValidationDetailPathTest {
 
         Outcome outcome = validate(schema, new JsonObject().put("m", new JsonObject().put("7", "xx")));
 
-        assertEquals(Set.of("#/m"), outcome.pathsFor("maxLength"), outcome.json);
+        assertEquals(Set.of("/m"), outcome.pointersFor("maxLength"), outcome.json);
     }
 
     @Test
@@ -320,12 +329,12 @@ class ValidationDetailPathTest {
                         .put("a/b", "xx"));
 
         assertAll(
-                () -> outcome.assertConstraint("#/p", "maxLength", 3, "must have a maximum length of 3"),
-                () -> outcome.assertConstraint("#/pet/name", "maxLength", 3, "must have a maximum length of 3"),
-                () -> outcome.assertConstraint("#/t/0", "maxLength", 2, "must have a maximum length of 2"),
-                () -> outcome.assertConstraint("#/t/1", "minimum", 5, "must be at least 5"),
-                () -> outcome.assertConstraint("#/code", "pattern", "^[a-z]+$", "must match pattern: ^[a-z]+$"),
-                () -> outcome.assertConstraint("#/a~1b", "maxLength", 1, "must have a maximum length of 1"),
+                () -> outcome.assertConstraint("/p", "maxLength", 3, "must have a maximum length of 3"),
+                () -> outcome.assertConstraint("/pet/name", "maxLength", 3, "must have a maximum length of 3"),
+                () -> outcome.assertConstraint("/t/0", "maxLength", 2, "must have a maximum length of 2"),
+                () -> outcome.assertConstraint("/t/1", "minimum", 5, "must be at least 5"),
+                () -> outcome.assertConstraint("/code", "pattern", "^[a-z]+$", "must match pattern: ^[a-z]+$"),
+                () -> outcome.assertConstraint("/a~1b", "maxLength", 1, "must have a maximum length of 1"),
                 () -> assertFalse(outcome.json.contains("of true"), outcome.json));
     }
 
@@ -391,15 +400,15 @@ class ValidationDetailPathTest {
                         .put("t", new JsonArray().add(1).add("x")));
 
         assertAll(
-                () -> outcome.assertAnyConstraint("#/plain", "type", "string", "must be of type: string"),
+                () -> outcome.assertAnyConstraint("/plain", "type", "string", "must be of type: string"),
                 () -> outcome.assertAnyConstraint(
-                        "#/either", "type", List.of("string", "null"), "must be of type: string or null"),
-                () -> outcome.assertAnyConstraint("#/pet/age", "type", "integer", "must be of type: integer"),
-                () -> outcome.assertAnyConstraint("#/owner/active", "type", "boolean", "must be of type: boolean"),
-                () -> outcome.assertAnyConstraint("#/p", "type", "integer", "must be of type: integer"),
-                () -> outcome.assertAnyConstraint("#/p", "type", "string", "must be of type: string"),
-                () -> outcome.assertAnyConstraint("#/t/0", "type", "string", "must be of type: string"),
-                () -> outcome.assertAnyConstraint("#/t/1", "type", "integer", "must be of type: integer"),
+                        "/either", "type", List.of("string", "null"), "must be of type: string or null"),
+                () -> outcome.assertAnyConstraint("/pet/age", "type", "integer", "must be of type: integer"),
+                () -> outcome.assertAnyConstraint("/owner/active", "type", "boolean", "must be of type: boolean"),
+                () -> outcome.assertAnyConstraint("/p", "type", "integer", "must be of type: integer"),
+                () -> outcome.assertAnyConstraint("/p", "type", "string", "must be of type: string"),
+                () -> outcome.assertAnyConstraint("/t/0", "type", "string", "must be of type: string"),
+                () -> outcome.assertAnyConstraint("/t/1", "type", "integer", "must be of type: integer"),
                 () -> assertTrue(outcome.json.contains("\"args\":{\"type\":[\"string\",\"null\"]}"), outcome.json),
                 () -> assertFalse(outcome.json.contains("of type: true"), outcome.json),
                 () -> assertFalse(outcome.json.contains("\"type\":true"), outcome.json));
@@ -422,39 +431,221 @@ class ValidationDetailPathTest {
         Outcome outcome = validate(schema, new JsonObject().put("v", true));
 
         outcome.assertAnyConstraint(
-                "#/v", "type", List.of("string", "integer", "null"), "must be of type: string, integer or null");
+                "/v", "type", List.of("string", "integer", "null"), "must be of type: string, integer or null");
+    }
+
+    @Test
+    @DisplayName("Body violations report plain pointers: a nested member, the root as a present empty string, and the"
+            + " empty-named member as a lone slash")
+    void bodySchemaViolationsReportPlainPointers() throws Exception {
+        // Given a nested pet.name maxLength, a root minProperties, and a member named "" with a minLength
+        JsonObject nestedSchema = object(new JsonObject().put("pet", inner()));
+        JsonObject rootSchema = new JsonObject().put("type", "object").put("minProperties", 2);
+        JsonObject emptyNamedSchema = object(
+                new JsonObject().put("", new JsonObject().put("type", "string").put("minLength", 2)));
+
+        // When the gate validates one violating body for each
+        Outcome nested = validate(nestedSchema, new JsonObject().put("pet", new JsonObject().put("name", "toolong")));
+        Outcome root = validate(rootSchema, new JsonObject().put("a", 1));
+        Outcome emptyNamed = validate(emptyNamedSchema, new JsonObject().put("", "x"));
+
+        // Then each entry carries its location in pointer, the root pointer is present (not omitted), and no
+        // entry names a parameter
+        assertAll(
+                () -> assertEquals(Set.of("/pet/name"), nested.pointersFor("maxLength"), nested.json),
+                () -> assertEquals(Set.of(""), root.pointersFor("minProperties"), root.json),
+                () -> assertTrue(
+                        root.json.contains("\"pointer\":\"\""), "the root pointer is serialized: " + root.json),
+                () -> assertEquals(Set.of("/"), emptyNamed.pointersFor("minLength"), emptyNamed.json),
+                () -> assertTrue(
+                        Stream.of(nested, root, emptyNamed)
+                                .flatMap(outcome -> outcome.errors().stream())
+                                .allMatch(error -> error.parameter() == null),
+                        "a body entry names no parameter"));
+    }
+
+    @Test
+    @DisplayName("Every body entry the gate reports carries a pointer and no parameter")
+    void bodyEntriesCarryAPointerAndNothingElseForLocation() throws Exception {
+        // Given the nested, root, tuple, escaped-name and undeclared-key bodies this class validates
+        JsonObject nested = object(new JsonObject().put("pet", inner()));
+        JsonObject tuple = object(new JsonObject()
+                .put("t", new JsonObject().put("type", "array").put("prefixItems", new JsonArray().add(maxLength(2)))));
+        JsonObject escaped = object(new JsonObject().put("a/b", maxLength(1)));
+        JsonObject root = new JsonObject().put("type", "object").put("minProperties", 2);
+
+        // When the gate validates a violating body for each
+        List<Outcome> outcomes = List.of(
+                validate(nested, new JsonObject().put("pet", new JsonObject().put("name", "toolong"))),
+                validate(nested, new JsonObject().put("pet", new JsonObject().put(CLIENT_KEY, 5))),
+                validate(tuple, new JsonObject().put("t", new JsonArray().add("long"))),
+                validate(escaped, new JsonObject().put("a/b", "xx")),
+                validate(root, new JsonObject().put("a", 1)));
+
+        // Then every entry names its location in pointer alone
+        assertAll(outcomes.stream().flatMap(outcome -> outcome.errors().stream().map(error -> (Executable) () -> {
+            assertNotNull(error.pointer(), "a body entry carries a pointer: " + outcome.json);
+            assertNull(error.parameter(), "a body entry names no parameter: " + outcome.json);
+        })));
+    }
+
+    @Test
+    @DisplayName("An omitted required member is reported at the member itself, with its location and keyword, and a"
+            + " parent under a client's key stays at the parent")
+    void omittedRequiredMemberIsNamedAtTheGate() throws Exception {
+        // Given a body schema whose pet must have a name, a nullable pet, a map of pets by client key, and a root
+        // that must have an id
+        JsonObject requiresName = new JsonObject()
+                .put("type", "object")
+                .put("properties", new JsonObject().put("name", maxLength(3)))
+                .put("required", new JsonArray().add("name"));
+        JsonObject plain = object(new JsonObject().put("pet", requiresName));
+        JsonObject nullable = object(new JsonObject()
+                        .put(
+                                "pet",
+                                new JsonObject()
+                                        .put(
+                                                "anyOf",
+                                                new JsonArray()
+                                                        .add(new JsonObject().put("type", "null"))
+                                                        .add(new JsonObject().put("$ref", "#/$defs/Pet")))))
+                .put("$defs", new JsonObject().put("Pet", requiresName));
+        JsonObject byKey = object(new JsonObject()
+                .put("byKey", new JsonObject().put("type", "object").put("additionalProperties", requiresName)));
+        JsonObject root = new JsonObject().put("type", "object").put("required", new JsonArray().add("id"));
+
+        // When the gate validates a body that omits each member
+        Outcome omittedPet = validate(plain, new JsonObject().put("pet", new JsonObject()));
+        Outcome omittedNullablePet = validate(nullable, new JsonObject().put("pet", new JsonObject()));
+        Outcome omittedUnderKey =
+                validate(byKey, new JsonObject().put("byKey", new JsonObject().put(CLIENT_KEY, new JsonObject())));
+        Outcome omittedRoot = validate(root, new JsonObject());
+
+        // Then the entry names the member under its parent, carries the body location and the required keyword,
+        // and keeps the engine's message
+        assertAll(
+                () -> assertEquals(Set.of("/pet/name"), omittedPet.pointersFor("required"), omittedPet.json),
+                () -> assertEquals(
+                        Set.of("/pet/name"), omittedNullablePet.pointersFor("required"), omittedNullablePet.json),
+                () -> assertEquals(Set.of("/pet"), omittedNullablePet.pointersFor("type"), omittedNullablePet.json),
+                () -> assertEquals(Set.of("/id"), omittedRoot.pointersFor("required"), omittedRoot.json),
+                // And a parent under a client's key stays at the declared parent, without the key
+                () -> assertEquals(Set.of("/byKey"), omittedUnderKey.pointersFor("required"), omittedUnderKey.json),
+                () -> assertFalse(omittedUnderKey.json.contains(CLIENT_KEY), omittedUnderKey.json),
+                () -> {
+                    ValidationErrorDetail entry = omittedPet.errors().stream()
+                            .filter(error -> "required".equals(error.type()))
+                            .findFirst()
+                            .orElseThrow(() -> new AssertionError(omittedPet.json));
+                    assertEquals("/pet/name", entry.pointer(), omittedPet.json);
+                    assertEquals("body", entry.location(), omittedPet.json);
+                    assertEquals("required", entry.type(), omittedPet.json);
+                    assertNull(entry.parameter(), omittedPet.json);
+                    assertEquals("Instance does not have required property \"name\"", entry.detail(), omittedPet.json);
+                });
+    }
+
+    @Test
+    @DisplayName("A violation inside an array parameter names the parameter and the item's index")
+    void arrayParameterItemReportsParameterNameWithIndex() {
+        // Given an ids query parameter that is an array of integers up to 10, and a limit query parameter
+        // of at least 0
+        ParamDescriptor ids =
+                new ParamDescriptor("ids", ParamLocation.QUERY, List.class, Integer.class, null, null, List.of());
+        ParamDescriptor limit =
+                new ParamDescriptor("limit", ParamLocation.QUERY, Integer.class, null, null, null, List.of());
+        OperationSchemas schemas = OperationSchemas.builder()
+                .parameterSchema(
+                        ParamLocation.QUERY,
+                        "ids",
+                        new JsonObject()
+                                .put("type", "array")
+                                .put(
+                                        "items",
+                                        new JsonObject().put("type", "integer").put("maximum", 10)))
+                .parameterSchema(
+                        ParamLocation.QUERY,
+                        "limit",
+                        new JsonObject().put("type", "integer").put("minimum", 0))
+                .build();
+        MultiMap query = MultiMap.caseInsensitiveMultiMap();
+        query.add("ids", "1").add("ids", "99").add("limit", "-1");
+
+        // When ids=1&ids=99 and limit=-1 are validated
+        List<ValidationErrorDetail> errors = validateParameters(List.of(ids, limit), schemas, query);
+
+        // Then the second item is named ids[1] and the scalar limit, both in parameter, with the query location
+        // and no pointer
+        assertAll(
+                () -> assertEquals(
+                        Set.of("ids[1]", "limit"),
+                        errors.stream().map(ValidationErrorDetail::parameter).collect(Collectors.toSet()),
+                        errors.toString()),
+                () -> assertEquals(2, errors.size(), errors.toString()),
+                () -> assertTrue(
+                        errors.stream().allMatch(error -> "query".equals(error.location())), errors.toString()),
+                () -> assertTrue(errors.stream().allMatch(error -> error.pointer() == null), errors.toString()));
+    }
+
+    @Test
+    @DisplayName("A root-level parameter violation names the parameter and echoes no submitted value")
+    void parameterNameCarriesNoSubmittedText() {
+        // Given a filter query parameter declared as an object, submitted as the text ZZKEY
+        ParamDescriptor filter =
+                new ParamDescriptor("filter", ParamLocation.QUERY, Object.class, null, null, null, List.of());
+        OperationSchemas schemas = OperationSchemas.builder()
+                .parameterSchema(
+                        ParamLocation.QUERY,
+                        "filter",
+                        new JsonObject().put("type", "object").put("additionalProperties", false))
+                .build();
+        MultiMap query = MultiMap.caseInsensitiveMultiMap();
+        query.add("filter", "ZZKEY");
+
+        // When it is validated
+        List<ValidationErrorDetail> errors = validateParameters(List.of(filter), schemas, query);
+
+        // Then the entry names the declared parameter, in parameter, and nothing of the submitted text
+        assertAll(
+                () -> assertEquals(1, errors.size(), errors.toString()),
+                () -> assertEquals("filter", errors.get(0).parameter(), errors.toString()),
+                () -> assertEquals("query", errors.get(0).location(), errors.toString()),
+                () -> assertNull(errors.get(0).pointer(), errors.toString()),
+                () -> assertFalse(errors.toString().contains("ZZKEY"), errors.toString()));
     }
 
     // --- Harness ---
 
     private record Outcome(List<ValidationErrorDetail> errors, String json) {
 
-        /** Asserts that some detail of {@code keyword} at {@code path} carries the given value and message. */
-        void assertAnyConstraint(String path, String keyword, Object value, String message) {
-            List<ValidationErrorDetail> atPath = errors.stream()
-                    .filter(error -> keyword.equals(error.type()) && path.equals(error.path()))
+        /** Asserts that some detail of {@code keyword} at {@code pointer} carries the given value and message. */
+        void assertAnyConstraint(String pointer, String keyword, Object value, String message) {
+            List<ValidationErrorDetail> atPointer = errors.stream()
+                    .filter(error -> keyword.equals(error.type()) && pointer.equals(error.pointer()))
                     .toList();
             assertTrue(
-                    atPath.stream()
+                    atPointer.stream()
                             .anyMatch(detail ->
                                     Map.of(keyword, value).equals(detail.args()) && message.equals(detail.detail())),
-                    "no " + keyword + " detail at " + path + " with " + value + " and '" + message + "': " + json);
+                    "no " + keyword + " detail at " + pointer + " with " + value + " and '" + message + "': " + json);
         }
 
-        void assertConstraint(String path, String keyword, Object value, String message) {
+        void assertConstraint(String pointer, String keyword, Object value, String message) {
             ValidationErrorDetail detail = errors.stream()
-                    .filter(error -> keyword.equals(error.type()) && path.equals(error.path()))
+                    .filter(error -> keyword.equals(error.type()) && pointer.equals(error.pointer()))
                     .findFirst()
-                    .orElseThrow(() -> new AssertionError("no " + keyword + " detail at " + path + ": " + json));
+                    .orElseThrow(() -> new AssertionError("no " + keyword + " detail at " + pointer + ": " + json));
             assertEquals(Map.of(keyword, value), detail.args(), json);
             assertEquals(message, detail.detail(), json);
         }
 
-        Set<String> pathsFor(String keyword) {
-            return errors.stream()
+        Set<String> pointersFor(String keyword) {
+            Set<String> pointers = new TreeSet<>(Comparator.nullsFirst(Comparator.<String>naturalOrder()));
+            errors.stream()
                     .filter(error -> keyword.equals(error.type()))
-                    .map(ValidationErrorDetail::path)
-                    .collect(Collectors.toCollection(TreeSet::new));
+                    .map(ValidationErrorDetail::pointer)
+                    .forEach(pointers::add);
+            return pointers;
         }
     }
 
@@ -481,13 +672,37 @@ class ValidationDetailPathTest {
         return new Outcome(ex.errors(), json);
     }
 
+    private static List<ValidationErrorDetail> validateParameters(
+            List<ParamDescriptor> parameters, OperationSchemas schemas, MultiMap query) {
+        WebValidationStrategy strategy = new WebValidationStrategy(
+                JaxRsConfig.builder().validationMode("aggregate").build());
+        var gate = strategy.gateFor(
+                        StubDescriptors.builder()
+                                .httpMethod("GET")
+                                .routeTemplate("/things")
+                                .parameters(parameters)
+                                .build(),
+                        schemas)
+                .orElseThrow();
+        RoutingContext ctx = mockContext(null, query);
+        gate.handle(ctx);
+        ArgumentCaptor<Throwable> captor = ArgumentCaptor.forClass(Throwable.class);
+        verify(ctx).fail(captor.capture());
+        return assertInstanceOf(RestValidationException.class, captor.getValue())
+                .errors();
+    }
+
     private static RoutingContext mockContext(RequestBody body) {
+        return mockContext(body, MultiMap.caseInsensitiveMultiMap());
+    }
+
+    private static RoutingContext mockContext(RequestBody body, MultiMap query) {
         RoutingContext ctx = mock(RoutingContext.class);
         HttpServerRequest request = mock(HttpServerRequest.class);
         Map<String, Object> data = new HashMap<>();
         when(ctx.request()).thenReturn(request);
         when(ctx.pathParams()).thenReturn(Map.of());
-        when(ctx.queryParams()).thenReturn(MultiMap.caseInsensitiveMultiMap());
+        when(ctx.queryParams()).thenReturn(query);
         when(request.headers()).thenReturn(MultiMap.caseInsensitiveMultiMap());
         when(request.cookies()).thenReturn(Set.<Cookie>of());
         when(ctx.body()).thenReturn(body);
