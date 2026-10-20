@@ -205,7 +205,7 @@ One row per live application instance. Used by `JobCoordinator` for dead-node de
 
 ## Flyway Configuration
 
-The job migration is declared once and can be run two ways.
+The job migration is declared once and can be run two ways: one single-history Flyway run (the default), or [named instances](#named-instances) selected with `flyway.named`.
 
 ### Named instances
 
@@ -218,10 +218,15 @@ Give the job tables their own schema and history table:
   },
   "flyway": {
     "mode": "MIGRATE",
+    "named": true,
     "instances": { "job": {} }
   }
 }
 ```
+
+`"named": true` turns on named mode; `instances` only carries per-instance overrides and may be omitted
+(`"named": true` alone runs every wired declaration with the root settings). `instances` without
+`"named": true` is a configuration error.
 
 - **One setting places everything.** `db.schemas.job` is the job instance's default schema and history
   schema, and `PgJobRepository` qualifies every job table with it, so the migrations and every job
@@ -242,10 +247,10 @@ Give the job tables their own schema and history table:
 `dev.vertique:vertique-db-flyway` documents the full instance configuration, the agreement rules between
 `db.schemas` and Flyway schema lists, and the failure model.
 
-### Single Flyway (legacy) configuration
+### Single Flyway configuration
 
-When `flyway.instances` is absent, the default `classpath:db/migration` location already includes the
-bundled `db/migration/job` scripts, so no extra location is needed. Every bundled adapter ships its own `V1` script, so one history can hold only one of them (a second would fail with a duplicate version); to run several adapters, use named instances. The single-history example:
+Without `flyway.named`, the default `classpath:db/migration` location already includes the
+bundled `db/migration/job` scripts, so no extra location is needed. Every bundled adapter ships its own `V1` script, so one history can hold only one of them (a second would fail with a duplicate version); to run several adapters, set `"named": true`. Wired migration declarations are ignored in a single run, so adding another adapter module never switches the mode. The single-history example:
 
 ```json
 {
@@ -261,8 +266,8 @@ If you override `locations`, list the job directory next to an application direc
 contain it, for example `["classpath:db/migration/job", "classpath:db/app"]`. Do not list both
 `classpath:db/migration` and `classpath:db/migration/job`: the first already covers the second.
 
-In this mode the migration lands where the legacy configuration says. If `db.schemas.job` is also
-set, the repository queries that schema, so make the legacy `flyway.schemas` list (first entry) or the
+In this mode the migration lands where the single-run configuration says. If `db.schemas.job` is also
+set, the repository queries that schema, so make the `flyway.schemas` list (first entry) or the
 connection default match it, or the repository will look in a schema the migration never filled.
 
 ---

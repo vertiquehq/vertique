@@ -12,7 +12,7 @@ SPDX-License-Identifier: EUPL-1.2
 
 Flyway-backed implementation of the `MigrationRunner` contract from `dev.vertique:vertique-db-core`. Supports three operation modes: MIGRATE (apply pending migrations), VALIDATE (verify schema matches migrations), and DISABLED (no-op). Designed for CI/CD pipelines that use a privileged DDL user for migrations and a restricted user for runtime.
 
-By default one Flyway run uses one history table. Opt-in **named instances** run several independent migration locations, each with its own history table, schema and version sequence, in dependency order — see [Named Instances](#named-instances).
+By default one Flyway run uses one history table: `flyway.locations`, one schema history. Setting `flyway.named` opts in to **named instances**, which run every wired migration declaration as its own instance with its own history table, schema and version sequence, in dependency order — see [Named Instances](#named-instances).
 
 When used with the framework lifecycle runner (`@VertiqueApp` + `VertiqueApplicationBootstrap`), `DbFlywayModule` also contributes a `MIGRATE`-phase `ApplicationStartupStep` (`FlywayMigrationStartupStep`) that runs migrations automatically — no manual `migrationRunner().migrate(vertx)` call is needed. See [`FlywayMigrationStartupStep` and `DbFlywayModule`](#flywaymigrationstartupstep-and-dbflywaymodule) below.
 
@@ -69,8 +69,9 @@ Lombok `@Builder` configuration value object. Deserialized from the `"flyway"` s
 | `baselineOnMigrate` | `boolean` | `false` | Apply baseline to existing DB on first migration |
 | `baselineVersion` | `String` | `"1"` | Baseline version applied when `baselineOnMigrate` is true |
 | `validateOnMigrate` | `boolean` | `true` | Validate applied migrations on each migrate run |
-| `instances` | `List<FlywayInstanceConfig>` | `null` | Named-instance overrides, bound from the keyed `flyway.instances` object. `null` (absent) keeps the legacy single Flyway; a non-null list, even empty, selects [named mode](#named-instances) |
-| `lockRetryCount` | `Integer` | `null` | Number of one-second retries Flyway makes to acquire its history-table lock while another process holds it. `null` keeps Flyway's default of `50` (about 50 seconds); `-1` retries without a bound. Values below `-1` are rejected when the runner resolves named instances, or builds Flyway for a legacy `MIGRATE`/`VALIDATE` run. Applies to the legacy run and, unless an instance overrides it, to every named instance. See [Concurrent starts](#concurrent-starts) |
+| `named` | `boolean` | `false` | Selects [named mode](#named-instances): every wired `MigrationDefinition` runs as its own instance with its own history table and version sequence. `false` runs one Flyway with `flyway.locations` and one history table; wired declarations are ignored |
+| `instances` | `List<FlywayInstanceConfig>` | `null` | Per-instance overrides of a named run, bound from the keyed `flyway.instances` object. It never selects a mode: absent, `null` and `{}` all mean no overrides. A non-empty object without `named: true` is a configuration error, not ignored |
+| `lockRetryCount` | `Integer` | `null` | Number of one-second retries Flyway makes to acquire its history-table lock while another process holds it. `null` keeps Flyway's default of `50` (about 50 seconds); `-1` retries without a bound. Values below `-1` are rejected when the runner resolves named instances, or builds Flyway for a single-history `MIGRATE`/`VALIDATE` run. Applies to the single run and, unless an instance overrides it, to every named instance. See [Concurrent starts](#concurrent-starts) |
 
 **Secret hygiene:** `password` and `placeholders` are write-only — read from configuration but never
 serialized back out by Jackson. `toString()` renders the password as `<redacted>`, the placeholder
@@ -102,7 +103,7 @@ reports a target version only for the migrations it applied, so callers must not
 
 **Exception wrapping:** Any `FlywayException` thrown during `migrate()` or `validate()` is caught and re-thrown as a `MigrationException` (from `dev.vertique:vertique-db-core`). This prevents Flyway vendor types from leaking into calling code. Named mode throws the `MigrationRunException` subclass instead and keeps the native cause just the same; see [Reports and failures](#reports-and-failures).
 
-**Named-instance API.** The runner has two further entry points, used only with `flyway.instances`:
+**Named-instance API.** The runner has two further entry points, used with `flyway.named`:
 
 ```java
 public FlywayMigrationRunner(FlywayConfig config, DbPoolConfig db,
@@ -160,7 +161,7 @@ call is needed — the runner drives `FlywayMigrationStartupStep` automatically 
 
 | Type | Scope | Description |
 |------|-------|-------------|
-| `FlywayConfig` | `@Singleton` | Deserialized from `"flyway"` config section, including `flyway.instances` |
+| `FlywayConfig` | `@Singleton` | Deserialized from `"flyway"` config section, including `flyway.named` and `flyway.instances` |
 | `FlywayMigrationRunner` | `@Singleton` | Built from the config, `Set<MigrationDefinition>` and `Optional<DbSchemas>` |
 | `MigrationRunner` | `@Singleton` | Bound to `FlywayMigrationRunner` |
 | `ApplicationStartupStep` (`FlywayMigrationStartupStep`) | `@Singleton @IntoSet` | MIGRATE-phase step contributed to the lifecycle runner |
@@ -173,25 +174,35 @@ drop its provider, or inject the `MigrationRunner` the module binds. Direct cons
 two-argument constructor remains available. Applications that bind their own `DbSchemas` must not
 include `DbModule`.
 
-#### One history table per legacy run
+#### Single history table (default)
 
-Without `flyway.instances`, `FlywayMigrationStartupStep` performs **one Flyway run** with the
+Without `flyway.named`, `FlywayMigrationStartupStep` performs **one Flyway run** with the
 configured `flyway.locations` and a single schema history table (`flyway_schema_history` by default).
-That suits applications whose scripts live in one namespace. Applications that need several
-independent locations, each with its own history table, opt in to [named instances](#named-instances)
-instead of running their own Flyway instances by hand.
+This is a normal, fully supported way to run migrations and suits applications whose scripts live in one
+namespace. Migration declarations wired by adapter modules or by the application (`MigrationDefinition`
+contributions) are **ignored** in this run: adding an adapter module never switches the mode.
+Applications that need several independent locations, each with its own history table, set
+`flyway.named` instead of running their own Flyway instances by hand.
+
+**One bundled adapter per single history.** Every bundled adapter (job, workflow, inbox/outbox) ships
+its own `V1__*.sql` script, and one history holds one version sequence. A single-history run can
+therefore hold the bundled scripts of **only one** adapter: a second adapter's `V1` collides on version
+`1` and Flyway rejects the duplicate version. Running job, workflow and inbox/outbox together requires
+`"named": true`. The same collision occurs when a broad location such as `classpath:db/migration`
+covers the subdirectories of several adapters, and when an application's own `V1` meets an adapter's
+`V1`. Narrow `flyway.locations` to one adapter's directory plus the application's, or use named mode.
 
 ---
 
 ## Named Instances
 
 Named instances give each module its own migration location, history table and version sequence in
-one run. They are opt-in: without a `flyway.instances` object the runner keeps the single-Flyway
-behavior described above.
+one run. They are opt-in with `"named": true`: without it the runner keeps the single-history behavior
+described above, whatever migration declarations are wired.
 
 ### Quick start
 
-Give each module one `db.schemas` entry, then declare one Flyway instance per module:
+Give each module one `db.schemas` entry, then switch on named mode:
 
 ```json
 {
@@ -200,11 +211,13 @@ Give each module one `db.schemas` entry, then declare one Flyway instance per mo
   },
   "flyway": {
     "mode": "MIGRATE",
-    "instances": { "job": {}, "app": {} }
+    "named": true
   }
 }
 ```
 
+Every wired `MigrationDefinition` (here `job` and `app`) becomes an instance; `instances` is only needed
+to override one of them, for example `"instances": { "app": { "target": "42" } }`.
 Each instance migrates into its schema and keeps its history there (`flyway_schema_history_job`,
 `flyway_schema_history_app`). Modules contribute their declaration through Dagger; the application
 adds its own the same way:
@@ -239,16 +252,22 @@ decides where their objects land.
 
 ### Selecting named mode
 
-| `flyway.instances` | Result |
-|--------------------|--------|
-| absent or `null` | Legacy single Flyway, unchanged |
-| `{}` | Named mode with every wired `MigrationDefinition` |
-| `{ "job": {...} }` | Named mode; the object overrides that instance's settings |
-| any other value | `ConfigurationException` from the config parser, before any runner exists |
+| `flyway.named` | `flyway.instances` | Result |
+|----------------|--------------------|--------|
+| `false` (default) | absent, `null` or `{}` | Single Flyway run with `flyway.locations`; wired declarations ignored |
+| `false` | non-empty | Configuration error: `Named migration configuration failed: flyway.instances overrides require flyway.named` |
+| `true` | absent, `null` or `{}` | Named mode with every wired `MigrationDefinition` and no overrides |
+| `true` | `{ "job": {...} }` | Named mode; the object overrides that instance's settings |
+| any | any other value | `ConfigurationException` from the config parser, before any runner exists |
 
+- **The flag alone selects the mode.** `instances` only supplies overrides. Adding or removing an
+  adapter module never changes the mode, because wired declarations do not select it.
+- **Overrides without the flag fail loudly.** `instances()` throws a `MigrationRunException` with
+  `Stage.CONFIGURATION` and no report; `run` and `migrate` return a failed future with the same
+  exception. They are never silently ignored.
 - **Every wired declaration runs**, whether or not it has an override entry. An override entry whose
   name matches no wired declaration is rejected rather than registering a module.
-- **Names** match `[a-z][a-z0-9-]{0,31}`; `legacy` is reserved. A name is also the key of its
+- **Names** match `[a-z][a-z0-9-]{0,31}`; `single` is reserved (it names the one entry of a single-history report); `legacy` is an ordinary valid name. A name is also the key of its
   `db.schemas` entry.
 - **An empty declaration set is rejected** in named mode, except when the root `mode` is `DISABLED`.
 - **Unknown fields are rejected.** An instance object accepts only the override fields below; `schema`
@@ -263,10 +282,10 @@ decides where their objects land.
   placeholder value cannot reach a log through it. For a plain type error the parser keeps the
   underlying Jackson failure as the cause, and that cause can quote the offending value; do not log
   the cause chain of a binding failure.
-- **Accepted residual.** A misspelled root key such as `flyway.instance` is ignored and selects legacy
-  mode, and a misspelled root `mode` takes the `MIGRATE` default, the most permissive ceiling. Confirm
-  the resolved instances and modes with `instances()` before deployment; in legacy mode it returns an
-  empty list.
+- **Accepted residual.** A misspelled root key such as `flyway.nammed` or `flyway.instance` is ignored,
+  so the run stays in single mode, and a misspelled root `mode` takes the `MIGRATE` default, the most
+  permissive ceiling. Confirm the resolved instances and modes with `instances()` before deployment;
+  in single mode it returns an empty list.
 
 ### Where an instance's schema comes from
 
@@ -344,7 +363,7 @@ never raised or clamped. Root `DISABLED` makes no connection at all.
 **Credentials.** Each instance uses one complete user and password pair, taken from its own
 `user`/`password`, else the root `flyway.user`/`flyway.password`, else the `DbPoolConfig` pair. A
 partial pair is rejected: one member set on the instance, or a root pair with one member that the
-instance would inherit. Values never mix across levels (the legacy single-Flyway path still falls back
+instance would inherit. Values never mix across levels (the single-history run still falls back
 per field). Separate migration roles per
 instance are supported against one database. The resolved view shows the selected `user`, never the
 password.
@@ -372,8 +391,8 @@ Future<MigrationReport> report = runner.run(vertx);          // runs on a Vert.x
   the effective schema, managed list, table, locations, mode, target, baseline and validation
   settings, user and placeholder *keys*; it never carries a password or placeholder value.
 - **`run(Vertx)`** repeats the same validation on a worker before opening any connection, then runs
-  each enabled instance through native Flyway and reports every outcome. In legacy mode it returns a
-  single entry named `legacy` with the first configured schema (or `null`) and the history table.
+  each enabled instance through native Flyway and reports every outcome. In single mode it returns a
+  single entry named `single` with the first configured schema (or `null`) and the history table.
 - **`migrate(Vertx)`** is what `FlywayMigrationStartupStep` calls. In named mode it runs the same
   operation as `run`, sums the applied counts, and returns the native target version only when the
   report has exactly one entry (a `DISABLED` entry counts); otherwise `targetVersion` is `null`.
@@ -417,7 +436,7 @@ A failure of a named operation is a `MigrationRunException` (a `MigrationExcepti
   when the failure carries them. It never contains SQL text, JDBC URLs, credentials or placeholder
   values.
 - **Native cause.** For `MIGRATION` and `VALIDATION` the original Flyway exception is the cause, as in
-  legacy mode. **Do not log the cause chain verbatim:** Flyway messages can embed statement text and
+  single mode. **Do not log the cause chain verbatim:** Flyway messages can embed statement text and
   connection details. Log the message and `stage()`. A configuration that cannot be bound fails earlier
   with a `ConfigurationException`, which follows the parser's own policy described under
   [Selecting named mode](#selecting-named-mode).
@@ -441,7 +460,7 @@ they need `USAGE` on the schema and `SELECT` on the history.
 ### Existing and shared schemas
 
 Named mode never converts, copies or relocates an existing history. An installation whose scripts
-already ran in a shared history, such as the default `flyway_schema_history`, stays in legacy mode;
+already ran in a shared history, such as the default `flyway_schema_history`, stays in single mode;
 the runner does not look for such a history, and an instance only ever sees its own history table.
 
 For a fresh install, give each instance its own schema (one `db.schemas` entry each).
@@ -456,22 +475,22 @@ For a fresh install, give each instance its own schema (one `db.schemas` entry e
   every instance that shares the schema: even an initially empty shared schema is occupied once the
   first instance commits. A per-instance `false` overrides a root `true`.
 - **Mixed schemas: avoid them.** A managed list that mixes an existing, occupied default schema with
-  an extra schema that does not exist yet behaves exactly as it does in legacy mode: Flyway creates the
+  an extra schema that does not exist yet behaves exactly as it does in single mode: Flyway creates the
   missing schema and may record its history marker in a way that bypasses the baseline decision. The
   runner adds no check for this. Keep one schema per instance, or provision every schema of an
   instance's list before the first run.
 - **Named opt-in authorizes pending scripts only.** It does not establish that existing objects match
   them; conflicts surface through Flyway and the scripts.
 
-### Legacy mode and `db.schemas`
+### Single mode and `db.schemas`
 
-When `flyway.instances` is absent, adapters and applications still qualify their SQL from any
-`db.schemas` entry, but legacy migrations land where the legacy configuration says (`flyway.schemas`
-and `flyway.locations`, or the connection default). The runner never checks the legacy list against
+Without `flyway.named`, adapters and applications still qualify their SQL from any
+`db.schemas` entry, but single-run migrations land where the single-run configuration says (`flyway.schemas`
+and `flyway.locations`, or the connection default). The runner never checks the `flyway.schemas` list against
 `db.schemas`. **If they differ, queries look in a schema the migrations never filled.** Make the
-legacy configuration match each entry, or move to named instances.
+single-run configuration match each entry, or switch to named mode.
 
-With a legacy configuration, the default `classpath:db/migration` location already includes the
+With a single-run configuration, the default `classpath:db/migration` location already includes the
 subdirectories of packaged modules, such as `db/migration/job`. Listing both a broad location and a
 module's location is redundant.
 
@@ -488,7 +507,7 @@ lock and creates the history table under the same lock.
 - **Bounded wait.** A waiting process retries once a second. By default it gives up after about 50
   seconds (`lockRetryCount` 50) and the run fails, so the process must be restarted. Set
   `flyway.lockRetryCount` (or an instance's `lockRetryCount`) higher to wait longer, or to `-1` to wait
-  without a bound. The setting applies to the legacy run too; when it is unset Flyway's own default is
+  without a bound. The setting applies to the single run too; when it is unset Flyway's own default is
   left untouched.
 - **A waiting process blocks its worker thread** for the whole wait; a wait beyond the Vert.x
   worker-execute-time limit draws blocked-thread warnings.

@@ -411,6 +411,7 @@ class NamedJobMigrationIT {
                         "flyway",
                         new JsonObject()
                                 .put("schemas", new JsonArray().add(UNUSED_FLYWAY_SCHEMA))
+                                .put("named", true)
                                 .put(
                                         "instances",
                                         new JsonObject()
@@ -822,11 +823,7 @@ class NamedJobMigrationIT {
                                 .put("mode", "MIGRATE")
                                 .put("jdbcUrl", db.jdbcUrl())
                                 .put("baselineOnMigrate", false)
-                                .put(
-                                        "instances",
-                                        new JsonObject()
-                                                .put("job", new JsonObject())
-                                                .put("app", new JsonObject())));
+                                .put("named", true));
     }
 
     private static MigrationComponent migrationComponent(Vertx vertx, JsonObject config) {

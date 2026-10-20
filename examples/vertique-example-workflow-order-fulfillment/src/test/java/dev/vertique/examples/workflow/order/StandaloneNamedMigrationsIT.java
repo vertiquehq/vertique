@@ -959,6 +959,7 @@ class StandaloneNamedMigrationsIT {
                                 .put("mode", "MIGRATE")
                                 .put("jdbcUrl", db.jdbcUrl())
                                 .put("baselineOnMigrate", false)
+                                .put("named", true)
                                 .put("instances", instances));
     }
 

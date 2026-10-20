@@ -7,7 +7,6 @@ import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -145,45 +144,80 @@ class FlywayNamedConfigurationTest {
     private List<DynamicTest> rawInstancesKeyAndParsedShape() {
         List<DynamicTest> tests = new ArrayList<>();
 
-        tests.add(dynamicTest("no flyway section at all binds legacy defaults", () -> {
+        tests.add(dynamicTest("no flyway section at all binds the single-history defaults", () -> {
             FlywayConfig config = DbFlywayModule.flywayConfig(new JsonObject(), PARSER);
 
-            assertNull(config.instances(), "legacy mode carries no instance list");
+            assertFalse(config.named(), "named mode is opt-in");
+            assertNull(config.instances(), "no overrides are carried");
             assertEquals(FlywayMode.MIGRATE, config.mode());
             assertNull(config.lockRetryCount(), "unset keeps the Flyway default");
         }));
 
-        tests.add(dynamicTest("instances absent selects legacy and keeps the legacy list", () -> {
+        tests.add(dynamicTest("named absent binds false and keeps the other root fields", () -> {
             FlywayConfig config = new Scenario("{ 'schemas': ['other'] }").bind();
 
+            assertFalse(config.named());
             assertNull(config.instances());
             assertEquals(List.of("other"), config.schemas());
         }));
 
-        tests.add(dynamicTest("instances JSON null selects legacy exactly like absence", () -> {
-            FlywayConfig config = new Scenario("{ 'instances': null }").bind();
-
-            assertNull(config.instances());
+        tests.add(dynamicTest("named true binds true, and false binds false", () -> {
+            assertTrue(new Scenario("{ 'named': true }").bind().named());
+            assertFalse(new Scenario("{ 'named': false }").bind().named());
         }));
 
-        tests.add(dynamicTest("instances {} selects named mode: an empty but present list", () -> {
+        tests.add(dynamicTest("named true with no instances binds no overrides", () -> {
+            FlywayConfig config = new Scenario("{ 'named': true }").bind();
+
+            assertTrue(config.named());
+            assertNull(config.instances(), "absent overrides stay absent");
+        }));
+
+        tests.add(dynamicTest("instances bind without named: binding itself never rejects overrides", () -> {
+            FlywayConfig config = new Scenario("{ 'instances': { 'job': { 'mode': 'VALIDATE' } } }").bind();
+
+            assertFalse(config.named());
+            assertEquals(1, config.instances().size());
+            assertEquals("job", config.instances().get(0).name());
+            assertEquals(FlywayMode.VALIDATE, config.instances().get(0).mode());
+        }));
+
+        tests.add(dynamicTest("instances {} does not select named mode", () -> {
             FlywayConfig config = new Scenario("{ 'instances': {} }").bind();
 
-            assertNotNull(config.instances(), "named mode must be distinguishable from legacy");
-            assertTrue(config.instances().isEmpty());
+            assertFalse(config.named(), "an empty overrides object is not a mode switch");
+            assertTrue(config.instances() == null || config.instances().isEmpty());
         }));
 
-        tests.add(dynamicTest("a misspelled root key is ignored and selects legacy", () -> {
-            FlywayConfig config = new Scenario("{ 'instance': { 'job': {} } }").bind();
+        tests.add(dynamicTest("instances JSON null does not select named mode", () -> {
+            FlywayConfig config = new Scenario("{ 'instances': null }").bind();
 
+            assertFalse(config.named());
             assertNull(config.instances());
         }));
 
-        tests.add(dynamicTest("unknown root keys stay ignored in legacy and named mode alike", () -> {
-            FlywayConfig legacy = new Scenario("{ 'unknownRootKey': { 'a': 1 } }").bind();
-            FlywayConfig named = new Scenario("{ 'unknownRootKey': 7, 'instances': { 'job': {} } }").bind();
+        tests.add(dynamicTest("named true with instances {} binds named with an empty override list", () -> {
+            FlywayConfig config = new Scenario("{ 'named': true, 'instances': {} }").bind();
 
-            assertNull(legacy.instances());
+            assertTrue(config.named());
+            assertTrue(config.instances() == null || config.instances().isEmpty());
+        }));
+
+        tests.add(dynamicTest("a misspelled root key is ignored and selects nothing", () -> {
+            FlywayConfig config = new Scenario("{ 'instance': { 'job': {} }, 'name': true }").bind();
+
+            assertFalse(config.named());
+            assertNull(config.instances());
+        }));
+
+        tests.add(dynamicTest("unknown root keys stay ignored with and without named mode", () -> {
+            FlywayConfig single = new Scenario("{ 'unknownRootKey': { 'a': 1 } }").bind();
+            FlywayConfig named =
+                    new Scenario("{ 'unknownRootKey': 7, 'named': true, 'instances': { 'job': {} } }").bind();
+
+            assertFalse(single.named());
+            assertNull(single.instances());
+            assertTrue(named.named());
             assertEquals(1, named.instances().size());
         }));
 
@@ -200,10 +234,10 @@ class FlywayNamedConfigurationTest {
         tests.add(dynamicTest("binding keeps every root field and attaches the parsed instances", () -> {
             String root = ROOT_POLICY + ", 'jdbcUrl': '" + EXPLICIT_URL + "', 'cleanDisabled': false,"
                     + " 'unknownRootKey': 'ignored'";
-            FlywayConfig legacy = new Scenario("{ " + root + " }").bind();
+            FlywayConfig single = new Scenario("{ " + root + " }").bind();
             FlywayConfig named = new Scenario(flyway(root, "{ 'job': { 'mode': 'DISABLED' }, 'app': {} }")).bind();
 
-            for (FlywayConfig config : List.of(legacy, named)) {
+            for (FlywayConfig config : List.of(single, named)) {
                 assertEquals(FlywayMode.VALIDATE, config.mode());
                 assertEquals(EXPLICIT_URL, config.jdbcUrl());
                 assertEquals("root_ddl", config.user());
@@ -219,7 +253,9 @@ class FlywayNamedConfigurationTest {
                 assertFalse(config.validateOnMigrate());
                 assertEquals(Integer.valueOf(7), config.lockRetryCount());
             }
-            assertNull(legacy.instances());
+            assertFalse(single.named());
+            assertTrue(named.named());
+            assertNull(single.instances());
             assertEquals(
                     List.of("job", "app"),
                     named.instances().stream().map(FlywayInstanceConfig::name).toList());
@@ -387,7 +423,7 @@ class FlywayNamedConfigurationTest {
                     assertBindingMessageSafe(ex);
                 })));
 
-        tests.add(dynamicTest("legacy binding failures keep their original configuration exception", () -> {
+        tests.add(dynamicTest("single-history binding failures keep their original configuration exception", () -> {
             Scenario scenario = new Scenario("{ 'outOfOrder': 'nope' }");
 
             assertThrows(ConfigurationException.class, scenario::bind);
@@ -718,48 +754,73 @@ class FlywayNamedConfigurationTest {
         }));
 
         tests.add(rejects(
-                "dependency on an undeclared name", "{ 'instances': {} }", "job", def("job", ALPHA, "missing")));
-        tests.add(rejects("self dependency", "{ 'instances': {} }", "job", def("job", ALPHA, "job")));
+                "dependency on an undeclared name",
+                "{ 'named': true, 'instances': {} }",
+                "job",
+                def("job", ALPHA, "missing")));
+        tests.add(rejects("self dependency", "{ 'named': true, 'instances': {} }", "job", def("job", ALPHA, "job")));
         tests.add(rejects(
                 "two-step dependency cycle",
-                "{ 'instances': {} }",
+                "{ 'named': true, 'instances': {} }",
                 "cycle",
                 def("job", ALPHA, "app"),
                 def("app", BETA, "job")));
         tests.add(rejects(
                 "two declarations sharing one name",
-                "{ 'instances': {} }",
+                "{ 'named': true, 'instances': {} }",
                 "job",
                 def("job", ALPHA),
                 def("job", BETA)));
-        tests.add(
-                rejects("an override for a name no declaration carries", "{ 'instances': { 'ghost': {} } }", "ghost"));
+        tests.add(rejects(
+                "an override for a name no declaration carries",
+                "{ 'named': true, 'instances': { 'ghost': {} } }",
+                "ghost"));
         tests.add(rejects(
                 "an unwired override next to a valid one",
-                "{ 'instances': { 'job': {}, 'ghost': { 'mode': 'VALIDATE' } } }",
+                "{ 'named': true, 'instances': { 'job': {}, 'ghost': { 'mode': 'VALIDATE' } } }",
                 "ghost"));
         tests.add(rejects(
                 "named mode with no declarations and a MIGRATE root",
-                "{ 'instances': {} }",
+                "{ 'named': true, 'instances': {} }",
                 "declaration",
                 NO_DECLARATIONS));
         tests.add(rejects(
                 "named mode with no declarations and a VALIDATE root",
-                "{ 'mode': 'VALIDATE', 'instances': {} }",
+                "{ 'mode': 'VALIDATE', 'named': true, 'instances': {} }",
                 "declaration",
                 NO_DECLARATIONS));
         for (String invalid : List.of("Job", "1job", "-job", "job_x", "job.x", "job x", "a" + "b".repeat(32))) {
             tests.add(rejects(
                     "declaration name '" + invalid + "' breaks the identifier pattern",
-                    "{ 'instances': {} }",
+                    "{ 'named': true, 'instances': {} }",
                     "name must match",
                     def(invalid, ALPHA)));
         }
         tests.add(rejects(
-                "declaration named legacy is reserved", "{ 'instances': {} }", "reserved", def("legacy", ALPHA)));
+                "declaration named single is reserved",
+                "{ 'named': true, 'instances': {} }",
+                "reserved",
+                def("single", ALPHA)));
         tests.add(rejects(
-                "override key Job breaks the identifier pattern", "{ 'instances': { 'Job': {} } }", "name must match"));
-        tests.add(rejects("override key legacy is reserved", "{ 'instances': { 'legacy': {} } }", "reserved"));
+                "override key Job breaks the identifier pattern",
+                "{ 'named': true, 'instances': { 'Job': {} } }",
+                "name must match"));
+        tests.add(rejects(
+                "override key single is reserved", "{ 'named': true, 'instances': { 'single': {} } }", "reserved"));
+        tests.add(effective(
+                "a declaration named legacy is an ordinary name",
+                new Scenario(flyway("", "{}")).definitions(def("legacy", ALPHA)),
+                views -> {
+                    assertEquals("legacy", only(views).name());
+                    assertEquals("flyway_schema_history_legacy", only(views).table());
+                }));
+        tests.add(effective(
+                "an override named legacy is accepted for the declaration of that name",
+                new Scenario(flyway("", "{ 'legacy': { 'mode': 'VALIDATE' } }")).definitions(def("legacy", ALPHA)),
+                views -> {
+                    assertEquals("legacy", only(views).name());
+                    assertEquals(FlywayMode.VALIDATE, only(views).mode());
+                }));
         return tests;
     }
 
@@ -867,13 +928,13 @@ class FlywayNamedConfigurationTest {
                 views -> assertEquals(2, views.size())));
         tests.add(rejects(
                 "a parent directory and a child directory of two instances",
-                "{ 'instances': {} }",
+                "{ 'named': true, 'instances': {} }",
                 "overlap",
                 def("app", "classpath:db/migration"),
                 def("job", "classpath:db/migration/job")));
         tests.add(rejects(
                 "the same location claimed by two instances",
-                "{ 'instances': {} }",
+                "{ 'named': true, 'instances': {} }",
                 "overlap",
                 def("job", ALPHA),
                 def("app", ALPHA)));
@@ -1028,6 +1089,7 @@ class FlywayNamedConfigurationTest {
                 .password(ROOT_PASSWORD)
                 .placeholders(Map.of("region", ROOT_PLACEHOLDER))
                 .lockRetryCount(9)
+                .named(true)
                 .instances(List.of(secretInstance()))
                 .build();
     }
@@ -1055,26 +1117,143 @@ class FlywayNamedConfigurationTest {
     // =====================================================================================
 
     @Test
-    void resolutionOpensNoConnectionInNamedAndLegacyMode() throws Exception {
-        // Given a JDBC destination that counts every connection, a named runner and a legacy runner
+    void resolutionOpensNoConnectionInNamedAndSingleMode() throws Exception {
+        // Given a JDBC destination that counts every connection, a named runner and a single-history runner
         try (Listener destination = new Listener()) {
             String root = "'jdbcUrl': '" + destination.jdbcUrl() + "'";
             FlywayMigrationRunner named = new Scenario(flyway(root, "{}"))
                     .definitions(job(), def("app", BETA, "job"))
                     .runner();
-            FlywayMigrationRunner legacy = new Scenario("{ " + root + ", 'schemas': ['other'] }")
+            FlywayMigrationRunner single = new Scenario("{ " + root + ", 'schemas': ['other'] }")
                     .placement(Map.of("job", "jobs"))
                     .runner();
 
             // When the instances are resolved, twice
             List<MigrationInstanceView> first = named.instances();
 
-            // Then the views are repeatable, legacy mode resolves none, and nothing connected
+            // Then the views are repeatable, single mode resolves none, and nothing connected
             assertEquals(List.of("job", "app"), names(first));
             assertEquals(first, named.instances());
-            assertEquals(List.of(), legacy.instances());
+            assertEquals(List.of(), single.instances());
             assertEquals(0, destination.strayConnections());
         }
+    }
+
+    private static final String OVERRIDES_WITHOUT_NAMED_MESSAGE =
+            "Named migration configuration failed: flyway.instances overrides require flyway.named";
+
+    /** Override sections that name no mode: each carries overrides and a secret, and none sets named. */
+    private static List<String> overridesWithoutNamed(String destination) {
+        String secrets = "'user': 'inst_ddl', 'password': '" + INSTANCE_PASSWORD + "'";
+        String jdbc = "'jdbcUrl': '" + destination + "'";
+        return List.of(
+                "{ " + jdbc + ", 'instances': { 'job': { " + secrets + " } } }",
+                "{ " + jdbc + ", 'named': false, 'instances': { 'job': {} } }",
+                "{ " + jdbc + ", 'instances': { 'ghost': { 'mode': 'VALIDATE' } } }",
+                "{ " + jdbc + ", 'mode': 'DISABLED', 'instances': { 'job': {} } }");
+    }
+
+    private static void assertOverridesWithoutNamedFailure(Throwable failure) {
+        MigrationRunException ex = assertInstanceOf(MigrationRunException.class, failure);
+        assertEquals(Stage.CONFIGURATION, ex.stage());
+        assertEquals(OVERRIDES_WITHOUT_NAMED_MESSAGE, ex.getMessage());
+        assertNull(ex.report(), "no report exists before a run");
+        assertNull(ex.getCause(), "the framework rejected the input itself");
+        assertSafe(ex);
+    }
+
+    @Test
+    void instancesRejectsOverridesWithoutNamedAndOpensNoConnection() throws Exception {
+        // Given a JDBC destination that counts every connection and overrides configured without named
+        try (Listener destination = new Listener()) {
+            for (String section : overridesWithoutNamed(destination.jdbcUrl())) {
+                FlywayMigrationRunner runner = new Scenario(section).runner();
+
+                // When the instances are resolved
+                MigrationRunException ex = assertThrows(MigrationRunException.class, runner::instances);
+
+                // Then it is the configuration failure that asks for named, with no report and no value
+                assertOverridesWithoutNamedFailure(ex);
+            }
+            assertEquals(0, destination.strayConnections());
+        }
+    }
+
+    @Test
+    void runFailsTheFutureForOverridesWithoutNamedAndOpensNoConnection() throws Exception {
+        // Given a JDBC destination that counts every connection and overrides configured without named
+        try (Listener destination = new Listener()) {
+            for (String section : overridesWithoutNamed(destination.jdbcUrl())) {
+                FlywayMigrationRunner runner = new Scenario(section).runner();
+
+                // When it runs
+                Throwable failure = failureOf(runner.run(vertx));
+
+                // Then the future fails with the same configuration failure
+                assertOverridesWithoutNamedFailure(failure);
+            }
+            assertEquals(0, destination.strayConnections());
+        }
+    }
+
+    @Test
+    void migrateFailsTheFutureForOverridesWithoutNamedAndOpensNoConnection() throws Exception {
+        // Given a JDBC destination that counts every connection and overrides configured without named
+        try (Listener destination = new Listener()) {
+            for (String section : overridesWithoutNamed(destination.jdbcUrl())) {
+                FlywayMigrationRunner runner = new Scenario(section).runner();
+
+                // When it migrates
+                Throwable failure = failureOf(runner.migrate(vertx));
+
+                // Then the future fails with the same configuration failure
+                assertOverridesWithoutNamedFailure(failure);
+            }
+            assertEquals(0, destination.strayConnections());
+        }
+    }
+
+    @Test
+    void emptyOrAbsentOverridesWithoutNamedAreNotRejected() throws Exception {
+        // Given a JDBC destination that counts every connection and sections that configure no override
+        try (Listener destination = new Listener()) {
+            String jdbc = "'jdbcUrl': '" + destination.jdbcUrl() + "'";
+            for (String section : List.of(
+                    "{ " + jdbc + " }",
+                    "{ " + jdbc + ", 'instances': {} }",
+                    "{ " + jdbc + ", 'instances': null }",
+                    "{ " + jdbc + ", 'named': false, 'instances': {} }")) {
+
+                // When the instances are resolved
+                List<MigrationInstanceView> views =
+                        new Scenario(section).runner().instances();
+
+                // Then single-history mode resolves no instance and nothing is rejected or connected
+                assertEquals(List.of(), views, section);
+            }
+            assertEquals(0, destination.strayConnections());
+        }
+    }
+
+    @Test
+    void namedWithoutOverridesResolvesEveryDeclarationWithRootSettings() {
+        // Given named mode, no instances key at all, and two declarations
+        Scenario scenario =
+                new Scenario("{ 'named': true, " + ROOT_POLICY + " }").definitions(job(), def("app", BETA, "job"));
+
+        // When the instances are resolved
+        List<MigrationInstanceView> views = scenario.views();
+
+        // Then every declaration is an instance in dependency order, inheriting the root settings
+        assertEquals(List.of("job", "app"), names(views));
+        for (MigrationInstanceView view : views) {
+            assertEquals(FlywayMode.VALIDATE, view.mode());
+            assertEquals("42", view.target());
+            assertEquals(List.of("shared", "audit"), view.schemas());
+            assertEquals("root_ddl", view.user());
+        }
+        assertEquals(List.of(ALPHA), view(views, "job").locations(), "root locations are never inherited");
+        assertEquals(List.of(BETA), view(views, "app").locations());
     }
 
     @Test
@@ -1162,7 +1341,7 @@ class FlywayNamedConfigurationTest {
     }
 
     @Test
-    void legacyRunnerRejectsALockRetryCountBelowMinusOne() {
+    void singleRunnerRejectsALockRetryCountBelowMinusOne() {
         // Given a single-Flyway configuration with an invalid lock retry count
         Scenario scenario = new Scenario("{ 'locations': ['" + ALPHA + "'], 'lockRetryCount': -2 }");
 
@@ -1178,7 +1357,7 @@ class FlywayNamedConfigurationTest {
     @Test
     void unreadableRootSectionFailsWithAValueFreeMessageInBothModes() {
         // Given unreadable root sections, each carrying a secret sentinel in a value that the native
-        // binding error would echo, in legacy and in named mode alike
+        // binding error would echo, in single and in named mode alike
         Map<String, String> unreadableRoots = new LinkedHashMap<>();
         unreadableRoots.put("password given as an array", "'password': ['" + ROOT_PASSWORD + "']");
         unreadableRoots.put(
@@ -1189,8 +1368,8 @@ class FlywayNamedConfigurationTest {
 
         List<Executable> checks = new ArrayList<>();
         for (Map.Entry<String, String> root : unreadableRoots.entrySet()) {
-            for (String section :
-                    List.of("{ " + root.getValue() + " }", "{ 'instances': {}, " + root.getValue() + " }")) {
+            for (String section : List.of(
+                    "{ " + root.getValue() + " }", "{ 'named': true, 'instances': {}, " + root.getValue() + " }")) {
                 checks.add(() -> {
                     // When the section is bound
                     Throwable failure = bindFailure(section);
@@ -1228,10 +1407,13 @@ class FlywayNamedConfigurationTest {
         return def("job", ALPHA);
     }
 
-    /** Builds a flyway section from root fields (may be empty) and a raw instances value; quotes may be single. */
+    /**
+     * Builds a named-mode flyway section from root fields (may be empty) and a raw overrides value; quotes
+     * may be single.
+     */
     private static String flyway(String rootFields, String instances) {
         String root = rootFields.isBlank() ? "" : rootFields + ", ";
-        return "{ " + root + "'instances': " + instances + " }";
+        return "{ " + root + "'named': true, 'instances': " + instances + " }";
     }
 
     private static <T> T only(List<T> list) {

@@ -183,6 +183,34 @@ class FlywayNamedMigrationRunnerIT {
         assertNoOpenConnections(database);
     }
 
+    @Test
+    @Timeout(value = 60, unit = TimeUnit.SECONDS)
+    @DisplayName("named mode without an instances key runs every wired declaration with the root settings")
+    void namedWithoutOverridesRunsEveryDeclarationWithDefaults() throws Exception {
+        // Given: named mode and no instances key at all, over two declarations
+        String database = freshDatabase();
+        FlywayConfig config = FlywayConfig.builder().named(true).build();
+        assertNull(config.instances(), "no overrides are configured");
+        FlywayMigrationRunner runner = runner(
+                database, declarations(declaration("audit", AUDIT, "ledger"), declaration("ledger", LEDGER)), config);
+
+        // When: the batch runs
+        MigrationReport report = succeeded(runner.run(vertx));
+
+        // Then: both declarations ran in dependency order, each with its own default history table
+        assertEquals(List.of("ledger", "audit"), namesOf(report));
+        assertEquals(List.of(MigrationStatus.MIGRATED, MigrationStatus.MIGRATED), statusesOf(report));
+        assertEquals(List.of(1, 1), appliedOf(report));
+        for (MigrationInstanceResult result : report.instances()) {
+            String name = result.instance().name();
+            assertEquals(historyTable(name), result.instance().table(), name);
+            assertEquals(FlywayMode.MIGRATE, result.instance().mode(), name);
+            assertTrue(tableExists(database, "it_" + name, historyTable(name)), name + " history");
+        }
+        assertEquals(List.of("ledger", "audit"), names(runner.instances()));
+        assertNoOpenConnections(database);
+    }
+
     // =====================================================================================
     // Failure mid-batch, then retry
     // =====================================================================================
@@ -358,8 +386,8 @@ class FlywayNamedMigrationRunnerIT {
         String database = freshDatabase();
         execute(
                 database,
-                "CREATE SCHEMA it_shop; CREATE TABLE it_shop.legacy_stock (id INTEGER PRIMARY KEY);"
-                        + " INSERT INTO it_shop.legacy_stock (id) VALUES (1);");
+                "CREATE SCHEMA it_shop; CREATE TABLE it_shop.stock_before (id INTEGER PRIMARY KEY);"
+                        + " INSERT INTO it_shop.stock_before (id) VALUES (1);");
 
         // When: the default policy runs
         MigrationRunException failed = assertInstanceOf(
@@ -372,7 +400,7 @@ class FlywayNamedMigrationRunnerIT {
         assertEquals(List.of(MigrationStatus.FAILED), statusesOf(failed.report()));
         assertFalse(tableExists(database, "it_shop", "shop_item"), "V1 must not run, nor be marked applied");
         assertEquals(List.of(), appliedVersions(database, "it_shop", historyTable("shop")));
-        assertEquals(1, countRows(database, "it_shop.legacy_stock"));
+        assertEquals(1, countRows(database, "it_shop.stock_before"));
 
         // When: the advertised baseline option is chosen explicitly
         MigrationReport report = succeeded(runner(
@@ -385,7 +413,7 @@ class FlywayNamedMigrationRunnerIT {
         assertEquals(List.of(MigrationStatus.MIGRATED), statusesOf(report));
         assertEquals(List.of(1), appliedOf(report));
         assertEquals(List.of("1"), appliedVersions(database, "it_shop", historyTable("shop")));
-        assertEquals(1, countRows(database, "it_shop.legacy_stock"));
+        assertEquals(1, countRows(database, "it_shop.stock_before"));
     }
 
     @Test
@@ -416,6 +444,7 @@ class FlywayNamedMigrationRunnerIT {
         FlywayConfig config = FlywayConfig.builder()
                 .baselineOnMigrate(true)
                 .baselineVersion("0")
+                .named(true)
                 .instances(List.of())
                 .build();
         FlywayMigrationRunner runner = runner(baselined, declared, config, shared);
@@ -481,6 +510,7 @@ class FlywayNamedMigrationRunnerIT {
         String database = freshDatabase();
         FlywayConfig config = FlywayConfig.builder()
                 .lockRetryCount(60)
+                .named(true)
                 .instances(List.of(retries("gated", 0)))
                 .build();
         Future<MigrationReport> first;
@@ -511,9 +541,10 @@ class FlywayNamedMigrationRunnerIT {
 
     @Test
     @Timeout(value = 90, unit = TimeUnit.SECONDS)
-    @DisplayName("a legacy runner that exceeds its lock retry count fails loudly while the first one finishes")
-    void aLegacyRunnerThatCannotGetTheLockFailsLoudly() throws Exception {
-        // Given: a legacy run blocked in V1, and a second legacy configuration that does not wait for the lock
+    @DisplayName("a single runner that exceeds its lock retry count fails loudly while the first one finishes")
+    void aSingleRunnerThatCannotGetTheLockFailsLoudly() throws Exception {
+        // Given: a single-history run blocked in V1, and a second single-history configuration that does not wait for
+        // the lock
         String database = freshDatabase();
         FlywayConfig waiting = FlywayConfig.builder().locations(List.of(GATE)).build();
         FlywayConfig impatient = FlywayConfig.builder()
@@ -602,6 +633,7 @@ class FlywayNamedMigrationRunnerIT {
     private static FlywayConfig namedConfig(FlywayInstanceConfig... overrides) {
         return FlywayConfig.builder()
                 .mode(FlywayMode.MIGRATE)
+                .named(true)
                 .placeholders(Map.of(PROBE_KEY, PROBE_VALUE))
                 .instances(List.of(overrides))
                 .build();
@@ -795,6 +827,10 @@ class FlywayNamedMigrationRunnerIT {
                 () -> future.toCompletionStage().toCompletableFuture().get(seconds, TimeUnit.SECONDS),
                 "the run was expected to fail within " + seconds + " seconds");
         return failure.getCause();
+    }
+
+    private static List<String> names(List<MigrationInstanceView> views) {
+        return views.stream().map(MigrationInstanceView::name).toList();
     }
 
     private static List<String> namesOf(MigrationReport report) {

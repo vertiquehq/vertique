@@ -42,17 +42,19 @@ import lombok.extern.jackson.Jacksonized;
  * }
  * }</pre>
  *
- * <p><strong>Named instances.</strong> When {@link #instances()} is {@code null} (the
- * {@code instances} key is absent or JSON {@code null}) the runner keeps its single-Flyway behavior.
- * A present {@code instances} object, even an empty one, selects named mode: every wired
+ * <p><strong>Named instances.</strong> By default the runner performs one Flyway run with one history
+ * table. Setting {@link #named()} selects named mode: every wired
  * {@link dev.vertique.db.MigrationDefinition} becomes an instance with its own history, the root
  * policy fields above are inherited unless an instance overrides them, root {@code locations} is not
- * inherited, and the root {@code mode} is a ceiling that an instance may lower but never raise.
+ * inherited, and the root {@code mode} is a ceiling that an instance may lower but never raise. The
+ * optional {@link #instances()} object only overrides settings of individual instances and has no
+ * effect on which mode is used; overrides without {@code named} are rejected rather than ignored.
  *
  * <pre>{@code
  * {
  *   "flyway": {
  *     "mode": "MIGRATE",
+ *     "named": true,
  *     "instances": {
  *       "job": {},
  *       "app": { "target": "42" }
@@ -175,8 +177,15 @@ public class FlywayConfig {
     // --- Named instances ---
 
     /**
-     * Named instance overrides. {@code null} (the default) keeps the single-Flyway behavior; a
-     * non-null list, even an empty one, selects named mode. Bound from the keyed
+     * Whether to run every wired migration declaration as its own named instance with its own
+     * history table. Defaults to {@code false}: one Flyway run with one history table.
+     */
+    @Builder.Default
+    private final boolean named = false;
+
+    /**
+     * Per-instance overrides of a named run; {@code null} or empty means every instance uses the
+     * root settings. Valid only with {@link #named()}. Bound from the keyed
      * {@code flyway.instances} object: each key becomes the {@code name} of its entry.
      */
     private final List<FlywayInstanceConfig> instances;
@@ -213,6 +222,7 @@ public class FlywayConfig {
                 + ", baselineOnMigrate=" + baselineOnMigrate
                 + ", baselineVersion=" + baselineVersion
                 + ", validateOnMigrate=" + validateOnMigrate
+                + ", named=" + named
                 + ", instances=" + instances
                 + ", lockRetryCount=" + lockRetryCount
                 + "]";
@@ -236,7 +246,7 @@ public class FlywayConfig {
          * binding because Jackson reads annotations from this builder method, not from the
          * {@code instances} field.
          *
-         * @param instances the instance overrides, or {@code null} for the single-Flyway behavior
+         * @param instances the instance overrides, or {@code null} for none
          * @return this builder
          * @throws NullPointerException if an element is {@code null}
          */

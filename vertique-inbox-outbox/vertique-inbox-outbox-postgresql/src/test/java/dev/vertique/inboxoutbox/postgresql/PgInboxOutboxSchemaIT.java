@@ -992,11 +992,7 @@ public class PgInboxOutboxSchemaIT {
 
     private static JsonObject migrationConfig() {
         return runtimeConfig()
-                .put(
-                        "flyway",
-                        new JsonObject()
-                                .put("mode", "MIGRATE")
-                                .put("instances", new JsonObject().put(INSTANCE, new JsonObject())));
+                .put("flyway", new JsonObject().put("mode", "MIGRATE").put("named", true));
     }
 
     private static Pool poolWithDefaultSchema(Vertx vertx, String schema) {

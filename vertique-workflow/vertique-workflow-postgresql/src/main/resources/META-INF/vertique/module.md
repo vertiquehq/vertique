@@ -107,7 +107,7 @@ The module owns workflow persistence tables, including:
 
 The migration files live with the module under `db/migration/workflow`. The whole schema is defined in a single migration, `V1__create_workflow_tables.sql` — including the `workflow_branch_tokens` table and the `metadata` columns on both `workflow_timers` and `workflow_branch_tokens`. Schema changes from here are additive Flyway migrations.
 
-**Placement.** The migration script is unqualified, so the migration instance's default schema decides where the seven tables and their indexes land. In named Flyway mode with a `db.schemas.workflow` entry, that schema is the default, and the stores qualify every table with it, so both agree. In legacy mode the migration lands where the legacy configuration says (see [Flyway Configuration](#flyway-configuration)). The module creates no sequences, views, functions or triggers and uses no notification channel, so tables and indexes are everything a mapped schema receives.
+**Placement.** The migration script is unqualified, so the migration instance's default schema decides where the seven tables and their indexes land. In named Flyway mode with a `db.schemas.workflow` entry, that schema is the default, and the stores qualify every table with it, so both agree. In single mode the migration lands where the single-run configuration says (see [Flyway Configuration](#flyway-configuration)). The module creates no sequences, views, functions or triggers and uses no notification channel, so tables and indexes are everything a mapped schema receives.
 
 ---
 
@@ -126,10 +126,13 @@ Give the workflow tables their own schema and history table:
   },
   "flyway": {
     "mode": "MIGRATE",
+    "named": true,
     "instances": { "workflow": {} }
   }
 }
 ```
+
+`"named": true` turns on named mode; `instances` only carries per-instance overrides and may be omitted (`"named": true` alone runs every wired declaration with the root settings). `instances` without `"named": true` is a configuration error.
 
 - **One setting places everything.** `db.schemas.workflow` is the instance's default schema and history schema, and the eight stores qualify every workflow table with it, so the migration and every statement use one schema. The tables and indexes land there, and the history table is `flyway_schema_history_workflow` in that schema.
 - **Run it through the named runner.** A migration component installs `DbModule`, `DbFlywayModule` and `WorkflowMigrationsModule` (plus the configuration and Vert.x modules the application already uses), and calls `FlywayMigrationRunner.run(vertx)`; `FlywayMigrationStartupStep` runs the same engine at startup. `dev.vertique:vertique-db-flyway` documents `instances()`, `run(Vertx)`, reports and failures.
@@ -152,9 +155,9 @@ A one-off deploy step or job builds that component, calls `FlywayMigrationRunner
 
 **Class loader.** The runner captures the calling thread's context class loader when `run` or `migrate` is called (its own class loader when the thread has none), and resolves packaged scripts and application locations through that loader, not through the ambient loader of the Vert.x worker thread that executes the migration. Call it from a thread whose context class loader can see the migration scripts, normally the application class path. Instance locations are independent per directory prefix: `classpath:db/migration/job` and a sibling such as `classpath:db/migration/job-v2` never read each other's scripts.
 
-### Single Flyway (legacy) configuration
+### Single Flyway configuration
 
-When `flyway.instances` is absent, the default `classpath:db/migration` location already includes the bundled `db/migration/workflow` scripts, so no extra location is needed. Every bundled adapter ships its own `V1` script, so one history can hold only one of them (a second would fail with a duplicate version); to run several adapters, use named instances. The single-history example:
+Without `flyway.named`, the default `classpath:db/migration` location already includes the bundled `db/migration/workflow` scripts, so no extra location is needed. Every bundled adapter ships its own `V1` script, so one history can hold only one of them (a second would fail with a duplicate version); to run several adapters, set `"named": true`. Wired migration declarations are ignored in a single run, so adding another adapter module never switches the mode. The single-history example:
 
 ```json
 {
@@ -168,7 +171,7 @@ When `flyway.instances` is absent, the default `classpath:db/migration` location
 
 If you override `locations`, list the workflow directory next to an application directory that does not contain it, for example `["classpath:db/migration/workflow", "classpath:db/app"]`. Do not list both `classpath:db/migration` and `classpath:db/migration/workflow`: the first already covers the second.
 
-In this mode the migration lands where the legacy configuration says, and nothing checks it against `db.schemas`. If `db.schemas.workflow` is also set, the stores query that schema, so make the legacy `flyway.schemas` list (first entry) or the connection default match it, or the stores will look in a schema the migration never filled.
+In this mode the migration lands where the single-run configuration says, and nothing checks it against `db.schemas`. If `db.schemas.workflow` is also set, the stores query that schema, so make the `flyway.schemas` list (first entry) or the connection default match it, or the stores will look in a schema the migration never filled.
 
 ### Runtime placement
 

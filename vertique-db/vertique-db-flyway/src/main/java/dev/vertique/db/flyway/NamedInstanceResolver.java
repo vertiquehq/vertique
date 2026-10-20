@@ -34,8 +34,8 @@ import java.util.regex.Pattern;
  */
 final class NamedInstanceResolver {
 
-    /** Instance name reserved for the single entry a legacy run reports. */
-    static final String LEGACY_NAME = "legacy";
+    /** Instance name reserved for the single entry a single-history run reports. */
+    static final String SINGLE_NAME = "single";
 
     private static final Pattern NAME = Pattern.compile("[a-z][a-z0-9-]{0,31}");
     private static final String DEFAULT_TABLE_PREFIX = "flyway_schema_history_";
@@ -135,7 +135,8 @@ final class NamedInstanceResolver {
 
     private Map<String, FlywayInstanceConfig> overrides() {
         Map<String, FlywayInstanceConfig> overrides = new LinkedHashMap<>();
-        for (FlywayInstanceConfig override : config.instances()) {
+        List<FlywayInstanceConfig> configured = config.instances() == null ? List.of() : config.instances();
+        for (FlywayInstanceConfig override : configured) {
             String name = override.name();
             checkName(name, "override");
             if (overrides.putIfAbsent(name, override) != null) {
@@ -161,7 +162,7 @@ final class NamedInstanceResolver {
         if (!NAME.matcher(name).matches()) {
             throw invalid(name, "the " + kind + " name must match [a-z][a-z0-9-]{0,31}");
         }
-        if (LEGACY_NAME.equals(name)) {
+        if (SINGLE_NAME.equals(name)) {
             throw invalid(name, "the " + kind + " name is reserved");
         }
     }

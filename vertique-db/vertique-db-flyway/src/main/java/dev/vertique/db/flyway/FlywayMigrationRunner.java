@@ -49,7 +49,7 @@ import org.slf4j.LoggerFactory;
  *
  * <h2>Named instances</h2>
  *
- * <p>When {@link FlywayConfig#instances()} is non-null the runner works in named mode: every wired
+ * <p>When {@link FlywayConfig#named()} is set the runner works in named mode: every wired
  * {@link MigrationDefinition} is one instance with its own locations, history table and version
  * sequence. {@link #instances()} resolves and validates them without opening a database connection;
  * {@link #run(Vertx)} validates them again on a Vert.x worker and runs every enabled instance through
@@ -93,8 +93,9 @@ public class FlywayMigrationRunner implements MigrationRunner {
      *
      * <p>The constructor only retains its inputs; declarations and configuration are validated by
      * {@link #instances()}, {@link #run(Vertx)} and {@link #migrate(Vertx)}. When
-     * {@link FlywayConfig#instances()} is {@code null} the declarations and the placement are ignored
-     * and the runner behaves exactly like {@link #FlywayMigrationRunner(FlywayConfig, DbPoolConfig)}.
+     * {@link FlywayConfig#named()} is not set the declarations and the placement are ignored and the
+     * runner behaves exactly like {@link #FlywayMigrationRunner(FlywayConfig, DbPoolConfig)}, except
+     * that configured {@link FlywayConfig#instances()} overrides are rejected instead of ignored.
      *
      * @param flywayConfig the Flyway configuration
      * @param dbPoolConfig the database pool configuration (for credential and JDBC URL fallback)
@@ -128,12 +129,14 @@ public class FlywayMigrationRunner implements MigrationRunner {
      * validates afresh.
      *
      * @return the resolved instances in execution order, immutable and free of secret values; empty
-     *     when {@link FlywayConfig#instances()} is {@code null}
+     *     when {@link FlywayConfig#named()} is not set
      * @throws MigrationRunException with {@link MigrationRunException.Stage#CONFIGURATION} and no
-     *     report when the named configuration or the declarations are invalid
+     *     report when the named configuration or the declarations are invalid, or when instance
+     *     overrides are configured without {@link FlywayConfig#named()}
      */
     public List<MigrationInstanceView> instances() {
         if (!isNamed()) {
+            rejectOverridesWithoutNamed();
             return List.of();
         }
         return resolver.resolve().stream()
@@ -151,8 +154,8 @@ public class FlywayMigrationRunner implements MigrationRunner {
      * returned future fails with a {@link MigrationRunException} whose report lists completed,
      * failed and not-run instances in order.
      *
-     * <p>Without named instances the single Flyway runs exactly as {@link #migrate(Vertx)} runs it
-     * and the report holds one entry named {@code legacy} with the first configured schema, if any, and
+     * <p>Without named mode the single Flyway runs exactly as {@link #migrate(Vertx)} runs it
+     * and the report holds one entry named {@code single} with the first configured schema, if any, and
      * the history table; failures keep the {@link MigrationException} behavior of
      * {@link #migrate(Vertx)}.
      *
@@ -161,14 +164,32 @@ public class FlywayMigrationRunner implements MigrationRunner {
      */
     public Future<MigrationReport> run(Vertx vertx) {
         if (!isNamed()) {
-            return runLegacy(vertx);
+            return overridesWithoutNamed() ? Future.failedFuture(overridesWithoutNamedFailure()) : runSingle(vertx);
         }
         ClassLoader loader = callerClassLoader();
         return vertx.executeBlocking(() -> executeNamed(loader).report());
     }
 
     private boolean isNamed() {
-        return flywayConfig.instances() != null;
+        return flywayConfig.named();
+    }
+
+    private boolean overridesWithoutNamed() {
+        return flywayConfig.instances() != null && !flywayConfig.instances().isEmpty();
+    }
+
+    private static MigrationRunException overridesWithoutNamedFailure() {
+        return new MigrationRunException(
+                "Named migration configuration failed: flyway.instances overrides require flyway.named",
+                null,
+                MigrationRunException.Stage.CONFIGURATION,
+                null);
+    }
+
+    private void rejectOverridesWithoutNamed() {
+        if (overridesWithoutNamed()) {
+            throw overridesWithoutNamedFailure();
+        }
     }
 
     private static ClassLoader callerClassLoader() {
@@ -191,12 +212,12 @@ public class FlywayMigrationRunner implements MigrationRunner {
         });
     }
 
-    // --- Legacy report ---
+    // --- Single-history report ---
 
-    private Future<MigrationReport> runLegacy(Vertx vertx) {
+    private Future<MigrationReport> runSingle(Vertx vertx) {
         if (flywayConfig.mode() == FlywayMode.DISABLED) {
             log.info("Flyway migration disabled");
-            MigrationInstanceView view = legacyView("flyway_schema_history");
+            MigrationInstanceView view = singleView("flyway_schema_history");
             return Future.succeededFuture(
                     new MigrationReport(List.of(new MigrationInstanceResult(view, MigrationStatus.DISABLED, 0, null))));
         }
@@ -225,7 +246,7 @@ public class FlywayMigrationRunner implements MigrationRunner {
             } catch (FlywayException e) {
                 throw new MigrationException("Migration status could not be read: " + e.getMessage(), e);
             }
-            MigrationInstanceView view = legacyView(flyway.getConfiguration().getTable());
+            MigrationInstanceView view = singleView(flyway.getConfiguration().getTable());
             return new MigrationReport(List.of(new MigrationInstanceResult(view, status, applied, currentVersion)));
         });
     }
@@ -235,11 +256,11 @@ public class FlywayMigrationRunner implements MigrationRunner {
         return schemas == null || schemas.isEmpty() ? null : schemas.get(0);
     }
 
-    /** The single entry of a legacy report. */
-    private MigrationInstanceView legacyView(String table) {
+    /** The single entry of a single-history report. */
+    private MigrationInstanceView singleView(String table) {
         boolean flywayUser = flywayConfig.user() != null;
         return new MigrationInstanceView(
-                NamedInstanceResolver.LEGACY_NAME,
+                NamedInstanceResolver.SINGLE_NAME,
                 firstConfiguredSchema(),
                 flywayConfig.schemas() == null ? List.of() : flywayConfig.schemas(),
                 table,
@@ -276,6 +297,9 @@ public class FlywayMigrationRunner implements MigrationRunner {
     public Future<MigrationResult> migrate(Vertx vertx) {
         if (isNamed()) {
             return migrateNamed(vertx);
+        }
+        if (overridesWithoutNamed()) {
+            return Future.failedFuture(overridesWithoutNamedFailure());
         }
         if (flywayConfig.mode() == FlywayMode.DISABLED) {
             log.info("Flyway migration disabled");

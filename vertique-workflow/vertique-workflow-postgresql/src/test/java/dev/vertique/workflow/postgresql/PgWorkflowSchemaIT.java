@@ -1790,10 +1790,8 @@ public class PgWorkflowSchemaIT {
     }
 
     private static JsonObject migrationConfig(Map<String, String> placement) {
-        JsonObject instances = new JsonObject();
-        placement.keySet().forEach(name -> instances.put(name, new JsonObject()));
         return runtimeConfig(placement)
-                .put("flyway", new JsonObject().put("mode", "MIGRATE").put("instances", instances));
+                .put("flyway", new JsonObject().put("mode", "MIGRATE").put("named", true));
     }
 
     private static WorkflowInstance newInstance(String definitionId, String businessKey, WorkflowSubjectRef subject) {

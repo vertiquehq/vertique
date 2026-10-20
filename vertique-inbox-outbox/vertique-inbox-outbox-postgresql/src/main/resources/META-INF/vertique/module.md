@@ -253,7 +253,7 @@ Index: `idx_inbox_processed_at` (for cleanup queries).
 
 **LISTEN/NOTIFY trigger:** `transactional_outbox_notify` fires `AFTER INSERT ON outbox` and calls `pg_notify('transactional_outbox_channel', NEW.id::text)`.
 
-**Placement.** The migration scripts are unqualified, so the migration instance's default schema decides where the tables, indexes, the `outbox_id_seq` sequence, the `notify_transactional_outbox` function and the trigger land. In named Flyway mode with a `db.schemas.inbox-outbox` entry, that schema is the default, and the repository qualifies every table with it, so both agree. In legacy mode the migration lands where the legacy configuration says (see [Flyway Configuration](#flyway-configuration)). The `transactional_outbox_channel` notification channel is **database-wide**: PostgreSQL channels are not schema-scoped, so every relay listening on the database receives every notification. Treat the channel as a wake-up hint, not a tenant boundary; a relay still claims rows only from its own mapped `outbox` table.
+**Placement.** The migration scripts are unqualified, so the migration instance's default schema decides where the tables, indexes, the `outbox_id_seq` sequence, the `notify_transactional_outbox` function and the trigger land. In named Flyway mode with a `db.schemas.inbox-outbox` entry, that schema is the default, and the repository qualifies every table with it, so both agree. In single mode the migration lands where the single-run configuration says (see [Flyway Configuration](#flyway-configuration)). The `transactional_outbox_channel` notification channel is **database-wide**: PostgreSQL channels are not schema-scoped, so every relay listening on the database receives every notification. Treat the channel as a wake-up hint, not a tenant boundary; a relay still claims rows only from its own mapped `outbox` table.
 
 ---
 
@@ -276,10 +276,15 @@ Give the inbox and outbox tables their own schema and history table:
   },
   "flyway": {
     "mode": "MIGRATE",
+    "named": true,
     "instances": { "inbox-outbox": {} }
   }
 }
 ```
+
+`"named": true` turns on named mode; `instances` only carries per-instance overrides and may be omitted
+(`"named": true` alone runs every wired declaration with the root settings). `instances` without
+`"named": true` is a configuration error.
 
 - **One setting places everything.** `db.schemas.inbox-outbox` is the instance's default schema and
   history schema, and `PgInboxOutboxRepository` qualifies every inbox and outbox table with it, so the
@@ -307,10 +312,10 @@ Give the inbox and outbox tables their own schema and history table:
 `dev.vertique:vertique-db-flyway` documents the full instance configuration, the agreement rules between
 `db.schemas` and Flyway schema lists, and the failure model.
 
-### Single Flyway (legacy) configuration
+### Single Flyway configuration
 
-When `flyway.instances` is absent, the default `classpath:db/migration` location already includes the
-bundled `db/migration/inbox-outbox` scripts, so no extra location is needed. Every bundled adapter ships its own `V1` script, so one history can hold only one of them (a second would fail with a duplicate version); to run several adapters, use named instances. The single-history example:
+Without `flyway.named`, the default `classpath:db/migration` location already includes the
+bundled `db/migration/inbox-outbox` scripts, so no extra location is needed. Every bundled adapter ships its own `V1` script, so one history can hold only one of them (a second would fail with a duplicate version); to run several adapters, set `"named": true`. Wired migration declarations are ignored in a single run, so adding another adapter module never switches the mode. The single-history example:
 
 ```json
 {
@@ -327,9 +332,9 @@ not contain it, for example `["classpath:db/migration/inbox-outbox", "classpath:
 both `classpath:db/migration` and `classpath:db/migration/inbox-outbox`: the first already covers the
 second.
 
-In this mode the migration lands where the legacy configuration says, and nothing checks it against
+In this mode the migration lands where the single-run configuration says, and nothing checks it against
 `db.schemas`. If `db.schemas.inbox-outbox` is also set, the repository queries that schema, so make the
-legacy `flyway.schemas` list (first entry) or the connection default match it, or the repository will
+`flyway.schemas` list (first entry) or the connection default match it, or the repository will
 look in a schema the migration never filled.
 
 ### Runtime placement
