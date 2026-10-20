@@ -15,7 +15,7 @@ import java.util.List;
  * ViolationDetail} individually. A detail the engine builds for a located failure holds an RFC 6901
  * JSON Pointer into the payload the engine validated, named with the engine's own mapper, so it is
  * relative to that payload and can differ from a pointer into the request body that carried it; a
- * detail that concerns the payload as a whole, or marks omitted violations, has no path. The {@code type}
+ * detail that concerns the payload as a whole has no path. The {@code type}
  * names the failed keyword, the bean validator's constraint type, or one of {@code decision},
  * {@code payload} or {@code binding}. Details built by the engine are value-free: no payload value,
  * decision name, class name, decode message or map key. A constraint message produced by an

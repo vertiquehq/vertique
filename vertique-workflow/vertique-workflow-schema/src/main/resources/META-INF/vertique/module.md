@@ -249,7 +249,7 @@ Each `ViolationDetail` has a `path`, a `message`, a `type` and `args`:
 | Field | Content |
 |---|---|
 | `path` | An RFC 6901 JSON Pointer such as `/comment` or `/items/0/name`; the root is the empty string. A segment uses the payload's wire name; it is never a map key or other caller data. An omitted required member is named, as `/comment` or `/items/0/name`, when the schema confirms the name; where the schema offers alternatives or cannot confirm it, the path is its parent's |
-| `type` | The failing schema keyword, or one of `definition`, `decision`, `payload`, `patternInputLength`, `patternInputTotalLength`, `truncated` |
+| `type` | The failing schema keyword, or one of `definition`, `decision`, `payload`, `patternInputLength`, `patternInputTotalLength` |
 | `message` | The canonical message for the violation |
 | `args` | The keyword's constraint arguments, such as a limit |
 
@@ -257,14 +257,10 @@ Each `ViolationDetail` has a `path`, a `message`, a `type` and `args`:
 or value of an unknown property; a location the schema does not declare is cut back to its declared
 parent.
 
-### Violation cap
+### Violation count
 
-At most 100 violations are returned, in the order they were produced. When more were produced, one
-final detail follows with an empty `path`, the message `further violations omitted` and the type
-`truncated`, so a result has at most 101 entries. Exactly 100 violations carry no truncation detail; 101
-carry the first 100 and the truncation detail. The cap bounds the answer, not the request: the
-transport must still cap the request body before it calls the validation methods. A single
-bounded-input violation is unaffected.
+Every violation is returned, in the order it was produced. The transport must still cap the request body
+before it calls the validation methods.
 
 ### Fixed answers
 

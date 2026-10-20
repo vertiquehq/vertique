@@ -384,8 +384,8 @@ WorkflowActorMapper customActorMapper() {
 error per violation instead of a message-only 400. `violations()` returns an unmodifiable list of
 `ViolationDetail` (`path`, `message`, `type`, `args`, `form`) and is never `null`. A detail the engine builds for a
 located failure has `form()` `JSON_POINTER`, so its `path` is an RFC 6901 JSON pointer; a detail that concerns the
-whole payload (an unknown decision, a payload that is not accepted or not required, one that does not bind) or marks
-omitted violations has a `null` path. The pointer is relative to the payload the engine validated and is named
+whole payload (an unknown decision, a payload that is not accepted or not required, one that does not bind) has a
+`null` path. The pointer is relative to the payload the engine validated and is named
 with the engine's own mapper; it can differ from a pointer into the request body that carried the payload, for
 example when the route binds names differently or nests the payload, so the default REST mapping reports no
 location for it. An application whose payload is the request body, or sits at a known place in it, reports the

@@ -21,7 +21,7 @@ import java.util.Map;
  * RFC 6901 pointer for a document it validated, as {@code form} states. It is never a location in a
  * request by itself; a transport that knows where the validated value sits maps it at its own
  * boundary. A {@code null} path says the violation locates nothing in any validated value, as for a
- * rule that concerns the whole operation or a marker such as "further violations omitted".
+ * rule that concerns the whole operation.
  *
  * @param path    the path of the violation in the form {@code form} states (e.g., {@code "name"},
  *                {@code "address.city"}, {@code "/address/city"}), or {@code null} when the violation

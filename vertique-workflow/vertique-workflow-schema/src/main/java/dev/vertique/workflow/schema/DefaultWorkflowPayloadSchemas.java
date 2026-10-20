@@ -32,17 +32,11 @@ import java.util.Optional;
  *
  * <p>Validation resolves the same keys, then runs the compiled validator held by the cache entry inside a window of
  * its pattern-input guard. Nothing is generated, compiled or loaded per call, and the submitted payload is only read.
- * At most 100 violations are returned, followed by one truncation detail when more were produced. A definition that
+ * Every violation is returned in the order produced. A definition that
  * declares no start type has nothing to validate, so every start payload is accepted.
  */
 @Singleton
 final class DefaultWorkflowPayloadSchemas implements WorkflowPayloadSchemas {
-
-    /** The largest number of violations returned before the truncation detail. */
-    private static final int MAX_VIOLATIONS = 100;
-
-    private static final String TRUNCATED_MESSAGE = "further violations omitted";
-    private static final String TRUNCATED_TYPE = "truncated";
 
     private static final String VOID_PRIMITIVE = "void";
     private static final String VOID_WRAPPER = Void.class.getName();
@@ -160,22 +154,7 @@ final class DefaultWorkflowPayloadSchemas implements WorkflowPayloadSchemas {
                     .map(detail -> new PayloadValidationResult(List.of(detail)))
                     .orElseThrow(() -> thrown);
         }
-        return new PayloadValidationResult(
-                capped(ViolationDetails.collect(result, entry.document(), false, PathForm.RFC6901)));
-    }
-
-    /**
-     * Keeps the first 100 violations in the order produced and appends one truncation detail when more were
-     * produced, so a result never has more than 101 entries.
-     */
-    private static List<ViolationDetail> capped(List<ViolationDetail> violations) {
-        if (violations.size() <= MAX_VIOLATIONS) {
-            return violations;
-        }
-        List<ViolationDetail> retained = new ArrayList<>(MAX_VIOLATIONS + 1);
-        retained.addAll(violations.subList(0, MAX_VIOLATIONS));
-        retained.add(ViolationDetail.unlocated(TRUNCATED_MESSAGE, TRUNCATED_TYPE));
-        return retained;
+        return new PayloadValidationResult(ViolationDetails.collect(result, entry.document(), false, PathForm.RFC6901));
     }
 
     private static PayloadValidationResult single(String message, String type) {

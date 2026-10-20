@@ -25,10 +25,8 @@ import org.slf4j.LoggerFactory;
  * property-path string to an RFC 6901 pointer over the wire names of the process mapper. When no
  * validator is bound the check does nothing and the engine behaves as before.
  *
- * <p>At most 100 violations are returned, in the order the validator produced them. When more were produced, one
- * final detail with an empty path, the message {@code further violations omitted} and the type {@code truncated}
- * follows, so the exception carries at most 101 details. Pointers are converted only for the retained violations,
- * which bounds the conversion work. The transport must still cap the request body before the engine is called.
+ * <p>Every violation is returned, in the order the validator produced them, and every pointer is converted. The
+ * transport must still cap the request body before the engine is called.
  *
  * <p>The check never logs a payload or a violation. It states once, at construction, whether
  * enforcement is enabled.
@@ -37,12 +35,6 @@ import org.slf4j.LoggerFactory;
 final class PayloadConstraintCheck {
 
     private static final Logger log = LoggerFactory.getLogger(PayloadConstraintCheck.class);
-
-    /** The largest number of violations returned before the truncation detail. */
-    private static final int MAX_VIOLATIONS = 100;
-
-    private static final String TRUNCATED_MESSAGE = "further violations omitted";
-    private static final String TRUNCATED_TYPE = "truncated";
 
     private final BeanValidator validator;
 
@@ -73,17 +65,13 @@ final class PayloadConstraintCheck {
             return;
         }
         Class<?> rootType = coerced.getClass();
-        int retained = Math.min(violations.size(), MAX_VIOLATIONS);
-        List<ViolationDetail> converted = new ArrayList<>(retained + 1);
-        for (ViolationDetail detail : violations.subList(0, retained)) {
+        List<ViolationDetail> converted = new ArrayList<>(violations.size());
+        for (ViolationDetail detail : violations) {
             converted.add(ViolationDetail.atPointer(
                     JakartaPathPointers.toPointer(detail.path(), rootType, VertiqueJson.mapper()),
                     detail.message(),
                     detail.type(),
                     detail.args()));
-        }
-        if (violations.size() > MAX_VIOLATIONS) {
-            converted.add(ViolationDetail.unlocated(TRUNCATED_MESSAGE, TRUNCATED_TYPE));
         }
         throw new WorkflowInvalidPayloadException(message, converted);
     }
