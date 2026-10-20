@@ -23,7 +23,6 @@ import dev.vertique.core.lifecycle.ComposeValidator;
 import dev.vertique.core.validation.BeanValidationException;
 import dev.vertique.core.validation.BeanValidator;
 import dev.vertique.core.validation.ViolationCarrier;
-import dev.vertique.core.validation.ViolationDetail;
 import dev.vertique.input.processing.InputObjectProcessor;
 import dev.vertique.rest.core.ProblemDetail;
 import dev.vertique.rest.core.RestValidationException;
@@ -74,7 +73,7 @@ import lombok.extern.slf4j.Slf4j;
  * REST framework with JAX-RS routing. It automatically includes {@link RestCoreModule}
  * for multibinding declarations and standard middleware, and
  * {@link dev.vertique.json.JsonRuntimeModule} so the {@link dev.vertique.core.json.JsonMapperProfileRegistry}
- * is available to resolve per-method request-body JSON profiles (FR-JSON-007B).
+ * is available to resolve per-method request-body JSON profiles.
  *
  * <p>Example usage in a Dagger component:
  * <pre>{@code
@@ -324,7 +323,7 @@ public abstract class RestModule {
     /**
      * Contributes the {@link JaxRsDefaultProfileValidator} into the {@code Set<ComposeValidator>}
      * multibinding so the {@code VALIDATE} startup phase forces its construction, failing fast when
-     * {@code jaxrs.jsonProfile} names an unknown profile (FR-JSON-050).
+     * {@code jaxrs.jsonProfile} names an unknown profile.
      *
      * @param impl the JAX-RS per-boundary default-profile validator
      * @return the validator contributed into the compose-validator set
@@ -349,7 +348,7 @@ public abstract class RestModule {
      *       outranks the inherited {@code BusinessRuleException}/{@link ValidationException} → 400
      *       fallback (mirrors {@link UnavailableException}'s 503 role)</li>
      *   <li>{@link ParamConversionException} (400) — inbound parameter value failed conversion to its
-     *       declared type (FR-015-08a); registered explicitly so the default is self-documenting and
+     *       declared type; registered explicitly so the default is self-documenting and
      *       independent of the {@link ValidationException} hierarchy fallback</li>
      *   <li>{@link ParamConverterNotFoundException} (500) — no converter/provider satisfies a declared
      *       parameter type at request time (a misconfiguration); registered explicitly rather than
@@ -369,7 +368,7 @@ public abstract class RestModule {
      * falls through to the {@link Throwable} (500) fallback.
      *
      * <p>Package-private: this provider serves the module's own Dagger wiring and same-package
-     * tests only. Per ADR-0205, a test harness in a sibling REST-surface module does not call this
+     * tests only. A test harness in a sibling REST-surface module does not call this
      * method directly; instead it declares its own package-private {@code @Component} over {@code
      * RestTestFixtureModule} (plus {@code RestTestNoSecurityModule} or {@code AuthModule}, the way
      * {@code vertique-rest-test}'s module docs show {@code ValidationMountComponent} doing) and lets
@@ -397,12 +396,12 @@ public abstract class RestModule {
                         .type("application/problem+json")
                         .build())
                 .on(BeanValidationException.class, ex -> Response.status(400)
-                        .entity(ValidationProblemDetail.of(ex.getMessage(), toErrors(ex.violations())))
+                        .entity(ValidationProblemDetail.of(ex.getMessage(), ValidationErrorDetail.ofViolations(ex)))
                         .type("application/problem+json")
                         .build())
                 .on(ValidationException.class, ex -> {
                     Object body = ex instanceof ViolationCarrier carrier
-                            ? ValidationProblemDetail.of(ex.getMessage(), toErrors(carrier.violations()))
+                            ? ValidationProblemDetail.of(ex.getMessage(), ValidationErrorDetail.ofViolations(carrier))
                             : ProblemDetail.of(400, ex.getMessage());
                     return Response.status(400)
                             .entity(body)
@@ -469,12 +468,6 @@ public abstract class RestModule {
                                         .entity(ProblemDetail.of(500, "Internal Server Error"))
                                         .type("application/problem+json")
                                         .build());
-    }
-
-    private static List<ValidationErrorDetail> toErrors(List<ViolationDetail> violations) {
-        return violations.stream()
-                .map(v -> new ValidationErrorDetail(v.path(), v.message(), null, v.type(), v.args()))
-                .toList();
     }
 
     /**

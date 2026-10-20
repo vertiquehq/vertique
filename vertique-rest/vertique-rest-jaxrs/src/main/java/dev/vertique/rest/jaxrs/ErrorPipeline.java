@@ -4,6 +4,10 @@
 package dev.vertique.rest.jaxrs;
 
 import dev.vertique.core.async.Combinators;
+import dev.vertique.core.validation.JakartaPathPointers;
+import dev.vertique.core.validation.ViolationCarrier;
+import dev.vertique.core.validation.ViolationDetail;
+import dev.vertique.core.validation.ViolationPathForm;
 import dev.vertique.rest.core.ProblemDetail;
 import dev.vertique.rest.core.interceptor.ErrorInterceptor;
 import dev.vertique.rest.core.interceptor.RequestInterceptor;
@@ -254,6 +258,45 @@ public class ErrorPipeline {
                     cause.getClass().getName());
         } else if (log.isDebugEnabled()) {
             log.debug("Client error response {} (instance {})", status, occurrence, cause);
+            if (cause instanceof ViolationCarrier carrier) {
+                logCarriedViolations(carrier);
+            }
+        }
+    }
+
+    /** The most carried violations logged for one response. */
+    private static final int MAX_LOGGED_VIOLATIONS = 100;
+
+    /**
+     * Logs, at DEBUG, the violations a carrier holds, at most {@value #MAX_LOGGED_VIOLATIONS} per
+     * response. A violation with a Java property path logs the non-empty path with its type, the path
+     * neutralized and cut at its first position marker; a violation with a pointer logs only its type.
+     * A violation with no path logs nothing. No message, key text, index or pointer is logged, because
+     * those can hold what the client sent.
+     *
+     * @param carrier the exception holding the violations
+     */
+    static void logCarriedViolations(ViolationCarrier carrier) {
+        if (!log.isDebugEnabled()) {
+            return;
+        }
+        int logged = 0;
+        for (ViolationDetail violation : carrier.violations()) {
+            if (logged == MAX_LOGGED_VIOLATIONS) {
+                return;
+            }
+            String path = violation.path();
+            if (path == null) {
+                continue;
+            }
+            if (violation.form() == ViolationPathForm.JSON_POINTER) {
+                log.debug("carried pointer violation type={}", violation.type());
+                logged++;
+            } else if (!path.isEmpty()) {
+                log.debug(
+                        "carried violation path={} type={}", JakartaPathPointers.loggablePath(path), violation.type());
+                logged++;
+            }
         }
     }
 

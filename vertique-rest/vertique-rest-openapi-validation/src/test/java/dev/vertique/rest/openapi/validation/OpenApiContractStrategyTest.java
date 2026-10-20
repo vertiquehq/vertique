@@ -5,7 +5,9 @@ package dev.vertique.rest.openapi.validation;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -38,10 +40,13 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 
 /**
  * Unit-level guards for {@link OpenApiContractValidationStrategy}: its selection id is
@@ -326,39 +331,113 @@ class OpenApiContractStrategyTest {
             assertSame(raw, mapped.getCause());
         }
 
-        @Test
-        @DisplayName("A schema output without child errors is mapped from the output itself")
-        void schemaOutputWithoutChildErrorsProducesSanitizedDetail() {
-            OutputUnit output = new OutputUnit()
-                    .setKeywordLocation("#/maxLength")
-                    .setInstanceLocation("#/pin")
+        /**
+         * One mapped output unit: where the engine reported it, whether it sits inside a wrapper unit with
+         * child errors, and the entry the strategy must produce.
+         */
+        private record Row(
+                String name,
+                String keywordLocation,
+                String instanceLocation,
+                boolean insideWrapper,
+                String expectedPointer,
+                String expectedType,
+                String expectedDetail) {
+
+            @Override
+            public String toString() {
+                return name;
+            }
+        }
+
+        private static Row row(String name, String keywordLocation, String instanceLocation, String expectedPointer) {
+            return new Row(
+                    name,
+                    keywordLocation,
+                    instanceLocation,
+                    false,
+                    expectedPointer,
+                    keywordLocation.substring("#/".length()),
+                    detailOf(keywordLocation));
+        }
+
+        private static String detailOf(String keywordLocation) {
+            return switch (keywordLocation) {
+                case "#/maxLength" -> "must be shorter";
+                case "#/additionalProperties" -> "contains an undeclared property";
+                default -> throw new IllegalArgumentException(keywordLocation);
+            };
+        }
+
+        static Stream<Row> todaysLocations() {
+            return Stream.of(
+                    row("declared member keeps its location", "#/maxLength", "#/pin", "/pin"),
+                    row("undeclared top-level member is cut to the root", "#/additionalProperties", "#/ZZKEY", ""),
+                    row(
+                            "undeclared nested member is cut to its parent",
+                            "#/additionalProperties",
+                            "#/pet/ZZKEY",
+                            "/pet"),
+                    row("schema-valued member under a client key passes through", "#/maxLength", "#/ZZKEY", "/ZZKEY"),
+                    new Row(
+                            "structural-only output reports the root",
+                            "#/properties",
+                            "#/pin",
+                            true,
+                            "",
+                            null,
+                            "is invalid"),
+                    row("key with a space is percent-decoded", "#/maxLength", "#/a%20b", "/a b"),
+                    row("key with angle brackets is percent-decoded", "#/maxLength", "#/%3Cx%3E", "/<x>"),
+                    row("key spelling a percent escape keeps the literal text", "#/maxLength", "#/%250A", "/%0A"),
+                    row("key with a line feed as the engine spells it", "#/maxLength", "#/a%Ab", "/a%Ab"),
+                    row("key with double quotes is percent-decoded", "#/maxLength", "#/%22q%22", "/\"q\""),
+                    row("key spelling an escaped slash keeps the literal text", "#/maxLength", "#/%2Fa", "/%2Fa"),
+                    row("key spelling an escaped tilde keeps the literal text", "#/maxLength", "#/%7E1", "/%7E1"),
+                    row("key spelling an escaped letter keeps the literal text", "#/maxLength", "#/%6Eame", "/%6Eame"),
+                    row("line feed in the first segment ends the pointer at the root", "#/maxLength", "#/a%0Ab", ""),
+                    row(
+                            "line separator in the last segment ends the pointer before it",
+                            "#/maxLength",
+                            "#/pet/x%E2%80%A8y",
+                            "/pet"),
+                    row(
+                            "paragraph separator in the last segment ends the pointer before it",
+                            "#/maxLength",
+                            "#/pet/x%E2%80%A9y",
+                            "/pet"),
+                    row(
+                            "escape character in a middle segment ends the pointer before it",
+                            "#/maxLength",
+                            "#/ok/a%1Bb/c",
+                            "/ok"));
+        }
+
+        @ParameterizedTest(name = "{0}")
+        @MethodSource("todaysLocations")
+        @DisplayName("A schema output keeps today's location, reported as a plain pointer")
+        void schemaOutputKeepsTodaysLocationsAsPointers(Row row) {
+            OutputUnit unit = new OutputUnit()
+                    .setKeywordLocation(row.keywordLocation())
+                    .setInstanceLocation(row.instanceLocation())
                     .setError("String contains submitted secret");
+            OutputUnit output = row.insideWrapper() ? new OutputUnit().setErrors(List.of(unit)) : unit;
             SchemaValidationException raw =
                     new SchemaValidationException("submitted secret", ValidatorErrorType.INVALID_VALUE, output, null);
 
             RestValidationException mapped = OpenApiContractValidationStrategy.mapToRestValidationException(raw);
 
             assertEquals("Request validation failed", mapped.getMessage());
-            assertEquals(
-                    List.of(new ValidationErrorDetail("#/pin", "must be shorter", "body", "maxLength", null)),
-                    mapped.errors());
             assertSame(raw, mapped.getCause());
-        }
-
-        @Test
-        @DisplayName("Structural-only schema output produces a generic value-free detail")
-        void structuralOnlySchemaOutputProducesGenericDetail() {
-            OutputUnit structural = new OutputUnit()
-                    .setKeywordLocation("#/properties")
-                    .setInstanceLocation("#/pin")
-                    .setError("submitted secret");
-            OutputUnit output = new OutputUnit().setErrors(List.of(structural));
-            SchemaValidationException raw =
-                    new SchemaValidationException("submitted secret", ValidatorErrorType.INVALID_VALUE, output, null);
-
-            RestValidationException mapped = OpenApiContractValidationStrategy.mapToRestValidationException(raw);
-
-            assertEquals(List.of(new ValidationErrorDetail("", "is invalid", "body", null, null)), mapped.errors());
+            assertEquals(1, mapped.errors().size());
+            ValidationErrorDetail entry = mapped.errors().get(0);
+            assertNotNull(entry.pointer(), "the location must be reported in pointer");
+            assertEquals(row.expectedPointer(), entry.pointer());
+            assertNull(entry.parameter(), "a body location is never a parameter");
+            assertEquals("body", entry.location());
+            assertEquals(row.expectedType(), entry.type());
+            assertEquals(row.expectedDetail(), entry.detail());
+            assertFalse(entry.detail().contains("secret"), "the detail must stay value-free");
         }
 
         @Test

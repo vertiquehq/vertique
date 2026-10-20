@@ -312,18 +312,42 @@ public class QuotaProblemDetail extends ProblemDetail {
 
 ```java
 public record ValidationErrorDetail(
-        String path,                        // violated field path, e.g. "email"
+        @Nullable String pointer,           // RFC 6901 JSON Pointer into the request document, e.g. "/items/0/name"
+        @Nullable String parameter,         // non-body request location, e.g. "page", "X-Token"
         String detail,                      // human-readable failure description
         @Nullable String location,          // "body", "query", "header", "path", "cookie", "form", "file"
         @Nullable String type,              // classification: "required", "size", "min", "pattern", …
         @Nullable Map<String, Object> args  // constraint arguments, e.g. {"min":1,"max":100}
 ) {
-    public static ValidationErrorDetail of(String path, String detail) { … }
+    public static ValidationErrorDetail ofPointer(String pointer, String detail) { … }
+    public static ValidationErrorDetail ofParameter(String parameter, String detail) { … }
+    public static List<ValidationErrorDetail> ofViolations(ViolationCarrier carrier) { … }
+    public ValidationErrorDetail withLocation(@Nullable String location) { … }
+    public ValidationErrorDetail withType(@Nullable String type) { … }
+    public ValidationErrorDetail withArgs(@Nullable Map<String, Object> args) { … }
 }
 ```
 
-`null` components are omitted from JSON. `args` is populated for standard Jakarta constraints by the
-`ViolationArgsInspector` SPI in `dev.vertique:vertique-validation`.
+- **`pointer`** is an RFC 6901 JSON Pointer into the request document over the wire names the
+  request was bound with. `""` is a valid pointer (the whole document) and is serialized, so test
+  for presence, not truthiness.
+- **`parameter`** names a non-body request location (query parameter, header, path variable,
+  cookie, form field).
+- **At most one** of `pointer` and `parameter` is set; the canonical constructor throws
+  `IllegalArgumentException` when both are present, which also rejects a malformed response body
+  read on the client side. An entry carries neither when the location cannot be stated.
+- The `with…` methods return a copy that carries every other member over.
+- **`ofViolations(ViolationCarrier)`** renders a carrier's violations one entry each in order and without a
+  cap, with `detail`, `type` and `args` and no location: a detail's path is a location in the value its producer
+  validated, not in the request. **`ofViolations(ViolationCarrier, String basePointer)`** is for code that knows
+  the validated value sits at `basePointer` in the request body (`""` when it is the body): a `JSON_POINTER`
+  detail whose joined pointer `ViolationPathForm.accepts` admits gets `pointer` and `location` `"body"`, every
+  other detail stays without a location. Neither logs. Use them from an application's own exception mapper to
+  reuse the framework's rules.
+
+`null` components are omitted from JSON and unknown members are ignored when reading. `args` is
+populated for standard Jakarta constraints by the `ViolationArgsInspector` SPI in
+`dev.vertique:vertique-validation`.
 
 ### `RestValidationException`
 
@@ -1102,13 +1126,13 @@ Completion is dual-channel, and the two channels mean different things:
 
 | Signal | Meaning | Caller behavior |
 |---|---|---|
-| synchronous throw | nothing was written or ended — an encode-time failure | may retry once against the same response head (fail-open, FR-JSON-058A) |
+| synchronous throw | nothing was written or ended — an encode-time failure | may retry once against the same response head (fail-open) |
 | returned future succeeds | the response was fully written and ended | done |
 | returned future fails | the wire write failed after handoff; zero or more bytes may already be on the wire | never retried; the caller owns terminal cleanup |
 
 The returned future may complete on any thread — do not assume context affinity; the framework
 pipeline redispatches handling back onto the request context. A `StreamingBody` must be piped, never
-buffered (FR-RESTSER-013 / NFR-003), and the response must not be ended on pipe failure.
+buffered, and the response must not be ended on pipe failure.
 
 ### `RestContextResolver`
 
@@ -1134,7 +1158,7 @@ An application resolver takes the default phase and priority `0`, so it already 
 every built-in** and may shadow a framework-provided value for the same type. Give it a priority
 above 120 to act as a fallback instead.
 
-**Contract (FR-REST-172):** `resolve` is a pure read. An implementation must not create, mutate,
+**Contract:** `resolve` is a pure read. An implementation must not create, mutate,
 enrich, replace, or propagate context as a side effect — it observes request state and reports back.
 
 `RestContextResolution` is the injectable coordinator: `resolve(Class, RoutingContext)` returns an

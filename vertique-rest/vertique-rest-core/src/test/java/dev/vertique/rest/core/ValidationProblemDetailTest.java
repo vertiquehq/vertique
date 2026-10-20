@@ -25,8 +25,8 @@ class ValidationProblemDetailTest {
     @DisplayName("of() creates a 400 ValidationProblemDetail with the given detail and errors")
     void shouldCreateViaFactory() {
         List<ValidationErrorDetail> errors = List.of(
-                new ValidationErrorDetail("/name", "must not be blank", "body", "required", null),
-                new ValidationErrorDetail("/age", "must be a positive integer", "body", "invalid_value", null));
+                new ValidationErrorDetail("/name", null, "must not be blank", "body", "required", null),
+                new ValidationErrorDetail("/age", null, "must be a positive integer", "body", "invalid_value", null));
 
         ValidationProblemDetail pd = ValidationProblemDetail.of("Request validation failed", errors);
 
@@ -35,7 +35,7 @@ class ValidationProblemDetailTest {
         assertEquals(400, pd.status());
         assertEquals("Request validation failed", pd.detail());
         assertEquals(2, pd.errors().size());
-        assertEquals("/name", pd.errors().get(0).path());
+        assertEquals("/name", pd.errors().get(0).pointer());
         assertEquals("must not be blank", pd.errors().get(0).detail());
         assertEquals("body", pd.errors().get(0).location());
         assertEquals("required", pd.errors().get(0).type());
@@ -52,16 +52,16 @@ class ValidationProblemDetailTest {
     }
 
     @Test
-    @DisplayName("JSON serialization includes the errors array with path and detail fields")
+    @DisplayName("JSON serialization includes the errors array with pointer and detail fields")
     void shouldSerializeErrorsArrayToJson() throws JsonProcessingException {
         List<ValidationErrorDetail> errors =
-                List.of(new ValidationErrorDetail("/email", "invalid format", "body", "invalid_value", null));
+                List.of(new ValidationErrorDetail("/email", null, "invalid format", "body", "invalid_value", null));
 
         ValidationProblemDetail pd = ValidationProblemDetail.of("Validation failed", errors);
         String json = mapper.writeValueAsString(pd);
 
         assertTrue(json.contains("\"errors\""));
-        assertTrue(json.contains("\"path\":\"/email\""));
+        assertTrue(json.contains("\"pointer\":\"/email\""));
         assertTrue(json.contains("\"detail\":\"invalid format\""));
         assertTrue(json.contains("\"location\":\"body\""));
         assertTrue(json.contains("\"status\":400"));
@@ -71,21 +71,21 @@ class ValidationProblemDetailTest {
     @DisplayName("JSON serialization omits null location and type in error details")
     void shouldOmitNullLocationAndType() throws JsonProcessingException {
         ValidationProblemDetail pd =
-                ValidationProblemDetail.of("Validation failed", List.of(ValidationErrorDetail.of("/x", "bad")));
+                ValidationProblemDetail.of("Validation failed", List.of(ValidationErrorDetail.ofPointer("/x", "bad")));
         String json = mapper.writeValueAsString(pd);
 
         // Error detail should NOT contain location or type (they're null)
         // But the top-level ProblemDetail DOES have a "type" field ("about:blank")
         assertFalse(json.contains("\"location\""));
-        assertTrue(json.contains("\"path\":\"/x\""));
-        // Verify the error object only has path and detail (no location/type keys)
-        assertTrue(json.contains("{\"path\":\"/x\",\"detail\":\"bad\"}"));
+        assertTrue(json.contains("\"pointer\":\"/x\""));
+        // Verify the error object only has pointer and detail (no location/type keys)
+        assertTrue(json.contains("{\"pointer\":\"/x\",\"detail\":\"bad\"}"));
     }
 
     @Test
     @DisplayName("toBuilder() produces a modified copy without changing the original")
     void shouldSupportToBuilder() {
-        List<ValidationErrorDetail> errors = List.of(ValidationErrorDetail.of("/name", "required"));
+        List<ValidationErrorDetail> errors = List.of(ValidationErrorDetail.ofPointer("/name", "required"));
         ValidationProblemDetail original = ValidationProblemDetail.of("Validation failed", errors);
         assertNull(original.instance());
 
@@ -99,11 +99,11 @@ class ValidationProblemDetailTest {
     }
 
     @Test
-    @DisplayName("ValidationErrorDetail.of() creates detail with null location and type")
+    @DisplayName("ValidationErrorDetail.ofPointer() creates detail with null location and type")
     void shouldCreateErrorDetailWithConvenienceFactory() {
-        ValidationErrorDetail detail = ValidationErrorDetail.of("/foo/bar", "too long");
+        ValidationErrorDetail detail = ValidationErrorDetail.ofPointer("/foo/bar", "too long");
 
-        assertEquals("/foo/bar", detail.path());
+        assertEquals("/foo/bar", detail.pointer());
         assertEquals("too long", detail.detail());
         assertNull(detail.location());
         assertNull(detail.type());

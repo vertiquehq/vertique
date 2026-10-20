@@ -3,8 +3,11 @@
 
 package dev.vertique.rest.openapi.validation;
 
+import static org.junit.jupiter.api.Assertions.assertAll;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -19,6 +22,7 @@ import io.vertx.core.Handler;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.http.HttpServer;
+import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.Router;
 import io.vertx.ext.web.RoutingContext;
 import io.vertx.ext.web.client.WebClient;
@@ -26,6 +30,7 @@ import io.vertx.ext.web.client.WebClientOptions;
 import io.vertx.ext.web.handler.BodyHandler;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterAll;
@@ -34,6 +39,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.api.function.Executable;
 
 /**
  * Proves the {@code openapi-contract} strategy sanitizes its validation error output (W6): when the
@@ -97,6 +103,11 @@ public class OpenApiContractSanitizationIT {
         router.route().handler(BodyHandler.create());
         router.post("/accounts")
                 .handler(gate)
+                .handler(rc -> rc.response().setStatusCode(201).end("created"));
+        Handler<RoutingContext> tagsGate = strategy.gateFor(op("POST", "/tags", "createTags"), OperationSchemas.empty())
+                .orElseThrow();
+        router.post("/tags")
+                .handler(tagsGate)
                 .handler(rc -> rc.response().setStatusCode(201).end("created"));
         // Capture the RestValidationException so the test can render the full problem detail and assert
         // no submitted value leaks across the whole serialized response (mirrors the REST error pipeline,
@@ -184,7 +195,7 @@ public class OpenApiContractSanitizationIT {
                     // --- Sanitized per-field context must still be present ---
                     assertFalse(ex.errors().isEmpty(), "there must be at least one structured field error");
                     ValidationErrorDetail first = ex.errors().get(0);
-                    assertNotNull(first.path(), "each error must carry a (pointer) path");
+                    assertNotNull(first.pointer(), "each error must carry a pointer");
                     assertNotNull(first.type(), "each error must carry the failed keyword as 'type'");
                     assertNotNull(first.location(), "each error must carry a location token");
                     // The detail message must not echo the submitted value.
@@ -197,7 +208,99 @@ public class OpenApiContractSanitizationIT {
                 })));
     }
 
+    @Test
+    @DisplayName("Contract violations report plain pointers at the locations reported today")
+    void contractViolationsReportPlainPointersAtTodaysLocations() throws Exception {
+        // Given/When: a too-long declared member (a), an undeclared member (b) and, on a map-valued body,
+        // too-long values under client-chosen keys (c); each posted through the real contract gate.
+        List<ValidationErrorDetail> tooLongPin = violationsOf("/accounts", "{\"pin\":\"12345\"}");
+        List<ValidationErrorDetail> undeclared =
+                violationsOf("/accounts", "{\"pin\":\"1234\",\"" + SECRET_PROPERTY + "\":\"x\"}");
+
+        // Client keys and the pointer each is reported at: percent-decoded; the line feed key stays as the
+        // engine spells it (it cannot be decoded); a key with an escape or line separator character ends
+        // the pointer before its segment.
+        String[][] keysAndPointers = {
+            {"a b", "/a b"},
+            {"<x>", "/<x>"},
+            {"%0A", "/%0A"},
+            {"a\nb", "/a%Ab"},
+            {"\"q\"", "/\"q\""},
+            {"a" + (char) 0x1B + "b", ""},
+            {"a" + (char) 0x2028 + "b", ""},
+        };
+        List<ValidationErrorDetail> all = new java.util.ArrayList<>(tooLongPin);
+        all.addAll(undeclared);
+        List<List<ValidationErrorDetail>> keyed = new java.util.ArrayList<>();
+        for (String[] keyAndPointer : keysAndPointers) {
+            List<ValidationErrorDetail> errors = violationsOf(
+                    "/tags", new JsonObject().put(keyAndPointer[0], "xx").encode());
+            keyed.add(errors);
+            all.addAll(errors);
+        }
+        String rendered = render(all);
+
+        // Then: every row is checked, so one run shows every failing row.
+        List<Executable> rows = new java.util.ArrayList<>();
+        rows.add(() -> assertBodyPointer(entryOfType(tooLongPin, "maxLength"), "/pin"));
+        rows.add(() -> assertBodyPointer(entryOfType(undeclared, "additionalProperties"), ""));
+        for (int i = 0; i < keysAndPointers.length; i++) {
+            String expected = keysAndPointers[i][1];
+            List<ValidationErrorDetail> errors = keyed.get(i);
+            rows.add(() -> assertBodyPointer(entryOfType(errors, "maxLength"), expected));
+            rows.add(() -> assertBodyPointer(entryOfType(errors, "additionalProperties"), ""));
+        }
+        rows.add(() -> assertFalse(
+                render(undeclared).contains(SECRET_PROPERTY), "the undeclared member name must not be echoed"));
+        rows.add(() -> assertFalse(render(undeclared).contains("1234"), "the submitted value must not be echoed"));
+        rows.add(() -> assertFalse(render(tooLongPin).contains("12345"), "the submitted value must not be echoed"));
+        rows.add(() -> assertFalse(rendered.contains("\"path\""), "path must not be rendered; got: " + rendered));
+        for (ValidationErrorDetail entry : all) {
+            rows.add(() -> {
+                assertNotNull(entry.pointer(), "every entry must carry a pointer");
+                entry.pointer()
+                        .codePoints()
+                        .forEach(cp -> assertFalse(
+                                Character.isISOControl(cp) || cp == 0x2028 || cp == 0x2029,
+                                "pointer must hold no control or separator character: " + entry.pointer()));
+            });
+        }
+        assertAll(rows);
+    }
+
+    private static void assertBodyPointer(ValidationErrorDetail entry, String expectedPointer) {
+        assertAll(
+                () -> assertNotNull(entry.pointer(), "the location must be reported in pointer for " + entry),
+                () -> assertEquals(expectedPointer, entry.pointer()),
+                () -> assertEquals("body", entry.location()),
+                () -> assertNull(entry.parameter()));
+    }
+
     // --- helpers ---
+
+    /** The one entry of the given keyword among {@code errors}; fails when there is none or several. */
+    private static ValidationErrorDetail entryOfType(List<ValidationErrorDetail> errors, String type) {
+        List<ValidationErrorDetail> matching =
+                errors.stream().filter(e -> type.equals(e.type())).toList();
+        assertEquals(1, matching.size(), "expected exactly one " + type + " entry in " + errors);
+        return matching.get(0);
+    }
+
+    /** Posts {@code jsonBody}, requires a 4xx and returns the structured errors the gate raised. */
+    private List<ValidationErrorDetail> violationsOf(String path, String jsonBody) throws Exception {
+        CAPTURED.set(null);
+        int status =
+                post(path, jsonBody).toCompletionStage().toCompletableFuture().get(10, TimeUnit.SECONDS);
+        assertTrue(status >= 400 && status < 500, "schema violation must be a 4xx; was " + status);
+        RestValidationException ex = CAPTURED.get();
+        assertNotNull(ex, "the gate must have raised a RestValidationException for " + jsonBody);
+        return ex.errors();
+    }
+
+    /** Renders the errors as the REST error pipeline would serialize them. */
+    private static String render(List<ValidationErrorDetail> errors) throws Exception {
+        return new ObjectMapper().writeValueAsString(ValidationProblemDetail.of("Request validation failed", errors));
+    }
 
     private Future<Integer> post(String path, String jsonBody) {
         return client.post(port, "127.0.0.1", path)
