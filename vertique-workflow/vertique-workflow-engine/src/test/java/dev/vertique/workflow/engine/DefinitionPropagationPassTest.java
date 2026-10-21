@@ -1031,11 +1031,6 @@ class DefinitionPropagationPassTest {
         }
 
         @Override
-        public RuntimeWorkflow resolvePinned(String definitionId, long version) {
-            return resolve(new DefinitionKey(WorkflowScopes.DEFAULT, definitionId, version));
-        }
-
-        @Override
         public Optional<RuntimeWorkflow> find(DefinitionKey key) {
             return Optional.ofNullable(runtimes.get(key.definitionId() + "@" + key.definitionVersion()));
         }

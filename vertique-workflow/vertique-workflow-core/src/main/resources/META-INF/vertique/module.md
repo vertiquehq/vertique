@@ -129,6 +129,8 @@ The registry validates definitions at registration time. Invalid graphs fail bef
 
 `definitionClass(Class<?>)` answers with a `RegisteredDefinitionClass(definitionId, contractName, contract)` for the exact runtime class of a registered definition, and is empty for a class that was never registered or was registered under more than one definition id. `WorkflowClientFactory` uses it to create a client from a definition class. It is an abstract member of the interface: `DefaultWorkflowRegistry` implements it, and a custom `WorkflowRegistry` implementation no longer compiles until it implements the member (an implementation that has no definition classes returns `Optional.empty()`). Workflow releases may add further abstract members, so the registry is an interface the framework implements rather than one applications extend.
 
+A registered version is identified by a `DefinitionKey`: the scope that owns it, the definition id and the version. `register(definition)` registers in the default scope, `WorkflowScopes.DEFAULT`, and `register(scopeKey, definition)` registers in another scope; a scope may hold its own versions of an id that the default scope also holds. The SPI takes definition keys: `resolve(key)` returns the version or throws `WorkflowVersionPinUnavailableException` naming the scope, the definition id and the version, `find(key)` answers an `Optional`, `keysFor(definitionId)` lists the keys of every scope ordered by scope and then version (for listings only), and `contractOf(scopeKey, definitionId)` answers the contract name that the versions of one scope and id name, in one lookup. `unregister`, `markDeprecated`, `isDeprecated` and `registeredDefinition` take a key too. `resolveCurrent(definitionId)` considers only the versions of the default scope. Every `RuntimeWorkflow` reports the scope it is registered in as `definitionScopeKey()`. The earlier `resolvePinned(id, version)` and the id and version forms of the four key members are removed; a custom `WorkflowRegistry` must implement `register(scopeKey, definition)`, `resolve`, `find` and `keysFor`. The engine resolves every instance's plan with the instance's full pin: its definition scope, definition id and definition version.
+
 Registration runs the plan checks and the callback consistency check, indexes the definition's type names (see Logical Type Names), then every contributed
 `WorkflowDefinitionValidator`, and only then publishes the definition. The validator step applies to
 bootstrap and runtime registrations alike. A validator exception propagates unchanged to the caller
@@ -245,8 +247,8 @@ OrderFulfillmentWorkflow byId = factory.create(OrderFulfillmentWorkflow.class, "
 - **What creation checks.** Creation validates the contract interface's methods only: the annotation, the interface kind, one role annotation per method, one start method, unique signal names and the method shapes. It does not resolve a plan or compare payload types; a payload that does not fit the definition is reported when the client starts or signals.
 - **Generated and reflective clients.** Both build the start command through `WorkflowClientBinding.startCommand(...)`, so they send the same command. A generated proxy takes `(WorkflowOperations, WorkflowClientBinding)` and embeds no definition id or version.
 
-- **Many definitions per contract.** Any number of definition ids and versions may name one contract. The registry reads a definition's id, version, state type and contract from the definition, and keeps no map from a contract to one definition. The registry no longer offers a lookup from a contract class to its definition; look a definition up with `resolvePinned(id, version)`, `registeredDefinition(id, version)`, `allRegistered()` or `definitionClass(definitionClass)`.
-- **One contract per definition id.** Every version of a definition id must name the same contract. Registering a version whose contract name differs from that of an earlier version of the same id fails with `WorkflowDefinitionException` naming `'<id>' v<version>` and both contract names; nothing is registered.
+- **Many definitions per contract.** Any number of definition ids and versions may name one contract. The registry reads a definition's id, version, state type and contract from the definition, and keeps no map from a contract to one definition. The registry no longer offers a lookup from a contract class to its definition; look a definition up with `resolve(key)`, `find(key)`, `registeredDefinition(key)`, `allRegistered()` or `definitionClass(definitionClass)`.
+- **One contract per scope and definition id.** Every version of a definition id in one scope must name the same contract; another scope may hold the same id under another contract. Registering a version whose contract name differs from that of an earlier version of the same scope and id fails with `WorkflowDefinitionException` naming `'<id>' v<version>`, the scope and both contract names; nothing is registered.
 - **Declared signals.** A definition that waits for a signal must declare it on its contract, as a `@WorkflowSignal` method of the contract interface or of an interface it extends. Registration fails with `WorkflowDefinitionException` naming the definition and the undeclared signals in sorted order; waits inside fork branches and waits guarded by a timeout count. Marker contracts are not exempt: an empty contract can only back a definition that waits for no signal. A contract may declare signals that some of its versions do not wait for, and it may grow: add the `@WorkflowSignal` method before registering a version that waits for the new signal.
 - **Signal sent to an older version.** A signal for an instance whose pinned version does not wait for it fails with `WorkflowSignalRejectedException` naming the instance, the signal and `'<id>' v<version>`, and changes nothing. A client of another contract than the instance's pinned contract is refused with `WorkflowDefinitionContractMismatchException`.
 
@@ -425,8 +427,8 @@ reconciliation, fenced claim/complete/release operations, and
 `recomputeActive(String scopeKey, String definitionId)`. Recompute is scoped to that exact
 scope and id: the highest ACTIVE or SUPERSEDED version becomes ACTIVE and lower eligible versions
 become SUPERSEDED; CANDIDATE, ACTIVATING, DEPRECATED, and RETIRED rows remain unchanged.
-`WorkflowRegistry` gains `markDeprecated(definitionId, version)` (default throws
-`UnsupportedOperationException`) and `isDeprecated` (default `false`), which have defaults so
+`WorkflowRegistry` gains `markDeprecated(DefinitionKey)` (default throws
+`UnsupportedOperationException`) and `isDeprecated(DefinitionKey)` (default `false`), which have defaults so
 they did not break implementations that existed then. `DefaultWorkflowRegistry` keeps the mark under its lock: current resolution skips deprecated
 versions and fails with the same unknown-definition exception when all are deprecated, pinned resolution still serves them, and
 `unregister` clears the mark. Marking an unregistered version is a no-op. The store SPI adds the
@@ -441,14 +443,14 @@ The lifecycle and the definition service also add `reinstate(DefinitionKey)`; th
 SUPERSEDED)` with the membership recomputation inside the same transaction.
 The store also adds `upsertCode` (startup record of deployed code: rehash only while no live instance is pinned to
 that exact version, decided inside the store transaction) and `resetStaleActivating` (claims older than twice the
-staleness bound return to CANDIDATE). `WorkflowRegistry.registeredDefinition(id, version)` is an internal default-empty
+staleness bound return to CANDIDATE). `WorkflowRegistry.registeredDefinition(key)` is an internal default-empty
 hook that the default registry fills with the source definition it registered; it is empty after `unregister`.
 Candidates of different owners (scope keys) may coexist for one id, but only one owner holds
 the id's executable membership; a claim, completion or static reconciliation by another owner fails with
 `OWNER_CONFLICT`.
 `WorkflowCoreModule` declares optional
 store, lifecycle, and configuration bindings plus the loader multibinding. Without persistence, the
-standalone definition graph needs neither a database nor a configuration parser. `WorkflowRegistry.unregister`
+standalone definition graph needs neither a database nor a configuration parser. `WorkflowRegistry.unregister(DefinitionKey)`
 removes a version; third-party registries must implement it to support durable
 activation compensation. Its default throws explicitly.
 

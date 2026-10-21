@@ -415,7 +415,7 @@ class WorkflowRegistryTest {
         }
 
         @Test
-        @DisplayName("resolvePinned returns exactly the requested version")
+        @DisplayName("resolve returns exactly the requested version")
         void shouldReturnPinnedVersion() {
             registry.register(DEF_V1);
             registry.register(DEF_V2);
@@ -431,7 +431,7 @@ class WorkflowRegistryTest {
     class VersionPinUnavailable {
 
         @Test
-        @DisplayName("resolvePinned with missing version throws WorkflowVersionPinUnavailableException")
+        @DisplayName("resolve with a missing version throws WorkflowVersionPinUnavailableException")
         void shouldThrowOnMissingPinnedVersion() {
             registry.register(DEF_V1);
 

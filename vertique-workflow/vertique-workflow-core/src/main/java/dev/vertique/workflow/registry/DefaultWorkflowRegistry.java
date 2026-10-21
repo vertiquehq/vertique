@@ -720,16 +720,6 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
     /**
      * {@inheritDoc}
      *
-     * @throws WorkflowVersionPinUnavailableException if the default scope does not hold the version
-     */
-    @Override
-    public RuntimeWorkflow resolvePinned(String definitionId, long version) {
-        return resolve(WorkflowScopes.DEFAULT, definitionId, version);
-    }
-
-    /**
-     * {@inheritDoc}
-     *
      * @throws WorkflowVersionPinUnavailableException if the scope does not hold the version; the message
      *     names the scope, the definition id and the version
      */

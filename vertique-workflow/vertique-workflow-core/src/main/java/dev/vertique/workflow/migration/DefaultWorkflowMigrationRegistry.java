@@ -26,7 +26,7 @@ import java.util.Set;
  * performs state-type + version compatibility checks lazily at {@link #find} time.
  *
  * <h2>Deferred validation rationale</h2>
- * <p>Validating both source and target versions against {@link WorkflowRegistry#resolvePinned}
+ * <p>Validating both source and target versions against {@link WorkflowRegistry#resolve(DefinitionKey)}
  * inside the constructor would make it impossible to register a {@code v1 -> v2} migration handler
  * when only {@code v1} is statically contributed to the Dagger graph at startup time and {@code v2}
  * is loaded later via
@@ -113,7 +113,7 @@ public class DefaultWorkflowMigrationRegistry implements WorkflowMigrationRegist
      * <ul>
      *   <li>No handler is indexed for the triple.</li>
      *   <li>Either the source or target version is not yet registered in the
-     *       {@link WorkflowRegistry} — specifically when {@link WorkflowRegistry#resolvePinned}
+     *       {@link WorkflowRegistry} — specifically when {@link WorkflowRegistry#resolve(DefinitionKey)}
      *       throws {@link WorkflowVersionPinUnavailableException} or
      *       {@link WorkflowDefinitionMissingException} (version loaded dynamically after
      *       construction). Any other registry exception propagates as-is (C1 fix).</li>

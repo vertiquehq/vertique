@@ -480,7 +480,7 @@ class DefaultWorkflowRegistryConcurrencyTest {
     class MultipleVersionsSequential {
 
         @Test
-        @DisplayName("resolveCurrent returns v3; resolvePinned returns v1, v2, v3 correctly")
+        @DisplayName("resolveCurrent returns v3; resolve returns v1, v2, v3 correctly")
         void shouldResolveCorrectVersions() {
             registry.register(minimalDef("task-foo", 1, TaskFooContract.class));
             registry.register(minimalDef("task-foo", 2, TaskFooContract.class));

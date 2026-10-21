@@ -76,19 +76,6 @@ public interface WorkflowRegistry {
     RuntimeWorkflow resolveCurrent(String definitionId);
 
     /**
-     * Returns the {@link RuntimeWorkflow} for one version of a definition in the default scope.
-     *
-     * <p>This is the default-scope form of {@link #resolve(DefinitionKey)}; code that holds an instance
-     * resolves the instance's full pin with the key form instead.
-     *
-     * @param definitionId id of the workflow definition
-     * @param version the exact plan version to resolve
-     * @return the runtime workflow for the specified version
-     * @throws WorkflowVersionPinUnavailableException if the version is not registered in the default scope
-     */
-    RuntimeWorkflow resolvePinned(String definitionId, long version);
-
-    /**
      * Returns the {@link RuntimeWorkflow} for one version of a definition in one scope.
      *
      * <p>This method is used by the engine when resuming an in-flight instance that was pinned to
@@ -163,26 +150,9 @@ public interface WorkflowRegistry {
      */
     Collection<RuntimeWorkflow> allRegistered();
 
-    /** Removes a version in the default scope. Unsupported registries fail explicitly. */
-    default void unregister(String definitionId, long version) {
-        DefinitionKeys.defaultScope(definitionId, version).ifPresent(this::unregister);
-    }
-
     /** Removes a version. Unsupported registries fail explicitly. */
     default void unregister(DefinitionKey key) {
         throw new UnsupportedOperationException("unregister is not supported");
-    }
-
-    /**
-     * Marks one registered version of a definition in the default scope as deprecated; see
-     * {@link #markDeprecated(DefinitionKey)}.
-     *
-     * @param definitionId id of the workflow definition
-     * @param version the exact plan version to mark as deprecated
-     * @throws UnsupportedOperationException if this registry does not support deprecation
-     */
-    default void markDeprecated(String definitionId, long version) {
-        DefinitionKeys.defaultScope(definitionId, version).ifPresent(this::markDeprecated);
     }
 
     /**
@@ -204,20 +174,6 @@ public interface WorkflowRegistry {
     }
 
     /**
-     * Returns whether one registered version of a definition in the default scope is marked deprecated;
-     * see {@link #isDeprecated(DefinitionKey)}.
-     *
-     * @param definitionId id of the workflow definition
-     * @param version the exact plan version to check
-     * @return {@code true} if the version is registered and marked deprecated; {@code false} otherwise
-     */
-    default boolean isDeprecated(String definitionId, long version) {
-        return DefinitionKeys.defaultScope(definitionId, version)
-                .map(this::isDeprecated)
-                .orElse(false);
-    }
-
-    /**
      * Returns whether one registered version of a definition is marked deprecated.
      *
      * <p>Implementations must read the mark atomically with registration changes. The default
@@ -230,19 +186,6 @@ public interface WorkflowRegistry {
      */
     default boolean isDeprecated(DefinitionKey key) {
         return false;
-    }
-
-    /**
-     * Returns the definition that was passed to {@link #register} for one version in the default scope;
-     * see {@link #registeredDefinition(DefinitionKey)}.
-     *
-     * @param definitionId id of the workflow definition
-     * @param version the exact plan version
-     * @return the definition registered for this version, or empty when none is registered or this
-     *     registry does not retain sources
-     */
-    default Optional<WorkflowDefinition<?, ?>> registeredDefinition(String definitionId, long version) {
-        return DefinitionKeys.defaultScope(definitionId, version).flatMap(this::registeredDefinition);
     }
 
     /**

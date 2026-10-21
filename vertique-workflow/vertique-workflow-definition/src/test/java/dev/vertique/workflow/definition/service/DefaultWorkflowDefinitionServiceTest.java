@@ -448,11 +448,6 @@ class DefaultWorkflowDefinitionServiceTest {
                         }
 
                         @Override
-                        public dev.vertique.workflow.registry.RuntimeWorkflow resolvePinned(String id, long v) {
-                            throw new UnsupportedOperationException();
-                        }
-
-                        @Override
                         public void register(String scopeKey, dev.vertique.workflow.dsl.WorkflowDefinition<?, ?> def) {
                             register(def);
                         }

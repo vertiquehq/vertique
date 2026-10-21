@@ -236,11 +236,6 @@ public class WorkflowComposeStartupContractIT {
         }
 
         @Override
-        public RuntimeWorkflow resolvePinned(String definitionId, long version) {
-            throw new UnsupportedOperationException("not used in startup-contract test");
-        }
-
-        @Override
         public void register(String scopeKey, dev.vertique.workflow.dsl.WorkflowDefinition<?, ?> def) {
             throw new UnsupportedOperationException("not used in startup-contract test");
         }

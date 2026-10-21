@@ -341,11 +341,6 @@ class WorkflowOutboxComposeValidatorTest {
         }
 
         @Override
-        public RuntimeWorkflow resolvePinned(String definitionId, long version) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
         public void register(String scopeKey, WorkflowDefinition<?, ?> def) {
             throw new UnsupportedOperationException();
         }
