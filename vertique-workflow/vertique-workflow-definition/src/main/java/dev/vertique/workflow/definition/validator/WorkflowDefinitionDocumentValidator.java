@@ -187,6 +187,10 @@ public final class WorkflowDefinitionDocumentValidator {
      * expression at emit time; the cost is paid twice, but CEL parsing is cheap and this ensures
      * structured diagnostics reach authors before the compile phase runs.
      *
+     * <p>For trusted documents only: a name is loaded as a class by name (without initialization). A
+     * validator that serves documents from an untrusted source must use the constructor that takes the
+     * type-name index, which never loads a class by name.
+     *
      * @param lookup facade over all 10 named callback registries; non-null
      * @param profile expression profile for pre-compiling {@code when} expressions; may be null
      *     (expression pre-compilation is then skipped)
@@ -229,7 +233,8 @@ public final class WorkflowDefinitionDocumentValidator {
      * Convenience constructor for tests and non-DI contexts that do not need expression
      * pre-compilation.
      *
-     * <p>Equivalent to {@code new WorkflowDefinitionDocumentValidator(lookup, null)}.
+     * <p>Equivalent to {@code new WorkflowDefinitionDocumentValidator(lookup, null)}, so it carries the
+     * same trusted-documents-only class-loader fallback.
      *
      * @param lookup facade over all 10 named callback registries; non-null
      * @throws NullPointerException if {@code lookup} is null

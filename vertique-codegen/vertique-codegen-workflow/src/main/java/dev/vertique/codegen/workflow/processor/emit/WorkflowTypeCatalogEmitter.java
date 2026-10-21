@@ -13,10 +13,13 @@ import dev.vertique.codegen.dagger.DaggerModuleWriter;
 import dev.vertique.codegen.workflow.processor.scan.TypeCatalogScanner.Entry;
 import dev.vertique.codegen.workflow.processor.scan.TypeCatalogScanner.Kind;
 import java.io.IOException;
+import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import javax.lang.model.element.TypeElement;
+import javax.tools.FileObject;
+import javax.tools.StandardLocation;
 
 /**
  * Emitter that generates the {@code GeneratedWorkflowTypeCatalogModule} Dagger module: one
@@ -33,7 +36,9 @@ import javax.lang.model.element.TypeElement;
  * source.
  *
  * <p>When a class with the module's name already resolves, for example because a dependency generated
- * a module with the same name, the emitter reports an error and writes nothing.
+ * a module with the same name, the emitter reports an error and writes nothing. A module that this
+ * compilation's own output directories already hold, left by an earlier build that was not cleaned,
+ * is not a collision: the new module replaces it.
  */
 public final class WorkflowTypeCatalogEmitter {
 
@@ -86,8 +91,9 @@ public final class WorkflowTypeCatalogEmitter {
             return;
         }
         // Checked once, before this emitter writes, so a module it wrote in an earlier round of the
-        // same compilation is never taken for a collision.
-        if (ctx.elements().getTypeElement(moduleName.canonicalName()) != null) {
+        // same compilation is never taken for a collision. A module left in this compilation's own
+        // output by an earlier build is not a collision either: it is replaced when the new one is written.
+        if (ctx.elements().getTypeElement(moduleName.canonicalName()) != null && !isOwnEarlierOutput(moduleName)) {
             ctx.diagnostics()
                     .error(
                             listed.get(0).type(),
@@ -113,6 +119,28 @@ public final class WorkflowTypeCatalogEmitter {
     }
 
     // --- Internal helpers ---
+
+    /**
+     * Returns whether the module that already resolves is a file of this compilation's own output, left
+     * by an earlier build that was not cleaned: its class file in the class output, or its source in the
+     * source output. A class that a dependency generated sits on the classpath, outside both locations.
+     */
+    private boolean isOwnEarlierOutput(ClassName moduleName) {
+        return existsInOutput(StandardLocation.CLASS_OUTPUT, moduleName, ".class")
+                || existsInOutput(StandardLocation.SOURCE_OUTPUT, moduleName, ".java");
+    }
+
+    private boolean existsInOutput(StandardLocation location, ClassName moduleName, String extension) {
+        try {
+            FileObject file =
+                    ctx.filer().getResource(location, moduleName.packageName(), MODULE_SIMPLE_NAME + extension);
+            try (InputStream ignored = file.openInputStream()) {
+                return true;
+            }
+        } catch (IOException | RuntimeException e) {
+            return false;
+        }
+    }
 
     private static CodeBlock body(List<Entry> listed) {
         CodeBlock entries = listed.stream()

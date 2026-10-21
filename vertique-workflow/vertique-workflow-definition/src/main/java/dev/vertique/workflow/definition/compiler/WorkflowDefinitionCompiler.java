@@ -94,6 +94,10 @@ public final class WorkflowDefinitionCompiler {
      * Constructs the compiler with all required collaborators. Payload type names are resolved by
      * class-loader lookup only.
      *
+     * <p>For trusted documents only: a name is loaded as a class by name (without initialization). A
+     * compiler that serves documents from an untrusted source must use the constructor that takes the
+     * type-name index, which never loads a class by name.
+     *
      * @param lookup the facade over all 10 named callback registries; non-null
      * @param profile the expression profile used to build the expression environment for decision
      *     steps; non-null

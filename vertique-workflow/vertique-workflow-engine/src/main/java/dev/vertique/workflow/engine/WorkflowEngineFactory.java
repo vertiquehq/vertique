@@ -13,11 +13,14 @@ import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
 import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
 import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
 import dev.vertique.workflow.migration.WorkflowMigrationRegistry;
+import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
 import dev.vertique.workflow.registry.WorkflowRegistry;
 import dev.vertique.workflow.sideeffect.IntentKind;
 import dev.vertique.workflow.sideeffect.WorkflowSideEffectRecorder;
 import dev.vertique.workflow.tasks.TaskStore;
 import dev.vertique.workflow.timer.TimerStore;
+import dev.vertique.workflow.types.DefaultWorkflowTypeNames;
+import dev.vertique.workflow.types.WorkflowTypeNames;
 import io.vertx.sqlclient.SqlClient;
 import jakarta.annotation.Nullable;
 import java.time.Clock;
@@ -219,6 +222,10 @@ public final class WorkflowEngineFactory {
      * service (decision payloads), matching production Dagger wiring where
      * {@link WorkflowEngineModule} declares the validator as an optional binding.
      *
+     * <p>The engine shares the type-name index of {@code registry} when it is a
+     * {@code DefaultWorkflowRegistry}; for any other registry it starts with an empty index, so pass
+     * the index explicitly through the overload that takes a {@link WorkflowTypeNames}.
+     *
      * @param txRunner the transaction runner SPI that owns the transaction boundary and the layered
      *     DB-to-workflow exception mapping
      * @param registry the workflow registry used to resolve pinned runtime workflows
@@ -260,6 +267,101 @@ public final class WorkflowEngineFactory {
             @Nullable DurableContextPropagator propagator,
             Set<InboundContextInitializer> inboundContextInitializers,
             Optional<BeanValidator> beanValidator) {
+        return create(
+                txRunner,
+                registry,
+                instances,
+                history,
+                dedup,
+                branchTokens,
+                joinStates,
+                timerStore,
+                taskStore,
+                clock,
+                recorders,
+                optionalIntentKinds,
+                migrationRegistryOpt,
+                propagator,
+                inboundContextInitializers,
+                beanValidator,
+                registryTypeNames(registry));
+    }
+
+    /**
+     * Returns the type-name index of a {@link DefaultWorkflowRegistry}, and an empty index for any
+     * other registry, which a wrapped registry cannot share. Pass the index explicitly through the
+     * overload that takes a {@link WorkflowTypeNames} when the registry is not a default registry.
+     */
+    static WorkflowTypeNames registryTypeNames(WorkflowRegistry registry) {
+        return registry instanceof DefaultWorkflowRegistry defaultRegistry
+                ? defaultRegistry.typeNames()
+                : new DefaultWorkflowTypeNames();
+    }
+
+    /**
+     * Assembles a fully wired workflow engine over the supplied dependencies, additionally
+     * threading an optional {@link BeanValidator} that switches on constraint enforcement for
+     * coerced decision and start payloads.
+     *
+     * <p>This overload takes the type-name index explicitly, so an engine over a registry that wraps or
+     * decorates the default registry shares the index the wrapped registry fills. The overload without
+     * the index uses the index of the registry when it is a {@code DefaultWorkflowRegistry} and an
+     * empty one otherwise; with an empty index a decision payload type that is not a binary class name
+     * cannot be resolved.
+     *
+     * <p>The {@link #create(WorkflowTransactionRunner, WorkflowRegistry, WorkflowInstanceRepository,
+     * WorkflowHistoryRepository, WorkflowDedupRepository, BranchTokenRepository, JoinStateRepository,
+     * TimerStore, TaskStore, Clock, Set, Set, Optional, DurableContextPropagator, Set)
+     * initializer overload} delegates here with an empty validator, which leaves payloads
+     * unchecked beyond coercion. This overload builds exactly one payload constraint check and
+     * threads that same instance into both the engine (start payloads) and the task lifecycle
+     * service (decision payloads), matching production Dagger wiring where
+     * {@link WorkflowEngineModule} declares the validator as an optional binding.
+     *
+     * @param txRunner the transaction runner SPI that owns the transaction boundary and the layered
+     *     DB-to-workflow exception mapping
+     * @param registry the workflow registry used to resolve pinned runtime workflows
+     * @param instances the instance repository SPI
+     * @param history the history repository SPI
+     * @param dedup the dedup repository SPI
+     * @param branchTokens the branch-token repository SPI
+     * @param joinStates the join-state repository SPI
+     * @param timerStore the timer store
+     * @param taskStore the task store
+     * @param clock the clock used to timestamp entries and state transitions
+     * @param recorders the set of side-effect recorders contributed by the application
+     * @param optionalIntentKinds the set of intent kinds the recorder router treats as optional
+     *     (use {@link #DEFAULT_OPTIONAL_INTENT_KINDS} for the engine default)
+     * @param migrationRegistryOpt the optional migration registry; when empty, {@code migrate} fails
+     *     with {@link UnsupportedOperationException}
+     * @param propagator the durable-context propagator used to capture branch metadata; may be
+     *     {@code null} for callers that do not exercise the branch durable-capture path
+     * @param inboundContextInitializers the set of {@link InboundContextInitializer}s to run on
+     *     every bound drive (binder-row and branch-owned)
+     * @param beanValidator the bean validator that checks coerced decision and start payloads; when
+     *     empty, payload constraints are not enforced
+     * @param typeNames the type-name index the engine resolves a decision payload's declared type name
+     *     through; pass the one index the registry fills, which is what Dagger wiring injects
+     * @return the assembled engine as a {@link WorkflowEngineHandle}
+     */
+    public static WorkflowEngineHandle create(
+            WorkflowTransactionRunner<SqlClient> txRunner,
+            WorkflowRegistry registry,
+            WorkflowInstanceRepository<SqlClient> instances,
+            WorkflowHistoryRepository<SqlClient> history,
+            WorkflowDedupRepository<SqlClient> dedup,
+            BranchTokenRepository<SqlClient> branchTokens,
+            JoinStateRepository<SqlClient> joinStates,
+            TimerStore<SqlClient> timerStore,
+            TaskStore<SqlClient> taskStore,
+            Clock clock,
+            Set<WorkflowSideEffectRecorder<SqlClient>> recorders,
+            Set<IntentKind> optionalIntentKinds,
+            Optional<WorkflowMigrationRegistry> migrationRegistryOpt,
+            @Nullable DurableContextPropagator propagator,
+            Set<InboundContextInitializer> inboundContextInitializers,
+            Optional<BeanValidator> beanValidator,
+            WorkflowTypeNames typeNames) {
         PayloadConstraintCheck payloadConstraintCheck = new PayloadConstraintCheck(beanValidator);
         WorkflowReminderComposeValidator complianceCheck = new WorkflowReminderComposeValidator(registry, recorders);
         RecorderRouter recorderRouter = new RecorderRouter(recorders, optionalIntentKinds, complianceCheck);
@@ -312,6 +414,7 @@ public final class WorkflowEngineFactory {
                 reminderScheduler,
                 compensationService,
                 inboundExecScope,
-                payloadConstraintCheck);
+                payloadConstraintCheck,
+                typeNames);
     }
 }

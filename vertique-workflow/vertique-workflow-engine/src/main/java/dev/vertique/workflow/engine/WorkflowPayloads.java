@@ -83,7 +83,8 @@ final class WorkflowPayloads {
      * details never carry a payload value, a payload type name, or a binder message. A payload
      * that cannot bind to the declared class retains the {@link DecodeException} as the cause.
      *
-     * <p>This overload resolves the type name by class-loader lookup only.
+     * <p>This overload resolves the type name by class-loader lookup only, without initializing the
+     * class.
      *
      * @param payload the raw payload from the command
      * @param payloadTypeName the type name declared in the plan decision
@@ -102,7 +103,8 @@ final class WorkflowPayloads {
      *
      * <p>The name comes from a registered plan, so it is either a logical name or the binary class
      * name of a row written before the class was named. When the index does not know it, the name is
-     * resolved as a binary class name, exactly as before logical names existed. The nullability rules
+     * resolved as a binary class name, exactly as before logical names existed, without initializing the
+     * class; a name that resolves nowhere fails with a {@link WorkflowDefinitionException}. The nullability rules
      * and error reporting are those of {@link #validateAndCoerceTaskPayload(Object, String)}.
      *
      * @param payload the raw payload from the command
@@ -133,9 +135,10 @@ final class WorkflowPayloads {
 
         Class<?> payloadClass = typeNames.find(payloadTypeName).orElse(null);
         if (payloadClass == null) {
+            // Lookup only: the class is resolved without running its static initializer.
             try {
-                payloadClass = Class.forName(payloadTypeName);
-            } catch (ClassNotFoundException e) {
+                payloadClass = Class.forName(payloadTypeName, false, WorkflowPayloads.class.getClassLoader());
+            } catch (ClassNotFoundException | LinkageError e) {
                 throw new WorkflowDefinitionException(
                         "Decision payloadTypeName '" + payloadTypeName + "' cannot be resolved: " + e.getMessage());
             }

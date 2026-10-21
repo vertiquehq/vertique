@@ -14,9 +14,15 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.regex.Pattern;
 
 /**
- * The default {@link WorkflowTypeNames} index, filled as workflow definitions register.
+ * INTERNAL framework seam: the workflow modules build and share one instance of this index; it is not an
+ * application contract and sits outside the maturity promise. Applications depend on {@link
+ * WorkflowTypeNames}.
+ *
+ * <p>The default {@link WorkflowTypeNames} index, filled as workflow definitions register.
  *
  * <p>Two separate namespaces hold the contract names and the type names. Within one namespace a name
  * maps to one class. Every indexed class is reachable by its logical name and by its binary name, so a
@@ -32,6 +38,9 @@ import java.util.concurrent.ConcurrentHashMap;
 public final class DefaultWorkflowTypeNames implements WorkflowTypeNames {
 
     private static final int MAX_NAME_CODE_POINTS = 255;
+
+    /** The only names an error message repeats; any other name is described without being repeated. */
+    private static final Pattern ECHOABLE_NAME = Pattern.compile("[A-Za-z0-9_.$-]{1,255}");
 
     private final Map<String, Holder> types = new ConcurrentHashMap<>();
     private final Map<String, Holder> contracts = new ConcurrentHashMap<>();
@@ -52,12 +61,11 @@ public final class DefaultWorkflowTypeNames implements WorkflowTypeNames {
      * @throws WorkflowTypeNameConflictException if a name is listed for two different classes
      */
     public DefaultWorkflowTypeNames(Collection<WorkflowTypeCatalog> catalogs) {
-        List<Runnable> undo = new ArrayList<>();
         for (WorkflowTypeCatalog catalog : catalogs) {
             for (WorkflowTypeCatalogEntry entry : catalog.entries()) {
                 switch (entry.kind()) {
-                    case CONTRACT -> addClass(contracts, entry.type(), entry.name(), "contract", undo);
-                    case TYPE -> addClass(types, entry.type(), entry.name(), "type", undo);
+                    case CONTRACT -> addClass(contracts, entry.type(), entry.name(), "contract", null);
+                    case TYPE -> addClass(types, entry.type(), entry.name(), "type", null);
                 }
             }
         }
@@ -67,8 +75,10 @@ public final class DefaultWorkflowTypeNames implements WorkflowTypeNames {
      * INTERNAL framework seam — used by the definition pipeline when a document names a type the index
      * does not hold; not an application contract and outside the maturity promise.
      *
-     * <p>Builds the error for an unknown name in a document field. The name is echoed only when it is a
-     * valid name, so a hostile or corrupt value never reaches a log line.
+     * <p>Builds the error for an unknown name in a document field. The name is echoed only when it
+     * consists of letters, digits, underscore, dot, dollar sign and hyphen and is at most 255 characters
+     * long; any other value is described by the document field alone, so a hostile or corrupt value never
+     * reaches a log line.
      *
      * @param field the document field that carried the name, such as {@code stateType}; must not be
      *     {@code null}
@@ -77,7 +87,7 @@ public final class DefaultWorkflowTypeNames implements WorkflowTypeNames {
      */
     public static WorkflowUnknownTypeNameException unknownName(String field, String name) {
         return new WorkflowUnknownTypeNameException(
-                isValidName(name)
+                isEchoable(name)
                         ? "unknown workflow type name '" + name + "' in document field " + field
                         : "unknown workflow type name in document field " + field);
     }
@@ -93,9 +103,7 @@ public final class DefaultWorkflowTypeNames implements WorkflowTypeNames {
     public Class<?> resolve(String name) {
         return find(name)
                 .orElseThrow(() -> new WorkflowUnknownTypeNameException(
-                        isValidName(name)
-                                ? "unknown workflow type name '" + name + "'"
-                                : "unknown workflow type name"));
+                        isEchoable(name) ? "unknown workflow type name '" + name + "'" : "unknown workflow type name"));
     }
 
     @Override
@@ -150,9 +158,12 @@ public final class DefaultWorkflowTypeNames implements WorkflowTypeNames {
             undo.forEach(Runnable::run);
             throw e;
         }
+        AtomicBoolean released = new AtomicBoolean();
         return () -> {
-            synchronized (this) {
-                undo.forEach(Runnable::run);
+            if (released.compareAndSet(false, true)) {
+                synchronized (this) {
+                    undo.forEach(Runnable::run);
+                }
             }
         };
     }
@@ -183,12 +194,18 @@ public final class DefaultWorkflowTypeNames implements WorkflowTypeNames {
     /** Takes one reference on the key; the returned action releases it and drops the key at zero. */
     private static void put(Map<String, Holder> namespace, String key, Class<?> type, List<Runnable> undo) {
         namespace.computeIfAbsent(key, k -> new Holder(type)).refs++;
-        undo.add(() -> {
-            Holder holder = namespace.get(key);
-            if (holder != null && --holder.refs == 0) {
-                namespace.remove(key);
-            }
-        });
+        if (undo != null) {
+            undo.add(() -> {
+                Holder holder = namespace.get(key);
+                if (holder != null && --holder.refs == 0) {
+                    namespace.remove(key);
+                }
+            });
+        }
+    }
+
+    private static boolean isEchoable(String name) {
+        return name != null && ECHOABLE_NAME.matcher(name).matches();
     }
 
     private static boolean isValidName(String name) {

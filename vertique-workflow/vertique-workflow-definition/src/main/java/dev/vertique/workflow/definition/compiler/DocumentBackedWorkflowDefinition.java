@@ -129,7 +129,9 @@ public final class DocumentBackedWorkflowDefinition<S, C> implements WorkflowDef
      * class names declared in the document via {@link Class#forName}.
      *
      * <p>Names resolve by class-loader lookup only; this overload is for tests and other callers that
-     * build a definition from a trusted document without a type-name index.
+     * build a definition from a trusted document without a type-name index. It loads a class by name
+     * (without initialization), so it must not be given a document from an untrusted source; use the
+     * overload that takes the type-name index for those.
      *
      * @param doc the deserialized definition document; non-null
      * @param compiler the compiler to embed; non-null
@@ -156,6 +158,9 @@ public final class DocumentBackedWorkflowDefinition<S, C> implements WorkflowDef
      * <p>The state name is looked up in the type namespace of {@code typeNames} and the contract name
      * in its contract namespace. A name the index does not know fails with
      * {@link WorkflowUnknownTypeNameException}; no class is loaded by name.
+     *
+     * <p>Both three-argument overloads of this method reject {@code null}; a literal {@code null} for
+     * the third argument is ambiguous and does not compile without a cast.
      *
      * <p>Two unchecked casts are performed: the resolved state class is cast to {@code Class<S>}
      * and the resolved contract class is cast to {@code Class<C>}. Both casts are safe at the

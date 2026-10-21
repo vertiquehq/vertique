@@ -37,7 +37,6 @@ import dev.vertique.workflow.ops.WorkflowOperations;
 import dev.vertique.workflow.ops.WorkflowView;
 import dev.vertique.workflow.plan.WorkflowPlan;
 import dev.vertique.workflow.registry.CallbackId;
-import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowCallbackRegistry;
 import dev.vertique.workflow.registry.WorkflowRegistry;
@@ -54,7 +53,7 @@ import dev.vertique.workflow.tasks.TaskRecord;
 import dev.vertique.workflow.tasks.TaskStore;
 import dev.vertique.workflow.timer.TimerRecord;
 import dev.vertique.workflow.timer.TimerStore;
-import dev.vertique.workflow.types.DefaultWorkflowTypeNames;
+import dev.vertique.workflow.types.WorkflowTypeNames;
 import io.vertx.core.Future;
 import io.vertx.core.json.Json;
 import io.vertx.sqlclient.SqlClient;
@@ -256,6 +255,59 @@ final class WorkflowEngine implements WorkflowEngineHandle {
     }
 
     /**
+     * Assembles the engine like the constructor that takes the type-name index, using the index of
+     * the registry when it is a {@code DefaultWorkflowRegistry} and an empty index otherwise.
+     */
+    WorkflowEngine(
+            WorkflowTransactionRunner<SqlClient> txRunner,
+            WorkflowRegistry registry,
+            WorkflowInstanceRepository<SqlClient> instances,
+            WorkflowHistoryRepository<SqlClient> history,
+            WorkflowDedupRepository<SqlClient> dedup,
+            RecorderRouter recorders,
+            TimerStore<SqlClient> timerStore,
+            TaskStore<SqlClient> taskStore,
+            FingerprintCanonicalizer fingerprintCanonicalizer,
+            Clock clock,
+            BranchTokenRepository<SqlClient> branchTokens,
+            JoinStateRepository<SqlClient> joinStates,
+            BranchTransitionEngine branchEngine,
+            BranchCompensationOrchestrator branchCompensation,
+            @Nullable DurableContextPropagator propagator,
+            Optional<dev.vertique.workflow.migration.WorkflowMigrationRegistry> migrationRegistryOpt,
+            WorkflowEventEmitter eventEmitter,
+            WorkflowHistoryRecorder historyRecorder,
+            ReminderScheduler reminderScheduler,
+            CompensationService compensationService,
+            @Nullable dev.vertique.context.InboundExecutionContextScope inboundExecScope,
+            PayloadConstraintCheck payloadConstraintCheck) {
+        this(
+                txRunner,
+                registry,
+                instances,
+                history,
+                dedup,
+                recorders,
+                timerStore,
+                taskStore,
+                fingerprintCanonicalizer,
+                clock,
+                branchTokens,
+                joinStates,
+                branchEngine,
+                branchCompensation,
+                propagator,
+                migrationRegistryOpt,
+                eventEmitter,
+                historyRecorder,
+                reminderScheduler,
+                compensationService,
+                inboundExecScope,
+                payloadConstraintCheck,
+                WorkflowEngineFactory.registryTypeNames(registry));
+    }
+
+    /**
      * Shared field-assignment + driver/coordinator-construction path used by the
      * {@link WorkflowEngineFactory} assembly seam. The transition driver, the fork/join coordinator,
      * the task-lifecycle service, and the timer-lifecycle service are built here (not passed in) so
@@ -298,8 +350,11 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      * payloads; the factory builds exactly one and passes that same instance here and into the
      * task-lifecycle service built below.
      *
-     * <p>Package-visible (not {@code private}) so the test-scope factory in the same package can
-     * invoke it; it is not part of any production API and is unused outside test code.
+     * <p>The {@code typeNames} parameter is the type-name index a decision payload's declared type
+     * name resolves through; the factory passes the one index the registry fills.
+     *
+     * <p>Package-visible (not {@code private}) so the factory in the same package can invoke it; it
+     * is not part of any production API.
      */
     WorkflowEngine(
             WorkflowTransactionRunner<SqlClient> txRunner,
@@ -323,7 +378,8 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             ReminderScheduler reminderScheduler,
             CompensationService compensationService,
             @Nullable dev.vertique.context.InboundExecutionContextScope inboundExecScope,
-            PayloadConstraintCheck payloadConstraintCheck) {
+            PayloadConstraintCheck payloadConstraintCheck,
+            WorkflowTypeNames typeNames) {
         this.payloadConstraintCheck = payloadConstraintCheck;
         this.txRunner = txRunner;
         this.registry = registry;
@@ -406,9 +462,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                 () -> timerLifecycleHolder[0],
                 builtContextBinder,
                 payloadConstraintCheck,
-                registry instanceof DefaultWorkflowRegistry defaultRegistry
-                        ? defaultRegistry.typeNames()
-                        : new DefaultWorkflowTypeNames());
+                typeNames);
         taskLifecycleHolder[0] = this.taskLifecycle;
         // TimerLifecycleService needs the driver, coordinator, and task service eagerly; all three
         // are now built. The driver reaches resolveFireAt through the lazy Provider above

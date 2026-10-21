@@ -50,7 +50,9 @@ import java.util.Set;
  *   <li><strong>Parse + validate + compile phase</strong> — all resources from all sources are
  *       processed through the pipeline. Successes are collected locally; failures accumulate as
  *       structured {@link Violation}s. The store and registry are <em>not</em> mutated during
- *       this phase. Cross-resource duplicate {@code (definitionId, definitionVersion)} pairs and
+ *       this phase; the only shared state it touches is the type-name index, which a packaged
+ *       document's classes join and which is restored when the document, or the load as a whole, is
+ *       rejected. Cross-resource duplicate {@code (definitionId, definitionVersion)} pairs and
  *       duplicate contract classes are also detected in this phase.</li>
  *   <li><strong>Commit phase</strong> — executed only when every resource succeeded and no
  *       cross-source duplicates were detected. Each compiled definition is stored as a candidate,
@@ -61,8 +63,9 @@ import java.util.Set;
  * <h2>All-or-nothing guarantee and residual risks</h2>
  * <p>Phase 1 guarantees that no store or registry mutation is attempted unless all resources are
  * individually valid and have no cross-resource conflicts. If any resource fails or any conflict
- * is detected in Phase 1, a single {@link WorkflowDefinitionLoadException} is thrown and the
- * store and registry remain completely untouched.
+ * is detected in Phase 1, a single {@link WorkflowDefinitionLoadException} is thrown, the
+ * store and registry remain completely untouched, and every name a packaged document added to the
+ * type-name index is released again.
  *
  * <p>Phase 2 commits definitions to the registry <em>one at a time</em>. If a registration throws
  * a {@link RuntimeException} after the Phase 1 pre-flight checks pass (e.g., a Dagger-time race
@@ -94,7 +97,8 @@ import java.util.Set;
  * <p>A packaged document may name a class that no catalog lists, by its binary name: before the
  * document is resolved, the bootstrap loads each class it names that the type-name index does not hold
  * and adds it to the index. A name that is not a loadable class is refused as an unknown type name and
- * reported as a {@code LOAD_FAILURE} violation attributed to the resource.
+ * reported as a {@code LOAD_FAILURE} violation attributed to the resource. When a packaged document is
+ * then rejected, the names it added are released from the index.
  *
  * <h2>Source ordering</h2>
  * <p>Sources are iterated in ascending order of their implementation class name
@@ -221,6 +225,8 @@ public final class WorkflowDefinitionBootstrap implements WorkflowContributor {
         List<CompiledDefinition> successes = new ArrayList<>();
         List<DocumentOrigin> loadedOrigins = new ArrayList<>();
         Map<CompiledDefinition, WorkflowDefinitionRecord> records = new LinkedHashMap<>();
+        // Releases the names that packaged documents added to the index; run for a rejected document.
+        List<Runnable> indexReleases = new ArrayList<>();
         List<Violation> allViolations = new ArrayList<>();
 
         List<WorkflowDefinitionSource> orderedSources = sources.stream()
@@ -229,8 +235,10 @@ public final class WorkflowDefinitionBootstrap implements WorkflowContributor {
 
         for (WorkflowDefinitionSource source : orderedSources) {
             for (DefinitionResource resource : source.resources()) {
+                List<Runnable> documentReleases = new ArrayList<>();
                 try {
-                    CompiledDefinition compiled = pipeline.load(resource, this::indexPackagedTypes);
+                    CompiledDefinition compiled =
+                            pipeline.load(resource, doc -> documentReleases.addAll(indexPackagedTypes(doc)));
                     // Key, provenance and record are built for every resource before anything is
                     // registered, so an over-bound value fails startup rather than a later commit.
                     DefinitionKey key = new DefinitionKey(
@@ -245,14 +253,18 @@ public final class WorkflowDefinitionBootstrap implements WorkflowContributor {
                     }
                     records.put(compiled, record);
                     successes.add(compiled);
+                    indexReleases.addAll(documentReleases);
                 } catch (WorkflowDefinitionLoadException e) {
+                    documentReleases.forEach(Runnable::run);
                     // Accumulated validation violations from one document
                     allViolations.addAll(e.violations().toList());
                 } catch (IllegalArgumentException e) {
+                    documentReleases.forEach(Runnable::run);
                     // Key, provenance or record bound violation — attribute it to the resource.
                     allViolations.add(new Violation(
                             "<unknown>", 0, null, null, "LOAD_FAILURE", resourceUri(resource) + ": " + e.getMessage()));
                 } catch (WorkflowDefinitionException e) {
+                    documentReleases.forEach(Runnable::run);
                     // Parse failure (WorkflowDefinitionParseException extends
                     // WorkflowDefinitionException) or class-resolution failure — synthesize a
                     // structured violation attributing the failure to the resource's source URI.
@@ -309,6 +321,7 @@ public final class WorkflowDefinitionBootstrap implements WorkflowContributor {
         // If any failures occurred, throw a single aggregate exception — store and registry
         // remain completely untouched.
         if (!allViolations.isEmpty()) {
+            indexReleases.forEach(Runnable::run);
             throw new WorkflowDefinitionLoadException(new WorkflowDefinitionViolations(allViolations));
         }
 
@@ -349,10 +362,12 @@ public final class WorkflowDefinitionBootstrap implements WorkflowContributor {
      * name the index does not hold is loaded as a binary class name with the context class loader
      * (lookup only, no initialization) and indexed under its own logical name. A name that is not a
      * loadable class is left for the pipeline to refuse as an unknown name.
+     *
+     * @return the actions that release what this call indexed; empty when nothing was indexed
      */
-    private void indexPackagedTypes(WorkflowDefinitionDocument doc) {
+    private List<Runnable> indexPackagedTypes(WorkflowDefinitionDocument doc) {
         if (typeNames == null) {
-            return;
+            return List.of();
         }
         Class<?> contract = null;
         List<Class<?>> types = new ArrayList<>();
@@ -371,9 +386,11 @@ public final class WorkflowDefinitionBootstrap implements WorkflowContributor {
             }
         }
         if (contract != null || !types.isEmpty()) {
-            // The classes stay indexed for the life of the process, like the classes of a registered definition.
-            typeNames.add(contract, types);
+            // The classes of an accepted document stay indexed for the life of the process, like the
+            // classes of a registered definition; a rejected document releases them.
+            return List.of(typeNames.add(contract, types));
         }
+        return List.of();
     }
 
     private static Class<?> loadPackagedClass(String binaryName) {

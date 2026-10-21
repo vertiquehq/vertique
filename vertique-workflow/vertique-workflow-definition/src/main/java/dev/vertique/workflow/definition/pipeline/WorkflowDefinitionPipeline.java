@@ -83,6 +83,10 @@ public final class WorkflowDefinitionPipeline {
      * Constructs the pipeline with all required collaborators. Type names in documents resolve by
      * class-loader lookup only.
      *
+     * <p>For trusted documents only: a name is loaded as a class by name (without initialization). A
+     * pipeline that serves documents from an untrusted source must use the constructor that takes the
+     * type-name index, which never loads a class by name.
+     *
      * @param parser the parser that deserializes raw bytes into a document; must not be
      *     {@code null}
      * @param validator the validator that accumulates and reports all document violations; must

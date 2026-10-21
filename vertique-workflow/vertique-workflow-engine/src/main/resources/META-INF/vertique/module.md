@@ -84,7 +84,8 @@ quote submitted text, including line breaks. Keep DEBUG off for the `dev.vertiqu
 production, or sanitize at the log sink. A decision payload type is resolved from the name the plan holds: the engine looks the name up in the
 `WorkflowTypeNames` index first, so a class named with `@WorkflowType` resolves by its logical name, and an
 instance written before the class was annotated still resolves by the class's binary name. A name the index
-does not know is loaded as a binary class name, as before. A payload class that cannot be resolved remains a
+does not know is looked up as a binary class name, as before, without running the class's static
+initializer. A payload class that cannot be resolved remains a
 definition error (`WorkflowDefinitionException`), not a caller error. A failure thrown by an application
 decision applicator is also reported as a definition error, with the applicator exception as its cause
 and without its message.
@@ -197,8 +198,10 @@ assembles the entire package-private collaborator graph — including hand-wirin
 engine as a `WorkflowEngineHandle`. The 16-argument overload takes the `Optional<BeanValidator>` that
 enables payload constraint enforcement; the shorter overloads delegate with an empty optional, so
 enforcement stays off. When the registry is a `DefaultWorkflowRegistry`, the factory shares the registry's
-`WorkflowTypeNames` index with the engine; any other registry gets an empty index, so decision payload names
-resolve as binary class names only.
+`WorkflowTypeNames` index with the engine; any other registry, such as one that wraps the default registry,
+gets an empty index unless you pass the index through the 17-argument overload, whose last parameter is the
+`WorkflowTypeNames` the registry fills. With an empty index, decision payload names resolve as binary class
+names only.
 
 Key members:
 
