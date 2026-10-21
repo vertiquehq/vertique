@@ -39,16 +39,18 @@ public @interface WorkflowContract {
     String value() default "";
 
     /**
-     * The workflow definition id this contract was written for. Clients do not read it.
+     * The workflow definition id this contract was written for. Clients do not read it, and it may be
+     * omitted.
      *
-     * @return the definition id
+     * @return the definition id, or empty when not set
      */
-    String definitionId();
+    String definitionId() default "";
 
     /**
-     * The workflow definition version this contract was written for. Clients do not read it.
+     * The workflow definition version this contract was written for. Clients do not read it, and it
+     * may be omitted.
      *
-     * @return the definition version
+     * @return the definition version, or {@code 0} when not set
      */
-    long definitionVersion();
+    long definitionVersion() default 0L;
 }
