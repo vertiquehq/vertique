@@ -62,7 +62,7 @@ class ContractScannerTest {
             import dev.vertique.workflow.ops.WorkflowInstanceId;
             import dev.vertique.workflow.ops.WorkflowView;
             import io.vertx.core.Future;
-            @WorkflowContract(definitionId = "order", definitionVersion = 2L)
+            @WorkflowContract
             public interface OrderContract {
                 @WorkflowStart
                 Future<WorkflowInstanceId> start(OrderPayload p);
@@ -87,7 +87,7 @@ class ContractScannerTest {
             import dev.vertique.workflow.contract.IdempotencyKey;
             import dev.vertique.workflow.ops.WorkflowInstanceId;
             import io.vertx.core.Future;
-            @WorkflowContract(definitionId = "keyparam", definitionVersion = 1L)
+            @WorkflowContract
             public interface KeyParamContract {
                 @WorkflowStart
                 Future<WorkflowInstanceId> start(@IdempotencyKey String key, PlainPayload p);
@@ -222,7 +222,7 @@ class ContractScannerTest {
                 import dev.vertique.workflow.contract.WorkflowStart;
                 import dev.vertique.workflow.ops.WorkflowInstanceId;
                 import io.vertx.core.Future;
-                @WorkflowContract(definitionId = "inherited", definitionVersion = 1L)
+                @WorkflowContract
                 public interface InheritedStartContract extends BaseOrderOps {
                     @Override
                     @WorkflowStart

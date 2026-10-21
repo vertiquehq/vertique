@@ -62,7 +62,7 @@ class WorkflowContractValidatorTest {
                 import dev.vertique.workflow.ops.WorkflowInstanceId;
                 import dev.vertique.workflow.ops.WorkflowView;
                 import io.vertx.core.Future;
-                @WorkflowContract(definitionId = "order", definitionVersion = 1L)
+                @WorkflowContract
                 public interface OrderContract {
                     @WorkflowStart
                     Future<WorkflowInstanceId> start(StartPayload payload);
@@ -87,7 +87,7 @@ class WorkflowContractValidatorTest {
         JavaFileObject contract = SourceFiles.inline("com.example.BadContract", """
                 package com.example;
                 import dev.vertique.workflow.contract.WorkflowContract;
-                @WorkflowContract(definitionId = "bad", definitionVersion = 1L)
+                @WorkflowContract
                 public class BadContract {}
                 """);
 
@@ -105,7 +105,7 @@ class WorkflowContractValidatorTest {
                 import dev.vertique.workflow.contract.WorkflowSignal;
                 import dev.vertique.workflow.ops.WorkflowInstanceId;
                 import io.vertx.core.Future;
-                @WorkflowContract(definitionId = "nostrt", definitionVersion = 1L)
+                @WorkflowContract
                 public interface NoStartContract {
                     @WorkflowSignal("cancel")
                     Future<Void> cancel(WorkflowInstanceId id, NoStartContract__Payload p);
@@ -135,7 +135,7 @@ class WorkflowContractValidatorTest {
                 import dev.vertique.workflow.contract.WorkflowStart;
                 import dev.vertique.workflow.ops.WorkflowInstanceId;
                 import io.vertx.core.Future;
-                @WorkflowContract(definitionId = "dflt", definitionVersion = 1L)
+                @WorkflowContract
                 public interface DefaultMethodContract {
                     @WorkflowStart
                     Future<WorkflowInstanceId> start(StartPayload payload);
@@ -159,7 +159,7 @@ class WorkflowContractValidatorTest {
                 import dev.vertique.workflow.ops.WorkflowInstanceId;
                 import dev.vertique.workflow.ops.WorkflowView;
                 import io.vertx.core.Future;
-                @WorkflowContract(definitionId = "cflct", definitionVersion = 1L)
+                @WorkflowContract
                 public interface ConflictContract {
                     @WorkflowStart
                     Future<WorkflowInstanceId> start(StartPayload payload);
@@ -183,7 +183,7 @@ class WorkflowContractValidatorTest {
                 import dev.vertique.workflow.contract.WorkflowStart;
                 import dev.vertique.workflow.ops.WorkflowInstanceId;
                 import io.vertx.core.Future;
-                @WorkflowContract(definitionId = "norole", definitionVersion = 1L)
+                @WorkflowContract
                 public interface NoRoleContract {
                     @WorkflowStart
                     Future<WorkflowInstanceId> start(StartPayload payload);
@@ -205,7 +205,7 @@ class WorkflowContractValidatorTest {
                 import dev.vertique.workflow.contract.WorkflowStart;
                 import dev.vertique.workflow.ops.WorkflowInstanceId;
                 import io.vertx.core.Future;
-                @WorkflowContract(definitionId = "stwid", definitionVersion = 1L)
+                @WorkflowContract
                 public interface StartWithIdContract {
                     @WorkflowStart
                     Future<WorkflowInstanceId> start(WorkflowInstanceId id, StartPayload payload);
@@ -226,7 +226,7 @@ class WorkflowContractValidatorTest {
                 import dev.vertique.workflow.contract.WorkflowStart;
                 import dev.vertique.workflow.ops.WorkflowInstanceId;
                 import io.vertx.core.Future;
-                @WorkflowContract(definitionId = "noidemp", definitionVersion = 1L)
+                @WorkflowContract
                 public interface NoIdempotencyContract {
                     @WorkflowStart
                     Future<WorkflowInstanceId> start(PlainPayload payload);
@@ -246,7 +246,7 @@ class WorkflowContractValidatorTest {
                 import dev.vertique.workflow.contract.WorkflowContract;
                 import dev.vertique.workflow.contract.WorkflowStart;
                 import io.vertx.core.Future;
-                @WorkflowContract(definitionId = "badsret", definitionVersion = 1L)
+                @WorkflowContract
                 public interface BadStartReturnContract {
                     @WorkflowStart
                     Future<String> start(StartPayload payload);
@@ -268,7 +268,7 @@ class WorkflowContractValidatorTest {
                 import dev.vertique.workflow.contract.WorkflowSignal;
                 import dev.vertique.workflow.ops.WorkflowInstanceId;
                 import io.vertx.core.Future;
-                @WorkflowContract(definitionId = "idfirst", definitionVersion = 1L)
+                @WorkflowContract
                 public interface IdNotFirstContract {
                     @WorkflowStart
                     Future<WorkflowInstanceId> start(StartPayload payload);
@@ -296,7 +296,7 @@ class WorkflowContractValidatorTest {
                 import dev.vertique.workflow.contract.WorkflowSignal;
                 import dev.vertique.workflow.ops.WorkflowInstanceId;
                 import io.vertx.core.Future;
-                @WorkflowContract(definitionId = "badsigret", definitionVersion = 1L)
+                @WorkflowContract
                 public interface BadSignalReturnContract {
                     @WorkflowStart
                     Future<WorkflowInstanceId> start(StartPayload payload);
@@ -324,7 +324,7 @@ class WorkflowContractValidatorTest {
                 import dev.vertique.workflow.contract.WorkflowSignal;
                 import dev.vertique.workflow.ops.WorkflowInstanceId;
                 import io.vertx.core.Future;
-                @WorkflowContract(definitionId = "nodedup", definitionVersion = 1L)
+                @WorkflowContract
                 public interface NoDedupContract {
                     @WorkflowStart
                     Future<WorkflowInstanceId> start(StartPayload payload);
@@ -348,7 +348,7 @@ class WorkflowContractValidatorTest {
                 import dev.vertique.workflow.contract.WorkflowSignal;
                 import dev.vertique.workflow.ops.WorkflowInstanceId;
                 import io.vertx.core.Future;
-                @WorkflowContract(definitionId = "dupsig", definitionVersion = 1L)
+                @WorkflowContract
                 public interface DupSignalContract {
                     @WorkflowStart
                     Future<WorkflowInstanceId> start(StartPayload payload);
@@ -378,7 +378,7 @@ class WorkflowContractValidatorTest {
                 import dev.vertique.workflow.contract.IdempotencyKey;
                 import dev.vertique.workflow.ops.WorkflowInstanceId;
                 import io.vertx.core.Future;
-                @WorkflowContract(definitionId = "badidkey", definitionVersion = 1L)
+                @WorkflowContract
                 public interface BadIdempKeyContract {
                     @WorkflowStart
                     Future<WorkflowInstanceId> start(@IdempotencyKey Integer key, PlainPayload payload);
@@ -400,7 +400,7 @@ class WorkflowContractValidatorTest {
                 import dev.vertique.workflow.contract.WorkflowQuery;
                 import dev.vertique.workflow.ops.WorkflowInstanceId;
                 import io.vertx.core.Future;
-                @WorkflowContract(definitionId = "badqret", definitionVersion = 1L)
+                @WorkflowContract
                 public interface BadQueryReturnContract {
                     @WorkflowStart
                     Future<WorkflowInstanceId> start(StartPayload payload);
@@ -426,7 +426,7 @@ class WorkflowContractValidatorTest {
                 import dev.vertique.workflow.contract.WorkflowQuery;
                 import dev.vertique.workflow.ops.WorkflowInstanceId;
                 import io.vertx.core.Future;
-                @WorkflowContract(definitionId = "superqret", definitionVersion = 1L)
+                @WorkflowContract
                 public interface SupertypeQueryContract {
                     @WorkflowStart
                     Future<WorkflowInstanceId> start(StartPayload payload);
@@ -453,7 +453,7 @@ class WorkflowContractValidatorTest {
                 import dev.vertique.workflow.ops.WorkflowInstanceId;
                 import dev.vertique.workflow.ops.WorkflowView;
                 import io.vertx.core.Future;
-                @WorkflowContract(definitionId = "wildqret", definitionVersion = 1L)
+                @WorkflowContract
                 public interface WildcardQueryContract {
                     @WorkflowStart
                     Future<WorkflowInstanceId> start(StartPayload payload);
@@ -476,7 +476,7 @@ class WorkflowContractValidatorTest {
                 import dev.vertique.workflow.contract.WorkflowStart;
                 import dev.vertique.workflow.ops.WorkflowInstanceId;
                 import io.vertx.core.Future;
-                @WorkflowContract(definitionId = "wildstart", definitionVersion = 1L)
+                @WorkflowContract
                 public interface WildcardStartContract {
                     @WorkflowStart
                     Future<? extends WorkflowInstanceId> start(StartPayload payload);
@@ -515,7 +515,7 @@ class WorkflowContractValidatorTest {
                 import dev.vertique.workflow.ops.WorkflowInstanceId;
                 import dev.vertique.workflow.ops.WorkflowView;
                 import io.vertx.core.Future;
-                @WorkflowContract(definitionId = "inherited", definitionVersion = 1L)
+                @WorkflowContract
                 public interface InheritedContract extends BaseOrderOps {
                     @Override
                     @WorkflowStart
@@ -540,7 +540,7 @@ class WorkflowContractValidatorTest {
                 import dev.vertique.workflow.ops.WorkflowInstanceId;
                 import dev.vertique.workflow.ops.WorkflowView;
                 import io.vertx.core.Future;
-                @WorkflowContract(definitionId = "2pq", definitionVersion = 1L)
+                @WorkflowContract
                 public interface TwoParamQueryContract {
                     @WorkflowStart
                     Future<WorkflowInstanceId> start(StartPayload payload);
@@ -586,7 +586,7 @@ class WorkflowContractValidatorTest {
                 import dev.vertique.workflow.ops.WorkflowInstanceId;
                 import dev.vertique.workflow.ops.WorkflowView;
                 import io.vertx.core.Future;
-                @WorkflowContract(definitionId = "order", definitionVersion = 1L)
+                @WorkflowContract
                 public interface SiblingContract extends SiblingA, SiblingB {
                     @WorkflowQuery("status")
                     Future<WorkflowView> status(WorkflowInstanceId id);

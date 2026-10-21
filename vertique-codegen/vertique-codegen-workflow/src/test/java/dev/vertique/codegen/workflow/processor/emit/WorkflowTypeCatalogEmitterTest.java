@@ -68,19 +68,19 @@ class WorkflowTypeCatalogEmitterTest {
                 """.formatted(pkg));
     }
 
-    private static JavaFileObject contract(String pkg, String simpleName, String annotationArgs) {
+    private static JavaFileObject contract(String pkg, String simpleName, String annotation) {
         return SourceFiles.inline(pkg + "." + simpleName, """
                 package %s;
                 import dev.vertique.workflow.contract.WorkflowContract;
                 import dev.vertique.workflow.contract.WorkflowStart;
                 import dev.vertique.workflow.ops.WorkflowInstanceId;
                 import io.vertx.core.Future;
-                @WorkflowContract(%s)
+                %s
                 public interface %s {
                     @WorkflowStart
                     Future<WorkflowInstanceId> start(StartPayload cmd);
                 }
-                """.formatted(pkg, annotationArgs, simpleName));
+                """.formatted(pkg, annotation, simpleName));
     }
 
     private static JavaFileObject typeClass(String fqn, String logicalName, String modifiers) {
@@ -135,9 +135,8 @@ class WorkflowTypeCatalogEmitterTest {
     @DisplayName("a compilation with contracts and types emits a catalog module listing one entry for each")
     void emitsCatalogModuleWithContractAndTypeEntries() {
         JavaFileObject payload = startPayload("com.acme");
-        JavaFileObject namedContract = contract(
-                "com.acme", "OrderWorkflow", "value = \"orders\", definitionId = \"o\", definitionVersion = 1");
-        JavaFileObject unnamedContract = contract("com.acme", "Refunds", "definitionId = \"r\", definitionVersion = 1");
+        JavaFileObject namedContract = contract("com.acme", "OrderWorkflow", "@WorkflowContract(\"orders\")");
+        JavaFileObject unnamedContract = contract("com.acme", "Refunds", "@WorkflowContract");
         JavaFileObject orderState = typeClass("com.acme.OrderState", "order", "public ");
         JavaFileObject paid = typeClass("com.acme.Paid", "order.paid", "public ");
 

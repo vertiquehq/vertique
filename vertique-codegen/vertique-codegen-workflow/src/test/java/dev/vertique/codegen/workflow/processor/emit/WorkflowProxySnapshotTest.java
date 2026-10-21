@@ -154,7 +154,7 @@ class WorkflowProxySnapshotTest {
                 import dev.vertique.workflow.ops.WorkflowInstanceId;
                 import dev.vertique.workflow.ops.WorkflowView;
                 import io.vertx.core.Future;
-                @WorkflowContract(definitionId = "snap-def", definitionVersion = 7)
+                @WorkflowContract
                 public interface OrderWorkflow {
                     @WorkflowStart Future<WorkflowInstanceId> start(StartOrder cmd);
                     @WorkflowSignal("cancel") Future<Void> cancel(WorkflowInstanceId id, CancelOrder c);

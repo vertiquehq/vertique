@@ -54,7 +54,7 @@ class WorkflowProxyEmitterTest {
                 import dev.vertique.workflow.ops.WorkflowInstanceId;
                 import dev.vertique.workflow.ops.WorkflowView;
                 import io.vertx.core.Future;
-                @WorkflowContract(definitionId = "orders", definitionVersion = 5L)
+                @WorkflowContract
                 public interface OrderWorkflow {
                     @WorkflowStart
                     Future<WorkflowInstanceId> start(StartOrder cmd);
@@ -127,7 +127,7 @@ class WorkflowProxyEmitterTest {
                 import dev.vertique.workflow.contract.WorkflowStart;
                 import dev.vertique.workflow.ops.WorkflowInstanceId;
                 import io.vertx.core.Future;
-                @WorkflowContract(definitionId = "orders", definitionVersion = 1L)
+                @WorkflowContract
                 public interface OrderWorkflow {
                     @WorkflowStart
                     Future<WorkflowInstanceId> start(StartOrder binding);
@@ -155,7 +155,7 @@ class WorkflowProxyEmitterTest {
                 import dev.vertique.workflow.contract.IdempotencyKey;
                 import dev.vertique.workflow.ops.WorkflowInstanceId;
                 import io.vertx.core.Future;
-                @WorkflowContract(definitionId = "orders", definitionVersion = 3L)
+                @WorkflowContract
                 public interface OrderWorkflow {
                     @WorkflowStart
                     Future<WorkflowInstanceId> start(@IdempotencyKey String key, StartOrder cmd);
@@ -185,7 +185,7 @@ class WorkflowProxyEmitterTest {
                 import dev.vertique.workflow.ops.WorkflowInstanceId;
                 import io.vertx.core.Future;
                 public final class Outer {
-                    @WorkflowContract(definitionId = "nested", definitionVersion = 1L)
+                    @WorkflowContract
                     public interface Inner {
                         @WorkflowStart
                         Future<WorkflowInstanceId> start(StartOrder cmd);
@@ -217,7 +217,7 @@ class WorkflowProxyEmitterTest {
                 import dev.vertique.workflow.contract.WorkflowStart;
                 import dev.vertique.workflow.ops.WorkflowInstanceId;
                 import io.vertx.core.Future;
-                @WorkflowContract(definitionId = "orders", definitionVersion = 1L)
+                @WorkflowContract
                 public interface OrderWorkflow {
                     @WorkflowStart
                     Future<WorkflowInstanceId> start(StartOrder ops);
@@ -250,7 +250,7 @@ class WorkflowProxyEmitterTest {
                 import dev.vertique.workflow.contract.WorkflowStart;
                 import dev.vertique.workflow.ops.WorkflowInstanceId;
                 import io.vertx.core.Future;
-                @WorkflowContract(definitionId = "orders", definitionVersion = 1L)
+                @WorkflowContract
                 public interface OrderWorkflow {
                     @WorkflowStart
                     Future<WorkflowInstanceId> start(StartOrder cmd);
