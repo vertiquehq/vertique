@@ -7,18 +7,18 @@ import dev.vertique.workflow.definition.schema.WorkflowDefinitionDocument;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
+import dev.vertique.workflow.exception.WorkflowUnknownTypeNameException;
 import dev.vertique.workflow.types.DefaultWorkflowTypeNames;
 import dev.vertique.workflow.types.WorkflowTypeNames;
 import java.util.Objects;
-import java.util.Optional;
 
 /**
  * Adapter that implements {@link WorkflowDefinition} backed by a deserialized
  * {@link WorkflowDefinitionDocument} and a {@link WorkflowDefinitionCompiler}.
  *
- * <p>Class references for the state type and contract are resolved once at factory time via
- * {@link Class#forName(String, boolean, ClassLoader)} — class <em>lookup</em> only, never
- * reflection-based instantiation (FR-WF-DEF-080). Two unchecked casts are localized to the
+ * <p>Class references for the state type and contract are resolved once at factory time, through a
+ * type-name index or, for callers without one, by class <em>lookup</em> on a class loader — never by
+ * reflection-based instantiation. Two unchecked casts are localized to the
  * {@link #fromDocument} factory method; they are safe because the validator has already confirmed
  * that the {@code stateType} and {@code contract} FQNs in the document resolve to compatible
  * classes before the compiler is invoked.
@@ -128,9 +128,8 @@ public final class DocumentBackedWorkflowDefinition<S, C> implements WorkflowDef
      * Creates a {@link DocumentBackedWorkflowDefinition} by resolving the state type and contract
      * class names declared in the document via {@link Class#forName}.
      *
-     * <p>Equivalent to {@link #fromDocument(WorkflowDefinitionDocument, WorkflowDefinitionCompiler,
-     * ClassLoader, WorkflowTypeNames)} with an empty type-name index, so names resolve by class-loader
-     * lookup only.
+     * <p>Names resolve by class-loader lookup only; this overload is for tests and other callers that
+     * build a definition from a trusted document without a type-name index.
      *
      * @param doc the deserialized definition document; non-null
      * @param compiler the compiler to embed; non-null
@@ -139,18 +138,24 @@ public final class DocumentBackedWorkflowDefinition<S, C> implements WorkflowDef
      * @throws WorkflowDefinitionException if the {@code stateType} or {@code contract} class
      *     cannot be found on the given class loader
      */
+    @SuppressWarnings("unchecked")
     public static DocumentBackedWorkflowDefinition<?, ?> fromDocument(
             WorkflowDefinitionDocument doc, WorkflowDefinitionCompiler compiler, ClassLoader cl) {
-        return fromDocument(doc, compiler, cl, new DefaultWorkflowTypeNames());
+        Objects.requireNonNull(doc, "doc");
+        Objects.requireNonNull(compiler, "compiler");
+        Objects.requireNonNull(cl, "cl");
+        Class<?> stateClass = loadClass(doc.stateType(), cl, "stateType");
+        Class<?> contractClass = loadClass(doc.contract(), cl, "contract");
+        return new DocumentBackedWorkflowDefinition<>(stateClass, contractClass, doc, compiler);
     }
 
     /**
      * Creates a {@link DocumentBackedWorkflowDefinition} by resolving the state type and contract
-     * names declared in the document.
+     * names declared in the document through a type-name index only.
      *
-     * <p>Each name is looked up in {@code typeNames} first (types for the state, contracts for the
-     * contract). A name the index does not know is resolved by {@link Class#forName} on the given
-     * class loader.
+     * <p>The state name is looked up in the type namespace of {@code typeNames} and the contract name
+     * in its contract namespace. A name the index does not know fails with
+     * {@link WorkflowUnknownTypeNameException}; no class is loaded by name.
      *
      * <p>Two unchecked casts are performed: the resolved state class is cast to {@code Class<S>}
      * and the resolved contract class is cast to {@code Class<C>}. Both casts are safe at the
@@ -159,46 +164,40 @@ public final class DocumentBackedWorkflowDefinition<S, C> implements WorkflowDef
      *
      * @param doc the deserialized definition document; non-null
      * @param compiler the compiler to embed; non-null
-     * @param cl the class loader to use for resolution; non-null
-     * @param typeNames the type-name index consulted before the class loader; non-null
+     * @param typeNames the type-name index that resolves the names; non-null
      * @return a ready-to-register {@link DocumentBackedWorkflowDefinition}; never null
-     * @throws WorkflowDefinitionException if the {@code stateType} or {@code contract} class
-     *     cannot be found
+     * @throws WorkflowUnknownTypeNameException if the {@code stateType} or {@code contract} name is
+     *     not in the index
      */
     @SuppressWarnings("unchecked")
     public static DocumentBackedWorkflowDefinition<?, ?> fromDocument(
-            WorkflowDefinitionDocument doc,
-            WorkflowDefinitionCompiler compiler,
-            ClassLoader cl,
-            WorkflowTypeNames typeNames) {
+            WorkflowDefinitionDocument doc, WorkflowDefinitionCompiler compiler, WorkflowTypeNames typeNames) {
         Objects.requireNonNull(doc, "doc");
         Objects.requireNonNull(compiler, "compiler");
-        Objects.requireNonNull(cl, "cl");
         Objects.requireNonNull(typeNames, "typeNames");
 
-        Class<?> stateClass = resolveClass(doc.stateType(), typeNames.find(doc.stateType()), cl, "stateType");
-        Class<?> contractClass = resolveClass(doc.contract(), typeNames.findContract(doc.contract()), cl, "contract");
+        Class<?> stateClass = typeNames
+                .find(doc.stateType())
+                .orElseThrow(() -> DefaultWorkflowTypeNames.unknownName("stateType", doc.stateType()));
+        Class<?> contractClass = typeNames
+                .findContract(doc.contract())
+                .orElseThrow(() -> DefaultWorkflowTypeNames.unknownName("contract", doc.contract()));
         return new DocumentBackedWorkflowDefinition<>(stateClass, contractClass, doc, compiler);
     }
 
     // --- Private helper ---
 
     /**
-     * Returns the indexed class when there is one, otherwise resolves the name using the given class
-     * loader, wrapping any {@link ClassNotFoundException} in a {@link WorkflowDefinitionException}.
+     * Resolves the name using the given class loader, wrapping any {@link ClassNotFoundException} in
+     * a {@link WorkflowDefinitionException}.
      *
-     * @param className the logical or fully-qualified class name to resolve; non-null
-     * @param indexed the class the type-name index holds for the name, if any
+     * @param className the fully-qualified class name to resolve; non-null
      * @param cl the class loader to use; non-null
      * @param fieldName the field name for error context (e.g., {@code "stateType"})
      * @return the resolved class; never null
      * @throws WorkflowDefinitionException if the class is not found
      */
-    private static Class<?> resolveClass(
-            String className, Optional<Class<?>> indexed, ClassLoader cl, String fieldName) {
-        if (indexed.isPresent()) {
-            return indexed.get();
-        }
+    private static Class<?> loadClass(String className, ClassLoader cl, String fieldName) {
         try {
             return Class.forName(className, false, cl);
         } catch (ClassNotFoundException e) {

@@ -4,6 +4,8 @@
 /**
  * APT-side scanning for {@code @WorkflowContract} interfaces: classifies each method as a
  * {@code @WorkflowStart}, {@code @WorkflowSignal}, or {@code @WorkflowQuery} operation and resolves
- * parameter roles (payload, instance id, idempotency/business/subject/dedup keys).
+ * parameter roles (payload, instance id, idempotency/business/subject/dedup keys), and reads the
+ * logical names of {@code @WorkflowContract} interfaces and {@code @WorkflowType} classes for the
+ * generated type catalog.
  */
 package dev.vertique.codegen.workflow.processor.scan;

@@ -51,7 +51,7 @@ DefinitionResource
 
 `DefinitionResource` contains bytes, format, and source metadata. The source may be a repository file, CMS record, database row, REST upload, object store, or generated artifact. Source location is provenance metadata; it does not affect engine execution or plan identity.
 
-`WorkflowDefinitionBootstrap` loads contributed `WorkflowDefinitionSource` resources during registry construction. Runtime management surfaces can call `WorkflowDefinitionService.load(...)` and `activate(...)` directly.
+`WorkflowDefinitionBootstrap` loads contributed `WorkflowDefinitionSource` resources during registry construction. A packaged document is trusted: it may name a class that no catalog lists, by its binary name. Before the document is resolved, the bootstrap loads each such class with the context class loader (lookup only) and adds it to the index, so the class then joins the index for later loads. A name that is not a loadable class fails startup with a `LOAD_FAILURE` violation attributed to the resource. Runtime management surfaces can call `WorkflowDefinitionService.load(...)` and `activate(...)` directly.
 
 ---
 
@@ -207,7 +207,7 @@ A well-formed definition is one that passes both parsing and semantic validation
 
 - Jackson YAML/JSON parsing is strict: unknown fields and invalid step types fail.
 - Required top-level fields and required step fields must be present.
-- Type and contract names resolve in this order: first the `WorkflowTypeNames` index (types for state and payload names, contracts for the contract name), which holds the classes of every registered definition under their logical and binary names; then, for a name the index does not know, class lookup by binary name on the application classpath. A name that neither finds is a violation. The pipeline resolves the state and contract of a document the same way.
+- Type and contract names resolve through the `WorkflowTypeNames` index only (types for state and payload names, contracts for the contract name). The index holds the classes of every contributed `WorkflowTypeCatalog` and of every registered definition, under their logical and binary names. Before validation the pipeline resolves the contract, the state type, the start payload type, then the signal and decision payload types in step order, and the first name the index does not hold fails the load with `WorkflowUnknownTypeNameException`, which names the document field and the name when it is a valid name. No class is loaded by a name the document supplies.
 - The contract class must be annotated with `@WorkflowContract`, and its id/version must match the document.
 - Named callbacks must resolve through the registered callback registries.
 - Decision expressions must parse through the expression profile.
@@ -266,7 +266,7 @@ Future<List<WorkflowDefinitionRecord>> definitions = service.list(
         new DefinitionFilter(DefinitionFilter.TenantScope.GLOBAL, null, null));
 ```
 
-`load` parses, validates, and compiles a candidate without registering it. `activate` publishes it;
+`load` parses, validates, and compiles a candidate without registering it. A document loaded this way, or restored from the store, can name only classes in the type-name index, so a class an application wants such a document to use must be listed in a contributed `WorkflowTypeCatalog` (the workflow annotation processor generates one for `@WorkflowContract` and `@WorkflowType` classes) or be used by a registered definition; a name outside the index fails the returned Future with `WorkflowUnknownTypeNameException` before any validation runs. `activate` publishes it;
 a failed load leaves the prior active version untouched. With PostgreSQL installed, source and
 metadata are durable and activation recompiles the stored text rather than trusting a local cache.
 The managed application lifecycle restores activated documents of every owner before any BOOTSTRAP verticle
@@ -394,7 +394,7 @@ public interface AppComponent {
 }
 ```
 
-Applications must also contribute at least one `WorkflowDefinitionSource` for bootstrap-loaded definitions, or call `WorkflowDefinitionService` from their own management surface.
+Applications must also contribute at least one `WorkflowDefinitionSource` for bootstrap-loaded definitions, or call `WorkflowDefinitionService` from their own management surface. Add the generated `GeneratedWorkflowTypeCatalogModule` of each module that declares the contracts and types such documents use.
 
 ---
 
@@ -411,6 +411,7 @@ Applications must also contribute at least one `WorkflowDefinitionSource` for bo
 
 - **Engine purity.** The runtime engine never parses YAML / JSON. Parsing, validation, and plan compilation happen in the control plane (bootstrap loaders and `WorkflowDefinitionService`). The engine only executes `WorkflowPlan` nodes + `WorkflowCallbackRegistry` callbacks.
 - **`CONTRACT_MISMATCH` is enforced at load time.** A document claiming `definitionVersion = 2` against a contract annotated `definitionVersion = 1` fails the validator with a clear violation, not silently at runtime.
+- **Service-loaded documents are catalog-only.** `WorkflowDefinitionService.load`, restoration from the store and propagation resolve names through the index only. A deployment where no catalog and no registered definition lists a class refuses a document that names it, even by its binary name, and loads nothing. Packaged documents are the trusted exception described above.
 - **Document plans are not no-code.** A document references Java classes (state type, contract type, payload types) and named callbacks from the application's callback module. A document without the corresponding Java types is rejected.
 - **Named conditions / mappers are looked up by id.** Document expression nodes resolve to callbacks registered in the application's `WorkflowDefinitionCallbacksModule`. Unknown ids fail at registration, not at first execution.
 - **Plan-hash stability.** Documents compile to the same `WorkflowPlan` shape as the Java DSL, so existing instances pinned to a `planHash` resume against the same plan only if the document compiles to a byte-identical plan structure. Use migration handlers when changing semantics across versions.

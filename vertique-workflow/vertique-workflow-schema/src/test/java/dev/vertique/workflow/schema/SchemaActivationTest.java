@@ -29,14 +29,19 @@ import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.DefinitionStatus;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
 import dev.vertique.workflow.schema.fixtures.Payloads;
+import dev.vertique.workflow.schema.fixtures.ReviewNoteWorkflowV1;
 import dev.vertique.workflow.schema.fixtures.ReviewState;
 import dev.vertique.workflow.schema.fixtures.StartReview;
+import dev.vertique.workflow.types.WorkflowTypeCatalog;
+import dev.vertique.workflow.types.WorkflowTypeCatalogEntry;
+import dev.vertique.workflow.types.WorkflowTypeCatalogEntry.Kind;
 import io.vertx.core.Future;
 import jakarta.inject.Singleton;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
+import java.util.List;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
@@ -84,6 +89,20 @@ class SchemaActivationTest {
                             "review.init", StartReview.class, ReviewState.class, start -> new ReviewState(start.id())))
                     .register(new NamedStartStateMapper<>(
                             "review.initFromText", String.class, ReviewState.class, ReviewState::new));
+        }
+
+        /** Lists the classes the loaded documents name; a service-loaded document resolves names through the catalog only. */
+        @Provides
+        @IntoSet
+        static WorkflowTypeCatalog typeCatalog() {
+            return () -> List.of(
+                    new WorkflowTypeCatalogEntry(
+                            Kind.CONTRACT, ReviewNoteWorkflowV1.class.getName(), ReviewNoteWorkflowV1.class),
+                    new WorkflowTypeCatalogEntry(Kind.TYPE, ReviewState.class.getName(), ReviewState.class),
+                    new WorkflowTypeCatalogEntry(Kind.TYPE, StartReview.class.getName(), StartReview.class),
+                    new WorkflowTypeCatalogEntry(Kind.TYPE, String.class.getName(), String.class),
+                    new WorkflowTypeCatalogEntry(
+                            Kind.TYPE, Payloads.PlainRecord.class.getName(), Payloads.PlainRecord.class));
         }
 
         @Provides

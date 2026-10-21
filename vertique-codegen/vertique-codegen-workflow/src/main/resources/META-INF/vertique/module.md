@@ -16,6 +16,8 @@ In addition to the performance win, the processor lifts contract-shape validatio
 
 The processor also generates a single aggregate `GeneratedWorkflowClientsModule` Dagger module whose `@Provides @Singleton` bindings each delegate to `WorkflowClientFactory.create({Contract}.class)`, so registry and plan validation (the four runtime-only rules) still run at application startup regardless of which path is taken. Applications use the shared parent-or-facade processor boundary described below and list `GeneratedWorkflowClientsModule` in the `@Component`.
 
+The processor also generates a `GeneratedWorkflowTypeCatalogModule` that lists the `@WorkflowContract` interfaces and `@WorkflowType` classes of the compilation. A document loaded at runtime can name only the classes such a catalog lists (see the workflow-core and workflow-definition guides).
+
 `WorkflowClientFactory` and `WorkflowProxyValidator` are preserved as the runtime fallback and the authoritative validation path. A generated proxy found on the classpath but impossible to instantiate causes a loud `WorkflowClientProxyLinkageException` rather than a silent fallback to the reflective proxy.
 
 ---
@@ -136,6 +138,27 @@ The body delegates to `WorkflowClientFactory.create({Contract}.class)` and never
 
 **Unreferenceable contracts are skipped, not bound.** A contract the module's package cannot name — one that is not `public` (or is nested in a non-public type) and lives outside that package, a `private` nested contract even within it, or one in the unnamed package — is left unbound with a *mandatory* compiler warning naming the reason (mandatory so `-nowarn` cannot turn the skip silent). Emitting the binding would produce a module that does not compile, and since javac compiles generated sources in the same task, that breaks the application's build merely by putting the processor on `annotationProcessorPaths`, whether or not the module is installed in a `@Component`. A skipped contract keeps working through a hand-written `@Provides`; make the contract and its enclosing types public, or point `-Avertique.codegen.package` at a package it is visible from, to have it bound. The module's package is resolved from all valid contracts *before* this filtering, so skipping one never relocates the module.
 
+### `GeneratedWorkflowTypeCatalogModule`
+
+Generates a single concrete `@Module` for every compilation unit that declares at least one valid `@WorkflowContract` interface or `@WorkflowType` class, including a unit that declares only `@WorkflowType` classes. It is not generated when the unit declares neither. The module has one `@Provides @IntoSet` method that returns a `WorkflowTypeCatalog`:
+
+```java
+@Provides
+@IntoSet
+static WorkflowTypeCatalog workflowTypeCatalog() {
+    return () -> List.of(
+            new WorkflowTypeCatalogEntry(Kind.CONTRACT, "orders", OrderWorkflow.class),
+            new WorkflowTypeCatalogEntry(Kind.TYPE, "order", OrderState.class));
+}
+```
+
+- **Names.** A contract entry is named by the non-empty `@WorkflowContract.value()`, else by the interface's binary name. A type entry is named by `@WorkflowType.value()`. An invalid contract (one that fails the shape checks above) is not listed.
+- **Order.** Entries are sorted by kind (contracts first) and then by name, so the generated source does not depend on the order the compiler visits the classes in.
+- **Package.** The module is generated in the package given by `-Avertique.codegen.package` when set and non-blank, else the longest common package prefix of all the listed classes, else `vertique.generated.workflow`. The package is resolved from all the classes before any is left out.
+- **Accessibility.** A class the module cannot name is left out of the catalog with a *mandatory* compiler warning that names the class, the module package and the `vertique.codegen.package` option; the build still compiles and the class is not mentioned in the generated source. A class is unreferenceable when it is not `public` (or is nested in a non-public type) and lives outside the module's package, when it is `private` nested, or when it is in the unnamed package. A left-out class stays usable in code definitions and in packaged documents; a document loaded through the definition service cannot name it and is refused with an unknown-name error. Make the class and its enclosing types public, point `vertique.codegen.package` at a package it is visible from, or list it in a hand-written catalog contributed with a `@Provides @IntoSet WorkflowTypeCatalog` method.
+- **Name collision.** When a class with the module's name already resolves when the processor runs (a dependency generated a catalog module in the same package, or a source of the compilation declares one), the build fails with an error that names the module and the `vertique.codegen.package` option, and the processor writes no source. Set `vertique.codegen.package` to a package that is unique to the module.
+- **Inclusion in the component.** Add `GeneratedWorkflowTypeCatalogModule` to the application `@Component` next to `WorkflowCoreModule`, which declares the (initially empty) `Set<WorkflowTypeCatalog>`. An application whose classes live in several modules adds each module's catalog module; the catalogs are merged at startup, and two catalogs that list different classes under one name fail startup with `WorkflowTypeNameConflictException`.
+
 ---
 
 ## Runtime Integration
@@ -179,6 +202,8 @@ The body delegates to `WorkflowClientFactory.create({Contract}.class)` and never
 | Duplicate `@IdempotencyKey`, `@BusinessKey`, `@SubjectRef`, or `@SignalDedupKey` | ERROR | `OrderWorkflow.start(): duplicate @IdempotencyKey annotation` |
 | Two operations share an erased signature inherited from unrelated super-interfaces | ERROR | `OrderWorkflow inherits an ambiguous operation 'start(com.example.StartOrder)' from multiple unrelated super-interfaces; a workflow contract may not inherit the same method signature from sibling interfaces` |
 | Two contracts with the same simple name in one compilation unit | ERROR | `@WorkflowContract com.a.OrderWorkflow collides with com.b.OrderWorkflow in GeneratedWorkflowClientsModule` |
+| `@WorkflowContract` or `@WorkflowType` class not accessible from the catalog module's package | MANDATORY WARNING | `@WorkflowType com.acme.hidden.Hidden is not accessible from package 'com.acme', where GeneratedWorkflowTypeCatalogModule is generated, so it is left out of the catalog ...` |
+| A class named like the catalog module already exists | ERROR | `Cannot generate the workflow type catalog module com.acme.GeneratedWorkflowTypeCatalogModule: a class with that name already exists ... Set -Avertique.codegen.package ...` |
 
 ---
 
@@ -205,11 +230,13 @@ public interface AppComponent { ... }
 
 Removing either step is safe: removing the processor reverts all contracts to the JDK reflective proxy; removing the module from `@Component` means contracts must be provided manually. `WorkflowClientFactory` and `WorkflowProxyValidator` are retained and not deprecated.
 
+Also add `GeneratedWorkflowTypeCatalogModule` when the application loads documents at runtime or ships packaged documents that name annotated types by logical name. Both generated modules are placed in the same package when the same option or the same classes decide it.
+
 ### Processor Options
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `vertique.codegen.package` | — | Package for `GeneratedWorkflowClientsModule`; overrides LCP resolution |
+| `vertique.codegen.package` | — | Package for `GeneratedWorkflowClientsModule` and `GeneratedWorkflowTypeCatalogModule`; overrides LCP resolution |
 
 > A contract's `(definitionId, version)` is **not** verifiable at compile time — the processor cannot
 > evaluate a `WorkflowDefinition`'s `definitionId()`/`definitionVersion()` method bodies, and the registry/plan
@@ -219,7 +246,7 @@ Removing either step is safe: removing the processor reverts all contracts to th
 
 ## Module Dagger Bindings
 
-The processor emits one Dagger module: `GeneratedWorkflowClientsModule` (placed in the package determined by package-resolution order). Each `@Provides @Singleton` method returns `factory.create({Contract}.class)` so that registry/plan validation always runs. The application must add this module to its `@Component` for the bindings to take effect.
+The processor emits two Dagger modules, each placed in the package determined by package-resolution order. `GeneratedWorkflowClientsModule`: each `@Provides @Singleton` method returns `factory.create({Contract}.class)` so that registry/plan validation always runs. `GeneratedWorkflowTypeCatalogModule`: one `@Provides @IntoSet` method contributes the compilation's `WorkflowTypeCatalog`. The application must add these modules to its `@Component` for the bindings to take effect.
 
 Generated proxies are discovered at runtime via `Class.forName` inside `WorkflowClientFactory` and require no further Dagger graph participation beyond the `GeneratedWorkflowClientsModule` binding.
 

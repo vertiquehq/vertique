@@ -35,6 +35,9 @@ import dev.vertique.workflow.registry.store.WorkflowDefinitionDocument;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionsConfig;
+import dev.vertique.workflow.types.WorkflowTypeCatalog;
+import dev.vertique.workflow.types.WorkflowTypeCatalogEntry;
+import dev.vertique.workflow.types.WorkflowTypeCatalogEntry.Kind;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import io.vertx.core.json.JsonObject;
@@ -198,6 +201,44 @@ public class DefinitionSourceTextTest {
         static StartStateMapperContributor startStateMapper() {
             return builder -> builder.register(new NamedStartStateMapper<>(
                     "reader.init", ReaderStart.class, ReaderState.class, start -> new ReaderState(start.value())));
+        }
+
+        /** Lists the classes a service-loaded document may name; the service resolves names through the catalog only. */
+        @Provides
+        @IntoSet
+        static WorkflowTypeCatalog typeCatalog() {
+            return () -> List.of(
+                    new WorkflowTypeCatalogEntry(Kind.TYPE, ReaderState.class.getName(), ReaderState.class),
+                    new WorkflowTypeCatalogEntry(Kind.TYPE, ReaderStart.class.getName(), ReaderStart.class),
+                    new WorkflowTypeCatalogEntry(Kind.CONTRACT, StaticYamlV1.class.getName(), StaticYamlV1.class),
+                    new WorkflowTypeCatalogEntry(Kind.CONTRACT, StaticJsonV1.class.getName(), StaticJsonV1.class),
+                    new WorkflowTypeCatalogEntry(
+                            Kind.CONTRACT, StaticJsonLargeV1.class.getName(), StaticJsonLargeV1.class),
+                    new WorkflowTypeCatalogEntry(
+                            Kind.CONTRACT, StaticTrailingJsonV1.class.getName(), StaticTrailingJsonV1.class),
+                    new WorkflowTypeCatalogEntry(
+                            Kind.CONTRACT, ReaderEncodingV1.class.getName(), ReaderEncodingV1.class),
+                    new WorkflowTypeCatalogEntry(
+                            Kind.CONTRACT, ReaderEncodingUnicodeV1.class.getName(), ReaderEncodingUnicodeV1.class),
+                    new WorkflowTypeCatalogEntry(Kind.CONTRACT, ExactLimitV1.class.getName(), ExactLimitV1.class),
+                    new WorkflowTypeCatalogEntry(Kind.CONTRACT, OverLimitV1.class.getName(), OverLimitV1.class),
+                    new WorkflowTypeCatalogEntry(Kind.CONTRACT, PersistedJsonV1.class.getName(), PersistedJsonV1.class),
+                    new WorkflowTypeCatalogEntry(Kind.CONTRACT, PersistedJsonV2.class.getName(), PersistedJsonV2.class),
+                    new WorkflowTypeCatalogEntry(Kind.CONTRACT, PersistedJsonV3.class.getName(), PersistedJsonV3.class),
+                    new WorkflowTypeCatalogEntry(Kind.CONTRACT, PersistedJsonV4.class.getName(), PersistedJsonV4.class),
+                    new WorkflowTypeCatalogEntry(Kind.CONTRACT, PersistedJsonV5.class.getName(), PersistedJsonV5.class),
+                    new WorkflowTypeCatalogEntry(Kind.CONTRACT, PersistedJsonV6.class.getName(), PersistedJsonV6.class),
+                    new WorkflowTypeCatalogEntry(Kind.CONTRACT, PersistedJsonV7.class.getName(), PersistedJsonV7.class),
+                    new WorkflowTypeCatalogEntry(Kind.CONTRACT, PersistedJsonV8.class.getName(), PersistedJsonV8.class),
+                    new WorkflowTypeCatalogEntry(Kind.CONTRACT, PersistedJsonV9.class.getName(), PersistedJsonV9.class),
+                    new WorkflowTypeCatalogEntry(
+                            Kind.CONTRACT, PersistedJsonV10.class.getName(), PersistedJsonV10.class),
+                    new WorkflowTypeCatalogEntry(Kind.CONTRACT, PersistedYamlV1.class.getName(), PersistedYamlV1.class),
+                    new WorkflowTypeCatalogEntry(
+                            Kind.CONTRACT, PersistedInvalidTailV1.class.getName(), PersistedInvalidTailV1.class),
+                    new WorkflowTypeCatalogEntry(Kind.CONTRACT, PersistedNulV1.class.getName(), PersistedNulV1.class),
+                    new WorkflowTypeCatalogEntry(
+                            Kind.CONTRACT, PersistedUnpairedV1.class.getName(), PersistedUnpairedV1.class));
         }
 
         @Provides

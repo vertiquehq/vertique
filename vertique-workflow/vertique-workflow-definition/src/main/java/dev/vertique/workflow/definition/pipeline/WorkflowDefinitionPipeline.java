@@ -13,12 +13,14 @@ import dev.vertique.workflow.definition.validator.WorkflowDefinitionDocumentVali
 import dev.vertique.workflow.definition.validator.WorkflowDefinitionLoadException;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
+import dev.vertique.workflow.exception.WorkflowUnknownTypeNameException;
 import dev.vertique.workflow.plan.WorkflowPlan;
 import dev.vertique.workflow.types.DefaultWorkflowTypeNames;
 import dev.vertique.workflow.types.WorkflowTypeNames;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
 import java.util.Objects;
+import java.util.function.Consumer;
 
 /**
  * Orchestrates the parse → validate → compile pipeline for a single
@@ -37,17 +39,22 @@ import java.util.Objects;
  *       resolution at first use, after the Dagger graph is fully constructed).</li>
  * </ul>
  *
- * <p>The pipeline runs three stages for each resource:
+ * <p>The pipeline runs these stages for each resource:
  * <ol>
  *   <li><strong>Parse</strong> — {@link WorkflowDefinitionParser#parse} deserializes the bytes
  *       into a {@link WorkflowDefinitionDocument}. A {@link WorkflowDefinitionParseException}
  *       (unknown property, unknown step type, null primitive, etc.) propagates immediately.</li>
+ *   <li><strong>Resolve</strong> — a pipeline built with a type-name index resolves every contract
+ *       and type name of the document through that index, in document order, before validation. The
+ *       first unknown name fails the load with {@link WorkflowUnknownTypeNameException}; no class is
+ *       loaded by name.</li>
  *   <li><strong>Validate</strong> — {@link WorkflowDefinitionDocumentValidator#validateOrThrow}
  *       runs all structural and semantic checks and throws a single
  *       {@link WorkflowDefinitionLoadException} carrying all accumulated violations when any
  *       fail.</li>
  *   <li><strong>Compile</strong> — {@link DocumentBackedWorkflowDefinition#fromDocument} resolves
- *       state and contract classes. Any {@link ClassNotFoundException} is wrapped in a
+ *       state and contract classes through the same index. A pipeline built without an index looks the
+ *       classes up on the context class loader and wraps any {@link ClassNotFoundException} in a
  *       {@link WorkflowDefinitionException}.</li>
  * </ol>
  *
@@ -68,6 +75,7 @@ public final class WorkflowDefinitionPipeline {
     private final WorkflowDefinitionDocumentValidator validator;
     private final WorkflowDefinitionCompiler compiler;
     private final WorkflowTypeNames typeNames;
+    private final boolean classLoaderFallback;
 
     // --- Construction ---
 
@@ -86,12 +94,13 @@ public final class WorkflowDefinitionPipeline {
             WorkflowDefinitionParser parser,
             WorkflowDefinitionDocumentValidator validator,
             WorkflowDefinitionCompiler compiler) {
-        this(parser, validator, compiler, new DefaultWorkflowTypeNames());
+        this(parser, validator, compiler, new DefaultWorkflowTypeNames(), true);
     }
 
     /**
-     * Constructs the pipeline with all required collaborators and the type-name index used to
-     * resolve the state and contract names of a document.
+     * Constructs the pipeline with all required collaborators and the type-name index that resolves
+     * every type and contract name of a document. A name the index does not hold fails the load with
+     * {@link WorkflowUnknownTypeNameException} and no class is loaded by name.
      *
      * @param parser the parser that deserializes raw bytes into a document; must not be
      *     {@code null}
@@ -99,8 +108,7 @@ public final class WorkflowDefinitionPipeline {
      *     not be {@code null}
      * @param compiler the compiler that translates a validated document into builder calls; must
      *     not be {@code null}
-     * @param typeNames the type-name index consulted before the class loader; must not be
-     *     {@code null}
+     * @param typeNames the type-name index that resolves the names; must not be {@code null}
      */
     @Inject
     public WorkflowDefinitionPipeline(
@@ -108,10 +116,20 @@ public final class WorkflowDefinitionPipeline {
             WorkflowDefinitionDocumentValidator validator,
             WorkflowDefinitionCompiler compiler,
             WorkflowTypeNames typeNames) {
+        this(parser, validator, compiler, typeNames, false);
+    }
+
+    private WorkflowDefinitionPipeline(
+            WorkflowDefinitionParser parser,
+            WorkflowDefinitionDocumentValidator validator,
+            WorkflowDefinitionCompiler compiler,
+            WorkflowTypeNames typeNames,
+            boolean classLoaderFallback) {
         this.parser = Objects.requireNonNull(parser, "parser");
         this.validator = Objects.requireNonNull(validator, "validator");
         this.compiler = Objects.requireNonNull(compiler, "compiler");
         this.typeNames = Objects.requireNonNull(typeNames, "typeNames");
+        this.classLoaderFallback = classLoaderFallback;
     }
 
     // --- Public API ---
@@ -123,24 +141,53 @@ public final class WorkflowDefinitionPipeline {
      * @return the compiled definition; never {@code null}
      * @throws WorkflowDefinitionParseException if the bytes cannot be deserialized (Jackson
      *     parse failure, unknown step type, unknown top-level property, null primitive, etc.)
+     * @throws WorkflowUnknownTypeNameException if a pipeline built with a type-name index meets a
+     *     contract or type name that the index does not hold
      * @throws WorkflowDefinitionLoadException if validation reveals one or more structural or
      *     semantic violations; the exception carries all accumulated violations
-     * @throws WorkflowDefinitionException if the state type or contract class cannot be resolved
-     *     on the class loader, or if the plan build fails for any reason
+     * @throws WorkflowDefinitionException if the plan build fails for any reason
      */
     public CompiledDefinition load(DefinitionResource resource) {
+        return load(resource, null);
+    }
+
+    /**
+     * INTERNAL framework seam — used by the definition bootstrap for packaged documents; not an
+     * application contract and outside the maturity promise.
+     *
+     * <p>Runs the pipeline like {@link #load(DefinitionResource)}, calling {@code afterParse} with the
+     * parsed document before any name is resolved. The bootstrap uses the hook to add the classes a
+     * packaged, trusted document names to the type-name index.
+     *
+     * @param resource the raw definition resource to process; must not be {@code null}
+     * @param afterParse called with the parsed document before name resolution; may be {@code null}
+     * @return the compiled definition; never {@code null}
+     * @throws WorkflowDefinitionParseException if the bytes cannot be deserialized
+     * @throws WorkflowUnknownTypeNameException if a type or contract name of the document is not in
+     *     the type-name index
+     * @throws WorkflowDefinitionLoadException if validation reveals one or more violations
+     * @throws WorkflowDefinitionException if compilation fails
+     */
+    public CompiledDefinition load(DefinitionResource resource, Consumer<WorkflowDefinitionDocument> afterParse) {
         Objects.requireNonNull(resource, "resource");
 
         // --- Stage 1: Parse ---
         WorkflowDefinitionDocument doc = parser.parse(resource.content(), resource.format());
+        if (afterParse != null) {
+            afterParse.accept(doc);
+        }
 
-        // --- Stage 2: Validate ---
+        // --- Stage 2: Resolve names, then validate ---
+        if (!classLoaderFallback) {
+            requireKnownNames(doc);
+        }
         validator.validateOrThrow(doc);
 
         // --- Stage 3: Compile ---
-        ClassLoader cl = Thread.currentThread().getContextClassLoader();
-        DocumentBackedWorkflowDefinition<?, ?> definition =
-                DocumentBackedWorkflowDefinition.fromDocument(doc, compiler, cl, typeNames);
+        DocumentBackedWorkflowDefinition<?, ?> definition = classLoaderFallback
+                ? DocumentBackedWorkflowDefinition.fromDocument(
+                        doc, compiler, Thread.currentThread().getContextClassLoader())
+                : DocumentBackedWorkflowDefinition.fromDocument(doc, compiler, typeNames);
 
         // --- Compute plan hash eagerly ---
         String planHash = computePlanHash(definition, doc);
@@ -149,6 +196,21 @@ public final class WorkflowDefinitionPipeline {
     }
 
     // --- Private helpers ---
+
+    /**
+     * Resolves every contract and type name of the document through the index, in document order, and
+     * fails on the first one it does not hold. No class is loaded by name.
+     *
+     * @param doc the parsed document
+     * @throws WorkflowUnknownTypeNameException naming the document field and the bounded name
+     */
+    private void requireKnownNames(WorkflowDefinitionDocument doc) {
+        for (DocumentTypeReferences.Reference reference : DocumentTypeReferences.of(doc)) {
+            if (!reference.isKnownTo(typeNames)) {
+                throw DefaultWorkflowTypeNames.unknownName(reference.field(), reference.name());
+            }
+        }
+    }
 
     /**
      * Computes the plan hash by building a fresh {@link WorkflowBuilder}, driving

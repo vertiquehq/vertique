@@ -5,7 +5,9 @@ package dev.vertique.workflow.definition.service;
 
 import dev.vertique.workflow.definition.parser.WorkflowDefinitionParseException;
 import dev.vertique.workflow.definition.pipeline.CompiledDefinition;
+import dev.vertique.workflow.definition.pipeline.DocumentTypeReferences;
 import dev.vertique.workflow.definition.pipeline.WorkflowDefinitionPipeline;
+import dev.vertique.workflow.definition.schema.WorkflowDefinitionDocument;
 import dev.vertique.workflow.definition.source.DefinitionResource;
 import dev.vertique.workflow.definition.source.WorkflowDefinitionSource;
 import dev.vertique.workflow.definition.validator.Violation;
@@ -19,6 +21,7 @@ import dev.vertique.workflow.registry.store.DocumentOrigin;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionsConfig;
+import dev.vertique.workflow.types.DefaultWorkflowTypeNames;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
 import java.util.ArrayList;
@@ -87,6 +90,12 @@ import java.util.Set;
  * parse failures are caught alongside other pipeline failures and synthesized into structured
  * violations with code {@code DOCUMENT_PARSE_FAILURE}, using the resource's URI for attribution.
  *
+ * <h2>Packaged documents are trusted</h2>
+ * <p>A packaged document may name a class that no catalog lists, by its binary name: before the
+ * document is resolved, the bootstrap loads each class it names that the type-name index does not hold
+ * and adds it to the index. A name that is not a loadable class is refused as an unknown type name and
+ * reported as a {@code LOAD_FAILURE} violation attributed to the resource.
+ *
  * <h2>Source ordering</h2>
  * <p>Sources are iterated in ascending order of their implementation class name
  * ({@link Class#getName()}). Within each source, resources are processed in the order returned
@@ -104,6 +113,10 @@ public final class WorkflowDefinitionBootstrap implements WorkflowContributor {
 
     private final boolean durable;
     private final WorkflowDefinitionsConfig config;
+
+    /** The one type-name index the packaged documents' classes join; {@code null} when none was given. */
+    private final DefaultWorkflowTypeNames typeNames;
+
     private volatile List<DocumentOrigin> origins = List.of();
 
     List<DocumentOrigin> documentOrigins() {
@@ -125,14 +138,47 @@ public final class WorkflowDefinitionBootstrap implements WorkflowContributor {
         this(pipeline, store, sources, Optional.empty(), Optional.empty());
     }
 
-    /** Constructs bootstrap with optional durable source retention and early typed policy validation. */
-    @Inject
+    /**
+     * Constructs bootstrap with optional durable source retention and early typed policy validation.
+     * No type-name index is given, so packaged documents add no classes to an index.
+     *
+     * @param pipeline the parse → validate → compile pipeline; must not be {@code null}
+     * @param store the candidate/active store; must not be {@code null}
+     * @param sources the set of all registered definition sources; must not be {@code null}
+     * @param durable the durable registry store, when one is configured
+     * @param config the typed definition policy, when one is configured
+     */
     public WorkflowDefinitionBootstrap(
             WorkflowDefinitionPipeline pipeline,
             WorkflowDefinitionStore store,
             Set<WorkflowDefinitionSource> sources,
             Optional<WorkflowDefinitionRegistryStore> durable,
             Optional<WorkflowDefinitionsConfig> config) {
+        this(pipeline, store, sources, durable, config, null);
+    }
+
+    /**
+     * Constructs bootstrap with the type-name index. A packaged document is trusted: before it is
+     * compiled, the bootstrap loads each class it names by binary name that the index does not hold
+     * and adds it to the index, so a packaged document can name a class no catalog lists.
+     *
+     * @param pipeline the parse → validate → compile pipeline; must not be {@code null}
+     * @param store the candidate/active store; must not be {@code null}
+     * @param sources the set of all registered definition sources; must not be {@code null}
+     * @param durable the durable registry store, when one is configured
+     * @param config the typed definition policy, when one is configured
+     * @param typeNames the type-name index that the classes of packaged documents join; may be
+     *     {@code null} to add none
+     */
+    @Inject
+    public WorkflowDefinitionBootstrap(
+            WorkflowDefinitionPipeline pipeline,
+            WorkflowDefinitionStore store,
+            Set<WorkflowDefinitionSource> sources,
+            Optional<WorkflowDefinitionRegistryStore> durable,
+            Optional<WorkflowDefinitionsConfig> config,
+            DefaultWorkflowTypeNames typeNames) {
+        this.typeNames = typeNames;
         this.durable = durable.isPresent();
         this.config = config.orElseGet(WorkflowDefinitionsConfig::defaults);
         this.pipeline = Objects.requireNonNull(pipeline, "pipeline");
@@ -184,7 +230,7 @@ public final class WorkflowDefinitionBootstrap implements WorkflowContributor {
         for (WorkflowDefinitionSource source : orderedSources) {
             for (DefinitionResource resource : source.resources()) {
                 try {
-                    CompiledDefinition compiled = pipeline.load(resource);
+                    CompiledDefinition compiled = pipeline.load(resource, this::indexPackagedTypes);
                     // Key, provenance and record are built for every resource before anything is
                     // registered, so an over-bound value fails startup rather than a later commit.
                     DefinitionKey key = new DefinitionKey(
@@ -295,6 +341,50 @@ public final class WorkflowDefinitionBootstrap implements WorkflowContributor {
                 store.resetToCandidate(defId, defVersion);
                 throw e;
             }
+        }
+    }
+
+    /**
+     * Adds the classes a packaged document names to the index. A packaged document is trusted, so a
+     * name the index does not hold is loaded as a binary class name with the context class loader
+     * (lookup only, no initialization) and indexed under its own logical name. A name that is not a
+     * loadable class is left for the pipeline to refuse as an unknown name.
+     */
+    private void indexPackagedTypes(WorkflowDefinitionDocument doc) {
+        if (typeNames == null) {
+            return;
+        }
+        Class<?> contract = null;
+        List<Class<?>> types = new ArrayList<>();
+        for (DocumentTypeReferences.Reference reference : DocumentTypeReferences.of(doc)) {
+            if (reference.isKnownTo(typeNames)) {
+                continue;
+            }
+            Class<?> loaded = loadPackagedClass(reference.name());
+            if (loaded == null) {
+                continue;
+            }
+            if (reference.contract()) {
+                contract = loaded;
+            } else {
+                types.add(loaded);
+            }
+        }
+        if (contract != null || !types.isEmpty()) {
+            // The classes stay indexed for the life of the process, like the classes of a registered definition.
+            typeNames.add(contract, types);
+        }
+    }
+
+    private static Class<?> loadPackagedClass(String binaryName) {
+        ClassLoader loader = Thread.currentThread().getContextClassLoader();
+        if (loader == null) {
+            loader = WorkflowDefinitionBootstrap.class.getClassLoader();
+        }
+        try {
+            return Class.forName(binaryName, false, loader);
+        } catch (ClassNotFoundException | LinkageError e) {
+            return null;
         }
     }
 

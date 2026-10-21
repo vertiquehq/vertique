@@ -28,6 +28,9 @@ import dev.vertique.workflow.registry.store.WorkflowDefinitionLifecycle;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionsConfig;
+import dev.vertique.workflow.types.WorkflowTypeCatalog;
+import dev.vertique.workflow.types.WorkflowTypeCatalogEntry;
+import dev.vertique.workflow.types.WorkflowTypeCatalogEntry.Kind;
 import io.vertx.core.Future;
 import jakarta.inject.Singleton;
 import java.nio.charset.StandardCharsets;
@@ -74,6 +77,18 @@ class DefinitionAsyncFallbackTest {
         static StartStateMapperContributor startStateMapper() {
             return builder -> builder.register(new NamedStartStateMapper<>(
                     "fallback.order.init", PlaceOrder.class, OrderState.class, p -> new OrderState(p.orderId())));
+        }
+
+        /** Lists the classes a service-loaded document may name; the service resolves names through the catalog only. */
+        @Provides
+        @dagger.multibindings.IntoSet
+        static WorkflowTypeCatalog typeCatalog() {
+            return () -> List.of(
+                    new WorkflowTypeCatalogEntry(Kind.TYPE, OrderState.class.getName(), OrderState.class),
+                    new WorkflowTypeCatalogEntry(Kind.TYPE, PlaceOrder.class.getName(), PlaceOrder.class),
+                    new WorkflowTypeCatalogEntry(Kind.CONTRACT, FallbackOrderV1.class.getName(), FallbackOrderV1.class),
+                    new WorkflowTypeCatalogEntry(
+                            Kind.CONTRACT, FallbackOrderV2.class.getName(), FallbackOrderV2.class));
         }
 
         @Provides

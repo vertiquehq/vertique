@@ -23,6 +23,7 @@ import dev.vertique.workflow.registry.store.WorkflowDefinitionLifecycle;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionsConfig;
 import dev.vertique.workflow.types.DefaultWorkflowTypeNames;
+import dev.vertique.workflow.types.WorkflowTypeCatalog;
 import dev.vertique.workflow.types.WorkflowTypeNames;
 import jakarta.inject.Singleton;
 import java.util.Set;
@@ -88,16 +89,31 @@ public abstract class WorkflowCoreModule {
     }
 
     /**
-     * Provides the one process-wide type-name index. The registry fills it as definitions register;
-     * the engine, the schema module and the document compiler resolve logical names through it.
+     * Provides the one process-wide type-name index. It starts with the entries of every contributed
+     * {@link WorkflowTypeCatalog}; the registry adds the classes of each definition as it registers,
+     * and the engine, the schema module and the document compiler resolve logical names through it.
      *
+     * @param catalogs the contributed type catalogs; may be empty
      * @return the singleton index
+     * @throws dev.vertique.workflow.exception.WorkflowTypeNameConflictException if two catalogs list
+     *     different classes under one name
      */
     @Provides
     @Singleton
-    static DefaultWorkflowTypeNames defaultTypeNames() {
-        return new DefaultWorkflowTypeNames();
+    static DefaultWorkflowTypeNames defaultTypeNames(Set<WorkflowTypeCatalog> catalogs) {
+        return new DefaultWorkflowTypeNames(catalogs);
     }
+
+    /**
+     * Declares the empty {@code Set<WorkflowTypeCatalog>} multibinding. The annotation processor's
+     * generated catalog module and any hand-written {@code @Provides @IntoSet WorkflowTypeCatalog}
+     * method contribute to it; the contributed catalogs are merged into the type-name index at
+     * startup.
+     *
+     * @return the (initially empty) set of type catalogs
+     */
+    @Multibinds
+    abstract Set<WorkflowTypeCatalog> typeCatalogs();
 
     /**
      * Binds {@link WorkflowTypeNames} to the singleton index.

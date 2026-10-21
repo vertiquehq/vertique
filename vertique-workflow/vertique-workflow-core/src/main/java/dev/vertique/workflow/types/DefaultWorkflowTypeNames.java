@@ -39,6 +39,49 @@ public final class DefaultWorkflowTypeNames implements WorkflowTypeNames {
     /** Creates an empty index. */
     public DefaultWorkflowTypeNames() {}
 
+    /**
+     * INTERNAL framework seam — used by the workflow core module while it builds the one index; not an
+     * application contract and outside the maturity promise.
+     *
+     * <p>Creates an index holding the entries of the contributed catalogs. Each class is reachable by
+     * its entry name and by its binary name. Listing the same class twice under the same name is not a
+     * conflict.
+     *
+     * @param catalogs the contributed catalogs; must not be {@code null}
+     * @throws WorkflowDefinitionException if an entry name is invalid
+     * @throws WorkflowTypeNameConflictException if a name is listed for two different classes
+     */
+    public DefaultWorkflowTypeNames(Collection<WorkflowTypeCatalog> catalogs) {
+        List<Runnable> undo = new ArrayList<>();
+        for (WorkflowTypeCatalog catalog : catalogs) {
+            for (WorkflowTypeCatalogEntry entry : catalog.entries()) {
+                switch (entry.kind()) {
+                    case CONTRACT -> addClass(contracts, entry.type(), entry.name(), "contract", undo);
+                    case TYPE -> addClass(types, entry.type(), entry.name(), "type", undo);
+                }
+            }
+        }
+    }
+
+    /**
+     * INTERNAL framework seam — used by the definition pipeline when a document names a type the index
+     * does not hold; not an application contract and outside the maturity promise.
+     *
+     * <p>Builds the error for an unknown name in a document field. The name is echoed only when it is a
+     * valid name, so a hostile or corrupt value never reaches a log line.
+     *
+     * @param field the document field that carried the name, such as {@code stateType}; must not be
+     *     {@code null}
+     * @param name the unknown name; may be {@code null}
+     * @return the exception to throw; never {@code null}
+     */
+    public static WorkflowUnknownTypeNameException unknownName(String field, String name) {
+        return new WorkflowUnknownTypeNameException(
+                isValidName(name)
+                        ? "unknown workflow type name '" + name + "' in document field " + field
+                        : "unknown workflow type name in document field " + field);
+    }
+
     @Override
     public String nameOf(Class<?> type) {
         Objects.requireNonNull(type, "type");

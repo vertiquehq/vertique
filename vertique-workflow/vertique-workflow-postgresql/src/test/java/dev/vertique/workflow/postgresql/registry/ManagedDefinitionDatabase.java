@@ -26,9 +26,16 @@ import dev.vertique.workflow.definition.callbacks.PayloadMapperContributor;
 import dev.vertique.workflow.definition.callbacks.StartStateMapperContributor;
 import dev.vertique.workflow.definition.callbacks.StateReducerContributor;
 import dev.vertique.workflow.definition.di.WorkflowDefinitionModule;
+import dev.vertique.workflow.definition.it.fixture.FraudScreenedDoc;
 import dev.vertique.workflow.definition.it.fixture.InventoryReservedDoc;
 import dev.vertique.workflow.definition.it.fixture.OrderDocState;
+import dev.vertique.workflow.definition.it.fixture.OrderFanOutState;
+import dev.vertique.workflow.definition.it.fixture.OrderFulfillmentDocumentWorkflowV1;
+import dev.vertique.workflow.definition.it.fixture.OrderFulfillmentDocumentWorkflowV2;
+import dev.vertique.workflow.definition.it.fixture.OrderFulfillmentFanOutDocumentWorkflowV1;
+import dev.vertique.workflow.definition.it.fixture.PaymentAuthorizedDoc;
 import dev.vertique.workflow.definition.it.fixture.PaymentCapturedDoc;
+import dev.vertique.workflow.definition.it.fixture.PlaceFanOutOrder;
 import dev.vertique.workflow.definition.it.fixture.PlaceOrderDoc;
 import dev.vertique.workflow.definition.it.fixture.ShipmentCreatedDoc;
 import dev.vertique.workflow.definition.parser.WorkflowDefinitionParserProbe;
@@ -63,6 +70,9 @@ import dev.vertique.workflow.sideeffect.RecorderResult;
 import dev.vertique.workflow.sideeffect.WorkflowRecorders;
 import dev.vertique.workflow.sideeffect.WorkflowSideEffectIntent;
 import dev.vertique.workflow.sideeffect.WorkflowSideEffectRecorder;
+import dev.vertique.workflow.types.WorkflowTypeCatalog;
+import dev.vertique.workflow.types.WorkflowTypeCatalogEntry;
+import dev.vertique.workflow.types.WorkflowTypeCatalogEntry.Kind;
 import io.vertx.core.AbstractVerticle;
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
@@ -207,6 +217,7 @@ public final class ManagedDefinitionDatabase {
                 .codeCatalogModule(new CodeCatalogModule(includeCodeDefinition))
                 .largeUnicodeMapperModule(new LargeUnicodeMapperModule(includeLargeUnicodeMapper))
                 .parserModule(parserProbe.module())
+                .typeCatalogModule(new TypeCatalogModule(callingTestClass()))
                 .build();
     }
 
@@ -226,6 +237,7 @@ public final class ManagedDefinitionDatabase {
                 .codeCatalogModule(new CodeCatalogModule(false, codeDefinitions))
                 .largeUnicodeMapperModule(new LargeUnicodeMapperModule(false))
                 .parserModule(new WorkflowDefinitionParserProbe().module())
+                .typeCatalogModule(new TypeCatalogModule(callingTestClass()))
                 .build();
     }
 
@@ -253,7 +265,8 @@ public final class ManagedDefinitionDatabase {
                 CallbackCatalogModule.class,
                 PostgresInfrastructureModule.class,
                 BootObservationModule.class,
-                WorkflowDefinitionParserProbe.ParserModule.class
+                WorkflowDefinitionParserProbe.ParserModule.class,
+                TypeCatalogModule.class
             })
     public interface AppComponent extends VertiqueApplicationComponent {
 
@@ -273,6 +286,8 @@ public final class ManagedDefinitionDatabase {
             Builder largeUnicodeMapperModule(LargeUnicodeMapperModule module);
 
             Builder parserModule(WorkflowDefinitionParserProbe.ParserModule module);
+
+            Builder typeCatalogModule(TypeCatalogModule module);
 
             AppComponent build();
         }
@@ -301,6 +316,67 @@ public final class ManagedDefinitionDatabase {
         WorkflowDefinitionPropagationPoller definitionPropagationPoller();
 
         Pool pool();
+    }
+
+    /**
+     * The test class that is building the graph: the first caller outside the fixture classes. Taken on the
+     * calling thread because the graph resolves its bindings later, on other threads.
+     */
+    private static Class<?> callingTestClass() {
+        return StackWalker.getInstance(StackWalker.Option.RETAIN_CLASS_REFERENCE)
+                .walk(frames -> frames.map(StackWalker.StackFrame::getDeclaringClass)
+                        .map(Class::getNestHost)
+                        .filter(host -> host != ManagedDefinitionDatabase.class && host != DefinitionScenario.class)
+                        .findFirst()
+                        .orElse(ManagedDefinitionDatabase.class));
+    }
+
+    /**
+     * Lists the classes a service-loaded document in these tests may name: the shared order fulfillment fixture
+     * and every class nested in the test class that builds the graph (its contracts as contracts, the rest as
+     * types). The service resolves names through the catalog only, so a test document can name exactly these.
+     */
+    @Module
+    static class TypeCatalogModule {
+
+        private final Class<?> testClass;
+
+        TypeCatalogModule(Class<?> testClass) {
+            this.testClass = testClass;
+        }
+
+        @Provides
+        @IntoSet
+        WorkflowTypeCatalog typeCatalog() {
+            List<WorkflowTypeCatalogEntry> entries = new ArrayList<>();
+            for (Class<?> contract : List.of(
+                    OrderFulfillmentDocumentWorkflowV1.class,
+                    OrderFulfillmentDocumentWorkflowV2.class,
+                    OrderFulfillmentFanOutDocumentWorkflowV1.class)) {
+                entries.add(new WorkflowTypeCatalogEntry(Kind.CONTRACT, contract.getName(), contract));
+            }
+            for (Class<?> type : List.of(
+                    OrderDocState.class,
+                    OrderFanOutState.class,
+                    PlaceOrderDoc.class,
+                    PlaceFanOutOrder.class,
+                    InventoryReservedDoc.class,
+                    PaymentAuthorizedDoc.class,
+                    PaymentCapturedDoc.class,
+                    FraudScreenedDoc.class,
+                    ShipmentCreatedDoc.class)) {
+                entries.add(new WorkflowTypeCatalogEntry(Kind.TYPE, type.getName(), type));
+            }
+            for (Class<?> member : testClass.getNestMembers()) {
+                if (member == testClass || member.isAnonymousClass() || member.isSynthetic()) {
+                    continue;
+                }
+                boolean contract = member.isAnnotationPresent(WorkflowContract.class);
+                entries.add(
+                        new WorkflowTypeCatalogEntry(contract ? Kind.CONTRACT : Kind.TYPE, member.getName(), member));
+            }
+            return () -> entries;
+        }
     }
 
     @Module
