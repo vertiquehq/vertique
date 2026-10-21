@@ -37,7 +37,7 @@ import io.vertx.core.Future;
  * <p>Compensation (LIFO): if payment authorization fails, the engine voids the authorization (if
  * attempted) then releases the inventory reservation.
  */
-@WorkflowContract(definitionId = "order-fulfillment", definitionVersion = 1)
+@WorkflowContract
 public interface OrderFulfillmentWorkflow {
 
     /**
