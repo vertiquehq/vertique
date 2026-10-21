@@ -56,6 +56,7 @@ Enforces contract-level and per-method structural shape rules. Only acts on the 
 | Check | Scope | Level |
 |-------|-------|-------|
 | Annotated type must be an `interface` | Contract | ERROR |
+| An explicit `@WorkflowContract.value()` is neither blank nor longer than 255 code points | Contract | ERROR |
 | Exactly one `@WorkflowStart` method | Contract | ERROR |
 | Signal names unique across clean `@WorkflowSignal` methods | Contract | ERROR |
 | No `default` methods | Per-method | ERROR |
@@ -127,7 +128,7 @@ static WorkflowTypeCatalog workflowTypeCatalog() {
 }
 ```
 
-- **Names.** A contract entry is named by the non-empty `@WorkflowContract.value()`, else by the interface's binary name. A type entry is named by `@WorkflowType.value()`. An invalid contract (one that fails the shape checks above) is not listed.
+- **Names.** A contract entry is named by the non-empty `@WorkflowContract.value()`, else by the interface's binary name. `@WorkflowContract` has no other attribute: a contract that sets `definitionId` or `definitionVersion` fails compilation. A type entry is named by `@WorkflowType.value()`. An invalid contract (one that fails the shape checks above) is not listed.
 - **Order.** Entries are sorted by kind (contracts first) and then by name, so the generated source does not depend on the order the compiler visits the classes in.
 - **Package.** The module is generated in the package given by `-Avertique.codegen.package` when set and non-blank, else the longest common package prefix of all the listed classes, else `vertique.generated.workflow`. The package is resolved from all the classes before any is left out.
 - **Accessibility.** A class the module cannot name is left out of the catalog with a *mandatory* compiler warning that names the class, the module package and the `vertique.codegen.package` option; the build still compiles and the class is not mentioned in the generated source. A class is unreferenceable when it is not `public` (or is nested in a non-public type) and lives outside the module's package, when it is `private` nested, or when it is in the unnamed package. A left-out class stays usable in code definitions and in packaged documents; a document loaded through the definition service cannot name it and is refused with an unknown-name error. Make the class and its enclosing types public, point `vertique.codegen.package` at a package it is visible from, or list it in a hand-written catalog contributed with a `@Provides @IntoSet WorkflowTypeCatalog` method.
@@ -156,6 +157,7 @@ static WorkflowTypeCatalog workflowTypeCatalog() {
 | Violation | Level | Example message |
 |-----------|-------|----------------|
 | `@WorkflowContract` not on an interface | ERROR | `OrderWorkflow must be an interface` |
+| Blank or over-long `@WorkflowContract.value()` | ERROR | `The contract name of com.acme.OrderWorkflow is invalid: it is blank` (an over-long name is reported as `longer than 255 code points`, never echoed) |
 | Zero or more than one `@WorkflowStart` method | ERROR | `OrderWorkflow must declare exactly one @WorkflowStart method; found 0` |
 | Duplicate signal name across clean `@WorkflowSignal` methods | ERROR | `OrderWorkflow: duplicate @WorkflowSignal name "cancel"` |
 | `default` method on contract | ERROR | `OrderWorkflow.helper() is a default method — @WorkflowContract methods must be abstract` |

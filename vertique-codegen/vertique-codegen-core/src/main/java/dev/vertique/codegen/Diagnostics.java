@@ -870,6 +870,19 @@ public final class Diagnostics {
     }
 
     /**
+     * Returns the compile-time error message when the logical name of a {@code @WorkflowContract}
+     * interface is blank or longer than the allowed number of code points. The message never repeats the
+     * name, which may be arbitrarily long.
+     *
+     * @param contractFqn the fully-qualified contract interface name
+     * @param problem     the violated rule, such as {@code blank} or {@code longer than 255 code points}
+     * @return the formatted error message
+     */
+    public static String workflowContractNameInvalid(String contractFqn, String problem) {
+        return "The contract name of %s is invalid: it is %s".formatted(contractFqn, problem);
+    }
+
+    /**
      * Returns the error message when a workflow contract declares a {@code default} method. Mirrors
      * {@code WorkflowProxyValidator}'s default-method rejection.
      *

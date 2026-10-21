@@ -368,8 +368,6 @@ METHOD|dev.vertique.workflow.contract.BusinessKeyed|businessKey|public abstract|
 METHOD|dev.vertique.workflow.contract.IdempotencyKeyed|idempotencyKey|public abstract|[]|[]|java.lang.String|[]|false
 METHOD|dev.vertique.workflow.contract.SignalDedupKeyed|dedupKey|public abstract|[]|[]|java.lang.String|[]|false
 METHOD|dev.vertique.workflow.contract.SubjectReferenced|subjectRef|public abstract|[]|[]|dev.vertique.workflow.subject.WorkflowSubjectRef|[]|false
-METHOD|dev.vertique.workflow.contract.WorkflowContract|definitionId|public abstract|[]|[]|java.lang.String|[]|false
-METHOD|dev.vertique.workflow.contract.WorkflowContract|definitionVersion|public abstract|[]|[]|long|[]|false
 METHOD|dev.vertique.workflow.contract.WorkflowQuery|value|public abstract|[]|[]|java.lang.String|[]|false
 METHOD|dev.vertique.workflow.contract.WorkflowSignal|value|public abstract|[]|[]|java.lang.String|[]|false
 METHOD|dev.vertique.workflow.dedup.WorkflowDedupScopes|dispatchKey|public static|[]|[java.lang.String,java.lang.String,java.lang.String,java.lang.String,java.lang.String]|java.lang.String|[]|false

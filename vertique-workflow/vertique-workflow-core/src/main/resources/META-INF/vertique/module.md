@@ -103,7 +103,7 @@ A plan names its state type, its signal payload types and its decision payload t
 public record OrderPaid(String orderId) {}
 ```
 
-`@WorkflowType` takes a required `value()` that is the logical name: nonblank, at most 255 code points and free of ISO control characters. An invalid name fails registration with a `WorkflowDefinitionException` that names the class and never the raw value. `@WorkflowContract(value = "orders", ...)` names a contract the same way; an empty `value()` (the default) means the interface's binary name.
+`@WorkflowType` takes a required `value()` that is the logical name: nonblank, at most 255 code points and free of ISO control characters. An invalid name fails registration with a `WorkflowDefinitionException` that names the class and never the raw value. `@WorkflowContract("orders")` names a contract the same way; an empty `value()` (the default) means the interface's binary name. A contract name that is blank or longer than 255 code points fails compilation with an error that names the interface and never the value.
 
 - **Two namespaces.** Type names (state and payload classes) and contract names are separate: a contract and a state class may both be named `shared`.
 - **One class per name.** Within a namespace a name maps to one class. A second class under the same name fails registry startup with `WorkflowTypeNameConflictException`, which names the logical name and both binary class names. Every indexed class is also reachable by its binary name, so a logical name equal to the binary name of a different indexed class is the same conflict, whichever class is indexed first.
@@ -211,7 +211,7 @@ directly; the engine (`WorkflowEngine`) does so.
 Typed workflow clients are Java interfaces annotated with `@WorkflowContract`. The runtime proxy validates the interface once and routes methods to `WorkflowOperations`.
 
 ```java
-@WorkflowContract(definitionId = "order-fulfillment", definitionVersion = 1)
+@WorkflowContract
 public interface OrderFulfillmentWorkflow {
 
     @WorkflowStart
@@ -243,12 +243,12 @@ OrderFulfillmentWorkflow byId = factory.create(OrderFulfillmentWorkflow.class, "
 - **What creation checks.** Creation validates the contract interface's methods only: the annotation, the interface kind, one role annotation per method, one start method, unique signal names and the method shapes. It does not resolve a plan or compare payload types; a payload that does not fit the definition is reported when the client starts or signals.
 - **Generated and reflective clients.** Both build the start command through `WorkflowClientBinding.startCommand(...)`, so they send the same command. A generated proxy takes `(WorkflowOperations, WorkflowClientBinding)` and embeds no definition id or version.
 
-- **Many definitions per contract.** Any number of definition ids and versions may name one contract. The registry reads a definition's id, version, state type and contract from the definition, never from the `@WorkflowContract` annotation, and keeps no map from a contract to one definition. The registry no longer offers a lookup from a contract class to its definition; look a definition up with `resolvePinned(id, version)`, `registeredDefinition(id, version)`, `allRegistered()` or `definitionClass(definitionClass)`.
+- **Many definitions per contract.** Any number of definition ids and versions may name one contract. The registry reads a definition's id, version, state type and contract from the definition, and keeps no map from a contract to one definition. The registry no longer offers a lookup from a contract class to its definition; look a definition up with `resolvePinned(id, version)`, `registeredDefinition(id, version)`, `allRegistered()` or `definitionClass(definitionClass)`.
 - **One contract per definition id.** Every version of a definition id must name the same contract. Registering a version whose contract name differs from that of an earlier version of the same id fails with `WorkflowDefinitionException` naming `'<id>' v<version>` and both contract names; nothing is registered.
 - **Declared signals.** A definition that waits for a signal must declare it on its contract, as a `@WorkflowSignal` method of the contract interface or of an interface it extends. Registration fails with `WorkflowDefinitionException` naming the definition and the undeclared signals in sorted order; waits inside fork branches and waits guarded by a timeout count. Marker contracts are not exempt: an empty contract can only back a definition that waits for no signal. A contract may declare signals that some of its versions do not wait for, and it may grow: add the `@WorkflowSignal` method before registering a version that waits for the new signal.
 - **Signal sent to an older version.** A signal for an instance whose pinned version does not wait for it fails with `WorkflowSignalRejectedException` naming the instance, the signal and `'<id>' v<version>`, and changes nothing. A client of another contract than the instance's pinned contract is refused with `WorkflowDefinitionContractMismatchException`.
 
-The `definitionId` and `definitionVersion` attributes of `@WorkflowContract` are not read by clients. `WorkflowClientFactory.create(Contract.class)` no longer exists, and the annotation processor no longer generates Dagger providers of typed clients: obtain a client from the factory, for example in your own `@Provides` method.
+`@WorkflowContract` has the single attribute `value()` and names no definition: a contract that sets `definitionId` or `definitionVersion` no longer compiles, because definitions carry their own id and version. `WorkflowClientFactory.create(Contract.class)` no longer exists, and the annotation processor no longer generates Dagger providers of typed clients: obtain a client from the factory, for example in your own `@Provides` method.
 
 `@WorkflowContract.value()` gives the contract a logical name (see Logical Type Names); the name does not change the plan hash. Contract annotations are useful for type-safe application code. Document-defined workflows still use a contract class today; see `dev.vertique:vertique-workflow-definition` for the typed document model and its current limits.
 

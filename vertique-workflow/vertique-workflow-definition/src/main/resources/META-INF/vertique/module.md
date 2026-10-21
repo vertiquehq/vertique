@@ -154,7 +154,7 @@ The full fixture also demonstrates timers, compensation, fork, join, due dates, 
 | `initialStep` | yes | Step id where execution begins |
 | `steps` | yes | Non-empty list of step definitions |
 
-The `contract` class must carry `@WorkflowContract`. Its `definitionId` and `definitionVersion` attributes are not compared with the document, so any number of documents and versions may name one contract.
+The `contract` class must carry `@WorkflowContract`. A contract names no definition, so any number of documents and versions may name one contract.
 
 ### Step Shape
 
@@ -208,7 +208,7 @@ A well-formed definition is one that passes both parsing and semantic validation
 - Jackson YAML/JSON parsing is strict: unknown fields and invalid step types fail.
 - Required top-level fields and required step fields must be present.
 - Type and contract names resolve through the `WorkflowTypeNames` index only (types for state and payload names, contracts for the contract name). The index holds the classes of every contributed `WorkflowTypeCatalog` and of every registered definition, under their logical and binary names. Before validation the pipeline resolves the contract, the state type, the start payload type, then the signal and decision payload types in step order, and the first name the index does not hold fails the load with `WorkflowUnknownTypeNameException`, which names the document field, and repeats the name only when it consists of letters, digits, underscore, dot, dollar sign and hyphen and is at most 255 characters long. No class is loaded by a name the document supplies.
-- The contract class must be annotated with `@WorkflowContract`. The document's `definitionId` and `definitionVersion` are not compared with the annotation, so several documents and versions can share one contract. A document registers through the same registry rules as a Java definition, including the check that every signal it waits for is declared on its contract.
+- The contract class must be annotated with `@WorkflowContract`. A contract names no definition, so several documents and versions can share one contract. A document registers through the same registry rules as a Java definition, including the check that every signal it waits for is declared on its contract.
 - Contract names and type names are separate namespaces: a contract name given as `stateType`, or a type name given as `contract`, is unknown.
 - Named callbacks must resolve through the registered callback registries.
 - Decision expressions must parse through the expression profile.
@@ -410,7 +410,6 @@ Applications must also contribute at least one `WorkflowDefinitionSource` for bo
 ## Invariants & Gotchas
 
 - **Engine purity.** The runtime engine never parses YAML / JSON. Parsing, validation, and plan compilation happen in the control plane (bootstrap loaders and `WorkflowDefinitionService`). The engine only executes `WorkflowPlan` nodes + `WorkflowCallbackRegistry` callbacks.
-- **`CONTRACT_MISMATCH` is enforced at load time.** A document claiming `definitionVersion = 2` against a contract annotated `definitionVersion = 1` fails the validator with a clear violation, not silently at runtime.
 - **Service-loaded documents are catalog-only.** `WorkflowDefinitionService.load`, restoration from the store and propagation resolve names through the index only. A deployment where no catalog and no registered definition lists a class refuses a document that names it, even by its binary name, and loads nothing. Packaged documents are the trusted exception described above.
 - **Document plans are not no-code.** A document references Java classes (state type, contract type, payload types) and named callbacks from the application's callback module. A document without the corresponding Java types is rejected.
 - **Named conditions / mappers are looked up by id.** Document expression nodes resolve to callbacks registered in the application's `WorkflowDefinitionCallbacksModule`. Unknown ids fail at registration, not at first execution.

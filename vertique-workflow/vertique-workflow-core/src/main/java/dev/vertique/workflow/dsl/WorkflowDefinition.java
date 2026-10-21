@@ -56,15 +56,14 @@ public interface WorkflowDefinition<S, C> {
     /**
      * Returns the unique identifier for this workflow definition.
      *
-     * @return the definition id; must match the {@code definitionId} on the contract annotation
+     * @return the definition id
      */
     String definitionId();
 
     /**
      * Returns the version of this workflow definition.
      *
-     * @return the definition version; must match the {@code definitionVersion} on the contract
-     *     annotation
+     * @return the definition version
      */
     long definitionVersion();
 

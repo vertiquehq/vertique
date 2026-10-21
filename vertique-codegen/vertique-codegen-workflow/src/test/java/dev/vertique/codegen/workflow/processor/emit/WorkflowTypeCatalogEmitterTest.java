@@ -135,7 +135,8 @@ class WorkflowTypeCatalogEmitterTest {
     @DisplayName("a compilation with contracts and types emits a catalog module listing one entry for each")
     void emitsCatalogModuleWithContractAndTypeEntries() {
         JavaFileObject payload = startPayload("com.acme");
-        JavaFileObject namedContract = contract("com.acme", "OrderWorkflow", "@WorkflowContract(\"orders\")");
+        JavaFileObject namedContract =
+                contract("com.acme", "OrderWorkflow", "@WorkflowContract(" + '"' + "orders" + '"' + ")");
         JavaFileObject unnamedContract = contract("com.acme", "Refunds", "@WorkflowContract");
         JavaFileObject orderState = typeClass("com.acme.OrderState", "order", "public ");
         JavaFileObject paid = typeClass("com.acme.Paid", "order.paid", "public ");

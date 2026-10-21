@@ -15,12 +15,12 @@ import java.lang.annotation.Target;
  * {@code WorkflowClientFactory.create(Class)}.
  *
  * <p>The annotated interface declares methods for starting, signalling, querying, and optionally
- * cancelling a specific workflow definition. Methods must be annotated with
- * {@link WorkflowStart}, {@link WorkflowSignal}, or {@link WorkflowQuery}.
+ * cancelling workflow instances. Methods must be annotated with {@link WorkflowStart},
+ * {@link WorkflowSignal}, or {@link WorkflowQuery}.
  *
- * <p>A client is bound to a definition by the factory call that creates it, not by this annotation:
- * the {@code definitionId} and {@code definitionVersion} attributes are no longer read by
- * {@code WorkflowClientFactory}.
+ * <p>A contract is the caller API: it names no definition. Any number of definitions may implement
+ * one contract, and a client is bound to a definition by the factory call that creates it, either
+ * from a definition class or from the contract and a definition id.
  */
 @Target(ElementType.TYPE)
 @Retention(RetentionPolicy.RUNTIME)
@@ -32,25 +32,11 @@ public @interface WorkflowContract {
      *
      * <p>Names a contract independently of its package and class name. Contract names form their own
      * namespace, separate from {@link dev.vertique.workflow.types.WorkflowType} names; within it one
-     * name maps to one interface. The contract name is never part of the plan hash.
+     * name maps to one interface. The contract name is never part of the plan hash. A non-empty name
+     * must not be blank and must have at most 255 code points; the annotation processor rejects any
+     * other name at compile time.
      *
      * @return the logical name; empty means the interface's binary name
      */
     String value() default "";
-
-    /**
-     * The workflow definition id this contract was written for. Clients do not read it, and it may be
-     * omitted.
-     *
-     * @return the definition id, or empty when not set
-     */
-    String definitionId() default "";
-
-    /**
-     * The workflow definition version this contract was written for. Clients do not read it, and it
-     * may be omitted.
-     *
-     * @return the definition version, or {@code 0} when not set
-     */
-    long definitionVersion() default 0L;
 }
