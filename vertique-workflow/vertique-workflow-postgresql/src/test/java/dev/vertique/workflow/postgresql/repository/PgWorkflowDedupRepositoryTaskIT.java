@@ -418,8 +418,8 @@ public class PgWorkflowDedupRepositoryTaskIT {
         String expectedFingerprint = "definitionVersion=1";
 
         insertInstance(id)
-                .compose(v -> pool.withTransaction(
-                        tx -> dedupRepository.claimOrResolveStart(definitionId, idemKey, id, expectedFingerprint, tx)))
+                .compose(v -> pool.withTransaction(tx -> dedupRepository.claimOrResolveStart(
+                        "default", definitionId, idemKey, id, expectedFingerprint, tx)))
                 .compose(result -> {
                     assertTrue(result.didInsert(), "start claim must succeed");
                     assertEquals(

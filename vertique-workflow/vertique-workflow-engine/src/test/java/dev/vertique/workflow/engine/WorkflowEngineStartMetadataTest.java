@@ -129,7 +129,9 @@ class WorkflowEngineStartMetadataTest {
         when(registry.resolveCurrent(DEFINITION_ID)).thenReturn(rw);
 
         UUID winningId = UUID.randomUUID();
-        when(dedup.claimOrResolveStart(eq(DEFINITION_ID), any(), any(), any(), any()))
+        when(dedup.findStart(any(), eq(DEFINITION_ID), any(), any()))
+                .thenReturn(Future.succeededFuture(Optional.empty()));
+        when(dedup.claimOrResolveStart(any(), eq(DEFINITION_ID), any(), any(), any(), any()))
                 .thenAnswer(inv -> Future.succeededFuture(
                         new StartDedupResult(new WorkflowInstanceId(winningId), true, "definitionVersion=1")));
 
@@ -158,15 +160,7 @@ class WorkflowEngineStartMetadataTest {
 
     private static StartCommand startCommand() {
         return new StartCommand(
-                DEFINITION_ID,
-                Object.class.getName(),
-                Map.of(),
-                "idem-" + UUID.randomUUID(),
-                null,
-                null,
-                null,
-                null,
-                null);
+                DEFINITION_ID, "test-contract", Map.of(), "idem-" + UUID.randomUUID(), null, null, null, null, null);
     }
 
     @Test

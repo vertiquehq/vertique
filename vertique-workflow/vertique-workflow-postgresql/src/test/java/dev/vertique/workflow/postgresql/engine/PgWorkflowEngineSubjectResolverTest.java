@@ -283,7 +283,10 @@ class PgWorkflowEngineSubjectResolverTest {
      * @param id the instance id the dedup winner will return
      */
     private void stubDedup(WorkflowInstanceId id) {
+        when(dedupRepo.findStart(any(String.class), any(String.class), any(String.class), any(SqlClient.class)))
+                .thenReturn(Future.succeededFuture(Optional.empty()));
         when(dedupRepo.claimOrResolveStart(
+                        any(String.class),
                         any(String.class),
                         any(String.class),
                         any(WorkflowInstanceId.class),

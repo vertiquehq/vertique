@@ -272,7 +272,7 @@ public interface AppComponent {
 
 ### Instance Scopes
 
-`WorkflowEngine.doCreateInstance` starts every instance in the default scope (`WorkflowScopes.DEFAULT`, for both the start scope and the definition scope); no engine setting selects another scope yet. `MigrationExecutor` carries both scopes of the instance into the re-pinned snapshot, and resurrection keeps them, so a scope written by another writer stays with the instance. The scopes are information and a filter, not an isolation boundary.
+`WorkflowEngine.start` resolves a null `StartCommand.startScope` to the default scope (`WorkflowScopes.DEFAULT`) and `doCreateInstance` stamps that start scope and the scope of the resolved definition version on the new instance; the engine takes no scope source of its own. The order of a start is: look up the start dedup row of `(start scope, definition id, idempotency key)` (`WorkflowDedupRepository.findStart`), then resolve the definition, then compare the command contract with the definition contract, then claim the dedup row and create the instance. A replay that names a version or target scope other than the existing pin fails with `WorkflowIdempotencyConflictException`; the stored fingerprint stays `definitionVersion=N` and is not used for the comparison. `MigrationExecutor` carries both scopes of the instance into the re-pinned snapshot, and resurrection keeps them, so a scope written by another writer stays with the instance. The scopes are information and a filter, not an isolation boundary.
 
 Every lookup of an instance's plan (signals, tasks, timers, retries, branch and join recovery, queries and migration) resolves the instance's full pin: its definition scope, definition id and definition version. An instance pinned to a definition scope never runs the plan that another scope holds under the same id and version, and migration resolves its target version in the instance's definition scope. The lifecycle, the startup restoration and the propagation pass register, mark and remove a runtime under the scope of the stored row they apply.
 
@@ -593,9 +593,9 @@ parameterized over `<TX>` (typically `SqlClient`):
 
 | SPI | Responsibility |
 |---|---|
-| `WorkflowInstanceRepository<TX>` | Instance insert, optimistic update, migration update, and reads (by id without lock, with tx, with `FOR UPDATE`, by business key, filtered+paginated) |
+| `WorkflowInstanceRepository<TX>` | Instance insert, optimistic update, migration update, and reads (by id without lock, with tx, with `FOR UPDATE`, by start scope, definition id and business key, filtered+paginated) |
 | `WorkflowHistoryRepository<TX>` | History append, next-sequence generation, and two list variants (recent, all) |
-| `WorkflowDedupRepository<TX>` | Race-safe claim/resolve for start, signal (scoped and unscoped), task completion/reassignment, and service dispatch |
+| `WorkflowDedupRepository<TX>` | Start lookup and race-safe claim/resolve by start scope for start, race-safe claim/resolve for signal (scoped and unscoped), task completion/reassignment, and service dispatch |
 | `BranchTokenRepository<TX>` | Fork/join branch token CRUD, status queries, and recovery queries |
 | `JoinStateRepository<TX>` | Fork/join state insert, read variants, open-for-workflow list, and the optimistic `decide` CAS |
 | `WorkflowTransactionRunner<TX>` | Transaction boundary, optional isolation level, and the two-stage workflow exception mapping |

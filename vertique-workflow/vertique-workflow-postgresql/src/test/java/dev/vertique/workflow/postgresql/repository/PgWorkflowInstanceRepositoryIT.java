@@ -514,8 +514,8 @@ public class PgWorkflowInstanceRepositoryIT {
         WorkflowInstance inst = instanceWithBusinessKey(id, businessKey);
 
         pool.withTransaction(tx -> repository.insert(inst, tx))
-                .compose(v ->
-                        pool.withTransaction(tx -> repository.findByBusinessKey("order-fulfillment", businessKey, tx)))
+                .compose(v -> pool.withTransaction(
+                        tx -> repository.findByBusinessKey("default", "order-fulfillment", businessKey, tx)))
                 .onSuccess(found -> ctx.verify(() -> {
                     assertTrue(found.isPresent(), "findByBusinessKey must return the row");
                     assertEquals(id, found.get().id());
@@ -532,7 +532,8 @@ public class PgWorkflowInstanceRepositoryIT {
         WorkflowInstance inst = instance(id, WorkflowStatus.RUNNING);
 
         pool.withTransaction(tx -> repository.insert(inst, tx))
-                .compose(v -> pool.withTransaction(tx -> repository.findByBusinessKey("order-fulfillment", null, tx)))
+                .compose(v -> pool.withTransaction(
+                        tx -> repository.findByBusinessKey("default", "order-fulfillment", null, tx)))
                 .onSuccess(found -> ctx.verify(() -> {
                     assertFalse(found.isPresent(), "findByBusinessKey with null key must return empty");
                     ctx.completeNow();
@@ -543,7 +544,7 @@ public class PgWorkflowInstanceRepositoryIT {
     @Test
     @DisplayName("findByBusinessKey returns empty when the key does not match")
     void findByBusinessKeyReturnsEmptyForNonExistentKey(VertxTestContext ctx) {
-        pool.withTransaction(tx -> repository.findByBusinessKey("order-fulfillment", "no-such-key", tx))
+        pool.withTransaction(tx -> repository.findByBusinessKey("default", "order-fulfillment", "no-such-key", tx))
                 .onSuccess(found -> ctx.verify(() -> {
                     assertFalse(found.isPresent(), "findByBusinessKey must return empty for a non-existent key");
                     ctx.completeNow();

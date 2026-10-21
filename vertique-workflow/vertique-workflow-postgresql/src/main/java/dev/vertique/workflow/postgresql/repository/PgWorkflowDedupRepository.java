@@ -29,8 +29,9 @@ import java.util.UUID;
  * and covers two deduplication concerns; every statement here addresses the default scope:
  *
  * <ul>
- *   <li>{@code kind='start'}, {@code dedup_namespace=definitionId}, {@code key=idempotencyKey} — prevents
- *       duplicate workflow starts for the same idempotency key within a definition.
+ *   <li>{@code kind='start'}, {@code scope_key=startScope}, {@code dedup_namespace=definitionId},
+ *       {@code key=idempotencyKey} — prevents duplicate workflow starts for the same idempotency key
+ *       within a start scope and definition.
  *   <li>{@code kind='signal'}, {@code dedup_namespace=workflowInstanceId::text}, {@code key=signalDedupKey}
  *       — prevents the same signal from being applied twice to the same instance.
  * </ul>
@@ -51,7 +52,7 @@ public final class PgWorkflowDedupRepository extends PgSqlRepository implements 
 
     // --- Dedup kind constants ---
 
-    /** Kind value for workflow start dedup rows: {@code (kind='start', dedup_namespace=definitionId, key=idempotencyKey)}. */
+    /** Kind value for workflow start dedup rows: {@code (kind='start', scope_key=startScope, dedup_namespace=definitionId, key=idempotencyKey)}. */
     private static final String DEDUP_KIND_START = "start";
 
     /** Kind value for signal dedup rows: {@code (kind='signal', dedup_namespace=instanceId::text, key=signalDedupKey)}. */
@@ -83,9 +84,12 @@ public final class PgWorkflowDedupRepository extends PgSqlRepository implements 
      * iff this transaction inserted (won the race); {@code false} iff a prior committed transaction
      * already held the row.
      *
-     * <p>Parameters: $1=dedup_namespace (definitionId), $2=key (idempotencyKey), $3=workflow_id, $4=fingerprint.
+     * <p>Parameters: $1=scope_key (start scope), $2=dedup_namespace (definitionId), $3=key (idempotencyKey),
+     * $4=workflow_id, $5=fingerprint.
      */
     private final String sqlClaimOrResolveStart;
+
+    private final String sqlFindStart;
 
     private final String sqlFindSignal;
 
@@ -149,10 +153,13 @@ public final class PgWorkflowDedupRepository extends PgSqlRepository implements 
 
         this.sqlClaimOrResolveStart =
                 "INSERT INTO " + dedup + " (kind, scope_key, dedup_namespace, key, workflow_id, fingerprint)"
-                        + " VALUES ('" + DEDUP_KIND_START + "', '" + WorkflowScopes.DEFAULT + "', $1, $2, $3, $4)"
+                        + " VALUES ('" + DEDUP_KIND_START + "', $1, $2, $3, $4, $5)"
                         + " ON CONFLICT (kind, scope_key, dedup_namespace, key) DO UPDATE"
                         + " SET workflow_id = workflow_dedup.workflow_id"
                         + " RETURNING workflow_id, (xmax = 0) AS inserted, fingerprint AS existing_fingerprint";
+
+        this.sqlFindStart = "SELECT workflow_id FROM " + dedup + " WHERE kind = '" + DEDUP_KIND_START
+                + "' AND scope_key = $1 AND dedup_namespace = $2 AND key = $3";
 
         this.sqlFindSignal = "SELECT workflow_id FROM " + dedup + " WHERE kind = '" + DEDUP_KIND_SIGNAL
                 + "' AND scope_key = '" + WorkflowScopes.DEFAULT + "' AND dedup_namespace = $1 AND key = $2";
@@ -198,7 +205,7 @@ public final class PgWorkflowDedupRepository extends PgSqlRepository implements 
      *
      * <pre>{@code
      * INSERT INTO workflow_dedup (kind, scope_key, dedup_namespace, key, workflow_id, fingerprint)
-     * VALUES ('start', $definitionId, $idempotencyKey, $proposedNewId, $fingerprint)
+     * VALUES ('start', $scopeKey, $definitionId, $idempotencyKey, $proposedNewId, $fingerprint)
      * ON CONFLICT (kind, scope_key, dedup_namespace, key) DO UPDATE
      *   SET workflow_id = workflow_dedup.workflow_id
      * RETURNING workflow_id, (xmax = 0) AS inserted, fingerprint AS existing_fingerprint;
@@ -218,6 +225,7 @@ public final class PgWorkflowDedupRepository extends PgSqlRepository implements 
      * version-pinning was introduced) are treated as "no version recorded" and never trigger the
      * conflict path.
      *
+     * @param scopeKey       the start scope of the start
      * @param definitionId   the workflow definition id; used as the dedup namespace
      * @param idempotencyKey the caller-supplied idempotency key
      * @param proposedNewId  the workflow instance id this caller proposes to use if it wins
@@ -227,13 +235,14 @@ public final class PgWorkflowDedupRepository extends PgSqlRepository implements 
      */
     @Override
     public Future<StartDedupResult> claimOrResolveStart(
+            String scopeKey,
             String definitionId,
             String idempotencyKey,
             WorkflowInstanceId proposedNewId,
             String fingerprint,
             SqlClient tx) {
         return tx.preparedQuery(sqlClaimOrResolveStart)
-                .execute(Tuple.of(definitionId, idempotencyKey, proposedNewId.value(), fingerprint))
+                .execute(Tuple.of(scopeKey, definitionId, idempotencyKey, proposedNewId.value(), fingerprint))
                 .map(rs -> {
                     var row = rs.iterator().next();
                     UUID winningId = row.getUUID("workflow_id");
@@ -242,6 +251,30 @@ public final class PgWorkflowDedupRepository extends PgSqlRepository implements 
                     return new StartDedupResult(new WorkflowInstanceId(winningId), inserted, existingFp);
                 })
                 .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_dedup claimOrResolveStart")));
+    }
+
+    /**
+     * Reads the start dedup row of a start scope, definition id and idempotency key without writing.
+     *
+     * @param scopeKey       the start scope of the start
+     * @param definitionId   the workflow definition id; used as the dedup namespace
+     * @param idempotencyKey the caller-supplied idempotency key
+     * @param tx             the active transaction to use
+     * @return a {@link Future} containing the id of the instance the committed row names, or
+     *         {@link Optional#empty()} when no row is visible
+     */
+    @Override
+    public Future<Optional<WorkflowInstanceId>> findStart(
+            String scopeKey, String definitionId, String idempotencyKey, SqlClient tx) {
+        return tx.preparedQuery(sqlFindStart)
+                .execute(Tuple.of(scopeKey, definitionId, idempotencyKey))
+                .map(rs -> {
+                    var it = rs.iterator();
+                    return it.hasNext()
+                            ? Optional.of(new WorkflowInstanceId(it.next().getUUID("workflow_id")))
+                            : Optional.<WorkflowInstanceId>empty();
+                })
+                .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_dedup findStart")));
     }
 
     // --- Signal dedup ---

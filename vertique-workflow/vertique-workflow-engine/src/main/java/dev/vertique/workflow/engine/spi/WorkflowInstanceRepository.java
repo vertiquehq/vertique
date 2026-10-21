@@ -98,15 +98,16 @@ public interface WorkflowInstanceRepository<TX> {
     Future<Optional<WorkflowInstance>> findByIdForUpdate(WorkflowInstanceId id, TX tx);
 
     /**
-     * Loads a workflow instance by definition id and business key within the given transaction.
-     * Returns empty immediately when {@code bk} is {@code null}.
+     * Loads a workflow instance by start scope, definition id and business key within the given
+     * transaction. Returns empty immediately when {@code bk} is {@code null}.
      *
+     * @param scopeKey the start scope the instance was created in
      * @param defId the definition id scope for the business key
      * @param bk    the business key value to look up; may be {@code null}
      * @param tx    the active transaction to use
      * @return a {@link Future} containing the instance if found, or {@link Optional#empty()}
      */
-    Future<Optional<WorkflowInstance>> findByBusinessKey(String defId, String bk, TX tx);
+    Future<Optional<WorkflowInstance>> findByBusinessKey(String scopeKey, String defId, String bk, TX tx);
 
     /**
      * Returns a keyset-paginated, filtered list of workflow instances. Executes read-only (no row

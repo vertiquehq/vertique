@@ -94,6 +94,7 @@ class RepositorySpiContractTest {
                 "claimOrResolveStart",
                 String.class,
                 String.class,
+                String.class,
                 dev.vertique.workflow.ops.WorkflowInstanceId.class,
                 String.class,
                 io.vertx.sqlclient.SqlClient.class);

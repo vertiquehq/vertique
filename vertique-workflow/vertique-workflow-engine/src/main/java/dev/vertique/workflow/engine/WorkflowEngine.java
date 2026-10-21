@@ -56,6 +56,7 @@ import dev.vertique.workflow.tasks.TaskRecord;
 import dev.vertique.workflow.tasks.TaskStore;
 import dev.vertique.workflow.timer.TimerRecord;
 import dev.vertique.workflow.timer.TimerStore;
+import dev.vertique.workflow.types.EchoedNames;
 import dev.vertique.workflow.types.WorkflowTypeNames;
 import io.vertx.core.Future;
 import io.vertx.core.json.Json;
@@ -652,14 +653,14 @@ final class WorkflowEngine implements WorkflowEngineHandle {
     }
 
     /**
-     * The default-scope key of an explicit start version. A start runs in the default scope; an id or version that
-     * no key can hold names no registered version.
+     * The key of an explicit start version in a scope. An id, scope or version that no key can hold names no
+     * registered version.
      */
-    private static DefinitionKey requestedKey(String definitionId, long version) {
+    private static DefinitionKey requestedKey(String scopeKey, String definitionId, long version) {
         try {
-            return new DefinitionKey(WorkflowScopes.DEFAULT, definitionId, version);
+            return new DefinitionKey(scopeKey, definitionId, version);
         } catch (IllegalArgumentException e) {
-            throw new WorkflowVersionPinUnavailableException(definitionId, version, null);
+            throw new WorkflowVersionPinUnavailableException(scopeKey, definitionId, version, null);
         }
     }
 
@@ -684,10 +685,11 @@ final class WorkflowEngine implements WorkflowEngineHandle {
     /**
      * {@inheritDoc}
      *
-     * <p>Atomically claims or resolves the start dedup slot. If a prior caller already committed a
-     * matching row, returns the winning instance id without creating a new instance. Otherwise,
-     * coerces the payload, derives the initial state, persists the instance and history, and drives
-     * initial transitions.
+     * <p>Looks for a start dedup row of the start scope, the definition id and the idempotency key first; a
+     * replay returns the existing instance before any version is resolved. A first start resolves the
+     * definition, compares the command's contract with the resolved definition's contract, atomically claims
+     * the start dedup slot and, when it wins, coerces the payload, derives the initial state, persists the
+     * instance and history, and drives initial transitions. A null start scope is the default scope.
      *
      * @param cmd the start command; must not be null
      * @param tx the active SQL transaction; must not be null
@@ -700,19 +702,63 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             return invalidClient;
         }
 
+        String startScope = cmd.startScope() == null ? WorkflowScopes.DEFAULT : cmd.startScope();
+        return dedup.findStart(startScope, cmd.definitionId(), cmd.idempotencyKey(), tx)
+                .compose(existing -> existing.isPresent()
+                        ? replayedStart(cmd, existing.get(), tx)
+                        : firstStart(cmd, startScope, tx));
+    }
+
+    /**
+     * Answers a start whose dedup row already exists. A start that names no version returns the existing
+     * instance. A start that names a version, and possibly a target scope, must name the definition the
+     * existing instance is pinned to; any other pin fails as an idempotency conflict. A replay never changes
+     * a pin.
+     */
+    private Future<WorkflowInstanceId> replayedStart(StartCommand cmd, WorkflowInstanceId existing, SqlClient tx) {
+        if (cmd.requestedDefinitionVersion() == null) {
+            return Future.succeededFuture(existing);
+        }
+        return instances.findById(existing, tx).compose(found -> {
+            if (found.isEmpty()) {
+                return Future.failedFuture(new WorkflowInstanceNotFoundException(existing));
+            }
+            WorkflowInstance pinned = found.get();
+            long requestedVersion = cmd.requestedDefinitionVersion();
+            String requestedScope = cmd.requestedTargetScope();
+            boolean sameVersion = pinned.definitionVersion() == requestedVersion;
+            boolean sameScope = requestedScope == null || requestedScope.equals(pinned.definitionScopeKey());
+            if (sameVersion && sameScope) {
+                return Future.succeededFuture(existing);
+            }
+            // The fingerprints keep the stored "definitionVersion=N" format; the scope is named only when it differs.
+            return Future.failedFuture(new WorkflowIdempotencyConflictException(
+                    "start",
+                    cmd.idempotencyKey(),
+                    pinFingerprint(sameScope ? null : pinned.definitionScopeKey(), pinned.definitionVersion()),
+                    pinFingerprint(sameScope ? null : requestedScope, requestedVersion)));
+        });
+    }
+
+    private static String pinFingerprint(@Nullable String scopeKey, long version) {
+        return scopeKey == null
+                ? "definitionVersion=" + version
+                : "definitionVersion=" + version + ",definitionScope=" + scopeKey;
+    }
+
+    /** Resolves the definition for a start with no dedup row, claims the slot and creates the instance. */
+    private Future<WorkflowInstanceId> firstStart(StartCommand cmd, String startScope, SqlClient tx) {
         RuntimeWorkflow rw;
         try {
-            if (cmd.requestedDefinitionVersion() != null) {
-                // Explicit version pin (FR-WF-DEF-069): resolve the requested version exactly.
-                DefinitionKey requested = requestedKey(cmd.definitionId(), cmd.requestedDefinitionVersion());
-                rw = registry.resolve(requested);
-                // A deprecated version admits no new work; refuse before any dedup claim or write.
-                if (registry.isDeprecated(requested)) {
-                    return Future.failedFuture(deprecatedRefusal(requested));
-                }
-            } else {
-                // Default: resolve the current (highest registered) version.
-                rw = registry.resolveCurrent(cmd.definitionId());
+            rw = resolveForStart(cmd, startScope);
+            DefinitionKey resolved = new DefinitionKey(
+                    rw.definitionScopeKey(), rw.plan().definitionId(), rw.plan().definitionVersion());
+            // A deprecated version admits no new work; refuse before any dedup claim or write.
+            if (cmd.requestedDefinitionVersion() != null && registry.isDeprecated(resolved)) {
+                return Future.failedFuture(deprecatedRefusal(resolved));
+            }
+            if (!cmd.contractName().equals(rw.contractName())) {
+                return Future.failedFuture(startContractRefusal(cmd, rw, resolved));
             }
         } catch (Exception e) {
             return Future.failedFuture(e);
@@ -724,27 +770,49 @@ final class WorkflowEngine implements WorkflowEngineHandle {
         UUID newId = UUID.randomUUID();
         WorkflowInstanceId proposedId = new WorkflowInstanceId(newId);
 
-        return dedup.claimOrResolveStart(rw.plan().definitionId(), cmd.idempotencyKey(), proposedId, fingerprint, tx)
+        return dedup.claimOrResolveStart(
+                        startScope, rw.plan().definitionId(), cmd.idempotencyKey(), proposedId, fingerprint, tx)
                 .compose((StartDedupResult result) -> {
                     if (!result.didInsert()) {
-                        // Loser: an existing dedup row was found. Apply idempotency semantics.
-                        if (cmd.requestedDefinitionVersion() != null) {
-                            // Strict mode: the caller pinned an explicit version. If the stored
-                            // fingerprint differs from the incoming one, reject as a conflict
-                            // (FR-WF-DEF-070 / AC #14). A null existing fingerprint (legacy row)
-                            // is treated as "no version recorded" — lenient, no conflict.
-                            String existingFp = result.existingFingerprint();
-                            if (existingFp != null && !existingFp.equals(fingerprint)) {
-                                return Future.failedFuture(new WorkflowIdempotencyConflictException(
-                                        "start", cmd.idempotencyKey(), existingFp, fingerprint));
-                            }
-                        }
-                        // Lenient: no requested version, or fingerprints match — return existing.
-                        return Future.succeededFuture(result.workflowId());
+                        // Loser: a concurrent start claimed the slot first. Apply the replay rules to its instance.
+                        return replayedStart(cmd, result.workflowId(), tx);
                     }
                     // Winner: proceed with instance creation.
-                    return doCreateInstance(cmd, rw, proposedId, tx);
+                    return doCreateInstance(cmd, startScope, rw, proposedId, tx);
                 });
+    }
+
+    /**
+     * Resolves the definition version a first start runs. An explicit version in a named scope resolves exactly
+     * that key, and only the start scope and the default scope can be named. An explicit version without a scope
+     * resolves from the start scope when it holds a version of the id, and from the default scope otherwise. A
+     * start without a version runs the current version of the default scope.
+     */
+    private RuntimeWorkflow resolveForStart(StartCommand cmd, String startScope) {
+        Long version = cmd.requestedDefinitionVersion();
+        if (version == null) {
+            return registry.resolveCurrent(cmd.definitionId());
+        }
+        String targetScope = cmd.requestedTargetScope();
+        if (targetScope != null) {
+            if (!targetScope.equals(startScope) && !targetScope.equals(WorkflowScopes.DEFAULT)) {
+                throw new WorkflowDefinitionMissingException(cmd.definitionId(), targetScope);
+            }
+            return registry.resolve(requestedKey(targetScope, cmd.definitionId(), version));
+        }
+        String owner =
+                registry.contractOf(startScope, cmd.definitionId()).isPresent() ? startScope : WorkflowScopes.DEFAULT;
+        return registry.resolve(requestedKey(owner, cmd.definitionId(), version));
+    }
+
+    /** The refusal for a start through a client of another contract than the resolved definition's. */
+    private static WorkflowDefinitionContractMismatchException startContractRefusal(
+            StartCommand cmd, RuntimeWorkflow rw, DefinitionKey resolved) {
+        return new WorkflowDefinitionContractMismatchException(
+                resolved,
+                "Definition '" + resolved.definitionId() + "' v" + resolved.definitionVersion()
+                        + " implements contract '" + rw.contractName() + "'; a client of contract '"
+                        + EchoedNames.bounded(cmd.contractName()) + "' cannot start it");
     }
 
     /**
@@ -767,13 +835,14 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      * transitions. Called only by the dedup winner in {@link #start(StartCommand, SqlClient)}.
      *
      * @param cmd the start command
+     * @param startScope the resolved start scope stamped on the instance
      * @param rw the resolved runtime workflow
      * @param id the instance id to use
      * @param tx the active transaction
      * @return a {@link Future} resolving to the new instance id after transitions complete
      */
     private Future<WorkflowInstanceId> doCreateInstance(
-            StartCommand cmd, RuntimeWorkflow rw, WorkflowInstanceId id, SqlClient tx) {
+            StartCommand cmd, String startScope, RuntimeWorkflow rw, WorkflowInstanceId id, SqlClient tx) {
         // Validate and coerce the payload to the declared start payload type.
         Object coercedPayload;
         try {
@@ -833,7 +902,9 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                 null,
                 now,
                 now,
-                instanceMetadata);
+                instanceMetadata,
+                startScope,
+                rw.definitionScopeKey());
 
         return instances
                 .insert(fresh, tx)

@@ -168,7 +168,8 @@ public final class PgWorkflowInstanceRepository extends PgSqlRepository
                 + " WHERE definition_id = $1 AND definition_version = $2"
                 + " AND status IN ('RUNNING','WAITING','COMPENSATING')";
 
-        this.sqlFindByBusinessKey = sqlSelectAllColumns + " WHERE definition_id = $1 AND business_key = $2";
+        this.sqlFindByBusinessKey =
+                sqlSelectAllColumns + " WHERE scope_key = $1 AND definition_id = $2 AND business_key = $3";
 
         this.sqlUpdateOptimistic = "UPDATE " + instances
                 + " SET version = $2, status = $3, current_step_id = $4,"
@@ -468,24 +469,27 @@ public final class PgWorkflowInstanceRepository extends PgSqlRepository
     }
 
     /**
-     * Loads a workflow instance by definition id and business key within the given transaction.
+     * Loads a workflow instance by start scope, definition id and business key within the given
+     * transaction.
      *
      * <p>The business key uniqueness is enforced by a partial unique index on
-     * {@code (definition_id, business_key) WHERE business_key IS NOT NULL}. This method returns
-     * empty immediately when {@code bk} is {@code null}.
+     * {@code (scope_key, definition_id, business_key) WHERE business_key IS NOT NULL}. This method
+     * returns empty immediately when {@code bk} is {@code null}.
      *
+     * @param scopeKey the start scope the instance was created in
      * @param defId the definition id scope for the business key
      * @param bk    the business key value to look up; may be {@code null}
      * @param tx    the active transaction to use
      * @return a {@link Future} containing the instance if found, or {@link Optional#empty()}
      */
     @Override
-    public Future<Optional<WorkflowInstance>> findByBusinessKey(String defId, String bk, SqlClient tx) {
+    public Future<Optional<WorkflowInstance>> findByBusinessKey(
+            String scopeKey, String defId, String bk, SqlClient tx) {
         if (bk == null) {
             return Future.succeededFuture(Optional.empty());
         }
         return tx.preparedQuery(sqlFindByBusinessKey)
-                .execute(Tuple.of(defId, bk))
+                .execute(Tuple.of(scopeKey, defId, bk))
                 .<Optional<WorkflowInstance>>map(rs -> {
                     var it = rs.iterator();
                     return it.hasNext()

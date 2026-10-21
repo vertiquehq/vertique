@@ -27,10 +27,23 @@ public interface WorkflowDedupRepository<TX> {
     // --- Start dedup ---
 
     /**
-     * Atomically claims a start dedup slot or resolves an existing one, recording the definition
-     * version fingerprint for idempotency-conflict detection.
+     * Reads the start dedup row of a start scope, definition id and idempotency key without writing.
      *
-     * @param definitionId   the workflow definition id; used as the dedup scope
+     * @param scopeKey       the start scope of the start
+     * @param definitionId   the workflow definition id; used as the dedup namespace
+     * @param idempotencyKey the caller-supplied idempotency key
+     * @param tx             the active transaction to use
+     * @return a {@link Future} containing the id of the instance the committed row names, or
+     *         {@link Optional#empty()} when no row is visible
+     */
+    Future<Optional<WorkflowInstanceId>> findStart(String scopeKey, String definitionId, String idempotencyKey, TX tx);
+
+    /**
+     * Atomically claims a start dedup slot or resolves an existing one, recording the definition
+     * version fingerprint.
+     *
+     * @param scopeKey       the start scope of the start
+     * @param definitionId   the workflow definition id; used as the dedup namespace
      * @param idempotencyKey the caller-supplied idempotency key
      * @param proposedNewId  the workflow instance id this caller proposes to use if it wins
      * @param fingerprint    the version fingerprint to record, e.g. {@code "definitionVersion=1"}
@@ -38,7 +51,12 @@ public interface WorkflowDedupRepository<TX> {
      * @return a {@link Future} containing the result; {@code didInsert=true} when this caller won
      */
     Future<StartDedupResult> claimOrResolveStart(
-            String definitionId, String idempotencyKey, WorkflowInstanceId proposedNewId, String fingerprint, TX tx);
+            String scopeKey,
+            String definitionId,
+            String idempotencyKey,
+            WorkflowInstanceId proposedNewId,
+            String fingerprint,
+            TX tx);
 
     // --- Signal dedup ---
 

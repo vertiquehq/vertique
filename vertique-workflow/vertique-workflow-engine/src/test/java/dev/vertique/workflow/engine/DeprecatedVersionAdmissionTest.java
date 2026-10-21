@@ -222,7 +222,10 @@ class DeprecatedVersionAdmissionTest {
                 .thenReturn(Future.succeededFuture(Optional.of(pinnedToDeprecated)));
         when(instances.findById(onVersion1.id(), tx)).thenReturn(Future.succeededFuture(Optional.of(onVersion1)));
 
-        when(dedup.claimOrResolveStart(eq(DEFINITION_ID), any(), any(), any(), any()))
+        when(dedup.findStart(any(), eq(DEFINITION_ID), any(), any()))
+                .thenReturn(Future.succeededFuture(Optional.empty()));
+
+        when(dedup.claimOrResolveStart(any(), eq(DEFINITION_ID), any(), any(), any(), any()))
                 .thenAnswer(invocation -> Future.succeededFuture(new StartDedupResult(
                         new WorkflowInstanceId(UUID.randomUUID()), true, "definitionVersion=unused")));
         when(dedup.claimOrResolveSignal(any(), any(), eq(tx))).thenReturn(Future.succeededFuture(true));
@@ -292,25 +295,9 @@ class DeprecatedVersionAdmissionTest {
         WorkflowInstance onVersion1 = harness.onVersion1();
 
         StartCommand explicitStartOfDeprecated = new StartCommand(
-                DEFINITION_ID,
-                Object.class.getName(),
-                Map.of(),
-                "start-" + UUID.randomUUID(),
-                null,
-                null,
-                2L,
-                null,
-                null);
+                DEFINITION_ID, "test-contract", Map.of(), "start-" + UUID.randomUUID(), null, null, 2L, null, null);
         StartCommand startWithoutVersion = new StartCommand(
-                DEFINITION_ID,
-                Object.class.getName(),
-                Map.of(),
-                "start-" + UUID.randomUUID(),
-                null,
-                null,
-                null,
-                null,
-                null);
+                DEFINITION_ID, "test-contract", Map.of(), "start-" + UUID.randomUUID(), null, null, null, null, null);
 
         runOnDuplicated(vertx, v -> {
             // When the deprecated version is started explicitly
@@ -327,7 +314,7 @@ class DeprecatedVersionAdmissionTest {
                                     assertThat(failure.getMessage()).contains(DEFINITION_ID);
                                 });
                         verify(instances, never()).insert(any(), any());
-                        verify(dedup, never()).claimOrResolveStart(any(), any(), any(), any(), any());
+                        verify(dedup, never()).claimOrResolveStart(any(), any(), any(), any(), any(), any());
                         verify(history, never()).append(any(), any());
 
                         // When another instance is migrated onto the deprecated version
@@ -397,15 +384,7 @@ class DeprecatedVersionAdmissionTest {
         Harness harness = harness();
         WorkflowEngineHandle engine = harness.engine();
         StartCommand explicitStartOfVersion1 = new StartCommand(
-                DEFINITION_ID,
-                Object.class.getName(),
-                Map.of(),
-                "start-" + UUID.randomUUID(),
-                null,
-                null,
-                1L,
-                null,
-                null);
+                DEFINITION_ID, "test-contract", Map.of(), "start-" + UUID.randomUUID(), null, null, 1L, null, null);
 
         runOnDuplicated(vertx, v -> {
             // When version 1 is started explicitly
@@ -415,7 +394,7 @@ class DeprecatedVersionAdmissionTest {
                         assertThat(startFailure)
                                 .as("an explicit start of a version that is not deprecated must succeed")
                                 .isNull();
-                        verify(harness.dedup(), times(1)).claimOrResolveStart(any(), any(), any(), any(), any());
+                        verify(harness.dedup(), times(1)).claimOrResolveStart(any(), any(), any(), any(), any(), any());
                         ArgumentCaptor<WorkflowInstance> inserted = ArgumentCaptor.forClass(WorkflowInstance.class);
                         verify(harness.instances()).insert(inserted.capture(), any());
                         assertThat(inserted.getValue().definitionVersion()).isEqualTo(1);

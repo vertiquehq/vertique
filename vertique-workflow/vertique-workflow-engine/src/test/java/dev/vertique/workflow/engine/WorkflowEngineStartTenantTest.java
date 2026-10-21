@@ -64,7 +64,8 @@ import org.mockito.ArgumentCaptor;
  *
  * <p>The engine is assembled through its package-private constructor over mocked repositories,
  * exactly as {@link WorkflowEngineFactory#create} does. The engine takes no scope source of its
- * own, so an instance it starts is in the default scope whatever the ambient context holds.
+ * own: an instance it starts is in the start scope of its command, and in the default scope when the command
+ * names none, whatever the ambient context holds.
  */
 @ExtendWith(VertxExtension.class)
 @Timeout(value = 10, unit = TimeUnit.SECONDS)
@@ -74,6 +75,7 @@ class WorkflowEngineStartTenantTest {
     private static final Clock FIXED_CLOCK = Clock.fixed(FIXED_NOW, ZoneOffset.UTC);
     private static final String DEFINITION_ID = "wf-start-scope-test";
     private static final String INITIAL_STEP_ID = "complete";
+    private static final String CONTRACT_NAME = "test-contract";
     private static final String FINGERPRINT = "definitionVersion=1";
 
     /** The assembled engine plus the mocked collaborators the scenarios assert on. */
@@ -94,7 +96,7 @@ class WorkflowEngineStartTenantTest {
                 null);
         WorkflowCallbackRegistry callbacks = mock();
         return RuntimeWorkflow.of(
-                plan, "test-contract", Object.class, Object.class, payload -> Map.of(), Map.of(), callbacks);
+                plan, CONTRACT_NAME, Object.class, Object.class, payload -> Map.of(), Map.of(), callbacks);
     }
 
     /**
@@ -113,7 +115,9 @@ class WorkflowEngineStartTenantTest {
         TaskStore<SqlClient> taskStore = mock();
 
         when(registry.resolveCurrent(DEFINITION_ID)).thenReturn(minimalRuntimeWorkflow());
-        when(dedup.claimOrResolveStart(eq(DEFINITION_ID), any(), any(), any(), any()))
+        when(dedup.findStart(any(), eq(DEFINITION_ID), any(), any()))
+                .thenReturn(Future.succeededFuture(Optional.empty()));
+        when(dedup.claimOrResolveStart(any(), eq(DEFINITION_ID), any(), any(), any(), any()))
                 .thenReturn(Future.succeededFuture(dedupOutcome));
         when(instances.insert(any(), any())).thenReturn(Future.succeededFuture());
         when(instances.updateOptimistic(any(), anyLong(), any())).thenReturn(Future.succeededFuture(1));
@@ -177,16 +181,16 @@ class WorkflowEngineStartTenantTest {
         return new StartDedupResult(new WorkflowInstanceId(UUID.randomUUID()), true, FINGERPRINT);
     }
 
-    private static StartCommand startCommand() {
+    private static StartCommand startCommand(String startScope) {
         return new StartCommand(
                 DEFINITION_ID,
-                Object.class.getName(),
+                CONTRACT_NAME,
                 Map.of(),
                 "idem-" + UUID.randomUUID(),
                 null,
                 null,
                 null,
-                null,
+                startScope,
                 null);
     }
 
@@ -195,14 +199,17 @@ class WorkflowEngineStartTenantTest {
      * context first (none when {@code null}), and blocks until the start future settles.
      */
     private static AsyncResult<WorkflowInstanceId> start(
-            Vertx vertx, Rig rig, DefaultContextHolder holder, String ambientTenant) throws Exception {
+            Vertx vertx, Rig rig, DefaultContextHolder holder, String ambientTenant, String startScope)
+            throws Exception {
         CompletableFuture<AsyncResult<WorkflowInstanceId>> settled = new CompletableFuture<>();
         ContextInternal duplicated = ((ContextInternal) vertx.getOrCreateContext()).duplicate();
         duplicated.runOnContext(v -> {
             if (ambientTenant != null) {
                 holder.bind(TenantCtx.class, new TenantCtx(ambientTenant));
             }
-            rig.engine().start(startCommand(), ActiveTransactionClient.create()).onComplete(settled::complete);
+            rig.engine()
+                    .start(startCommand(startScope), ActiveTransactionClient.create())
+                    .onComplete(settled::complete);
         });
         return settled.get(5, TimeUnit.SECONDS);
     }
@@ -211,6 +218,23 @@ class WorkflowEngineStartTenantTest {
         ArgumentCaptor<WorkflowInstance> inserted = ArgumentCaptor.forClass(WorkflowInstance.class);
         verify(rig.instances()).insert(inserted.capture(), any());
         return inserted.getValue();
+    }
+
+    @Test
+    @DisplayName("a start stamps the start scope of its command on the instance, whatever the ambient context holds")
+    void startStampsTheStartScopeOfItsCommand(Vertx vertx) throws Exception {
+        DefaultContextHolder holder = new DefaultContextHolder();
+
+        // Given an engine and an ambient context carrying t1
+        Rig rig = rig(TenantCtxCodec.propagator(holder), winner());
+
+        // When a workflow starts with the start scope acme
+        AsyncResult<WorkflowInstanceId> started = start(vertx, rig, holder, "t1", "acme");
+
+        // Then the stored instance has the acme start scope and the definition's own scope
+        assertThat(started.succeeded()).as("start in acme: %s", started.cause()).isTrue();
+        assertThat(insertedInstance(rig).scopeKey()).isEqualTo("acme");
+        assertThat(insertedInstance(rig).definitionScopeKey()).isEqualTo(WorkflowScopes.DEFAULT);
     }
 
     @Test
@@ -223,7 +247,7 @@ class WorkflowEngineStartTenantTest {
         Rig withPropagator = rig(propagator, winner());
 
         // When a workflow starts
-        AsyncResult<WorkflowInstanceId> propagatedStart = start(vertx, withPropagator, holder, "t1");
+        AsyncResult<WorkflowInstanceId> propagatedStart = start(vertx, withPropagator, holder, "t1", null);
 
         // Then the start succeeds and the stored instance is in the default scope
         assertThat(propagatedStart.succeeded())
@@ -236,7 +260,7 @@ class WorkflowEngineStartTenantTest {
         Rig withoutPropagator = rig(null, winner());
 
         // When a workflow starts
-        AsyncResult<WorkflowInstanceId> plainStart = start(vertx, withoutPropagator, holder, "t1");
+        AsyncResult<WorkflowInstanceId> plainStart = start(vertx, withoutPropagator, holder, "t1", null);
 
         // Then the start succeeds and the stored instance is in the default scope
         assertThat(plainStart.succeeded())

@@ -950,7 +950,7 @@ public class PgWorkflowSchemaIT {
                 .isPresent());
         assertEquals(
                 withSubject.id(),
-                inTransaction(runtime, tx -> instances.findByBusinessKey(definitionId, businessKey, tx))
+                inTransaction(runtime, tx -> instances.findByBusinessKey(SCOPE_KEY, definitionId, businessKey, tx))
                         .orElseThrow()
                         .id());
 
@@ -1025,10 +1025,13 @@ public class PgWorkflowSchemaIT {
 
         // start: the first claim inserts, a later claim resolves to the winning instance
         String startKey = unique("start");
-        StartDedupResult claimed =
-                inTransaction(runtime, tx -> dedup.claimOrResolveStart(definitionId, startKey, winner, "fp-start", tx));
-        StartDedupResult resolved =
-                inTransaction(runtime, tx -> dedup.claimOrResolveStart(definitionId, startKey, other, "fp-other", tx));
+        StartDedupResult claimed = inTransaction(
+                runtime,
+                tx -> dedup.claimOrResolveStart(
+                        WorkflowScopes.DEFAULT, definitionId, startKey, winner, "fp-start", tx));
+        StartDedupResult resolved = inTransaction(
+                runtime,
+                tx -> dedup.claimOrResolveStart(WorkflowScopes.DEFAULT, definitionId, startKey, other, "fp-other", tx));
         assertTrue(claimed.didInsert());
         assertFalse(resolved.didInsert());
         assertEquals(winner, resolved.workflowId());
@@ -1702,7 +1705,12 @@ public class PgWorkflowSchemaIT {
                         .append(historyEntry(instance.id(), 1, WorkflowEntryType.START), tx))
                 .compose(v -> runtime.workflowDedupRepository()
                         .claimOrResolveStart(
-                                instance.definitionId(), work.idempotencyKey(), instance.id(), "fp-start", tx))
+                                WorkflowScopes.DEFAULT,
+                                instance.definitionId(),
+                                work.idempotencyKey(),
+                                instance.id(),
+                                "fp-start",
+                                tx))
                 .compose(claim -> claim.didInsert()
                         ? Future.<Void>succeededFuture()
                         : Future.<Void>failedFuture(new AssertionError("the start claim must be new")))
