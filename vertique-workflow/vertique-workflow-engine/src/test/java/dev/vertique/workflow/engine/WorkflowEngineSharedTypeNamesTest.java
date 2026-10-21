@@ -89,7 +89,7 @@ class WorkflowEngineSharedTypeNamesTest {
 
     record SharedStart(String id) {}
 
-    @WorkflowContract(definitionId = DEFINITION_ID, definitionVersion = 1)
+    @WorkflowContract
     interface SharedContract {}
 
     private static final class ReachedTheTaskLock extends RuntimeException {

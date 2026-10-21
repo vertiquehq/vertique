@@ -100,7 +100,7 @@ class WorkflowPayloadsTest {
 
     record ApprovalStart(String id) {}
 
-    @WorkflowContract(definitionId = "approval-saga", definitionVersion = 1)
+    @WorkflowContract
     interface ApprovalContract {}
 
     @Test
