@@ -41,6 +41,8 @@ case "$FAKE_CASE" in
                      > .worktrees/other/mod/target/surefire-reports/TEST-B.xml
                  printf '[INFO] Reactor Summary for demo:\n[INFO] BUILD SUCCESS\n'; exit 0 ;;
     no-build-line) echo "partial output"; exit 0 ;;
+    slow-pass)   sleep 3; report Alpha 5 0 0
+                 printf '[INFO] Reactor Summary for demo:\n[INFO] BUILD SUCCESS\n'; exit 0 ;;
 esac
 EOF
 chmod +x "$fake_mvn"
@@ -90,6 +92,29 @@ if grep -q "final build: FAILURE" <(BUILD_VERDICT_ROOT="$work/nested-fail" BUILD
 else
     echo "FAIL: nested success lines are ignored"; failures=$(( failures + 1 ))
 fi
+
+# A Maven process in the same checkout during the run makes the counts untrustworthy;
+# one in another directory must not matter. The foreign process is a stand-in whose
+# command line matches BUILD_VERDICT_PROCESS_PATTERN.
+foreign_case() { # <name> <directory-for-foreign-process> <expected-verdict>
+    local name="$1" foreign_dir="$2" want="$3" root="$work/$1" out pid
+    mkdir -p "$root" "$work/$name-elsewhere"
+    [[ "$foreign_dir" == "root" ]] && foreign_dir="$root" || foreign_dir="$work/$name-elsewhere"
+    (cd "$foreign_dir" && exec bash -c 'sleep 25; :' build-verdict-test-foreign) &
+    pid=$!
+    sleep 1
+    out="$(BUILD_VERDICT_ROOT="$root" BUILD_VERDICT_MVN="$fake_mvn" FAKE_CASE=slow-pass \
+        BUILD_VERDICT_PROCESS_PATTERN=build-verdict-test-foreign BUILD_VERDICT_POLL_SECONDS=1 \
+        "$verdict_script" --log-dir "$work/$name-log" verify 2>&1)"
+    kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null
+    if grep -q "^VERDICT: $want" <<<"$out"; then
+        echo "PASS: $name"
+    else
+        echo "FAIL: $name (want $want)"; sed 's/^/    /' <<<"$out"; failures=$(( failures + 1 ))
+    fi
+}
+foreign_case concurrent-maven-same-checkout root SUSPECT
+foreign_case maven-elsewhere-ignored elsewhere PASS
 
 if (( failures > 0 )); then
     echo "$failures case(s) failed" >&2

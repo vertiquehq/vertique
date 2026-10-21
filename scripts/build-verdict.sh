@@ -25,12 +25,15 @@
 #
 #   VERDICT: PASS | FAIL | SUSPECT
 #
-# SUSPECT means Maven exited 0 but the run cannot be trusted (no tests executed
-# although the arguments did not skip them, or no final BUILD line was found).
+# SUSPECT means Maven exited 0 but the run cannot be trusted: no tests executed
+# although the arguments did not skip them, no final BUILD line was found, or
+# another Maven process was running in the same checkout during the run.
 #
 # Environment (used by scripts/test-build-verdict.sh): BUILD_VERDICT_ROOT is the
 # repository root to run in (default: the script's parent directory), and
-# BUILD_VERDICT_MVN is the Maven command (default: ./mvnw).
+# BUILD_VERDICT_MVN is the Maven command (default: ./mvnw). BUILD_VERDICT_PROCESS_PATTERN
+# (default: plexus.classworlds) and BUILD_VERDICT_POLL_SECONDS (default: 2) tune the
+# concurrent-Maven check.
 
 set -uo pipefail
 
@@ -55,6 +58,7 @@ if (( $# == 0 )); then
 fi
 
 root="$(cd "$root" && pwd)"
+root_physical="$(cd "$root" && pwd -P)"
 if [[ -z "$log_dir" ]]; then
     mkdir -p "${TMPDIR:-/tmp}/vertique-build"
     log_dir="$(mktemp -d "${TMPDIR:-/tmp}/vertique-build/run.XXXXXX")"
@@ -68,9 +72,47 @@ marker="$log_dir/start.marker"
 # than anything this run writes even on filesystems with one-second resolution.
 sleep 1
 
+# Another Maven process running in this checkout writes the same target/ directories
+# and test reports, so this run's counts could include its results. Sample for such
+# processes while the build runs; any finding makes the verdict SUSPECT.
+process_pattern="${BUILD_VERDICT_PROCESS_PATTERN:-plexus.classworlds}"
+poll_seconds="${BUILD_VERDICT_POLL_SECONDS:-2}"
+foreign_pids=""
+
+is_descendant_of_self() { # <pid>
+    local pid="$1" parent
+    while [[ -n "$pid" && "$pid" != "1" && "$pid" != "0" ]]; do
+        [[ "$pid" == "$$" ]] && return 0
+        parent="$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')"
+        pid="$parent"
+    done
+    return 1
+}
+
+scan_foreign_maven() {
+    local pid dir
+    for pid in $(pgrep -f "$process_pattern" 2>/dev/null); do
+        is_descendant_of_self "$pid" && continue
+        dir="$(lsof -a -p "$pid" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -1)"
+        [[ -z "$dir" ]] && continue
+        case "$dir/" in
+            "$root_physical"/*)
+                case " $foreign_pids " in *" $pid "*) ;; *) foreign_pids+="$pid " ;; esac ;;
+        esac
+    done
+}
+
 start_epoch="$(date +%s)"
-(cd "$root" && "$mvn_cmd" -ntp -B "$@") > "$log" 2>&1
+scan_foreign_maven
+(cd "$root" && exec "$mvn_cmd" -ntp -B "$@") > "$log" 2>&1 &
+mvn_pid=$!
+while kill -0 "$mvn_pid" 2>/dev/null; do
+    sleep "$poll_seconds"
+    scan_foreign_maven
+done
+wait "$mvn_pid"
 rc=$?
+scan_foreign_maven
 end_epoch="$(date +%s)"
 
 # The outer reactor prints "Reactor Summary" once; nested builds do not. Read the
@@ -117,6 +159,8 @@ if (( rc != 0 )) || [[ "$build_result" == "FAILURE" ]]; then
     verdict="FAIL"
 elif [[ "$build_result" == "none" ]]; then
     verdict="SUSPECT"; reason="no final BUILD line found in the log"
+elif [[ -n "$foreign_pids" ]]; then
+    verdict="SUSPECT"; reason="another Maven process was running in this checkout; counts may include its results"
 elif (( tests == 0 && skips_tests == 0 )); then
     verdict="SUSPECT"; reason="no test report was written during this run (check -Dtest selectors and @Nested classes)"
 elif (( failures + errors > 0 )); then
@@ -134,6 +178,9 @@ echo "duration: $(( end_epoch - start_epoch )) s"
 echo "source: $head_sha, $dirty uncommitted path(s)"
 echo "command: $mvn_cmd -ntp -B $*"
 echo "log: $log"
+if [[ -n "$foreign_pids" ]]; then
+    echo "concurrent Maven in this checkout (pids): $foreign_pids"
+fi
 if [[ -n "$summary_lines" ]]; then
     echo "reactor (skipped or failed modules):"
     sed 's/^\[INFO\] /  /' <<<"$summary_lines"
