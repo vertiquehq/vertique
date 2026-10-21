@@ -96,9 +96,16 @@ scan_foreign_maven() {
         dir="$(lsof -a -p "$pid" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -1)"
         [[ -z "$dir" ]] && continue
         case "$dir/" in
-            "$root_physical"/*)
-                case " $foreign_pids " in *" $pid "*) ;; *) foreign_pids+="$pid " ;; esac ;;
+            "$root_physical"/*) ;;
+            *) continue ;;
         esac
+        # A checkout nested inside this one (a worktree under .worktrees/, a submodule)
+        # has its own target/ directories; only a process in this same checkout counts.
+        top="$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null)"
+        if [[ -n "$top" ]] && [[ "$(cd "$top" && pwd -P)" != "$root_physical" ]]; then
+            continue
+        fi
+        case " $foreign_pids " in *" $pid "*) ;; *) foreign_pids+="$pid " ;; esac
     done
 }
 

@@ -96,10 +96,15 @@ fi
 # A Maven process in the same checkout during the run makes the counts untrustworthy;
 # one in another directory must not matter. The foreign process is a stand-in whose
 # command line matches BUILD_VERDICT_PROCESS_PATTERN.
-foreign_case() { # <name> <directory-for-foreign-process> <expected-verdict>
+foreign_case() { # <name> <root|elsewhere|nested> <expected-verdict>
     local name="$1" foreign_dir="$2" want="$3" root="$work/$1" out pid
     mkdir -p "$root" "$work/$name-elsewhere"
-    [[ "$foreign_dir" == "root" ]] && foreign_dir="$root" || foreign_dir="$work/$name-elsewhere"
+    git init -q "$root"
+    case "$foreign_dir" in
+        root) foreign_dir="$root" ;;
+        nested) foreign_dir="$root/.worktrees/other"; mkdir -p "$foreign_dir"; git init -q "$foreign_dir" ;;
+        *) foreign_dir="$work/$name-elsewhere" ;;
+    esac
     (cd "$foreign_dir" && exec bash -c 'sleep 25; :' build-verdict-test-foreign) &
     pid=$!
     sleep 1
@@ -115,6 +120,7 @@ foreign_case() { # <name> <directory-for-foreign-process> <expected-verdict>
 }
 foreign_case concurrent-maven-same-checkout root SUSPECT
 foreign_case maven-elsewhere-ignored elsewhere PASS
+foreign_case maven-nested-checkout-ignored nested PASS
 
 if (( failures > 0 )); then
     echo "$failures case(s) failed" >&2
