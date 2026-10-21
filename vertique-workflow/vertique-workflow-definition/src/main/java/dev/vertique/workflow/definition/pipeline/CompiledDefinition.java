@@ -10,7 +10,7 @@ import java.util.Objects;
 /**
  * The output of one successful {@link WorkflowDefinitionPipeline#load} run: a fully parsed,
  * validated, and compiled workflow definition together with its plan hash, provenance metadata,
- * and type-name strings captured at parse time.
+ * and the logical names of its state type and contract.
  *
  * <p>This record is the internal storage shape used by
  * {@link dev.vertique.workflow.definition.service.WorkflowDefinitionStore}. The public API surface
@@ -23,17 +23,17 @@ import java.util.Objects;
  *     resulting plan's hash; must not be {@code null} or blank
  * @param source provenance metadata captured from the originating
  *     {@link dev.vertique.workflow.definition.source.DefinitionResource}; must not be {@code null}
- * @param stateTypeFqn the fully-qualified class name of the workflow state type as declared in
- *     the definition document; must not be {@code null}
- * @param contractFqn the fully-qualified class name of the contract interface as declared in the
- *     definition document; must not be {@code null}
+ * @param stateTypeName the logical name of the workflow state type, as the type-name index reports
+ *     it for the resolved state class; must not be {@code null}
+ * @param contractName the logical name of the contract interface, as the type-name index reports it
+ *     for the resolved contract class; must not be {@code null}
  */
 public record CompiledDefinition(
         WorkflowDefinition<?, ?> definition,
         String planHash,
         SourceMetadata source,
-        String stateTypeFqn,
-        String contractFqn) {
+        String stateTypeName,
+        String contractName) {
 
     /**
      * Compact constructor: validates non-null invariants and that {@code planHash} is non-blank.
@@ -48,7 +48,7 @@ public record CompiledDefinition(
             throw new IllegalArgumentException("planHash must not be blank");
         }
         Objects.requireNonNull(source, "source");
-        Objects.requireNonNull(stateTypeFqn, "stateTypeFqn");
-        Objects.requireNonNull(contractFqn, "contractFqn");
+        Objects.requireNonNull(stateTypeName, "stateTypeName");
+        Objects.requireNonNull(contractName, "contractName");
     }
 }

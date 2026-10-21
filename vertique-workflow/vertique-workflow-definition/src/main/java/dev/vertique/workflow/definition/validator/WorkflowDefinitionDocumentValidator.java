@@ -53,11 +53,11 @@ import java.util.function.Supplier;
  * <ol>
  *   <li>{@code DEFINITION_ID_BLANK} — {@code definitionId} null or blank.</li>
  *   <li>{@code DEFINITION_VERSION_INVALID} — {@code definitionVersion < 1}.</li>
- *   <li>{@code STATE_TYPE_UNRESOLVABLE} — {@code stateType} FQN not found on classpath.</li>
- *   <li>{@code CONTRACT_UNRESOLVABLE} — {@code contract} FQN not found on classpath.</li>
+ *   <li>{@code STATE_TYPE_UNRESOLVABLE} — {@code stateType} name not found.</li>
+ *   <li>{@code CONTRACT_UNRESOLVABLE} — {@code contract} name not found.</li>
  *   <li>{@code CONTRACT_NOT_ANNOTATED} — resolved contract class is not annotated with
  *       {@link WorkflowContract}.</li>
- *   <li>{@code START_PAYLOAD_TYPE_UNRESOLVABLE} — {@code startPayloadType} FQN not found.</li>
+ *   <li>{@code START_PAYLOAD_TYPE_UNRESOLVABLE} — {@code startPayloadType} name not found.</li>
  *   <li>{@code INITIAL_STATE_MAPPER_UNKNOWN} — {@code initialStateMapper} id not registered.</li>
  *   <li>{@code SUBJECT_RESOLVER_UNKNOWN} — {@code subjectResolver} present but not registered.</li>
  *   <li>{@code INITIAL_STEP_UNKNOWN} — {@code initialStep} does not match any step id.</li>

@@ -32,6 +32,7 @@ import dev.vertique.workflow.definition.pipeline.WorkflowDefinitionPipeline;
 import dev.vertique.workflow.definition.source.DefinitionResource;
 import dev.vertique.workflow.definition.source.SourceMetadata;
 import dev.vertique.workflow.definition.source.WorkflowDefinitionSource;
+import dev.vertique.workflow.definition.validator.Violation;
 import dev.vertique.workflow.definition.validator.WorkflowDefinitionDocumentValidator;
 import dev.vertique.workflow.definition.validator.WorkflowDefinitionLoadException;
 import dev.vertique.workflow.exception.WorkflowDefinitionMissingException;
@@ -76,6 +77,10 @@ class WorkflowDefinitionBootstrapTest {
 
     @WorkflowContract(definitionId = "boot-gamma", definitionVersion = 1)
     interface BootGammaV1Contract {}
+
+    /** One contract shared by several documents; its annotation attributes name an id and version nobody has. */
+    @WorkflowContract(definitionId = "unused", definitionVersion = 9)
+    interface ParityContract {}
 
     private static final String SIXTY_FOUR_CODE_POINTS =
             "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -239,6 +244,45 @@ class WorkflowDefinitionBootstrapTest {
             // Registry must be untouched
             assertThat(reg.allRegistered()).isEmpty();
         }
+    }
+
+    // --- Documents sharing one contract ---
+
+    @Test
+    @DisplayName("both register, and only an identical (id, version) is a duplicate")
+    void packagedDocumentsSharingOneContractBothRegister() {
+        // Given: two packaged documents naming one contract, and a third repeating the first's id and version
+        DefinitionResource first = resourceFor("parity-doc", 1, ParityContract.class);
+        DefinitionResource variant = resourceFor("parity-variant", 1, ParityContract.class);
+        DefinitionResource repeated = resourceFor("parity-doc", 1, ParityContract.class);
+
+        // When: the bootstrap contributes the first two
+        DefaultWorkflowRegistry registry = freshRegistry();
+        bootstrap(Set.of(() -> List.of(first, variant))).contribute(registry);
+
+        // Then: both are registered and name the same contract
+        assertThat(registry.resolvePinned("parity-doc", 1L).contractName()).isEqualTo(ParityContract.class.getName());
+        assertThat(registry.resolvePinned("parity-variant", 1L).contractName())
+                .isEqualTo(ParityContract.class.getName());
+
+        // When: the bootstrap contributes all three, the repeat coming from another source
+        DefaultWorkflowRegistry other = freshRegistry();
+        WorkflowDefinitionBootstrap withRepeat = new WorkflowDefinitionBootstrap(
+                pipeline,
+                new WorkflowDefinitionStore(),
+                Set.of(() -> List.of(first, variant), () -> List.of(repeated)));
+
+        // Then: exactly one violation is reported, the duplicate (id, version), and nothing is registered
+        assertThatThrownBy(() -> withRepeat.contribute(other))
+                .isInstanceOf(WorkflowDefinitionLoadException.class)
+                .satisfies(ex -> {
+                    List<Violation> violations =
+                            ((WorkflowDefinitionLoadException) ex).violations().toList();
+                    assertThat(violations).extracting(Violation::code).containsExactly("DUPLICATE_DEFINITION");
+                    assertThat(violations.get(0).message()).contains("'parity-doc' v1");
+                    assertThat(violations).extracting(Violation::code).doesNotContain("DUPLICATE_CONTRACT");
+                });
+        assertThat(other.allRegistered()).isEmpty();
     }
 
     // --- One bad (validation) + one good resource: all-or-nothing ---

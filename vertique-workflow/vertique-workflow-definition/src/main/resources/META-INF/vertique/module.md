@@ -146,9 +146,9 @@ The full fixture also demonstrates timers, compensation, fork, join, due dates, 
 |---|---:|---|
 | `definitionId` | yes | Durable workflow definition id |
 | `definitionVersion` | yes | Version registered for this document |
-| `stateType` | yes | Logical name (`@WorkflowType`) or Java class name for workflow state |
-| `contract` | yes | Logical name (`@WorkflowContract.value()`) or Java class name of an interface annotated with `@WorkflowContract` |
-| `startPayloadType` | yes | Logical name or Java class name for the start payload |
+| `stateType` | yes | Logical type name (`@WorkflowType`) of the workflow state; a packaged document may also use a binary class name |
+| `contract` | yes | Logical contract name (`@WorkflowContract.value()`) of an interface annotated with `@WorkflowContract`; a packaged document may also use a binary class name. Any number of documents and Java definitions may name one contract |
+| `startPayloadType` | yes | Logical type name of the start payload; a packaged document may also use a binary class name |
 | `initialStateMapper` | yes | Named callback that maps start payload to initial state |
 | `subjectResolver` | no | Named callback that derives `WorkflowSubjectRef` from state |
 | `initialStep` | yes | Step id where execution begins |
@@ -208,7 +208,8 @@ A well-formed definition is one that passes both parsing and semantic validation
 - Jackson YAML/JSON parsing is strict: unknown fields and invalid step types fail.
 - Required top-level fields and required step fields must be present.
 - Type and contract names resolve through the `WorkflowTypeNames` index only (types for state and payload names, contracts for the contract name). The index holds the classes of every contributed `WorkflowTypeCatalog` and of every registered definition, under their logical and binary names. Before validation the pipeline resolves the contract, the state type, the start payload type, then the signal and decision payload types in step order, and the first name the index does not hold fails the load with `WorkflowUnknownTypeNameException`, which names the document field, and repeats the name only when it consists of letters, digits, underscore, dot, dollar sign and hyphen and is at most 255 characters long. No class is loaded by a name the document supplies.
-- The contract class must be annotated with `@WorkflowContract`, and its id/version must match the document.
+- The contract class must be annotated with `@WorkflowContract`. The document's `definitionId` and `definitionVersion` are not compared with the annotation, so several documents and versions can share one contract. A document registers through the same registry rules as a Java definition, including the check that every signal it waits for is declared on its contract.
+- Contract names and type names are separate namespaces: a contract name given as `stateType`, or a type name given as `contract`, is unknown.
 - Named callbacks must resolve through the registered callback registries.
 - Decision expressions must parse through the expression profile.
 - Step ids must be unique, reachable from `initialStep`, and all step references must point to existing steps.
@@ -413,4 +414,4 @@ Applications must also contribute at least one `WorkflowDefinitionSource` for bo
 - **Service-loaded documents are catalog-only.** `WorkflowDefinitionService.load`, restoration from the store and propagation resolve names through the index only. A deployment where no catalog and no registered definition lists a class refuses a document that names it, even by its binary name, and loads nothing. Packaged documents are the trusted exception described above.
 - **Document plans are not no-code.** A document references Java classes (state type, contract type, payload types) and named callbacks from the application's callback module. A document without the corresponding Java types is rejected.
 - **Named conditions / mappers are looked up by id.** Document expression nodes resolve to callbacks registered in the application's `WorkflowDefinitionCallbacksModule`. Unknown ids fail at registration, not at first execution.
-- **Plan-hash stability.** Documents compile to the same `WorkflowPlan` shape as the Java DSL, so existing instances pinned to a `planHash` resume against the same plan only if the document compiles to a byte-identical plan structure. Use migration handlers when changing semantics across versions. The hash covers the logical name of the state class (its `@WorkflowType` value, or its binary name when it has none), and a document restored from the store is hashed by the same name, so a restart accepts a document whose state class carries a logical name.
+- **Plan-hash stability.** Documents compile to the same `WorkflowPlan` shape as the Java DSL, so existing instances pinned to a `planHash` resume against the same plan only if the document compiles to a byte-identical plan structure. Use migration handlers when changing semantics across versions. The hash covers the logical name of the state class (its `@WorkflowType` value, or its binary name when it has none), and a document restored from the store is hashed by the same name, so a restart accepts a document whose state class carries a logical name. A document that names the state class by its binary name therefore hashes the same as one that names it by its logical name, whichever source it comes from. `CompiledDefinition.stateTypeName()` and `contractName()` report those logical names.

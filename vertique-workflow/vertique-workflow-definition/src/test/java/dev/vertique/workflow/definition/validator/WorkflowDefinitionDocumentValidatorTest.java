@@ -47,6 +47,10 @@ import dev.vertique.workflow.definition.schema.WaitSignalStep;
 import dev.vertique.workflow.definition.schema.WorkflowDefinitionDocument;
 import dev.vertique.workflow.subject.WorkflowSubjectRef;
 import dev.vertique.workflow.tasks.TaskAssignment;
+import dev.vertique.workflow.types.DefaultWorkflowTypeNames;
+import dev.vertique.workflow.types.WorkflowTypeCatalogEntry;
+import dev.vertique.workflow.types.WorkflowTypeCatalogEntry.Kind;
+import dev.vertique.workflow.types.WorkflowTypeNames;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -98,6 +102,10 @@ class WorkflowDefinitionDocumentValidatorTest {
     /** Contract with a WRONG definitionVersion. */
     @WorkflowContract(definitionId = "test-wf", definitionVersion = 99)
     interface WrongVersionContract {}
+
+    /** Contract named by the index; its annotation attributes differ from the header of the documents using it. */
+    @WorkflowContract(value = "parity-orders", definitionId = "unused", definitionVersion = 9)
+    interface ParityOrdersContract {}
 
     /** Contract interface with no @WorkflowContract annotation. */
     interface UnannotatedContract {}
@@ -432,6 +440,54 @@ class WorkflowDefinitionDocumentValidatorTest {
 
         assertThat(result.toList().stream().map(Violation::code).toList())
                 .doesNotContain("CONTRACT_DEFINITION_VERSION_MISMATCH", "CONTRACT_NOT_ANNOTATED");
+    }
+
+    // --- Rule 6/7 over a type-name index: the contract is resolved by name ---
+
+    @Test
+    @DisplayName("a contract resolves by logical name without comparing the header, and must be annotated")
+    void contractResolvesByLogicalNameWithoutHeaderComparison() {
+        // Given: a validator over an index (no class-loader lookup) holding the annotated contract
+        // under its logical name and an unannotated interface under its binary name
+        WorkflowTypeNames index = new DefaultWorkflowTypeNames(List.of(() -> List.of(
+                new WorkflowTypeCatalogEntry(Kind.CONTRACT, "parity-orders", ParityOrdersContract.class),
+                new WorkflowTypeCatalogEntry(
+                        Kind.CONTRACT, UnannotatedContract.class.getName(), UnannotatedContract.class),
+                new WorkflowTypeCatalogEntry(Kind.TYPE, STATE_FQN, TestState.class),
+                new WorkflowTypeCatalogEntry(Kind.TYPE, PAYLOAD_FQN, TestPayload.class))));
+        WorkflowDefinitionDocumentValidator validator =
+                new WorkflowDefinitionDocumentValidator(fullLookup, null, index);
+        List<StepNode> steps = List.of(
+                new ServiceStep("svc", "inventory.reserve", PAYLOAD_MAPPER_ID, null, "done"), new CompleteStep("done"));
+        // And: a document whose header (parity-doc v3) differs from the annotation (unused v9)
+        WorkflowDefinitionDocument named = new WorkflowDefinitionDocument(
+                "parity-doc", 3L, STATE_FQN, "parity-orders", PAYLOAD_FQN, INIT_MAPPER_ID, null, "svc", steps);
+        // And: a document naming an interface that carries no contract annotation
+        WorkflowDefinitionDocument unannotated = new WorkflowDefinitionDocument(
+                "parity-doc",
+                3L,
+                STATE_FQN,
+                UnannotatedContract.class.getName(),
+                PAYLOAD_FQN,
+                INIT_MAPPER_ID,
+                null,
+                "svc",
+                steps);
+
+        // When: each document is validated
+        WorkflowDefinitionViolations namedResult = validator.validate(named);
+        WorkflowDefinitionViolations unannotatedResult = validator.validate(unannotated);
+
+        // Then: the header need not match the annotation
+        assertThat(namedResult.isEmpty())
+                .as("violations: %s", namedResult.toList())
+                .isTrue();
+        // And: the unannotated interface is the one violation, naming only the offending class
+        assertThat(unannotatedResult.toList()).extracting(Violation::code).containsExactly("CONTRACT_NOT_ANNOTATED");
+        assertThat(unannotatedResult.toList().get(0).message())
+                .contains(UnannotatedContract.class.getName())
+                .doesNotContain("parity-doc")
+                .doesNotContain("svc");
     }
 
     // --- Rule 8: START_PAYLOAD_TYPE_UNRESOLVABLE ---

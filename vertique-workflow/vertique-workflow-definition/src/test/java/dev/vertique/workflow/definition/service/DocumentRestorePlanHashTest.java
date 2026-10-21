@@ -185,7 +185,7 @@ class DocumentRestorePlanHashTest {
     void restoredDocumentIsCachedWithTheSameStateTypeNameAsAFreshLoad() {
         // Given: the state type name a fresh load of the document caches
         String freshlyLoaded = publish(DaggerDocumentRestorePlanHashTest_RestoreComponent.create())
-                .stateTypeFqn();
+                .stateTypeName();
         RestoreComponent restarted = DaggerDocumentRestorePlanHashTest_RestoreComponent.create();
         WorkflowDefinitionRecord stored = storedRecord("a".repeat(64));
         WorkflowDefinitionDocument document = new WorkflowDefinitionDocument(KEY, document(), "YAML");
@@ -200,7 +200,7 @@ class DocumentRestorePlanHashTest {
                         .get(KEY)
                         .orElseThrow()
                         .compiled()
-                        .stateTypeFqn())
+                        .stateTypeName())
                 .isEqualTo(freshlyLoaded)
                 .isEqualTo("restore.state");
     }

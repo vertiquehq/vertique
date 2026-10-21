@@ -572,13 +572,11 @@ METHOD|dev.vertique.workflow.definition.parser.DocumentFormat|values|public stat
 METHOD|dev.vertique.workflow.definition.parser.WorkflowDefinitionMapperFactory|jsonMapper|public|[]|[]|com.fasterxml.jackson.databind.ObjectMapper|[]|false
 METHOD|dev.vertique.workflow.definition.parser.WorkflowDefinitionMapperFactory|yamlMapper|public|[]|[]|com.fasterxml.jackson.databind.ObjectMapper|[]|false
 METHOD|dev.vertique.workflow.definition.parser.WorkflowDefinitionParser|parse|public|[]|[byte[],dev.vertique.workflow.definition.parser.DocumentFormat]|dev.vertique.workflow.definition.schema.WorkflowDefinitionDocument|[]|false
-METHOD|dev.vertique.workflow.definition.pipeline.CompiledDefinition|contractFqn|public|[]|[]|java.lang.String|[]|false
 METHOD|dev.vertique.workflow.definition.pipeline.CompiledDefinition|definition|public|[]|[]|dev.vertique.workflow.dsl.WorkflowDefinition<?, ?>|[]|false
 METHOD|dev.vertique.workflow.definition.pipeline.CompiledDefinition|equals|public final|[]|[java.lang.Object]|boolean|[]|false
 METHOD|dev.vertique.workflow.definition.pipeline.CompiledDefinition|hashCode|public final|[]|[]|int|[]|false
 METHOD|dev.vertique.workflow.definition.pipeline.CompiledDefinition|planHash|public|[]|[]|java.lang.String|[]|false
 METHOD|dev.vertique.workflow.definition.pipeline.CompiledDefinition|source|public|[]|[]|dev.vertique.workflow.definition.source.SourceMetadata|[]|false
-METHOD|dev.vertique.workflow.definition.pipeline.CompiledDefinition|stateTypeFqn|public|[]|[]|java.lang.String|[]|false
 METHOD|dev.vertique.workflow.definition.pipeline.CompiledDefinition|toString|public final|[]|[]|java.lang.String|[]|false
 METHOD|dev.vertique.workflow.definition.pipeline.WorkflowDefinitionPipeline|load|public|[]|[dev.vertique.workflow.definition.source.DefinitionResource]|dev.vertique.workflow.definition.pipeline.CompiledDefinition|[]|false
 METHOD|dev.vertique.workflow.definition.schema.CompensationStep|equals|public final|[]|[java.lang.Object]|boolean|[]|false

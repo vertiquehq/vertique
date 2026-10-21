@@ -19,11 +19,15 @@ import java.util.List;
  *   <li>{@code definitionId} — unique identifier for this workflow definition (e.g.,
  *       {@code "order-fulfillment"}).
  *   <li>{@code definitionVersion} — monotonically increasing version number (e.g., {@code 1}).
- *   <li>{@code stateType} — fully-qualified class name of the workflow state type
- *       (e.g., {@code "dev.example.order.state.OrderState"}).
- *   <li>{@code contract} — fully-qualified class name of the {@code @WorkflowContract}-annotated
- *       interface. Each coexisting version of a definition MUST reference a distinct contract class.
- *   <li>{@code startPayloadType} — fully-qualified class name of the start command payload type.
+ *   <li>{@code stateType} — logical type name of the workflow state type (the {@code @WorkflowType}
+ *       value, e.g., {@code "order-state"}). A packaged, trusted document may also give the binary
+ *       class name.
+ *   <li>{@code contract} — logical contract name of the {@code @WorkflowContract}-annotated
+ *       interface (its {@code value()}, e.g., {@code "orders"}); a packaged document may also give
+ *       the binary class name. The document's id and version are not compared with the annotation,
+ *       and any number of documents and versions may name one contract. Contract names and type
+ *       names are separate namespaces.
+ *   <li>{@code startPayloadType} — logical type name of the start command payload type.
  *   <li>{@code initialStateMapper} — registered {@code StartStateMapper} id that produces the
  *       initial state from the start payload.
  *   <li>{@code subjectResolver} — optional registered {@code SubjectResolver} id; {@code null}

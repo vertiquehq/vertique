@@ -196,7 +196,12 @@ public final class WorkflowDefinitionPipeline {
         // --- Compute plan hash eagerly ---
         String planHash = computePlanHash(definition, doc);
 
-        return new CompiledDefinition(definition, planHash, resource.metadata(), doc.stateType(), doc.contract());
+        return new CompiledDefinition(
+                definition,
+                planHash,
+                resource.metadata(),
+                typeNames.nameOf(definition.stateType()),
+                typeNames.contractNameOf(definition.contract()));
     }
 
     // --- Private helpers ---

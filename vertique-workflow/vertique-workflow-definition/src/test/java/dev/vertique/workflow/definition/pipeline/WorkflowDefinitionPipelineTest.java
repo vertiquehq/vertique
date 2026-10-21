@@ -11,6 +11,7 @@ import dev.vertique.workflow.contract.WorkflowContract;
 import dev.vertique.workflow.definition.callbacks.DefaultBranchResultReducerRegistry;
 import dev.vertique.workflow.definition.callbacks.DefaultFailMessageFactoryRegistry;
 import dev.vertique.workflow.definition.callbacks.DefaultNamedConditionRegistry;
+import dev.vertique.workflow.definition.callbacks.DefaultPayloadMapperRegistry;
 import dev.vertique.workflow.definition.callbacks.DefaultStartStateMapperRegistry;
 import dev.vertique.workflow.definition.callbacks.DefaultStateMutatorRegistry;
 import dev.vertique.workflow.definition.callbacks.DefaultStateReducerRegistry;
@@ -29,15 +30,26 @@ import dev.vertique.workflow.definition.expression.cel.CelExpressionProfile;
 import dev.vertique.workflow.definition.parser.DocumentFormat;
 import dev.vertique.workflow.definition.parser.WorkflowDefinitionParseException;
 import dev.vertique.workflow.definition.parser.WorkflowDefinitionParser;
+import dev.vertique.workflow.definition.service.WorkflowDefinitionBootstrap;
+import dev.vertique.workflow.definition.service.WorkflowDefinitionStore;
 import dev.vertique.workflow.definition.source.DefinitionResource;
 import dev.vertique.workflow.definition.source.SourceMetadata;
+import dev.vertique.workflow.definition.validator.Violation;
 import dev.vertique.workflow.definition.validator.WorkflowDefinitionDocumentValidator;
 import dev.vertique.workflow.definition.validator.WorkflowDefinitionLoadException;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
+import dev.vertique.workflow.exception.WorkflowUnknownTypeNameException;
+import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
+import dev.vertique.workflow.types.DefaultWorkflowTypeNames;
+import dev.vertique.workflow.types.WorkflowType;
+import dev.vertique.workflow.types.WorkflowTypeCatalogEntry;
+import dev.vertique.workflow.types.WorkflowTypeCatalogEntry.Kind;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
+import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -69,9 +81,24 @@ class WorkflowDefinitionPipelineTest {
     @WorkflowContract(definitionId = "task-pipeline", definitionVersion = 1)
     interface TaskPipelineContract {}
 
+    /** An annotated state class, reachable through the index only by its logical name. */
+    @WorkflowType("parity.state")
+    record ParityState(String id) {}
+
+    @WorkflowType("parity.start")
+    record ParityStart(String id) {}
+
+    /** A contract named by the index; the annotation attributes name an id and version nobody has. */
+    @WorkflowContract(value = "parity-orders", definitionId = "unused", definitionVersion = 9)
+    interface ParityOrders {}
+
     // --- Infrastructure ---
 
     private WorkflowDefinitionPipeline pipeline;
+    private RegisteredIdentifierLookup lookup;
+    private WorkflowDefinitionParser parser;
+    private ExpressionProfile profile;
+    private DecisionRouteCompiler decisionRouteCompiler;
 
     @BeforeEach
     @SuppressWarnings({"unchecked", "rawtypes"})
@@ -80,7 +107,7 @@ class WorkflowDefinitionPipelineTest {
                 Mockito.mock(dev.vertique.workflow.definition.parser.WorkflowDefinitionMapperFactory.class);
         Mockito.when(mapperFactory.jsonMapper()).thenReturn(new ObjectMapper());
 
-        ExpressionProfile profile = new CelExpressionProfile();
+        profile = new CelExpressionProfile();
 
         StartStateMapperRegistry startStateMappers =
                 new DefaultStartStateMapperRegistry(Set.of(b -> b.register(new NamedStartStateMapper<>(
@@ -90,7 +117,7 @@ class WorkflowDefinitionPipelineTest {
         NamedPayloadMapper rawMapper = new NamedPayloadMapper<>("any", TaskState.class, s -> s);
         Mockito.when(payloadMappers.lookup(Mockito.anyString())).thenReturn(rawMapper);
 
-        RegisteredIdentifierLookup lookup = new RegisteredIdentifierLookup(
+        lookup = new RegisteredIdentifierLookup(
                 payloadMappers,
                 startStateMappers,
                 new DefaultStateReducerRegistry(Set.of()),
@@ -103,8 +130,7 @@ class WorkflowDefinitionPipelineTest {
                 new DefaultNamedConditionRegistry(Set.of()));
 
         DefaultNamedConditionRegistry conditionRegistry = new DefaultNamedConditionRegistry(Set.of());
-        DecisionRouteCompiler decisionRouteCompiler =
-                new DecisionRouteCompiler(profile, conditionRegistry, mapperFactory);
+        decisionRouteCompiler = new DecisionRouteCompiler(profile, conditionRegistry, mapperFactory);
         WorkflowDefinitionCompiler compiler = new WorkflowDefinitionCompiler(lookup, profile, decisionRouteCompiler);
 
         // WorkflowDefinitionParser has a package-private constructor; use Mockito to create the mock
@@ -118,7 +144,7 @@ class WorkflowDefinitionPipelineTest {
                 .registerModule(new com.fasterxml.jackson.module.paramnames.ParameterNamesModule())
                 .enable(com.fasterxml.jackson.databind.DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
                 .enable(com.fasterxml.jackson.databind.DeserializationFeature.FAIL_ON_NULL_FOR_PRIMITIVES);
-        WorkflowDefinitionParser parser = Mockito.mock(WorkflowDefinitionParser.class);
+        parser = Mockito.mock(WorkflowDefinitionParser.class);
         Mockito.doAnswer(invocation -> {
                     byte[] bytes = invocation.getArgument(0);
                     DocumentFormat format = invocation.getArgument(1);
@@ -206,8 +232,8 @@ class WorkflowDefinitionPipelineTest {
             assertThat(result.definition().definitionVersion()).isEqualTo(1L);
             assertThat(result.planHash()).isNotBlank();
             assertThat(result.source()).isEqualTo(meta);
-            assertThat(result.stateTypeFqn()).isEqualTo(TaskState.class.getName());
-            assertThat(result.contractFqn()).isEqualTo(TaskPipelineContract.class.getName());
+            assertThat(result.stateTypeName()).isEqualTo(TaskState.class.getName());
+            assertThat(result.contractName()).isEqualTo(TaskPipelineContract.class.getName());
         }
     }
 
@@ -271,6 +297,99 @@ class WorkflowDefinitionPipelineTest {
                                 .anyMatch(v -> v.code().equals("DEFINITION_ID_BLANK"));
                     });
         }
+    }
+
+    // --- Unknown names ---
+
+    /** A packaged document that is valid except for the one field under test. */
+    private static String documentWith(String contract, String stateType, String startPayloadType) {
+        return """
+                definitionId: parity-doc
+                definitionVersion: 1
+                contract: %s
+                stateType: %s
+                startPayloadType: %s
+                initialStateMapper: parity.init
+                initialStep: done
+                steps:
+                  - id: done
+                    type: complete
+                """.formatted(contract, stateType, startPayloadType);
+    }
+
+    @Test
+    @DisplayName("a contract or type name the index does not hold fails before validation, naming the field")
+    void unknownContractOrTypeNameFailsBeforeValidation() {
+        // Given: a pipeline over an index holding contract parity-orders and the annotated state parity.state
+        DefaultWorkflowTypeNames index = new DefaultWorkflowTypeNames(List.of(() -> List.of(
+                new WorkflowTypeCatalogEntry(Kind.CONTRACT, "parity-orders", ParityOrders.class),
+                new WorkflowTypeCatalogEntry(Kind.TYPE, "parity.state", ParityState.class),
+                new WorkflowTypeCatalogEntry(Kind.TYPE, "parity.start", ParityStart.class))));
+        lookup = new RegisteredIdentifierLookup(
+                new DefaultPayloadMapperRegistry(Set.of()),
+                new DefaultStartStateMapperRegistry(Set.of(b -> b.register(new NamedStartStateMapper<>(
+                        "parity.init", ParityStart.class, ParityState.class, start -> new ParityState(start.id()))))),
+                new DefaultStateReducerRegistry(Set.of()),
+                new DefaultStateMutatorRegistry(Set.of()),
+                new DefaultTimerResolverRegistry(Set.of()),
+                new DefaultFailMessageFactoryRegistry(Set.of()),
+                new DefaultSubjectResolverRegistry(Set.of()),
+                new DefaultTaskAssignmentResolverRegistry(Set.of()),
+                new DefaultBranchResultReducerRegistry(Set.of()),
+                new DefaultNamedConditionRegistry(Set.of()));
+        WorkflowDefinitionPipeline indexed = new WorkflowDefinitionPipeline(
+                parser,
+                new WorkflowDefinitionDocumentValidator(lookup, profile, index),
+                new WorkflowDefinitionCompiler(lookup, profile, decisionRouteCompiler, index),
+                index);
+        String noSuchContract = documentWith("no-such-contract", "parity.state", "parity.start");
+        String typeAsContract = documentWith("parity.state", "parity.state", "parity.start");
+        String contractAsType = documentWith("parity-orders", "parity-orders", "parity.start");
+        String unloadablePayload = documentWith("parity-orders", "parity.state", "parity.NoSuchPayload");
+
+        // When/Then: each load fails with the unknown-name error naming the field and the offending name,
+        // never with a validator violation
+        assertUnknownName(indexed, noSuchContract, "contract", "no-such-contract");
+        assertUnknownName(indexed, typeAsContract, "contract", "parity.state");
+        assertUnknownName(indexed, contractAsType, "stateType", "parity-orders");
+        assertUnknownName(indexed, unloadablePayload, "startPayloadType", "parity.NoSuchPayload");
+
+        // And: the same unknown contract in a packaged document fails startup with one load failure that names
+        // the resource and the field
+        DefinitionResource packaged = new DefinitionResource(
+                noSuchContract.getBytes(StandardCharsets.UTF_8),
+                DocumentFormat.YAML,
+                new SourceMetadata("test", "test://parity/no-such-contract", null, null, null, Instant.now()));
+        WorkflowDefinitionBootstrap bootstrap = new WorkflowDefinitionBootstrap(
+                indexed,
+                new WorkflowDefinitionStore(),
+                Set.of(() -> List.of(packaged)),
+                Optional.empty(),
+                Optional.empty(),
+                index);
+        assertThatThrownBy(() -> bootstrap.contribute(new DefaultWorkflowRegistry()))
+                .isInstanceOf(WorkflowDefinitionLoadException.class)
+                .satisfies(ex -> {
+                    List<Violation> violations =
+                            ((WorkflowDefinitionLoadException) ex).violations().toList();
+                    assertThat(violations).extracting(Violation::code).containsExactly("LOAD_FAILURE");
+                    assertThat(violations.get(0).message())
+                            .contains("test://parity/no-such-contract")
+                            .contains("document field contract")
+                            .contains("no-such-contract");
+                });
+    }
+
+    private void assertUnknownName(
+            WorkflowDefinitionPipeline indexed, String document, String field, String offendingName) {
+        DefinitionResource resource =
+                new DefinitionResource(document.getBytes(StandardCharsets.UTF_8), DocumentFormat.YAML, testMetadata());
+
+        assertThatThrownBy(() -> indexed.load(resource))
+                .isInstanceOf(WorkflowUnknownTypeNameException.class)
+                .isNotInstanceOf(WorkflowDefinitionLoadException.class)
+                .hasMessageContaining("document field " + field)
+                .hasMessageContaining(offendingName);
     }
 
     // --- Compiler failure ---
