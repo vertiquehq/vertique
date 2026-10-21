@@ -430,6 +430,29 @@ class DefaultWorkflowDefinitionServiceTest {
                         }
 
                         @Override
+                        public void register(String scopeKey, dev.vertique.workflow.dsl.WorkflowDefinition<?, ?> def) {
+                            register(def);
+                        }
+
+                        @Override
+                        public dev.vertique.workflow.registry.RuntimeWorkflow resolve(
+                                dev.vertique.workflow.registry.store.DefinitionKey key) {
+                            throw new UnsupportedOperationException();
+                        }
+
+                        @Override
+                        public java.util.Optional<dev.vertique.workflow.registry.RuntimeWorkflow> find(
+                                dev.vertique.workflow.registry.store.DefinitionKey key) {
+                            return java.util.Optional.empty();
+                        }
+
+                        @Override
+                        public java.util.List<dev.vertique.workflow.registry.store.DefinitionKey> keysFor(
+                                String definitionId) {
+                            return java.util.List.of();
+                        }
+
+                        @Override
                         public java.util.Optional<dev.vertique.workflow.registry.RegisteredDefinitionClass>
                                 definitionClass(Class<?> definitionClass) {
                             return java.util.Optional.empty();

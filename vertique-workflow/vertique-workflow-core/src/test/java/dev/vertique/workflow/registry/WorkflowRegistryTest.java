@@ -18,6 +18,8 @@ import dev.vertique.workflow.exception.WorkflowDefinitionException;
 import dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.plan.RaceSafety;
+import dev.vertique.workflow.registry.store.DefinitionKey;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import io.vertx.core.Future;
 import java.time.Duration;
 import java.util.List;
@@ -418,7 +420,7 @@ class WorkflowRegistryTest {
             registry.register(DEF_V1);
             registry.register(DEF_V2);
 
-            RuntimeWorkflow rw = registry.resolvePinned("order-saga", 1L);
+            RuntimeWorkflow rw = registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "order-saga", 1L));
 
             assertThat(rw.plan().definitionVersion()).isEqualTo(1L);
         }
@@ -433,7 +435,7 @@ class WorkflowRegistryTest {
         void shouldThrowOnMissingPinnedVersion() {
             registry.register(DEF_V1);
 
-            assertThatThrownBy(() -> registry.resolvePinned("order-saga", 99L))
+            assertThatThrownBy(() -> registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "order-saga", 99L)))
                     .isInstanceOf(WorkflowVersionPinUnavailableException.class)
                     .hasMessageContaining("order-saga")
                     .hasMessageContaining("99");
@@ -728,8 +730,12 @@ class WorkflowRegistryTest {
 
             // Second registration names ContractD1 for a different definitionId — accepted.
             assertThatCode(() -> registry.register(defD2)).doesNotThrowAnyException();
-            assertThat(registry.resolvePinned("d1", 1L).contractName()).isEqualTo(ContractD1.class.getName());
-            assertThat(registry.resolvePinned("d2", 1L).contractName()).isEqualTo(ContractD1.class.getName());
+            assertThat(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "d1", 1L))
+                            .contractName())
+                    .isEqualTo(ContractD1.class.getName());
+            assertThat(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "d2", 1L))
+                            .contractName())
+                    .isEqualTo(ContractD1.class.getName());
         }
 
         @Test
@@ -829,7 +835,7 @@ class WorkflowRegistryTest {
                 new Expected("purchase-approval", 2L, PurchaseApprovalV2.class),
                 new Expected("travel-approval", 1L, TravelApprovalV1.class));
         for (Expected e : expected) {
-            RuntimeWorkflow rw = registry.resolvePinned(e.id(), e.version());
+            RuntimeWorkflow rw = registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, e.id(), e.version()));
             assertThat(rw.plan().definitionId()).as("plan id").isEqualTo(e.id());
             assertThat(rw.plan().definitionVersion()).as("plan version").isEqualTo(e.version());
             assertThat(rw.stateType()).as("state type").isEqualTo(ApprovalState.class);
@@ -860,9 +866,11 @@ class WorkflowRegistryTest {
                 .hasMessageContaining("contract 'other'");
 
         // and: the refused version is not resolvable while v1 is still registered
-        assertThatThrownBy(() -> registry.resolvePinned("purchase-approval", 2L))
+        assertThatThrownBy(() -> registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "purchase-approval", 2L)))
                 .isInstanceOf(WorkflowVersionPinUnavailableException.class);
-        assertThat(registry.resolvePinned("purchase-approval", 1L).plan().definitionVersion())
+        assertThat(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "purchase-approval", 1L))
+                        .plan()
+                        .definitionVersion())
                 .isEqualTo(1L);
         assertThat(registry.allRegistered()).hasSize(1);
 
@@ -891,7 +899,7 @@ class WorkflowRegistryTest {
 
         // and: nothing is registered
         assertThat(registry.allRegistered()).isEmpty();
-        assertThatThrownBy(() -> registry.resolvePinned("undeclared-waits", 1L))
+        assertThatThrownBy(() -> registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "undeclared-waits", 1L)))
                 .isInstanceOf(WorkflowVersionPinUnavailableException.class);
         assertThat(registry.definitionClass(WaitsForUndeclaredSignals.class)).isEmpty();
     }
@@ -961,7 +969,7 @@ class WorkflowRegistryTest {
         registry.register(new PurchaseApprovalV3());
 
         // Then: the registry holds it under the identity the definition reports
-        RuntimeWorkflow rw = registry.resolvePinned("purchase-approval", 3L);
+        RuntimeWorkflow rw = registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "purchase-approval", 3L));
         assertThat(rw.plan().definitionId()).as("definition id").isEqualTo("purchase-approval");
         assertThat(rw.plan().definitionVersion()).as("definition version").isEqualTo(3L);
         assertThat(rw.stateType()).as("state type").isEqualTo(ApprovalState.class);
@@ -972,12 +980,181 @@ class WorkflowRegistryTest {
                         registered -> assertThat(registered.definitionId()).isEqualTo("purchase-approval"));
 
         // and: nothing is registered under the annotation's legacy values
-        assertThatThrownBy(() -> registry.resolvePinned("unused", 99L))
+        assertThatThrownBy(() -> registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "unused", 99L)))
                 .isInstanceOf(WorkflowVersionPinUnavailableException.class);
         assertThat(registry.allRegistered())
                 .extracting(registered -> registered.plan().definitionId() + " v"
                         + registered.plan().definitionVersion())
                 .containsExactly("purchase-approval v3");
+    }
+
+    // --- Scoped registry: tests ---
+
+    @Test
+    @DisplayName("definitions are keyed by scope and code registers in the default scope")
+    void definitionsAreKeyedByScopeAndCodeRegistersInTheDefaultScope() {
+        // Given: purchase-approval v1 to v3 registered as code, and a different graph of purchase-approval v1
+        // registered in the acme scope
+        registry.register(new PurchaseApprovalV1());
+        registry.register(new PurchaseApprovalV2());
+        registry.register(new PurchaseApprovalV3());
+        registry.register("acme", approvalDefinition(1L, "escalate", "approve"));
+        DefinitionKey acmeV1 = new DefinitionKey("acme", "purchase-approval", 1L);
+        DefinitionKey defaultV1 = new DefinitionKey(WorkflowScopes.DEFAULT, "purchase-approval", 1L);
+        DefinitionKey defaultV3 = new DefinitionKey(WorkflowScopes.DEFAULT, "purchase-approval", 3L);
+        DefinitionKey defaultV4 = new DefinitionKey(WorkflowScopes.DEFAULT, "purchase-approval", 4L);
+        DefinitionKey globexV1 = new DefinitionKey("globex", "purchase-approval", 1L);
+
+        // When: the registry is read through every lookup, the acme version is registered again, and default v4
+        // is registered afterwards
+        List<DefinitionKey> keysBefore = registry.keysFor("purchase-approval");
+        RuntimeWorkflow acmeResolved = registry.resolve(acmeV1);
+        RuntimeWorkflow defaultResolved = registry.resolve(defaultV1);
+        RuntimeWorkflow currentBefore = registry.resolveCurrent("purchase-approval");
+        Throwable globexRefusal = catchThrowable(() -> registry.resolve(globexV1));
+        Throwable duplicate =
+                catchThrowable(() -> registry.register("acme", approvalDefinition(1L, "approve", "escalate")));
+        registry.register(approvalDefinition(4L, "approve"));
+
+        // Then: the listing is ordered by scope, then version, and holds the acme entry beside the default ones
+        assertThat(keysBefore)
+                .containsExactly(
+                        acmeV1,
+                        defaultV1,
+                        new DefinitionKey(WorkflowScopes.DEFAULT, "purchase-approval", 2L),
+                        defaultV3);
+
+        // and: each key resolves its own graph, and the graph reports the scope of its key
+        assertThat(acmeResolved.definitionScopeKey()).isEqualTo("acme");
+        assertThat(acmeResolved.plan().definitionVersion()).isEqualTo(1L);
+        assertThat(defaultResolved.definitionScopeKey()).isEqualTo(WorkflowScopes.DEFAULT);
+        assertThat(defaultResolved.plan().definitionVersion()).isEqualTo(1L);
+        assertThat(acmeResolved.plan().planHash())
+                .isNotEqualTo(defaultResolved.plan().planHash());
+        assertThat(registry.find(acmeV1))
+                .hasValueSatisfying(found -> assertThat(found.plan()).isEqualTo(acmeResolved.plan()));
+        assertThat(registry.find(defaultV1))
+                .hasValueSatisfying(found -> assertThat(found.plan()).isEqualTo(defaultResolved.plan()));
+
+        // and: a scope that holds nothing of the id has no entry, and resolving it names the scope
+        assertThat(registry.find(globexV1)).isEmpty();
+        assertThat(globexRefusal)
+                .isInstanceOf(WorkflowVersionPinUnavailableException.class)
+                .hasMessageContaining("globex")
+                .hasMessageContaining("purchase-approval");
+
+        // and: current resolution considers the default scope only, before and after default v4
+        assertThat(currentBefore.plan().definitionVersion()).isEqualTo(3L);
+        assertThat(currentBefore.definitionScopeKey()).isEqualTo(WorkflowScopes.DEFAULT);
+        assertThat(registry.resolveCurrent("purchase-approval").plan().definitionVersion())
+                .isEqualTo(4L);
+
+        // and: the second acme v1 is refused naming its scope, id and version, and the first entry is unchanged
+        assertNamesKey(duplicate, "acme", "purchase-approval", 1L);
+        assertThat(registry.resolve(acmeV1).plan()).isEqualTo(acmeResolved.plan());
+
+        // and: default v4 joined the default entries and the acme entry stayed as it was
+        assertThat(registry.keysFor("purchase-approval"))
+                .containsExactly(
+                        acmeV1,
+                        defaultV1,
+                        new DefinitionKey(WorkflowScopes.DEFAULT, "purchase-approval", 2L),
+                        defaultV3,
+                        defaultV4);
+        assertThat(registry.resolve(defaultV4).definitionScopeKey()).isEqualTo(WorkflowScopes.DEFAULT);
+
+        // and: code registered without a scope appears under no key outside the default scope
+        assertThat(registry.allRegistered())
+                .filteredOn(registered -> !"acme".equals(registered.definitionScopeKey()))
+                .hasSize(4)
+                .allSatisfy(registered ->
+                        assertThat(registered.definitionScopeKey()).isEqualTo(WorkflowScopes.DEFAULT));
+        assertThat(registry.allRegistered()).hasSize(5);
+    }
+
+    @Test
+    @DisplayName("the contract and signal rules apply per scope and definition id")
+    void contractAndSignalRulesApplyPerScopeAndDefinitionId() {
+        // Given: contract C declaring ok, contract D declaring go, and default X v1 naming C and waiting for ok
+        registry.register(definition(ScopeContractC.class, "X", 1L, "ok"));
+        DefinitionKey acmeV1 = new DefinitionKey("acme", "X", 1L);
+        DefinitionKey acmeV2 = new DefinitionKey("acme", "X", 2L);
+        DefinitionKey defaultV2 = new DefinitionKey(WorkflowScopes.DEFAULT, "X", 2L);
+
+        // When: the registrations of the scenario run in order
+        Throwable acmeFirst =
+                catchThrowable(() -> registry.register("acme", definition(ScopeContractD.class, "X", 1L, "go")));
+        Throwable defaultOtherContract =
+                catchThrowable(() -> registry.register(definition(ScopeContractD.class, "X", 2L, "go")));
+        Throwable acmeOtherContract =
+                catchThrowable(() -> registry.register("acme", definition(ScopeContractC.class, "X", 2L, "ok")));
+        Throwable acmeUndeclared =
+                catchThrowable(() -> registry.register("acme", definition(ScopeContractD.class, "X", 2L, "ok")));
+        boolean refusedLeftNothing =
+                registry.find(acmeV2).isEmpty() && registry.find(defaultV2).isEmpty();
+        Throwable acmeValid =
+                catchThrowable(() -> registry.register("acme", definition(ScopeContractD.class, "X", 2L, "go")));
+        Throwable defaultOtherId =
+                catchThrowable(() -> registry.register(definition(ScopeContractD.class, "Y", 1L, "go")));
+
+        // Then: acme X v1 is accepted although the default X names another contract
+        assertThat(acmeFirst).isNull();
+
+        // and: default X v2 naming D is refused, its (default, X) names C
+        assertNamesKey(defaultOtherContract, WorkflowScopes.DEFAULT, "X", 2L);
+        assertThat(defaultOtherContract.getMessage())
+                .containsIgnoringCase("contract")
+                .contains("scope-c")
+                .contains("scope-d");
+
+        // and: acme X v2 naming C is refused, its (acme, X) names D
+        assertNamesKey(acmeOtherContract, "acme", "X", 2L);
+        assertThat(acmeOtherContract.getMessage())
+                .containsIgnoringCase("contract")
+                .contains("scope-c")
+                .contains("scope-d");
+
+        // and: acme X v2 waiting for a signal that D does not declare is refused, naming the signal
+        assertNamesKey(acmeUndeclared, "acme", "X", 2L);
+        assertThat(acmeUndeclared.getMessage()).contains("ok");
+
+        // and: the refusals registered nothing
+        assertThat(refusedLeftNothing).isTrue();
+
+        // and: the valid acme v2 and the default Y, which shares contract D with the acme X, are accepted
+        assertThat(acmeValid).isNull();
+        assertThat(defaultOtherId).isNull();
+        assertThat(registry.find(acmeV2)).isPresent();
+        assertThat(registry.find(new DefinitionKey(WorkflowScopes.DEFAULT, "Y", 1L)))
+                .isPresent();
+        assertThat(registry.allRegistered()).hasSize(4);
+
+        // and: the contract of each (scope, id) is the one its versions name, and a scope without the id has none
+        assertThat(registry.contractOf("acme", "X")).contains("scope-d");
+        assertThat(registry.contractOf(WorkflowScopes.DEFAULT, "X")).contains("scope-c");
+        assertThat(registry.contractOf(WorkflowScopes.DEFAULT, "Y")).contains("scope-d");
+        assertThat(registry.contractOf("globex", "X")).isEmpty();
+        assertThat(registry.find(acmeV1)).isPresent();
+    }
+
+    private static void assertNamesKey(Throwable refusal, String scopeKey, String definitionId, long version) {
+        assertThat(refusal).isInstanceOf(WorkflowDefinitionException.class);
+        assertThat(refusal.getMessage())
+                .contains(scopeKey)
+                .contains(definitionId)
+                .containsPattern("(\\bv" + version + "\\b|\\bversion " + version + "\\b|, " + version + "\\))");
+    }
+
+    /** A definition of {@code definitionId} that waits, one after the other, for the given signals. */
+    private static <C> WorkflowDefinition<ApprovalState, C> definition(
+            Class<C> contract, String definitionId, long version, String... signals) {
+        return new SequentialWaitDefinition<C>(contract, definitionId, version, signals) {};
+    }
+
+    /** A purchase-approval definition of the approval contract that waits for the given signals in order. */
+    private static WorkflowDefinition<ApprovalState, ApprovalContract> approvalDefinition(
+            long version, String... signals) {
+        return definition(ApprovalContract.class, "purchase-approval", version, signals);
     }
 
     // --- Many definitions per contract: fixtures ---
@@ -1011,6 +1188,22 @@ class WorkflowRegistryTest {
 
         @WorkflowSignal("approve")
         Future<Void> approve(WorkflowInstanceId id, ApprovalSignal payload, @SignalDedupKey String dedupKey);
+    }
+
+    /** A contract named {@code scope-c} that declares only {@code ok}. */
+    @WorkflowContract("scope-c")
+    interface ScopeContractC {
+
+        @WorkflowSignal("ok")
+        Future<Void> ok(WorkflowInstanceId id, ApprovalSignal payload, @SignalDedupKey String dedupKey);
+    }
+
+    /** A contract named {@code scope-d} that declares only {@code go}. */
+    @WorkflowContract("scope-d")
+    interface ScopeContractD {
+
+        @WorkflowSignal("go")
+        Future<Void> go(WorkflowInstanceId id, ApprovalSignal payload, @SignalDedupKey String dedupKey);
     }
 
     /**

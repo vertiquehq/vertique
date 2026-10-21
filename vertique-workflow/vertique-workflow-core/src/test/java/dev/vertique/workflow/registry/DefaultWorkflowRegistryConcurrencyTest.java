@@ -12,6 +12,8 @@ import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
 import dev.vertique.workflow.exception.WorkflowDefinitionMissingException;
 import dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException;
+import dev.vertique.workflow.registry.store.DefinitionKey;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
@@ -306,7 +308,7 @@ class DefaultWorkflowRegistryConcurrencyTest {
             RuntimeWorkflow foo = registry.resolveCurrent("task-foo");
             assertThat(foo.plan().definitionVersion()).isEqualTo(1L);
 
-            assertThatThrownBy(() -> registry.resolvePinned("task-foo", 2L))
+            assertThatThrownBy(() -> registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "task-foo", 2L)))
                     .isInstanceOf(WorkflowVersionPinUnavailableException.class);
         }
 
@@ -487,17 +489,17 @@ class DefaultWorkflowRegistryConcurrencyTest {
             RuntimeWorkflow current = registry.resolveCurrent("task-foo");
             assertThat(current.plan().definitionVersion()).isEqualTo(3L);
 
-            RuntimeWorkflow v1 = registry.resolvePinned("task-foo", 1L);
+            RuntimeWorkflow v1 = registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "task-foo", 1L));
             assertThat(v1.plan().definitionVersion()).isEqualTo(1L);
 
-            RuntimeWorkflow v2 = registry.resolvePinned("task-foo", 2L);
+            RuntimeWorkflow v2 = registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "task-foo", 2L));
             assertThat(v2.plan().definitionVersion()).isEqualTo(2L);
 
-            RuntimeWorkflow v3 = registry.resolvePinned("task-foo", 3L);
+            RuntimeWorkflow v3 = registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "task-foo", 3L));
             assertThat(v3.plan().definitionVersion()).isEqualTo(3L);
 
             // Missing version still throws correctly
-            assertThatThrownBy(() -> registry.resolvePinned("task-foo", 99L))
+            assertThatThrownBy(() -> registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "task-foo", 99L)))
                     .isInstanceOf(WorkflowVersionPinUnavailableException.class);
         }
     }

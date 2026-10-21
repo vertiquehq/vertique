@@ -9,6 +9,8 @@ import dev.vertique.workflow.exception.WorkflowMigrationStateTypeMismatchExcepti
 import dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowRegistry;
+import dev.vertique.workflow.registry.store.DefinitionKey;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
 import java.util.Collection;
@@ -48,7 +50,7 @@ import java.util.Set;
  * <ol>
  *   <li>Both {@link WorkflowMigrationHandler#fromDefinitionVersion()} and
  *       {@link WorkflowMigrationHandler#targetDefinitionVersion()} must be resolvable via
- *       {@link WorkflowRegistry#resolvePinned(String, long)}. If either is absent
+ *       {@link WorkflowRegistry#resolve(DefinitionKey)} in the default scope. If either is absent
  *       ({@link WorkflowVersionPinUnavailableException} or
  *       {@link WorkflowDefinitionMissingException} is thrown), {@link Optional#empty()} is
  *       returned. Any other registry exception propagates immediately so it is not silently
@@ -144,7 +146,8 @@ public class DefaultWorkflowMigrationRegistry implements WorkflowMigrationRegist
         // propagate so it is not silently swallowed as a benign "not found" (C1 fix).
         RuntimeWorkflow sourcePlan;
         try {
-            sourcePlan = workflowRegistry.resolvePinned(definitionId, sourceVersion);
+            sourcePlan =
+                    workflowRegistry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, definitionId, sourceVersion));
         } catch (WorkflowVersionPinUnavailableException | WorkflowDefinitionMissingException ex) {
             return Optional.empty();
         }
@@ -152,7 +155,8 @@ public class DefaultWorkflowMigrationRegistry implements WorkflowMigrationRegist
         // Resolve target plan — same: absent means not yet registered.
         RuntimeWorkflow targetPlan;
         try {
-            targetPlan = workflowRegistry.resolvePinned(definitionId, targetVersion);
+            targetPlan =
+                    workflowRegistry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, definitionId, targetVersion));
         } catch (WorkflowVersionPinUnavailableException | WorkflowDefinitionMissingException ex) {
             return Optional.empty();
         }

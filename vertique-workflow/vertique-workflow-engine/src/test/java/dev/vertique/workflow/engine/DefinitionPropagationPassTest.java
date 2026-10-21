@@ -1017,10 +1017,32 @@ class DefinitionPropagationPassTest {
         }
 
         @Override
-        public RuntimeWorkflow resolvePinned(String definitionId, long version) {
+        public RuntimeWorkflow resolve(DefinitionKey key) {
+            String definitionId = key.definitionId();
+            long version = key.definitionVersion();
             RuntimeWorkflow found = runtimes.get(definitionId + "@" + version);
             if (found == null) throw new WorkflowVersionPinUnavailableException(definitionId, version, null);
             return found;
+        }
+
+        @Override
+        public RuntimeWorkflow resolvePinned(String definitionId, long version) {
+            return resolve(new DefinitionKey(WorkflowScopes.DEFAULT, definitionId, version));
+        }
+
+        @Override
+        public Optional<RuntimeWorkflow> find(DefinitionKey key) {
+            return Optional.ofNullable(runtimes.get(key.definitionId() + "@" + key.definitionVersion()));
+        }
+
+        @Override
+        public List<DefinitionKey> keysFor(String definitionId) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void register(String scopeKey, WorkflowDefinition<?, ?> def) {
+            register(def);
         }
 
         @Override
@@ -1034,12 +1056,16 @@ class DefinitionPropagationPassTest {
         }
 
         @Override
-        public Optional<WorkflowDefinition<?, ?>> registeredDefinition(String definitionId, long version) {
+        public Optional<WorkflowDefinition<?, ?>> registeredDefinition(DefinitionKey key) {
+            String definitionId = key.definitionId();
+            long version = key.definitionVersion();
             return Optional.ofNullable(definitions.get(definitionId + "@" + version));
         }
 
         @Override
-        public void unregister(String definitionId, long version) {
+        public void unregister(DefinitionKey key) {
+            String definitionId = key.definitionId();
+            long version = key.definitionVersion();
             String name = definitionId + "@" + version;
             unregistered.add(name);
             runtimes.remove(name);
@@ -1048,13 +1074,17 @@ class DefinitionPropagationPassTest {
         }
 
         @Override
-        public void markDeprecated(String definitionId, long version) {
+        public void markDeprecated(DefinitionKey key) {
+            String definitionId = key.definitionId();
+            long version = key.definitionVersion();
             if (failMark) throw new IllegalStateException("cannot mark");
             deprecated.add(definitionId + "@" + version);
         }
 
         @Override
-        public boolean isDeprecated(String definitionId, long version) {
+        public boolean isDeprecated(DefinitionKey key) {
+            String definitionId = key.definitionId();
+            long version = key.definitionVersion();
             return deprecated.contains(definitionId + "@" + version);
         }
     }

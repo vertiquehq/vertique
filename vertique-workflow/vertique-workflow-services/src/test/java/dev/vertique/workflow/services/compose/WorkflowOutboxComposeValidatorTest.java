@@ -28,6 +28,8 @@ import dev.vertique.workflow.registry.RegisteredDefinitionClass;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowCallbackRegistry;
 import dev.vertique.workflow.registry.WorkflowRegistry;
+import dev.vertique.workflow.registry.store.DefinitionKey;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import io.vertx.core.Future;
 import java.util.Collection;
 import java.util.List;
@@ -285,6 +287,7 @@ class WorkflowOutboxComposeValidatorTest {
         RuntimeWorkflow rw = new RuntimeWorkflow(
                 plan,
                 "test-contract",
+                WorkflowScopes.DEFAULT,
                 String.class,
                 String.class,
                 Function.identity(),
@@ -340,6 +343,26 @@ class WorkflowOutboxComposeValidatorTest {
         @Override
         public RuntimeWorkflow resolvePinned(String definitionId, long version) {
             throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void register(String scopeKey, WorkflowDefinition<?, ?> def) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public RuntimeWorkflow resolve(DefinitionKey key) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public Optional<RuntimeWorkflow> find(DefinitionKey key) {
+            return Optional.empty();
+        }
+
+        @Override
+        public List<DefinitionKey> keysFor(String definitionId) {
+            return List.of();
         }
 
         @Override

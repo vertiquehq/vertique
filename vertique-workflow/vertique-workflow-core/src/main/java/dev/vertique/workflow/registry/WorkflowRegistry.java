@@ -5,7 +5,10 @@ package dev.vertique.workflow.registry;
 
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException;
+import dev.vertique.workflow.registry.store.DefinitionKey;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -15,19 +18,25 @@ import java.util.Optional;
  * implementations contributed to the Dagger multibinding. The registry validates each definition
  * at registration time and rejects invalid plans with a {@code WorkflowDefinitionException}.
  *
- * <p>Any number of definition ids and versions may implement one contract. The registry maps the
- * class of a registered definition to its definition id and contract for
- * {@code WorkflowClientFactory}.
+ * <p>A registered version is identified by a {@link DefinitionKey}: the scope that owns it, the definition
+ * id and the version. Code definitions register in the default scope, {@link WorkflowScopes#DEFAULT}, and a
+ * scope may hold its own versions of an id the default scope also holds. Every pinned lookup takes the
+ * full key.
+ *
+ * <p>Any number of definition ids and versions may implement one contract. Within one scope and
+ * definition id every version must name the same contract. The registry maps the class of a registered
+ * definition to its definition id and contract for {@code WorkflowClientFactory}.
  *
  * <p>The framework implements this interface ({@link DefaultWorkflowRegistry}); applications call it.
- * Members added in later releases, such as {@link #definitionClass(Class)}, are abstract, so a
- * third-party implementation must be updated with the framework.
+ * Members added in later releases, such as {@link #definitionClass(Class)}, {@link #resolve(DefinitionKey)}
+ * and {@link #find(DefinitionKey)}, are abstract, so a third-party implementation must be updated with
+ * the framework.
  */
 public interface WorkflowRegistry {
 
     /**
-     * Registers a workflow definition, builds its plan via the DSL, and stores the resulting
-     * {@link RuntimeWorkflow}.
+     * Registers a workflow definition in the default scope, builds its plan via the DSL, and stores the
+     * resulting {@link RuntimeWorkflow}.
      *
      * <p>Registration validates the plan: it must call {@code wf.init(...)} exactly once, and all
      * {@code WaitSignalNode} signal names must be unique within the plan. Violations throw
@@ -39,32 +48,98 @@ public interface WorkflowRegistry {
     void register(WorkflowDefinition<?, ?> def);
 
     /**
-     * Returns the {@link RuntimeWorkflow} for the highest-version plan of the given definition that is
-     * not marked deprecated.
+     * Registers a workflow definition in the given scope, builds its plan via the DSL, and stores the
+     * resulting {@link RuntimeWorkflow}.
+     *
+     * <p>The plan rules of {@link #register(WorkflowDefinition)} apply. In addition, the definition must
+     * name the same contract as the versions already registered under the same scope and definition id,
+     * and registering a key twice is refused. Another scope may register the same id under another
+     * contract.
+     *
+     * @param scopeKey the scope that owns the definition; {@link WorkflowScopes#DEFAULT} for the default
+     *     scope
+     * @param def the workflow definition to register
+     * @throws dev.vertique.workflow.exception.WorkflowDefinitionException if the plan is invalid, the
+     *     contract differs from the one of the scope and id, or the key is already registered
+     */
+    void register(String scopeKey, WorkflowDefinition<?, ?> def);
+
+    /**
+     * Returns the {@link RuntimeWorkflow} for the highest-version plan of the given definition in the
+     * default scope that is not marked deprecated.
      *
      * @param definitionId id of the workflow definition
      * @return the runtime workflow for the current (highest non-deprecated) version
-     * @throws dev.vertique.workflow.exception.WorkflowDefinitionMissingException if no definition with
-     *     the given id is registered, or every registered version of it is deprecated
+     * @throws dev.vertique.workflow.exception.WorkflowDefinitionMissingException if no default-scope
+     *     definition with the given id is registered, or every registered version of it is deprecated
      */
     RuntimeWorkflow resolveCurrent(String definitionId);
 
     /**
-     * Returns the {@link RuntimeWorkflow} for a specific version of the given definition.
+     * Returns the {@link RuntimeWorkflow} for one version of a definition in the default scope.
      *
-     * <p>This method is used by the engine when resuming an in-flight instance that was pinned to
-     * a specific plan version at start time.
+     * <p>This is the default-scope form of {@link #resolve(DefinitionKey)}; code that holds an instance
+     * resolves the instance's full pin with the key form instead.
      *
      * @param definitionId id of the workflow definition
      * @param version the exact plan version to resolve
      * @return the runtime workflow for the specified version
-     * @throws WorkflowVersionPinUnavailableException if the definition id is registered but the
-     *     specified version is not; this exception carries the instanceId if the caller provides
-     *     one
-     * @throws dev.vertique.workflow.exception.WorkflowDefinitionMissingException if no definition with
-     *     the given id is registered at all
+     * @throws WorkflowVersionPinUnavailableException if the version is not registered in the default scope
      */
     RuntimeWorkflow resolvePinned(String definitionId, long version);
+
+    /**
+     * Returns the {@link RuntimeWorkflow} for one version of a definition in one scope.
+     *
+     * <p>This method is used by the engine when resuming an in-flight instance that was pinned to
+     * a specific plan version at start time; the key is the instance's definition scope, id and version.
+     *
+     * @param key the scope, definition id and exact plan version to resolve
+     * @return the runtime workflow for the key; its {@link RuntimeWorkflow#definitionScopeKey()} is the
+     *     scope of the key
+     * @throws WorkflowVersionPinUnavailableException if the key is not registered; the exception names the
+     *     scope, the definition id and the version
+     */
+    RuntimeWorkflow resolve(DefinitionKey key);
+
+    /**
+     * Returns the {@link RuntimeWorkflow} for one version of a definition in one scope, if registered.
+     *
+     * @param key the scope, definition id and exact plan version to look up
+     * @return the runtime workflow, or empty when the key is not registered
+     */
+    Optional<RuntimeWorkflow> find(DefinitionKey key);
+
+    /**
+     * Lists the keys of every registered version of a definition id across all scopes, ordered by scope
+     * and then by version.
+     *
+     * <p>This is for listings. A start path asks {@link #contractOf(String, String)} and
+     * {@link #find(DefinitionKey)}, which cost one lookup regardless of the number of scopes.
+     *
+     * @param definitionId id of the workflow definition
+     * @return an immutable list of the registered keys; empty when no scope holds the id
+     */
+    List<DefinitionKey> keysFor(String definitionId);
+
+    /**
+     * Returns the contract name of the registered versions of one definition id in one scope.
+     *
+     * <p>The default implementation derives the answer from {@link #keysFor(String)}; the framework
+     * registry answers from an index it keeps for its registration rules.
+     *
+     * @param scopeKey the scope to ask
+     * @param definitionId id of the workflow definition
+     * @return the contract name the versions of the scope and id name, or empty when the scope holds no
+     *     version of the id
+     */
+    default Optional<String> contractOf(String scopeKey, String definitionId) {
+        return keysFor(definitionId).stream()
+                .filter(key -> key.scopeKey().equals(scopeKey))
+                .findFirst()
+                .flatMap(this::find)
+                .map(RuntimeWorkflow::contractName);
+    }
 
     /**
      * Returns the definition id and contract of a registered definition class.
@@ -80,16 +155,34 @@ public interface WorkflowRegistry {
     Optional<RegisteredDefinitionClass> definitionClass(Class<?> definitionClass);
 
     /**
-     * Returns an immutable snapshot of every registered {@link RuntimeWorkflow} across all
+     * Returns an immutable snapshot of every registered {@link RuntimeWorkflow} across all scopes and
      * definitionId/version pairs. Used by startup validators to walk all plans without resolving
      * each one individually.
      *
      * @return immutable collection of all registered runtime workflows; never null, may be empty
      */
     Collection<RuntimeWorkflow> allRegistered();
-    /** Removes a version. Unsupported registries fail explicitly. */
+
+    /** Removes a version in the default scope. Unsupported registries fail explicitly. */
     default void unregister(String definitionId, long version) {
+        DefinitionKeys.defaultScope(definitionId, version).ifPresent(this::unregister);
+    }
+
+    /** Removes a version. Unsupported registries fail explicitly. */
+    default void unregister(DefinitionKey key) {
         throw new UnsupportedOperationException("unregister is not supported");
+    }
+
+    /**
+     * Marks one registered version of a definition in the default scope as deprecated; see
+     * {@link #markDeprecated(DefinitionKey)}.
+     *
+     * @param definitionId id of the workflow definition
+     * @param version the exact plan version to mark as deprecated
+     * @throws UnsupportedOperationException if this registry does not support deprecation
+     */
+    default void markDeprecated(String definitionId, long version) {
+        DefinitionKeys.defaultScope(definitionId, version).ifPresent(this::markDeprecated);
     }
 
     /**
@@ -102,13 +195,26 @@ public interface WorkflowRegistry {
      * observes a version that is registered but not yet marked after this method returns. The
      * default implementation throws, so registries that do not support deprecation fail explicitly.
      *
-     * @param definitionId id of the workflow definition
-     * @param version the exact plan version to mark as deprecated
+     * @param key the scope, definition id and exact plan version to mark as deprecated
      * @throws UnsupportedOperationException if this registry does not support deprecation
      */
-    default void markDeprecated(String definitionId, long version) {
+    default void markDeprecated(DefinitionKey key) {
         throw new UnsupportedOperationException(
                 getClass().getName() + " does not support the markDeprecated operation");
+    }
+
+    /**
+     * Returns whether one registered version of a definition in the default scope is marked deprecated;
+     * see {@link #isDeprecated(DefinitionKey)}.
+     *
+     * @param definitionId id of the workflow definition
+     * @param version the exact plan version to check
+     * @return {@code true} if the version is registered and marked deprecated; {@code false} otherwise
+     */
+    default boolean isDeprecated(String definitionId, long version) {
+        return DefinitionKeys.defaultScope(definitionId, version)
+                .map(this::isDeprecated)
+                .orElse(false);
     }
 
     /**
@@ -118,13 +224,25 @@ public interface WorkflowRegistry {
      * implementation returns {@code false}, which preserves the behavior of existing registries
      * that do not track deprecation.
      *
-     * @param definitionId id of the workflow definition
-     * @param version the exact plan version to check
+     * @param key the scope, definition id and exact plan version to check
      * @return {@code true} if the version is registered and marked deprecated; {@code false}
      *     otherwise
      */
-    default boolean isDeprecated(String definitionId, long version) {
+    default boolean isDeprecated(DefinitionKey key) {
         return false;
+    }
+
+    /**
+     * Returns the definition that was passed to {@link #register} for one version in the default scope;
+     * see {@link #registeredDefinition(DefinitionKey)}.
+     *
+     * @param definitionId id of the workflow definition
+     * @param version the exact plan version
+     * @return the definition registered for this version, or empty when none is registered or this
+     *     registry does not retain sources
+     */
+    default Optional<WorkflowDefinition<?, ?>> registeredDefinition(String definitionId, long version) {
+        return DefinitionKeys.defaultScope(definitionId, version).flatMap(this::registeredDefinition);
     }
 
     /**
@@ -135,12 +253,11 @@ public interface WorkflowRegistry {
      * Applications do not call it. The default implementation returns an empty result, which preserves
      * the behavior of existing registries that do not retain their sources.
      *
-     * @param definitionId id of the workflow definition
-     * @param version the exact plan version
+     * @param key the scope, definition id and exact plan version
      * @return the definition registered for this version, or empty when none is registered or this
      *     registry does not retain sources
      */
-    default Optional<WorkflowDefinition<?, ?>> registeredDefinition(String definitionId, long version) {
+    default Optional<WorkflowDefinition<?, ?>> registeredDefinition(DefinitionKey key) {
         return Optional.empty();
     }
 }

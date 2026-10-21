@@ -16,6 +16,8 @@ import dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException;
 import dev.vertique.workflow.plan.HumanTaskNode;
 import dev.vertique.workflow.plan.WorkflowNode;
 import dev.vertique.workflow.plan.WorkflowPlan;
+import dev.vertique.workflow.registry.store.DefinitionKey;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import java.lang.reflect.RecordComponent;
 import java.util.ArrayList;
 import java.util.List;
@@ -197,9 +199,10 @@ class DefaultWorkflowRegistryDefinitionValidatorTest {
         // Then: nothing about the definition is resolvable
         assertThatThrownBy(() -> registry.resolveCurrent("validated-saga"))
                 .isInstanceOf(WorkflowDefinitionMissingException.class);
-        assertThatThrownBy(() -> registry.resolvePinned("validated-saga", 1L))
+        assertThatThrownBy(() -> registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "validated-saga", 1L)))
                 .isInstanceOf(WorkflowVersionPinUnavailableException.class);
-        assertThat(registry.registeredDefinition("validated-saga", 1L)).isEmpty();
+        assertThat(registry.registeredDefinition(new DefinitionKey(WorkflowScopes.DEFAULT, "validated-saga", 1L)))
+                .isEmpty();
         assertThat(registry.allRegistered()).isEmpty();
 
         // When: the validator passes and the same definition is registered again
@@ -209,8 +212,10 @@ class DefaultWorkflowRegistryDefinitionValidatorTest {
         // Then: the registration succeeds, so the failed attempt left no half-registered state
         assertThat(registry.resolveCurrent("validated-saga").plan().definitionVersion())
                 .isEqualTo(1L);
-        assertThat(registry.resolvePinned("validated-saga", 1L)).isNotNull();
-        assertThat(registry.registeredDefinition("validated-saga", 1L)).containsSame(definition);
+        assertThat(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "validated-saga", 1L)))
+                .isNotNull();
+        assertThat(registry.registeredDefinition(new DefinitionKey(WorkflowScopes.DEFAULT, "validated-saga", 1L)))
+                .containsSame(definition);
     }
 
     @Test

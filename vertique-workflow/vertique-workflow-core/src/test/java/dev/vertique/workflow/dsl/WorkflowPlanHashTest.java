@@ -13,6 +13,8 @@ import dev.vertique.workflow.plan.HumanTaskNode;
 import dev.vertique.workflow.plan.WaitSignalNode;
 import dev.vertique.workflow.plan.WorkflowPlan;
 import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
+import dev.vertique.workflow.registry.store.DefinitionKey;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.types.WorkflowType;
 import io.vertx.core.Future;
 import org.junit.jupiter.api.DisplayName;
@@ -236,7 +238,10 @@ class WorkflowPlanHashTest {
         });
 
         // Then: the plan hash is the one captured before the change
-        assertThat(registry.resolvePinned("golden-saga", 1L).plan().planHash()).isEqualTo(GOLDEN_UNANNOTATED_PLAN_HASH);
+        assertThat(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "golden-saga", 1L))
+                        .plan()
+                        .planHash())
+                .isEqualTo(GOLDEN_UNANNOTATED_PLAN_HASH);
     }
 
     @Test
@@ -254,7 +259,9 @@ class WorkflowPlanHashTest {
                 definition(TypedContract.class, "typed-saga", PlainState.class, PlainPaid.class, PlainApproval.class));
 
         // Then: the annotated plan carries the logical names
-        WorkflowPlan plan = annotatedRegistry.resolvePinned("typed-saga", 1L).plan();
+        WorkflowPlan plan = annotatedRegistry
+                .resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "typed-saga", 1L))
+                .plan();
         assertThat(plan.stateTypeName()).isEqualTo("order");
         assertThat(waitNode(plan).payloadTypeName()).isEqualTo("order.paid");
         assertThat(decisionNode(plan).decisions().get(0).payloadTypeName()).isEqualTo("order.approval");
@@ -262,8 +269,10 @@ class WorkflowPlanHashTest {
         // And: the hash digests those names, and so differs from the twin's
         assertThat(plan.planHash()).isEqualTo(WorkflowBuilder.computePlanHashForTesting(plan));
         assertThat(plan.planHash())
-                .isNotEqualTo(
-                        twinRegistry.resolvePinned("typed-saga", 1L).plan().planHash());
+                .isNotEqualTo(twinRegistry
+                        .resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "typed-saga", 1L))
+                        .plan()
+                        .planHash());
     }
 
     @Test
@@ -280,8 +289,12 @@ class WorkflowPlanHashTest {
                 definition(OtherContract.class, "x", PlainState.class, PlainPaid.class, PlainApproval.class));
 
         // Then: the plans, hashes included, are equal
-        WorkflowPlan ordersPlan = ordersRegistry.resolvePinned("x", 1L).plan();
-        WorkflowPlan otherPlan = otherRegistry.resolvePinned("x", 1L).plan();
+        WorkflowPlan ordersPlan = ordersRegistry
+                .resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "x", 1L))
+                .plan();
+        WorkflowPlan otherPlan = otherRegistry
+                .resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "x", 1L))
+                .plan();
         assertThat(ordersPlan.planHash()).isEqualTo(otherPlan.planHash());
         assertThat(ordersPlan).isEqualTo(otherPlan);
     }

@@ -6,6 +6,7 @@ package dev.vertique.workflow.registry;
 import dev.vertique.workflow.plan.CompensationNode;
 import dev.vertique.workflow.plan.WorkflowNode;
 import dev.vertique.workflow.plan.WorkflowPlan;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import java.util.Map;
 import java.util.function.Function;
 
@@ -33,6 +34,8 @@ import java.util.function.Function;
  * @param plan the serialization-friendly plan produced by the {@link WorkflowBuilder}
  * @param contractName the logical name of the contract the definition implements, as reported by
  *     {@code WorkflowTypeNames.contractNameOf}; a contract may be implemented by many definitions
+ * @param definitionScopeKey the scope the definition is registered in; {@link WorkflowScopes#DEFAULT} for code
+ *     definitions and for definitions registered without a scope
  * @param stateType runtime {@code Class} object for the workflow state; used for JSON
  *     deserialization
  * @param startPayloadType runtime {@code Class} object for the start payload; the engine coerces
@@ -54,6 +57,7 @@ import java.util.function.Function;
 public record RuntimeWorkflow(
         WorkflowPlan plan,
         String contractName,
+        String definitionScopeKey,
         Class<?> stateType,
         Class<?> startPayloadType,
         Function<Object, Object> initialState,
@@ -65,8 +69,8 @@ public record RuntimeWorkflow(
     // --- Factory ---
 
     /**
-     * Constructs a {@code RuntimeWorkflow}, eagerly computing the two node-lookup maps from
-     * {@code plan.nodes()}.
+     * Constructs a {@code RuntimeWorkflow} in the default scope, eagerly computing the two node-lookup maps
+     * from {@code plan.nodes()}.
      *
      * @param plan the serialization-friendly workflow plan
      * @param contractName logical name of the contract the definition implements
@@ -85,6 +89,40 @@ public record RuntimeWorkflow(
             Function<Object, Object> initialState,
             Map<String, Class<?>> signalPayloadTypes,
             WorkflowCallbackRegistry callbacks) {
+        return of(
+                plan,
+                contractName,
+                WorkflowScopes.DEFAULT,
+                stateType,
+                startPayloadType,
+                initialState,
+                signalPayloadTypes,
+                callbacks);
+    }
+
+    /**
+     * Constructs a {@code RuntimeWorkflow} in the given scope, eagerly computing the two node-lookup maps from
+     * {@code plan.nodes()}.
+     *
+     * @param plan the serialization-friendly workflow plan
+     * @param contractName logical name of the contract the definition implements
+     * @param definitionScopeKey the scope the definition is registered in
+     * @param stateType runtime {@code Class} for the workflow state
+     * @param startPayloadType runtime {@code Class} for the start payload
+     * @param initialState function that maps start payload to initial state
+     * @param signalPayloadTypes map from signal name to payload class
+     * @param callbacks callback registry populated by the builder
+     * @return a fully-initialized {@code RuntimeWorkflow} with pre-computed lookup maps
+     */
+    public static RuntimeWorkflow of(
+            WorkflowPlan plan,
+            String contractName,
+            String definitionScopeKey,
+            Class<?> stateType,
+            Class<?> startPayloadType,
+            Function<Object, Object> initialState,
+            Map<String, Class<?>> signalPayloadTypes,
+            WorkflowCallbackRegistry callbacks) {
         Map<String, WorkflowNode> byId = new java.util.HashMap<>();
         Map<String, CompensationNode> compMap = new java.util.HashMap<>();
         for (WorkflowNode n : plan.nodes()) {
@@ -96,6 +134,7 @@ public record RuntimeWorkflow(
         return new RuntimeWorkflow(
                 plan,
                 contractName,
+                definitionScopeKey,
                 stateType,
                 startPayloadType,
                 initialState,

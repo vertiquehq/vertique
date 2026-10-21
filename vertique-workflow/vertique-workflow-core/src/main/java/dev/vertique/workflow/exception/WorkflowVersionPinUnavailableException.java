@@ -4,6 +4,7 @@
 package dev.vertique.workflow.exception;
 
 import dev.vertique.workflow.ops.WorkflowInstanceId;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 
 /**
  * Thrown when a workflow instance is pinned to a specific definition version that is no longer
@@ -17,6 +18,9 @@ import dev.vertique.workflow.ops.WorkflowInstanceId;
  */
 public class WorkflowVersionPinUnavailableException extends WorkflowUnavailableException {
 
+    /** The scope that owns the definition the instance is pinned to. */
+    private final String scopeKey;
+
     /** The workflow definition id that the instance belongs to. */
     private final String definitionId;
 
@@ -27,26 +31,52 @@ public class WorkflowVersionPinUnavailableException extends WorkflowUnavailableE
     private final WorkflowInstanceId instanceId;
 
     /**
-     * Creates a new {@code WorkflowVersionPinUnavailableException}.
+     * Creates a new {@code WorkflowVersionPinUnavailableException} for a definition in the default scope.
      *
      * @param definitionId the workflow definition id
      * @param version the pinned version that is no longer registered
      * @param instanceId the id of the in-flight instance
      */
     public WorkflowVersionPinUnavailableException(String definitionId, long version, WorkflowInstanceId instanceId) {
+        this(WorkflowScopes.DEFAULT, definitionId, version, instanceId);
+    }
+
+    /**
+     * Creates a new {@code WorkflowVersionPinUnavailableException}.
+     *
+     * @param scopeKey the scope that owns the definition
+     * @param definitionId the workflow definition id
+     * @param version the pinned version that is no longer registered
+     * @param instanceId the id of the in-flight instance, or {@code null} when the lookup was not made for an
+     *     instance
+     */
+    public WorkflowVersionPinUnavailableException(
+            String scopeKey, String definitionId, long version, WorkflowInstanceId instanceId) {
         super("Workflow definition '"
                 + definitionId
                 + "' version "
                 + version
-                + " is no longer registered"
+                + " in scope '"
+                + scopeKey
+                + "' is no longer registered"
                 + (instanceId != null
                         ? "; in-flight instance " + instanceId.value()
                                 + " cannot be advanced. Restore the definition version or cancel the"
                                 + " instance via management APIs."
                         : ". Restore the definition version or re-register it."));
+        this.scopeKey = scopeKey;
         this.definitionId = definitionId;
         this.version = version;
         this.instanceId = instanceId;
+    }
+
+    /**
+     * Returns the scope that owns the definition the instance is pinned to.
+     *
+     * @return the scope key
+     */
+    public String scopeKey() {
+        return scopeKey;
     }
 
     /**

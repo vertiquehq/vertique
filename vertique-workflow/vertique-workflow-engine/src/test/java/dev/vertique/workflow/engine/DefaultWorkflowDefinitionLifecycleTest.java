@@ -1242,10 +1242,32 @@ class DefaultWorkflowDefinitionLifecycleTest {
         }
 
         @Override
-        public RuntimeWorkflow resolvePinned(String definitionId, long version) {
+        public RuntimeWorkflow resolve(DefinitionKey key) {
+            String definitionId = key.definitionId();
+            long version = key.definitionVersion();
             RuntimeWorkflow found = registrations.get(definitionId + "@" + version);
             if (found == null) throw new WorkflowVersionPinUnavailableException(definitionId, version, null);
             return found;
+        }
+
+        @Override
+        public RuntimeWorkflow resolvePinned(String definitionId, long version) {
+            return resolve(new DefinitionKey(WorkflowScopes.DEFAULT, definitionId, version));
+        }
+
+        @Override
+        public Optional<RuntimeWorkflow> find(DefinitionKey key) {
+            return Optional.ofNullable(registrations.get(key.definitionId() + "@" + key.definitionVersion()));
+        }
+
+        @Override
+        public List<DefinitionKey> keysFor(String definitionId) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void register(String scopeKey, WorkflowDefinition<?, ?> def) {
+            register(def);
         }
 
         @Override
@@ -1259,12 +1281,16 @@ class DefaultWorkflowDefinitionLifecycleTest {
         }
 
         @Override
-        public Optional<WorkflowDefinition<?, ?>> registeredDefinition(String definitionId, long version) {
+        public Optional<WorkflowDefinition<?, ?>> registeredDefinition(DefinitionKey key) {
+            String definitionId = key.definitionId();
+            long version = key.definitionVersion();
             return Optional.ofNullable(definitions.get(definitionId + "@" + version));
         }
 
         @Override
-        public void unregister(String definitionId, long version) {
+        public void unregister(DefinitionKey key) {
+            String definitionId = key.definitionId();
+            long version = key.definitionVersion();
             String name = definitionId + "@" + version;
             unregistered.add(name);
             registrations.remove(name);
@@ -1397,10 +1423,32 @@ class DefaultWorkflowDefinitionLifecycleTest {
         }
 
         @Override
-        public RuntimeWorkflow resolvePinned(String definitionId, long version) {
+        public RuntimeWorkflow resolve(DefinitionKey key) {
+            String definitionId = key.definitionId();
+            long version = key.definitionVersion();
             RuntimeWorkflow found = registrations.get(definitionId + "@" + version);
             if (found == null) throw new WorkflowVersionPinUnavailableException(definitionId, version, null);
             return found;
+        }
+
+        @Override
+        public RuntimeWorkflow resolvePinned(String definitionId, long version) {
+            return resolve(new DefinitionKey(WorkflowScopes.DEFAULT, definitionId, version));
+        }
+
+        @Override
+        public Optional<RuntimeWorkflow> find(DefinitionKey key) {
+            return Optional.ofNullable(registrations.get(key.definitionId() + "@" + key.definitionVersion()));
+        }
+
+        @Override
+        public List<DefinitionKey> keysFor(String definitionId) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void register(String scopeKey, WorkflowDefinition<?, ?> def) {
+            register(def);
         }
 
         @Override
@@ -1414,7 +1462,9 @@ class DefaultWorkflowDefinitionLifecycleTest {
         }
 
         @Override
-        public void unregister(String definitionId, long version) {
+        public void unregister(DefinitionKey key) {
+            String definitionId = key.definitionId();
+            long version = key.definitionVersion();
             unregistered.add(definitionId + "@" + version);
             registrations.remove(definitionId + "@" + version);
         }

@@ -20,6 +20,7 @@ import dev.vertique.services.ServiceTargetResolver;
 import dev.vertique.workflow.registry.RegisteredDefinitionClass;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowRegistry;
+import dev.vertique.workflow.registry.store.DefinitionKey;
 import io.vertx.core.Future;
 import jakarta.inject.Singleton;
 import java.util.Collection;
@@ -237,6 +238,26 @@ public class WorkflowComposeStartupContractIT {
         @Override
         public RuntimeWorkflow resolvePinned(String definitionId, long version) {
             throw new UnsupportedOperationException("not used in startup-contract test");
+        }
+
+        @Override
+        public void register(String scopeKey, dev.vertique.workflow.dsl.WorkflowDefinition<?, ?> def) {
+            throw new UnsupportedOperationException("not used in startup-contract test");
+        }
+
+        @Override
+        public RuntimeWorkflow resolve(DefinitionKey key) {
+            throw new UnsupportedOperationException("not used in startup-contract test");
+        }
+
+        @Override
+        public Optional<RuntimeWorkflow> find(DefinitionKey key) {
+            return Optional.empty();
+        }
+
+        @Override
+        public List<DefinitionKey> keysFor(String definitionId) {
+            return List.of();
         }
 
         @Override
