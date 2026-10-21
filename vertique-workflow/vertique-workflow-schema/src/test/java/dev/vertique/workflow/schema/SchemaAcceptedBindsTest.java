@@ -11,6 +11,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.exc.UnrecognizedPropertyException;
 import dev.vertique.core.json.JsonProfileId;
 import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
+import dev.vertique.workflow.registry.store.DefinitionKey;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.schema.fixtures.Payloads;
 import dev.vertique.workflow.schema.fixtures.ValidationPayloads;
 import io.vertx.core.json.JsonArray;
@@ -116,7 +118,8 @@ class SchemaAcceptedBindsTest {
 
         // When / Then: every accepted declared-key payload is valid and binds to an instance
         for (JsonObject payload : fixture.accepted()) {
-            assertThat(schemas.validateDecision(ID, 1L, "review", "decide", payload)
+            assertThat(schemas.validateDecision(
+                                    new DefinitionKey(WorkflowScopes.DEFAULT, ID, 1L), "review", "decide", payload)
                             .valid())
                     .as("schema accepts %s", payload.encode())
                     .isTrue();
@@ -128,7 +131,11 @@ class SchemaAcceptedBindsTest {
         }
 
         // And: the schema rejects the payload that is wrong for the declared type
-        assertThat(schemas.validateDecision(ID, 1L, "review", "decide", fixture.rejected())
+        assertThat(schemas.validateDecision(
+                                new DefinitionKey(WorkflowScopes.DEFAULT, ID, 1L),
+                                "review",
+                                "decide",
+                                fixture.rejected())
                         .valid())
                 .as("schema rejects %s", fixture.rejected().encode())
                 .isFalse();
@@ -142,7 +149,9 @@ class SchemaAcceptedBindsTest {
 
     private static void assertSchemaAcceptsBinderRejects(
             WorkflowPayloadSchemas schemas, ObjectMapper mapper, Fixture fixture, JsonObject payload) {
-        assertThat(schemas.validateDecision(ID, 1L, "review", "decide", payload).valid())
+        assertThat(schemas.validateDecision(
+                                new DefinitionKey(WorkflowScopes.DEFAULT, ID, 1L), "review", "decide", payload)
+                        .valid())
                 .as("schema accepts the undeclared key in %s", payload.encode())
                 .isTrue();
         assertThatThrownBy(() -> mapper.readValue(payload.encode(), fixture.type()))

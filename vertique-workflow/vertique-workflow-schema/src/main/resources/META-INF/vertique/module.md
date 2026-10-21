@@ -166,7 +166,7 @@ without knowing the Java types.
 
 | Class | Role |
 |---|---|
-| `WorkflowPayloadSchemas` | `describe(definitionId, version)` for the whole definition; `decision(definitionId, version, stepId, decisionName)` for one decision; `validateDecision` and `validateStart` to validate a submitted payload |
+| `WorkflowPayloadSchemas` | `describe(key)` for the whole definition; `decision(key, stepId, decisionName)` for one decision; `validateDecision` and `validateStart` to validate a submitted payload. The key is the `DefinitionKey` of the pin: scope, definition id and version |
 | `WorkflowDefinitionDescriptor` | Definition id and version, the start payload schema (`null` for a `void` start) and the human task steps in plan order |
 | `HumanTaskStepDescriptor` | A step id and its decisions in declaration order |
 | `DecisionDescriptor` | Decision name, the step it leads to and the payload schema (`null` for a `void` decision) |
@@ -235,15 +235,18 @@ definition version:
 
 ```java
 PayloadValidationResult result =
-    schemas.validateDecision("order-review", 2, "review", "approve", payload);
+    schemas.validateDecision(key, "review", "approve", payload);
 if (!result.valid()) {
   List<ViolationDetail> violations = result.violations();
 }
-PayloadValidationResult start = schemas.validateStart("order-review", 2, startPayload);
+PayloadValidationResult start = schemas.validateStart(key, startPayload);
 ```
 
-`validateDecision(definitionId, version, stepId, decisionName, payload)` and
-`validateStart(definitionId, version, payload)` take the payload as a nullable `JsonObject`.
+`validateDecision(key, stepId, decisionName, payload)` and
+`validateStart(key, payload)` take the payload as a nullable `JsonObject`. The key names the scope, the definition id and
+the version, for example `new DefinitionKey(WorkflowScopes.DEFAULT, "order-review", 2)`, so two scopes that hold one id
+and version are described and validated by their own plans. A key that no registered definition holds describes as empty
+and validates as one `definition` violation.
 `PayloadValidationResult.valid()` is true when `violations()` is empty. A mistake by the caller, such
 as an unknown id or a payload that does not fit, is answered with a violation and never an exception.
 

@@ -12,6 +12,7 @@ import dev.vertique.workflow.plan.HumanTaskNode;
 import dev.vertique.workflow.plan.WorkflowNode;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowRegistry;
+import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.types.DefaultWorkflowTypeNames;
 import dev.vertique.workflow.types.WorkflowTypeNames;
 import io.vertx.core.json.JsonObject;
@@ -74,8 +75,8 @@ final class DefaultWorkflowPayloadSchemas implements WorkflowPayloadSchemas {
     }
 
     @Override
-    public Optional<WorkflowDefinitionDescriptor> describe(String definitionId, long definitionVersion) {
-        return resolve(definitionId, definitionVersion).map(workflow -> {
+    public Optional<WorkflowDefinitionDescriptor> describe(DefinitionKey key) {
+        return resolve(key).map(workflow -> {
             Class<?> startType = workflow.startPayloadType();
             PayloadSchema start = startType == null ? null : schemaOf(typeNames.nameOf(startType));
             List<HumanTaskStepDescriptor> steps = new ArrayList<>();
@@ -88,26 +89,21 @@ final class DefaultWorkflowPayloadSchemas implements WorkflowPayloadSchemas {
                     steps.add(new HumanTaskStepDescriptor(task.stepId(), decisions));
                 }
             }
-            return new WorkflowDefinitionDescriptor(definitionId, definitionVersion, start, steps);
+            return new WorkflowDefinitionDescriptor(key.definitionId(), key.definitionVersion(), start, steps);
         });
     }
 
     @Override
-    public Optional<DecisionDescriptor> decision(
-            String definitionId, long definitionVersion, String stepId, String decisionName) {
-        return resolve(definitionId, definitionVersion)
+    public Optional<DecisionDescriptor> decision(DefinitionKey key, String stepId, String decisionName) {
+        return resolve(key)
                 .flatMap(workflow -> findDecision(workflow, stepId, decisionName))
                 .map(this::descriptorOf);
     }
 
     @Override
     public PayloadValidationResult validateDecision(
-            String definitionId,
-            long definitionVersion,
-            String stepId,
-            String decisionName,
-            @Nullable JsonObject payload) {
-        Optional<RuntimeWorkflow> workflow = resolve(definitionId, definitionVersion);
+            DefinitionKey key, String stepId, String decisionName, @Nullable JsonObject payload) {
+        Optional<RuntimeWorkflow> workflow = resolve(key);
         if (workflow.isEmpty()) {
             return single(UNKNOWN_DEFINITION, DEFINITION_TYPE);
         }
@@ -119,9 +115,8 @@ final class DefaultWorkflowPayloadSchemas implements WorkflowPayloadSchemas {
     }
 
     @Override
-    public PayloadValidationResult validateStart(
-            String definitionId, long definitionVersion, @Nullable JsonObject payload) {
-        Optional<RuntimeWorkflow> workflow = resolve(definitionId, definitionVersion);
+    public PayloadValidationResult validateStart(DefinitionKey key, @Nullable JsonObject payload) {
+        Optional<RuntimeWorkflow> workflow = resolve(key);
         if (workflow.isEmpty()) {
             return single(UNKNOWN_DEFINITION, DEFINITION_TYPE);
         }
@@ -194,9 +189,9 @@ final class DefaultWorkflowPayloadSchemas implements WorkflowPayloadSchemas {
         return VOID_PRIMITIVE.equals(typeName) || VOID_WRAPPER.equals(typeName);
     }
 
-    private Optional<RuntimeWorkflow> resolve(String definitionId, long definitionVersion) {
+    private Optional<RuntimeWorkflow> resolve(DefinitionKey key) {
         try {
-            return Optional.of(registry.resolvePinned(definitionId, definitionVersion));
+            return Optional.of(registry.resolve(key));
         } catch (WorkflowVersionPinUnavailableException | WorkflowDefinitionMissingException e) {
             return Optional.empty();
         }

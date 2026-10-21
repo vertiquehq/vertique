@@ -10,6 +10,8 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import dev.vertique.core.json.JsonProfileId;
 import dev.vertique.core.json.JsonSchemaFragment;
 import dev.vertique.core.json.JsonSchemaTypeOverride;
+import dev.vertique.workflow.registry.store.DefinitionKey;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.schema.fixtures.OrderedPayloads;
 import io.vertx.core.json.JsonObject;
 import java.util.ArrayList;
@@ -114,7 +116,9 @@ class PropertyOrderTest {
         var schemas = new DefaultWorkflowPayloadSchemas(registry, cache);
 
         // When: the start payload is described
-        PayloadSchema schema = schemas.describe("replaced", 1L).orElseThrow().startPayload();
+        PayloadSchema schema = schemas.describe(new DefinitionKey(WorkflowScopes.DEFAULT, "replaced", 1L))
+                .orElseThrow()
+                .startPayload();
 
         // Then: the published keys are the ones in the document, so this is a fixture precondition
         assertThat(propertyKeys(schema)).containsExactly("alpha", "zeta");
@@ -135,8 +139,11 @@ class PropertyOrderTest {
         var schemas = new DefaultWorkflowPayloadSchemas(registry, cache);
 
         // When: the definition is described
-        List<DecisionDescriptor> described =
-                schemas.describe("open", 1L).orElseThrow().humanTasks().get(0).decisions();
+        List<DecisionDescriptor> described = schemas.describe(new DefinitionKey(WorkflowScopes.DEFAULT, "open", 1L))
+                .orElseThrow()
+                .humanTasks()
+                .get(0)
+                .decisions();
 
         // Then: both decisions have a payload, an object document and no property order
         assertThat(described).hasSize(2);
@@ -156,8 +163,10 @@ class PropertyOrderTest {
         var schemas = new DefaultWorkflowPayloadSchemas(registry, cache);
 
         // When: the decision is looked up
-        PayloadSchema schema =
-                schemas.decision("ordered", 1L, "review", "note").orElseThrow().payload();
+        PayloadSchema schema = schemas.decision(
+                        new DefinitionKey(WorkflowScopes.DEFAULT, "ordered", 1L), "review", "note")
+                .orElseThrow()
+                .payload();
 
         // Then: its property order leads with the explicit names and holds every key once
         assertThat(schema.propertyOrder()).startsWith("department", "requester");
@@ -198,7 +207,7 @@ class PropertyOrderTest {
         var registry = Registries.withSchemaValidator(cache);
         registry.register(Definitions.withStart("order", 1L, type));
         return new DefaultWorkflowPayloadSchemas(registry, cache)
-                .describe("order", 1L)
+                .describe(new DefinitionKey(WorkflowScopes.DEFAULT, "order", 1L))
                 .orElseThrow()
                 .startPayload();
     }

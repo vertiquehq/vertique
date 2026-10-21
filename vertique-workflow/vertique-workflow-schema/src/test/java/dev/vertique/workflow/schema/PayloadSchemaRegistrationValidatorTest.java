@@ -17,6 +17,8 @@ import dev.vertique.workflow.exception.WorkflowDefinitionException;
 import dev.vertique.workflow.plan.HumanTaskNode;
 import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
 import dev.vertique.workflow.registry.RegisteredWorkflowDefinition;
+import dev.vertique.workflow.registry.store.DefinitionKey;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.schema.fixtures.Payloads;
 import dev.vertique.workflow.types.DefaultWorkflowTypeNames;
 import io.vertx.core.json.JsonObject;
@@ -151,16 +153,17 @@ class PayloadSchemaRegistrationValidatorTest {
         // When: the definition registers and is described
         registry.register(Definitions.withStartAndDecision(
                 "order-saga", 1L, Payloads.PlaceOrder.class, Payloads.OrderApproval.class));
-        Optional<WorkflowDefinitionDescriptor> described =
-                new DefaultWorkflowPayloadSchemas(registry, cache, names).describe("order-saga", 1L);
+        Optional<WorkflowDefinitionDescriptor> described = new DefaultWorkflowPayloadSchemas(registry, cache, names)
+                .describe(new DefinitionKey(WorkflowScopes.DEFAULT, "order-saga", 1L));
 
         // Then: the plan names the decision payload by its logical name, never by its binary class name
-        List<String> decisionTypeNames = registry.resolvePinned("order-saga", 1L).plan().nodes().stream()
-                .filter(HumanTaskNode.class::isInstance)
-                .map(HumanTaskNode.class::cast)
-                .flatMap(task -> task.decisions().stream())
-                .map(HumanTaskNode.TaskDecision::payloadTypeName)
-                .toList();
+        List<String> decisionTypeNames =
+                registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "order-saga", 1L)).plan().nodes().stream()
+                        .filter(HumanTaskNode.class::isInstance)
+                        .map(HumanTaskNode.class::cast)
+                        .flatMap(task -> task.decisions().stream())
+                        .map(HumanTaskNode.TaskDecision::payloadTypeName)
+                        .toList();
         assertThat(decisionTypeNames).containsExactly("order.approval");
 
         // And: the cache holds one entry per logical name and none for a binary class name

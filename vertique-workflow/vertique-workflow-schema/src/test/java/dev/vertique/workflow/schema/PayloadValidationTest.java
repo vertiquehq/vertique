@@ -9,6 +9,8 @@ import static org.assertj.core.api.Assertions.tuple;
 import dev.vertique.core.validation.ViolationDetail;
 import dev.vertique.json.schema.validation.ViolationDetails;
 import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
+import dev.vertique.workflow.registry.store.DefinitionKey;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.schema.fixtures.ValidationPayloads;
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
@@ -52,7 +54,7 @@ class PayloadValidationTest {
     }
 
     private PayloadValidationResult validate(String decision, JsonObject payload) {
-        return schemas.validateDecision(ID, 1L, "review", decision, payload);
+        return schemas.validateDecision(new DefinitionKey(WorkflowScopes.DEFAULT, ID, 1L), "review", decision, payload);
     }
 
     private static String repeated(char character, int length) {
@@ -337,10 +339,12 @@ class PayloadValidationTest {
         WorkflowPayloadSchemas nullStartSchemas = new DefaultWorkflowPayloadSchemas(nullStartRegistry, nullStartCache);
 
         // When: a missing, an empty and a non-empty start payload are validated
-        PayloadValidationResult missing = nullStartSchemas.validateStart("null-start", 1L, null);
-        PayloadValidationResult empty = nullStartSchemas.validateStart("null-start", 1L, new JsonObject());
-        PayloadValidationResult filled =
-                nullStartSchemas.validateStart("null-start", 1L, new JsonObject().put("anything", 1));
+        PayloadValidationResult missing =
+                nullStartSchemas.validateStart(new DefinitionKey(WorkflowScopes.DEFAULT, "null-start", 1L), null);
+        PayloadValidationResult empty = nullStartSchemas.validateStart(
+                new DefinitionKey(WorkflowScopes.DEFAULT, "null-start", 1L), new JsonObject());
+        PayloadValidationResult filled = nullStartSchemas.validateStart(
+                new DefinitionKey(WorkflowScopes.DEFAULT, "null-start", 1L), new JsonObject().put("anything", 1));
 
         // Then: all three are valid without a violation
         assertThat(missing.valid()).isTrue();
@@ -373,8 +377,10 @@ class PayloadValidationTest {
         // Given: the orders definition, whose start type requires a comment
         // When: valid decision and start payloads and an invalid start payload are validated
         PayloadValidationResult decision = validateApprove(new JsonObject().put("comment", "fine"));
-        PayloadValidationResult start = schemas.validateStart(ID, 1L, new JsonObject().put("comment", "fine"));
-        PayloadValidationResult invalidStart = schemas.validateStart(ID, 1L, new JsonObject().put("other", SENTINEL));
+        PayloadValidationResult start = schemas.validateStart(
+                new DefinitionKey(WorkflowScopes.DEFAULT, ID, 1L), new JsonObject().put("comment", "fine"));
+        PayloadValidationResult invalidStart = schemas.validateStart(
+                new DefinitionKey(WorkflowScopes.DEFAULT, ID, 1L), new JsonObject().put("other", SENTINEL));
 
         // Then: the valid ones carry no violation
         assertThat(decision.valid()).isTrue();
@@ -403,15 +409,20 @@ class PayloadValidationTest {
                 ViolationDetail.unlocated("payload is not accepted for a start type without a payload", "payload");
 
         // When / Then: an unknown definition, decision or step yields one fixed violation each
-        PayloadValidationResult definition = schemas.validateDecision("ZZID", 1L, "s", "d", empty);
+        PayloadValidationResult definition =
+                schemas.validateDecision(new DefinitionKey(WorkflowScopes.DEFAULT, "ZZID", 1L), "s", "d", empty);
         assertThat(definition.violations()).containsExactly(unknownDefinition);
-        PayloadValidationResult name = schemas.validateDecision(ID, 1L, "review", "ZZNAME", empty);
+        PayloadValidationResult name =
+                schemas.validateDecision(new DefinitionKey(WorkflowScopes.DEFAULT, ID, 1L), "review", "ZZNAME", empty);
         assertThat(name.violations()).containsExactly(unknownDecision);
-        PayloadValidationResult step = schemas.validateDecision(ID, 1L, "ZZSTEP", "approve", empty);
+        PayloadValidationResult step =
+                schemas.validateDecision(new DefinitionKey(WorkflowScopes.DEFAULT, ID, 1L), "ZZSTEP", "approve", empty);
         assertThat(step.violations()).containsExactly(unknownDecision);
-        PayloadValidationResult start = schemas.validateStart("ZZID", 1L, empty);
+        PayloadValidationResult start =
+                schemas.validateStart(new DefinitionKey(WorkflowScopes.DEFAULT, "ZZID", 1L), empty);
         assertThat(start.violations()).containsExactly(unknownDefinition);
-        PayloadValidationResult version = schemas.validateDecision(ID, 99L, "review", "approve", empty);
+        PayloadValidationResult version = schemas.validateDecision(
+                new DefinitionKey(WorkflowScopes.DEFAULT, ID, 99L), "review", "approve", empty);
         assertThat(version.violations()).containsExactly(unknownDefinition);
         Validations.assertNoValueIn(definition, "ZZID");
         Validations.assertNoValueIn(name, "ZZNAME");
@@ -423,13 +434,21 @@ class PayloadValidationTest {
         assertThat(validate("reject", extra).violations()).containsExactly(voidDecision);
 
         // And: a void start accepts only null
-        assertThat(schemas.validateStart(NO_START_ID, 1L, null).valid()).isTrue();
-        assertThat(schemas.validateStart(NO_START_ID, 1L, empty).violations()).containsExactly(voidStart);
-        assertThat(schemas.validateStart(NO_START_ID, 1L, extra).violations()).containsExactly(voidStart);
+        assertThat(schemas.validateStart(new DefinitionKey(WorkflowScopes.DEFAULT, NO_START_ID, 1L), null)
+                        .valid())
+                .isTrue();
+        assertThat(schemas.validateStart(new DefinitionKey(WorkflowScopes.DEFAULT, NO_START_ID, 1L), empty)
+                        .violations())
+                .containsExactly(voidStart);
+        assertThat(schemas.validateStart(new DefinitionKey(WorkflowScopes.DEFAULT, NO_START_ID, 1L), extra)
+                        .violations())
+                .containsExactly(voidStart);
 
         // And: a missing payload for a typed decision or start is a required payload
         ViolationDetail required = ViolationDetail.unlocated("payload is required", "payload");
         assertThat(validateApprove(null).violations()).containsExactly(required);
-        assertThat(schemas.validateStart(ID, 1L, null).violations()).containsExactly(required);
+        assertThat(schemas.validateStart(new DefinitionKey(WorkflowScopes.DEFAULT, ID, 1L), null)
+                        .violations())
+                .containsExactly(required);
     }
 }

@@ -11,6 +11,8 @@ import dev.vertique.workflow.exception.WorkflowDefinitionException;
 import dev.vertique.workflow.exception.WorkflowDefinitionMissingException;
 import dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException;
 import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
+import dev.vertique.workflow.registry.store.DefinitionKey;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.schema.fixtures.Payloads;
 import io.vertx.core.json.JsonObject;
 import java.util.Map;
@@ -108,7 +110,7 @@ class SchemaRegistrationTest {
                 .hasMessageContaining("'bound-saga' v2");
 
         // Then: the rejected candidate stays unresolvable while its payload entry remains cached
-        assertThatThrownBy(() -> registry.resolvePinned("bound-saga", 2L))
+        assertThatThrownBy(() -> registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "bound-saga", 2L)))
                 .isInstanceOf(WorkflowVersionPinUnavailableException.class);
         assertThat(cache.find(new SchemaKey(Payloads.Comment.class.getName(), JsonProfileId.of("vertique"))))
                 .isPresent();
@@ -135,7 +137,11 @@ class SchemaRegistrationTest {
 
         // And: any object payload is accepted by the cached schema
         var schemas = new DefaultWorkflowPayloadSchemas(registry, cache);
-        assertThat(schemas.validateDecision("map-saga", 1L, "review", "note", new JsonObject().put("anything", 1))
+        assertThat(schemas.validateDecision(
+                                new DefinitionKey(WorkflowScopes.DEFAULT, "map-saga", 1L),
+                                "review",
+                                "note",
+                                new JsonObject().put("anything", 1))
                         .valid())
                 .isTrue();
     }
