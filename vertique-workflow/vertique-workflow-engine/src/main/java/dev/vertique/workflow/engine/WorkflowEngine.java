@@ -211,6 +211,9 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      */
     private final PayloadConstraintCheck payloadConstraintCheck;
 
+    /** This node's view of the activation records, which chooses the version of a start without one. */
+    private final DefinitionActivations activations;
+
     @Inject
     WorkflowEngine(
             WorkflowTransactionRunner<SqlClient> txRunner,
@@ -234,7 +237,9 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             MigrationExecutor migrationExecutor,
             DurableContextPropagator propagator,
             WorkflowContextBinder contextBinder,
-            PayloadConstraintCheck payloadConstraintCheck) {
+            PayloadConstraintCheck payloadConstraintCheck,
+            DefinitionActivations activations) {
+        this.activations = activations;
         this.txRunner = txRunner;
         this.registry = registry;
         this.instances = instances;
@@ -309,7 +314,8 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                 compensationService,
                 inboundExecScope,
                 payloadConstraintCheck,
-                WorkflowEngineFactory.registryTypeNames(registry));
+                WorkflowEngineFactory.registryTypeNames(registry),
+                new DefinitionActivations());
     }
 
     /**
@@ -356,7 +362,8 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      * task-lifecycle service built below.
      *
      * <p>The {@code typeNames} parameter is the type-name index a decision payload's declared type
-     * name resolves through; the factory passes the one index the registry fills.
+     * name resolves through; the factory passes the one index the registry fills. The {@code activations}
+     * parameter is this engine's view of the activation records, which the factory builds empty.
      *
      * <p>Package-visible (not {@code private}) so the factory in the same package can invoke it; it
      * is not part of any production API.
@@ -384,8 +391,10 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             CompensationService compensationService,
             @Nullable dev.vertique.context.InboundExecutionContextScope inboundExecScope,
             PayloadConstraintCheck payloadConstraintCheck,
-            WorkflowTypeNames typeNames) {
+            WorkflowTypeNames typeNames,
+            DefinitionActivations activations) {
         this.payloadConstraintCheck = payloadConstraintCheck;
+        this.activations = activations;
         this.txRunner = txRunner;
         this.registry = registry;
         this.instances = instances;
@@ -753,8 +762,9 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             rw = resolveForStart(cmd, startScope);
             DefinitionKey resolved = new DefinitionKey(
                     rw.definitionScopeKey(), rw.plan().definitionId(), rw.plan().definitionVersion());
-            // A deprecated version admits no new work; refuse before any dedup claim or write.
-            if (cmd.requestedDefinitionVersion() != null && registry.isDeprecated(resolved)) {
+            // A deprecated version admits no new work, whether it was named or an activation record selected it;
+            // refuse before any dedup claim or write.
+            if (registry.isDeprecated(resolved)) {
                 return Future.failedFuture(deprecatedRefusal(resolved));
             }
             if (!cmd.contractName().equals(rw.contractName())) {
@@ -786,12 +796,14 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      * Resolves the definition version a first start runs. An explicit version in a named scope resolves exactly
      * that key, and only the start scope and the default scope can be named. An explicit version without a scope
      * resolves from the start scope when it holds a version of the id, and from the default scope otherwise. A
-     * start without a version runs the current version of the default scope.
+     * start without a version runs what the activation records select: the start scope's record, else the default
+     * scope's record, else the highest startable version of the default scope. It fails with
+     * {@link dev.vertique.workflow.exception.WorkflowNoCurrentVersionException} when none of them applies.
      */
     private RuntimeWorkflow resolveForStart(StartCommand cmd, String startScope) {
         Long version = cmd.requestedDefinitionVersion();
         if (version == null) {
-            return registry.resolveCurrent(cmd.definitionId());
+            return activations.resolve(registry, startScope, cmd.definitionId());
         }
         String targetScope = cmd.requestedTargetScope();
         if (targetScope != null) {

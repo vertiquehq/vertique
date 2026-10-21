@@ -5,7 +5,6 @@ package dev.vertique.workflow.engine;
 
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.engine.WorkflowCodeDefinitionCatalog.CodeDefinition;
-import dev.vertique.workflow.exception.WorkflowDefinitionException;
 import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException;
 import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException.Reason;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
@@ -66,6 +65,8 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
     private final WorkflowCodeDefinitionCatalog catalog;
     /** The node's view of the applied records, or {@code null} when the lifecycle was built without one. */
     private final @Nullable DefaultWorkflowDefinitionRegistryView view;
+    /** The node's view of the activation records, which a start without a version reads. */
+    private final DefinitionActivations activations;
     /** Runtimes this lifecycle published whose completion outcome is still unknown, by key. */
     private final ConcurrentMap<DefinitionKey, RuntimeWorkflow> uncertain = new ConcurrentHashMap<>();
     /** Runtimes a reinstatement published whose commit outcome could not be read back, by key. */
@@ -104,7 +105,7 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
         this(store, registry, loaders, queue, registrations, catalog, null);
     }
 
-    @Inject
+    /** Constructs a lifecycle with its own private activation view, for unit tests only. */
     DefaultWorkflowDefinitionLifecycle(
             Optional<WorkflowDefinitionRegistryStore> store,
             Provider<WorkflowRegistry> registry,
@@ -113,6 +114,20 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
             ManagedRegistrations registrations,
             WorkflowCodeDefinitionCatalog catalog,
             @Nullable DefaultWorkflowDefinitionRegistryView view) {
+        this(store, registry, loaders, queue, registrations, catalog, view, new DefinitionActivations());
+    }
+
+    @Inject
+    DefaultWorkflowDefinitionLifecycle(
+            Optional<WorkflowDefinitionRegistryStore> store,
+            Provider<WorkflowRegistry> registry,
+            Set<PersistedDefinitionLoader> loaders,
+            DefinitionApplyQueue queue,
+            ManagedRegistrations registrations,
+            WorkflowCodeDefinitionCatalog catalog,
+            @Nullable DefaultWorkflowDefinitionRegistryView view,
+            DefinitionActivations activations) {
+        this.activations = activations;
         this.view = view;
         this.store = store;
         this.registry = registry;
@@ -183,9 +198,11 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
         try {
             DefinitionActivation activation =
                     new DefinitionActivation(scopeKey, definitionId, targetScopeKey, version, Instant.now());
-            if (store.isEmpty()) return Future.failedFuture(noRegistry());
+            if (store.isEmpty()) return activateInView(activation);
             WorkflowDefinitionRegistryStore durable = store.orElseThrow();
-            return queue.submit(definitionId, () -> durable.putActivation(activation));
+            // The view follows the commit, so a refused or failed write leaves it as it was.
+            return queue.submit(definitionId, () -> durable.putActivation(activation)
+                    .onSuccess(committed -> activations.put(activation)));
         } catch (RuntimeException e) {
             return Future.failedFuture(e);
         }
@@ -195,9 +212,7 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
     public Future<Void> deactivateDefault(String definitionId) {
         try {
             new DefinitionKey(WorkflowScopes.DEFAULT, definitionId, 1);
-            if (store.isEmpty()) return Future.failedFuture(noRegistry());
-            WorkflowDefinitionRegistryStore durable = store.orElseThrow();
-            return queue.submit(definitionId, () -> durable.removeActivation(WorkflowScopes.DEFAULT, definitionId));
+            return removeRecord(WorkflowScopes.DEFAULT, definitionId);
         } catch (RuntimeException e) {
             return Future.failedFuture(e);
         }
@@ -210,9 +225,7 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
             if (WorkflowScopes.DEFAULT.equals(scopeKey))
                 throw new IllegalArgumentException(
                         "the default scope cannot follow itself; clear its record with deactivateDefault");
-            if (store.isEmpty()) return Future.failedFuture(noRegistry());
-            WorkflowDefinitionRegistryStore durable = store.orElseThrow();
-            return queue.submit(definitionId, () -> durable.removeActivation(scopeKey, definitionId));
+            return removeRecord(scopeKey, definitionId);
         } catch (RuntimeException e) {
             return Future.failedFuture(e);
         }
@@ -222,15 +235,39 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
     public Future<List<DefinitionActivation>> activations(@Nullable String scopeKey) {
         try {
             if (scopeKey != null) new DefinitionKey(scopeKey, WorkflowScopes.DEFAULT, 1);
-            if (store.isEmpty()) return Future.failedFuture(noRegistry());
+            if (store.isEmpty()) return Future.succeededFuture(activations.list(scopeKey));
             return store.orElseThrow().listActivations(scopeKey);
         } catch (RuntimeException e) {
             return Future.failedFuture(e);
         }
     }
 
-    private static WorkflowDefinitionException noRegistry() {
-        return new WorkflowDefinitionException("durable registry is unavailable");
+    /**
+     * Writes a record into the node view alone, as without a durable registry. The target must be registered here
+     * and not deprecated, which is the most this node can check.
+     */
+    private Future<Void> activateInView(DefinitionActivation activation) {
+        DefinitionKey target =
+                new DefinitionKey(activation.targetScopeKey(), activation.definitionId(), activation.version());
+        WorkflowRegistry local = registry.get();
+        if (local.find(target).isEmpty() || local.isDeprecated(target))
+            return Future.failedFuture(failure(
+                    Reason.INVALID_TRANSITION,
+                    target,
+                    "cannot activate a version that is not registered and available"));
+        activations.put(activation);
+        return Future.succeededFuture();
+    }
+
+    /** Removes a record from the store and then from the node view, or from the view alone without a store. */
+    private Future<Void> removeRecord(String scopeKey, String definitionId) {
+        if (store.isEmpty()) {
+            activations.remove(scopeKey, definitionId);
+            return Future.succeededFuture();
+        }
+        WorkflowDefinitionRegistryStore durable = store.orElseThrow();
+        return queue.submit(definitionId, () -> durable.removeActivation(scopeKey, definitionId)
+                .onSuccess(committed -> activations.remove(scopeKey, definitionId)));
     }
 
     /**

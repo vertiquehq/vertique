@@ -415,6 +415,7 @@ public final class WorkflowEngineFactory {
                 compensationService,
                 inboundExecScope,
                 payloadConstraintCheck,
-                typeNames);
+                typeNames,
+                new DefinitionActivations());
     }
 }
