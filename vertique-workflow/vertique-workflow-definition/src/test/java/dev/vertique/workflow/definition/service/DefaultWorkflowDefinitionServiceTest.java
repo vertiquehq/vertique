@@ -32,6 +32,7 @@ import dev.vertique.workflow.definition.parser.WorkflowDefinitionParser;
 import dev.vertique.workflow.definition.pipeline.WorkflowDefinitionPipeline;
 import dev.vertique.workflow.definition.source.SourceMetadata;
 import dev.vertique.workflow.definition.validator.WorkflowDefinitionDocumentValidator;
+import dev.vertique.workflow.exception.WorkflowDefinitionContractMismatchException;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
 import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
@@ -95,6 +96,12 @@ class DefaultWorkflowDefinitionServiceTest {
 
     @WorkflowContract
     interface SvcScopedOrderContract {}
+
+    @WorkflowContract("lookup-c")
+    interface SvcLookupCContract {}
+
+    @WorkflowContract("lookup-d")
+    interface SvcLookupDContract {}
 
     // --- Infrastructure ---
 
@@ -252,6 +259,47 @@ class DefaultWorkflowDefinitionServiceTest {
                 .singleElement()
                 .satisfies(ref -> assertThat(ref.status()).isEqualTo(ActivationStatus.AVAILABLE));
         assertThat(registry.resolve(key).plan().planHash()).isEqualTo(loaded.planHash());
+    }
+
+    @Test
+    @DisplayName("a store-less scope load of a default id under another contract is refused")
+    void scopeLoadOfDefaultIdUnderAnotherContractIsRefusedWithoutStore() {
+        // Given: a store-less service where the default scope holds lookup-y under C as a candidate
+        ServiceTestHelpers.await(service.load(
+                WorkflowScopes.DEFAULT,
+                yamlFor("lookup-y", 1, SvcLookupCContract.class),
+                DocumentFormat.YAML,
+                testMeta()));
+
+        // When: acme loads lookup-y under D
+        // Then: the load is refused naming acme and the id, and acme holds nothing
+        assertThatThrownBy(() -> ServiceTestHelpers.await(service.load(
+                        "acme", yamlFor("lookup-y", 1, SvcLookupDContract.class), DocumentFormat.YAML, testMeta())))
+                .isInstanceOfSatisfying(WorkflowDefinitionContractMismatchException.class, mismatch -> {
+                    assertThat(mismatch.definitionKey().scopeKey()).isEqualTo("acme");
+                    assertThat(mismatch.definitionKey().definitionId()).isEqualTo("lookup-y");
+                });
+        assertThat(ServiceTestHelpers.await(service.list(new DefinitionFilter("acme", null, null))))
+                .isEmpty();
+
+        // When: acme loads lookup-y under C
+        CompiledDefinitionRef underC = ServiceTestHelpers.await(service.load(
+                "acme", yamlFor("lookup-y", 1, SvcLookupCContract.class), DocumentFormat.YAML, testMeta()));
+
+        // Then: the load succeeds
+        assertThat(underC.status()).isEqualTo(ActivationStatus.CANDIDATE);
+
+        // When: acme holds lookup-q under D and the default scope later loads lookup-q under C
+        ServiceTestHelpers.await(service.load(
+                "acme", yamlFor("lookup-q", 1, SvcLookupDContract.class), DocumentFormat.YAML, testMeta()));
+        CompiledDefinitionRef later = ServiceTestHelpers.await(service.load(
+                WorkflowScopes.DEFAULT,
+                yamlFor("lookup-q", 1, SvcLookupCContract.class),
+                DocumentFormat.YAML,
+                testMeta()));
+
+        // Then: the later default load is accepted
+        assertThat(later.status()).isEqualTo(ActivationStatus.CANDIDATE);
     }
 
     static Stream<Arguments> invalidScopeKeys() {

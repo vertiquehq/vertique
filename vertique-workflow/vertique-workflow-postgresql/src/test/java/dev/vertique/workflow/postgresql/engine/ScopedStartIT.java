@@ -329,10 +329,11 @@ public class ScopedStartIT {
     void contractMismatchAtStartIsRefusedBeforeAnyWrite() throws Exception {
         // Given: a definition of the purchase contract, and a client of a contract that no definition implements
         Harness harness = ScopedStartFixture.open(pool, new Purchase(ID, 1L, "done"));
-        OtherContract foreign = harness.factory().create(OtherContract.class, ID);
+        OtherContract foreign =
+                harness.factory().client(OtherContract.class, ID).version(1).create();
         PurchaseContract own = harness.factory().create(PurchaseContract.class, ID);
 
-        // When: the foreign client starts the definition
+        // When: the foreign client starts version 1 of the definition
         Throwable failure = failureOf(() -> foreign.start("k-foreign", "bk-1", new StartPurchase("payload-marker-9")));
 
         // Then: it is refused with the contract mismatch, naming the definition and both contracts, never the payload

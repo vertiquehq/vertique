@@ -346,7 +346,7 @@ BOOTSTRAP step has recorded it. Definition id and scope key (255), source type (
 author and upload id (255) code-point limits apply in every mode, including when no store is installed. NUL and
 unpaired surrogates are rejected in every text field, ISO control characters in ids and scope keys, and a
 version must be positive. Over-limit input is rejected before anything is registered. Invalid asynchronous
-arguments are failed Futures. Previously started instances keep their pinned version. Coexisting versions of one document id name the same contract class, and a version that names another contract than the id's registered versions is refused at registration.
+arguments are failed Futures. Previously started instances keep their pinned version. Coexisting versions of one document id name the same contract class, and a version that names another contract than the id's registered versions is refused at registration. A load into a scope other than the default one is refused with `WorkflowDefinitionContractMismatchException` when the default scope holds the id, in any status including candidate, under another contract, unless the scope already holds the id; the in-memory store applies the same rule, and a default-scope load of an id that a scope holds under another contract is accepted.
 
 ### Source Text And Size Policy
 

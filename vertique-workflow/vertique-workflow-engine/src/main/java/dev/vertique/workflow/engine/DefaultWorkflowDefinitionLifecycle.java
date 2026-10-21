@@ -5,6 +5,7 @@ package dev.vertique.workflow.engine;
 
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.engine.WorkflowCodeDefinitionCatalog.CodeDefinition;
+import dev.vertique.workflow.exception.WorkflowDefinitionContractMismatchException;
 import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException;
 import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException.Reason;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
@@ -19,6 +20,7 @@ import dev.vertique.workflow.registry.store.WorkflowDefinitionLifecycle;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.registry.store.WorkflowScopes;
+import dev.vertique.workflow.types.EchoedNames;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
 import jakarta.annotation.Nullable;
@@ -255,8 +257,31 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
                     Reason.INVALID_TRANSITION,
                     target,
                     "cannot activate a version that is not registered and available"));
+        WorkflowDefinitionContractMismatchException refusal = defaultContractRefusal(local, activation, target);
+        if (refusal != null) return Future.failedFuture(refusal);
         activations.put(activation);
         return Future.succeededFuture();
+    }
+
+    /**
+     * The refusal for pointing a scope at a default-scope version of another contract than the scope's own
+     * versions of the id, judged from the registrations of this node.
+     */
+    private static @Nullable WorkflowDefinitionContractMismatchException defaultContractRefusal(
+            WorkflowRegistry local, DefinitionActivation activation, DefinitionKey target) {
+        if (WorkflowScopes.DEFAULT.equals(activation.scopeKey())
+                || !WorkflowScopes.DEFAULT.equals(activation.targetScopeKey())) return null;
+        String own = local.contractOf(activation.scopeKey(), activation.definitionId())
+                .orElse(null);
+        String targetContract = local.contractOf(WorkflowScopes.DEFAULT, activation.definitionId())
+                .orElse(null);
+        if (own == null || own.equals(targetContract)) return null;
+        return new WorkflowDefinitionContractMismatchException(
+                target,
+                "Scope '" + activation.scopeKey() + "' holds '" + activation.definitionId() + "' under contract '"
+                        + EchoedNames.bounded(own)
+                        + "', so it cannot follow the default scope's version, which implements contract '"
+                        + EchoedNames.bounded(String.valueOf(targetContract)) + "'");
     }
 
     /** Removes a record from the store and then from the node view, or from the view alone without a store. */

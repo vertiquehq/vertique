@@ -148,20 +148,42 @@ final class DefinitionActivations {
     }
 
     /**
-     * Chooses the runtime a start without a version runs: the version the start scope's record names, else the one
-     * the default scope's record names, else, without a durable registry, the computed default. A record names a
-     * version of the default scope or of its own scope, and the runtime is resolved from the registry like an
-     * explicit start of that version.
+     * Chooses the runtime a start without a version runs for a client of one contract. When the start scope holds
+     * versions of the id that implement the client's contract, the scope's own record applies, and without a record
+     * the scope follows the default scope's current version only if that version implements the client's contract
+     * too. Otherwise the scope's own versions are not the client's: the default scope's record applies, or the
+     * computed default, when the default scope's versions implement the client's contract. A record of the start
+     * scope that names a version of the default scope applies like the default's own. A record names a version of the
+     * default scope or of its own scope, and the runtime is resolved from the registry like an explicit start of that
+     * version. The choice costs a fixed number of lookups, whatever the number of scopes and versions.
      *
-     * @throws WorkflowNoCurrentVersionException when there is no record and no computed default
+     * @throws WorkflowNoCurrentVersionException when no record or computed default applies to the client's contract
      */
-    RuntimeWorkflow resolve(WorkflowRegistry registry, String startScope, String definitionId) {
-        DefinitionActivation record = records.get(new Slot(startScope, definitionId));
-        if (record == null) record = records.get(new Slot(WorkflowScopes.DEFAULT, definitionId));
-        if (record == null && computed)
-            record = computedDefault(registry, definitionId).orElse(null);
+    RuntimeWorkflow resolve(WorkflowRegistry registry, String startScope, String definitionId, String contractName) {
+        boolean owns = WorkflowEngine.ownsId(registry, startScope, definitionId, contractName);
+        DefinitionActivation own = records.get(new Slot(startScope, definitionId));
+        DefinitionActivation record;
+        if (owns && own != null) {
+            record = own;
+        } else if (!defaultNamesContract(registry, definitionId, contractName)) {
+            record = null;
+        } else {
+            // The scope's record counts here only when it names a version of the default scope.
+            record = own != null && WorkflowScopes.DEFAULT.equals(own.targetScopeKey())
+                    ? own
+                    : records.get(new Slot(WorkflowScopes.DEFAULT, definitionId));
+            if (record == null && computed)
+                record = computedDefault(registry, definitionId).orElse(null);
+        }
         if (record == null) throw new WorkflowNoCurrentVersionException(startScope, definitionId);
         return registry.resolve(new DefinitionKey(record.targetScopeKey(), definitionId, record.version()));
+    }
+
+    /** Whether the default scope holds no version of the id or holds versions that implement the contract. */
+    private static boolean defaultNamesContract(WorkflowRegistry registry, String definitionId, String contractName) {
+        return registry.contractOf(WorkflowScopes.DEFAULT, definitionId)
+                .map(contractName::equals)
+                .orElse(true);
     }
 
     /** The computed default records for every id with no explicit default record and no cleared mark. */

@@ -8,6 +8,7 @@ import dev.vertique.db.postgresql.PgDbExceptionMapper;
 import dev.vertique.db.postgresql.PgSqlRepository;
 import dev.vertique.db.postgresql.PgTableNames;
 import dev.vertique.workflow.engine.WorkflowExceptionMapper;
+import dev.vertique.workflow.exception.WorkflowDefinitionContractMismatchException;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
 import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException;
 import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException.Reason;
@@ -39,6 +40,7 @@ import jakarta.inject.Singleton;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
@@ -241,6 +243,7 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
             if (record.status() != DefinitionStatus.CANDIDATE) throw invalid(record.key(), "insert requires CANDIDATE");
             return mutate(record.key(), (tx, rows) -> encoding(tx).compose(ignored -> {
                 if (row(rows, record.key()).isPresent()) throw invalid(record.key(), "definition already exists");
+                requireDefaultContract(rows, record);
                 return insert(tx, record, document, DefinitionStatus.CANDIDATE);
             }));
         });
@@ -485,6 +488,7 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
                 String status = current.getString("status");
                 if (!DefinitionStatus.AVAILABLE.name().equals(status))
                     throw invalid(target, "cannot activate status " + status + ", only AVAILABLE can be activated");
+                requireScopeContract(rows, activation, current.getString("contract_name"));
                 return tx.preparedQuery(sqlPutActivation)
                         .execute(Tuple.of(
                                 activation.scopeKey(),
@@ -495,6 +499,51 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
                         .mapEmpty();
             });
         });
+    }
+
+    /**
+     * Refuses a candidate for a scope other than the default one when the default scope holds the id, in any status,
+     * under another contract, unless the scope already holds the id in any status. The rows are the locked rows of the
+     * id across every scope, read after the lock was granted.
+     */
+    private static void requireDefaultContract(RowSet<Row> rows, WorkflowDefinitionRecord record) {
+        String scope = record.key().scopeKey();
+        if (WorkflowScopes.DEFAULT.equals(scope)) return;
+        List<Row> all = new ArrayList<>();
+        rows.forEach(all::add);
+        if (all.stream().anyMatch(r -> scope.equals(r.getString("scope_key")))) return;
+        all.stream()
+                .filter(r -> WorkflowScopes.DEFAULT.equals(r.getString("scope_key")))
+                .filter(r -> !record.contractName().equals(r.getString("contract_name")))
+                .findFirst()
+                .ifPresent(defaultRow -> {
+                    throw new WorkflowDefinitionContractMismatchException(
+                            record.key(),
+                            "Scope '" + scope + "' cannot load '" + record.key().definitionId()
+                                    + "' under contract '" + EchoedNames.bounded(record.contractName())
+                                    + "': the default scope holds it under contract '"
+                                    + EchoedNames.bounded(defaultRow.getString("contract_name")) + "'");
+                });
+    }
+
+    /**
+     * Refuses an activation that points a scope at a default-scope version of another contract than the scope's own
+     * versions of the id.
+     */
+    private static void requireScopeContract(
+            RowSet<Row> rows, DefinitionActivation activation, String targetContractName) {
+        if (WorkflowScopes.DEFAULT.equals(activation.scopeKey())
+                || !WorkflowScopes.DEFAULT.equals(activation.targetScopeKey())) return;
+        for (Row r : rows) {
+            if (!activation.scopeKey().equals(r.getString("scope_key"))
+                    || targetContractName.equals(r.getString("contract_name"))) continue;
+            throw new WorkflowDefinitionContractMismatchException(
+                    new DefinitionKey(WorkflowScopes.DEFAULT, activation.definitionId(), activation.version()),
+                    "Scope '" + activation.scopeKey() + "' holds '" + activation.definitionId()
+                            + "' under contract '" + EchoedNames.bounded(r.getString("contract_name"))
+                            + "', so it cannot follow the default scope's version, which implements contract '"
+                            + EchoedNames.bounded(targetContractName) + "'");
+        }
     }
 
     @Override

@@ -5,12 +5,14 @@ package dev.vertique.workflow.definition.service;
 
 import dev.vertique.workflow.definition.pipeline.CompiledDefinition;
 import dev.vertique.workflow.definition.source.SourceMetadata;
+import dev.vertique.workflow.exception.WorkflowDefinitionContractMismatchException;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
 import dev.vertique.workflow.registry.store.DefinitionFilter;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.DefinitionStatus;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
 import dev.vertique.workflow.registry.store.WorkflowScopes;
+import dev.vertique.workflow.types.EchoedNames;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
 import java.time.Instant;
@@ -327,12 +329,37 @@ public final class WorkflowDefinitionStore {
         candidate(DefaultWorkflowDefinitionService.record(key, compiled, format, Map.of()), compiled);
     }
 
-    void candidate(WorkflowDefinitionRecord record, CompiledDefinition compiled) {
+    synchronized void candidate(WorkflowDefinitionRecord record, CompiledDefinition compiled) {
         DefinitionKey key = record.key();
+        requireDefaultContract(record);
         // Validate all metadata before publishing the candidate; metadata must not reset a concurrent claim.
         storeCandidate(key, compiled);
         metadataByKey.put(key, record);
         refreshCachedStatus(key);
+    }
+
+    /**
+     * Refuses a candidate for a scope other than the default one when the default scope holds the id, in any status,
+     * under another contract, unless the scope already holds the id in any status.
+     */
+    private void requireDefaultContract(WorkflowDefinitionRecord record) {
+        DefinitionKey key = record.key();
+        if (WorkflowScopes.DEFAULT.equals(key.scopeKey())) return;
+        boolean holdsId = false;
+        WorkflowDefinitionRecord defaultRow = null;
+        for (WorkflowDefinitionRecord held : metadataByKey.values()) {
+            if (!held.key().definitionId().equals(key.definitionId())) continue;
+            if (held.key().scopeKey().equals(key.scopeKey())) holdsId = true;
+            else if (WorkflowScopes.DEFAULT.equals(held.key().scopeKey())
+                    && !held.contractName().equals(record.contractName())) defaultRow = held;
+        }
+        if (!holdsId && defaultRow != null)
+            throw new WorkflowDefinitionContractMismatchException(
+                    key,
+                    "Scope '" + key.scopeKey() + "' cannot load '" + key.definitionId() + "' under contract '"
+                            + EchoedNames.bounded(record.contractName())
+                            + "': the default scope holds it under contract '"
+                            + EchoedNames.bounded(defaultRow.contractName()) + "'");
     }
 
     private void refreshCachedStatus(DefinitionKey key) {

@@ -576,7 +576,9 @@ public class DefinitionOwnershipIT {
 
             // When a global static document with the same id and version is reconciled
             ReconcileOutcome heldOutcome = await(nodeA.store()
-                    .upsertDocument(staticRecord(heldGlobal, heldPlanHash), staticDocument(heldGlobal, heldDocument)));
+                    .upsertDocument(
+                            staticRecord(heldGlobal, heldPlanHash, contractName(nodeB, heldDocument, "reconcile-held")),
+                            staticDocument(heldGlobal, heldDocument)));
 
             // Then it is inserted as available beside tenant-a's untouched row
             assertThat(heldOutcome).isEqualTo(ReconcileOutcome.INSERTED);
@@ -596,7 +598,9 @@ public class DefinitionOwnershipIT {
                     .planHash();
             IdLockBarrier freshBarrier = fixture.holdIdLock(freshId);
             Future<ReconcileOutcome> freshReconcile = nodeA.store()
-                    .upsertDocument(staticRecord(freshGlobal, freshHash), staticDocument(freshGlobal, freshDocument));
+                    .upsertDocument(
+                            staticRecord(freshGlobal, freshHash, contractName(nodeA, freshDocument, "reconcile-fresh")),
+                            staticDocument(freshGlobal, freshDocument));
             Future<Void> freshPublication = TenantRowSeed.insertCandidate(
                             nodeB.app(), "tenant-a", freshDocument, DocumentFormat.YAML, source("reconcile-fresh"))
                     .compose(loaded -> nodeB.service().publish(freshTenant));
@@ -624,7 +628,9 @@ public class DefinitionOwnershipIT {
                     nodeB.app(), "tenant-a", raceDocument, DocumentFormat.YAML, source("reconcile-race")));
             IdLockBarrier raceBarrier = fixture.holdIdLock(raceId);
             Future<ReconcileOutcome> raceReconcile = nodeA.store()
-                    .upsertDocument(staticRecord(raceGlobal, raceHash), staticDocument(raceGlobal, raceDocument));
+                    .upsertDocument(
+                            staticRecord(raceGlobal, raceHash, contractName(nodeA, raceDocument, "reconcile-race")),
+                            staticDocument(raceGlobal, raceDocument));
             Future<Void> racePublication = nodeB.service().publish(raceTenant);
             raceBarrier.awaitQueued(2);
 
@@ -683,12 +689,12 @@ public class DefinitionOwnershipIT {
         }
     }
 
-    private static WorkflowDefinitionRecord staticRecord(DefinitionKey key, String planHash) {
+    private static WorkflowDefinitionRecord staticRecord(DefinitionKey key, String planHash, String contractName) {
         Instant now = Instant.now();
         return new WorkflowDefinitionRecord(
                 key,
                 DefinitionKind.DOCUMENT,
-                "example.Contract",
+                contractName,
                 "example.State",
                 planHash,
                 DefinitionStatus.AVAILABLE,
@@ -747,6 +753,13 @@ public class DefinitionOwnershipIT {
                 .definitionPipeline()
                 .load(new DefinitionResource(document, DocumentFormat.YAML, source(label)))
                 .planHash();
+    }
+
+    private static String contractName(Node node, byte[] document, String label) {
+        return node.app()
+                .definitionPipeline()
+                .load(new DefinitionResource(document, DocumentFormat.YAML, source(label)))
+                .contractName();
     }
 
     private static SourceMetadata source(String label) {

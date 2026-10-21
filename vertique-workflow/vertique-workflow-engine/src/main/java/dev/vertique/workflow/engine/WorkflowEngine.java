@@ -719,20 +719,35 @@ final class WorkflowEngine implements WorkflowEngineHandle {
     }
 
     /**
-     * Answers a start whose dedup row already exists. A start that names no version returns the existing
-     * instance. A start that names a version, and possibly a target scope, must name the definition the
-     * existing instance is pinned to; any other pin fails as an idempotency conflict. A replay never changes
+     * Answers a start whose dedup row already exists. A client of another contract than the one the existing
+     * instance's definition implements fails as an idempotency conflict, because business keys and idempotency
+     * keys are shared by the clients of one start scope and id. A start that names no version otherwise returns
+     * the existing instance. A start that names a version, and possibly a target scope, must name the definition
+     * the existing instance is pinned to; any other pin fails as an idempotency conflict. A replay never changes
      * a pin.
      */
     private Future<WorkflowInstanceId> replayedStart(StartCommand cmd, WorkflowInstanceId existing, SqlClient tx) {
-        if (cmd.requestedDefinitionVersion() == null) {
-            return Future.succeededFuture(existing);
-        }
         return instances.findById(existing, tx).compose(found -> {
             if (found.isEmpty()) {
-                return Future.failedFuture(new WorkflowInstanceNotFoundException(existing));
+                return cmd.requestedDefinitionVersion() == null
+                        ? Future.succeededFuture(existing)
+                        : Future.failedFuture(new WorkflowInstanceNotFoundException(existing));
             }
             WorkflowInstance pinned = found.get();
+            // A pin that is not registered on this node skips the comparison, like a query does.
+            Optional<RuntimeWorkflow> pinnedWorkflow = registry.find(
+                    new DefinitionKey(pinned.definitionScopeKey(), pinned.definitionId(), pinned.definitionVersion()));
+            if (pinnedWorkflow.isPresent()
+                    && !cmd.contractName().equals(pinnedWorkflow.get().contractName())) {
+                return Future.failedFuture(new WorkflowIdempotencyConflictException(
+                        "start",
+                        cmd.idempotencyKey(),
+                        "contract=" + pinnedWorkflow.get().contractName(),
+                        "contract=" + EchoedNames.bounded(cmd.contractName())));
+            }
+            if (cmd.requestedDefinitionVersion() == null) {
+                return Future.succeededFuture(existing);
+            }
             long requestedVersion = cmd.requestedDefinitionVersion();
             String requestedScope = cmd.requestedTargetScope();
             boolean sameVersion = pinned.definitionVersion() == requestedVersion;
@@ -795,15 +810,16 @@ final class WorkflowEngine implements WorkflowEngineHandle {
     /**
      * Resolves the definition version a first start runs. An explicit version in a named scope resolves exactly
      * that key, and only the start scope and the default scope can be named. An explicit version without a scope
-     * resolves from the start scope when it holds a version of the id, and from the default scope otherwise. A
-     * start without a version runs what the activation records select: the start scope's record, else the default
-     * scope's record, else the highest startable version of the default scope. It fails with
+     * resolves from the start scope when it holds a version of the id that implements the client's contract, and
+     * from the default scope otherwise. A start without a version runs what the activation records select for the
+     * client's contract: the start scope's record, else the default scope's record, else the highest startable
+     * version of the default scope. It fails with
      * {@link dev.vertique.workflow.exception.WorkflowNoCurrentVersionException} when none of them applies.
      */
     private RuntimeWorkflow resolveForStart(StartCommand cmd, String startScope) {
         Long version = cmd.requestedDefinitionVersion();
         if (version == null) {
-            return activations.resolve(registry, startScope, cmd.definitionId());
+            return activations.resolve(registry, startScope, cmd.definitionId(), cmd.contractName());
         }
         String targetScope = cmd.requestedTargetScope();
         if (targetScope != null) {
@@ -812,9 +828,21 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             }
             return registry.resolve(requestedKey(targetScope, cmd.definitionId(), version));
         }
-        String owner =
-                registry.contractOf(startScope, cmd.definitionId()).isPresent() ? startScope : WorkflowScopes.DEFAULT;
+        String owner = ownsId(registry, startScope, cmd.definitionId(), cmd.contractName())
+                ? startScope
+                : WorkflowScopes.DEFAULT;
         return registry.resolve(requestedKey(owner, cmd.definitionId(), version));
+    }
+
+    /**
+     * Whether the start scope's own definitions of the id apply to a client of the contract: a scope other than the
+     * default one holds a registered version of the id (available or deprecated) that implements that contract.
+     */
+    static boolean ownsId(WorkflowRegistry registry, String startScope, String definitionId, String contractName) {
+        return !WorkflowScopes.DEFAULT.equals(startScope)
+                && registry.contractOf(startScope, definitionId)
+                        .filter(contractName::equals)
+                        .isPresent();
     }
 
     /** The refusal for a start through a client of another contract than the resolved definition's. */

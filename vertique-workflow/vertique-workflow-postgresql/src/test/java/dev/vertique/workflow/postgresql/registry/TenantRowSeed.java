@@ -28,7 +28,8 @@ import java.util.Map;
  * load rules do not apply. The document is compiled by the real definition pipeline of the given graph, so the row
  * carries the plan hash that restoring it later will recompute; the store derives the document digest. Seeding only
  * queues behind the definition id lock like any other store operation, so it can be called while a test holds that
- * lock.
+ * lock. The row names the contract of the compiled document, so a scope's row of an id the default scope
+ * holds under the same contract is accepted like a load of it.
  */
 final class TenantRowSeed {
 
@@ -50,7 +51,7 @@ final class TenantRowSeed {
         WorkflowDefinitionRecord record = new WorkflowDefinitionRecord(
                 key,
                 DefinitionKind.DOCUMENT,
-                "example.Contract",
+                compiled.contractName(),
                 "example.State",
                 compiled.planHash(),
                 DefinitionStatus.CANDIDATE,

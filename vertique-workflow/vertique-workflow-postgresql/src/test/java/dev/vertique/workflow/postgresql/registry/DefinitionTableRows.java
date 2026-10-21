@@ -68,6 +68,22 @@ final class DefinitionTableRows {
         }
     }
 
+    /** Inserts a default-scope code row in the {@code CANDIDATE} status that names the given contract. */
+    static void insertCandidateCode(Connection connection, String definitionId, long version, String contractName)
+            throws SQLException {
+        try (PreparedStatement insert = connection.prepareStatement("""
+                INSERT INTO workflow_definitions
+                    (scope_key, definition_id, definition_version, kind, contract_name, state_type_name, plan_hash, status,
+                     source_type, loaded_at)
+                VALUES ('default', ?, ?, 'CODE', ?, 'example.State', repeat('a', 64), 'CANDIDATE', 'lookup-test', now())
+                """)) {
+            insert.setString(1, definitionId);
+            insert.setLong(2, version);
+            insert.setString(3, contractName);
+            insert.executeUpdate();
+        }
+    }
+
     /** Inserts a document row that does not name the digest column at all. */
     static void insertDocumentOmittingDigest(Connection connection, String definitionId) throws SQLException {
         try (PreparedStatement insert = connection.prepareStatement("""
