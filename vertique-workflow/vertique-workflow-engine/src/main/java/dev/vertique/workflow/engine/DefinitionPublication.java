@@ -78,7 +78,7 @@ final class DefinitionPublication {
     }
 
     /**
-     * Registers the definition and attributes the exact registered runtime to the key's owner. When the
+     * Registers the definition and attributes the exact registered runtime to the key. When the
      * attribution cannot be recorded, the registration this call made is removed again.
      *
      * @return the runtime the registry now holds for the key
@@ -98,7 +98,8 @@ final class DefinitionPublication {
             // The registration was made by this call, so it is removed whatever the registry holds under the key.
             try {
                 local.unregister(key);
-                if (published != null) registrations.clear(key.definitionId(), key.definitionVersion(), published);
+                if (published != null)
+                    registrations.clear(key.scopeKey(), key.definitionId(), key.definitionVersion(), published);
             } catch (RuntimeException compensation) {
                 if (compensation != e) e.addSuppressed(compensation);
             }

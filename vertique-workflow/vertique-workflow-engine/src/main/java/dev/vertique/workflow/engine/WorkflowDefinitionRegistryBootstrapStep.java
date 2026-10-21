@@ -37,7 +37,6 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
-import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.TreeSet;
@@ -56,28 +55,21 @@ import org.slf4j.LoggerFactory;
  *   <li>It attributes the registrations that already exist when it starts, the packaged static documents and
  *       the application-contributed definitions registered while the registry was constructed, to the default
  *       scope, and it snapshots the code definitions in the {@link WorkflowCodeDefinitionCatalog}.
- *   <li>It records every packaged document and every code definition in the table. Drift, a conflicting kind, a
- *       conflicting owner, or a stored code definition that the deployed code no longer provides fails startup.
- *   <li>It restores every live document of every owner, deprecated ones included, and attributes each to its
- *       owner.
- *   <li>It recomputes the active version of every owner and id.
+ *   <li>It records every packaged document and every code definition in the table as available. Drift, a
+ *       conflicting kind, or a stored code definition that the deployed code no longer provides fails startup.
+ *   <li>It restores every live document of every scope, deprecated ones included, and attributes each to its
+ *       key.
  *   <li>It applies the deprecation marks, and removes the registrations of retired rows when they are still
- *       attributed to the row's own owner.
- *   <li>It records in the node's view every live row whose runtime this node holds for the row's own owner.
- *   <li>It resets activation attempts that went stale, for every definition id of the table.
+ *       attributed to the row's own key.
+ *   <li>It records in the node's view every live row whose runtime this node holds for the row's own key.
+ *   <li>It resets publication attempts that went stale, for every definition id of the table.
  *   <li>It hands the committed metadata, the rows just reset included, to the loaders.
  * </ol>
  */
 @Singleton
 final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartupStep {
     private static final Logger log = LoggerFactory.getLogger(WorkflowDefinitionRegistryBootstrapStep.class);
-    private static final Set<DefinitionStatus> LIVE =
-            Set.of(DefinitionStatus.ACTIVE, DefinitionStatus.SUPERSEDED, DefinitionStatus.DEPRECATED);
-    private static final Set<DefinitionStatus> HOLDING = Set.of(
-            DefinitionStatus.ACTIVE,
-            DefinitionStatus.SUPERSEDED,
-            DefinitionStatus.DEPRECATED,
-            DefinitionStatus.ACTIVATING);
+    private static final Set<DefinitionStatus> LIVE = Set.of(DefinitionStatus.AVAILABLE, DefinitionStatus.DEPRECATED);
     private static final Comparator<WorkflowDefinitionRecord> LISTING_ORDER = Comparator.comparing(
                     (WorkflowDefinitionRecord record) -> record.key().definitionId())
             .thenComparing(record -> record.key().scopeKey())
@@ -130,8 +122,7 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
                     .compose(ignored -> listAll())
                     .compose(reconciled -> requireCode(reconciled)
                             .compose(ignored -> restoreAll(local, reconciled))
-                            .compose(verified -> recompute(reconciled)
-                                    .compose(ignored -> listAll())
+                            .compose(verified -> listAll()
                                     .compose(committed -> applyMembership(local, committed)
                                             .compose(ignored -> recordView(local, committed))
                                             .compose(ignored -> resetStale(committed)))
@@ -178,7 +169,7 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
                         origin.contractName(),
                         origin.stateTypeName(),
                         origin.planHash(),
-                        DefinitionStatus.SUPERSEDED,
+                        DefinitionStatus.AVAILABLE,
                         origin.provenance(),
                         origin.document().documentFormat(),
                         origin.provenance().loadedAt(),
@@ -213,7 +204,7 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
                         definition.contractName(),
                         definition.stateTypeName(),
                         definition.planHash(),
-                        DefinitionStatus.SUPERSEDED,
+                        DefinitionStatus.AVAILABLE,
                         new DefinitionProvenance(
                                 "code",
                                 definition.definition() == null
@@ -251,9 +242,6 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
                         previous.map(WorkflowDefinitionRecord::planHash).orElse("(unknown)"),
                         source.planHash());
                 return Future.succeededFuture();
-            }
-            case OWNER_CONFLICT -> {
-                return ownerConflict(source);
             }
             case KIND_CONFLICT -> {
                 return Future.failedFuture(failure(
@@ -307,32 +295,6 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
         throw new IllegalStateException("Unhandled reconcile outcome " + outcome);
     }
 
-    /** Fails with the owners that hold the definition id, so that the operator can see who stands in the way. */
-    private Future<Void> ownerConflict(WorkflowDefinitionRecord source) {
-        DefinitionKey key = source.key();
-        return listAll().compose(rows -> {
-            String holders = rows.stream()
-                    .filter(row -> row.key().definitionId().equals(key.definitionId()))
-                    .filter(row -> !Objects.equals(row.key().scopeKey(), key.scopeKey()))
-                    .filter(row -> HOLDING.contains(row.status()))
-                    .map(row -> owner(row.key().scopeKey()) + " (version "
-                            + row.key().definitionVersion() + " " + row.status() + ")")
-                    .distinct()
-                    .collect(Collectors.joining(", "));
-            return Future.failedFuture(failure(
-                    Reason.OWNER_CONFLICT,
-                    key,
-                    "reconciliation OWNER_CONFLICT: the " + owner(key.scopeKey()) + " owner cannot take this id"
-                            + " because it is held by "
-                            + (holders.isEmpty() ? "another owner" : holders) + "; this start provides "
-                            + source.kind() + " from " + described(source.provenance())));
-        });
-    }
-
-    private static String owner(String scopeKey) {
-        return scopeKey;
-    }
-
     /**
      * A stored code row that is still live must still be provided by the deployed code. Retired and
      * candidate code rows may outlive their code.
@@ -352,7 +314,7 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
         return Future.succeededFuture();
     }
 
-    /** Restores every live document of every owner that the registry does not hold yet. */
+    /** Restores every live document of every scope that the registry does not hold yet. */
     private Future<List<VerifiedDocument>> restoreAll(WorkflowRegistry local, List<WorkflowDefinitionRecord> rows) {
         List<VerifiedDocument> verified = new ArrayList<>();
         Future<Void> chain = Future.succeededFuture();
@@ -368,26 +330,8 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
     }
 
     /**
-     * Recomputes the active version of every owner and id that has a row in the active or superseded
-     * status, code and documents alike.
-     */
-    private Future<Void> recompute(List<WorkflowDefinitionRecord> rows) {
-        TreeSet<OwnerId> owners =
-                new TreeSet<>(Comparator.comparing(OwnerId::definitionId).thenComparing(OwnerId::scopeKey));
-        for (WorkflowDefinitionRecord row : rows) {
-            if (row.status() == DefinitionStatus.ACTIVE || row.status() == DefinitionStatus.SUPERSEDED)
-                owners.add(new OwnerId(row.key().scopeKey(), row.key().definitionId()));
-        }
-        Future<Void> chain = Future.succeededFuture();
-        for (OwnerId owner : owners)
-            chain = chain.compose(ignored -> queue.submit(owner.definitionId(), () -> store.orElseThrow()
-                    .recomputeActive(owner.scopeKey(), owner.definitionId())));
-        return chain;
-    }
-
-    /**
      * Marks deprecated rows and removes retired ones from the registry, each only while the registry
-     * still holds the runtime that was published for the row's own owner.
+     * still holds the runtime that was published for the row's own key.
      */
     private Future<Void> applyMembership(WorkflowRegistry local, List<WorkflowDefinitionRecord> committed) {
         Future<Void> chain = Future.succeededFuture();
@@ -404,7 +348,7 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
                     RuntimeWorkflow held = held(local, key);
                     if (standing(key, held) == ManagedRegistrations.Standing.OWN) {
                         local.unregister(key);
-                        registrations.clear(key.definitionId(), key.definitionVersion(), held);
+                        registrations.clear(key.scopeKey(), key.definitionId(), key.definitionVersion(), held);
                     }
                     return Future.<Void>succeededFuture();
                 }));
@@ -412,7 +356,7 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
         return chain;
     }
 
-    /** Records in the node view each live row of the committed listing whose runtime is held for the row's owner. */
+    /** Records in the node view each live row of the committed listing whose runtime is held for the row's key. */
     private Future<Void> recordView(WorkflowRegistry local, List<WorkflowDefinitionRecord> committed) {
         Future<Void> chain = Future.succeededFuture();
         for (WorkflowDefinitionRecord row : committed) {
@@ -429,8 +373,8 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
     }
 
     /**
-     * Classifies the runtime the registry holds for the row. A runtime of another owner or none at all is left
-     * alone; one that nobody published is preserved and fails the start, because it cannot be attributed.
+     * Classifies the runtime the registry holds for the row. No runtime at all is left alone; one that nobody
+     * published is preserved and fails the start, because it cannot be attributed.
      */
     private ManagedRegistrations.Standing standing(DefinitionKey key, @Nullable RuntimeWorkflow held) {
         ManagedRegistrations.Standing standing =
@@ -453,24 +397,24 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
     }
 
     /**
-     * Resets the activation attempts that went stale, under the id lock, for every definition id that
-     * the table holds an activation attempt for, whether or not code or a loader knows the id.
+     * Resets the publication attempts that went stale, under the id lock, for every definition id that
+     * the table holds a publication attempt for, whether or not code or a loader knows the id.
      */
     private Future<Void> resetStale(List<WorkflowDefinitionRecord> committed) {
         TreeSet<String> ids = committed.stream()
-                .filter(row -> row.status() == DefinitionStatus.ACTIVATING)
+                .filter(row -> row.status() == DefinitionStatus.PUBLISHING)
                 .map(row -> row.key().definitionId())
                 .collect(Collectors.toCollection(TreeSet::new));
         Future<Void> chain = Future.succeededFuture();
         for (String id : ids)
             chain = chain.compose(
-                    ignored -> queue.submit(id, () -> store.orElseThrow().resetStaleActivating(id)));
+                    ignored -> queue.submit(id, () -> store.orElseThrow().resetStalePublishing(id)));
         return chain;
     }
 
     /**
-     * Gives the loaders the committed metadata. The restored documents are read again after the
-     * recomputation, and candidate and retired documents, the rows just reset included, are read after the reset.
+     * Gives the loaders the committed metadata. The restored documents are read again, and candidate and retired
+     * documents, the rows just reset included, are read after the reset.
      */
     private Future<Void> handOffMetadata(List<VerifiedDocument> verified) {
         Future<Void> chain = Future.succeededFuture();
@@ -603,6 +547,4 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
             PersistedDefinitionLoader loader, WorkflowDefinitionRecord record, WorkflowDefinition<?, ?> definition) {}
 
     private record Prepared(WorkflowRegistry registry, List<DocumentOrigin> origins, List<CodeDefinition> code) {}
-
-    private record OwnerId(String scopeKey, String definitionId) {}
 }

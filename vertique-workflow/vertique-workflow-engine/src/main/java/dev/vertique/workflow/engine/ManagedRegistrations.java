@@ -10,35 +10,33 @@ import jakarta.annotation.Nullable;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
 import java.util.Objects;
-import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
 /**
- * Remembers, for each registered definition id and version, which owner the durable lifecycle published it
- * for and the exact {@link RuntimeWorkflow} instance it published.
+ * Remembers, for each registered definition scope, id and version, the exact {@link RuntimeWorkflow} instance the
+ * durable lifecycle published for it.
  *
- * <p>The public registry has no notion of an owner, and two owners can store identical documents under the
- * same id and version. Ownership is therefore never inferred from equal hashes: a managed mutation acts on a
- * registration only when it is attributed here and the registry still holds that very instance. A runtime
- * that was registered directly, or that replaced an attributed one, has no matching attribution and is
+ * <p>The public registry has no notion of who published a registration, and two scopes can store identical
+ * documents under the same id and version. Attribution is therefore never inferred from equal hashes: a managed
+ * mutation acts on a registration only when it is attributed here and the registry still holds that very instance.
+ * A runtime that was registered directly, or that replaced an attributed one, has no matching attribution and is
  * reported by {@link #classify} so the caller can refuse to touch it.
  *
  * <p>Every managed publisher records its publication here, the startup step records the registrations that
- * already exist when it starts as global ones, and every managed removal clears the entry it removed. Calls
+ * already exist when it starts as default-scope ones, and every managed removal clears the entry it removed. Calls
  * that read or change an id are made under that id's {@link DefinitionApplyQueue} slot.
  */
 @Singleton
 final class ManagedRegistrations {
-    private final ConcurrentMap<VersionKey, Attribution> attributions = new ConcurrentHashMap<>();
+    private final ConcurrentMap<VersionKey, RuntimeWorkflow> attributions = new ConcurrentHashMap<>();
 
     @Inject
     ManagedRegistrations() {}
 
-    /** Records that the lifecycle published {@code runtime} for {@code scopeKey}, replacing any older entry. */
+    /** Records that the lifecycle published {@code runtime} for the key, replacing any older entry. */
     void attribute(String scopeKey, String definitionId, long version, RuntimeWorkflow runtime) {
-        attributions.put(
-                new VersionKey(definitionId, version), new Attribution(scopeKey, Objects.requireNonNull(runtime)));
+        attributions.put(new VersionKey(scopeKey, definitionId, version), Objects.requireNonNull(runtime));
     }
 
     /**
@@ -49,59 +47,40 @@ final class ManagedRegistrations {
     void attributeExistingToDefaultScope(WorkflowRegistry registry) {
         for (RuntimeWorkflow runtime : registry.allRegistered())
             attributions.putIfAbsent(
-                    new VersionKey(runtime.plan().definitionId(), runtime.plan().definitionVersion()),
-                    new Attribution(WorkflowScopes.DEFAULT, runtime));
+                    new VersionKey(
+                            WorkflowScopes.DEFAULT,
+                            runtime.plan().definitionId(),
+                            runtime.plan().definitionVersion()),
+                    runtime);
     }
 
-    /** Forgets the entry for this id and version, but only while it still names exactly {@code runtime}. */
-    void clear(String definitionId, long version, RuntimeWorkflow runtime) {
-        VersionKey key = new VersionKey(definitionId, version);
-        attributions.computeIfPresent(key, (ignored, entry) -> entry.runtime() == runtime ? null : entry);
+    /** Forgets the entry for this scope, id and version, but only while it still names exactly {@code runtime}. */
+    void clear(String scopeKey, String definitionId, long version, RuntimeWorkflow runtime) {
+        attributions.computeIfPresent(
+                new VersionKey(scopeKey, definitionId, version), (ignored, entry) -> entry == runtime ? null : entry);
     }
 
     /**
-     * Compares what the registry holds for an id and version against the attribution.
+     * Compares what the registry holds for a scope, id and version against the attribution.
      *
-     * @param scopeKey the owner scope the caller acts for; {@link WorkflowScopes#DEFAULT} for the default scope
      * @param held the runtime the registry holds for the version, or {@code null} when it holds none
      */
     Standing classify(String scopeKey, String definitionId, long version, @Nullable RuntimeWorkflow held) {
         if (held == null) return Standing.ABSENT;
-        Attribution entry = attributions.get(new VersionKey(definitionId, version));
-        if (entry == null || entry.runtime() != held) return Standing.UNATTRIBUTED;
-        return Objects.equals(entry.scopeKey(), scopeKey) ? Standing.OWN : Standing.OTHER_OWNER;
+        return attributions.get(new VersionKey(scopeKey, definitionId, version)) == held
+                ? Standing.OWN
+                : Standing.UNATTRIBUTED;
     }
 
-    /**
-     * Returns the owner the lifecycle published {@code held} for, while the registry still holds exactly that
-     * instance.
-     *
-     * @param held the runtime the registry holds for the version, or {@code null} when it holds none
-     * @return the owner of the attributed instance, or empty when {@code held} is absent or not attributed
-     */
-    Optional<Owner> ownerOf(String definitionId, long version, @Nullable RuntimeWorkflow held) {
-        if (held == null) return Optional.empty();
-        Attribution entry = attributions.get(new VersionKey(definitionId, version));
-        if (entry == null || entry.runtime() != held) return Optional.empty();
-        return Optional.of(new Owner(entry.scopeKey()));
-    }
-
-    /** The owner scope a runtime was published for; {@link WorkflowScopes#DEFAULT} is the default scope. */
-    record Owner(String scopeKey) {}
-
-    /** How the registration held for an id and version relates to the owner a managed mutation acts for. */
+    /** How the registration held for a scope, id and version relates to what the lifecycle published. */
     enum Standing {
         /** The registry holds nothing for the version. */
         ABSENT,
-        /** The registry holds exactly the runtime the lifecycle published for this owner. */
+        /** The registry holds exactly the runtime the lifecycle published for this key. */
         OWN,
-        /** The registry holds exactly the runtime the lifecycle published for a different owner. */
-        OTHER_OWNER,
         /** The registry holds a runtime the lifecycle did not publish, or one that replaced the published one. */
         UNATTRIBUTED
     }
 
-    private record VersionKey(String definitionId, long version) {}
-
-    private record Attribution(String scopeKey, RuntimeWorkflow runtime) {}
+    private record VersionKey(String scopeKey, String definitionId, long version) {}
 }

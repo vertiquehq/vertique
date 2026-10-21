@@ -174,6 +174,22 @@ public interface WorkflowRegistry {
     }
 
     /**
+     * Clears the deprecation mark of one registered version of a definition, so that current resolution and new
+     * starts see it again. The registration itself is untouched.
+     *
+     * <p>Implementations must make the change atomic with registration changes. Clearing the mark of a version
+     * that is not registered or not marked is a no-op. The default implementation throws, so registries that do
+     * not support deprecation fail explicitly.
+     *
+     * @param key the scope, definition id and exact plan version whose mark is cleared
+     * @throws UnsupportedOperationException if this registry does not support deprecation
+     */
+    default void unmarkDeprecated(DefinitionKey key) {
+        throw new UnsupportedOperationException(
+                getClass().getName() + " does not support the unmarkDeprecated operation");
+    }
+
+    /**
      * Returns whether one registered version of a definition is marked deprecated.
      *
      * <p>Implementations must read the mark atomically with registration changes. The default

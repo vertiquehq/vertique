@@ -890,6 +890,26 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
     /**
      * {@inheritDoc}
      *
+     * <p>The mark is cleared under the same write lock as {@link #register}, {@link #unregister} and
+     * {@link #markDeprecated}, so no caller observes a half-applied change.
+     */
+    @Override
+    public void unmarkDeprecated(DefinitionKey key) {
+        ScopedId scopedId = new ScopedId(key.scopeKey(), key.definitionId());
+        rwLock.writeLock().lock();
+        try {
+            deprecated.computeIfPresent(scopedId, (k, marked) -> {
+                marked.remove(key.definitionVersion());
+                return marked.isEmpty() ? null : marked;
+            });
+        } finally {
+            rwLock.writeLock().unlock();
+        }
+    }
+
+    /**
+     * {@inheritDoc}
+     *
      * <p>Returns {@code false} for a version that is not currently registered.
      */
     @Override

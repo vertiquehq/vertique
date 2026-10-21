@@ -169,6 +169,35 @@ class RegistryDeprecationTest {
     }
 
     @Test
+    @DisplayName("clearing the deprecation mark makes the version current again and leaves the registration alone")
+    void unmarkDeprecatedMakesTheVersionCurrentAgain() {
+        String id = "unmark-invoice";
+        DefaultWorkflowRegistry registry = new DefaultWorkflowRegistry();
+        DefinitionKey versionTwo = new DefinitionKey(WorkflowScopes.DEFAULT, id, 2);
+
+        // Given versions 1 and 2 registered and version 2 marked deprecated
+        registry.register(definition(id, 1, InvoiceContract.class));
+        registry.register(definition(id, 2, InvoiceContract.class));
+        registry.markDeprecated(versionTwo);
+        RuntimeWorkflow registered = registry.resolve(versionTwo);
+        assertThat(registry.resolveCurrent(id).plan().definitionVersion()).isEqualTo(1);
+
+        // When the mark is cleared
+        registry.unmarkDeprecated(versionTwo);
+
+        // Then version 2 is no longer marked, is current again, and is the same registration
+        assertThat(registry.isDeprecated(versionTwo)).isFalse();
+        assertThat(registry.resolveCurrent(id).plan().definitionVersion()).isEqualTo(2);
+        assertThat(registry.resolve(versionTwo)).isSameAs(registered);
+
+        // And clearing it again, or for a version that is not registered, changes nothing
+        assertThatCode(() -> registry.unmarkDeprecated(versionTwo)).doesNotThrowAnyException();
+        assertThatCode(() -> registry.unmarkDeprecated(new DefinitionKey(WorkflowScopes.DEFAULT, id, 9)))
+                .doesNotThrowAnyException();
+        assertThat(registry.resolveCurrent(id).plan().definitionVersion()).isEqualTo(2);
+    }
+
+    @Test
     @DisplayName(
             "unregistering a deprecated version clears its registered definition and its mark so it can be registered again")
     void unregisterClearsContractAndMark() {

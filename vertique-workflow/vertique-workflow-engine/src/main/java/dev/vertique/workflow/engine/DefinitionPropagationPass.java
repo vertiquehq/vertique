@@ -46,12 +46,13 @@ import org.slf4j.LoggerFactory;
  *
  * <ol>
  *   <li>The removal round handles the retired rows, removing only a runtime that is attributed to the row's own
- *       owner, and hands candidate and retired documents to their loader as metadata. A retired row whose runtime
- *       is unattributed has nothing of its owner to remove. Activating rows are left alone.
- *   <li>The restore round handles the live rows. A runtime that the owner already holds is verified against the
- *       row; a missing one is restored from the stored document through its loader, or from the deployed code
- *       through the {@link WorkflowCodeDefinitionCatalog}, hash-verified, and attributed to its owner. A
- *       deprecated row is marked after it is restored; a runtime that cannot be marked is removed again.
+ *       key, and hands candidate and retired documents to their loader as metadata. A retired row whose runtime
+ *       is unattributed has nothing of its own to remove. Publishing rows are left alone.
+ *   <li>The restore round handles the live rows. A runtime that this lifecycle already published for the row is
+ *       verified against it, and its deprecation mark follows the row's status in both directions; a missing one
+ *       is restored from the stored document through its loader, or from the deployed code through the
+ *       {@link WorkflowCodeDefinitionCatalog}, hash-verified, and attributed to its key. A deprecated row is
+ *       marked after it is restored; a runtime that cannot be marked is removed again.
  * </ol>
  *
  * <p>Because every removal precedes every restoration, the order of the listing does not matter. The loader is
@@ -67,13 +68,7 @@ import org.slf4j.LoggerFactory;
 @Singleton
 final class DefinitionPropagationPass {
     private static final Logger log = LoggerFactory.getLogger(WorkflowDefinitionPropagationPoller.class.getName());
-    private static final Set<DefinitionStatus> LIVE =
-            Set.of(DefinitionStatus.ACTIVE, DefinitionStatus.SUPERSEDED, DefinitionStatus.DEPRECATED);
-    private static final Set<DefinitionStatus> HOLDING = Set.of(
-            DefinitionStatus.ACTIVE,
-            DefinitionStatus.SUPERSEDED,
-            DefinitionStatus.DEPRECATED,
-            DefinitionStatus.ACTIVATING);
+    private static final Set<DefinitionStatus> LIVE = Set.of(DefinitionStatus.AVAILABLE, DefinitionStatus.DEPRECATED);
 
     private final Optional<WorkflowDefinitionRegistryStore> store;
     private final Provider<WorkflowRegistry> registry;
@@ -275,7 +270,7 @@ final class DefinitionPropagationPass {
                 boolean removed = false;
                 if (standing == ManagedRegistrations.Standing.OWN) {
                     local.unregister(key);
-                    registrations.clear(key.definitionId(), key.definitionVersion(), held);
+                    registrations.clear(key.scopeKey(), key.definitionId(), key.definitionVersion(), held);
                     removed = true;
                 }
                 view.removed(key);
@@ -286,8 +281,8 @@ final class DefinitionPropagationPass {
                 view.settled(key);
                 handOffMetadata(record);
             }
-            case ACTIVATING -> {
-                if (listed != DefinitionStatus.ACTIVATING) return Future.succeededFuture(false);
+            case PUBLISHING -> {
+                if (listed != DefinitionStatus.PUBLISHING) return Future.succeededFuture(false);
                 view.settled(key);
             }
             default -> {
@@ -322,7 +317,6 @@ final class DefinitionPropagationPass {
                 applyHeld(local, record, held);
                 restored = Future.succeededFuture();
             }
-            case OTHER_OWNER -> restored = releaseStale(local, record, held).compose(ignored -> publish(local, record));
             default -> restored = publish(local, record);
         }
         return restored.map(ignored -> {
@@ -332,13 +326,15 @@ final class DefinitionPropagationPass {
     }
 
     /**
-     * Verifies the runtime the owner holds against the row, and brings its deprecation mark, the loader and the
+     * Verifies the runtime this lifecycle published for the row, and brings its deprecation mark, the loader and the
      * view up to date. The loader is handed the row before the view records it, so a hand-off that fails is
      * attempted again by the next pass.
      */
     private void applyHeld(WorkflowRegistry local, WorkflowDefinitionRecord record, RuntimeWorkflow held) {
         DefinitionKey key = record.key();
-        if (record.status() == DefinitionStatus.DEPRECATED && !local.isDeprecated(key)) local.markDeprecated(key);
+        boolean deprecated = record.status() == DefinitionStatus.DEPRECATED;
+        if (deprecated && !local.isDeprecated(key)) local.markDeprecated(key);
+        else if (!deprecated && local.isDeprecated(key)) local.unmarkDeprecated(key);
         String registered = held.plan().planHash();
         if (!record.planHash().equals(registered))
             throw DefinitionPublication.failure(
@@ -358,33 +354,6 @@ final class DefinitionPropagationPass {
             }
         view.applied(record);
         if (news) log.info("Applied definition {} on this node as {}", key, record.status());
-    }
-
-    /**
-     * Frees the slot held by the runtime of another owner, but only when that owner has no live row any more.
-     * Otherwise the row fails as an owner conflict and is retried.
-     */
-    private Future<Void> releaseStale(WorkflowRegistry local, WorkflowDefinitionRecord record, RuntimeWorkflow held) {
-        DefinitionKey key = record.key();
-        ManagedRegistrations.Owner owner = registrations
-                .ownerOf(key.definitionId(), key.definitionVersion(), held)
-                .orElseThrow();
-        DefinitionKey otherKey = new DefinitionKey(owner.scopeKey(), key.definitionId(), key.definitionVersion());
-        return store.orElseThrow()
-                .find(otherKey)
-                .recover(error -> Future.failedFuture(fatal(error) ? error : new TableUnreadable(error)))
-                .map(found -> {
-                    if (found.filter(other -> HOLDING.contains(other.status())).isPresent())
-                        throw DefinitionPublication.failure(
-                                Reason.OWNER_CONFLICT,
-                                key,
-                                "the registered runtime belongs to another owner that still holds this definition id"
-                                        + " and version");
-                    local.unregister(key);
-                    registrations.clear(key.definitionId(), key.definitionVersion(), held);
-                    view.removed(otherKey);
-                    return (Void) null;
-                });
     }
 
     private Future<Void> publish(WorkflowRegistry local, WorkflowDefinitionRecord record) {
@@ -434,7 +403,7 @@ final class DefinitionPropagationPass {
     }
 
     /**
-     * Publishes the definition for the row's owner and marks it deprecated when the row is. A runtime that could
+     * Publishes the definition for the row's key and marks it deprecated when the row is. A runtime that could
      * not be marked is removed and unattributed again, so that a deprecated version is never served unmarked.
      */
     private void publishAndMark(
@@ -447,7 +416,7 @@ final class DefinitionPropagationPass {
         } catch (RuntimeException failure) {
             try {
                 local.unregister(key);
-                registrations.clear(key.definitionId(), key.definitionVersion(), published);
+                registrations.clear(key.scopeKey(), key.definitionId(), key.definitionVersion(), published);
             } catch (RuntimeException compensation) {
                 if (compensation != failure) failure.addSuppressed(compensation);
             }

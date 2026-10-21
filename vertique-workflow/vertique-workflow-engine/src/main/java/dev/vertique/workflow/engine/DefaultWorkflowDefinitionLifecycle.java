@@ -10,8 +10,6 @@ import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException.Reas
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowRegistry;
 import dev.vertique.workflow.registry.store.ActivationClaim;
-import dev.vertique.workflow.registry.store.ActivationOutcome;
-import dev.vertique.workflow.registry.store.DefinitionFilter;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.DefinitionKind;
 import dev.vertique.workflow.registry.store.DefinitionStatus;
@@ -32,31 +30,29 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.function.Supplier;
-import java.util.stream.Collectors;
 
 /**
- * Publishes durable document activations and compensates only the captured local publication.
+ * Publishes durable document candidates and compensates only the captured local publication.
  *
  * <p>When the outcome of a completion stays unknown, the runtime this lifecycle published is remembered per
- * key. A later activation of the same key adopts exactly that runtime, and only while the registry still holds
+ * key. A later publication of the same key adopts exactly that runtime, and only while the registry still holds
  * that same instance; a registration the lifecycle did not publish is never adopted or removed.
  *
- * <p>Every publication this lifecycle makes is attributed to its owner in {@link ManagedRegistrations}. Ordinary
+ * <p>Every publication this lifecycle makes is attributed to its key in {@link ManagedRegistrations}. Ordinary
  * deprecation and retirement act only on a registration that is attributed and still held as the same instance,
  * and refuse, before any durable change, one that is not.
  *
- * <p>Reinstatement restores the executable source first, from the deployed code catalog or the stored document
- * text, publishes it under the owner's attribution, and only then commits the durable change. A failed commit
- * removes just the publication that this call made, or that an earlier call of this lifecycle left unresolved.
+ * <p>Reinstatement of a retired version restores the executable source first, from the deployed code catalog or
+ * the stored document text, publishes it under the key's attribution, and only then commits the durable change. A
+ * failed commit removes just the publication that this call made, or that an earlier call of this lifecycle left
+ * unresolved. A deprecated version is still registered, so its reinstatement commits the durable change and then
+ * clears the deprecation mark without publishing the source again.
  */
 @Singleton
 final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLifecycle {
-    /**
-     * The statuses in which a row certainly keeps its definition id held for its owner. An activating row is
-     * left out on purpose: whether its claim is stale or fresh is for the store to decide, under its lock.
-     */
-    private static final Set<DefinitionStatus> HOLDING =
-            Set.of(DefinitionStatus.ACTIVE, DefinitionStatus.SUPERSEDED, DefinitionStatus.DEPRECATED);
+    /** The statuses in which a row's version is registered on every node. */
+    private static final Set<DefinitionStatus> REGISTERED =
+            Set.of(DefinitionStatus.AVAILABLE, DefinitionStatus.DEPRECATED);
 
     private final Optional<WorkflowDefinitionRegistryStore> store;
     private final Provider<WorkflowRegistry> registry;
@@ -123,15 +119,20 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
     }
 
     @Override
-    public Future<Void> activate(DefinitionKey key) {
+    public Future<Void> publish(DefinitionKey key) {
         try {
             Objects.requireNonNull(key, "key");
             if (store.isEmpty())
                 return Future.failedFuture(failure(Reason.INVALID_TRANSITION, key, "durable registry is unavailable"));
-            return queue.submit(key.definitionId(), () -> activateQueued(key));
+            return queue.submit(key.definitionId(), () -> publishQueued(key));
         } catch (RuntimeException e) {
             return Future.failedFuture(e);
         }
+    }
+
+    @Override
+    public Future<Void> activate(DefinitionKey key) {
+        return publish(key);
     }
 
     @Override
@@ -143,10 +144,8 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
             // Commit the durable status first; only a committed status is projected onto the local registry.
             return queue.submit(key.definitionId(), () -> {
                 // A registration this lifecycle did not publish is refused before the durable status changes.
-                ManagedRegistrations.Standing standing = preflight(key);
+                preflight(key);
                 return commitDeprecation(key, true).compose(ignored -> {
-                    // A registration published for another owner is not this definition's to mark.
-                    if (standing == ManagedRegistrations.Standing.OTHER_OWNER) return Future.<Void>succeededFuture();
                     registry.get().markDeprecated(key);
                     return refreshView(key);
                 });
@@ -181,13 +180,15 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
     }
 
     /**
-     * Reads the retired row, refuses the reinstatement while another owner holds the id, restores and publishes
-     * the executable source, commits the durable change, and hands the committed row to the document loader.
-     * The owner check here is advisory and saves work; the store's check under its lock is authoritative.
+     * Reads the row and reinstates it. A retired row has its executable source restored and published, and then
+     * the durable change is committed; the commit is authoritative and a failure before it removes what this call
+     * published. A deprecated row is still registered, so the durable change is committed first and the
+     * deprecation mark is cleared afterwards, without publishing the source again. The committed row is handed
+     * to the document loader.
      *
-     * <p>A row that is already active or superseded is accepted only as the result of an earlier attempt of this
-     * lifecycle whose commit outcome was unknown: the runtime that attempt left registered must still stand, be
-     * attributed to the owner and carry the row's plan hash. The same hand-off then runs as after a first success.
+     * <p>A row that is already available is accepted only as the result of an earlier attempt of this lifecycle
+     * whose commit outcome was unknown: the runtime that attempt left registered must still stand, be attributed
+     * to the key and carry the row's plan hash. The same hand-off then runs as after a first success.
      */
     private Future<Void> reinstateQueued(DefinitionKey key) {
         WorkflowDefinitionRegistryStore durable = store.orElseThrow();
@@ -197,19 +198,19 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
                     attempt.record =
                             found.orElseThrow(() -> failure(Reason.INVALID_TRANSITION, key, "definition not found"));
                     DefinitionStatus status = attempt.record.status();
-                    if ((status == DefinitionStatus.ACTIVE || status == DefinitionStatus.SUPERSEDED)
-                            && adoptSettled(attempt)) {
+                    if (status == DefinitionStatus.AVAILABLE && adoptSettled(attempt)) {
                         attempt.settled = true;
-                        return Future.<List<WorkflowDefinitionRecord>>succeededFuture(List.of());
+                        return Future.<Void>succeededFuture();
+                    }
+                    if (status == DefinitionStatus.DEPRECATED) {
+                        // The version is registered and marked; only the durable status and the mark change.
+                        preflight(key);
+                        attempt.deprecated = true;
+                        return Future.<Void>succeededFuture();
                     }
                     if (status != DefinitionStatus.RETIRED)
                         throw failure(Reason.INVALID_TRANSITION, key, "cannot reinstate status " + status);
                     attempt.retired = true;
-                    return durable.list(new DefinitionFilter(null, null, null));
-                })
-                .compose(rows -> {
-                    if (attempt.settled) return Future.<Void>succeededFuture();
-                    requireNoOtherHolder(key, rows);
                     return publishSource(attempt);
                 })
                 // The row was read as retired, so a failure before the commit is attempted is a definitive
@@ -223,9 +224,9 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
     }
 
     /**
-     * Whether a row that is already active or superseded is the committed result of an earlier reinstatement of
-     * this lifecycle: the runtime it left unresolved must still be the registered one, attributed to the owner,
-     * with the row's plan hash. Prepares the hand-off of the row when it is.
+     * Whether a row that is already available is the committed result of an earlier reinstatement of this
+     * lifecycle: the runtime it left unresolved must still be the registered one, attributed to the key, with the
+     * row's plan hash. Prepares the hand-off of the row when it is.
      */
     private boolean adoptSettled(Reinstatement attempt) {
         DefinitionKey key = attempt.key;
@@ -249,35 +250,18 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
         try {
             WorkflowRegistry local = registry.get();
             if (isRegistered(local, remembered)) local.unregister(attempt.key);
-            registrations.clear(attempt.key.definitionId(), attempt.key.definitionVersion(), remembered);
+            registrations.clear(
+                    attempt.key.scopeKey(), attempt.key.definitionId(), attempt.key.definitionVersion(), remembered);
         } catch (RuntimeException compensation) {
             if (compensation != original) original.addSuppressed(compensation);
         }
     }
 
-    /** Refuses the reinstatement while a different owner holds the same definition id. */
-    private static void requireNoOtherHolder(DefinitionKey key, List<WorkflowDefinitionRecord> rows) {
-        String holders = rows.stream()
-                .filter(row -> row.key().definitionId().equals(key.definitionId()))
-                .filter(row -> !Objects.equals(row.key().scopeKey(), key.scopeKey()))
-                .filter(row -> HOLDING.contains(row.status()))
-                .map(row -> owner(row.key().scopeKey()) + " (version "
-                        + row.key().definitionVersion() + " " + row.status() + ")")
-                .distinct()
-                .collect(Collectors.joining(", "));
-        if (!holders.isEmpty())
-            throw failure(Reason.OWNER_CONFLICT, key, "another owner holds this definition id: " + holders);
-    }
-
-    private static String owner(String scopeKey) {
-        return scopeKey;
-    }
-
     /**
-     * Makes the executable source of the retired row available in the registry, attributed to the row's owner.
-     * A registration this lifecycle published for the same owner is kept as it is, unless it is the one an
-     * earlier reinstatement left unresolved, which this call then owns and removes if it fails; one this
-     * lifecycle did not publish, or one published for another owner, fails the call before anything is registered.
+     * Makes the executable source of the retired row available in the registry, attributed to its key. A
+     * registration this lifecycle published for the key is kept as it is, unless it is the one an earlier
+     * reinstatement left unresolved, which this call then owns and removes if it fails; one this lifecycle did
+     * not publish fails the call before anything is registered.
      */
     private Future<Void> publishSource(Reinstatement attempt) {
         DefinitionKey key = attempt.key;
@@ -285,8 +269,7 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
         RuntimeWorkflow held = held(local, key);
         ManagedRegistrations.Standing standing =
                 registrations.classify(key.scopeKey(), key.definitionId(), key.definitionVersion(), held);
-        if (standing == ManagedRegistrations.Standing.UNATTRIBUTED
-                || standing == ManagedRegistrations.Standing.OTHER_OWNER)
+        if (standing == ManagedRegistrations.Standing.UNATTRIBUTED)
             throw failure(
                     Reason.INVALID_TRANSITION,
                     key,
@@ -295,12 +278,12 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
         RuntimeWorkflow remembered = unresolvedReinstatements.get(key);
         if (remembered != null && remembered != held) {
             unresolvedReinstatements.remove(key, remembered);
-            registrations.clear(key.definitionId(), key.definitionVersion(), remembered);
+            registrations.clear(key.scopeKey(), key.definitionId(), key.definitionVersion(), remembered);
         }
         boolean document = attempt.record.kind() == DefinitionKind.DOCUMENT;
         if (document) attempt.loader = loaderFor(attempt.record);
         if (standing == ManagedRegistrations.Standing.OWN) {
-            // The registration that stands is valid for this owner: keep it, and remove it on failure only when
+            // The registration that stands is valid for this key: keep it, and remove it on failure only when
             // it is the one an earlier unresolved reinstatement of this lifecycle left behind.
             String registered = held.plan().planHash();
             if (!attempt.record.planHash().equals(registered))
@@ -356,15 +339,15 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
 
     /**
      * Commits the durable reinstatement. A failure whose outcome is unknown is decided by reading the row
-     * again: an active or superseded row with the plan hash of the published source was committed, and any other
-     * row was not, which removes this attempt's publication. When the row cannot be read the publication stays,
+     * again: an available row with the plan hash of the row that was read was committed, and any other
+     * row was not, which removes this attempt's publication, if it made one. When the row cannot be read the publication stays,
      * remembered, for a retry to adopt or to remove.
      */
     private Future<Void> commitReinstatement(Reinstatement attempt) {
         WorkflowDefinitionRegistryStore durable = store.orElseThrow();
         Future<Void> transition;
         try {
-            transition = durable.transition(attempt.key, DefinitionStatus.RETIRED, DefinitionStatus.SUPERSEDED);
+            transition = durable.transition(attempt.key, attempt.record.status(), DefinitionStatus.AVAILABLE);
         } catch (RuntimeException failure) {
             transition = Future.failedFuture(failure);
         }
@@ -377,9 +360,8 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
                     return Future.<Void>failedFuture(original);
                 }
                 boolean committed = read.result()
-                        .filter(row ->
-                                (row.status() == DefinitionStatus.ACTIVE || row.status() == DefinitionStatus.SUPERSEDED)
-                                        && row.planHash().equals(attempt.record.planHash()))
+                        .filter(row -> row.status() == DefinitionStatus.AVAILABLE
+                                && row.planHash().equals(attempt.record.planHash()))
                         .isPresent();
                 unresolvedReinstatements.remove(attempt.key);
                 if (committed) return Future.<Void>succeededFuture();
@@ -395,7 +377,11 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
         try {
             WorkflowRegistry local = registry.get();
             if (isRegistered(local, attempt.publication)) local.unregister(attempt.key);
-            registrations.clear(attempt.key.definitionId(), attempt.key.definitionVersion(), attempt.publication);
+            registrations.clear(
+                    attempt.key.scopeKey(),
+                    attempt.key.definitionId(),
+                    attempt.key.definitionVersion(),
+                    attempt.publication);
         } catch (RuntimeException compensation) {
             if (compensation != original) original.addSuppressed(compensation);
         }
@@ -403,6 +389,7 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
 
     /** Hands the committed document row to its loader, so that the loader's cache agrees with the table. */
     private Future<Void> handOffReinstated(Reinstatement attempt) {
+        if (attempt.deprecated) prepareUndeprecated(attempt);
         if (attempt.loader == null) {
             unresolvedReinstatements.remove(attempt.key);
             return refreshView(attempt.key);
@@ -417,6 +404,27 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
             unresolvedReinstatements.remove(attempt.key);
             return (Void) null;
         });
+    }
+
+    /**
+     * Clears the deprecation mark of the registration this lifecycle published for the key, now that the row is
+     * available, and prepares the hand-off of the committed row to the loader of a document.
+     */
+    private void prepareUndeprecated(Reinstatement attempt) {
+        DefinitionKey key = attempt.key;
+        WorkflowRegistry local = registry.get();
+        RuntimeWorkflow held = held(local, key);
+        if (registrations.classify(key.scopeKey(), key.definitionId(), key.definitionVersion(), held)
+                != ManagedRegistrations.Standing.OWN) return;
+        local.unmarkDeprecated(key);
+        // The change is committed, so a missing loader must not fail the call; the node view still refreshes.
+        if (attempt.record.kind() == DefinitionKind.DOCUMENT) {
+            List<PersistedDefinitionLoader> matches = loaders.stream()
+                    .filter(loader -> loader.supports(attempt.record.documentFormat()))
+                    .toList();
+            if (matches.size() == 1) attempt.loader = matches.getFirst();
+        }
+        attempt.definition = local.registeredDefinition(key).orElse(null);
     }
 
     /**
@@ -453,7 +461,7 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
         RuntimeWorkflow held = held(local, key);
         if (registrations.classify(key.scopeKey(), id, version, held) == ManagedRegistrations.Standing.OWN) {
             local.unregister(key);
-            registrations.clear(id, version, held);
+            registrations.clear(key.scopeKey(), id, version, held);
             uncertain.remove(key, held);
             unresolvedReinstatements.remove(key, held);
         }
@@ -463,7 +471,7 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
     /**
      * Classifies the local registration of the key's id and version before any durable change. A registration
      * the lifecycle did not publish, or one that a direct registry call replaced after publication, fails as an
-     * invalid transition and stays registered; one published for another owner is only reported, never touched.
+     * invalid transition and stays registered.
      */
     private ManagedRegistrations.Standing preflight(DefinitionKey key) {
         ManagedRegistrations.Standing standing = registrations.classify(
@@ -490,7 +498,7 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
                     attempt.publication);
     }
 
-    /** Reads the current status, then moves an active or superseded row to deprecated; already deprecated is accepted. */
+    /** Reads the current status, then moves an available row to deprecated; already deprecated is accepted. */
     private Future<Void> commitDeprecation(DefinitionKey key, boolean retryOnConflict) {
         WorkflowDefinitionRegistryStore durable = store.orElseThrow();
         return durable.find(key).compose(found -> {
@@ -498,7 +506,7 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
                     found.orElseThrow(() -> failure(Reason.INVALID_TRANSITION, key, "definition not found"));
             DefinitionStatus status = record.status();
             if (status == DefinitionStatus.DEPRECATED) return Future.<Void>succeededFuture();
-            if (status != DefinitionStatus.ACTIVE && status != DefinitionStatus.SUPERSEDED)
+            if (status != DefinitionStatus.AVAILABLE)
                 throw failure(Reason.INVALID_TRANSITION, key, "cannot deprecate status " + status);
             return durable.transition(key, status, DefinitionStatus.DEPRECATED).recover(original -> {
                 if (original instanceof Error) return Future.failedFuture(original);
@@ -514,7 +522,7 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
                     // The status moved between the read and the transition: decide again once.
                     boolean moved = original instanceof WorkflowDefinitionLifecycleException refusal
                             && refusal.reason() == Reason.INVALID_TRANSITION
-                            && (now == DefinitionStatus.ACTIVE || now == DefinitionStatus.SUPERSEDED);
+                            && now == DefinitionStatus.AVAILABLE;
                     return retryOnConflict && moved
                             ? commitDeprecation(key, false)
                             : Future.<Void>failedFuture(original);
@@ -523,14 +531,14 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
         });
     }
 
-    private Future<Void> activateQueued(DefinitionKey key) {
+    private Future<Void> publishQueued(DefinitionKey key) {
         WorkflowDefinitionRegistryStore durable = store.orElseThrow();
         Attempt attempt = new Attempt(key);
         Future<Void> publication = durable.find(key)
                 .<Void>compose(found -> {
                     WorkflowDefinitionRecord record =
                             found.orElseThrow(() -> failure(Reason.INVALID_TRANSITION, key, "definition not found"));
-                    if (record.status() == DefinitionStatus.ACTIVE) {
+                    if (record.status() == DefinitionStatus.AVAILABLE) {
                         uncertain.remove(key);
                         return Future.succeededFuture();
                     }
@@ -591,7 +599,7 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
                             });
                 })
                 .recover(original -> recover(attempt, original));
-        // Hook failures fail the operation, but cannot undo a committed activation.
+        // Hook failures fail the operation, but cannot undo a committed publication.
         return publication.compose(ignored -> {
             if (attempt.definition == null) return Future.succeededFuture();
             return durable.find(key).map(found -> {
@@ -621,9 +629,8 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
             }
             Optional<WorkflowDefinitionRecord> current = read.result();
             if (attempt.publication != null
-                    && current.filter(r ->
-                                    (r.status() == DefinitionStatus.ACTIVE || r.status() == DefinitionStatus.SUPERSEDED)
-                                            && r.planHash().equals(attempt.record.planHash()))
+                    && current.filter(r -> r.status() == DefinitionStatus.AVAILABLE
+                                    && r.planHash().equals(attempt.record.planHash()))
                             .isPresent()) {
                 attribute(attempt);
                 uncertain.remove(attempt.key);
@@ -633,10 +640,10 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
         });
     }
 
-    private Future<ActivationOutcome> complete(Attempt attempt) {
-        Future<ActivationOutcome> completion;
+    private Future<Void> complete(Attempt attempt) {
+        Future<Void> completion;
         try {
-            completion = store.orElseThrow().complete(attempt.claim);
+            completion = store.orElseThrow().complete(attempt.claim).mapEmpty();
         } catch (RuntimeException failure) {
             completion = Future.failedFuture(failure);
         }
@@ -644,8 +651,7 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
             // Only a refusal produced by this complete call can establish this attempt's failure.
             if (failure instanceof WorkflowDefinitionLifecycleException refusal
                     && refusal.key().equals(attempt.claim.key())
-                    && (refusal.reason() == Reason.STALE_CLAIM || refusal.reason() == Reason.OWNER_CONFLICT))
-                attempt.definitiveCompletionFailure = failure;
+                    && refusal.reason() == Reason.STALE_CLAIM) attempt.definitiveCompletionFailure = failure;
             return Future.failedFuture(failure);
         });
     }
@@ -664,7 +670,10 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
                     WorkflowRegistry local = registry.get();
                     if (isRegistered(local, attempt.publication)) local.unregister(attempt.key);
                     registrations.clear(
-                            attempt.key.definitionId(), attempt.key.definitionVersion(), attempt.publication);
+                            attempt.key.scopeKey(),
+                            attempt.key.definitionId(),
+                            attempt.key.definitionVersion(),
+                            attempt.publication);
                     // Forget the runtime only once it is gone; a failed removal leaves it to be adopted by a retry.
                     uncertain.remove(attempt.key, attempt.publication);
                 } catch (RuntimeException compensation) {
@@ -690,7 +699,7 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
                         boolean own = registrations.classify(
                                         key.scopeKey(), key.definitionId(), key.definitionVersion(), held(local, key))
                                 == ManagedRegistrations.Standing.OWN;
-                        found.filter(row -> HOLDING.contains(row.status()))
+                        found.filter(row -> REGISTERED.contains(row.status()))
                                 .filter(row -> own)
                                 .ifPresentOrElse(view::applied, () -> view.removed(key));
                         return null;
@@ -743,6 +752,8 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
         RuntimeWorkflow publication;
         /** Whether the row was read as retired, so that nothing of this reinstatement can be committed yet. */
         boolean retired;
+        /** Whether the row was read as deprecated: it is still registered and only its status and mark change. */
+        boolean deprecated;
         /** Whether the row was found already committed by an earlier unresolved attempt of this lifecycle. */
         boolean settled;
 
