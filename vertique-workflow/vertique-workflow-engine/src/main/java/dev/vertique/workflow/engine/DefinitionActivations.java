@@ -73,9 +73,10 @@ final class DefinitionActivations {
 
     /** Stores the record, replacing the scope's earlier record of the id. */
     void put(DefinitionActivation activation) {
-        Slot slot = new Slot(activation.scopeKey(), activation.definitionId());
+        // The change is recorded before the map is mutated, so a refresh that reads the map after the mutation
+        // always sees the change mark and leaves the slot alone.
+        changed.put(new Slot(activation.scopeKey(), activation.definitionId()), sequence.incrementAndGet());
         store(activation);
-        changed.put(slot, sequence.incrementAndGet());
     }
 
     private void store(DefinitionActivation activation) {
@@ -88,8 +89,8 @@ final class DefinitionActivations {
      * marks the id as cleared, so that no computed version stands in for it.
      */
     void remove(String scopeKey, String definitionId) {
-        discard(scopeKey, definitionId);
         changed.put(new Slot(scopeKey, definitionId), sequence.incrementAndGet());
+        discard(scopeKey, definitionId);
     }
 
     private void discard(String scopeKey, String definitionId) {

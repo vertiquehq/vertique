@@ -24,6 +24,7 @@ import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionsConfig;
 import dev.vertique.workflow.registry.store.WorkflowScopes;
+import dev.vertique.workflow.types.EchoedNames;
 import io.vertx.core.Future;
 import io.vertx.core.VertxException;
 import io.vertx.core.json.JsonObject;
@@ -47,6 +48,9 @@ import java.util.TreeMap;
 import java.util.UUID;
 import java.util.function.Function;
 import java.util.function.Supplier;
+import java.util.stream.StreamSupport;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * PostgreSQL registry with transaction-owned id locking and fenced publication claims.
@@ -59,6 +63,8 @@ import java.util.function.Supplier;
 @Singleton
 public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
         implements WorkflowDefinitionRegistryStore {
+    private static final Logger log = LoggerFactory.getLogger(PgWorkflowDefinitionRegistryStore.class);
+
     private static final String COLUMNS =
             "scope_key, definition_id, definition_version, kind, contract_name, state_type_name, plan_hash, name_binding, status, document_format, "
                     + "source_type, source_uri, source_revision, source_author, source_upload_id, loaded_at, created_at, status_changed_at";
@@ -139,8 +145,11 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
                              THEN document ELSE NULL END AS document
                     FROM""" + " " + definitions + " WHERE " + KEY + " AND kind = 'DOCUMENT'";
 
-        this.sqlList =
-                "SELECT " + COLUMNS + " FROM " + definitions + " ORDER BY definition_id, scope_key, definition_version";
+        // The filter is applied by the database: each parameter is null when its criterion is absent.
+        this.sqlList = "SELECT " + COLUMNS + " FROM " + definitions
+                + " WHERE ($1::varchar IS NULL OR scope_key = $1) AND ($2::varchar IS NULL OR definition_id = $2)"
+                + " AND ($3::varchar[] IS NULL OR status = ANY($3::varchar[]))"
+                + " ORDER BY definition_id, scope_key, definition_version";
 
         this.sqlInsert = "INSERT INTO " + definitions
                 + " (scope_key, definition_id, definition_version, kind, contract_name, state_type_name, plan_hash, status, document, document_format, document_digest, source_type, source_uri, source_revision, source_author, source_upload_id, loaded_at, name_binding) VALUES ($1,$2,$3,'DOCUMENT',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17::jsonb)";
@@ -193,8 +202,12 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
                 + definitions
                 + " WHERE definition_id=$1 ORDER BY scope_key, definition_version FOR UPDATE";
 
+        // Writes nothing unless the target version is AVAILABLE when the statement runs.
         this.sqlPutActivation = "INSERT INTO " + activations
-                + " (scope_key, definition_id, target_scope_key, definition_version, activated_at) VALUES ($1,$2,$3,$4,$5)"
+                + " (scope_key, definition_id, target_scope_key, definition_version, activated_at)"
+                + " SELECT $1::varchar,$2::varchar,$3::varchar,$4::bigint,$5::timestamptz WHERE EXISTS (SELECT 1 FROM "
+                + definitions
+                + " WHERE scope_key=$3 AND definition_id=$2 AND definition_version=$4 AND status='AVAILABLE')"
                 + " ON CONFLICT (scope_key, definition_id) DO UPDATE SET target_scope_key=EXCLUDED.target_scope_key,"
                 + " definition_version=EXCLUDED.definition_version, activated_at=EXCLUDED.activated_at";
 
@@ -207,8 +220,11 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
 
         // Writes the default scope's record of the id to the inserted version unless the record names a higher one.
         this.sqlActivateDefault = "INSERT INTO " + activations
-                + " AS existing (scope_key, definition_id, target_scope_key, definition_version, activated_at) VALUES ('"
-                + WorkflowScopes.DEFAULT + "',$1,'" + WorkflowScopes.DEFAULT + "',$2,clock_timestamp())"
+                + " AS existing (scope_key, definition_id, target_scope_key, definition_version, activated_at)"
+                + " SELECT '" + WorkflowScopes.DEFAULT + "',$1::varchar,'" + WorkflowScopes.DEFAULT
+                + "',$2::bigint,clock_timestamp() WHERE EXISTS (SELECT 1 FROM " + definitions
+                + " WHERE scope_key='" + WorkflowScopes.DEFAULT
+                + "' AND definition_id=$1 AND definition_version=$2 AND status='AVAILABLE')"
                 + " ON CONFLICT (scope_key, definition_id) DO UPDATE SET target_scope_key=EXCLUDED.target_scope_key,"
                 + " definition_version=EXCLUDED.definition_version, activated_at=EXCLUDED.activated_at"
                 + " WHERE existing.definition_version < EXCLUDED.definition_version";
@@ -277,17 +293,16 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
     public Future<List<WorkflowDefinitionRecord>> list(DefinitionFilter filter) {
         return attempt(() -> {
             Objects.requireNonNull(filter, "filter");
-            return transaction(
-                    "list", tx -> tx.query(sqlList).execute().map(rows -> java.util.stream.StreamSupport.stream(
-                                    rows.spliterator(), false)
-                            .map(PgWorkflowDefinitionRegistryStore::metadata)
-                            .filter(r -> filter.scopeKey() == null
-                                    || filter.scopeKey().equals(r.key().scopeKey()))
-                            .filter(r -> filter.definitionId() == null
-                                    || filter.definitionId().equals(r.key().definitionId()))
-                            .filter(r -> filter.statuses() == null
-                                    || filter.statuses().contains(r.status()))
-                            .toList()));
+            String[] statuses = filter.statuses() == null
+                    ? null
+                    : filter.statuses().stream().map(Enum::name).toArray(String[]::new);
+            Tuple criteria = Tuple.tuple()
+                    .addString(filter.scopeKey())
+                    .addString(filter.definitionId())
+                    .addValue(statuses);
+            return transaction("list", tx -> tx.preparedQuery(sqlList)
+                    .execute(criteria)
+                    .map(rows -> readable(rows, "definition", PgWorkflowDefinitionRegistryStore::metadata)));
         });
     }
 
@@ -499,9 +514,7 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
             if (scopeKey != null) new DefinitionKey(scopeKey, WorkflowScopes.DEFAULT, 1);
             return transaction("activations", tx -> tx.preparedQuery(sqlListActivations)
                     .execute(Tuple.tuple().addValue(scopeKey))
-                    .map(rows -> java.util.stream.StreamSupport.stream(rows.spliterator(), false)
-                            .map(PgWorkflowDefinitionRegistryStore::activation)
-                            .toList()));
+                    .map(rows -> readable(rows, "activation", PgWorkflowDefinitionRegistryStore::activation)));
         });
     }
 
@@ -513,6 +526,8 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
      */
     private Future<Void> activateFirstPublication(SqlConnection tx, DefinitionKey key, boolean activateDefault) {
         if (!activateDefault) return Future.succeededFuture();
+        if (!WorkflowScopes.DEFAULT.equals(key.scopeKey()))
+            throw new IllegalStateException("only a version of the default scope can become its current version");
         return tx.preparedQuery(sqlActivateDefault)
                 .execute(Tuple.of(key.definitionId(), key.definitionVersion()))
                 .mapEmpty();
@@ -666,9 +681,46 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
         return new JsonObject(new TreeMap<String, Object>(record.nameBinding()));
     }
 
-    /** Reads a stored binding; a stored value that is not a string maps to nothing and is never echoed. */
+    /**
+     * Maps the rows, skipping a row that cannot be mapped so that one bad row neither stops the startup nor the
+     * propagation pass for every other row. The skipped row is logged by its bounded, printable scope and id.
+     */
+    private static <T> List<T> readable(RowSet<Row> rows, String what, Function<Row, T> mapper) {
+        List<T> mapped = new java.util.ArrayList<>();
+        for (Row row : StreamSupport.stream(rows.spliterator(), false).toList()) {
+            try {
+                mapped.add(mapper.apply(row));
+            } catch (IllegalArgumentException | NullPointerException | ClassCastException | IllegalStateException e) {
+                log.warn(
+                        "Skipped a stored {} row that cannot be read: scope '{}' id '{}' ({})",
+                        what,
+                        EchoedNames.bounded(safeString(row, "scope_key")),
+                        EchoedNames.bounded(safeString(row, "definition_id")),
+                        e.getClass().getSimpleName());
+            }
+        }
+        return List.copyOf(mapped);
+    }
+
+    private static String safeString(Row row, String column) {
+        try {
+            return row.getString(column);
+        } catch (RuntimeException unreadable) {
+            return null;
+        }
+    }
+
+    /**
+     * Reads a stored binding; a stored value that is not a string maps to nothing and is never echoed. A stored
+     * binding that is not an object fails the mapping of the row.
+     */
     private static Map<String, String> storedBinding(Row r) {
-        JsonObject stored = r.getJsonObject("name_binding");
+        JsonObject stored;
+        try {
+            stored = r.getJsonObject("name_binding");
+        } catch (ClassCastException notAnObject) {
+            throw new IllegalArgumentException("the stored name binding is not an object");
+        }
         Map<String, String> binding = new TreeMap<>();
         if (stored != null)
             stored.forEach(entry -> {

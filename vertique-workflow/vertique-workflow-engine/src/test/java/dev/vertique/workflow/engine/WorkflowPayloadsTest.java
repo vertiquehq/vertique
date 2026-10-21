@@ -90,6 +90,27 @@ class WorkflowPayloadsTest {
         assertTrue(failure.getMessage().contains("com.example.Missing"), "message must name the type");
     }
 
+    @Test
+    @DisplayName("an unresolvable decision class echoes a bounded, printable name and no loader message")
+    void unresolvableDecisionClassEchoIsBoundedAndPrintable() {
+        // Given a declared type name with a line break, a forged log line and a long tail
+        String hostile = "evil.Type\nFORGED LOG LINE " + "x".repeat(300);
+
+        // When it is validated through the type-name index
+        WorkflowDefinitionException failure = assertThrows(
+                WorkflowDefinitionException.class,
+                () -> WorkflowPayloads.validateAndCoerceTaskPayload(
+                        new JsonObject(), hostile, new DefaultWorkflowTypeNames()));
+
+        // Then the message names the start of the type without control characters
+        assertTrue(failure.getMessage().contains("evil.Type"), "message must name the type");
+        assertTrue(failure.getMessage().chars().noneMatch(Character::isISOControl), failure.getMessage());
+
+        // And neither the long tail nor the loader's own repetition of the name is echoed
+        assertFalse(failure.getMessage().contains("x".repeat(100)), failure.getMessage());
+        assertTrue(failure.getMessage().length() < 250, failure.getMessage());
+    }
+
     // --- Type-name resolution ---
 
     /** Decision payload type that carries a logical name. */

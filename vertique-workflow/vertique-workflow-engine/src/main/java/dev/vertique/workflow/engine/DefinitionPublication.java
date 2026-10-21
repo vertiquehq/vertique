@@ -8,16 +8,20 @@ import dev.vertique.workflow.engine.WorkflowCodeDefinitionCatalog.CodeDefinition
 import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException;
 import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException.Reason;
 import dev.vertique.workflow.exception.WorkflowDefinitionMissingException;
+import dev.vertique.workflow.exception.WorkflowUnknownTypeNameException;
 import dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowRegistry;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.PersistedDefinitionLoader;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
+import dev.vertique.workflow.types.EchoedNames;
+import dev.vertique.workflow.types.WorkflowTypeNames;
 import jakarta.annotation.Nullable;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * The mechanics that every managed publisher of an executable definition shares: reading what the registry holds
@@ -28,7 +32,37 @@ import java.util.Set;
  */
 final class DefinitionPublication {
 
+    /** The most unresolved names a refusal lists; the message states the total when there are more. */
+    static final int MAX_LISTED_NAMES = 10;
+
     private DefinitionPublication() {}
+
+    /**
+     * Fails when a name in the row's binding no longer resolves to a class, so a version bound to the binary name
+     * of a class that moved is refused before anything is registered instead of failing its instances later.
+     * Names resolve only through the type-name index; no class is loaded by a stored name. The message lists at
+     * most {@value #MAX_LISTED_NAMES} names, each bounded and printable, and states the total.
+     *
+     * @throws WorkflowUnknownTypeNameException when the binding names a class that no longer resolves
+     */
+    static void requireBoundNamesResolve(WorkflowTypeNames typeNames, WorkflowDefinitionRecord row) {
+        List<String> unresolved = row.nameBinding().values().stream()
+                .distinct()
+                .filter(name -> typeNames.find(name).isEmpty())
+                .sorted()
+                .toList();
+        if (unresolved.isEmpty()) return;
+        DefinitionKey key = row.key();
+        String listed = unresolved.stream()
+                .limit(MAX_LISTED_NAMES)
+                .map(EchoedNames::bounded)
+                .collect(Collectors.joining(", "));
+        String count = unresolved.size() > MAX_LISTED_NAMES ? " (" + unresolved.size() + " names in total)" : "";
+        throw new WorkflowUnknownTypeNameException("definition '" + EchoedNames.bounded(key.definitionId())
+                + "' version " + key.definitionVersion() + " in scope '" + EchoedNames.bounded(key.scopeKey())
+                + "' was recorded with type names that no class resolves any more: " + listed + count
+                + "; keep the class under that name, or retire the version before moving the class");
+    }
 
     /** The runtime the registry holds for the exact key, or {@code null} when it holds none. */
     static @Nullable RuntimeWorkflow held(WorkflowRegistry local, DefinitionKey key) {

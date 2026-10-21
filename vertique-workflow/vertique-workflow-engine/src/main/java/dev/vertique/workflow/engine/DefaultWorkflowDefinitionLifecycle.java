@@ -398,6 +398,7 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
                 .compose(source -> work(() -> {
                     var text =
                             source.orElseThrow(() -> failure(Reason.LOADER_MISSING, key, "stored source is missing"));
+                    requireBoundNamesResolve(attempt.record);
                     WorkflowDefinition<?, ?> definition = attempt.loader.load(attempt.record, text);
                     String hash = DefinitionPublication.planHash(attempt.loader, definition, attempt.record);
                     if (!definition.definitionId().equals(key.definitionId())
@@ -411,6 +412,12 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
                     attempt.definition = definition;
                     return (Void) null;
                 }));
+    }
+
+    /** Refuses a row whose bound type names no class resolves any more, before anything is loaded or registered. */
+    private void requireBoundNamesResolve(WorkflowDefinitionRecord record) {
+        if (record.nameBinding().isEmpty()) return;
+        DefinitionPublication.requireBoundNamesResolve(WorkflowEngineFactory.registryTypeNames(registry.get()), record);
     }
 
     /** Registers the code definition the deployed code provides, after its hash was checked against the row. */
@@ -660,6 +667,7 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
                             .compose(document -> work(() -> {
                                 var source = document.orElseThrow(
                                         () -> failure(Reason.LOADER_MISSING, key, "stored source is missing"));
+                                requireBoundNamesResolve(attempt.record);
                                 attempt.definition = attempt.loader.load(attempt.record, source);
                                 String hash = DefinitionPublication.planHash(
                                         attempt.loader, attempt.definition, attempt.record);

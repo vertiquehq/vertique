@@ -28,7 +28,6 @@ import dev.vertique.workflow.registry.store.WorkflowDefinitionDocument;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.registry.store.WorkflowScopes;
-import dev.vertique.workflow.types.EchoedNames;
 import dev.vertique.workflow.types.WorkflowTypeNames;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
@@ -307,24 +306,8 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
                 stored.nameBinding());
     }
 
-    /**
-     * Fails when a name in the row's binding no longer resolves to a class, so a version bound to the binary name
-     * of a class that moved stops startup instead of failing its instances later. Names resolve only through the
-     * type-name index; no class is loaded by a stored name.
-     */
     private void requireBoundNamesResolve(WorkflowDefinitionRecord row) {
-        List<String> unresolved = row.nameBinding().values().stream()
-                .distinct()
-                .filter(name -> typeNames.find(name).isEmpty())
-                .sorted()
-                .toList();
-        if (unresolved.isEmpty()) return;
-        DefinitionKey key = row.key();
-        throw new WorkflowUnknownTypeNameException("definition '" + printable(key.definitionId()) + "' version "
-                + key.definitionVersion() + " in scope '" + printable(key.scopeKey())
-                + "' was recorded with type names that no class resolves any more: "
-                + unresolved.stream().map(EchoedNames::bounded).collect(Collectors.joining(", "))
-                + "; keep the class under that name, or retire the version before moving the class");
+        DefinitionPublication.requireBoundNamesResolve(typeNames, row);
     }
 
     /** Records every durable activation record in the node's view, whether or not this node has the code it names. */

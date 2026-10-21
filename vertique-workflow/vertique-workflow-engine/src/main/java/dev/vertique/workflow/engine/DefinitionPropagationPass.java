@@ -20,6 +20,7 @@ import dev.vertique.workflow.registry.store.WorkflowDefinitionDocument;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRecord;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionsConfig;
+import dev.vertique.workflow.types.EchoedNames;
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
@@ -335,7 +336,7 @@ final class DefinitionPropagationPass {
                 }
                 view.removed(key);
                 handOffMetadata(record);
-                if (removed) log.info("Removed definition {} from this node: it is retired", key);
+                if (removed) log.info("Removed definition {} from this node: it is retired", printable(key));
             }
             case CANDIDATE -> {
                 view.settled(key);
@@ -413,7 +414,7 @@ final class DefinitionPropagationPass {
                 else loader.onMetadata(record);
             }
         view.applied(record);
-        if (news) log.info("Applied definition {} on this node as {}", key, record.status());
+        if (news) log.info("Applied definition {} on this node as {}", printable(key), record.status());
     }
 
     private Future<Void> publish(WorkflowRegistry local, WorkflowDefinitionRecord record) {
@@ -427,7 +428,7 @@ final class DefinitionPropagationPass {
                 : publishDocument(local, record);
         return published.map(ignored -> {
             view.applied(record);
-            log.info("Applied definition {} on this node as {}", key, record.status());
+            log.info("Applied definition {} on this node as {}", printable(key), record.status());
             return (Void) null;
         });
     }
@@ -440,6 +441,9 @@ final class DefinitionPropagationPass {
                 .compose(document -> work(() -> {
                     WorkflowDefinitionDocument source = document.orElseThrow(() ->
                             DefinitionPublication.failure(Reason.LOADER_MISSING, key, "DOCUMENT source is missing"));
+                    if (!record.nameBinding().isEmpty())
+                        DefinitionPublication.requireBoundNamesResolve(
+                                WorkflowEngineFactory.registryTypeNames(local), record);
                     WorkflowDefinition<?, ?> definition;
                     String hash;
                     try {
@@ -509,18 +513,34 @@ final class DefinitionPropagationPass {
         reasons.put(key, reason);
         view.failed(key);
         String detail = error instanceof WorkflowDefinitionLifecycleException || error instanceof RowTimeout
-                ? error.getMessage()
+                ? printable(key, String.valueOf(error.getMessage()))
                 : error.getClass().getSimpleName();
         if (repeated) {
-            log.debug("Definition {} still could not be applied on this node: {} ({})", key, reason, detail);
+            log.debug("Definition {} still could not be applied on this node: {} ({})", printable(key), reason, detail);
             return;
         }
         log.warn(
                 "Definition {} could not be applied on this node: {} ({}); it is counted as failing and retried on"
                         + " the next pass",
-                key,
+                printable(key),
                 reason,
                 detail);
+    }
+
+    /** The key in a form that is safe to log: bounded and without control characters. */
+    private static String printable(DefinitionKey key) {
+        return "scope '" + EchoedNames.bounded(key.scopeKey()) + "' id '" + EchoedNames.bounded(key.definitionId())
+                + "' version " + key.definitionVersion();
+    }
+
+    /** A failure message with the key's own text bounded, so that a long id is not repeated whole. */
+    private static String printable(DefinitionKey key, String message) {
+        String bounded = message;
+        if (key.definitionId().length() > EchoedNames.MAX_CODE_POINTS)
+            bounded = bounded.replace(key.definitionId(), EchoedNames.bounded(key.definitionId()));
+        if (key.scopeKey().length() > EchoedNames.MAX_CODE_POINTS)
+            bounded = bounded.replace(key.scopeKey(), EchoedNames.bounded(key.scopeKey()));
+        return bounded.replaceAll("\\p{Cntrl}", "?");
     }
 
     private static <T> Future<T> work(Supplier<T> action) {

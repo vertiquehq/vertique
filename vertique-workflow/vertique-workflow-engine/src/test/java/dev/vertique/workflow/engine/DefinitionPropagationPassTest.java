@@ -705,6 +705,27 @@ class DefinitionPropagationPassTest {
         assertThat(log.warnings()).hasSize(3);
     }
 
+    @Test
+    @DisplayName("a failing and an applied row log a bounded form of a long definition id")
+    void logsABoundedFormOfALongDefinitionId() {
+        // Given a code row the deployed code does not provide and a held document row, both with a long id
+        String longId = "wf-" + "y".repeat(200);
+        world.store.put(code(longId, DefinitionStatus.AVAILABLE, T0));
+        String heldId = "wf-" + "z".repeat(200);
+        world.hold(WorkflowScopes.DEFAULT, heldId, 1, HASH);
+        world.store.put(document(WorkflowScopes.DEFAULT, heldId, DefinitionStatus.AVAILABLE, T0));
+
+        // When a pass runs
+        world.runOk();
+
+        // Then the warning and the applied line were logged, and neither repeats the whole id
+        assertThat(log.warnings()).isNotEmpty();
+        assertThat(log.everything()).anySatisfy(line -> assertThat(line).contains("Applied definition"));
+        assertThat(log.everything())
+                .noneSatisfy(line -> assertThat(line).containsAnyOf(longId, heldId))
+                .allSatisfy(line -> assertThat(line).doesNotContain("y".repeat(100), "z".repeat(100)));
+    }
+
     // ----- remaining outcomes -----
 
     @Test

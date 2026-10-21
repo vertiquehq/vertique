@@ -17,6 +17,7 @@ import dev.vertique.workflow.state.BranchToken;
 import dev.vertique.workflow.state.WorkflowHistoryEntry;
 import dev.vertique.workflow.state.WorkflowInstance;
 import dev.vertique.workflow.types.DefaultWorkflowTypeNames;
+import dev.vertique.workflow.types.EchoedNames;
 import dev.vertique.workflow.types.WorkflowTypeNames;
 import io.vertx.core.Future;
 import io.vertx.core.json.DecodeException;
@@ -140,7 +141,7 @@ final class WorkflowPayloads {
                 payloadClass = Class.forName(payloadTypeName, false, WorkflowPayloads.class.getClassLoader());
             } catch (ClassNotFoundException | LinkageError e) {
                 throw new WorkflowDefinitionException(
-                        "Decision payloadTypeName '" + payloadTypeName + "' cannot be resolved: " + e.getMessage());
+                        "Decision payloadTypeName '" + EchoedNames.bounded(payloadTypeName) + "' cannot be resolved");
             }
         }
 

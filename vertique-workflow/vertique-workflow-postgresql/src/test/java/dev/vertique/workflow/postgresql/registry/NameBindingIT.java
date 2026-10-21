@@ -4,6 +4,7 @@
 package dev.vertique.workflow.postgresql.registry;
 
 import static dev.vertique.workflow.postgresql.registry.DefinitionScenario.await;
+import static dev.vertique.workflow.postgresql.registry.DefinitionScenario.failureOf;
 import static dev.vertique.workflow.postgresql.registry.DefinitionScenario.source;
 import static dev.vertique.workflow.postgresql.registry.IsolatedFixtureCode.APPROVAL_NAME;
 import static dev.vertique.workflow.postgresql.registry.IsolatedFixtureCode.DEFINITION_ID;
@@ -309,6 +310,121 @@ public class NameBindingIT {
             // And the instance resumes
             approve(second, instance);
             assertThat(database.instanceStatus(instance)).isEqualTo("COMPLETED");
+        }
+    }
+
+    @Test
+    @DisplayName("a startup refusal lists at most ten unresolved names and counts the rest")
+    void startupRefusalBoundsTheListedNames(Vertx vertx) {
+        try (DefinitionScenario database = new DefinitionScenario(vertx, db)) {
+            own(database, DEFINITION_ID);
+
+            // Given version 1 published and a stored binding that names twenty-five classes that do not exist
+            IsolatedFixtureCode annotated =
+                    publishedThenAnnotated(database, false).annotated();
+            JsonObject gone = new JsonObject();
+            for (int index = 0; index < 25; index++)
+                gone.put(String.format("gone.Type%02d", index), String.format("gone.Type%02d", index));
+            await(database.admin()
+                    .preparedQuery("UPDATE workflow_definitions SET name_binding = $1::jsonb"
+                            + " WHERE scope_key = 'default' AND definition_id = $2 AND definition_version = 1")
+                    .execute(Tuple.of(gone, DEFINITION_ID)));
+
+            // When a node starts over it
+            Boot refused = database.attempt(
+                    none(), unobserved(), definitions(annotated, 1), null, new JsonObject(), annotated.catalog());
+
+            // Then startup fails with an unknown type name that lists ten names and states the total
+            assertThat(refused.failure()).isNotNull();
+            WorkflowUnknownTypeNameException unknown =
+                    causeOf(refused.failure(), WorkflowUnknownTypeNameException.class);
+            assertThat(unknown.getMessage().split("gone\\.Type", -1).length - 1)
+                    .as("listed names")
+                    .isLessThanOrEqualTo(10);
+            assertThat(unknown.getMessage()).containsPattern("\\b25\\b");
+        }
+    }
+
+    @Test
+    @DisplayName("reinstating a retired document whose bound class has moved fails naming the version and the names")
+    void reinstatingRetiredDocumentAfterMoveFailsNamingVersion(Vertx vertx) {
+        try (DefinitionScenario database = new DefinitionScenario(vertx, db)) {
+            ActivationFixtures.clearActivations(database.admin(), DOCUMENT_ID);
+            database.ownRows(DOCUMENT_ID);
+            database.onClose(() -> ActivationFixtures.clearActivations(database.admin(), DOCUMENT_ID));
+
+            // Given a document bound to the binary name of its payload class, published and then retired
+            IsolatedFixtureCode unannotated = fixture(database, ORIGINAL, Naming.UNANNOTATED, false);
+            Boot first = boot(database, unannotated);
+            DefinitionKey key = new DefinitionKey(ACME, DOCUMENT_ID, 1);
+            await(first.app()
+                    .definitionService()
+                    .load(
+                            ACME,
+                            documentText(unannotated.approvalClassName()).getBytes(StandardCharsets.UTF_8),
+                            DocumentFormat.YAML,
+                            source("binding-doc", LOADED_AT)));
+            await(first.app().definitionService().publish(key));
+            await(first.app().definitionService().deprecate(key));
+            database.ageStatus(key, 60);
+            await(first.app().definitionService().retire(key));
+            assertThat(row(database, ACME, DOCUMENT_ID, 1).status()).isEqualTo("RETIRED");
+            first.close();
+
+            // And a node whose deployed code has the classes in another package
+            IsolatedFixtureCode moved = fixture(database, MOVED, Naming.ANNOTATED, false);
+            Boot second = boot(database, moved);
+
+            // When the retired version is reinstated
+            Throwable failure = failureOf(second.app().definitionService().reinstate(key));
+
+            // Then it fails with an unknown type name naming the scope, definition, version and the class
+            assertThat(failure).isNotNull();
+            WorkflowUnknownTypeNameException unknown = causeOf(failure, WorkflowUnknownTypeNameException.class);
+            assertThat(unknown.getMessage())
+                    .contains(ACME, DOCUMENT_ID, unannotated.approvalClassName())
+                    .containsPattern("\\b1\\b");
+
+            // And the version stays retired
+            assertThat(row(database, ACME, DOCUMENT_ID, 1).status()).isEqualTo("RETIRED");
+        }
+    }
+
+    @Test
+    @DisplayName("publishing a candidate document whose bound class has moved fails naming the version and the names")
+    void publishingCandidateDocumentAfterMoveFailsNamingVersion(Vertx vertx) {
+        try (DefinitionScenario database = new DefinitionScenario(vertx, db)) {
+            ActivationFixtures.clearActivations(database.admin(), DOCUMENT_ID);
+            database.ownRows(DOCUMENT_ID);
+            database.onClose(() -> ActivationFixtures.clearActivations(database.admin(), DOCUMENT_ID));
+
+            // Given a candidate document bound to the binary name of its payload class
+            IsolatedFixtureCode unannotated = fixture(database, ORIGINAL, Naming.UNANNOTATED, false);
+            Boot first = boot(database, unannotated);
+            DefinitionKey key = new DefinitionKey(ACME, DOCUMENT_ID, 1);
+            await(first.app()
+                    .definitionService()
+                    .load(
+                            ACME,
+                            documentText(unannotated.approvalClassName()).getBytes(StandardCharsets.UTF_8),
+                            DocumentFormat.YAML,
+                            source("binding-doc", LOADED_AT)));
+            assertThat(row(database, ACME, DOCUMENT_ID, 1).status()).isEqualTo("CANDIDATE");
+            first.close();
+
+            // And a node whose deployed code has the classes in another package
+            IsolatedFixtureCode moved = fixture(database, MOVED, Naming.ANNOTATED, false);
+            Boot second = boot(database, moved);
+
+            // When the candidate is published
+            Throwable failure = failureOf(second.app().definitionService().publish(key));
+
+            // Then it fails with an unknown type name naming the scope, definition, version and the class
+            assertThat(failure).isNotNull();
+            WorkflowUnknownTypeNameException unknown = causeOf(failure, WorkflowUnknownTypeNameException.class);
+            assertThat(unknown.getMessage())
+                    .contains(ACME, DOCUMENT_ID, unannotated.approvalClassName())
+                    .containsPattern("\\b1\\b");
         }
     }
 

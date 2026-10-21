@@ -312,7 +312,10 @@ the default scope's record (an absent record is accepted), and `activations(scop
 `null`, of every scope. The default scope's current version cannot be deprecated or retired until another version is activated
 or `deactivateDefault` clears the record; to decommission an id call `deactivateDefault`, `deprecate`, and `retire` after the
 cooling window. Without a durable registry these operations act on the node's in-memory view and are lost on restart. Like
-`load`, they take any scope, so restrict them to authorized callers.
+`load`, they take any scope, so restrict them to authorized callers. A deactivation is not durable across a release: when a
+later release deploys a higher version whose header does not set `activateOnDeploy: false`, that version becomes the
+default scope's current version again on its first publication. Ship such a version with `activateOnDeploy: false` to keep
+the id deactivated.
 
 `reinstate(DefinitionKey)` brings a retired version back when its source is available (the deployed code for a code version,
 the stored text for a document), and a deprecated version back by clearing its deprecation mark; either becomes AVAILABLE.
@@ -322,13 +325,15 @@ The returned Future fails with `CODE_UNAVAILABLE`, `DRIFT`,
 `retire(DefinitionKey)` retires a candidate version, or a deprecated one after the cooling window with no live pinned
 instance, and reports RETIRED in service metadata and lists; the returned Future fails with `COOLING`,
 `PINNED_INSTANCES` or `INVALID_TRANSITION`. Retiring a candidate of one scope never removes another scope's runtime,
-even when id, version and hash are equal.
+even when id, version and hash are equal. A scope's activation record can still name a version that is retired, because
+only the default scope's current version is protected; a start without a version in that scope then fails until the
+record is moved to an available version or removed with `follow`.
 
 Startup restores the live documents of every scope. An id that deployed code registers is a
 default-scope CODE row, and a document of another scope may publish the same id and version beside it.
 A load into a scope writes only that scope's rows; it never touches the default scope's or another scope's rows. Documents
 packaged with the application are loaded into the default scope. The service does not check identity: the application decides who may load
-into which scope, so restrict `load`, `publish`, `deprecate`, `retire` and `reinstate` to authorized callers. The
+into which scope, so restrict `load`, `publish`, `deprecate`, `retire`, `reinstate`, `activate`, `deactivateDefault`, `follow` and `activations` to authorized callers. The
 public `currentStatus` of a version that is only persisted metadata (a candidate or retired row that startup did
 not compile) reports the persisted status instead of returning `null`; it returns `null` only when nothing is known about the version. An equal plan hash no longer proves equal text: a
 packaged document whose text differs (even by a comment, whitespace or line endings) from the stored text of the

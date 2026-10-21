@@ -45,6 +45,8 @@ CREATE TABLE IF NOT EXISTS workflow_definitions (
     publish_token UUID,
     CONSTRAINT pk_workflow_definitions PRIMARY KEY (scope_key, definition_id, definition_version),
     CONSTRAINT ck_workflow_definitions_version CHECK (definition_version > 0),
+    CONSTRAINT ck_workflow_definitions_keys CHECK (scope_key !~ '[[:cntrl:]]' AND definition_id !~ '[[:cntrl:]]'),
+    CONSTRAINT ck_workflow_definitions_binding CHECK (jsonb_typeof(name_binding) = 'object'),
     CONSTRAINT ck_workflow_definitions_kind CHECK (kind IN ('CODE','DOCUMENT')),
     CONSTRAINT ck_workflow_definitions_status CHECK (status IN ('CANDIDATE','PUBLISHING','AVAILABLE','DEPRECATED','RETIRED')),
     CONSTRAINT ck_workflow_definitions_claim CHECK ((status = 'PUBLISHING') = (publish_token IS NOT NULL)),
@@ -67,6 +69,8 @@ CREATE TABLE IF NOT EXISTS workflow_definition_activations (
     activated_at TIMESTAMPTZ NOT NULL,
     CONSTRAINT pk_workflow_definition_activations PRIMARY KEY (scope_key, definition_id),
     CONSTRAINT ck_workflow_definition_activations_version CHECK (definition_version > 0),
+    CONSTRAINT ck_workflow_definition_activations_keys CHECK (
+        scope_key !~ '[[:cntrl:]]' AND definition_id !~ '[[:cntrl:]]' AND target_scope_key !~ '[[:cntrl:]]'),
     CONSTRAINT ck_workflow_definition_activations_target CHECK (
         (target_scope_key = scope_key OR target_scope_key = 'default')
         AND (scope_key <> 'default' OR target_scope_key = 'default')),

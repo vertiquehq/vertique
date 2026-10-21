@@ -324,8 +324,13 @@ synchronous exceptions.
 - **Reinstatement.** `reinstate` of a retired version needs an executable source: the deployed code for a code version, the
   stored text for a document. A deprecated version is still registered, so its reinstatement only clears the deprecation
   mark. Either way the version becomes `AVAILABLE`.
-- **No authorization.** `load`, `publish`, `deprecate`, `retire` and `reinstate` perform no access check. Restrict
-  them to authorized callers in your application.
+- **No authorization.** `load`, `publish`, `deprecate`, `retire`, `reinstate`, `activate`, `deactivateDefault`,
+  `follow` and `activations` perform no access check. Restrict them to authorized callers in your application.
+- **Retire and tenant records.** `retire` guards only the default scope's current version. A tenant scope's activation
+  record can name a version that is then retired; starts without a version in that scope fail until the record is moved
+  (`activate`) or removed (`follow`).
+- **Deactivation is not durable across a release.** A later release that deploys a higher version activates it on its
+  first publication unless its header sets `activateOnDeploy: false`.
 
 ### Async usage
 
@@ -437,6 +442,9 @@ Each node polls the table and applies differences, so a change committed on one 
 - **Registry writes** always run at `READ COMMITTED`, whatever the server default.
 - **Retirement cost.** `retire` counts the pinned instances while it holds the exclusive id lock, and no index covers that
   predicate, so on a very large instance table a retirement can delay new starts of that id.
+- **Shared per-id serialization.** Load, publish, activate and the other registry writes of one definition id serialize
+  on the same id lock across every tenant scope, so one caller can delay the others. Rate-limit those calls in your
+  application. A listing is filtered by the database and returns every matching row without pagination.
 
 ### Registry mutation outside the lifecycle
 
