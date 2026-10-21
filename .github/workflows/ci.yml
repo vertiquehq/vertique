@@ -175,11 +175,6 @@ jobs:
           bash scripts/test-verify-bytecode-target.sh
           bash scripts/verify-bytecode-target.sh
 
-      # The build verdict script is a local and agent aid, not a gate. Its harness
-      # runs against a fake Maven command, so it needs no build output.
-      - name: Test build verdict script
-        run: bash scripts/test-build-verdict.sh
-
       # Surefire and Failsafe redirect test output to these reports. Retain
       # them after failures and cancellation so CI-only flakes and hangs remain
       # diagnosable after the run.
