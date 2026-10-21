@@ -37,7 +37,9 @@ import dev.vertique.workflow.definition.validator.WorkflowDefinitionDocumentVali
 import dev.vertique.workflow.definition.validator.WorkflowDefinitionLoadException;
 import dev.vertique.workflow.exception.WorkflowDefinitionMissingException;
 import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
+import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.List;
@@ -261,8 +263,11 @@ class WorkflowDefinitionBootstrapTest {
         bootstrap(Set.of(() -> List.of(first, variant))).contribute(registry);
 
         // Then: both are registered and name the same contract
-        assertThat(registry.resolvePinned("parity-doc", 1L).contractName()).isEqualTo(ParityContract.class.getName());
-        assertThat(registry.resolvePinned("parity-variant", 1L).contractName())
+        assertThat(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "parity-doc", 1L))
+                        .contractName())
+                .isEqualTo(ParityContract.class.getName());
+        assertThat(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "parity-variant", 1L))
+                        .contractName())
                 .isEqualTo(ParityContract.class.getName());
 
         // When: the bootstrap contributes all three, the repeat coming from another source

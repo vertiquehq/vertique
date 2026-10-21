@@ -85,6 +85,9 @@ class DefaultWorkflowDefinitionServiceTest {
     @WorkflowContract
     interface SvcItemV1Contract {}
 
+    @WorkflowContract
+    interface SvcScopedOrderContract {}
+
     // --- Infrastructure ---
 
     private DefaultWorkflowRegistry registry;
@@ -197,6 +200,26 @@ class DefaultWorkflowDefinitionServiceTest {
     }
 
     // --- Tests ---
+
+    @Test
+    @DisplayName("activation registers the definition in the scope of its key")
+    void activationRegistersTheDefinitionInTheScopeOfItsKey() {
+        // Given: a valid document loaded into the acme scope, with an id inside the acme namespace
+        DefinitionKey acmeKey = new DefinitionKey("acme", "acme:order", 1L);
+        ServiceTestHelpers.await(service.load(
+                yamlFor("acme:order", 1, SvcScopedOrderContract.class), DocumentFormat.YAML, testMeta(), "acme"));
+
+        // When: the loaded key is activated
+        ServiceTestHelpers.await(service.activate(acmeKey));
+
+        // Then: the registry holds the definition under the acme key and reports that scope
+        assertThat(registry.find(acmeKey)).hasValueSatisfying(registered -> assertThat(registered.definitionScopeKey())
+                .isEqualTo("acme"));
+
+        // and: it holds nothing under the default scope
+        assertThat(registry.find(new DefinitionKey(WorkflowScopes.DEFAULT, "acme:order", 1L)))
+                .isEmpty();
+    }
 
     @Nested
     @DisplayName("load then activate")

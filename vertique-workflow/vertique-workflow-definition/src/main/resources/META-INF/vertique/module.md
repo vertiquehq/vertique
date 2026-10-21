@@ -213,7 +213,7 @@ A well-formed definition is one that passes both parsing and semantic validation
 - Named callbacks must resolve through the registered callback registries.
 - Decision expressions must parse through the expression profile.
 - Step ids must be unique, reachable from `initialStep`, and all step references must point to existing steps.
-- The compiled plan is registered through the normal `WorkflowRegistry` path, so core plan validation still applies.
+- The compiled plan is registered through the normal `WorkflowRegistry` path, so core plan validation still applies. Activating a loaded definition through the in-memory service registers it under the scope of its key, so a definition loaded into one scope is not found under the default scope. Documents packaged with the application are still registered in the default scope.
 
 There is currently no separate published JSON Schema or YAML Schema file for workflow definitions. The authoritative validation is strict Jackson mapping plus `WorkflowDefinitionDocumentValidator`.
 

@@ -486,7 +486,7 @@ class DocumentRegistrationParityTest {
     private static Outcome viaPackagedSource(PackagedView component) {
         WorkflowPlan plan = component
                 .workflowRegistry()
-                .resolvePinned(DOCUMENT_DEFINITION, 1L)
+                .resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DOCUMENT_DEFINITION, 1L))
                 .plan();
         CompiledDefinition compiled =
                 component.workflowDefinitionStore().get(KEY).orElseThrow().compiled();
@@ -558,16 +558,19 @@ class DocumentRegistrationParityTest {
 
         // Then: both reach the validators and the registry, each reporting the contract
         assertThat(registration.recorder.seen).containsExactly("parity-code v1", "parity-doc v1");
-        assertThat(registry.registeredDefinition(CODE_DEFINITION, 1L)
+        assertThat(registry.registeredDefinition(new DefinitionKey(WorkflowScopes.DEFAULT, CODE_DEFINITION, 1L))
                         .orElseThrow()
                         .contract())
                 .isEqualTo(ParityOrders.class);
-        assertThat(registry.registeredDefinition(DOCUMENT_DEFINITION, 1L)
+        assertThat(registry.registeredDefinition(new DefinitionKey(WorkflowScopes.DEFAULT, DOCUMENT_DEFINITION, 1L))
                         .orElseThrow()
                         .contract())
                 .isEqualTo(ParityOrders.class);
-        assertThat(registry.resolvePinned(CODE_DEFINITION, 1L).contractName()).isEqualTo(CONTRACT_NAME);
-        assertThat(registry.resolvePinned(DOCUMENT_DEFINITION, 1L).contractName())
+        assertThat(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, CODE_DEFINITION, 1L))
+                        .contractName())
+                .isEqualTo(CONTRACT_NAME);
+        assertThat(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DOCUMENT_DEFINITION, 1L))
+                        .contractName())
                 .isEqualTo(CONTRACT_NAME);
 
         // When: the bad document is bootstrapped in a second run, and a Java definition awaiting the same signal
@@ -615,13 +618,15 @@ class DocumentRegistrationParityTest {
         assertThat(registry.allRegistered())
                 .extracting(registered -> registered.plan().definitionId())
                 .containsExactly(DOCUMENT_DEFINITION);
-        assertThat(registry.resolvePinned(DOCUMENT_DEFINITION, 1L).contractName())
+        assertThat(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DOCUMENT_DEFINITION, 1L))
+                        .contractName())
                 .isEqualTo(CONTRACT_NAME);
         assertThat(store.currentStatus(DOCUMENT_DEFINITION, 1L)).isEqualTo(ActivationStatus.ACTIVE);
         assertThat(registration.recorder.seen).containsExactly("parity-doc v1");
 
         // and: the second document is neither registered nor active; its claim was released to candidate
-        assertThatThrownBy(() -> registry.resolvePinned(DOCUMENT_DEFINITION_BAD, 1L))
+        assertThatThrownBy(
+                        () -> registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DOCUMENT_DEFINITION_BAD, 1L)))
                 .isInstanceOf(WorkflowVersionPinUnavailableException.class);
         assertThat(store.currentStatus(DOCUMENT_DEFINITION_BAD, 1L)).isEqualTo(ActivationStatus.CANDIDATE);
     }

@@ -167,14 +167,14 @@ class DocumentRestorePlanHashTest {
         component.workflowRegistry().register(published.definition());
         String registered = component
                 .workflowRegistry()
-                .resolvePinned("restore-saga", 1L)
+                .resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "restore-saga", 1L))
                 .plan()
                 .planHash();
 
         // Then: the plan carries the logical state name, and the registry and loader hashes agree
         assertThat(component
                         .workflowRegistry()
-                        .resolvePinned("restore-saga", 1L)
+                        .resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "restore-saga", 1L))
                         .plan()
                         .stateTypeName())
                 .isEqualTo("restore.state");

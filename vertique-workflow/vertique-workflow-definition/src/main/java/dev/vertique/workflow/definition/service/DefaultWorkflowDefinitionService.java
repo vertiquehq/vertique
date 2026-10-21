@@ -160,7 +160,9 @@ public final class DefaultWorkflowDefinitionService implements WorkflowDefinitio
             try {
                 registryProvider
                         .get()
-                        .register(store.get(key).orElseThrow().compiled().definition());
+                        .register(
+                                key.scopeKey(),
+                                store.get(key).orElseThrow().compiled().definition());
                 store.markActive(key);
                 return Future.succeededFuture();
             } catch (RuntimeException e) {

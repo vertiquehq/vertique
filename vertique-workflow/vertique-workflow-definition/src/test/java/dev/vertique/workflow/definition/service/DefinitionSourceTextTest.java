@@ -317,13 +317,15 @@ public class DefinitionSourceTextTest {
                 graph(vertx, List.of(staticYaml(), staticLargeJson(), malformedTailJson(), validTrailingJson()));
         String json = json("reader-encoding-😀", 1, ReaderEncodingUnicodeV1.class);
 
-        assertThat(graph.workflowRegistry().resolvePinned("reader-static-yaml", 1))
+        assertThat(graph.workflowRegistry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "reader-static-yaml", 1)))
                 .isNotNull();
-        assertThat(graph.workflowRegistry().resolvePinned("reader-static-json", 1))
+        assertThat(graph.workflowRegistry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "reader-static-json", 1)))
                 .isNotNull();
-        assertThat(graph.workflowRegistry().resolvePinned("reader-static-json-large", 1))
+        assertThat(graph.workflowRegistry()
+                        .resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "reader-static-json-large", 1)))
                 .isNotNull();
-        assertThat(graph.workflowRegistry().resolvePinned("reader-valid-trailing-json", 1))
+        assertThat(graph.workflowRegistry()
+                        .resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "reader-valid-trailing-json", 1)))
                 .isNotNull();
 
         for (byte[] encoded : jsonEncodings(json)) {
