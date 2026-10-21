@@ -9,7 +9,6 @@ import dev.vertique.codegen.support.MethodOverrides;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
-import javax.lang.model.element.AnnotationMirror;
 import javax.lang.model.element.ExecutableElement;
 import javax.lang.model.element.Modifier;
 import javax.lang.model.element.TypeElement;
@@ -60,8 +59,6 @@ public final class ContractScanner {
 
     // --- Annotation attribute names ---
 
-    private static final String ATTR_DEFINITION_ID = "definitionId";
-    private static final String ATTR_DEFINITION_VERSION = "definitionVersion";
     private static final String ATTR_VALUE = "value";
 
     private final CodegenContext ctx;
@@ -83,20 +80,11 @@ public final class ContractScanner {
      * @throws IllegalStateException when {@code contract} does not carry {@code @WorkflowContract}
      */
     public ContractModel scan(TypeElement contract) {
-        AnnotationMirror mirror = AnnotationMirrors.findByFqn(contract, WORKFLOW_CONTRACT_FQN)
+        AnnotationMirrors.findByFqn(contract, WORKFLOW_CONTRACT_FQN)
                 .orElseThrow(() -> new IllegalStateException(
                         "scan() called on a type without @WorkflowContract: " + contract.getQualifiedName()));
 
-        String definitionId = ctx.annotations()
-                .attribute(mirror, ATTR_DEFINITION_ID, String.class)
-                .orElse("");
-        long definitionVersion = ctx.annotations()
-                .attribute(mirror, ATTR_DEFINITION_VERSION, Long.class)
-                .orElse(0L);
-
-        List<OperationModel> operations = scanOperations(contract);
-
-        return new ContractModel(contract, definitionId, definitionVersion, operations);
+        return new ContractModel(contract, scanOperations(contract));
     }
 
     // --- Private scanning helpers ---

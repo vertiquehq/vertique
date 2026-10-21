@@ -523,7 +523,16 @@ public class WorkflowEventEmissionIT {
     @DisplayName("WORKFLOW_STARTED + WORKFLOW_COMPLETED: start() on immediate-complete plan writes 2 outbox rows")
     void startEmitsWorkflowStartedAndCompleted(VertxTestContext ctx) {
         State state = new State("complete-" + UUID.randomUUID());
-        StartCommand cmd = new StartCommand("event-emission-complete", state, state.idempotencyKey(), null, null);
+        StartCommand cmd = new StartCommand(
+                "event-emission-complete",
+                CompleteContract.class.getName(),
+                state,
+                state.idempotencyKey(),
+                null,
+                null,
+                null,
+                null,
+                null);
 
         engine.start(cmd)
                 .compose(workflowId -> readOutboxRowsForWorkflow(workflowId.value())
@@ -575,7 +584,16 @@ public class WorkflowEventEmissionIT {
     @DisplayName("WORKFLOW_FAILED: start() on fail-plan writes WORKFLOW_STARTED + WORKFLOW_FAILED outbox rows")
     void startEmitsWorkflowFailed(VertxTestContext ctx) {
         State state = new State("fail-" + UUID.randomUUID());
-        StartCommand cmd = new StartCommand("event-emission-fail", state, state.idempotencyKey(), null, null);
+        StartCommand cmd = new StartCommand(
+                "event-emission-fail",
+                FailContract.class.getName(),
+                state,
+                state.idempotencyKey(),
+                null,
+                null,
+                null,
+                null,
+                null);
 
         engine.start(cmd)
                 .compose(workflowId -> readOutboxRowsForWorkflow(workflowId.value())
@@ -620,7 +638,16 @@ public class WorkflowEventEmissionIT {
     @DisplayName("TASK_CREATED: start() on task-plan writes WORKFLOW_STARTED + TASK_CREATED outbox rows")
     void startEmitsTaskCreated(VertxTestContext ctx) {
         State state = new State("task-created-" + UUID.randomUUID());
-        StartCommand cmd = new StartCommand("event-emission-task", state, state.idempotencyKey(), null, null);
+        StartCommand cmd = new StartCommand(
+                "event-emission-task",
+                TaskContract.class.getName(),
+                state,
+                state.idempotencyKey(),
+                null,
+                null,
+                null,
+                null,
+                null);
 
         engine.start(cmd)
                 .compose(workflowId -> {
@@ -680,7 +707,16 @@ public class WorkflowEventEmissionIT {
     @DisplayName("TASK_COMPLETED + WORKFLOW_COMPLETED: taskCompleted() writes both outbox rows atomically")
     void taskCompletedEmitsEvents(VertxTestContext ctx) {
         State state = new State("task-complete-" + UUID.randomUUID());
-        StartCommand cmd = new StartCommand("event-emission-task", state, state.idempotencyKey(), null, null);
+        StartCommand cmd = new StartCommand(
+                "event-emission-task",
+                TaskContract.class.getName(),
+                state,
+                state.idempotencyKey(),
+                null,
+                null,
+                null,
+                null,
+                null);
 
         engine.start(cmd)
                 .compose(workflowId -> {
@@ -748,7 +784,16 @@ public class WorkflowEventEmissionIT {
     @DisplayName("WORKFLOW_CANCELLED: cancel() writes WORKFLOW_CANCELLED outbox row with reason attribute")
     void cancelEmitsWorkflowCancelled(VertxTestContext ctx) {
         State state = new State("cancel-" + UUID.randomUUID());
-        StartCommand cmd = new StartCommand("event-emission-task", state, state.idempotencyKey(), null, null);
+        StartCommand cmd = new StartCommand(
+                "event-emission-task",
+                TaskContract.class.getName(),
+                state,
+                state.idempotencyKey(),
+                null,
+                null,
+                null,
+                null,
+                null);
 
         engine.start(cmd)
                 .compose(workflowId -> engine.cancel(workflowId, "test-cancel-reason")
@@ -809,7 +854,16 @@ public class WorkflowEventEmissionIT {
             + " TASK_CANCELLED.sequence equals the workflow_history TASK_CANCELLED row sequence")
     void cancelWhileWaitingOnTaskEmitsTaskCancelledWithCorrectSequence(VertxTestContext ctx) {
         State state = new State("task-cancel-" + UUID.randomUUID());
-        StartCommand cmd = new StartCommand("event-emission-task", state, state.idempotencyKey(), null, null);
+        StartCommand cmd = new StartCommand(
+                "event-emission-task",
+                TaskContract.class.getName(),
+                state,
+                state.idempotencyKey(),
+                null,
+                null,
+                null,
+                null,
+                null);
 
         engine.start(cmd)
                 .compose(workflowId -> engine.cancel(workflowId, "test-task-cancel-reason")
@@ -908,7 +962,16 @@ public class WorkflowEventEmissionIT {
     @DisplayName("Atomicity: complete-immediately workflow produces exactly 2 outbox rows (no phantom rows)")
     void atomicityExactly2OutboxRows(VertxTestContext ctx) {
         State state = new State("atomic-" + UUID.randomUUID());
-        StartCommand cmd = new StartCommand("event-emission-complete", state, state.idempotencyKey(), null, null);
+        StartCommand cmd = new StartCommand(
+                "event-emission-complete",
+                CompleteContract.class.getName(),
+                state,
+                state.idempotencyKey(),
+                null,
+                null,
+                null,
+                null,
+                null);
 
         engine.start(cmd)
                 .compose(workflowId -> readOutboxRowsForWorkflow(workflowId.value())

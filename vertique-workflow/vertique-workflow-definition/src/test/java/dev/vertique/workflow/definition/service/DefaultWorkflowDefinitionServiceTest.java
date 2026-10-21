@@ -437,6 +437,12 @@ class DefaultWorkflowDefinitionServiceTest {
                         }
 
                         @Override
+                        public java.util.Optional<dev.vertique.workflow.registry.RegisteredDefinitionClass>
+                                definitionClass(Class<?> definitionClass) {
+                            return java.util.Optional.empty();
+                        }
+
+                        @Override
                         public java.util.Collection<dev.vertique.workflow.registry.RuntimeWorkflow> allRegistered() {
                             return java.util.List.of();
                         }

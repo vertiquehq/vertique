@@ -12,19 +12,14 @@ import dev.vertique.workflow.ops.WorkflowView;
 import io.vertx.core.Future;
 
 /**
- * Workflow contract fixture that is structurally valid but is deliberately NOT registered in the
- * {@link dev.vertique.workflow.registry.DefaultWorkflowRegistry} used by
+ * Workflow contract fixture that is structurally valid and has no generated proxy; its definition id is
+ * deliberately NOT registered in the {@link dev.vertique.workflow.registry.DefaultWorkflowRegistry} used by
  * {@link WorkflowClientFactorySelectionTest}.
  *
- * <p>Used to verify the "validation-runs-first" guarantee: because validation runs before the
- * generated-proxy lookup, {@code factory.create(...)} must throw
- * {@link dev.vertique.workflow.exception.WorkflowProxyContractException} even though no stand-in proxy
- * for this contract exists on the classpath. If selection ran first, the factory would reach the
- * JDK-proxy fallback and then attempt to pre-compile handlers — which would also fail — but via a
- * different code path. The validation-first guarantee means the thrown exception type is always
- * {@code WorkflowProxyContractException}, regardless of whether a generated proxy is present.
+ * <p>Used to verify that creating a client from a contract and a definition id does not require the id to be
+ * registered: the factory checks the contract only and falls back to the JDK proxy.
  *
- * <p>Targets definition id {@code "selection-saga-unregistered"} v1, which is never registered.
+ * <p>Targets definition id {@code "selection-saga-unregistered"}, which is never registered.
  */
 @WorkflowContract(definitionId = "selection-saga-unregistered", definitionVersion = 1)
 interface UnregisteredSelectionWorkflow {

@@ -451,10 +451,26 @@ public class PgWorkflowEngineStartPayloadIT {
      * @return the created instance id; fails with {@link CompletionException} when the start fails
      */
     private static WorkflowInstanceId start(String definitionId, Object payload, String key) {
-        return engine.start(new StartCommand(definitionId, payload, key, null, null))
+        return engine.start(new StartCommand(
+                        definitionId, contractNameOf(definitionId), payload, key, null, null, null, null, null))
                 .toCompletionStage()
                 .toCompletableFuture()
                 .join();
+    }
+
+    /**
+     * Returns the contract name of a fixture definition.
+     *
+     * @param definitionId the id of one of this test's fixture definitions
+     * @return the name of the definition's contract
+     */
+    private static String contractNameOf(String definitionId) {
+        return switch (definitionId) {
+            case TYPED_DEFINITION_ID -> TypedContract.class.getName();
+            case VOID_DEFINITION_ID -> VoidContract.class.getName();
+            case THROWING_DEFINITION_ID -> ThrowingContract.class.getName();
+            default -> throw new IllegalArgumentException("unknown fixture definition: " + definitionId);
+        };
     }
 
     /**

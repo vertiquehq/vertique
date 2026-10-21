@@ -323,8 +323,18 @@ class PgWorkflowEngineEventEmissionTest {
         stubInstance(id, inst);
         stubDedup(id);
 
-        Future<WorkflowInstanceId> result =
-                engine.start(new StartCommand("event-emit-complete", new State("s1"), "started-key-1", null, null), tx);
+        Future<WorkflowInstanceId> result = engine.start(
+                new StartCommand(
+                        "event-emit-complete",
+                        CompleteContract.class.getName(),
+                        new State("s1"),
+                        "started-key-1",
+                        null,
+                        null,
+                        null,
+                        null,
+                        null),
+                tx);
 
         assertTrue(result.succeeded(), "start() must succeed; cause: " + result.cause());
 
@@ -342,7 +352,17 @@ class PgWorkflowEngineEventEmissionTest {
         stubDedup(id);
 
         Future<WorkflowInstanceId> result = engine.start(
-                new StartCommand("event-emit-complete", new State("c1"), "completed-key-1", null, null), tx);
+                new StartCommand(
+                        "event-emit-complete",
+                        CompleteContract.class.getName(),
+                        new State("c1"),
+                        "completed-key-1",
+                        null,
+                        null,
+                        null,
+                        null,
+                        null),
+                tx);
 
         assertTrue(result.succeeded(), "start() must succeed; cause: " + result.cause());
 
@@ -361,8 +381,18 @@ class PgWorkflowEngineEventEmissionTest {
         stubInstance(id, inst);
         stubDedup(id);
 
-        Future<WorkflowInstanceId> result =
-                engine.start(new StartCommand("event-emit-fail", new State("f1"), "failed-key-1", null, null), tx);
+        Future<WorkflowInstanceId> result = engine.start(
+                new StartCommand(
+                        "event-emit-fail",
+                        FailContract.class.getName(),
+                        new State("f1"),
+                        "failed-key-1",
+                        null,
+                        null,
+                        null,
+                        null,
+                        null),
+                tx);
 
         assertTrue(result.succeeded(), "start() must succeed; cause: " + result.cause());
 

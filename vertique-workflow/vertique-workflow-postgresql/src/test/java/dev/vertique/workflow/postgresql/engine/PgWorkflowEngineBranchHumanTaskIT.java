@@ -272,8 +272,16 @@ public class PgWorkflowEngineBranchHumanTaskIT {
     // --- Helpers ---
 
     private WorkflowInstanceId startWorkflow(String id) {
-        StartCommand cmd =
-                new StartCommand(DEFINITION.definitionId(), new StartBranchTask(id), "idem-" + id, null, null);
+        StartCommand cmd = new StartCommand(
+                DEFINITION.definitionId(),
+                DEFINITION.contract().getName(),
+                new StartBranchTask(id),
+                "idem-" + id,
+                null,
+                null,
+                null,
+                null,
+                null);
         return engine.start(cmd).toCompletionStage().toCompletableFuture().join();
     }
 

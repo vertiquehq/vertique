@@ -309,10 +309,28 @@ public class SignalDedupInstanceScopingIT {
     @DisplayName("two instances with shared dedupKey both receive signal — inbox has two distinct rows")
     void twoInstancesWithSharedDedupKeyBothReceiveSignal(VertxTestContext ctx) {
         WaitGoStart startA = new WaitGoStart("instance-a");
-        StartCommand cmdA = new StartCommand("wait-go-saga", startA, startA.idempotencyKey(), null, null);
+        StartCommand cmdA = new StartCommand(
+                "wait-go-saga",
+                WaitGoContract.class.getName(),
+                startA,
+                startA.idempotencyKey(),
+                null,
+                null,
+                null,
+                null,
+                null);
 
         WaitGoStart startB = new WaitGoStart("instance-b");
-        StartCommand cmdB = new StartCommand("wait-go-saga", startB, startB.idempotencyKey(), null, null);
+        StartCommand cmdB = new StartCommand(
+                "wait-go-saga",
+                WaitGoContract.class.getName(),
+                startB,
+                startB.idempotencyKey(),
+                null,
+                null,
+                null,
+                null,
+                null);
 
         engine.start(cmdA)
                 .compose(idA -> engine.start(cmdB).map(idB -> new WorkflowInstanceId[] {idA, idB}))

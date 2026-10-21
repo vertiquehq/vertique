@@ -276,7 +276,16 @@ public class WorkflowDarkModeIT {
             + " with no bind-related failure")
     void darkMode_startSignalRecovery_metadataAlwaysNullAndBehaviorByteIdenticalToToday(VertxTestContext ctx) {
         Start payload = new Start("dm-1");
-        StartCommand cmd = new StartCommand(DEFINITION.definitionId(), payload, payload.idempotencyKey(), null, null);
+        StartCommand cmd = new StartCommand(
+                DEFINITION.definitionId(),
+                DEFINITION.contract().getName(),
+                payload,
+                payload.idempotencyKey(),
+                null,
+                null,
+                null,
+                null,
+                null);
 
         runOnDuplicatedContext(() -> engine.start(cmd)
                 // Post-start: metadata must be NULL (empty ambient capture per FR-WF-CTX-010).
@@ -327,7 +336,16 @@ public class WorkflowDarkModeIT {
                 () -> recovery, new WorkflowBranchRecoveryConfig(10, java.time.Duration.ofSeconds(1)));
 
         Start payload = new Start("dm-2");
-        StartCommand cmd = new StartCommand(DEFINITION.definitionId(), payload, payload.idempotencyKey(), null, null);
+        StartCommand cmd = new StartCommand(
+                DEFINITION.definitionId(),
+                DEFINITION.contract().getName(),
+                payload,
+                payload.idempotencyKey(),
+                null,
+                null,
+                null,
+                null,
+                null);
 
         runOnDuplicatedContext(() -> engine.start(cmd)
                 .compose(id -> engine.signal(id, "signal-start", "go", "dark-mode-dedup-adapter")

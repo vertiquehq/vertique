@@ -21,8 +21,9 @@ public final class NestedSelectionHost_NestedJob_WorkflowClientProxy implements 
      * Matches the generated proxy constructor signature.
      *
      * @param ops the workflow operations (unused in this stand-in)
+     * @param binding the client binding (unused in this stand-in)
      */
-    public NestedSelectionHost_NestedJob_WorkflowClientProxy(WorkflowOperations ops) {
+    public NestedSelectionHost_NestedJob_WorkflowClientProxy(WorkflowOperations ops, WorkflowClientBinding binding) {
         // No-op stand-in.
     }
 

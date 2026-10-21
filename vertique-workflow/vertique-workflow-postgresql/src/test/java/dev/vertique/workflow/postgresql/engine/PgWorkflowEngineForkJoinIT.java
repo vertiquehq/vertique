@@ -187,7 +187,16 @@ public class PgWorkflowEngineForkJoinIT {
     @DisplayName("AC #1 — ALL_REQUIRED fan-out completes when every branch reaches a terminal Complete")
     void allRequiredHappyPath(VertxTestContext ctx) {
         StartFanout payload = new StartFanout("o1");
-        StartCommand cmd = new StartCommand(DEFINITION.definitionId(), payload, payload.idempotencyKey(), null, null);
+        StartCommand cmd = new StartCommand(
+                DEFINITION.definitionId(),
+                DEFINITION.contract().getName(),
+                payload,
+                payload.idempotencyKey(),
+                null,
+                null,
+                null,
+                null,
+                null);
         engine.start(cmd)
                 .compose(id -> engine.query(id))
                 .onComplete(ar -> ctx.verify(() -> {

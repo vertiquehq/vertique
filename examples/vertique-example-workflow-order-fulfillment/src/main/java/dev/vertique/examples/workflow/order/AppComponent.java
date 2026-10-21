@@ -122,10 +122,11 @@ import jakarta.inject.Singleton;
  *   <li>{@link StubServicesModule} — stub inventory, payment, shipping, and fraud-screening
  *       service implementations for integration tests.</li>
  *   <li>{@link AppModule} — management verticle deployment.</li>
- *   <li>{@link GeneratedWorkflowClientsModule} — APT-generated module that provides
- *       {@link OrderFulfillmentWorkflow} and {@link OrderFulfillmentFanOutWorkflow} bindings via
- *       {@code WorkflowClientFactory.create(…)} (ADR-0025 explicit-inclusion model).</li>
  * </ul>
+ *
+ * <p>Typed clients such as {@link OrderFulfillmentWorkflow} and {@link OrderFulfillmentFanOutWorkflow}
+ * are not provided by Dagger: obtain them from {@link #workflowClientFactory()} with
+ * {@code create(OrderFulfillmentDefinition.class)}.
  */
 @VertiqueApp
 @Singleton
@@ -154,8 +155,7 @@ import jakarta.inject.Singleton;
             WorkflowTasksModule.class,
             TaskReviewDefinitionModule.class,
             StubServicesModule.class,
-            AppModule.class,
-            GeneratedWorkflowClientsModule.class
+            AppModule.class
         })
 public interface AppComponent extends VertiqueApplicationComponent {
 
@@ -179,34 +179,11 @@ public interface AppComponent extends VertiqueApplicationComponent {
     TransactionalWorkflowOperations<SqlClient> txWorkflowOperations();
 
     /**
-     * Returns the workflow client factory for creating typed proxies.
+     * Returns the workflow client factory for creating typed proxies from a definition class.
      *
      * @return workflow client factory
      */
     WorkflowClientFactory workflowClientFactory();
-
-    /**
-     * Returns the Dagger-provided {@link OrderFulfillmentWorkflow} typed proxy.
-     *
-     * <p>The binding is supplied by {@link GeneratedWorkflowClientsModule}, which delegates to
-     * {@code WorkflowClientFactory.create(OrderFulfillmentWorkflow.class)}. At runtime the factory
-     * selects the APT-generated {@code OrderFulfillmentWorkflow_WorkflowClientProxy}.
-     *
-     * @return the order-fulfillment workflow client proxy; never {@code null}
-     */
-    OrderFulfillmentWorkflow orderFulfillmentWorkflow();
-
-    /**
-     * Returns the Dagger-provided {@link OrderFulfillmentFanOutWorkflow} typed proxy.
-     *
-     * <p>The binding is supplied by {@link GeneratedWorkflowClientsModule}, which delegates to
-     * {@code WorkflowClientFactory.create(OrderFulfillmentFanOutWorkflow.class)}. At runtime the
-     * factory selects the APT-generated
-     * {@code OrderFulfillmentFanOutWorkflow_WorkflowClientProxy}.
-     *
-     * @return the fan-out order-fulfillment workflow client proxy; never {@code null}
-     */
-    OrderFulfillmentFanOutWorkflow orderFulfillmentFanOutWorkflow();
 
     /**
      * Returns the developer-facing task service for completing and reassigning human tasks.

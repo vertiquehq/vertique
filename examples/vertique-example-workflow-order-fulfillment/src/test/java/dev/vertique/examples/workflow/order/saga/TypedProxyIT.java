@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import dev.vertique.examples.workflow.order.OrderFulfillmentDefinition;
 import dev.vertique.examples.workflow.order.OrderFulfillmentWorkflow;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.state.WorkflowStatus;
@@ -26,8 +27,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * Typed proxy integration test (§9.4 test 21).
  *
  * <p>Drives the same happy-path scenario as {@link OrderFulfillmentSagaIT} but invokes the saga
- * through the {@link OrderFulfillmentWorkflow} typed proxy created by
- * {@link dev.vertique.workflow.client.WorkflowClientFactory}. Outcomes must be identical:
+ * through the {@link OrderFulfillmentWorkflow} typed proxy created from
+ * {@link OrderFulfillmentDefinition} by {@link dev.vertique.workflow.client.WorkflowClientFactory}. Outcomes must be identical:
  * status COMPLETED after all relay cycles.
  */
 @ExtendWith(VertxExtension.class)
@@ -40,7 +41,7 @@ public class TypedProxyIT extends SagaTestBase {
     static void setUp(Vertx vertx, VertxTestContext ctx) {
         setUpComponent(vertx)
                 .map(v -> {
-                    proxy = component.workflowClientFactory().create(OrderFulfillmentWorkflow.class);
+                    proxy = component.workflowClientFactory().create(OrderFulfillmentDefinition.class);
                     return v;
                 })
                 .onComplete(ar -> {
@@ -88,6 +89,10 @@ public class TypedProxyIT extends SagaTestBase {
                     assertTrue(ar.succeeded(), "saga via proxy must succeed: " + ar.cause());
                     var view = ar.result();
                     assertEquals(WorkflowStatus.COMPLETED, view.instance().status(), "proxy saga must reach COMPLETED");
+                    assertEquals(
+                            1L,
+                            view.instance().definitionVersion(),
+                            "a definition-class client must start the current version, which is version 1");
 
                     assertEquals(
                             1, component.stubInventoryService().reserveCalls().size());
@@ -112,28 +117,11 @@ public class TypedProxyIT extends SagaTestBase {
     @Test
     @DisplayName("factory returns the APT-generated proxy, not a JDK dynamic proxy")
     void usesGeneratedProxy() {
-        assertTrue(
-                proxy.getClass().getName().endsWith("_WorkflowClientProxy"),
-                "expected APT-generated proxy, got " + proxy.getClass().getName());
+        assertEquals(
+                "dev.vertique.examples.workflow.order.OrderFulfillmentWorkflow_WorkflowClientProxy",
+                proxy.getClass().getName(),
+                "a definition-class client must be the APT-generated proxy");
         assertFalse(java.lang.reflect.Proxy.isProxyClass(proxy.getClass()), "proxy must not be a JDK dynamic proxy");
-    }
-
-    @Test
-    @DisplayName(
-            "Dagger-injected contract (via GeneratedWorkflowClientsModule) is the generated proxy obtained through the factory")
-    void daggerBindingProvidesGeneratedProxy() {
-        // GeneratedWorkflowClientsModule's @Provides delegates to WorkflowClientFactory.create(...), which
-        // validates the contract against the registered definition and then selects the generated proxy.
-        // Getting a *_WorkflowClientProxy back from the Dagger accessor proves that binding path end-to-end
-        // (module -> factory.create -> generated proxy), not a raw proxy return that would bypass validation.
-        OrderFulfillmentWorkflow injected = component.orderFulfillmentWorkflow();
-        assertTrue(
-                injected.getClass().getName().endsWith("_WorkflowClientProxy"),
-                "Dagger-injected contract must be the APT-generated proxy, got "
-                        + injected.getClass().getName());
-        assertFalse(
-                java.lang.reflect.Proxy.isProxyClass(injected.getClass()),
-                "injected contract must not be a JDK dynamic proxy");
     }
 
     @Test

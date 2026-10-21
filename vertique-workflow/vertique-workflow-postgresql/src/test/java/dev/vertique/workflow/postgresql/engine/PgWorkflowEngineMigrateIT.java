@@ -323,7 +323,16 @@ public class PgWorkflowEngineMigrateIT {
     @DisplayName("AC #6 — migrate v1→v2 re-pins instance, records WORKFLOW_MIGRATED history, advances on v2 plan")
     void migrateHappyPath(VertxTestContext ctx) {
         String idempotencyKey = "migrate-happy-" + UUID.randomUUID();
-        StartCommand cmd = new StartCommand(DEF_ID, new StartPayload("alice"), idempotencyKey, null, null);
+        StartCommand cmd = new StartCommand(
+                DEF_ID,
+                MigrateTestContractV2.class.getName(),
+                new StartPayload("alice"),
+                idempotencyKey,
+                null,
+                null,
+                null,
+                null,
+                null);
 
         engineV1.start(cmd)
                 .compose(id -> {
@@ -379,7 +388,16 @@ public class PgWorkflowEngineMigrateIT {
     @DisplayName("plan hash: target v2 hash written to instance row after migration")
     void migratePlanHashIsCorrect(VertxTestContext ctx) {
         String idempotencyKey = "migrate-hash-" + UUID.randomUUID();
-        StartCommand cmd = new StartCommand(DEF_ID, new StartPayload("bob"), idempotencyKey, null, null);
+        StartCommand cmd = new StartCommand(
+                DEF_ID,
+                MigrateTestContractV2.class.getName(),
+                new StartPayload("bob"),
+                idempotencyKey,
+                null,
+                null,
+                null,
+                null,
+                null);
 
         engineV1.start(cmd)
                 .compose(id -> engineMigrate.migrate(id, 2L).map(v -> id))

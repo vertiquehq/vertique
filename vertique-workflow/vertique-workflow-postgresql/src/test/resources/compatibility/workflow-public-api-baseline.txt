@@ -115,8 +115,6 @@ CONSTRUCTOR|dev.vertique.workflow.migration.MigrationResult$ContinueAt|public|[]
 CONSTRUCTOR|dev.vertique.workflow.migration.WorkflowMigrationHandlerMissingException|public|[]|[dev.vertique.workflow.ops.WorkflowInstanceId,java.lang.String,long,long]|[]|false
 CONSTRUCTOR|dev.vertique.workflow.migration.WorkflowMigrationIllegalStateException|public|[]|[dev.vertique.workflow.ops.WorkflowInstanceId,java.lang.String]|[]|false
 CONSTRUCTOR|dev.vertique.workflow.migration.WorkflowMigrationModule|public|[]|[]|[]|false
-CONSTRUCTOR|dev.vertique.workflow.ops.StartCommand|public|[]|[java.lang.String,java.lang.Object,java.lang.String,java.lang.String,dev.vertique.workflow.subject.WorkflowSubjectRef,java.lang.Long]|[]|false
-CONSTRUCTOR|dev.vertique.workflow.ops.StartCommand|public|[]|[java.lang.String,java.lang.Object,java.lang.String,java.lang.String,dev.vertique.workflow.subject.WorkflowSubjectRef]|[]|false
 CONSTRUCTOR|dev.vertique.workflow.ops.TaskCompletionCommand|public|[]|[java.util.UUID,java.lang.String,java.lang.Object,java.lang.String,dev.vertique.workflow.actor.WorkflowActor,java.lang.String,dev.vertique.workflow.tasks.TaskAssignment]|[]|false
 CONSTRUCTOR|dev.vertique.workflow.ops.TaskCompletionCommand|public|[]|[java.util.UUID,java.lang.String,java.lang.Object,java.lang.String,dev.vertique.workflow.actor.WorkflowActor,java.lang.String]|[]|false
 CONSTRUCTOR|dev.vertique.workflow.ops.TaskReassignmentCommand|public|[]|[java.util.UUID,dev.vertique.workflow.tasks.TaskAssignment,dev.vertique.workflow.actor.WorkflowActor,java.lang.String,java.lang.String,dev.vertique.workflow.tasks.TaskAssignment]|[]|false
@@ -368,9 +366,6 @@ METHOD|dev.vertique.workflow.actor.WorkflowActor$User|userId|public|[]|[]|java.l
 METHOD|dev.vertique.workflow.actor.WorkflowActorMapper|toWorkflowActor|public abstract|[]|[dev.vertique.security.SecurityIdentity]|dev.vertique.workflow.actor.WorkflowActor|[]|false
 METHOD|dev.vertique.workflow.actor.WorkflowActorMaps|toMap|public static|[]|[dev.vertique.workflow.actor.WorkflowActor]|java.util.Map<java.lang.String, java.lang.String>|[]|false
 METHOD|dev.vertique.workflow.actor.WorkflowActorMaps|toMap|public static|[]|[dev.vertique.workflow.tasks.TaskAssignment]|java.util.Map<java.lang.String, java.lang.String>|[]|false
-METHOD|dev.vertique.workflow.client.WorkflowClientFactory|create|public|[C extends java.lang.Object]|[java.lang.Class<C>]|C|[]|false
-METHOD|dev.vertique.workflow.client.WorkflowProxyValidator|precompileHandlers|public static|[]|[java.lang.Class<?>,dev.vertique.workflow.ops.WorkflowOperations,dev.vertique.workflow.registry.WorkflowRegistry]|java.util.Map<java.lang.reflect.Method, dev.vertique.workflow.client.OperationHandler>|[]|false
-METHOD|dev.vertique.workflow.client.WorkflowProxyValidator|validate|public static|[]|[java.lang.Class<?>,dev.vertique.workflow.registry.WorkflowRegistry]|void|[]|false
 METHOD|dev.vertique.workflow.contract.BusinessKeyed|businessKey|public abstract|[]|[]|java.lang.String|[]|false
 METHOD|dev.vertique.workflow.contract.IdempotencyKeyed|idempotencyKey|public abstract|[]|[]|java.lang.String|[]|false
 METHOD|dev.vertique.workflow.contract.SignalDedupKeyed|dedupKey|public abstract|[]|[]|java.lang.String|[]|false

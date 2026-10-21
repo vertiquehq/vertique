@@ -25,6 +25,7 @@ import dev.vertique.workflow.plan.CompleteNode;
 import dev.vertique.workflow.plan.ServiceDispatchNode;
 import dev.vertique.workflow.plan.WorkflowPlan;
 import dev.vertique.workflow.registry.CallbackId;
+import dev.vertique.workflow.registry.RegisteredDefinitionClass;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowCallbackRegistry;
 import dev.vertique.workflow.registry.WorkflowRegistry;
@@ -32,6 +33,7 @@ import io.vertx.core.Future;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.function.BiFunction;
 import java.util.function.Function;
@@ -336,6 +338,11 @@ class WorkflowOutboxComposeValidatorTest {
         @Override
         public WorkflowContractMetadata contractMetadata(Class<?> contractInterface) {
             throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public Optional<RegisteredDefinitionClass> definitionClass(Class<?> definitionClass) {
+            return Optional.empty();
         }
 
         @Override

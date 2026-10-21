@@ -9,6 +9,8 @@ import dev.vertique.core.lifecycle.LifecycleOrdered;
 import dev.vertique.db.test.PostgresContainer;
 import dev.vertique.examples.workflow.order.AppComponent;
 import dev.vertique.examples.workflow.order.DaggerAppComponent;
+import dev.vertique.examples.workflow.order.OrderFulfillmentFanOutWorkflow;
+import dev.vertique.examples.workflow.order.OrderFulfillmentWorkflow;
 import dev.vertique.examples.workflow.order.command.AuthorizePayment;
 import dev.vertique.examples.workflow.order.command.CreateShipment;
 import dev.vertique.examples.workflow.order.command.PlaceOrder;
@@ -293,7 +295,16 @@ public abstract class SagaTestBase {
                 new PlaceOrder(orderId, "cust-" + orderId, List.of(new PlaceOrder.OrderItem("SKU-1", 1, 500L)), 500L);
         return component
                 .workflowOperations()
-                .start(new StartCommand("order-fulfillment", cmd, cmd.idempotencyKey(), null, null));
+                .start(new StartCommand(
+                        "order-fulfillment",
+                        OrderFulfillmentWorkflow.class.getName(),
+                        cmd,
+                        cmd.idempotencyKey(),
+                        null,
+                        null,
+                        null,
+                        null,
+                        null));
     }
 
     /**
@@ -307,7 +318,16 @@ public abstract class SagaTestBase {
                 new PlaceOrder(orderId, "cust-" + orderId, List.of(new PlaceOrder.OrderItem("SKU-1", 1, 500L)), 500L);
         return component
                 .workflowOperations()
-                .start(new StartCommand("order-fulfillment-fanout", cmd, cmd.idempotencyKey(), null, null));
+                .start(new StartCommand(
+                        "order-fulfillment-fanout",
+                        OrderFulfillmentFanOutWorkflow.class.getName(),
+                        cmd,
+                        cmd.idempotencyKey(),
+                        null,
+                        null,
+                        null,
+                        null,
+                        null));
     }
 
     /**

@@ -279,7 +279,16 @@ public class PgWorkflowEngineWorkflowCancelCascadesIT {
             "cancel() closes every active branch's owned timer and task before marking branches and instance CANCELLED")
     void cancelCascadesThroughBranchOwnedWaits(VertxTestContext ctx) {
         StartFanout payload = new StartFanout("c1");
-        StartCommand cmd = new StartCommand(DEFINITION.definitionId(), payload, payload.idempotencyKey(), null, null);
+        StartCommand cmd = new StartCommand(
+                DEFINITION.definitionId(),
+                DEFINITION.contract().getName(),
+                payload,
+                payload.idempotencyKey(),
+                null,
+                null,
+                null,
+                null,
+                null);
 
         AtomicReference<WorkflowInstanceId> idRef = new AtomicReference<>();
         AtomicReference<UUID> branchATokenId = new AtomicReference<>();

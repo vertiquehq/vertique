@@ -254,7 +254,16 @@ public class CompensationOverApproximationIT {
     @DisplayName("only step-A (with completed signal) is compensated; step-B (no signal) is excluded")
     void onlyCompletedStepIsCompensated(VertxTestContext ctx) {
         TwoStepStart start = new TwoStepStart("oa-test-1");
-        StartCommand cmd = new StartCommand("over-approx-saga", start, start.idempotencyKey(), null, null);
+        StartCommand cmd = new StartCommand(
+                "over-approx-saga",
+                TwoStepContract.class.getName(),
+                start,
+                start.idempotencyKey(),
+                null,
+                null,
+                null,
+                null,
+                null);
 
         engine.start(cmd)
                 .compose(id ->

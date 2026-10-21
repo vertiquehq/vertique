@@ -829,7 +829,16 @@ public class PgWorkflowBranchRecoveryServiceIT {
     @DisplayName("AC #9 — stale RUNNING branch with no retries left is demoted to FAILED and the join is evaluated")
     void recoverySweepDemotesStaleRunningAndEvaluatesJoin(VertxTestContext ctx) {
         StartFanout payload = new StartFanout("o-rec");
-        StartCommand cmd = new StartCommand(DEFINITION.definitionId(), payload, payload.idempotencyKey(), null, null);
+        StartCommand cmd = new StartCommand(
+                DEFINITION.definitionId(),
+                DEFINITION.contract().getName(),
+                payload,
+                payload.idempotencyKey(),
+                null,
+                null,
+                null,
+                null,
+                null);
         runOnDuplicatedContext(() -> engine.start(cmd)
                 // Force branch 'a' into stale RUNNING (no retry budget left).
                 .compose(id -> pool.preparedQuery("UPDATE workflow_branch_tokens SET status = 'RUNNING',"
@@ -880,7 +889,16 @@ public class PgWorkflowBranchRecoveryServiceIT {
         // Sweep should drive branch a through CompleteNode → COMPLETED, then evaluateJoin
         // sees both terminal, ALL_REQUIRED decides COMPLETED, instance advances past join.
         StartFanout payload = new StartFanout("o-resume");
-        StartCommand cmd = new StartCommand(DEFINITION.definitionId(), payload, payload.idempotencyKey(), null, null);
+        StartCommand cmd = new StartCommand(
+                DEFINITION.definitionId(),
+                DEFINITION.contract().getName(),
+                payload,
+                payload.idempotencyKey(),
+                null,
+                null,
+                null,
+                null,
+                null);
         runOnDuplicatedContext(() -> engine.start(cmd)
                 .compose(id -> pool.preparedQuery("UPDATE workflow_branch_tokens SET status = 'RETRY_SCHEDULED',"
                                 + " current_step_id = 'complete-a', wait_type = NULL, wait_key = NULL,"
@@ -948,7 +966,16 @@ public class PgWorkflowBranchRecoveryServiceIT {
         // Bump max_attempts at the row level so canRetry = (0+1 < 3) is true. The runtime policy
         // declared on the fork is irrelevant — recovery reads max_attempts directly from the row.
         StartFanout payload = new StartFanout("o-retry");
-        StartCommand cmd = new StartCommand(DEFINITION.definitionId(), payload, payload.idempotencyKey(), null, null);
+        StartCommand cmd = new StartCommand(
+                DEFINITION.definitionId(),
+                DEFINITION.contract().getName(),
+                payload,
+                payload.idempotencyKey(),
+                null,
+                null,
+                null,
+                null,
+                null);
         Instant past = Instant.now().minusSeconds(3600);
         runOnDuplicatedContext(() -> engine.start(cmd)
                 .compose(id -> pool.preparedQuery("UPDATE workflow_branch_tokens SET status = 'RUNNING',"
@@ -1010,7 +1037,16 @@ public class PgWorkflowBranchRecoveryServiceIT {
         // processDue.recover handler must swallow the exception; the branch row must remain
         // RETRY_SCHEDULED (no resume happened) and no FAN_IN_* entry should be appended.
         StartFanout payload = new StartFanout("o-drift");
-        StartCommand cmd = new StartCommand(DEFINITION.definitionId(), payload, payload.idempotencyKey(), null, null);
+        StartCommand cmd = new StartCommand(
+                DEFINITION.definitionId(),
+                DEFINITION.contract().getName(),
+                payload,
+                payload.idempotencyKey(),
+                null,
+                null,
+                null,
+                null,
+                null);
         runOnDuplicatedContext(() -> engine.start(cmd)
                 .compose(id -> pool.preparedQuery("UPDATE workflow_branch_tokens SET status = 'RETRY_SCHEDULED',"
                                 + " current_step_id = 'complete-a', wait_type = NULL, wait_key = NULL,"
@@ -1057,7 +1093,16 @@ public class PgWorkflowBranchRecoveryServiceIT {
                 () -> recovery, new WorkflowBranchRecoveryConfig(10, java.time.Duration.ofSeconds(1)));
 
         StartFanout payload = new StartFanout("o-adapter");
-        StartCommand cmd = new StartCommand(DEFINITION.definitionId(), payload, payload.idempotencyKey(), null, null);
+        StartCommand cmd = new StartCommand(
+                DEFINITION.definitionId(),
+                DEFINITION.contract().getName(),
+                payload,
+                payload.idempotencyKey(),
+                null,
+                null,
+                null,
+                null,
+                null);
         runOnDuplicatedContext(() -> engine.start(cmd)
                 .compose(id -> pool.preparedQuery("UPDATE workflow_branch_tokens SET status = 'RUNNING',"
                                 + " updated_at = $1, attempt_count = max_attempts - 1 WHERE workflow_id = $2"
@@ -1233,8 +1278,16 @@ public class PgWorkflowBranchRecoveryServiceIT {
             + " T fill on both the SERVICE and WORKFLOW_EVENT outbox entries")
     void recoverDueBranch_carrierAuthoritativePlusInstanceFill_headlineAc2(VertxTestContext ctx) {
         Ac2Start payload = new Ac2Start("ac2-headline");
-        StartCommand cmd =
-                new StartCommand(AC2_DEFINITION.definitionId(), payload, payload.idempotencyKey(), null, null);
+        StartCommand cmd = new StartCommand(
+                AC2_DEFINITION.definitionId(),
+                AC2_DEFINITION.contract().getName(),
+                payload,
+                payload.idempotencyKey(),
+                null,
+                null,
+                null,
+                null,
+                null);
         runOnDuplicatedContext(() -> withAc2AmbientTenantAndCorrelation(
                         "T", "IGNORED-AT-START", () -> ac2Engine.start(cmd))
                 // Seed a degraded branch token: correlation C only, no tenant — simulating the
@@ -1323,8 +1376,16 @@ public class PgWorkflowBranchRecoveryServiceIT {
         // instance-fill supplies tenant T (absent from ambient) before the fork dispatch runs in
         // the same drive, so the freshly-created branch token's fork-time capture absorbs it.
         Ac2Start payload = new Ac2Start("ac2-live-fill");
-        StartCommand cmd =
-                new StartCommand(AC2_LIVE_DEFINITION.definitionId(), payload, payload.idempotencyKey(), null, null);
+        StartCommand cmd = new StartCommand(
+                AC2_LIVE_DEFINITION.definitionId(),
+                AC2_LIVE_DEFINITION.contract().getName(),
+                payload,
+                payload.idempotencyKey(),
+                null,
+                null,
+                null,
+                null,
+                null);
         runOnDuplicatedContext(() -> ac2Engine
                 .start(cmd)
                 .compose(id -> pool.preparedQuery("UPDATE workflow_instances SET metadata = $1 WHERE id = $2")
@@ -1367,8 +1428,16 @@ public class PgWorkflowBranchRecoveryServiceIT {
     void recoverBranch_nullInstanceMetadata_noFillContributed_branchCarrierUnchanged(VertxTestContext ctx) {
         // Start with NO ambient context at all so instance.metadata() persists NULL (FR-WF-CTX-010).
         Ac2Start payload = new Ac2Start("ac2-null-instance");
-        StartCommand cmd =
-                new StartCommand(AC2_DEFINITION.definitionId(), payload, payload.idempotencyKey(), null, null);
+        StartCommand cmd = new StartCommand(
+                AC2_DEFINITION.definitionId(),
+                AC2_DEFINITION.contract().getName(),
+                payload,
+                payload.idempotencyKey(),
+                null,
+                null,
+                null,
+                null,
+                null);
         runOnDuplicatedContext(() -> ac2Engine
                 .start(cmd)
                 // Seed the branch token with its OWN carrier (correlation D only) — instance
@@ -1420,10 +1489,26 @@ public class PgWorkflowBranchRecoveryServiceIT {
     void recoverBranch_bindFailureIsolatedToThatRow_sweepContinues(VertxTestContext ctx) {
         Ac2Start payloadBad = new Ac2Start("ac2-isolation-bad");
         Ac2Start payloadGood = new Ac2Start("ac2-isolation-good");
-        StartCommand cmdBad =
-                new StartCommand(AC2_DEFINITION.definitionId(), payloadBad, payloadBad.idempotencyKey(), null, null);
-        StartCommand cmdGood =
-                new StartCommand(AC2_DEFINITION.definitionId(), payloadGood, payloadGood.idempotencyKey(), null, null);
+        StartCommand cmdBad = new StartCommand(
+                AC2_DEFINITION.definitionId(),
+                AC2_DEFINITION.contract().getName(),
+                payloadBad,
+                payloadBad.idempotencyKey(),
+                null,
+                null,
+                null,
+                null,
+                null);
+        StartCommand cmdGood = new StartCommand(
+                AC2_DEFINITION.definitionId(),
+                AC2_DEFINITION.contract().getName(),
+                payloadGood,
+                payloadGood.idempotencyKey(),
+                null,
+                null,
+                null,
+                null,
+                null);
         runOnDuplicatedContext(() -> ac2Engine
                 .start(cmdBad)
                 .compose(badId -> ac2Engine.start(cmdGood).map(goodId -> new WorkflowInstanceId[] {badId, goodId}))
@@ -1470,8 +1555,16 @@ public class PgWorkflowBranchRecoveryServiceIT {
         // the only asserted proof available: the join's no-failure-route variant (AC #9's DEFINITION)
         // never reaches an outbox write on this path, so binding cannot be observed through it.
         Ac2Start payload = new Ac2Start("ac2-demote");
-        StartCommand cmd =
-                new StartCommand(AC2_DEMOTE_DEFINITION.definitionId(), payload, payload.idempotencyKey(), null, null);
+        StartCommand cmd = new StartCommand(
+                AC2_DEMOTE_DEFINITION.definitionId(),
+                AC2_DEMOTE_DEFINITION.contract().getName(),
+                payload,
+                payload.idempotencyKey(),
+                null,
+                null,
+                null,
+                null,
+                null);
         runOnDuplicatedContext(() -> withAc2AmbientTenantAndCorrelation(
                         "T-DEMOTE", "IGNORED-AT-START", () -> ac2Engine.start(cmd))
                 // Seed a degraded branch token: correlation C-DEMOTE only, no tenant — simulating

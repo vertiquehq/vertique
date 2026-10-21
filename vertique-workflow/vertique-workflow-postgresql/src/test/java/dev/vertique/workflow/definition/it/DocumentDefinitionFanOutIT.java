@@ -38,6 +38,7 @@ import dev.vertique.workflow.definition.di.WorkflowDefinitionModule;
 import dev.vertique.workflow.definition.it.fixture.FraudScreenedDoc;
 import dev.vertique.workflow.definition.it.fixture.InventoryReservedDoc;
 import dev.vertique.workflow.definition.it.fixture.OrderFanOutState;
+import dev.vertique.workflow.definition.it.fixture.OrderFulfillmentFanOutDocumentWorkflowV1;
 import dev.vertique.workflow.definition.it.fixture.PaymentAuthorizedDoc;
 import dev.vertique.workflow.definition.it.fixture.PlaceFanOutOrder;
 import dev.vertique.workflow.definition.parser.DocumentFormat;
@@ -515,8 +516,16 @@ public class DocumentDefinitionFanOutIT {
     @DisplayName("AC #2 — document-defined fan-out drives ALL_REQUIRED branches to COMPLETED via branch signals")
     void documentDefinedFanOut_allRequiredBranches_completesAfterThreeSignals(VertxTestContext ctx) {
         PlaceFanOutOrder payload = new PlaceFanOutOrder("fanout-" + UUID.randomUUID());
-        StartCommand cmd =
-                new StartCommand("order-fulfillment-fanout-doc", payload, payload.idempotencyKey(), null, null);
+        StartCommand cmd = new StartCommand(
+                "order-fulfillment-fanout-doc",
+                OrderFulfillmentFanOutDocumentWorkflowV1.class.getName(),
+                payload,
+                payload.idempotencyKey(),
+                null,
+                null,
+                null,
+                null,
+                null);
 
         // Re-enter on a duplicated Vert.x context so the entire async chain — including the
         // pool.withTransaction(tx -> txEngine.signal(...)) bodies that hit

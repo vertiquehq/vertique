@@ -253,8 +253,12 @@ public class PgWorkflowEngineTimerFiringFailedIT {
         String id = UUID.randomUUID().toString();
         StartCommand cmd = new StartCommand(
                 "timer-firing-failed-test",
+                FakeContract.class.getName(),
                 new StartPayload(id),
                 java.util.UUID.randomUUID().toString(),
+                null,
+                null,
+                null,
                 null,
                 null);
 
@@ -361,8 +365,12 @@ public class PgWorkflowEngineTimerFiringFailedIT {
         String id = UUID.randomUUID().toString();
         StartCommand cmd = new StartCommand(
                 "timer-firing-failed-test",
+                FakeContract.class.getName(),
                 new StartPayload(id),
                 java.util.UUID.randomUUID().toString(),
+                null,
+                null,
+                null,
                 null,
                 null);
 
@@ -452,8 +460,12 @@ public class PgWorkflowEngineTimerFiringFailedIT {
         String id = UUID.randomUUID().toString();
         StartCommand cmd = new StartCommand(
                 "timer-firing-failed-test",
+                FakeContract.class.getName(),
                 new StartPayload(id),
                 java.util.UUID.randomUUID().toString(),
+                null,
+                null,
+                null,
                 null,
                 null);
 

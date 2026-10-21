@@ -459,7 +459,16 @@ public class PgWorkflowEngineMigrateIllegalStateIT {
     @DisplayName("AC #15a — migrate on COMPLETED instance throws WorkflowMigrationIllegalStateException")
     void migrateCompletedInstance(VertxTestContext ctx) {
         String key = "migrate-completed-" + UUID.randomUUID();
-        StartCommand cmd = new StartCommand(SIMPLE_DEF_ID, new SimpleState("x"), key, null, null);
+        StartCommand cmd = new StartCommand(
+                SIMPLE_DEF_ID,
+                IllegalStateContractV2.class.getName(),
+                new SimpleState("x"),
+                key,
+                null,
+                null,
+                null,
+                null,
+                null);
 
         // Start via v1 engine, signal to complete.
         engineSimpleV1
@@ -497,7 +506,16 @@ public class PgWorkflowEngineMigrateIllegalStateIT {
     @DisplayName("AC #15a — migrate on CANCELLED instance throws WorkflowMigrationIllegalStateException")
     void migrateCancelledInstance(VertxTestContext ctx) {
         String key = "migrate-cancelled-" + UUID.randomUUID();
-        StartCommand cmd = new StartCommand(SIMPLE_DEF_ID, new SimpleState("y"), key, null, null);
+        StartCommand cmd = new StartCommand(
+                SIMPLE_DEF_ID,
+                IllegalStateContractV2.class.getName(),
+                new SimpleState("y"),
+                key,
+                null,
+                null,
+                null,
+                null,
+                null);
 
         engineSimpleV1
                 .start(cmd)
@@ -538,7 +556,8 @@ public class PgWorkflowEngineMigrateIllegalStateIT {
             "AC #15b — migrate on instance with active fork-branch state throws WorkflowMigrationIllegalStateException")
     void migrateInstanceWithActiveBranches(VertxTestContext ctx) {
         String key = "migrate-fork-" + UUID.randomUUID();
-        StartCommand cmd = new StartCommand(FORK_DEF_ID, new SimpleState("z"), key, null, null);
+        StartCommand cmd = new StartCommand(
+                FORK_DEF_ID, ForkContractV2.class.getName(), new SimpleState("z"), key, null, null, null, null, null);
 
         engineForkV1
                 .start(cmd)

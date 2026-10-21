@@ -245,7 +245,16 @@ public class CompensationLifoIT {
     @DisplayName("LIFO compensation: step-B compensated before step-A when both completed before failure")
     void lifoCompensationOrder(VertxTestContext ctx) {
         ThreeStepStart start = new ThreeStepStart("lifo-test-1");
-        StartCommand cmd = new StartCommand("three-step-lifo", start, start.idempotencyKey(), null, null);
+        StartCommand cmd = new StartCommand(
+                "three-step-lifo",
+                ThreeStepContract.class.getName(),
+                start,
+                start.idempotencyKey(),
+                null,
+                null,
+                null,
+                null,
+                null);
 
         engine.start(cmd)
                 .compose(id -> {
@@ -337,7 +346,16 @@ public class CompensationLifoIT {
     @DisplayName("partial completion: only completed step-A is compensated when step-B never completes")
     void partialCompensation(VertxTestContext ctx) {
         ThreeStepStart start = new ThreeStepStart("lifo-test-2");
-        StartCommand cmd = new StartCommand("three-step-lifo", start, start.idempotencyKey(), null, null);
+        StartCommand cmd = new StartCommand(
+                "three-step-lifo",
+                ThreeStepContract.class.getName(),
+                start,
+                start.idempotencyKey(),
+                null,
+                null,
+                null,
+                null,
+                null);
 
         // Only advance through sig-a (step-A completes), do NOT send sig-b.
         // Then manually signal with a fail trigger — but wait, the FailNode is after wait-b.

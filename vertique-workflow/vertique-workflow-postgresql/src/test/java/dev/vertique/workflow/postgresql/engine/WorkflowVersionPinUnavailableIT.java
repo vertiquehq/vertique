@@ -201,7 +201,16 @@ public class WorkflowVersionPinUnavailableIT {
     void signalViaEngineWithoutPinnedVersionFails(VertxTestContext ctx) {
         SimpleStartType payload = new SimpleStartType("test-value");
         String idempotencyKey = "version-pin-test-" + UUID.randomUUID();
-        StartCommand startCmd = new StartCommand("version-test", payload, idempotencyKey, null, null);
+        StartCommand startCmd = new StartCommand(
+                "version-test",
+                VersionTestContract.class.getName(),
+                payload,
+                idempotencyKey,
+                null,
+                null,
+                null,
+                null,
+                null);
 
         // Engine A starts the instance; it will be WAITING for signal "go".
         engineA.start(startCmd)
@@ -236,7 +245,16 @@ public class WorkflowVersionPinUnavailableIT {
     void queryViaEngineWithoutPinnedVersionReturnsViewFromSnapshot(VertxTestContext ctx) {
         SimpleStartType payload = new SimpleStartType("query-value");
         String idempotencyKey = "version-pin-query-" + UUID.randomUUID();
-        StartCommand startCmd = new StartCommand("version-test", payload, idempotencyKey, null, null);
+        StartCommand startCmd = new StartCommand(
+                "version-test",
+                VersionTestContract.class.getName(),
+                payload,
+                idempotencyKey,
+                null,
+                null,
+                null,
+                null,
+                null);
 
         // Engine A starts the instance.
         engineA.start(startCmd)

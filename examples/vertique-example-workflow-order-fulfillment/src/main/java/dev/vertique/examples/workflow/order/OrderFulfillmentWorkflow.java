@@ -19,8 +19,9 @@ import io.vertx.core.Future;
  * Typed contract interface for the order-fulfillment durable saga.
  *
  * <p>This interface is the canonical API surface for starting and advancing the saga. All methods
- * are non-blocking and return {@link Future}. Callers obtain a proxy via
- * {@link dev.vertique.workflow.client.WorkflowClientFactory#create(Class)}.
+ * are non-blocking and return {@link Future}. Callers obtain a proxy from the class of the registered
+ * definition via {@link dev.vertique.workflow.client.WorkflowClientFactory#create(Class)}, passing
+ * {@link OrderFulfillmentDefinition}.
  *
  * <p>The saga follows these forward steps:
  * <ol>

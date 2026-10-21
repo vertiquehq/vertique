@@ -13,7 +13,7 @@
  *       resolves parameter roles</li>
  *   <li>{@code validate} — compile-time structural contract-shape validators</li>
  *   <li>{@code emit} — source emitters for {@code {Contract}_WorkflowClientProxy} and
- *       {@code GeneratedWorkflowClientsModule}</li>
+ *       {@code GeneratedWorkflowTypeCatalogModule}</li>
  * </ul>
  */
 package dev.vertique.codegen.workflow.processor;

@@ -31,16 +31,18 @@ import javax.lang.model.element.TypeElement;
  * <p>The generated class is {@code public final}, implements the contract interface, and delegates
  * each operation method to {@code WorkflowOperations} with zero reflection:
  * <ul>
- *   <li>{@code @WorkflowStart} methods call {@code ops.start(new StartCommand(...))} with the
+ *   <li>{@code @WorkflowStart} methods call {@code ops.start(binding.startCommand(...))} with the
  *       idempotency key, business key, and subject ref extracted from the payload or explicit
- *       parameters.</li>
+ *       parameters. The definition id, version and scopes come from the client binding the proxy is
+ *       constructed with, so no definition literal is generated and the generated code never names
+ *       the {@code StartCommand} constructor.</li>
  *   <li>{@code @WorkflowSignal} methods call {@code ops.signal(...)} with the dedup key extracted
  *       from the signal payload or an explicit parameter.</li>
  *   <li>{@code @WorkflowQuery} methods call {@code ops.query(id)}.</li>
  * </ul>
  *
  * <p>The generated class lands in the contract's own package so that {@code WorkflowClientFactory}
- * can resolve it by name at runtime; see ADR-0073.
+ * can resolve it by name at runtime.
  *
  * <p>This emitter is only called for validated contracts; every operation is assumed to be a
  * clean single-role method with correct parameter structure.
@@ -54,15 +56,15 @@ public final class WorkflowProxyEmitter {
 
     private static final String OPS_PKG = "dev.vertique.workflow.ops";
     private static final ClassName WORKFLOW_OPERATIONS = ClassName.get(OPS_PKG, "WorkflowOperations");
-    private static final ClassName START_COMMAND = ClassName.get(OPS_PKG, "StartCommand");
+
+    private static final ClassName WORKFLOW_CLIENT_BINDING =
+            ClassName.get("dev.vertique.workflow.client", "WorkflowClientBinding");
 
     private static final String CONTRACT_PKG = "dev.vertique.workflow.contract";
     private static final ClassName IDEMPOTENCY_KEYED = ClassName.get(CONTRACT_PKG, "IdempotencyKeyed");
     private static final ClassName BUSINESS_KEYED = ClassName.get(CONTRACT_PKG, "BusinessKeyed");
     private static final ClassName SUBJECT_REFERENCED = ClassName.get(CONTRACT_PKG, "SubjectReferenced");
     private static final ClassName SIGNAL_DEDUP_KEYED = ClassName.get(CONTRACT_PKG, "SignalDedupKeyed");
-
-    private static final ClassName JAKARTA_INJECT = ClassName.get("jakarta.inject", "Inject");
 
     private final CodegenContext ctx;
 
@@ -101,11 +103,12 @@ public final class WorkflowProxyEmitter {
                                 + "classpath. Delegates every contract method to {@code WorkflowOperations}.\n",
                         contractClassName)
                 .addField(WORKFLOW_OPERATIONS, "ops", Modifier.PRIVATE, Modifier.FINAL)
+                .addField(WORKFLOW_CLIENT_BINDING, "binding", Modifier.PRIVATE, Modifier.FINAL)
                 .addMethod(buildConstructor(generatedSimpleName))
                 .addMethod(buildToString(contractClassName));
 
         for (OperationModel op : model.operations()) {
-            typeBuilder.addMethod(buildOperationMethod(op, model));
+            typeBuilder.addMethod(buildOperationMethod(op));
         }
 
         JavaFile javaFile = JavaFile.builder(packageName, typeBuilder.build()).build();
@@ -125,7 +128,7 @@ public final class WorkflowProxyEmitter {
     // --- Constructor ---
 
     /**
-     * Builds the {@code @Inject} constructor that receives a {@code WorkflowOperations} instance.
+     * Builds the constructor that receives a {@code WorkflowOperations} instance and the client binding.
      *
      * @param generatedSimpleName the simple name of the generated class
      * @return the constructor method spec
@@ -133,11 +136,14 @@ public final class WorkflowProxyEmitter {
     private static MethodSpec buildConstructor(String generatedSimpleName) {
         return MethodSpec.constructorBuilder()
                 .addModifiers(Modifier.PUBLIC)
-                .addAnnotation(AnnotationSpec.builder(JAKARTA_INJECT).build())
                 .addParameter(WORKFLOW_OPERATIONS, "ops")
-                .addJavadoc("Constructs the generated proxy, receiving the workflow operations facade.\n\n"
-                        + "@param ops the workflow operations to delegate contract methods to\n")
+                .addParameter(WORKFLOW_CLIENT_BINDING, "binding")
+                .addJavadoc(
+                        "Constructs the generated proxy, receiving the workflow operations facade and the client binding.\n\n"
+                                + "@param ops the workflow operations to delegate contract methods to\n"
+                                + "@param binding the binding that supplies the definition id, version and scopes of started instances\n")
                 .addStatement("this.ops = ops")
+                .addStatement("this.binding = binding")
                 .build();
     }
 
@@ -147,12 +153,10 @@ public final class WorkflowProxyEmitter {
      * Builds the {@code @Override} method for a single operation, delegating to the appropriate
      * {@code WorkflowOperations} method based on the operation role.
      *
-     * @param op    the operation model; must have exactly one role
-     * @param model the parent contract model (used for {@code definitionId} and
-     *              {@code definitionVersion})
+     * @param op the operation model; must have exactly one role
      * @return the method spec
      */
-    private static MethodSpec buildOperationMethod(OperationModel op, ContractModel model) {
+    private static MethodSpec buildOperationMethod(OperationModel op) {
         MethodSpec.Builder method = MethodSpec.methodBuilder(op.methodName())
                 .addAnnotation(Override.class)
                 .addModifiers(Modifier.PUBLIC)
@@ -164,7 +168,7 @@ public final class WorkflowProxyEmitter {
 
         OperationRole role = op.role().orElseThrow();
         switch (role) {
-            case START -> addStartBody(method, op, model);
+            case START -> addStartBody(method, op);
             case SIGNAL -> addSignalBody(method, op);
             case QUERY -> addQueryBody(method, op);
         }
@@ -173,14 +177,13 @@ public final class WorkflowProxyEmitter {
     }
 
     /**
-     * Adds the START operation body — constructs a {@code StartCommand} and calls
+     * Adds the START operation body — builds the command through the client binding and calls
      * {@code ops.start(...)}.
      *
      * @param method the method builder to add the body to
      * @param op     the START operation model
-     * @param model  the contract model (for {@code definitionId} and {@code definitionVersion})
      */
-    private static void addStartBody(MethodSpec.Builder method, OperationModel op, ContractModel model) {
+    private static void addStartBody(MethodSpec.Builder method, OperationModel op) {
         String payloadName =
                 op.firstParamWithRole(ParamRole.PAYLOAD).orElseThrow().name();
 
@@ -222,21 +225,15 @@ public final class WorkflowProxyEmitter {
                             sr);
                 });
 
-        // Version literal: always pin the compiled version as a Long literal (e.g. "5L")
-        CodeBlock versionExpr = CodeBlock.of("$LL", model.definitionVersion());
-
-        // Qualify the receiver as this.ops: an operation parameter may legitimately be named "ops"
-        // (the runtime JDK proxy captures ops in a closure and has no such collision), and a bare
-        // ops would then resolve to that parameter and fail to compile.
+        // Qualify the receivers as this.ops and this.binding: an operation parameter may legitimately be named
+        // "ops" or "binding" (the runtime JDK proxy captures both in a closure and has no such collision), and a
+        // bare name would then resolve to that parameter and fail to compile.
         method.addStatement(
-                "return this.ops.start(new $T($S, $L, $L, $L, $L, $L))",
-                START_COMMAND,
-                model.definitionId(),
+                "return this.ops.start(this.binding.startCommand($L, $L, $L, $L))",
                 payloadName,
                 idemExpr,
                 bizExpr,
-                subjExpr,
-                versionExpr);
+                subjExpr);
     }
 
     /**

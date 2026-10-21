@@ -339,7 +339,16 @@ public class MalformedHistoryFailLoudIT {
     @DisplayName("compensation fails loudly when SIGNAL_RECEIVED payload is malformed (missing signalName)")
     void compensationFailsLoudWhenSignalReceivedPayloadIsMalformed(VertxTestContext ctx) {
         TwoStepStart start = new TwoStepStart("run-1");
-        StartCommand cmd = new StartCommand("malformed-sig-saga", start, start.idempotencyKey(), null, null);
+        StartCommand cmd = new StartCommand(
+                "malformed-sig-saga",
+                TwoStepContract.class.getName(),
+                start,
+                start.idempotencyKey(),
+                null,
+                null,
+                null,
+                null,
+                null);
 
         engine.start(cmd)
                 .compose((WorkflowInstanceId id) ->
@@ -400,7 +409,16 @@ public class MalformedHistoryFailLoudIT {
     @DisplayName("compensation fails loudly when SIDE_EFFECT_RECORDED payload is malformed (wrong stepId type)")
     void compensationFailsLoudWhenSideEffectRecordedPayloadIsMalformed(VertxTestContext ctx) {
         OneStepStart start = new OneStepStart("run-1");
-        StartCommand cmd = new StartCommand("malformed-ser-saga", start, start.idempotencyKey(), null, null);
+        StartCommand cmd = new StartCommand(
+                "malformed-ser-saga",
+                OneStepContract.class.getName(),
+                start,
+                start.idempotencyKey(),
+                null,
+                null,
+                null,
+                null,
+                null);
 
         engine.start(cmd)
                 .compose((WorkflowInstanceId id) -> {

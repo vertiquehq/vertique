@@ -598,7 +598,16 @@ public class DefinitionPropagationIT {
                 // When a new instance is started explicitly on the deprecated version
                 Throwable refused = failureOf(b.app()
                         .workflowOperations()
-                        .start(new StartCommand(id, new CodeStart("deprecated"), "deprecated-start", null, null, 1L)));
+                        .start(new StartCommand(
+                                id,
+                                PeerCodeV1.class.getName(),
+                                new CodeStart("deprecated"),
+                                "deprecated-start",
+                                null,
+                                null,
+                                1L,
+                                null,
+                                null)));
 
                 // Then the start is refused as deprecated and no instance was written
                 assertThat(refused).isInstanceOfSatisfying(WorkflowDefinitionLifecycleException.class, failure -> {
@@ -609,7 +618,16 @@ public class DefinitionPropagationIT {
                 // When a new instance is started explicitly on the restored version
                 WorkflowInstanceId started = await(b.app()
                         .workflowOperations()
-                        .start(new StartCommand(id, new CodeStart("restored"), "restored-start", null, null, 1L)));
+                        .start(new StartCommand(
+                                id,
+                                PeerCodeV1.class.getName(),
+                                new CodeStart("restored"),
+                                "restored-start",
+                                null,
+                                null,
+                                1L,
+                                null,
+                                null)));
                 WorkflowView view = await(b.app().workflowOperations().query(started));
 
                 // Then it ran on the restored hash to a terminal status, leaving no pinned instance

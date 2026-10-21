@@ -441,18 +441,52 @@ public class WorkflowTenantKeyIT {
         // left alone and two stamped t1 by another writer right after the start
         WorkflowInstanceId singleUnstamped = await(inContext(
                 "t1",
-                () -> operations.start(
-                        new StartCommand(SINGLE_ID, new StartFlow("a"), "k-single-unstamped", null, null))));
+                () -> operations.start(new StartCommand(
+                        SINGLE_ID,
+                        SingleContract.class.getName(),
+                        new StartFlow("a"),
+                        "k-single-unstamped",
+                        null,
+                        null,
+                        null,
+                        null,
+                        null))));
         WorkflowInstanceId forkUnstamped = await(inContext(
                 "t1",
-                () -> operations.start(new StartCommand(FORK_ID, new StartFlow("b"), "k-fork-unstamped", null, null))));
+                () -> operations.start(new StartCommand(
+                        FORK_ID,
+                        ForkContract.class.getName(),
+                        new StartFlow("b"),
+                        "k-fork-unstamped",
+                        null,
+                        null,
+                        null,
+                        null,
+                        null))));
         WorkflowInstanceId singleStamped = await(inContext(
                 "t1",
-                () -> operations.start(
-                        new StartCommand(SINGLE_ID, new StartFlow("c"), "k-single-stamped", null, null))));
+                () -> operations.start(new StartCommand(
+                        SINGLE_ID,
+                        SingleContract.class.getName(),
+                        new StartFlow("c"),
+                        "k-single-stamped",
+                        null,
+                        null,
+                        null,
+                        null,
+                        null))));
         WorkflowInstanceId forkStamped = await(inContext(
                 "t1",
-                () -> operations.start(new StartCommand(FORK_ID, new StartFlow("d"), "k-fork-stamped", null, null))));
+                () -> operations.start(new StartCommand(
+                        FORK_ID,
+                        ForkContract.class.getName(),
+                        new StartFlow("d"),
+                        "k-fork-stamped",
+                        null,
+                        null,
+                        null,
+                        null,
+                        null))));
 
         // Then the ambient tenant was not taken: no instance row and no start task carries a tenant
         for (WorkflowInstanceId started : List.of(singleUnstamped, forkUnstamped, singleStamped, forkStamped)) {

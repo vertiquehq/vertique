@@ -12,6 +12,7 @@ import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException;
 import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException.Reason;
 import dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException;
 import dev.vertique.workflow.plan.WorkflowPlan;
+import dev.vertique.workflow.registry.RegisteredDefinitionClass;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowRegistry;
 import dev.vertique.workflow.registry.store.ActivationClaim;
@@ -1247,6 +1248,11 @@ class DefaultWorkflowDefinitionLifecycleTest {
         }
 
         @Override
+        public Optional<RegisteredDefinitionClass> definitionClass(Class<?> definitionClass) {
+            return Optional.empty();
+        }
+
+        @Override
         public Collection<RuntimeWorkflow> allRegistered() {
             return List.copyOf(registrations.values());
         }
@@ -1399,6 +1405,11 @@ class DefaultWorkflowDefinitionLifecycleTest {
         @Override
         public WorkflowContractMetadata contractMetadata(Class<?> contractInterface) {
             throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public Optional<RegisteredDefinitionClass> definitionClass(Class<?> definitionClass) {
+            return Optional.empty();
         }
 
         @Override

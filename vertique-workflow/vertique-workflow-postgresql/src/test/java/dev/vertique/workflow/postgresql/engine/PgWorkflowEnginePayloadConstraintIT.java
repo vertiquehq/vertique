@@ -671,10 +671,26 @@ public class PgWorkflowEnginePayloadConstraintIT {
      */
     private static WorkflowInstanceId start(String definitionId, Object payload, String key) {
         return validatingEngine
-                .start(new StartCommand(definitionId, payload, key, null, null))
+                .start(new StartCommand(
+                        definitionId, contractNameOf(definitionId), payload, key, null, null, null, null, null))
                 .toCompletionStage()
                 .toCompletableFuture()
                 .join();
+    }
+
+    /**
+     * Returns the contract name of a fixture definition.
+     *
+     * @param definitionId the id of one of this test's fixture definitions
+     * @return the name of the definition's contract
+     */
+    private static String contractNameOf(String definitionId) {
+        return switch (definitionId) {
+            case INSTANCE_DEFINITION_ID -> InstanceContract.class.getName();
+            case BRANCH_DEFINITION_ID -> BranchContract.class.getName();
+            case START_DEFINITION_ID -> StartContract.class.getName();
+            default -> throw new IllegalArgumentException("unknown fixture definition: " + definitionId);
+        };
     }
 
     private static WorkflowInvalidPayloadException assertInvalidStart(Object payload, String key) {

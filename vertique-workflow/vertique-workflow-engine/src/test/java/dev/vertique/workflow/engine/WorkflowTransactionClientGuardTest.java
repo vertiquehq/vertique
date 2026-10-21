@@ -90,8 +90,16 @@ class WorkflowTransactionClientGuardTest {
     private static final WorkflowActor ACTOR = new WorkflowActor.User("alice");
     private static final DurableMetadata CARRIER =
             DurableMetadata.of(TenantCtxCodec.NAMESPACE, new JsonObject().put("tenantId", "CARRIER"));
-    private static final StartCommand START =
-            new StartCommand(DEFINITION_ID, Map.of(), "start-" + UUID.randomUUID(), null, null);
+    private static final StartCommand START = new StartCommand(
+            DEFINITION_ID,
+            Object.class.getName(),
+            Map.of(),
+            "start-" + UUID.randomUUID(),
+            null,
+            null,
+            null,
+            null,
+            null);
 
     /** Raised by every SQL-capable collaborator mock, so a reached boundary is visible as a failure. */
     private static final class SqlBoundaryReached extends RuntimeException {

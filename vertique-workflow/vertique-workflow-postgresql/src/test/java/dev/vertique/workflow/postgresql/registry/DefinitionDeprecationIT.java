@@ -187,7 +187,15 @@ public class DefinitionDeprecationIT {
             // And an explicit new start of the target version fails typed and creates no instance
             Throwable startFailure = failureOf(app.workflowOperations()
                     .start(new StartCommand(
-                            id, new PlaceOrderDoc("deprecation-" + id), "start-" + id, null, null, targetVersion)));
+                            id,
+                            (targetVersion == 1 ? contractV1 : contractV2).getName(),
+                            new PlaceOrderDoc("deprecation-" + id),
+                            "start-" + id,
+                            null,
+                            null,
+                            targetVersion,
+                            null,
+                            null)));
             assertThat(startFailure).isInstanceOfSatisfying(WorkflowDefinitionLifecycleException.class, failure -> {
                 assertThat(failure.reason()).isEqualTo(Reason.DEPRECATED);
                 assertThat(failure.key().definitionId()).isEqualTo(id);

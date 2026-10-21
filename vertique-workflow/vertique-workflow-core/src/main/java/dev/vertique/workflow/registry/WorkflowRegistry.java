@@ -15,8 +15,13 @@ import java.util.Optional;
  * implementations contributed to the Dagger multibinding. The registry validates each definition
  * at registration time and rejects invalid plans with a {@code WorkflowDefinitionException}.
  *
- * <p>The registry is also the source of {@link WorkflowContractMetadata} for contract interfaces
- * used by {@code WorkflowClientFactory}.
+ * <p>The registry is also the source of {@link WorkflowContractMetadata} for contract interfaces,
+ * and maps the class of a registered definition to its definition id and contract for
+ * {@code WorkflowClientFactory}.
+ *
+ * <p>The framework implements this interface ({@link DefaultWorkflowRegistry}); applications call it.
+ * Members added in later releases, such as {@link #definitionClass(Class)}, are abstract, so a
+ * third-party implementation must be updated with the framework.
  */
 public interface WorkflowRegistry {
 
@@ -72,6 +77,19 @@ public interface WorkflowRegistry {
      *     annotated with {@code @WorkflowContract} or is not linked to a registered definition
      */
     dev.vertique.workflow.contract.WorkflowContractMetadata contractMetadata(Class<?> contractInterface);
+
+    /**
+     * Returns the definition id and contract of a registered definition class.
+     *
+     * <p>The lookup is by the exact runtime class of the registered definition objects. A class whose
+     * instances were registered under more than one definition id has no single answer, so the result
+     * is empty for it, as it is for a class that was never registered.
+     *
+     * @param definitionClass the class of a registered {@link WorkflowDefinition}
+     * @return the definition id, contract name and contract of the class, or empty when the class is
+     *     not registered under exactly one definition id
+     */
+    Optional<RegisteredDefinitionClass> definitionClass(Class<?> definitionClass);
 
     /**
      * Returns an immutable snapshot of every registered {@link RuntimeWorkflow} across all

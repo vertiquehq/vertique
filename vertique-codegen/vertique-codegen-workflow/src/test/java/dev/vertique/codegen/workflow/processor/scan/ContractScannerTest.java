@@ -97,20 +97,6 @@ class ContractScannerTest {
     // --- Tests ---
 
     @Test
-    @DisplayName("reads @WorkflowContract definitionId and definitionVersion")
-    void readsContractAttributes() {
-        CapturingProcessor processor = new CapturingProcessor();
-
-        ProcessorTestHarness.run(processor, ORDER_PAYLOAD, CANCEL_PAYLOAD, ORDER_CONTRACT)
-                .assertSuccess();
-
-        assertEquals(1, processor.models.size());
-        ContractModel model = processor.models.get(0);
-        assertEquals("order", model.definitionId());
-        assertEquals(2L, model.definitionVersion());
-    }
-
-    @Test
     @DisplayName("scans three operations with correct roles on a full contract")
     void scansFullContractOperations() {
         CapturingProcessor processor = new CapturingProcessor();

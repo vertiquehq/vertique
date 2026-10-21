@@ -11,15 +11,16 @@ import java.lang.annotation.Target;
 
 /**
  * Marks an interface as a typed workflow contract that can be used with
+ * {@code WorkflowClientFactory.create(Class, String)} or created from a definition class with
  * {@code WorkflowClientFactory.create(Class)}.
  *
  * <p>The annotated interface declares methods for starting, signalling, querying, and optionally
  * cancelling a specific workflow definition. Methods must be annotated with
  * {@link WorkflowStart}, {@link WorkflowSignal}, or {@link WorkflowQuery}.
  *
- * <p>The {@code definitionId} and {@code definitionVersion} together identify the workflow
- * definition in the {@code WorkflowRegistry}. Proxy creation fails with
- * {@code WorkflowProxyContractException} if the definition is not registered.
+ * <p>A client is bound to a definition by the factory call that creates it, not by this annotation:
+ * the {@code definitionId} and {@code definitionVersion} attributes are no longer read by
+ * {@code WorkflowClientFactory}.
  */
 @Target(ElementType.TYPE)
 @Retention(RetentionPolicy.RUNTIME)
@@ -38,16 +39,16 @@ public @interface WorkflowContract {
     String value() default "";
 
     /**
-     * The workflow definition id this contract targets.
+     * The workflow definition id this contract was written for. Clients do not read it.
      *
-     * @return the definition id; must match a registered definition
+     * @return the definition id
      */
     String definitionId();
 
     /**
-     * The workflow definition version this contract targets.
+     * The workflow definition version this contract was written for. Clients do not read it.
      *
-     * @return the definition version; must match a registered version
+     * @return the definition version
      */
     long definitionVersion();
 }

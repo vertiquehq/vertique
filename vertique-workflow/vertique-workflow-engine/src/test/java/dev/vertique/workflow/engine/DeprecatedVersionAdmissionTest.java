@@ -282,10 +282,26 @@ class DeprecatedVersionAdmissionTest {
         WorkflowInstance pinnedToDeprecated = harness.pinnedToDeprecated();
         WorkflowInstance onVersion1 = harness.onVersion1();
 
-        StartCommand explicitStartOfDeprecated =
-                new StartCommand(DEFINITION_ID, Map.of(), "start-" + UUID.randomUUID(), null, null, 2L);
-        StartCommand startWithoutVersion =
-                new StartCommand(DEFINITION_ID, Map.of(), "start-" + UUID.randomUUID(), null, null);
+        StartCommand explicitStartOfDeprecated = new StartCommand(
+                DEFINITION_ID,
+                Object.class.getName(),
+                Map.of(),
+                "start-" + UUID.randomUUID(),
+                null,
+                null,
+                2L,
+                null,
+                null);
+        StartCommand startWithoutVersion = new StartCommand(
+                DEFINITION_ID,
+                Object.class.getName(),
+                Map.of(),
+                "start-" + UUID.randomUUID(),
+                null,
+                null,
+                null,
+                null,
+                null);
 
         runOnDuplicated(vertx, v -> {
             // When the deprecated version is started explicitly
@@ -371,8 +387,16 @@ class DeprecatedVersionAdmissionTest {
         // Given version 1 is current, version 3 is registered and neither is deprecated
         Harness harness = harness();
         WorkflowEngineHandle engine = harness.engine();
-        StartCommand explicitStartOfVersion1 =
-                new StartCommand(DEFINITION_ID, Map.of(), "start-" + UUID.randomUUID(), null, null, 1L);
+        StartCommand explicitStartOfVersion1 = new StartCommand(
+                DEFINITION_ID,
+                Object.class.getName(),
+                Map.of(),
+                "start-" + UUID.randomUUID(),
+                null,
+                null,
+                1L,
+                null,
+                null);
 
         runOnDuplicated(vertx, v -> {
             // When version 1 is started explicitly

@@ -321,7 +321,15 @@ public class PgWorkflowEngineBranchFanoutCreationIT {
     void forkDispatchExercisesAllThreeBranchCreationHandlers(VertxTestContext ctx) {
         StartFanout payload = new StartFanout("create-1");
         dev.vertique.workflow.ops.StartCommand cmd = new dev.vertique.workflow.ops.StartCommand(
-                DEFINITION.definitionId(), payload, payload.idempotencyKey(), null, null);
+                DEFINITION.definitionId(),
+                DEFINITION.contract().getName(),
+                payload,
+                payload.idempotencyKey(),
+                null,
+                null,
+                null,
+                null,
+                null);
 
         record Outcome(
                 String branchA,
@@ -391,7 +399,15 @@ public class PgWorkflowEngineBranchFanoutCreationIT {
     void branchReminderFireReschedulesNext(VertxTestContext ctx) {
         StartFanout payload = new StartFanout("rem-1");
         dev.vertique.workflow.ops.StartCommand cmd = new dev.vertique.workflow.ops.StartCommand(
-                DEFINITION.definitionId(), payload, payload.idempotencyKey(), null, null);
+                DEFINITION.definitionId(),
+                DEFINITION.contract().getName(),
+                payload,
+                payload.idempotencyKey(),
+                null,
+                null,
+                null,
+                null,
+                null);
 
         record Outcome(long firedCount, long reminderTimers) {}
 

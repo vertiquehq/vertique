@@ -93,7 +93,16 @@ public class TaskReviewSagaIT extends SagaTestBase {
 
         component
                 .workflowOperations()
-                .start(new StartCommand("task-review", start, testId, null, null))
+                .start(new StartCommand(
+                        "task-review",
+                        TaskReviewWorkflowDefinition.TaskReviewContract.class.getName(),
+                        start,
+                        testId,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null))
                 .compose(id -> {
                     // Workflow must be WAITING on a TASK step
                     return component.workflowOperations().query(id).map(view -> {
@@ -150,7 +159,16 @@ public class TaskReviewSagaIT extends SagaTestBase {
 
         component
                 .workflowOperations()
-                .start(new StartCommand("task-review", start, testId, null, null))
+                .start(new StartCommand(
+                        "task-review",
+                        TaskReviewWorkflowDefinition.TaskReviewContract.class.getName(),
+                        start,
+                        testId,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null))
                 .compose(id -> findTaskId(id).map(taskId -> new Object[] {id, taskId}))
                 .compose(pair -> {
                     WorkflowInstanceId id = (WorkflowInstanceId) pair[0];

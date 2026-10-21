@@ -248,7 +248,16 @@ public class PlanHashDriftIT {
     @DisplayName("signal via engine with drifted plan hash fails with WorkflowPlanHashDriftException")
     void signalWithDriftedPlanHashFails(VertxTestContext ctx) {
         String idempotencyKey = "drift-signal-" + UUID.randomUUID();
-        StartCommand cmd = new StartCommand("hash-drift", new DriftStart("d1"), idempotencyKey, null, null);
+        StartCommand cmd = new StartCommand(
+                "hash-drift",
+                DriftContract.class.getName(),
+                new DriftStart("d1"),
+                idempotencyKey,
+                null,
+                null,
+                null,
+                null,
+                null);
 
         engineA.start(cmd)
                 .compose(id -> {
@@ -283,7 +292,16 @@ public class PlanHashDriftIT {
     @DisplayName("query via engine with drifted plan hash succeeds (read-only, plan-independent)")
     void queryWithDriftedPlanHashSucceeds(VertxTestContext ctx) {
         String idempotencyKey = "drift-query-" + UUID.randomUUID();
-        StartCommand cmd = new StartCommand("hash-drift", new DriftStart("d2"), idempotencyKey, null, null);
+        StartCommand cmd = new StartCommand(
+                "hash-drift",
+                DriftContract.class.getName(),
+                new DriftStart("d2"),
+                idempotencyKey,
+                null,
+                null,
+                null,
+                null,
+                null);
 
         engineA.start(cmd)
                 .compose(id -> engineB.query(id).map(view -> new Object[] {id, view}))

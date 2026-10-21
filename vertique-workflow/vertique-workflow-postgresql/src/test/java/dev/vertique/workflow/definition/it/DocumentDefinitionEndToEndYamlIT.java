@@ -28,6 +28,7 @@ import dev.vertique.workflow.definition.callbacks.StateReducerContributor;
 import dev.vertique.workflow.definition.di.WorkflowDefinitionModule;
 import dev.vertique.workflow.definition.it.fixture.InventoryReservedDoc;
 import dev.vertique.workflow.definition.it.fixture.OrderDocState;
+import dev.vertique.workflow.definition.it.fixture.OrderFulfillmentDocumentWorkflowV1;
 import dev.vertique.workflow.definition.it.fixture.PaymentCapturedDoc;
 import dev.vertique.workflow.definition.it.fixture.PlaceOrderDoc;
 import dev.vertique.workflow.definition.it.fixture.ShipmentCreatedDoc;
@@ -450,7 +451,16 @@ public class DocumentDefinitionEndToEndYamlIT {
     @DisplayName("YAML-defined order fulfillment runs to COMPLETED through manual signal chain")
     void endToEnd_yamlOrderFulfillment_completesThroughSignalChain(VertxTestContext ctx) {
         PlaceOrderDoc payload = new PlaceOrderDoc("yaml-order-" + UUID.randomUUID());
-        StartCommand cmd = new StartCommand("order-fulfillment-doc", payload, payload.idempotencyKey(), null, null);
+        StartCommand cmd = new StartCommand(
+                "order-fulfillment-doc",
+                OrderFulfillmentDocumentWorkflowV1.class.getName(),
+                payload,
+                payload.idempotencyKey(),
+                null,
+                null,
+                null,
+                null,
+                null);
 
         engine.start(cmd)
                 .compose(this::driveToCompletion)

@@ -579,8 +579,16 @@ public class PgWorkflowEnginePayloadRejectionIT {
      */
     private UUID startAndFindOpenTask(String definitionId) {
         String id = UUID.randomUUID().toString();
-        WorkflowInstanceId workflowId = engine.start(
-                        new StartCommand(definitionId, new State(id), "start-" + id, null, null))
+        WorkflowInstanceId workflowId = engine.start(new StartCommand(
+                        definitionId,
+                        contractNameOf(definitionId),
+                        new State(id),
+                        "start-" + id,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null))
                 .toCompletionStage()
                 .toCompletableFuture()
                 .join();
@@ -593,6 +601,20 @@ public class PgWorkflowEnginePayloadRejectionIT {
                 .join();
         assertNotNull(taskId, "the started workflow must have created an open task");
         return taskId;
+    }
+
+    /**
+     * Returns the contract name of a fixture definition.
+     *
+     * @param definitionId the id of one of this test's fixture definitions
+     * @return the name of the definition's contract
+     */
+    private static String contractNameOf(String definitionId) {
+        return switch (definitionId) {
+            case INSTANCE_DEFINITION_ID -> InstanceContract.class.getName();
+            case BRANCH_DEFINITION_ID -> BranchContract.class.getName();
+            default -> throw new IllegalArgumentException("unknown fixture definition: " + definitionId);
+        };
     }
 
     private static Future<TaskMutationResult> complete(UUID taskId, String decision, Object payload, String key) {

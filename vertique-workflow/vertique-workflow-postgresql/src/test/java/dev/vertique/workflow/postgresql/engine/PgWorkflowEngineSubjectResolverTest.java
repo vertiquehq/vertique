@@ -311,7 +311,15 @@ class PgWorkflowEngineSubjectResolverTest {
 
         // Pass a state with articleId=null — the resolver would return null, but caller ref wins.
         StartCommand cmd = new StartCommand(
-                "subj-test-with-resolver", new ArticleState(null, null), "caller-wins-key-1", null, callerRef);
+                "subj-test-with-resolver",
+                WithResolverContract.class.getName(),
+                new ArticleState(null, null),
+                "caller-wins-key-1",
+                null,
+                callerRef,
+                null,
+                null,
+                null);
 
         Future<WorkflowInstanceId> result = engine.start(cmd, tx);
 
@@ -336,10 +344,14 @@ class PgWorkflowEngineSubjectResolverTest {
         // articleId is non-null → resolver returns WorkflowSubjectRef("Article", "art-42", "v3")
         StartCommand cmd = new StartCommand(
                 "subj-test-with-resolver",
+                WithResolverContract.class.getName(),
                 new ArticleState("art-42", "v3"),
                 "resolver-fallback-key-1",
                 null,
-                null /* no caller ref */);
+                null /* no caller ref */,
+                null,
+                null,
+                null);
 
         Future<WorkflowInstanceId> result = engine.start(cmd, tx);
 
@@ -363,10 +375,14 @@ class PgWorkflowEngineSubjectResolverTest {
 
         StartCommand cmd = new StartCommand(
                 "subj-test-no-resolver",
+                NoResolverContract.class.getName(),
                 new ArticleState("art-99", "v1"),
                 "neither-key-1",
                 null,
-                null /* no caller ref */);
+                null /* no caller ref */,
+                null,
+                null,
+                null);
 
         Future<WorkflowInstanceId> result = engine.start(cmd, tx);
 
@@ -385,10 +401,14 @@ class PgWorkflowEngineSubjectResolverTest {
         // articleId=null causes the resolver in WITH_RESOLVER_DEF to return null.
         StartCommand cmd = new StartCommand(
                 "subj-test-with-resolver",
+                WithResolverContract.class.getName(),
                 new ArticleState(null, null),
                 "resolver-null-key-1",
                 null,
-                null /* no caller ref */);
+                null /* no caller ref */,
+                null,
+                null,
+                null);
 
         Future<WorkflowInstanceId> result = engine.start(cmd, tx);
 
@@ -454,7 +474,15 @@ class PgWorkflowEngineSubjectResolverTest {
         stubDedup(id);
 
         StartCommand cmd = new StartCommand(
-                "subj-test-spy-resolver", new ArticleState("art-1", "v7"), "spy-caller-wins-key-1", null, callerRef);
+                "subj-test-spy-resolver",
+                SpyResolverContract.class.getName(),
+                new ArticleState("art-1", "v7"),
+                "spy-caller-wins-key-1",
+                null,
+                callerRef,
+                null,
+                null,
+                null);
 
         Future<WorkflowInstanceId> result = engine.start(cmd, tx);
 

@@ -335,8 +335,12 @@ public class PgWorkflowEngineSignalTimeoutIT {
         String id = UUID.randomUUID().toString();
         StartCommand cmd = new StartCommand(
                 "signal-timeout-test",
+                FakeTimeoutContract.class.getName(),
                 new OrderPayload(id),
                 java.util.UUID.randomUUID().toString(),
+                null,
+                null,
+                null,
                 null,
                 null);
 
@@ -404,8 +408,12 @@ public class PgWorkflowEngineSignalTimeoutIT {
         String id = UUID.randomUUID().toString();
         StartCommand cmd = new StartCommand(
                 "signal-timeout-test",
+                FakeTimeoutContract.class.getName(),
                 new OrderPayload(id),
                 java.util.UUID.randomUUID().toString(),
+                null,
+                null,
+                null,
                 null,
                 null);
 
@@ -496,8 +504,12 @@ public class PgWorkflowEngineSignalTimeoutIT {
         String id = UUID.randomUUID().toString();
         StartCommand cmd = new StartCommand(
                 "signal-no-timeout-test",
+                FakeNoTimeoutContract.class.getName(),
                 new OrderPayload(id),
                 java.util.UUID.randomUUID().toString(),
+                null,
+                null,
+                null,
                 null,
                 null);
 
@@ -546,8 +558,12 @@ public class PgWorkflowEngineSignalTimeoutIT {
         String id = UUID.randomUUID().toString();
         StartCommand cmd = new StartCommand(
                 "signal-timeout-test",
+                FakeTimeoutContract.class.getName(),
                 new OrderPayload(id),
                 java.util.UUID.randomUUID().toString(),
+                null,
+                null,
+                null,
                 null,
                 null);
 

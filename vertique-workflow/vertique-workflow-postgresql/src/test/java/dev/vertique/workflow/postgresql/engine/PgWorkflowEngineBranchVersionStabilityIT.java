@@ -213,8 +213,16 @@ public class PgWorkflowEngineBranchVersionStabilityIT {
 
     private WorkflowInstanceId startWithSubjectVersion(String id, String subjectVersion) {
         WorkflowSubjectRef ref = subjectVersion == null ? null : new WorkflowSubjectRef("Order", id, subjectVersion);
-        StartCommand cmd =
-                new StartCommand(DEFINITION.definitionId(), new StartReview(id), "idem-vsa-" + id, null, ref);
+        StartCommand cmd = new StartCommand(
+                DEFINITION.definitionId(),
+                DEFINITION.contract().getName(),
+                new StartReview(id),
+                "idem-vsa-" + id,
+                null,
+                ref,
+                null,
+                null,
+                null);
         return engine.start(cmd).toCompletionStage().toCompletableFuture().join();
     }
 

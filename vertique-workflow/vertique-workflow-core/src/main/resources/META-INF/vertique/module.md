@@ -127,6 +127,8 @@ static WorkflowContributor orderFulfillment(OrderFulfillmentDefinition definitio
 
 The registry validates definitions at registration time. Invalid graphs fail before they can serve traffic.
 
+`definitionClass(Class<?>)` answers with a `RegisteredDefinitionClass(definitionId, contractName, contract)` for the exact runtime class of a registered definition, and is empty for a class that was never registered or was registered under more than one definition id. `WorkflowClientFactory` uses it to create a client from a definition class. It is an abstract member of the interface: `DefaultWorkflowRegistry` implements it, and a custom `WorkflowRegistry` implementation no longer compiles until it implements the member (an implementation that has no definition classes returns `Optional.empty()`). Workflow releases may add further abstract members, so the registry is an interface the framework implements rather than one applications extend.
+
 Registration runs the plan checks and the callback consistency check, indexes the definition's type names (see Logical Type Names), then every contributed
 `WorkflowDefinitionValidator`, and only then publishes the definition. The validator step applies to
 bootstrap and runtime registrations alike. A validator exception propagates unchanged to the caller
@@ -149,7 +151,7 @@ The Postgres implementation opens its own transaction for each call. Code that a
 
 Instance state is modeled as a single current snapshot plus an append-only history: `query` returns the latest snapshot, and each transition that produced it is recorded as a separate history entry.
 
-Starts require an idempotency key. `StartCommand.requestedDefinitionVersion` may pin a new instance to a specific registered version; when omitted, the current version is used. Idempotency and dedup keys are scoped to what they protect — a start key is scoped to the definition id and a signal dedup key is scoped to the workflow instance; see `dev.vertique:vertique-workflow-postgresql` for the complete key-scope table across all operations.
+Starts require an idempotency key. `StartCommand` has nine components: `definitionId`, `contractName`, `payload`, `idempotencyKey`, `businessKey`, `subjectRef`, `requestedDefinitionVersion`, `startScope` and `requestedTargetScope`; there is no shorter constructor, so a direct caller passes `null` for the optional components. `contractName` names the contract the caller started through and must not be blank. `requestedDefinitionVersion` may pin a new instance to a specific registered version; when omitted, the current version is used. The engine does not read `startScope` or `requestedTargetScope` yet; pass `null` for both. Idempotency and dedup keys are scoped to what they protect — a start key is scoped to the definition id and a signal dedup key is scoped to the workflow instance; see `dev.vertique:vertique-workflow-postgresql` for the complete key-scope table across all operations.
 
 ### Tenant Key on Instances, Tasks And Filters
 
@@ -226,15 +228,20 @@ public interface OrderFulfillmentWorkflow {
 }
 ```
 
-Create a proxy through `WorkflowClientFactory`:
+A typed client is always bound to one workflow definition id; no `WorkflowClientFactory` method takes a contract alone. Create it from the class of a registered definition, or from a contract and a definition id:
 
 ```java
-@Provides
-@Singleton
-static OrderFulfillmentWorkflow orderWorkflow(WorkflowClientFactory factory) {
-    return factory.create(OrderFulfillmentWorkflow.class);
-}
+OrderFulfillmentWorkflow orders = factory.create(OrderFulfillmentDefinition.class);
+OrderFulfillmentWorkflow byId = factory.create(OrderFulfillmentWorkflow.class, "order-fulfillment");
 ```
+
+- **From a definition class.** `create(DefinitionClass)` looks the class up in the registry. A class that is not registered, or that is registered under more than one definition id, fails with `WorkflowProxyContractException` naming the class. The client's contract is the definition's contract.
+- **From a contract and an id.** `create(Contract.class, definitionId)` needs a nonblank id of at most 255 code points (`IllegalArgumentException` otherwise) and does not require the id to be registered yet, because definitions may be loaded later. The contract name is `@WorkflowContract.value()` or, when empty, the interface's binary name.
+- **Version and scope.** A client starts the current version of its definition. `client(DefinitionClass)` and `client(Contract.class, definitionId)` return a `WorkflowClientBuilder` with `version(long)` (positive, `IllegalArgumentException` otherwise), `version(targetScope, long)`, `scope(startScope)` and `create()`. The selections are recorded in the client's `WorkflowClientBinding`; the engine does not act on the two scope selections yet.
+- **What creation checks.** Creation validates the contract interface's methods only: the annotation, the interface kind, one role annotation per method, one start method, unique signal names and the method shapes. It does not resolve a plan or compare payload types; a payload that does not fit the definition is reported when the client starts or signals.
+- **Generated and reflective clients.** Both build the start command through `WorkflowClientBinding.startCommand(...)`, so they send the same command. A generated proxy takes `(WorkflowOperations, WorkflowClientBinding)` and embeds no definition id or version.
+
+The `definitionId` and `definitionVersion` attributes of `@WorkflowContract` are not read by clients. `WorkflowClientFactory.create(Contract.class)` no longer exists, and the annotation processor no longer generates Dagger providers of typed clients: obtain a client from the factory, for example in your own `@Provides` method.
 
 `@WorkflowContract.value()` gives the contract a logical name (see Logical Type Names); the name does not change the plan hash. Contract annotations are useful for type-safe application code. Document-defined workflows still use a contract class today; see `dev.vertique:vertique-workflow-definition` for the typed document model and its current limits.
 
@@ -408,8 +415,8 @@ reconciliation, fenced claim/complete/release operations, and
 owner and id: the highest ACTIVE or SUPERSEDED version becomes ACTIVE and lower eligible versions
 become SUPERSEDED; CANDIDATE, ACTIVATING, DEPRECATED, and RETIRED rows remain unchanged.
 `WorkflowRegistry` gains `markDeprecated(definitionId, version)` (default throws
-`UnsupportedOperationException`) and `isDeprecated` (default `false`) so existing third-party registries are
-unaffected. `DefaultWorkflowRegistry` keeps the mark under its lock: current resolution skips deprecated
+`UnsupportedOperationException`) and `isDeprecated` (default `false`), which have defaults so
+they did not break implementations that existed then. `DefaultWorkflowRegistry` keeps the mark under its lock: current resolution skips deprecated
 versions and fails with the same unknown-definition exception when all are deprecated, pinned resolution still serves them, and
 `unregister` clears the mark. Marking an unregistered version is a no-op. The store SPI adds the
 conditional `transition(key, from, to)` operation and the lifecycle adds `deprecate(DefinitionKey)`.

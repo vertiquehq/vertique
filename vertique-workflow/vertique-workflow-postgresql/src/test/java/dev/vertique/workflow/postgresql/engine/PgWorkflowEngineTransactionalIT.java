@@ -297,7 +297,16 @@ public class PgWorkflowEngineTransactionalIT {
     @DisplayName("start init function produces OrderState with correct fields (state_json decoded)")
     void startInitializerProducesOrderStateNotPlaceOrder(VertxTestContext ctx) {
         PlaceOrder payload = new PlaceOrder("o1", 100);
-        StartCommand cmd = new StartCommand("engine-tx-order", payload, payload.idempotencyKey(), null, null);
+        StartCommand cmd = new StartCommand(
+                "engine-tx-order",
+                FakeSimpleContract.class.getName(),
+                payload,
+                payload.idempotencyKey(),
+                null,
+                null,
+                null,
+                null,
+                null);
 
         simpleEngine
                 .start(cmd)
@@ -323,7 +332,16 @@ public class PgWorkflowEngineTransactionalIT {
     @DisplayName("start commits instance + history + dedup atomically; rollback leaves zero rows")
     void startCommitsInstancePlusHistoryPlusDedup(VertxTestContext ctx) {
         PlaceOrder payload = new PlaceOrder("o2", 200);
-        StartCommand cmd = new StartCommand("engine-tx-order", payload, payload.idempotencyKey(), null, null);
+        StartCommand cmd = new StartCommand(
+                "engine-tx-order",
+                FakeSimpleContract.class.getName(),
+                payload,
+                payload.idempotencyKey(),
+                null,
+                null,
+                null,
+                null,
+                null);
 
         simpleEngine
                 .start(cmd)
@@ -365,7 +383,16 @@ public class PgWorkflowEngineTransactionalIT {
     @SuppressWarnings("unchecked")
     void concurrentSignalsOptimisticConcurrency(VertxTestContext ctx) {
         PlaceOrder payload = new PlaceOrder("o3", 300);
-        StartCommand startCmd = new StartCommand("engine-tx-signal", payload, payload.idempotencyKey(), null, null);
+        StartCommand startCmd = new StartCommand(
+                "engine-tx-signal",
+                FakeSignalContract.class.getName(),
+                payload,
+                payload.idempotencyKey(),
+                null,
+                null,
+                null,
+                null,
+                null);
         String dedupA = "signal-dedup-" + UUID.randomUUID();
         String dedupB = "signal-dedup-" + UUID.randomUUID();
 
@@ -428,7 +455,16 @@ public class PgWorkflowEngineTransactionalIT {
     @DisplayName("signal payload coercion: raw Map coerced to PaymentCaptured before state updater")
     void signalPayloadCoercion(VertxTestContext ctx) {
         PlaceOrder payload = new PlaceOrder("o4", 400);
-        StartCommand startCmd = new StartCommand("engine-tx-signal", payload, payload.idempotencyKey(), null, null);
+        StartCommand startCmd = new StartCommand(
+                "engine-tx-signal",
+                FakeSignalContract.class.getName(),
+                payload,
+                payload.idempotencyKey(),
+                null,
+                null,
+                null,
+                null,
+                null);
         String dedupKey = "coerce-dedup-" + UUID.randomUUID();
         Map<String, Object> rawPayload = Map.of("chargeId", "charge-xyz");
 
@@ -459,7 +495,16 @@ public class PgWorkflowEngineTransactionalIT {
     @DisplayName("signal with typed PaymentCaptured payload is processed correctly (no coercion needed)")
     void signalWithTypedPayload(VertxTestContext ctx) {
         PlaceOrder payload = new PlaceOrder("o5", 500);
-        StartCommand startCmd = new StartCommand("engine-tx-signal", payload, payload.idempotencyKey(), null, null);
+        StartCommand startCmd = new StartCommand(
+                "engine-tx-signal",
+                FakeSignalContract.class.getName(),
+                payload,
+                payload.idempotencyKey(),
+                null,
+                null,
+                null,
+                null,
+                null);
         String dedupKey = "typed-dedup-" + UUID.randomUUID();
 
         signalEngine
@@ -486,7 +531,16 @@ public class PgWorkflowEngineTransactionalIT {
     @DisplayName("start is idempotent: duplicate call returns same instance id, no new rows")
     void startIsIdempotent(VertxTestContext ctx) {
         PlaceOrder payload = new PlaceOrder("o6", 600);
-        StartCommand cmd = new StartCommand("engine-tx-order", payload, payload.idempotencyKey(), null, null);
+        StartCommand cmd = new StartCommand(
+                "engine-tx-order",
+                FakeSimpleContract.class.getName(),
+                payload,
+                payload.idempotencyKey(),
+                null,
+                null,
+                null,
+                null,
+                null);
 
         simpleEngine
                 .start(cmd)
@@ -514,7 +568,16 @@ public class PgWorkflowEngineTransactionalIT {
     void signalOnNonWaitingInstanceFails(VertxTestContext ctx) {
         PlaceOrder payload = new PlaceOrder("o7", 700);
         // Use simple engine — the instance will be COMPLETED immediately (no wait step).
-        StartCommand cmd = new StartCommand("engine-tx-order", payload, payload.idempotencyKey(), null, null);
+        StartCommand cmd = new StartCommand(
+                "engine-tx-order",
+                FakeSimpleContract.class.getName(),
+                payload,
+                payload.idempotencyKey(),
+                null,
+                null,
+                null,
+                null,
+                null);
         String dedupKey = "reject-dedup-" + UUID.randomUUID();
 
         simpleEngine
@@ -612,7 +675,16 @@ public class PgWorkflowEngineTransactionalIT {
                 Clock.systemUTC());
 
         PlaceOrder payload = new PlaceOrder("o8", 800);
-        StartCommand cmd = new StartCommand("engine-tx-dispatch", payload, payload.idempotencyKey(), null, null);
+        StartCommand cmd = new StartCommand(
+                "engine-tx-dispatch",
+                FakeSimpleContract.class.getName(),
+                payload,
+                payload.idempotencyKey(),
+                null,
+                null,
+                null,
+                null,
+                null);
 
         dispatchEngine
                 .start(cmd)

@@ -48,6 +48,8 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
  *   <li>{@code byDefinition} — {@link ConcurrentHashMap} keyed by definitionId, inner
  *       {@link ConcurrentSkipListMap} keyed by version; allows efficient lookup of the highest
  *       version via {@code lastEntry()}.</li>
+ *   <li>{@code sources} — the registered definition objects per id and version; also the source of
+ *       {@link #definitionClass(Class)}.</li>
  *   <li>{@code byContract} — {@link ConcurrentHashMap} keyed by contract interface class; links
  *       the class to its definition metadata.</li>
  *   <li>{@code deprecated} — set of version numbers per definitionId that are marked deprecated;
@@ -629,6 +631,47 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
                         "No workflow definition registered for contract: " + contractInterface.getName());
             }
             return meta;
+        } finally {
+            rwLock.readLock().unlock();
+        }
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Derived from the registered definitions under the read lock, so it follows
+     * {@link #unregister(String, long)}. When several versions of one id share the class, the
+     * highest version's contract answers.
+     */
+    @Override
+    public Optional<RegisteredDefinitionClass> definitionClass(Class<?> definitionClass) {
+        Objects.requireNonNull(definitionClass, "definitionClass");
+        rwLock.readLock().lock();
+        try {
+            String foundId = null;
+            WorkflowDefinition<?, ?> foundDefinition = null;
+            long foundVersion = Long.MIN_VALUE;
+            for (Map.Entry<String, HashMap<Long, WorkflowDefinition<?, ?>>> byId : sources.entrySet()) {
+                for (Map.Entry<Long, WorkflowDefinition<?, ?>> byVersion :
+                        byId.getValue().entrySet()) {
+                    if (byVersion.getValue().getClass() != definitionClass) {
+                        continue;
+                    }
+                    if (foundId != null && !foundId.equals(byId.getKey())) {
+                        return Optional.empty();
+                    }
+                    if (foundId == null || byVersion.getKey() > foundVersion) {
+                        foundId = byId.getKey();
+                        foundDefinition = byVersion.getValue();
+                        foundVersion = byVersion.getKey();
+                    }
+                }
+            }
+            if (foundId == null) {
+                return Optional.empty();
+            }
+            Class<?> contract = foundDefinition.contract();
+            return Optional.of(new RegisteredDefinitionClass(foundId, typeNames.contractNameOf(contract), contract));
         } finally {
             rwLock.readLock().unlock();
         }

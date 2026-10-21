@@ -181,7 +181,16 @@ public class DefinitionReinstatementIT {
             WorkflowInstanceId started = await(restarted
                     .app()
                     .workflowOperations()
-                    .start(new StartCommand(id, new CodeStart("reinstated"), "reinstated-start", null, null, null)));
+                    .start(new StartCommand(
+                            id,
+                            ReinstatedCodeV1.class.getName(),
+                            new CodeStart("reinstated"),
+                            "reinstated-start",
+                            null,
+                            null,
+                            null,
+                            null,
+                            null)));
             WorkflowView view = await(restarted.app().workflowOperations().query(started));
 
             // Then it ran on the reinstated version to a terminal status, so no instance is pinned afterwards
@@ -561,7 +570,8 @@ public class DefinitionReinstatementIT {
             assertThat(registry.resolvePinned(id, 3).plan().planHash()).isEqualTo(hash3);
 
             // And the admission still sees only the committed, retired row and is refused
-            Throwable raced = failureOf(operations.start(startCommand(id, "race-v3", 3), racer.connection()));
+            Throwable raced =
+                    failureOf(operations.start(startCommand(id, RollbackV3.class, "race-v3", 3), racer.connection()));
             assertThat(raced).isInstanceOfSatisfying(WorkflowDefinitionLifecycleException.class, failure -> {
                 assertThat(failure.key()).isEqualTo(v3);
             });
@@ -584,15 +594,15 @@ public class DefinitionReinstatementIT {
             // And admission still sees only committed eligibility: the retired version is refused although its
             // publication is still local, and the active version is admitted
             Tx refusedAdmission = Tx.begin(scenario, null);
-            Throwable stillRetired =
-                    failureOf(operations.start(startCommand(id, "gate-v3", 3), refusedAdmission.connection()));
+            Throwable stillRetired = failureOf(
+                    operations.start(startCommand(id, RollbackV3.class, "gate-v3", 3), refusedAdmission.connection()));
             refusedAdmission.rollback();
             assertThat(stillRetired).isInstanceOfSatisfying(WorkflowDefinitionLifecycleException.class, failure -> {
                 assertThat(failure.key()).isEqualTo(v3);
             });
             Tx admitted = Tx.begin(scenario, null);
             WorkflowInstanceId admittedId =
-                    await(operations.start(startCommand(id, "gate-v2", 2), admitted.connection()));
+                    await(operations.start(startCommand(id, RollbackV2.class, "gate-v2", 2), admitted.connection()));
             admitted.commit();
             assertThat(await(boot.app().workflowOperations().query(admittedId))
                             .instance()
@@ -636,8 +646,8 @@ public class DefinitionReinstatementIT {
 
             // And admission now accepts the committed version
             Tx afterCommit = Tx.begin(scenario, null);
-            WorkflowInstanceId pinned =
-                    await(operations.start(startCommand(id, "after-v3", 3), afterCommit.connection()));
+            WorkflowInstanceId pinned = await(
+                    operations.start(startCommand(id, RollbackV3.class, "after-v3", 3), afterCommit.connection()));
             afterCommit.commit();
             assertThat(await(boot.app().workflowOperations().query(pinned))
                             .instance()
@@ -1078,8 +1088,18 @@ public class DefinitionReinstatementIT {
         return documentText(definitionId, version, contract).getBytes(StandardCharsets.UTF_8);
     }
 
-    private static StartCommand startCommand(String definitionId, String idempotencyKey, long version) {
-        return new StartCommand(definitionId, new CodeStart(idempotencyKey), idempotencyKey, null, null, version);
+    private static StartCommand startCommand(
+            String definitionId, Class<?> contract, String idempotencyKey, long version) {
+        return new StartCommand(
+                definitionId,
+                contract.getName(),
+                new CodeStart(idempotencyKey),
+                idempotencyKey,
+                null,
+                null,
+                version,
+                null,
+                null);
     }
 
     private static List<Long> registeredVersions(WorkflowRegistry registry, String definitionId) {

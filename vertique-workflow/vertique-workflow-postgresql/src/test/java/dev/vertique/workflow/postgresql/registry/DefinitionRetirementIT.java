@@ -784,7 +784,8 @@ public class DefinitionRetirementIT {
 
             // When B admits a start while the version is ACTIVE and leaves its transaction uncommitted
             Tx admitted = fixture.begin(null);
-            await(staleOps.start(startCommand(pinId, "stale-pin-start", 1), admitted.connection()));
+            await(staleOps.start(
+                    startCommand(pinId, StalePinCaseV1.class, "stale-pin-start", 1), admitted.connection()));
             fixture.awaitAdvisory(pinId, "ShareLock", true, 1);
 
             // And deprecation is requested, so it queues behind the admission
@@ -821,8 +822,8 @@ public class DefinitionRetirementIT {
 
             // When the stale node B starts it in a caller transaction
             Tx stale = fixture.begin(null);
-            Throwable refusal =
-                    failureOf(staleOps.start(startCommand(goneId, "stale-gone-start", 1), stale.connection()));
+            Throwable refusal = failureOf(staleOps.start(
+                    startCommand(goneId, StaleGoneCaseV1.class, "stale-gone-start", 1), stale.connection()));
             stale.rollback();
 
             // Then the start is refused with a typed lifecycle failure naming the retired version
@@ -1136,8 +1137,8 @@ public class DefinitionRetirementIT {
             long historyBefore = fixture.historyCount();
 
             // When a start and a migration are attempted from the old snapshots
-            Throwable startRefusal =
-                    failureOf(staleOps.start(startCommand(startId, "snapshot-start", 1), startSnapshot.connection()));
+            Throwable startRefusal = failureOf(staleOps.start(
+                    startCommand(startId, SnapshotStartCaseV1.class, "snapshot-start", 1), startSnapshot.connection()));
             startSnapshot.rollback();
             Throwable migrateRefusal = failureOf(repository.migratePinAndState(
                     instanceRow(sourcePin, migrateId, 2, migrateLoaded.planHash(), 1, WorkflowStatus.RUNNING),
@@ -1218,8 +1219,8 @@ public class DefinitionRetirementIT {
             Tx second = fixture.begin(null);
 
             // When both starts, with distinct instance and idempotency keys, reach their admission barriers
-            await(ops.start(startCommand(id, "concurrent-first", 1), first.connection()));
-            await(ops.start(startCommand(id, "concurrent-second", 1), second.connection()));
+            await(ops.start(startCommand(id, ConcurrentCaseV1.class, "concurrent-first", 1), first.connection()));
+            await(ops.start(startCommand(id, ConcurrentCaseV1.class, "concurrent-second", 1), second.connection()));
 
             // Then both hold the shared id lock at once, before any exclusive request exists
             fixture.awaitAdvisory(id, "ShareLock", true, 2);
@@ -1494,7 +1495,8 @@ public class DefinitionRetirementIT {
             // When the real engine start is invoked with each invalid client and a fresh dedup key
             for (int i = 0; i < invalidClients.size(); i++) {
                 String dedupKey = "autocommit-" + i;
-                Throwable engineFailure = failureOf(ops.start(startCommand(id, dedupKey, 1), invalidClients.get(i)));
+                Throwable engineFailure = failureOf(
+                        ops.start(startCommand(id, AutocommitCaseV1.class, dedupKey, 1), invalidClients.get(i)));
 
                 // Then it fails with an IllegalArgumentException and leaves no dedup, instance or history row
                 assertThat(engineFailure)
@@ -1535,8 +1537,8 @@ public class DefinitionRetirementIT {
             // When each rejected start is retried with the same key in a genuine transaction
             for (int i = 0; i < invalidClients.size(); i++) {
                 String dedupKey = "autocommit-" + i;
-                WorkflowInstanceId retried =
-                        await(pool.withTransaction(connection -> ops.start(startCommand(id, dedupKey, 1), connection)));
+                WorkflowInstanceId retried = await(pool.withTransaction(
+                        connection -> ops.start(startCommand(id, AutocommitCaseV1.class, dedupKey, 1), connection)));
 
                 // Then a real instance is created and the dedup slot resolves to it
                 assertThat(fixture.instanceExists(retried.value())).isTrue();
@@ -1551,7 +1553,8 @@ public class DefinitionRetirementIT {
             assertThat(activeConnection.transaction().completion().isComplete()).isFalse();
 
             // When the engine starts an instance in it
-            WorkflowInstanceId accepted = await(ops.start(startCommand(id, "autocommit-active", 1), activeConnection));
+            WorkflowInstanceId accepted = await(
+                    ops.start(startCommand(id, AutocommitCaseV1.class, "autocommit-active", 1), activeConnection));
 
             // Then the start is accepted and follows shared admission, holding the id lock until commit
             fixture.awaitAdvisory(id, "ShareLock", true, 1);
@@ -1586,7 +1589,8 @@ public class DefinitionRetirementIT {
             await(app.definitionService().activate(advisoryKey));
             Stored activeBefore = fixture.stored(advisoryId, 1);
             Tx holder = fixture.begin(null);
-            await(ops.start(startCommand(advisoryId, "timeout-holder", 1), holder.connection()));
+            await(ops.start(
+                    startCommand(advisoryId, TimeoutAdvisoryCaseV1.class, "timeout-holder", 1), holder.connection()));
             fixture.awaitAdvisory(advisoryId, "ShareLock", true, 1);
 
             // When an exclusive store mutation queues behind it with a shortened wait, and another admission
@@ -1595,8 +1599,8 @@ public class DefinitionRetirementIT {
             Future<Void> mutation = app.definitionService().deprecate(advisoryKey);
             fixture.awaitAdvisory(advisoryId, "ExclusiveLock", false, 1);
             Tx queued = fixture.begin(null);
-            Future<WorkflowInstanceId> queuedStart =
-                    ops.start(startCommand(advisoryId, "timeout-queued", 1), queued.connection());
+            Future<WorkflowInstanceId> queuedStart = ops.start(
+                    startCommand(advisoryId, TimeoutAdvisoryCaseV1.class, "timeout-queued", 1), queued.connection());
             fixture.awaitAdvisory(advisoryId, "ShareLock", false, 1);
             Throwable timeout = failureOf(mutation);
 
@@ -2035,9 +2039,18 @@ public class DefinitionRetirementIT {
         }
     }
 
-    private static StartCommand startCommand(String definitionId, String idempotencyKey, long version) {
+    private static StartCommand startCommand(
+            String definitionId, Class<?> contract, String idempotencyKey, long version) {
         return new StartCommand(
-                definitionId, new PlaceOrderDoc("order-" + idempotencyKey), idempotencyKey, null, null, version);
+                definitionId,
+                contract.getName(),
+                new PlaceOrderDoc("order-" + idempotencyKey),
+                idempotencyKey,
+                null,
+                null,
+                version,
+                null,
+                null);
     }
 
     private static WorkflowInstance instanceRow(

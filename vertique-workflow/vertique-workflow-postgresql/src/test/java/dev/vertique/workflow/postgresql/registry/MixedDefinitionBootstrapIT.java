@@ -691,7 +691,16 @@ public class MixedDefinitionBootstrapIT {
             await(service.activate(v1));
             WorkflowInstanceId pinned = await(first.app()
                     .workflowOperations()
-                    .start(new StartCommand(docId, new PlaceOrderDoc("stale-order"), "stale-pin", null, null, 1L)));
+                    .start(new StartCommand(
+                            docId,
+                            StaleDocV1.class.getName(),
+                            new PlaceOrderDoc("stale-order"),
+                            "stale-pin",
+                            null,
+                            null,
+                            1L,
+                            null,
+                            null)));
             CompiledDefinitionRef loadedV2 = await(service.load(
                     documentBytes(docId, 2, StaleDocV2.class),
                     DocumentFormat.YAML,
@@ -809,7 +818,16 @@ public class MixedDefinitionBootstrapIT {
             // And an explicit new start of the deprecated version fails typed while the pinned instance resumes
             Throwable newStart = failureOf(second.app()
                     .workflowOperations()
-                    .start(new StartCommand(docId, new PlaceOrderDoc("stale-new"), "stale-new", null, null, 1L)));
+                    .start(new StartCommand(
+                            docId,
+                            StaleDocV1.class.getName(),
+                            new PlaceOrderDoc("stale-new"),
+                            "stale-new",
+                            null,
+                            null,
+                            1L,
+                            null,
+                            null)));
             assertThat(newStart).isInstanceOfSatisfying(WorkflowDefinitionLifecycleException.class, failure -> {
                 assertThat(failure.reason()).isEqualTo(Reason.DEPRECATED);
                 assertThat(failure.key()).isEqualTo(v1);
@@ -939,7 +957,16 @@ public class MixedDefinitionBootstrapIT {
             Throwable startRefusal = failureOf(oldNode.app()
                     .transactionalOperations()
                     .start(
-                            new StartCommand(id, new CodeStart("rolling"), "rolling-start", null, null, 2L),
+                            new StartCommand(
+                                    id,
+                                    RollingV2.class.getName(),
+                                    new CodeStart("rolling"),
+                                    "rolling-start",
+                                    null,
+                                    null,
+                                    2L,
+                                    null,
+                                    null),
                             startTx.connection()));
             startTx.rollback();
 
@@ -1261,7 +1288,16 @@ public class MixedDefinitionBootstrapIT {
             // And an instance pinned to version 1, waiting for its first signal
             WorkflowInstanceId pinned = await(first.app()
                     .workflowOperations()
-                    .start(new StartCommand(id, new PlaceOrderDoc("packaged-order"), "packaged-pin", null, null, 1L)));
+                    .start(new StartCommand(
+                            id,
+                            PackagedDeprecatedV1.class.getName(),
+                            new PlaceOrderDoc("packaged-order"),
+                            "packaged-pin",
+                            null,
+                            null,
+                            1L,
+                            null,
+                            null)));
 
             // And version 1 deprecated through the service
             await(first.app().definitionService().deprecate(v1));
@@ -1293,7 +1329,16 @@ public class MixedDefinitionBootstrapIT {
             // And an explicit new start of the deprecated version fails typed
             Throwable newStart = failureOf(second.app()
                     .workflowOperations()
-                    .start(new StartCommand(id, new PlaceOrderDoc("packaged-new"), "packaged-new", null, null, 1L)));
+                    .start(new StartCommand(
+                            id,
+                            PackagedDeprecatedV1.class.getName(),
+                            new PlaceOrderDoc("packaged-new"),
+                            "packaged-new",
+                            null,
+                            null,
+                            1L,
+                            null,
+                            null)));
             assertThat(newStart).isInstanceOfSatisfying(WorkflowDefinitionLifecycleException.class, failure -> {
                 assertThat(failure.reason()).isEqualTo(Reason.DEPRECATED);
                 assertThat(failure.key()).isEqualTo(v1);

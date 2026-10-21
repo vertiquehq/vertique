@@ -307,8 +307,12 @@ public class PgWorkflowEngineCancelTimerIT {
         String id = UUID.randomUUID().toString();
         StartCommand cmd = new StartCommand(
                 "cancel-standalone-timer-test",
+                StandaloneTimerContract.class.getName(),
                 new Payload(id),
                 java.util.UUID.randomUUID().toString(),
+                null,
+                null,
+                null,
                 null,
                 null);
 
@@ -375,8 +379,12 @@ public class PgWorkflowEngineCancelTimerIT {
         String id = UUID.randomUUID().toString();
         StartCommand cmd = new StartCommand(
                 "cancel-signal-timeout-test",
+                SignalTimeoutContract.class.getName(),
                 new Payload(id),
                 java.util.UUID.randomUUID().toString(),
+                null,
+                null,
+                null,
                 null,
                 null);
 

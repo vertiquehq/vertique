@@ -273,7 +273,16 @@ public class PgWorkflowEngineRaceJoinSupersedesOpenWaitsIT {
     @DisplayName("FIRST_SUCCESS win by branch-a cancels branch-b's open timer and task before SUPERSEDED update")
     void firstSuccessSupersedeCancelsLoserBranchWaits(VertxTestContext ctx) {
         StartRace payload = new StartRace("rs1");
-        StartCommand cmd = new StartCommand(DEFINITION.definitionId(), payload, payload.idempotencyKey(), null, null);
+        StartCommand cmd = new StartCommand(
+                DEFINITION.definitionId(),
+                DEFINITION.contract().getName(),
+                payload,
+                payload.idempotencyKey(),
+                null,
+                null,
+                null,
+                null,
+                null);
 
         AtomicReference<WorkflowInstanceId> idRef = new AtomicReference<>();
         AtomicReference<UUID> branchBTokenIdRef = new AtomicReference<>();

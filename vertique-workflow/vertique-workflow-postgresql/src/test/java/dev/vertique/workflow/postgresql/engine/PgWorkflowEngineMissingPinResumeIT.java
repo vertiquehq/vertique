@@ -202,7 +202,16 @@ public class PgWorkflowEngineMissingPinResumeIT {
             "FR-WF-DEF-062 — signal via engine without pinned version throws typed exception with instanceId; instance unchanged")
     void signalViaEngineWithoutPinnedVersionThrowsTypedExceptionAndRollsBack(VertxTestContext ctx) {
         String key = "missing-pin-signal-" + UUID.randomUUID();
-        StartCommand cmd = new StartCommand(DEF_ID, new MissingPinPayload("test"), key, null, null);
+        StartCommand cmd = new StartCommand(
+                DEF_ID,
+                MissingPinContract.class.getName(),
+                new MissingPinPayload("test"),
+                key,
+                null,
+                null,
+                null,
+                null,
+                null);
 
         // Engine A starts the instance — ends up WAITING for "go".
         engineA.start(cmd)
@@ -270,7 +279,16 @@ public class PgWorkflowEngineMissingPinResumeIT {
     @DisplayName("FR-WF-DEF-062 — resume when DB row references unknown version throws typed exception with instanceId")
     void resumeWhenDbRowReferencesUnknownVersionThrowsTypedException(VertxTestContext ctx) {
         String key = "missing-pin-db-version-" + UUID.randomUUID();
-        StartCommand cmd = new StartCommand(DEF_ID, new MissingPinPayload("db-test"), key, null, null);
+        StartCommand cmd = new StartCommand(
+                DEF_ID,
+                MissingPinContract.class.getName(),
+                new MissingPinPayload("db-test"),
+                key,
+                null,
+                null,
+                null,
+                null,
+                null);
 
         engineA.start(cmd)
                 .compose(id -> {

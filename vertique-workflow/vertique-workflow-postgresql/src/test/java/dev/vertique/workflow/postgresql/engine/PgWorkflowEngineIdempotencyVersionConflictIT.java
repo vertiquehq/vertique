@@ -202,8 +202,26 @@ public class PgWorkflowEngineIdempotencyVersionConflictIT {
     @DisplayName("same idempotency key + different requested version → WorkflowIdempotencyConflictException")
     void sameKeyDifferentVersionThrowsConflict(VertxTestContext ctx) {
         String ikey = "conflict-key-" + UUID.randomUUID();
-        StartCommand firstCmd = new StartCommand(DEF_ID, new SimplePayload("p"), ikey, null, null, 1L);
-        StartCommand conflictCmd = new StartCommand(DEF_ID, new SimplePayload("p"), ikey, null, null, 2L);
+        StartCommand firstCmd = new StartCommand(
+                DEF_ID,
+                IdempConflictContractV1.class.getName(),
+                new SimplePayload("p"),
+                ikey,
+                null,
+                null,
+                1L,
+                null,
+                null);
+        StartCommand conflictCmd = new StartCommand(
+                DEF_ID,
+                IdempConflictContractV2.class.getName(),
+                new SimplePayload("p"),
+                ikey,
+                null,
+                null,
+                2L,
+                null,
+                null);
 
         engine.start(firstCmd)
                 .compose(firstId -> {
@@ -239,7 +257,16 @@ public class PgWorkflowEngineIdempotencyVersionConflictIT {
     @DisplayName("same idempotency key + same requested version → idempotent (returns existing instance)")
     void sameKeySameVersionIsIdempotent(VertxTestContext ctx) {
         String ikey = "idempotent-key-" + UUID.randomUUID();
-        StartCommand cmd = new StartCommand(DEF_ID, new SimplePayload("p"), ikey, null, null, 1L);
+        StartCommand cmd = new StartCommand(
+                DEF_ID,
+                IdempConflictContractV1.class.getName(),
+                new SimplePayload("p"),
+                ikey,
+                null,
+                null,
+                1L,
+                null,
+                null);
 
         engine.start(cmd)
                 .compose(firstId -> engine.start(cmd).map(secondId -> new WorkflowInstanceId[] {firstId, secondId}))
@@ -260,9 +287,27 @@ public class PgWorkflowEngineIdempotencyVersionConflictIT {
     @DisplayName("retry with no requested version after explicit v1 start → lenient, returns existing instance")
     void retryWithNoVersionAfterExplicitV1IsLenient(VertxTestContext ctx) {
         String ikey = "lenient-no-version-" + UUID.randomUUID();
-        StartCommand explicitV1 = new StartCommand(DEF_ID, new SimplePayload("p"), ikey, null, null, 1L);
+        StartCommand explicitV1 = new StartCommand(
+                DEF_ID,
+                IdempConflictContractV1.class.getName(),
+                new SimplePayload("p"),
+                ikey,
+                null,
+                null,
+                1L,
+                null,
+                null);
         // retry with no requested version (5-arg form)
-        StartCommand noVersion = new StartCommand(DEF_ID, new SimplePayload("p"), ikey, null, null);
+        StartCommand noVersion = new StartCommand(
+                DEF_ID,
+                IdempConflictContractV2.class.getName(),
+                new SimplePayload("p"),
+                ikey,
+                null,
+                null,
+                null,
+                null,
+                null);
 
         engine.start(explicitV1)
                 .compose(firstId -> engine.start(noVersion).map(retryId -> new WorkflowInstanceId[] {firstId, retryId}))
@@ -284,9 +329,27 @@ public class PgWorkflowEngineIdempotencyVersionConflictIT {
     void firstStartNoVersionRetryWithExplicitV1Conflicts(VertxTestContext ctx) {
         String ikey = "strict-after-no-version-" + UUID.randomUUID();
         // First start: no requested version; registry's current is v2 (highest registered).
-        StartCommand noVersion = new StartCommand(DEF_ID, new SimplePayload("p"), ikey, null, null);
+        StartCommand noVersion = new StartCommand(
+                DEF_ID,
+                IdempConflictContractV2.class.getName(),
+                new SimplePayload("p"),
+                ikey,
+                null,
+                null,
+                null,
+                null,
+                null);
         // Retry with explicit v1.
-        StartCommand explicitV1 = new StartCommand(DEF_ID, new SimplePayload("p"), ikey, null, null, 1L);
+        StartCommand explicitV1 = new StartCommand(
+                DEF_ID,
+                IdempConflictContractV1.class.getName(),
+                new SimplePayload("p"),
+                ikey,
+                null,
+                null,
+                1L,
+                null,
+                null);
 
         engine.start(noVersion)
                 .compose(firstId -> {

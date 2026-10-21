@@ -176,7 +176,16 @@ class WorkflowEngineStartTenantTest {
     }
 
     private static StartCommand startCommand() {
-        return new StartCommand(DEFINITION_ID, Map.of(), "idem-" + UUID.randomUUID(), null, null);
+        return new StartCommand(
+                DEFINITION_ID,
+                Object.class.getName(),
+                Map.of(),
+                "idem-" + UUID.randomUUID(),
+                null,
+                null,
+                null,
+                null,
+                null);
     }
 
     /**

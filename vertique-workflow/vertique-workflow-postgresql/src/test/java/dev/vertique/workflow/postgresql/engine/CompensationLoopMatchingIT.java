@@ -249,7 +249,16 @@ public class CompensationLoopMatchingIT {
     @DisplayName("loop: both s1 dispatch occurrences are compensated (LIFO) after two signal deliveries")
     void bothLoopDispatchOccurrencesAreCompensated(VertxTestContext ctx) {
         LoopStart start = new LoopStart("loop-test-1");
-        StartCommand cmd = new StartCommand("loop-comp-saga", start, start.idempotencyKey(), null, null);
+        StartCommand cmd = new StartCommand(
+                "loop-comp-saga",
+                LoopContract.class.getName(),
+                start,
+                start.idempotencyKey(),
+                null,
+                null,
+                null,
+                null,
+                null);
 
         engine.start(cmd)
                 .compose(id ->

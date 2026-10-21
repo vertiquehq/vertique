@@ -406,8 +406,33 @@ public class RequireVersionStabilityIT {
      */
     private Future<WorkflowInstanceId> startWorkflow(
             String definitionId, StabilityState state, WorkflowSubjectRef subjectRef) {
-        StartCommand cmd = new StartCommand(definitionId, state, state.idempotencyKey(), null, subjectRef);
+        StartCommand cmd = new StartCommand(
+                definitionId,
+                contractNameOf(definitionId),
+                state,
+                state.idempotencyKey(),
+                null,
+                subjectRef,
+                null,
+                null,
+                null);
         return engine.start(cmd);
+    }
+
+    /**
+     * Returns the contract name of a fixture definition.
+     *
+     * @param definitionId the id of one of this test's fixture definitions
+     * @return the name of the definition's contract
+     */
+    private static String contractNameOf(String definitionId) {
+        return switch (definitionId) {
+            case "stability-required-def" -> StabilityRequiredContract.class.getName();
+            case "stability-not-required-def" -> StabilityNotRequiredContract.class.getName();
+            case "signal-then-stability-def" -> SignalThenStabilityContract.class.getName();
+            case "decision-branch-stability-def" -> DecisionBranchContract.class.getName();
+            default -> throw new IllegalArgumentException("unknown fixture definition: " + definitionId);
+        };
     }
 
     /**
@@ -700,7 +725,16 @@ public class RequireVersionStabilityIT {
             // subjectRef with null version — fails per-task stability guard during start tx.
             WorkflowSubjectRef refNoVersion = new WorkflowSubjectRef("Article", "art-10", null);
 
-            engine.start(new StartCommand("stability-required-def", state, state.idempotencyKey(), null, refNoVersion))
+            engine.start(new StartCommand(
+                            "stability-required-def",
+                            StabilityRequiredContract.class.getName(),
+                            state,
+                            state.idempotencyKey(),
+                            null,
+                            refNoVersion,
+                            null,
+                            null,
+                            null))
                     .map(id -> {
                         ctx.verify(() -> ctx.failNow(new AssertionError(
                                 "Start must have failed with WorkflowSubjectVersionUnavailableException")));
