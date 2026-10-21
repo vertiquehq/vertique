@@ -13,6 +13,7 @@ import dev.vertique.workflow.definition.service.WorkflowDefinitionService;
 import dev.vertique.workflow.ops.StartCommand;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.postgresql.registry.DefinitionScenario.Boot;
+import dev.vertique.workflow.postgresql.registry.ManagedDefinitionDatabase.AppComponent;
 import dev.vertique.workflow.registry.store.DefinitionActivation;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.WorkflowScopes;
@@ -92,6 +93,10 @@ final class ActivationFixtures {
 
         WorkflowDefinitionService service() {
             return node.app().definitionService();
+        }
+
+        AppComponent app() {
+            return node.app();
         }
 
         DefinitionScenario database() {

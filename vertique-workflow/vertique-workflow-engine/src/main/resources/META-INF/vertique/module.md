@@ -299,8 +299,11 @@ lifecycle updates it after the durable write commits (`activate`, `deactivateDef
 leaves it as it was. Without a durable store the view is the only state: `activate`, `deactivateDefault`, `follow` and
 `activations` complete synchronously on it and are lost on restart, while `deprecate`, `retire` and `reinstate` stay
 store-only. With a store `activations` reads the store. The startup step restores every stored record into the view, including
-records that name a version this node has no code for, and the records it writes itself on first publication; the view is not
-refreshed from changes that other nodes commit while this node runs. An engine assembled by `WorkflowEngineFactory.create` has
+records that name a version this node has no code for, and the records it writes itself on first publication. While the node
+runs, the propagation pass refreshes the view from the committed records (see Peer Propagation), so an activation, `follow` or
+`deactivateDefault` committed on another node reaches this one within the propagation bound. A start never reads the activation
+table; it reads the view. Without a store a restart rebuilds the default scope's current versions by the first-publication
+rule and forgets every other scope's records. An engine assembled by `WorkflowEngineFactory.create` has
 its own empty view and no store, so it always computes the default.
 
 On first publication the startup step passes `activateDefault` to the store for every code version and packaged document
@@ -446,6 +449,15 @@ that was already queued starts nothing, a `pollNow()` call after shutdown began 
 no pass, and shutdown completes only after the pass in flight has finished. A `pollNow()` call that joins a pass
 already running receives that pass, which may have read the table before a change committed just before the call, so
 that change can need one more pass.
+
+After both rounds the pass lists the committed activation records once and refreshes the node's activation view from them,
+each definition id under its queue slot. A committed record replaces the node's entry for its scope and id as a whole, and an
+entry with no committed record is removed, which is how `follow` and `deactivateDefault` reach a peer. The view keeps a record
+whose version this node holds no code for, and applying a record is not an apply failure. Because the definition rounds run
+first, a document published and activated within one interval is held before the record that names it is applied, so one pass
+applies both. A scope that this node's own lifecycle changed after the listing was read is left for the next pass. The pass
+never writes the table and never changes the pin of a running instance. A change of activation therefore reaches a peer within
+the same bound as a definition row.
 
 Convergence time is the cadence plus the time one pass needs to apply; there is no tighter bound. A row that
 cannot be applied is retried on every pass and stays unapplied meanwhile, so a stalled or failing apply gives no

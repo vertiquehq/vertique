@@ -194,6 +194,45 @@ class NoStoreActivationTest {
         });
     }
 
+    @Test
+    @DisplayName("without a store a restart rebuilds the default activations and forgets every other scope's")
+    void restartRebuildsDefaultActivationsAndForgetsScopeActivations(Vertx vertx) throws Exception {
+        // Given a component without a store whose code has versions 1 and 2, so version 2 is current
+        Rig first = rig(code(ORDER_ID, 1, true), code(ORDER_ID, 2, true));
+
+        // And version 1 activated in the default scope and in qa
+        onContext(vertx, () -> first.lifecycle().activate(WorkflowScopes.DEFAULT, ORDER_ID, WorkflowScopes.DEFAULT, 1));
+        onContext(vertx, () -> first.lifecycle().activate("qa", ORDER_ID, WorkflowScopes.DEFAULT, 1));
+        List<DefinitionActivation> beforeRestart =
+                onContext(vertx, () -> first.lifecycle().activations(null));
+
+        // When a second component is built from the same code
+        Rig second = rig(code(ORDER_ID, 1, true), code(ORDER_ID, 2, true));
+        List<DefinitionActivation> defaultAfterRestart =
+                onContext(vertx, () -> second.lifecycle().activations(WorkflowScopes.DEFAULT));
+        List<DefinitionActivation> qaAfterRestart =
+                onContext(vertx, () -> second.lifecycle().activations("qa"));
+
+        // Then the first component held both choices
+        assertThat(beforeRestart)
+                .extracting(
+                        DefinitionActivation::scopeKey,
+                        DefinitionActivation::targetScopeKey,
+                        DefinitionActivation::version)
+                .containsExactlyInAnyOrder(
+                        tuple(WorkflowScopes.DEFAULT, WorkflowScopes.DEFAULT, 1L),
+                        tuple("qa", WorkflowScopes.DEFAULT, 1L));
+
+        // And the second has the default scope's current on version 2 again and no activation of qa
+        assertThat(defaultAfterRestart)
+                .extracting(
+                        DefinitionActivation::scopeKey,
+                        DefinitionActivation::targetScopeKey,
+                        DefinitionActivation::version)
+                .containsExactly(tuple(WorkflowScopes.DEFAULT, WorkflowScopes.DEFAULT, 2L));
+        assertThat(qaAfterRestart).isEmpty();
+    }
+
     private static WorkflowDefinition<?, ?> code(String definitionId, long version, boolean activateOnDeploy) {
         return new CodeWorkflow(definitionId, version, activateOnDeploy);
     }

@@ -950,7 +950,7 @@ class DefinitionPropagationPassTest {
 
         @Override
         public Future<List<DefinitionActivation>> listActivations(String scopeKey) {
-            throw new UnsupportedOperationException();
+            return Future.succeededFuture(List.of());
         }
 
         @Override

@@ -16,11 +16,15 @@ import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
 import java.time.Instant;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 /**
@@ -28,6 +32,10 @@ import java.util.stream.Stream;
  * record, keyed by scope and id. The lifecycle updates it after the records are committed, or alone when there is no
  * durable registry, and a start without a version reads it to choose the version to run. With a durable registry the
  * startup step restores every durable record into it.
+ *
+ * <p>With a durable registry the propagation pass also refreshes the view from the committed records, so that a
+ * record written, replaced or removed on another node reaches this one within the propagation bound. A refresh never
+ * writes the table and never overrides a change that this node's lifecycle made after the records were read.
  *
  * <p>The view keeps a record even when this node has no code for the version the record names; such a start fails
  * like an explicit start of that version.
@@ -46,6 +54,10 @@ final class DefinitionActivations {
 
     private final ConcurrentMap<Slot, DefinitionActivation> records = new ConcurrentHashMap<>();
     private final Set<String> clearedDefaults = ConcurrentHashMap.newKeySet();
+    /** The change sequence at which the lifecycle or the startup restore last changed each slot. */
+    private final ConcurrentMap<Slot, Long> changed = new ConcurrentHashMap<>();
+
+    private final AtomicLong sequence = new AtomicLong();
     private final boolean computed;
     private final Instant computedAt = Instant.now();
 
@@ -61,6 +73,12 @@ final class DefinitionActivations {
 
     /** Stores the record, replacing the scope's earlier record of the id. */
     void put(DefinitionActivation activation) {
+        Slot slot = new Slot(activation.scopeKey(), activation.definitionId());
+        store(activation);
+        changed.put(slot, sequence.incrementAndGet());
+    }
+
+    private void store(DefinitionActivation activation) {
         records.put(new Slot(activation.scopeKey(), activation.definitionId()), activation);
         if (WorkflowScopes.DEFAULT.equals(activation.scopeKey())) clearedDefaults.remove(activation.definitionId());
     }
@@ -70,8 +88,48 @@ final class DefinitionActivations {
      * marks the id as cleared, so that no computed version stands in for it.
      */
     void remove(String scopeKey, String definitionId) {
+        discard(scopeKey, definitionId);
+        changed.put(new Slot(scopeKey, definitionId), sequence.incrementAndGet());
+    }
+
+    private void discard(String scopeKey, String definitionId) {
         records.remove(new Slot(scopeKey, definitionId));
         if (WorkflowScopes.DEFAULT.equals(scopeKey)) clearedDefaults.add(definitionId);
+    }
+
+    /** The current change sequence; take it before reading the committed records and hand it to {@link #refresh}. */
+    long mark() {
+        return sequence.get();
+    }
+
+    /** The definition ids this view holds a record for. */
+    Set<String> definitionIds() {
+        return records.keySet().stream().map(Slot::definitionId).collect(Collectors.toSet());
+    }
+
+    /**
+     * Brings the view's records of one definition id in line with the committed ones: a committed record replaces
+     * the scope's entry as a whole, and an entry with no committed record is removed. A scope that the lifecycle or
+     * the startup restore changed after {@code mark} was taken is left alone, because the committed records were
+     * read before that change; the next refresh settles it. The records are kept whether or not this node has code
+     * for the version they name. Nothing is written to the table.
+     *
+     * @param committed the committed records of the id, in any scope
+     * @param mark the change sequence taken before the committed records were read
+     */
+    void refresh(String definitionId, List<DefinitionActivation> committed, long mark) {
+        Map<String, DefinitionActivation> byScope = new HashMap<>();
+        for (DefinitionActivation record : committed) byScope.put(record.scopeKey(), record);
+        for (DefinitionActivation record : byScope.values()) {
+            Slot slot = new Slot(record.scopeKey(), definitionId);
+            if (changed.getOrDefault(slot, 0L) > mark) continue;
+            if (!record.equals(records.get(slot))) store(record);
+        }
+        for (Slot slot : List.copyOf(records.keySet())) {
+            if (!slot.definitionId().equals(definitionId) || byScope.containsKey(slot.scopeKey())) continue;
+            if (changed.getOrDefault(slot, 0L) > mark) continue;
+            discard(slot.scopeKey(), definitionId);
+        }
     }
 
     /**

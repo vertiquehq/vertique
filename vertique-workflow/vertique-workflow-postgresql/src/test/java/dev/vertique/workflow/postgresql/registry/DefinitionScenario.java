@@ -147,6 +147,21 @@ final class DefinitionScenario implements AutoCloseable {
         return boot;
     }
 
+    /** Starts a graph that must start with the given application config and contributes the given code definitions. */
+    Boot node(
+            WorkflowDefinitionSource source,
+            BootObservation observation,
+            List<WorkflowDefinition<?, ?>> codeDefinitions,
+            JsonObject config) {
+        Boot boot =
+                begin(source, observation, codeDefinitions, null, 10, config).await();
+        if (boot.failure() != null) {
+            boot.close();
+            throw new AssertionError("The application graph was expected to start", boot.failure());
+        }
+        return boot;
+    }
+
     /** Starts a graph and reports its startup failure, if any; a graph that did start is closed with the scenario. */
     Boot attempt(WorkflowDefinitionSource source, BootObservation observation) {
         return attempt(source, observation, List.of(), null, 10);
@@ -199,12 +214,22 @@ final class DefinitionScenario implements AutoCloseable {
             List<WorkflowDefinition<?, ?>> codeDefinitions,
             WorkflowDefinitionSqlObserver observer,
             int poolSize) {
+        return begin(source, observation, codeDefinitions, observer, poolSize, new JsonObject());
+    }
+
+    /** Requests a startup like {@link #attempt} with the given application config but returns before it finished. */
+    PendingBoot begin(
+            WorkflowDefinitionSource source,
+            BootObservation observation,
+            List<WorkflowDefinition<?, ?>> codeDefinitions,
+            WorkflowDefinitionSqlObserver observer,
+            int poolSize,
+            JsonObject config) {
         Pool raw = ManagedDefinitionDatabase.openPool(vertx, db, poolSize);
         Pool pool = observer == null ? raw : observer.observe(raw);
         AppComponent app;
         try {
-            app = ManagedDefinitionDatabase.appWithCode(
-                    vertx, pool, new JsonObject(), observation, source, codeDefinitions);
+            app = ManagedDefinitionDatabase.appWithCode(vertx, pool, config, observation, source, codeDefinitions);
         } catch (RuntimeException | Error failure) {
             await(pool.close());
             throw failure;

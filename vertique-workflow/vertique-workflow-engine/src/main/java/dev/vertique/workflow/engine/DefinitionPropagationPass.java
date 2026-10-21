@@ -10,6 +10,7 @@ import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException;
 import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException.Reason;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowRegistry;
+import dev.vertique.workflow.registry.store.DefinitionActivation;
 import dev.vertique.workflow.registry.store.DefinitionFilter;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.DefinitionKind;
@@ -26,7 +27,9 @@ import jakarta.inject.Inject;
 import jakarta.inject.Provider;
 import jakarta.inject.Singleton;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -55,6 +58,12 @@ import org.slf4j.LoggerFactory;
  *       marked after it is restored; a runtime that cannot be marked is removed again.
  * </ol>
  *
+ * <p>After both rounds the pass lists the committed activation records once and refreshes this node's activation
+ * view from them, each definition id under its slot: a committed record replaces the scope's entry as a whole, and
+ * an entry with no committed record is removed. A record that names a version this node holds no code for stays in
+ * the view. A scope that this node's own lifecycle changed after the listing was read is left to the next pass. A
+ * start never reads the activation table; it reads the view.
+ *
  * <p>Because every removal precedes every restoration, the order of the listing does not matter. The loader is
  * handed a row before the node view records it, so a hand-off that fails is attempted again by the next pass. A
  * row that is already settled on this node is skipped without a slot or a read; anything else takes the full path.
@@ -77,6 +86,7 @@ final class DefinitionPropagationPass {
     private final ManagedRegistrations registrations;
     private final WorkflowCodeDefinitionCatalog catalog;
     private final DefaultWorkflowDefinitionRegistryView view;
+    private final DefinitionActivations activations;
     private final Vertx vertx;
     private final long rowDeadlineMs;
     /** The status and change instant at which a row that is not live was last settled, by key. */
@@ -84,7 +94,7 @@ final class DefinitionPropagationPass {
     /** The typed reason of the latest failure of a row, by key. */
     private final Map<DefinitionKey, String> reasons = new ConcurrentHashMap<>();
 
-    @Inject
+    /** Constructs a pass over a node view of activations that nothing else reads. */
     DefinitionPropagationPass(
             Optional<WorkflowDefinitionRegistryStore> store,
             Provider<WorkflowRegistry> registry,
@@ -95,6 +105,32 @@ final class DefinitionPropagationPass {
             DefaultWorkflowDefinitionRegistryView view,
             Vertx vertx,
             Optional<WorkflowDefinitionsConfig> config) {
+        this(
+                store,
+                registry,
+                loaders,
+                queue,
+                registrations,
+                catalog,
+                view,
+                new DefinitionActivations(store),
+                vertx,
+                config);
+    }
+
+    @Inject
+    DefinitionPropagationPass(
+            Optional<WorkflowDefinitionRegistryStore> store,
+            Provider<WorkflowRegistry> registry,
+            Set<PersistedDefinitionLoader> loaders,
+            DefinitionApplyQueue queue,
+            ManagedRegistrations registrations,
+            WorkflowCodeDefinitionCatalog catalog,
+            DefaultWorkflowDefinitionRegistryView view,
+            DefinitionActivations activations,
+            Vertx vertx,
+            Optional<WorkflowDefinitionsConfig> config) {
+        this.activations = activations;
         this.vertx = vertx;
         long seconds = config.orElseGet(WorkflowDefinitionsConfig::defaults).maxStalenessSeconds();
         long deadlineMs;
@@ -127,12 +163,36 @@ final class DefinitionPropagationPass {
                 if (!LIVE.contains(row.status())) chain = chain.compose(ignored -> apply(row, true));
             for (WorkflowDefinitionRecord row : rows)
                 if (LIVE.contains(row.status())) chain = chain.compose(ignored -> apply(row, false));
-            return chain.map(ignored -> {
+            return chain.compose(ignored -> refreshActivations()).map(ignored -> {
                 view.retainFailures(listed);
                 settledRows.keySet().retainAll(listed);
                 reasons.keySet().retainAll(listed);
                 return (Void) null;
             });
+        });
+    }
+
+    /**
+     * Refreshes this node's activation view from one listing of the committed activation records. It runs after both
+     * definition rounds, so that a record naming a version published in the same interval finds that version held.
+     * Each definition id is refreshed under its slot of the shared queue, which orders it with the lifecycle's own
+     * writes; the view keeps a record whose version this node holds no code for.
+     */
+    private Future<Void> refreshActivations() {
+        long mark = activations.mark();
+        return store.orElseThrow().listActivations(null).compose(records -> {
+            Map<String, List<DefinitionActivation>> byId = new LinkedHashMap<>();
+            for (DefinitionActivation record : records)
+                byId.computeIfAbsent(record.definitionId(), id -> new ArrayList<>())
+                        .add(record);
+            for (String id : activations.definitionIds()) byId.putIfAbsent(id, List.of());
+            Future<Void> chain = Future.succeededFuture();
+            for (Map.Entry<String, List<DefinitionActivation>> entry : byId.entrySet())
+                chain = chain.compose(ignored -> queue.submit(entry.getKey(), () -> {
+                    activations.refresh(entry.getKey(), entry.getValue(), mark);
+                    return Future.<Void>succeededFuture();
+                }));
+            return chain;
         });
     }
 
