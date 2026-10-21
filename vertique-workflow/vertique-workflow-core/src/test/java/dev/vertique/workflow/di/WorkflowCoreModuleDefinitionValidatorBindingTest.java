@@ -16,6 +16,8 @@ import dev.vertique.workflow.registry.RegisteredWorkflowDefinition;
 import dev.vertique.workflow.registry.WorkflowContributor;
 import dev.vertique.workflow.registry.WorkflowDefinitionValidator;
 import dev.vertique.workflow.registry.WorkflowRegistry;
+import dev.vertique.workflow.registry.store.DefinitionKey;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import jakarta.inject.Singleton;
 import java.util.ArrayList;
 import java.util.List;
@@ -151,7 +153,9 @@ class WorkflowCoreModuleDefinitionValidatorBindingTest {
         assertThat(validator.received).hasSize(1);
         assertThat(validator.received.get(0).plan().definitionId()).isEqualTo("wired-saga");
         assertThat(validator.received.get(0).startPayloadType()).isEqualTo(StartPayload.class);
-        assertThat(registry.resolveCurrent("wired-saga").plan().definitionVersion())
+        assertThat(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "wired-saga", 1L))
+                        .plan()
+                        .definitionVersion())
                 .isEqualTo(1L);
     }
 
@@ -165,6 +169,9 @@ class WorkflowCoreModuleDefinitionValidatorBindingTest {
         WorkflowRegistry registry = component.registry();
 
         // Then: it builds and holds the contributed definition
-        assertThat(registry.resolveCurrent("wired-saga").plan().definitionId()).isEqualTo("wired-saga");
+        assertThat(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "wired-saga", 1L))
+                        .plan()
+                        .definitionId())
+                .isEqualTo("wired-saga");
     }
 }

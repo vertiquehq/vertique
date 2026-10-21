@@ -1372,7 +1372,6 @@ METHOD|dev.vertique.workflow.registry.CallbackId|toString|public final|[]|[]|jav
 METHOD|dev.vertique.workflow.registry.CallbackId|value|public|[]|[]|java.lang.String|[]|false
 METHOD|dev.vertique.workflow.registry.DefaultWorkflowRegistry|allRegistered|public|[]|[]|java.util.Collection<dev.vertique.workflow.registry.RuntimeWorkflow>|[]|false
 METHOD|dev.vertique.workflow.registry.DefaultWorkflowRegistry|register|public|[]|[dev.vertique.workflow.dsl.WorkflowDefinition<?, ?>]|void|[]|false
-METHOD|dev.vertique.workflow.registry.DefaultWorkflowRegistry|resolveCurrent|public|[]|[java.lang.String]|dev.vertique.workflow.registry.RuntimeWorkflow|[]|false
 METHOD|dev.vertique.workflow.registry.RuntimeWorkflow|callbacks|public|[]|[]|dev.vertique.workflow.registry.WorkflowCallbackRegistry|[]|false
 METHOD|dev.vertique.workflow.registry.RuntimeWorkflow|compensationByForwardStepId|public|[]|[]|java.util.Map<java.lang.String, dev.vertique.workflow.plan.CompensationNode>|[]|false
 METHOD|dev.vertique.workflow.registry.RuntimeWorkflow|equals|public final|[]|[java.lang.Object]|boolean|[]|false
@@ -1398,7 +1397,6 @@ METHOD|dev.vertique.workflow.registry.WorkflowCallbackRegistry|timerResolver|pub
 METHOD|dev.vertique.workflow.registry.WorkflowContributor|contribute|public abstract|[]|[dev.vertique.workflow.registry.WorkflowRegistry]|void|[]|false
 METHOD|dev.vertique.workflow.registry.WorkflowRegistry|allRegistered|public abstract|[]|[]|java.util.Collection<dev.vertique.workflow.registry.RuntimeWorkflow>|[]|false
 METHOD|dev.vertique.workflow.registry.WorkflowRegistry|register|public abstract|[]|[dev.vertique.workflow.dsl.WorkflowDefinition<?, ?>]|void|[]|false
-METHOD|dev.vertique.workflow.registry.WorkflowRegistry|resolveCurrent|public abstract|[]|[java.lang.String]|dev.vertique.workflow.registry.RuntimeWorkflow|[]|false
 METHOD|dev.vertique.workflow.retention.WorkflowRetentionService$PurgeResult|equals|public final|[]|[java.lang.Object]|boolean|[]|false
 METHOD|dev.vertique.workflow.retention.WorkflowRetentionService$PurgeResult|hashCode|public final|[]|[]|int|[]|false
 METHOD|dev.vertique.workflow.retention.WorkflowRetentionService$PurgeResult|moreRowsRemaining|public|[]|[]|boolean|[]|false

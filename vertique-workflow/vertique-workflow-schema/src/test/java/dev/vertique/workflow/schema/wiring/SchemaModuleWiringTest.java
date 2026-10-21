@@ -20,6 +20,8 @@ import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
 import dev.vertique.workflow.registry.WorkflowContributor;
 import dev.vertique.workflow.registry.WorkflowRegistry;
+import dev.vertique.workflow.registry.store.DefinitionKey;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.schema.WorkflowSchemaModule;
 import jakarta.inject.Singleton;
 import jakarta.validation.Validation;
@@ -193,7 +195,10 @@ class SchemaModuleWiringTest {
         WorkflowRegistry registry = component.registry();
 
         // Then: the definition is registered
-        assertThat(registry.resolveCurrent("wired-note").plan().definitionId()).isEqualTo("wired-note");
+        assertThat(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "wired-note", 1L))
+                        .plan()
+                        .definitionId())
+                .isEqualTo("wired-note");
     }
 
     @Test
@@ -206,7 +211,9 @@ class SchemaModuleWiringTest {
         WorkflowRegistry registry = component.registry();
 
         // Then: the definition is registered
-        assertThat(registry.resolveCurrent("wired-note").plan().definitionVersion())
+        assertThat(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "wired-note", 1L))
+                        .plan()
+                        .definitionVersion())
                 .isEqualTo(1L);
     }
 }

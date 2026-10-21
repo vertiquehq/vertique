@@ -34,7 +34,22 @@ import java.util.List;
  *       when not needed.
  *   <li>{@code initialStep} — id of the first step to execute after initialization.
  *   <li>{@code steps} — ordered list of all step nodes in the workflow graph.
+ *   <li>{@code activateOnDeploy} — optional; {@code false} publishes a packaged document without making it the
+ *       default scope's current version. Absent means {@code true}. A document loaded through the definition
+ *       service ignores it: such a document is published and activated by an operator.
  * </ul>
+ *
+ * @param definitionId unique identifier for the workflow definition
+ * @param definitionVersion monotonically increasing version number
+ * @param stateType logical type name of the workflow state type
+ * @param contract logical contract name
+ * @param startPayloadType logical type name of the start command payload type
+ * @param initialStateMapper registered start-state mapper id
+ * @param subjectResolver optional registered subject resolver id
+ * @param initialStep id of the first step
+ * @param steps ordered list of all step nodes
+ * @param activateOnDeploy whether a packaged version activates when first published; {@code null} is read as
+ *     {@code true}
  */
 public record WorkflowDefinitionDocument(
         String definitionId,
@@ -45,4 +60,47 @@ public record WorkflowDefinitionDocument(
         String initialStateMapper,
         @Nullable String subjectResolver,
         String initialStep,
-        List<StepNode> steps) {}
+        List<StepNode> steps,
+        @Nullable Boolean activateOnDeploy) {
+
+    /** Normalizes an absent {@code activateOnDeploy} to {@code true}. */
+    public WorkflowDefinitionDocument {
+        if (activateOnDeploy == null) activateOnDeploy = Boolean.TRUE;
+    }
+
+    /**
+     * Creates a document without the {@code activateOnDeploy} header, which is read as {@code true}.
+     *
+     * @param definitionId unique identifier for the workflow definition
+     * @param definitionVersion monotonically increasing version number
+     * @param stateType logical type name of the workflow state type
+     * @param contract logical contract name
+     * @param startPayloadType logical type name of the start command payload type
+     * @param initialStateMapper registered start-state mapper id
+     * @param subjectResolver optional registered subject resolver id
+     * @param initialStep id of the first step
+     * @param steps ordered list of all step nodes
+     */
+    public WorkflowDefinitionDocument(
+            String definitionId,
+            long definitionVersion,
+            String stateType,
+            String contract,
+            String startPayloadType,
+            String initialStateMapper,
+            @Nullable String subjectResolver,
+            String initialStep,
+            List<StepNode> steps) {
+        this(
+                definitionId,
+                definitionVersion,
+                stateType,
+                contract,
+                startPayloadType,
+                initialStateMapper,
+                subjectResolver,
+                initialStep,
+                steps,
+                Boolean.TRUE);
+    }
+}

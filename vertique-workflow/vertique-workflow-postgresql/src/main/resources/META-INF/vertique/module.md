@@ -175,6 +175,14 @@ retirement can delay new starts of that id. `PgWorkflowInstanceQueryService.coun
 scope-aware informational count (`countNonTerminal(definitionId, version)` counts the default scope); it is not the
 retirement guard. The count and the retirement guard include only instances pinned to the definition's own scope.
 
+`upsertCode(record, activateDefault)` and `upsertDocument(record, document, activateDefault)` insert a missing row and, only when
+the outcome is `INSERTED` and `activateDefault` is true, write `(default, id) -> (default, version)` into
+`workflow_definition_activations` in the same transaction and under the same id lock: one statement inserts the record or
+replaces it only when the stored version is lower, so concurrent first boots write one record, the highest version wins in any
+order, and a failure of either statement rolls back the row as well. `UNCHANGED`, `REHASHED`, conflicts and drift write no
+record, so a restart never activates and never undoes an operator's choice. Deploy a new version with `activateOnDeploy` false
+while nodes running the previous code are still up, and activate it once every node runs the new code.
+
 `putActivation`, `removeActivation` and `listActivations` maintain `workflow_definition_activations`. A write runs like every registry mutation, under the id lock at READ COMMITTED: `putActivation` requires the target row `(target_scope_key, id, version)` to exist and be `AVAILABLE` (a refusal is `INVALID_TRANSITION` naming the target key) and then inserts or replaces the scope's record; `removeActivation` deletes it and accepts an absent record. The default-current guard lives in `transition` and `retire`: in the same transaction and after the lock was granted, a default-scope row is refused with `INVALID_TRANSITION` while the default scope's record of the id names its version, so a concurrent activation and deprecation serialize on the lock and the record never ends on a deprecated target. Rows of other scopes are not guarded. Delete a record with `removeActivation` (or `deactivateDefault` through the lifecycle) before deleting the definition rows it names, and note that tests or tools that delete definition rows directly must remove the id's records first because of the restricting foreign key.
 
 Registry refusal messages can name other scopes and plan hashes: do not forward them to tenants.

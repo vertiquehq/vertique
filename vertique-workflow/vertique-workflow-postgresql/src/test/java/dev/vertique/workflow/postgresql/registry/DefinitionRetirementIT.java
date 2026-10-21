@@ -579,6 +579,7 @@ public class DefinitionRetirementIT {
                             .isPresent();
 
                     // When its row is deprecated through the service, cooled by the database clock and retired
+                    await(app.definitionService().deactivateDefault(id));
                     await(app.definitionService().deprecate(key));
                     fixture.ageStatus(key, coolingSeconds + 60);
                     Stored cooledBefore = fixture.stored(id, version);
@@ -637,6 +638,7 @@ public class DefinitionRetirementIT {
                     assertThat(documentBefore.status()).isEqualTo("AVAILABLE");
 
                     // When the CODE row is deprecated through the service, cooled by the database clock and retired
+                    await(app.definitionService().deactivateDefault(id));
                     await(app.definitionService().deprecate(codeKey));
                     fixture.ageStatus(codeKey, coolingSeconds + 60);
                     Stored cooledBefore = fixture.stored(id, 1);
@@ -663,7 +665,6 @@ public class DefinitionRetirementIT {
                     // And the document of the same id, which the removal must not take with it, is untouched
                     assertThat(app.workflowRegistry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, id, version)))
                             .isSameAs(documentRuntime);
-                    assertThat(app.workflowRegistry().resolveCurrent(id)).isSameAs(documentRuntime);
                     assertThat(app.workflowRegistry()
                                     .registeredDefinition(new DefinitionKey(WorkflowScopes.DEFAULT, id, version)))
                             .isEqualTo(documentDefinition);
@@ -2409,6 +2410,8 @@ public class DefinitionRetirementIT {
                 await(admin().preparedQuery("DELETE FROM workflow_dedup WHERE kind = 'start' AND dedup_namespace = $1")
                         .execute(Tuple.of(definitionId)));
                 await(admin().preparedQuery("DELETE FROM workflow_instances WHERE definition_id = $1")
+                        .execute(Tuple.of(definitionId)));
+                await(admin().preparedQuery("DELETE FROM workflow_definition_activations WHERE definition_id = $1")
                         .execute(Tuple.of(definitionId)));
                 await(admin().preparedQuery("DELETE FROM workflow_definitions WHERE definition_id = $1")
                         .execute(Tuple.of(definitionId)));

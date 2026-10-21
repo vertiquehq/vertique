@@ -529,6 +529,7 @@ public class PublicationLifecycleIT {
 
             // Given a retired code version that a second component does not have
             DefinitionKey codeKey = new DefinitionKey(WorkflowScopes.DEFAULT, codeId, 1);
+            await(service.deactivateDefault(codeId));
             await(service.deprecate(codeKey));
             scenario.ageStatus(codeKey, coolingSeconds + 60);
             await(service.retire(codeKey));

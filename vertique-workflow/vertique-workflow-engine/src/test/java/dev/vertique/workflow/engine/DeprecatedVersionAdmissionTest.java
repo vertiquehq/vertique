@@ -202,7 +202,9 @@ class DeprecatedVersionAdmissionTest {
         RuntimeWorkflow version1 = runtimeWorkflow(1, PLAN_HASH_V1);
         RuntimeWorkflow version2 = runtimeWorkflow(2, PLAN_HASH_V2);
         RuntimeWorkflow version3 = runtimeWorkflow(3, PLAN_HASH_V3);
-        when(registry.resolveCurrent(DEFINITION_ID)).thenReturn(version1);
+        DefinitionKey currentKey = new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 1);
+        when(registry.keysFor(DEFINITION_ID)).thenReturn(List.of(currentKey));
+        when(registry.isDeployed(currentKey)).thenReturn(true);
         when(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 1)))
                 .thenReturn(version1);
         when(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 2)))

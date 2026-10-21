@@ -144,6 +144,23 @@ final class ActivationFixtures {
             return failureOf(() -> node.app().workflowOperations().start(command(startScope, id)));
         }
 
+        /** Starts the id in the start scope on the explicit version of the default scope and returns the pin. */
+        Pin startVersion(String startScope, String id, long version) {
+            String key = "start-" + UUID.randomUUID();
+            return pin(await(node.app()
+                    .workflowOperations()
+                    .start(new StartCommand(
+                            id,
+                            contract.getName(),
+                            new PlaceOrderDoc("order-" + key),
+                            key,
+                            null,
+                            null,
+                            version,
+                            startScope,
+                            null))));
+        }
+
         private StartCommand command(String startScope, String id) {
             String key = "start-" + UUID.randomUUID();
             return new StartCommand(

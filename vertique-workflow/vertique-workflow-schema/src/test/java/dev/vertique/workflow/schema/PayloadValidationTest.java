@@ -334,7 +334,9 @@ class PayloadValidationTest {
         PayloadSchemaCache nullStartCache = new PayloadSchemaCache();
         DefaultWorkflowRegistry nullStartRegistry = Registries.withSchemaValidator(nullStartCache);
         nullStartRegistry.register(Definitions.withStart("null-start", 1L, null));
-        assertThat(nullStartRegistry.resolveCurrent("null-start").startPayloadType())
+        assertThat(nullStartRegistry
+                        .resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "null-start", 1L))
+                        .startPayloadType())
                 .isNull();
         WorkflowPayloadSchemas nullStartSchemas = new DefaultWorkflowPayloadSchemas(nullStartRegistry, nullStartCache);
 

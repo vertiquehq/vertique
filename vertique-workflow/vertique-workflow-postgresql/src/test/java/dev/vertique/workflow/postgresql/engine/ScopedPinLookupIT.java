@@ -204,6 +204,10 @@ public class ScopedPinLookupIT {
 
         WorkflowRegistry workflowRegistry();
 
+        dev.vertique.workflow.postgresql.registry.PgWorkflowDefinitionRegistryStore pgWorkflowDefinitionRegistryStore();
+
+        dev.vertique.workflow.registry.store.WorkflowDefinitionLifecycle definitionLifecycle();
+
         @Component.Factory
         interface Factory {
             ApprovalHost create(@BindsInstance Pool pool, @BindsInstance Clock clock);
@@ -215,6 +219,12 @@ public class ScopedPinLookupIT {
 
     private static Engine newEngine() {
         ApprovalHost host = DaggerScopedPinLookupIT_ApprovalHost.factory().create(pool, Clock.systemUTC());
+        DefaultVersionSeed.recordAndActivate(
+                host.pgWorkflowDefinitionRegistryStore(),
+                host.definitionLifecycle(),
+                host.workflowRegistry(),
+                APPROVAL_ID,
+                FORK_ID);
         PgWorkflowBranchRecoveryService recovery = new PgWorkflowBranchRecoveryService(
                 host.transactionRunner(),
                 host.branchTokenRepository(),

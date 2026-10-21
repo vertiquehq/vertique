@@ -108,6 +108,16 @@ public final class DocumentBackedWorkflowDefinition<S, C> implements WorkflowDef
     /**
      * {@inheritDoc}
      *
+     * @return the document's {@code activateOnDeploy} header, {@code true} when the document has none
+     */
+    @Override
+    public boolean activateOnDeploy() {
+        return document.activateOnDeploy();
+    }
+
+    /**
+     * {@inheritDoc}
+     *
      * <p>Delegates to {@link WorkflowDefinitionCompiler#emit} using a raw-typed builder. The
      * unchecked cast here mirrors the pattern used by {@code DefaultWorkflowRegistry.register()}
      * (line 117) and is safe because the validator has already confirmed type compatibility before

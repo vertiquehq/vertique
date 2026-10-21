@@ -213,16 +213,17 @@ public abstract class SagaTestBase {
      * {@code AFTER_START} phase the saga harness does not use.
      *
      * <p>The filter selects phases strictly before {@link dev.vertique.core.lifecycle.LifecyclePhase#BOOTSTRAP}
-     * (the first verticle phase). A {@code !isVerticlePhase()} filter would be too loose: it also
-     * admits {@code AFTER_START}, a non-verticle phase that runs <em>after</em> verticles — which
-     * this harness deliberately does not deploy.
+     * (the first verticle phase), and the definition registry step. A {@code !isVerticlePhase()} filter would be
+     * too loose: it also admits {@code AFTER_START}, a non-verticle phase that runs <em>after</em> verticles —
+     * which this harness deliberately does not deploy.
      *
      * @param component the fully-wired application component
      * @return a Future that completes once the pre-verticle startup steps have run
      */
     private static Future<Void> runNonVerticleStartupSteps(AppComponent component) {
         List<ApplicationStartupStep> steps = component.startupSteps().stream()
-                .filter(step -> step.phase().ordinal() < dev.vertique.core.lifecycle.LifecyclePhase.BOOTSTRAP.ordinal())
+                .filter(step -> step.phase().ordinal() < dev.vertique.core.lifecycle.LifecyclePhase.BOOTSTRAP.ordinal()
+                        || isDefinitionRegistryStep(step))
                 .sorted(LifecycleOrdered.comparator())
                 .toList();
         Future<Void> chain = Future.succeededFuture();
@@ -230,6 +231,14 @@ public abstract class SagaTestBase {
             chain = chain.compose(v -> step.start());
         }
         return chain;
+    }
+
+    /**
+     * Whether the step records the code definitions in the durable registry and activates them. A start without a
+     * version needs that record, so the harness runs this one step of the verticle phase as well.
+     */
+    private static boolean isDefinitionRegistryStep(ApplicationStartupStep step) {
+        return step.getClass().getSimpleName().equals("WorkflowDefinitionRegistryBootstrapStep");
     }
 
     /** Clears all workflow, outbox, inbox, and job tables between tests. */

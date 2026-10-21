@@ -365,7 +365,7 @@ class DefaultWorkflowDefinitionServiceTest {
                     testMeta()));
             ServiceTestHelpers.await(service.publish(key("svc-order", 1)));
 
-            RuntimeWorkflow rw = registry.resolveCurrent("svc-order");
+            RuntimeWorkflow rw = registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "svc-order", 1L));
             assertThat(rw.plan().definitionId()).isEqualTo("svc-order");
             assertThat(rw.plan().definitionVersion()).isEqualTo(1L);
 
@@ -402,7 +402,9 @@ class DefaultWorkflowDefinitionServiceTest {
                     DocumentFormat.YAML,
                     testMeta()));
             ServiceTestHelpers.await(service.publish(key("svc-order", 1)));
-            assertThat(registry.resolveCurrent("svc-order").plan().definitionVersion())
+            assertThat(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "svc-order", 1L))
+                            .plan()
+                            .definitionVersion())
                     .isEqualTo(1L);
 
             // Attempt to load bad YAML for v2 — must fail
@@ -412,7 +414,9 @@ class DefaultWorkflowDefinitionServiceTest {
                     .isInstanceOf(WorkflowDefinitionParseException.class);
 
             // v1 still active in registry
-            assertThat(registry.resolveCurrent("svc-order").plan().definitionVersion())
+            assertThat(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "svc-order", 1L))
+                            .plan()
+                            .definitionVersion())
                     .isEqualTo(1L);
             // list still shows only 1 entry
             assertThat(ServiceTestHelpers.await(service.list(globalFilter()))).hasSize(1);
@@ -453,8 +457,10 @@ class DefaultWorkflowDefinitionServiceTest {
                     testMeta()));
             ServiceTestHelpers.await(service.publish(key("svc-order", 1)));
 
-            // Registry must return the higher (v2) version
-            assertThat(registry.resolveCurrent("svc-order").plan().definitionVersion())
+            // Registry must hold the higher (v2) version
+            assertThat(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "svc-order", 2L))
+                            .plan()
+                            .definitionVersion())
                     .isEqualTo(2L);
 
             // Store must reflect: both versions AVAILABLE
@@ -509,9 +515,13 @@ class DefaultWorkflowDefinitionServiceTest {
                 f.get(); // rethrow if any thread threw
             }
 
-            assertThat(registry.resolveCurrent("svc-order").plan().definitionId())
+            assertThat(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "svc-order", 1L))
+                            .plan()
+                            .definitionId())
                     .isEqualTo("svc-order");
-            assertThat(registry.resolveCurrent("svc-item").plan().definitionId())
+            assertThat(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "svc-item", 1L))
+                            .plan()
+                            .definitionId())
                     .isEqualTo("svc-item");
             assertThat(ServiceTestHelpers.await(service.list(globalFilter()))).hasSize(2);
         }
@@ -567,7 +577,9 @@ class DefaultWorkflowDefinitionServiceTest {
             assertThat(okCount).isGreaterThanOrEqualTo(1);
 
             // Final state: exactly one AVAILABLE in store; registry resolves the definition
-            assertThat(registry.resolveCurrent("svc-order").plan().definitionId())
+            assertThat(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "svc-order", 1L))
+                            .plan()
+                            .definitionId())
                     .isEqualTo("svc-order");
             long activeCount = ServiceTestHelpers.await(service.list(globalFilter())).stream()
                     .filter(r -> r.status() == DefinitionStatus.AVAILABLE)
@@ -593,11 +605,6 @@ class DefaultWorkflowDefinitionServiceTest {
                             if (callCount++ == 0) {
                                 throw new WorkflowDefinitionException("simulated registration failure");
                             }
-                        }
-
-                        @Override
-                        public dev.vertique.workflow.registry.RuntimeWorkflow resolveCurrent(String id) {
-                            throw new UnsupportedOperationException();
                         }
 
                         @Override

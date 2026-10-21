@@ -390,6 +390,10 @@ public class WorkflowTenantKeyIT {
 
         WorkflowRegistry workflowRegistry();
 
+        dev.vertique.workflow.postgresql.registry.PgWorkflowDefinitionRegistryStore pgWorkflowDefinitionRegistryStore();
+
+        dev.vertique.workflow.registry.store.WorkflowDefinitionLifecycle definitionLifecycle();
+
         ContextHolder contextHolder();
 
         @Component.Factory
@@ -413,6 +417,8 @@ public class WorkflowTenantKeyIT {
                 .using(vertx)
                 .build();
         host = DaggerWorkflowTenantKeyIT_TenantEngineHost.factory().create(pool, Clock.systemUTC());
+        DefaultVersionSeed.recordAndActivate(
+                host.pgWorkflowDefinitionRegistryStore(), host.definitionLifecycle(), host.workflowRegistry());
         operations = host.workflowOperations();
         taskCallbacks = host.taskCallbacks();
         txRunner = host.transactionRunner();

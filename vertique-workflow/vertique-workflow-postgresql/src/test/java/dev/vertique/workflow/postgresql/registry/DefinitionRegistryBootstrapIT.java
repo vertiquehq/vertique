@@ -173,8 +173,11 @@ public class DefinitionRegistryBootstrapIT {
                 List::of);
 
         Future<Void> work = mutationPool
-                .preparedQuery("DELETE FROM workflow_definitions WHERE definition_id = $1")
+                .preparedQuery("DELETE FROM workflow_definition_activations WHERE definition_id = $1")
                 .execute(Tuple.of(definitionId))
+                .compose(ignored -> mutationPool
+                        .preparedQuery("DELETE FROM workflow_definitions WHERE definition_id = $1")
+                        .execute(Tuple.of(definitionId)))
                 .compose(ignored ->
                         VertiqueApplicationBootstrap.start(VertiqueRuntime.of(vertx, new JsonObject()), r -> app))
                 .compose(handle -> {
@@ -712,10 +715,12 @@ public class DefinitionRegistryBootstrapIT {
     private static Future<Void> deleteDefinitions(Pool pool, String... definitionIds) {
         Future<Void> deleted = Future.succeededFuture();
         for (String definitionId : definitionIds) {
-            deleted = deleted.compose(
-                    ignored -> pool.preparedQuery("DELETE FROM workflow_definitions WHERE definition_id = $1")
-                            .execute(Tuple.of(definitionId))
-                            .mapEmpty());
+            deleted = deleted.compose(ignored -> pool.preparedQuery(
+                            "DELETE FROM workflow_definition_activations WHERE definition_id = $1")
+                    .execute(Tuple.of(definitionId))
+                    .compose(cleared -> pool.preparedQuery("DELETE FROM workflow_definitions WHERE definition_id = $1")
+                            .execute(Tuple.of(definitionId)))
+                    .mapEmpty());
         }
         return deleted;
     }
@@ -850,8 +855,12 @@ public class DefinitionRegistryBootstrapIT {
             if (resources.mutationPool != null) {
                 Future<Void> deleteOwnedRow = resources
                         .mutationPool
-                        .preparedQuery("DELETE FROM workflow_definitions WHERE definition_id = $1")
+                        .preparedQuery("DELETE FROM workflow_definition_activations WHERE definition_id = $1")
                         .execute(Tuple.of(resources.definitionId))
+                        .compose(ignored -> resources
+                                .mutationPool
+                                .preparedQuery("DELETE FROM workflow_definitions WHERE definition_id = $1")
+                                .execute(Tuple.of(resources.definitionId)))
                         .map(ignored -> (Void) null);
                 cleanup = cleanup.compose(ignored -> quietly(deleteOwnedRow, cleanupFailures));
             }

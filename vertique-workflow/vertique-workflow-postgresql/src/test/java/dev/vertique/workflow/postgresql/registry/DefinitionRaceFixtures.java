@@ -215,6 +215,8 @@ final class DefinitionRaceFixtures {
 
         void deleteRows(String... definitionIds) {
             for (String id : definitionIds) {
+                await(admin().preparedQuery("DELETE FROM workflow_definition_activations WHERE definition_id = $1")
+                        .execute(Tuple.of(id)));
                 await(admin().preparedQuery("DELETE FROM workflow_definitions WHERE definition_id = $1")
                         .execute(Tuple.of(id)));
             }

@@ -314,11 +314,10 @@ Refusals are `WorkflowDefinitionLifecycleException` instances with a `reason()` 
 no bound store, an invalid key or a lock timeout, use their own exception types. They arrive as failed `Future`s, never as
 synchronous exceptions.
 
-- **Deprecation.** `resolveCurrent` skips a deprecated version, and fails with the unknown-definition exception when
-  every version is deprecated. An explicit-version start and a `migrate` whose target is deprecated fail with
+- **Deprecation.** An explicit-version start and a `migrate` whose target is deprecated fail with
   reason `DEPRECATED`. Signals, timers and resumes of instances already pinned to the version keep working.
-  Deprecating a version leaves every other version available; current resolution already serves the next lower
-  version.
+  Deprecating a version leaves every other version available; the default scope's current version cannot be
+  deprecated until another version is activated.
 - **Cooling window.** A deprecated version cannot retire until `workflow.definitions.maxStalenessSeconds` (default 30)
   has passed on the database clock. After that, retirement is refused with `PINNED_INSTANCES` while any `RUNNING`,
   `WAITING` or `COMPENSATING` instance, archived ones included, is pinned to the exact version.

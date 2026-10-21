@@ -151,16 +151,18 @@ public class DefinitionReinstatementIT {
                     .isEqualTo(retired);
             assertThat(reinstated.planHash()).isEqualTo(hash);
 
-            // And both current and pinned resolution serve the deployed code, with the registered definition restored
+            // And pinned resolution serves the deployed code, with the registered definition restored
             assertThat(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1))
                             .plan()
                             .planHash())
                     .isEqualTo(hash);
-            assertThat(registry.resolveCurrent(id).plan().definitionVersion()).isEqualTo(1);
             assertThat(registry.isDeprecated(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1)))
                     .isFalse();
             assertThat(registry.registeredDefinition(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1)))
                     .isPresent();
+
+            // And the version is activated, because reinstating a version does not make it current
+            await(service.activate(WorkflowScopes.DEFAULT, id, WorkflowScopes.DEFAULT, 1));
 
             // When a new instance is started through the workflow operations
             WorkflowInstanceId started = await(restarted
@@ -188,6 +190,7 @@ public class DefinitionReinstatementIT {
             // When the same component deprecates the version, its cooling window passes by the database clock and it
             // is retired with no pin
             long coolingSeconds = restarted.app().workflowDefinitionsConfig().maxStalenessSeconds();
+            await(service.deactivateDefault(id));
             await(service.deprecate(key));
             assertThat(scenario.stored(id, 1).status()).isEqualTo("DEPRECATED");
             assertThat(registry.isDeprecated(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1)))
@@ -450,7 +453,6 @@ public class DefinitionReinstatementIT {
                             .plan()
                             .planHash())
                     .isEqualTo(loadedHash);
-            assertThat(registry.resolveCurrent(id).plan().definitionVersion()).isEqualTo(1);
             assertThat(registry.registeredDefinition(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1)))
                     .isPresent();
             assertThat(restarted.app().workflowDefinitionStore().currentStatus(id, 1))
@@ -524,11 +526,10 @@ public class DefinitionReinstatementIT {
             // When the lower retired version is reinstated
             await(service.reinstate(v1));
 
-            // Then it is available beside the higher version, which stays current
+            // Then it is available beside the higher version
             assertThat(scenario.stored(id, 1).status()).isEqualTo("AVAILABLE");
             assertThat(scenario.stored(id, 2).status()).isEqualTo("AVAILABLE");
             assertThat(scenario.stored(id, 3).status()).isEqualTo("RETIRED");
-            assertThat(registry.resolveCurrent(id).plan().definitionVersion()).isEqualTo(2);
             assertThat(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, id, 2)))
                     .isSameAs(activeRuntime);
             RuntimeWorkflow lowerRuntime = registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1));
@@ -621,7 +622,6 @@ public class DefinitionReinstatementIT {
                     .isSameAs(activeRuntime);
             assertThat(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1)))
                     .isSameAs(lowerRuntime);
-            assertThat(registry.resolveCurrent(id).plan().definitionVersion()).isEqualTo(2);
 
             // When the fault is gone and the higher version is reinstated again
             removeFailure(scenario, "fail_test_reinstate_promotion");
@@ -631,7 +631,6 @@ public class DefinitionReinstatementIT {
             assertThat(scenario.stored(id, 3).status()).isEqualTo("AVAILABLE");
             assertThat(scenario.stored(id, 2).status()).isEqualTo("AVAILABLE");
             assertThat(scenario.stored(id, 1).status()).isEqualTo("AVAILABLE");
-            assertThat(registry.resolveCurrent(id).plan().definitionVersion()).isEqualTo(3);
             assertThat(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, id, 3))
                             .plan()
                             .planHash())
@@ -854,6 +853,9 @@ public class DefinitionReinstatementIT {
                         .isEqualTo("AVAILABLE");
                 assertThat(scenario.stored("tenant-two", id, 1)).isEqualTo(holderBefore);
                 scenario.execute("""
+                        DELETE FROM workflow_definition_activations WHERE definition_id = $1
+                        """, Tuple.of(id));
+                scenario.execute("""
                         DELETE FROM workflow_definitions WHERE definition_id = $1
                         """, Tuple.of(id));
             }
@@ -900,10 +902,9 @@ public class DefinitionReinstatementIT {
             // When the lower version is reinstated
             await(service.reinstate(v1));
 
-            // Then it is available beside the higher version, which stays current
+            // Then it is available beside the higher version
             assertThat(scenario.stored(id, 1).status()).isEqualTo("AVAILABLE");
             assertThat(scenario.stored(id, 2).status()).isEqualTo("AVAILABLE");
-            assertThat(registry.resolveCurrent(id).plan().definitionVersion()).isEqualTo(2);
             assertThat(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, id, 2)))
                     .isSameAs(activeRuntime);
 

@@ -343,13 +343,11 @@ public class MixedDefinitionBootstrapIT {
             assertThat(scenario.stored(id, 1).planHash()).isEqualTo(hashV1);
             assertThat(scenario.rowCount(id)).isEqualTo(2);
 
-            // And the deprecation mark is applied again, so current resolution keeps skipping version 1
+            // And the deprecation mark is applied again
             assertThat(second.app().workflowRegistry().isDeprecated(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1)))
                     .isTrue();
             assertThat(second.app().workflowRegistry().isDeprecated(new DefinitionKey(WorkflowScopes.DEFAULT, id, 2)))
                     .isFalse();
-            assertThat(second.app().workflowRegistry().resolveCurrent(id).plan().definitionVersion())
-                    .isEqualTo(2);
             assertThat(second.app()
                             .workflowRegistry()
                             .resolve(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1))
@@ -744,12 +742,6 @@ public class MixedDefinitionBootstrapIT {
                             .plan()
                             .planHash())
                     .isEqualTo(loadedV1.planHash());
-            assertThat(second.app()
-                            .workflowRegistry()
-                            .resolveCurrent(docId)
-                            .plan()
-                            .definitionVersion())
-                    .isEqualTo(2);
             assertThat(second.app()
                             .workflowRegistry()
                             .resolve(new DefinitionKey(WorkflowScopes.DEFAULT, docId, 2))
@@ -1377,12 +1369,11 @@ public class MixedDefinitionBootstrapIT {
             assertThat(scenario.stored(id, 1).status()).isEqualTo("DEPRECATED");
             assertThat(scenario.stored(id, 2).status()).isEqualTo("AVAILABLE");
 
-            // And the deprecation mark is applied again, so current resolution serves version 2
+            // And the deprecation mark is applied again
             assertThat(registry.isDeprecated(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1)))
                     .isTrue();
             assertThat(registry.isDeprecated(new DefinitionKey(WorkflowScopes.DEFAULT, id, 2)))
                     .isFalse();
-            assertThat(registry.resolveCurrent(id).plan().definitionVersion()).isEqualTo(2);
             assertThat(second.app().workflowDefinitionStore().currentStatus(id, 1))
                     .isEqualTo(ActivationStatus.DEPRECATED);
 
@@ -1563,7 +1554,6 @@ public class MixedDefinitionBootstrapIT {
                             .plan()
                             .planHash())
                     .isEqualTo(liveHash);
-            assertThat(registry.resolveCurrent(id).plan().definitionVersion()).isEqualTo(2);
             assertThat(registry.registeredDefinition(new DefinitionKey(WorkflowScopes.DEFAULT, id, 2)))
                     .isPresent();
             assertThat(scenario.stored(id, 2).status()).isEqualTo("AVAILABLE");

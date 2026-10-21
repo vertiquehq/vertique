@@ -281,8 +281,13 @@ Every event and side-effect correlation the engine records, single-path and bran
 ### Activation Records And The Current Version
 
 A start without a version runs the version that activation records select. `WorkflowEngine.start` consults, in this order: the
-start scope's record of the definition id, the default scope's record, and, when the default scope has no record, the highest
-version of the default scope that is not deprecated (`WorkflowRegistry.resolveCurrent`). When none applies the start fails with
+start scope's record of the definition id and the default scope's record. With a durable store, no record means the start fails
+with `WorkflowNoCurrentVersionException(scopeKey, definitionId)` at once, including after `deactivateDefault`. Without a store the
+default scope's current version of an id with no explicit record is computed from the registry instead: the highest
+non-deprecated version registered by the deployment (through `register(definition)`) that does not opt out through
+`activateOnDeploy()`; a version published at run time never counts. `activations` lists these computed records next to the
+explicit ones, nothing computed is written anywhere, and `deactivateDefault` leaves a cleared mark so the computed version of
+that id does not come back until the next startup. When none applies the start fails with
 `WorkflowNoCurrentVersionException(scopeKey, definitionId)`. Only the start scope, the default scope and the default scope's
 versions are ever consulted: the versions of another scope are never borrowed, and nothing in the start path weights, samples or
 splits traffic between versions. A record resolves its version like an explicit start of it, so a record whose target is
@@ -293,14 +298,19 @@ The records live in a package-private, node-local `DefinitionActivations` view, 
 lifecycle updates it after the durable write commits (`activate`, `deactivateDefault`, `follow`), and a refused or failed write
 leaves it as it was. Without a durable store the view is the only state: `activate`, `deactivateDefault`, `follow` and
 `activations` complete synchronously on it and are lost on restart, while `deprecate`, `retire` and `reinstate` stay
-store-only. With a store `activations` reads the store. The view is filled by the operations of this node only: it is not
-restored from the stored records at startup and not refreshed from changes that other nodes commit, so a node that did not
-write a record starts through the fallback until a record is written through it. An engine assembled by
-`WorkflowEngineFactory.create` has its own empty view and no lifecycle, so it always uses the fallback.
+store-only. With a store `activations` reads the store. The startup step restores every stored record into the view, including
+records that name a version this node has no code for, and the records it writes itself on first publication; the view is not
+refreshed from changes that other nodes commit while this node runs. An engine assembled by `WorkflowEngineFactory.create` has
+its own empty view and no store, so it always computes the default.
 
-To decommission an id: `deactivateDefault(id)`, then `deprecate` and `retire` of its versions. Following scopes then start only
-while the fallback still finds a non-deprecated default-scope version, and fail with `WorkflowNoCurrentVersionException` once
-the versions are deprecated or retired. See the durable registry section of `dev.vertique:vertique-workflow-core` for the
+On first publication the startup step passes `activateDefault` to the store for every code version and packaged document
+version that does not opt out of activation on deploy, in ascending version order per id; the store writes the default scope's
+record in the insert's transaction when the version is higher than the record. The step contains no rollout logic. See the
+core module for the rule and the rolling-deploy advice.
+
+To decommission an id: `deactivateDefault(id)`, then `deprecate` and `retire` of its versions. With a store, starts without a
+version in any following scope fail with `WorkflowNoCurrentVersionException` as soon as the default record is cleared. A restart
+does not bring the record back, because it is not a first publication. See the durable registry section of `dev.vertique:vertique-workflow-core` for the
 record rules and the guard that refuses to deprecate or retire the default scope's current version.
 
 ### Document Publication And Startup Restoration

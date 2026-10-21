@@ -31,6 +31,8 @@ import dev.vertique.workflow.plan.WorkflowPlan;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowCallbackRegistry;
 import dev.vertique.workflow.registry.WorkflowRegistry;
+import dev.vertique.workflow.registry.store.DefinitionKey;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.sideeffect.WorkflowSideEffectRecorder;
 import dev.vertique.workflow.state.WorkflowInstance;
 import io.vertx.core.Future;
@@ -126,7 +128,10 @@ class WorkflowEngineStartMetadataTest {
         dev.vertique.workflow.tasks.TaskStore<SqlClient> taskStore = org.mockito.Mockito.mock();
 
         RuntimeWorkflow rw = minimalRuntimeWorkflow();
-        when(registry.resolveCurrent(DEFINITION_ID)).thenReturn(rw);
+        DefinitionKey currentKey = new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 1);
+        when(registry.keysFor(DEFINITION_ID)).thenReturn(List.of(currentKey));
+        when(registry.isDeployed(currentKey)).thenReturn(true);
+        when(registry.resolve(currentKey)).thenReturn(rw);
 
         UUID winningId = UUID.randomUUID();
         when(dedup.findStart(any(), eq(DEFINITION_ID), any(), any()))

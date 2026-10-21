@@ -10,7 +10,6 @@ import dev.vertique.workflow.contract.WorkflowContract;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
-import dev.vertique.workflow.exception.WorkflowDefinitionMissingException;
 import dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.WorkflowScopes;
@@ -39,8 +38,7 @@ import org.junit.jupiter.api.Test;
  *   <li>Concurrent registrations of distinct definitionIds all succeed without data loss or
  *       exceptions (FR-WF-DEF-022).</li>
  *   <li>Concurrent register + resolve of the same id never exposes half-published state —
- *       readers either see a fully-registered workflow or get a clean
- *       {@link WorkflowDefinitionMissingException}; they NEVER see a
+ *       readers either see a fully-registered workflow or find nothing; they NEVER see a
  *       {@link NullPointerException} or {@link WorkflowVersionPinUnavailableException} from
  *       a partially-published-and-then-rolled-back entry (FR-WF-DEF-023).</li>
  *   <li>A failed {@code register()} rolls back atomically — no half-committed state is
@@ -236,10 +234,8 @@ class DefaultWorkflowRegistryConcurrencyTest {
                     while (System.currentTimeMillis() < deadline && iterations < 1000) {
                         iterations++;
                         try {
-                            registry.resolveCurrent("task-foo");
-                            // Hit — valid: the write completed, we got a fully-registered workflow
-                        } catch (WorkflowDefinitionMissingException e) {
-                            // Clean miss — valid: registration not yet complete
+                            // Hit or clean miss — both valid: the write either completed or has not yet
+                            registry.find(new DefinitionKey(WorkflowScopes.DEFAULT, "task-foo", 1L));
                         } catch (NullPointerException | WorkflowVersionPinUnavailableException e) {
                             // Invalid — half-published state leaked through
                             if (unexpectedExceptions.getAndIncrement() == 0) {
@@ -305,7 +301,7 @@ class DefaultWorkflowRegistryConcurrencyTest {
             assertThat(registered.iterator().next().plan().definitionId()).isEqualTo("task-foo");
 
             // task-foo v1 is still resolvable; v2 must be missing
-            RuntimeWorkflow foo = registry.resolveCurrent("task-foo");
+            RuntimeWorkflow foo = registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "task-foo", 1L));
             assertThat(foo.plan().definitionVersion()).isEqualTo(1L);
 
             assertThatThrownBy(() -> registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "task-foo", 2L)))
@@ -320,7 +316,9 @@ class DefaultWorkflowRegistryConcurrencyTest {
             registry.register(minimalDef("task-bar", 1, TaskFooContract.class));
 
             assertThat(registry.allRegistered()).hasSize(2);
-            assertThat(registry.resolveCurrent("task-bar").plan().definitionId())
+            assertThat(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "task-bar", 1L))
+                            .plan()
+                            .definitionId())
                     .isEqualTo("task-bar");
         }
 
@@ -355,7 +353,8 @@ class DefaultWorkflowRegistryConcurrencyTest {
                 long deadline = System.currentTimeMillis() + 200;
                 while (System.currentTimeMillis() < deadline) {
                     try {
-                        RuntimeWorkflow rw = registry.resolveCurrent("task-foo");
+                        RuntimeWorkflow rw =
+                                registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "task-foo", 1L));
                         // Must be v1 only — v2 never committed successfully
                         if (rw.plan().definitionVersion() != 1L) {
                             if (unexpectedCount.getAndIncrement() == 0) {
@@ -363,7 +362,7 @@ class DefaultWorkflowRegistryConcurrencyTest {
                                         new AssertionError("saw v" + rw.plan().definitionVersion() + " instead of v1"));
                             }
                         }
-                    } catch (WorkflowDefinitionMissingException e) {
+                    } catch (WorkflowVersionPinUnavailableException e) {
                         // Unexpected: v1 was committed before the concurrent attempt started
                         if (unexpectedCount.getAndIncrement() == 0) {
                             firstUnexpected.set(e);
@@ -398,7 +397,9 @@ class DefaultWorkflowRegistryConcurrencyTest {
 
             // After rollback, allRegistered still has exactly 1 entry (task-foo v1 only)
             assertThat(registry.allRegistered()).hasSize(1);
-            assertThat(registry.resolveCurrent("task-foo").plan().definitionVersion())
+            assertThat(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "task-foo", 1L))
+                            .plan()
+                            .definitionVersion())
                     .isEqualTo(1L);
         }
     }
@@ -480,13 +481,13 @@ class DefaultWorkflowRegistryConcurrencyTest {
     class MultipleVersionsSequential {
 
         @Test
-        @DisplayName("resolveCurrent returns v3; resolve returns v1, v2, v3 correctly")
+        @DisplayName("resolve returns v1, v2, v3 correctly")
         void shouldResolveCorrectVersions() {
             registry.register(minimalDef("task-foo", 1, TaskFooContract.class));
             registry.register(minimalDef("task-foo", 2, TaskFooContract.class));
             registry.register(minimalDef("task-foo", 3, TaskFooContract.class));
 
-            RuntimeWorkflow current = registry.resolveCurrent("task-foo");
+            RuntimeWorkflow current = registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "task-foo", 3L));
             assertThat(current.plan().definitionVersion()).isEqualTo(3L);
 
             RuntimeWorkflow v1 = registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "task-foo", 1L));

@@ -85,6 +85,7 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
     private final String sqlRemoveActivation;
     private final String sqlListActivations;
     private final String sqlDefaultCurrent;
+    private final String sqlActivateDefault;
     private final WorkflowDefinitionsConfig config;
     private final WorkflowExceptionMapper workflowMapper = new WorkflowExceptionMapper();
     private volatile boolean utf8Confirmed;
@@ -195,6 +196,14 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
                         + activations
                         + " WHERE ($1::varchar IS NULL OR scope_key=$1) ORDER BY definition_id, scope_key";
 
+        // Writes the default scope's record of the id to the inserted version unless the record names a higher one.
+        this.sqlActivateDefault = "INSERT INTO " + activations
+                + " AS existing (scope_key, definition_id, target_scope_key, definition_version, activated_at) VALUES ('"
+                + WorkflowScopes.DEFAULT + "',$1,'" + WorkflowScopes.DEFAULT + "',$2,clock_timestamp())"
+                + " ON CONFLICT (scope_key, definition_id) DO UPDATE SET target_scope_key=EXCLUDED.target_scope_key,"
+                + " definition_version=EXCLUDED.definition_version, activated_at=EXCLUDED.activated_at"
+                + " WHERE existing.definition_version < EXCLUDED.definition_version";
+
         this.sqlDefaultCurrent = "SELECT 1 FROM " + activations + " WHERE scope_key='" + WorkflowScopes.DEFAULT
                 + "' AND definition_id=$1 AND target_scope_key='" + WorkflowScopes.DEFAULT
                 + "' AND definition_version=$2";
@@ -275,13 +284,14 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
 
     @Override
     public Future<ReconcileOutcome> upsertDocument(
-            WorkflowDefinitionRecord record, WorkflowDefinitionDocument document) {
+            WorkflowDefinitionRecord record, WorkflowDefinitionDocument document, boolean activateDefault) {
         return attempt(() -> {
             validateDocument(record, document);
             return mutate(record.key(), (tx, rows) -> encoding(tx).compose(ignored -> {
                 Optional<Row> current = row(rows, record.key());
                 if (current.isEmpty())
                     return insert(tx, record, document, DefinitionStatus.AVAILABLE)
+                            .compose(inserted -> activateFirstPublication(tx, record.key(), activateDefault))
                             .map(ReconcileOutcome.INSERTED);
                 Row old = current.orElseThrow();
                 if (!"DOCUMENT".equals(old.getString("kind")))
@@ -305,7 +315,7 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
     }
 
     @Override
-    public Future<ReconcileOutcome> upsertCode(WorkflowDefinitionRecord record) {
+    public Future<ReconcileOutcome> upsertCode(WorkflowDefinitionRecord record, boolean activateDefault) {
         return attempt(() -> {
             validateCode(record);
             DefinitionKey key = record.key();
@@ -313,7 +323,9 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
             return mutate(key.definitionId(), (tx, rows) -> {
                 Optional<Row> current = row(rows, key);
                 if (current.isEmpty())
-                    return insertCode(tx, record, DefinitionStatus.AVAILABLE).map(ReconcileOutcome.INSERTED);
+                    return insertCode(tx, record, DefinitionStatus.AVAILABLE)
+                            .compose(inserted -> activateFirstPublication(tx, key, activateDefault))
+                            .map(ReconcileOutcome.INSERTED);
                 Row old = current.orElseThrow();
                 if (!"CODE".equals(old.getString("kind")))
                     return Future.succeededFuture(ReconcileOutcome.KIND_CONFLICT);
@@ -481,6 +493,19 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
                             .map(PgWorkflowDefinitionRegistryStore::activation)
                             .toList()));
         });
+    }
+
+    /**
+     * Makes a version that was just inserted the default scope's current version when it is higher than the version the
+     * default scope's record already names, or when there is no record. It runs on the transaction of the insert, under
+     * the lock of the id, so a failure rolls back the insert with it, and a record committed meanwhile is compared
+     * after the lock was granted.
+     */
+    private Future<Void> activateFirstPublication(SqlConnection tx, DefinitionKey key, boolean activateDefault) {
+        if (!activateDefault) return Future.succeededFuture();
+        return tx.preparedQuery(sqlActivateDefault)
+                .execute(Tuple.of(key.definitionId(), key.definitionVersion()))
+                .mapEmpty();
     }
 
     /**

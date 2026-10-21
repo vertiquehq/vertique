@@ -22,7 +22,7 @@ import dev.vertique.workflow.definition.service.WorkflowDefinitionService;
 import dev.vertique.workflow.definition.source.SourceMetadata;
 import dev.vertique.workflow.di.WorkflowCoreModule;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
-import dev.vertique.workflow.exception.WorkflowDefinitionMissingException;
+import dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException;
 import dev.vertique.workflow.registry.WorkflowRegistry;
 import dev.vertique.workflow.registry.store.DefinitionFilter;
 import dev.vertique.workflow.registry.store.DefinitionKey;
@@ -147,8 +147,9 @@ class SchemaActivationTest {
         assertThatThrownBy(() -> await(definitions.publish(REVIEW_NOTE_V1)))
                 .isInstanceOf(WorkflowDefinitionException.class)
                 .hasMessage(SCALAR_DECISION_MESSAGE);
-        assertThatThrownBy(() -> platform.registry().resolveCurrent("review-note"))
-                .isInstanceOf(WorkflowDefinitionMissingException.class);
+        assertThatThrownBy(
+                        () -> platform.registry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "review-note", 1L)))
+                .isInstanceOf(WorkflowVersionPinUnavailableException.class);
     }
 
     @Test
@@ -211,7 +212,10 @@ class SchemaActivationTest {
         await(definitions.publish(REVIEW_NOTE_V1));
 
         // Then: the registry resolves it and the service reports it active
-        assertThat(platform.registry().resolveCurrent("review-note").plan().definitionVersion())
+        assertThat(platform.registry()
+                        .resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "review-note", 1L))
+                        .plan()
+                        .definitionVersion())
                 .isEqualTo(1L);
         assertThat(await(definitions.list(GLOBAL)))
                 .extracting(WorkflowDefinitionRecord::status)

@@ -904,12 +904,12 @@ class DefinitionPropagationPassTest {
 
         @Override
         public Future<ReconcileOutcome> upsertDocument(
-                WorkflowDefinitionRecord record, WorkflowDefinitionDocument document) {
+                WorkflowDefinitionRecord record, WorkflowDefinitionDocument document, boolean activateDefault) {
             throw new UnsupportedOperationException();
         }
 
         @Override
-        public Future<ReconcileOutcome> upsertCode(WorkflowDefinitionRecord record) {
+        public Future<ReconcileOutcome> upsertCode(WorkflowDefinitionRecord record, boolean activateDefault) {
             throw new UnsupportedOperationException();
         }
 
@@ -1013,11 +1013,6 @@ class DefinitionPropagationPassTest {
                         + def.definitionVersion() + " is already registered");
             runtimes.put(name, runtime(def.definitionId(), def.definitionVersion(), hashes.getOrDefault(name, HASH)));
             definitions.put(name, def);
-        }
-
-        @Override
-        public RuntimeWorkflow resolveCurrent(String definitionId) {
-            throw new UnsupportedOperationException();
         }
 
         @Override

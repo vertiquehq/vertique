@@ -18,6 +18,8 @@ import dev.vertique.workflow.plan.WorkflowPlan;
 import dev.vertique.workflow.registry.CallbackId;
 import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
 import dev.vertique.workflow.registry.WorkflowCallbackRegistry;
+import dev.vertique.workflow.registry.store.DefinitionKey;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import io.vertx.core.Future;
 import java.util.List;
 import org.junit.jupiter.api.DisplayName;
@@ -92,7 +94,8 @@ class WorkflowBuilderTest {
                         .complete("done");
             }
         });
-        return registry.resolveCurrent("order-fulfillment").plan();
+        return registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "order-fulfillment", 1L))
+                .plan();
     }
 
     // --- Tests ---

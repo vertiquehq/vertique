@@ -38,6 +38,13 @@ final class WorkflowDefinitionSqlObserver {
     private volatile CompletionFailureGate completionFailureGate;
     private volatile CompletionLockGate completionLockGate;
     private volatile CompletionResponseLossGate completionResponseLossGate;
+    private final AtomicBoolean failNextActivationWrite = new AtomicBoolean();
+    private final java.util.concurrent.atomic.AtomicInteger injectedActivationFailures =
+            new java.util.concurrent.atomic.AtomicInteger();
+    private final java.util.concurrent.atomic.AtomicInteger activationWrites =
+            new java.util.concurrent.atomic.AtomicInteger();
+    private static final java.util.regex.Pattern ACTIVATION_WRITE = java.util.regex.Pattern.compile(
+            "(insert\\s+into|update|merge\\s+into)\\s+(?:\"?[\\w$]+\"?\\.)?\"?workflow_definition_activations\"?\\b");
 
     Pool observe(Pool delegate) {
         return (Pool) wrapClient(delegate, Pool.class);
@@ -69,6 +76,30 @@ final class WorkflowDefinitionSqlObserver {
 
     int shortenedDefinitionLockTimeouts() {
         return shortenedDefinitionLockTimeouts.get();
+    }
+
+    /**
+     * Fails the next statement that inserts or updates an activation record, once, with a non-transient database
+     * error, so the transaction that issued it cannot commit. Reads and deletes of records are not affected.
+     */
+    void failNextActivationWrite() {
+        failNextActivationWrite.set(true);
+    }
+
+    /** How many times {@link #failNextActivationWrite} has made a statement fail. */
+    int injectedActivationFailures() {
+        return injectedActivationFailures.get();
+    }
+
+    /** How many statements that insert or update an activation record this observer has seen issued. */
+    int activationWrites() {
+        return activationWrites.get();
+    }
+
+    private static boolean isActivationWrite(String sql) {
+        return ACTIVATION_WRITE
+                .matcher(sql.toLowerCase(Locale.ROOT).replaceAll("\\s+", " "))
+                .find();
     }
 
     int encodingLookupCount() {
@@ -123,6 +154,7 @@ final class WorkflowDefinitionSqlObserver {
         String sql = sqlArgument(method, forwarded);
         if (sql != null) {
             statements.add(sql);
+            if (isActivationWrite(sql)) activationWrites.incrementAndGet();
             long sticky = stickyShortenedLockTimeoutMillis;
             if (isDefinitionLockTimeout(sql)
                     && (sticky > 0 || shortenDefinitionLockTimeout.compareAndSet(true, false))) {
@@ -177,6 +209,13 @@ final class WorkflowDefinitionSqlObserver {
     @SuppressWarnings({"rawtypes", "unchecked"})
     private Object wrapStatement(Object delegate, Class<?> statementType, String sql) {
         InvocationHandler handler = (proxy, method, args) -> {
+            if (method.getName().equals("execute")
+                    && isActivationWrite(sql)
+                    && failNextActivationWrite.compareAndSet(true, false)) {
+                injectedActivationFailures.incrementAndGet();
+                return Future.failedFuture(
+                        new PgException("controlled activation write failure", "ERROR", "XX000", null));
+            }
             if (method.getName().equals("execute")
                     && sql.toLowerCase(Locale.ROOT).contains("pg_advisory_xact_lock")
                     && completionLockArmed.compareAndSet(true, false)) {

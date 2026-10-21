@@ -65,17 +65,6 @@ public interface WorkflowRegistry {
     void register(String scopeKey, WorkflowDefinition<?, ?> def);
 
     /**
-     * Returns the {@link RuntimeWorkflow} for the highest-version plan of the given definition in the
-     * default scope that is not marked deprecated.
-     *
-     * @param definitionId id of the workflow definition
-     * @return the runtime workflow for the current (highest non-deprecated) version
-     * @throws dev.vertique.workflow.exception.WorkflowDefinitionMissingException if no default-scope
-     *     definition with the given id is registered, or every registered version of it is deprecated
-     */
-    RuntimeWorkflow resolveCurrent(String definitionId);
-
-    /**
      * Returns the {@link RuntimeWorkflow} for one version of a definition in one scope.
      *
      * <p>This method is used by the engine when resuming an in-flight instance that was pinned to
@@ -218,5 +207,22 @@ public interface WorkflowRegistry {
      */
     default Optional<WorkflowDefinition<?, ?>> registeredDefinition(DefinitionKey key) {
         return Optional.empty();
+    }
+
+    /**
+     * Whether a version was registered through {@link #register(WorkflowDefinition)}, which is how the deployed
+     * code and the packaged documents register, and not through {@link #register(String, WorkflowDefinition)}, which
+     * publishes a version at run time.
+     *
+     * <p>This is an internal framework seam: an engine without a durable registry uses it to compute the default
+     * scope's current versions from what the deployment registered. Applications do not call it. The default
+     * implementation returns {@code true}, which preserves the behavior of existing registries that do not
+     * distinguish the two.
+     *
+     * @param key the scope, definition id and exact plan version
+     * @return {@code true} if the version is registered and was registered as deployed
+     */
+    default boolean isDeployed(DefinitionKey key) {
+        return true;
     }
 }

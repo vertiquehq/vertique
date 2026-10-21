@@ -8,7 +8,6 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import dev.vertique.core.json.JsonProfileId;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
-import dev.vertique.workflow.exception.WorkflowDefinitionMissingException;
 import dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException;
 import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
 import dev.vertique.workflow.registry.store.DefinitionKey;
@@ -41,15 +40,18 @@ class SchemaRegistrationTest {
                 .isInstanceOf(WorkflowDefinitionException.class)
                 .hasMessage("definition 'scalar-saga' v1 step 'review' decision 'note' payload type 'java.lang.String'"
                         + " is not object-shaped (root type string); wrap the value in a record");
-        assertThatThrownBy(() -> scalarRegistry.resolveCurrent("scalar-saga"))
-                .isInstanceOf(WorkflowDefinitionMissingException.class);
+        assertThatThrownBy(() -> scalarRegistry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "scalar-saga", 1L)))
+                .isInstanceOf(WorkflowVersionPinUnavailableException.class);
 
         // When: the one with a required alias is registered
         var aliasRegistry = registry();
         aliasRegistry.register(alias);
 
         // Then: it resolves
-        assertThat(aliasRegistry.resolveCurrent("alias-saga").plan().definitionId())
+        assertThat(aliasRegistry
+                        .resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "alias-saga", 1L))
+                        .plan()
+                        .definitionId())
                 .isEqualTo("alias-saga");
 
         // When: the one with a polymorphic type is registered
@@ -60,8 +62,8 @@ class SchemaRegistrationTest {
                 .hasMessage("definition 'sealed-saga' v1 step 'review' decision 'note' payload type '"
                         + Payloads.SealedShape.class.getName()
                         + "' is not object-shaped (root type none); wrap the value in a record");
-        assertThatThrownBy(() -> sealedRegistry.resolveCurrent("sealed-saga"))
-                .isInstanceOf(WorkflowDefinitionMissingException.class);
+        assertThatThrownBy(() -> sealedRegistry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "sealed-saga", 1L)))
+                .isInstanceOf(WorkflowVersionPinUnavailableException.class);
     }
 
     @Test
@@ -75,8 +77,8 @@ class SchemaRegistrationTest {
                 .isInstanceOf(WorkflowDefinitionException.class)
                 .hasMessageStartingWith("definition 'start-saga' v4 start payload")
                 .hasMessageContaining("payload type 'java.lang.String' is not object-shaped (root type string)");
-        assertThatThrownBy(() -> registry.resolveCurrent("start-saga"))
-                .isInstanceOf(WorkflowDefinitionMissingException.class);
+        assertThatThrownBy(() -> registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "start-saga", 4L)))
+                .isInstanceOf(WorkflowVersionPinUnavailableException.class);
     }
 
     @Test
@@ -90,8 +92,10 @@ class SchemaRegistrationTest {
         registry.register(Definitions.withDecisionUnderSecondContract("void-saga", 1L, void.class));
 
         // Then: both resolve, and only the object type has an entry
-        assertThat(registry.resolveCurrent("record-saga")).isNotNull();
-        assertThat(registry.resolveCurrent("void-saga")).isNotNull();
+        assertThat(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "record-saga", 1L)))
+                .isNotNull();
+        assertThat(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "void-saga", 1L)))
+                .isNotNull();
         assertThat(cache.snapshot().keySet())
                 .containsExactly(new SchemaKey(Payloads.PlainRecord.class.getName(), JsonProfileId.of("vertique")));
     }
@@ -126,7 +130,10 @@ class SchemaRegistrationTest {
         registry.register(Definitions.withDecision("map-saga", 1L, Map.class));
 
         // Then: it resolves
-        assertThat(registry.resolveCurrent("map-saga").plan().definitionId()).isEqualTo("map-saga");
+        assertThat(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "map-saga", 1L))
+                        .plan()
+                        .definitionId())
+                .isEqualTo("map-saga");
 
         // And: the cached document is an object schema
         assertThat(cache.findByTypeName(Map.class.getName())

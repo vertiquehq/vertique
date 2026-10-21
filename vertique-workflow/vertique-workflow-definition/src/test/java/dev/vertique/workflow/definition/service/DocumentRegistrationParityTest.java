@@ -673,7 +673,8 @@ class DocumentRegistrationParityTest {
         RecordingClassLoader recorder = new RecordingClassLoader();
 
         // When: A starts and provides its registry, and B loads the same bytes through the service
-        RuntimeWorkflow registered = packaged.workflowRegistry().resolveCurrent("legacy-doc");
+        RuntimeWorkflow registered =
+                packaged.workflowRegistry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "legacy-doc", 1L));
         Future<CompiledDefinitionRef> loading = recorder.callWithContextLoader(() -> service.workflowDefinitionService()
                 .load(
                         WorkflowScopes.DEFAULT,

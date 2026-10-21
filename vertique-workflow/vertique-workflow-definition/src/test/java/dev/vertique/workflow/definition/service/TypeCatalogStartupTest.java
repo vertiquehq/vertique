@@ -24,6 +24,7 @@ import dev.vertique.workflow.exception.WorkflowUnknownTypeNameException;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowRegistry;
 import dev.vertique.workflow.registry.store.DefinitionFilter;
+import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.types.WorkflowType;
 import dev.vertique.workflow.types.WorkflowTypeCatalog;
@@ -301,7 +302,8 @@ class TypeCatalogStartupTest {
             CataloguedPackagedStateComponent component =
                     DaggerTypeCatalogStartupTest_CataloguedPackagedStateComponent.create();
 
-            RuntimeWorkflow registered = component.workflowRegistry().resolveCurrent("acme");
+            RuntimeWorkflow registered =
+                    component.workflowRegistry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "acme", 1L));
 
             assertThat(registered.plan().definitionId()).isEqualTo("acme");
             assertThat(registered.plan().definitionVersion()).isEqualTo(1);
@@ -347,7 +349,8 @@ class TypeCatalogStartupTest {
         void packagedBinaryNameRegistersAndItsClassesJoinTheIndex() {
             PackagedBinaryNameComponent component = DaggerTypeCatalogStartupTest_PackagedBinaryNameComponent.create();
 
-            RuntimeWorkflow registered = component.workflowRegistry().resolveCurrent("legacy");
+            RuntimeWorkflow registered =
+                    component.workflowRegistry().resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "legacy", 1L));
             assertThat(registered.startPayloadType()).isEqualTo(LegacyPlain.class);
             assertThat(registered.stateType()).isEqualTo(LegacyState.class);
 

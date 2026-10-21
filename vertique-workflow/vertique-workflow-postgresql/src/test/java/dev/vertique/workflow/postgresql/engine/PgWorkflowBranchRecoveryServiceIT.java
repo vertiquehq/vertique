@@ -441,6 +441,10 @@ public class PgWorkflowBranchRecoveryServiceIT {
                 .create(pool, Clock.systemUTC());
 
         engine = component.workflowOperations();
+        DefaultVersionSeed.recordAndActivate(
+                component.pgWorkflowDefinitionRegistryStore(),
+                component.definitionLifecycle(),
+                component.workflowRegistry());
 
         // Construct the recovery service through the engine-graph-provided WorkflowRecoveryBridge.
         // Use the null-propagator public ctor (no DurableContextPropagator) so the per-branch
@@ -470,6 +474,10 @@ public class PgWorkflowBranchRecoveryServiceIT {
         Ac2TestComponent ac2Component = DaggerPgWorkflowBranchRecoveryServiceIT_Ac2TestComponent.factory()
                 .create(pool, Clock.systemUTC());
         ac2Engine = ac2Component.workflowOperations();
+        DefaultVersionSeed.recordAndActivate(
+                ac2Component.pgWorkflowDefinitionRegistryStore(),
+                ac2Component.definitionLifecycle(),
+                ac2Component.workflowRegistry());
         ac2Holder = ac2Component.contextHolder();
         ac2CorrelationFactory = ac2Component.correlationContextFactory();
         ac2Recovery = new PgWorkflowBranchRecoveryService(
@@ -592,6 +600,10 @@ public class PgWorkflowBranchRecoveryServiceIT {
          * @return the workflow registry
          */
         dev.vertique.workflow.registry.WorkflowRegistry workflowRegistry();
+
+        dev.vertique.workflow.postgresql.registry.PgWorkflowDefinitionRegistryStore pgWorkflowDefinitionRegistryStore();
+
+        dev.vertique.workflow.registry.store.WorkflowDefinitionLifecycle definitionLifecycle();
 
         /**
          * Factory binding the per-test {@link Pool} and {@link Clock} instances into the graph.
@@ -793,6 +805,10 @@ public class PgWorkflowBranchRecoveryServiceIT {
         WorkflowRecoveryBridge recoveryBridge();
 
         dev.vertique.workflow.registry.WorkflowRegistry workflowRegistry();
+
+        dev.vertique.workflow.postgresql.registry.PgWorkflowDefinitionRegistryStore pgWorkflowDefinitionRegistryStore();
+
+        dev.vertique.workflow.registry.store.WorkflowDefinitionLifecycle definitionLifecycle();
 
         DurableContextPropagator durableContextPropagator();
 

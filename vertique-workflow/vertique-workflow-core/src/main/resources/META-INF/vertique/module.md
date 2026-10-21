@@ -129,7 +129,7 @@ The registry validates definitions at registration time. Invalid graphs fail bef
 
 `definitionClass(Class<?>)` answers with a `RegisteredDefinitionClass(definitionId, contractName, contract)` for the exact runtime class of a registered definition, and is empty for a class that was never registered or was registered under more than one definition id. `WorkflowClientFactory` uses it to create a client from a definition class. It is an abstract member of the interface: `DefaultWorkflowRegistry` implements it, and a custom `WorkflowRegistry` implementation no longer compiles until it implements the member (an implementation that has no definition classes returns `Optional.empty()`). Workflow releases may add further abstract members, so the registry is an interface the framework implements rather than one applications extend.
 
-A registered version is identified by a `DefinitionKey`: the scope that owns it, the definition id and the version. `register(definition)` registers in the default scope, `WorkflowScopes.DEFAULT`, and `register(scopeKey, definition)` registers in another scope; a scope may hold its own versions of an id that the default scope also holds. The SPI takes definition keys: `resolve(key)` returns the version or throws `WorkflowVersionPinUnavailableException` naming the scope, the definition id and the version, `find(key)` answers an `Optional`, `keysFor(definitionId)` lists the keys of every scope ordered by scope and then version (for listings only), and `contractOf(scopeKey, definitionId)` answers the contract name that the versions of one scope and id name, in one lookup. `unregister`, `markDeprecated`, `isDeprecated` and `registeredDefinition` take a key too. `resolveCurrent(definitionId)` considers only the versions of the default scope. Every `RuntimeWorkflow` reports the scope it is registered in as `definitionScopeKey()`. The earlier `resolvePinned(id, version)` and the id and version forms of the four key members are removed; a custom `WorkflowRegistry` must implement `register(scopeKey, definition)`, `resolve`, `find` and `keysFor`. The engine resolves every instance's plan with the instance's full pin: its definition scope, definition id and definition version.
+A registered version is identified by a `DefinitionKey`: the scope that owns it, the definition id and the version. `register(definition)` registers in the default scope, `WorkflowScopes.DEFAULT`, and `register(scopeKey, definition)` registers in another scope; a scope may hold its own versions of an id that the default scope also holds. The SPI takes definition keys: `resolve(key)` returns the version or throws `WorkflowVersionPinUnavailableException` naming the scope, the definition id and the version, `find(key)` answers an `Optional`, `keysFor(definitionId)` lists the keys of every scope ordered by scope and then version (for listings only), and `contractOf(scopeKey, definitionId)` answers the contract name that the versions of one scope and id name, in one lookup. `unregister`, `markDeprecated`, `isDeprecated` and `registeredDefinition` take a key too. `resolveCurrent` is removed: the version a start without a version runs is chosen by activation records, not by the registry (see Activation records). Every `RuntimeWorkflow` reports the scope it is registered in as `definitionScopeKey()`. The earlier `resolvePinned(id, version)` and the id and version forms of the four key members are removed; a custom `WorkflowRegistry` must implement `register(scopeKey, definition)`, `resolve`, `find` and `keysFor`. The engine resolves every instance's plan with the instance's full pin: its definition scope, definition id and definition version.
 
 Registration runs the plan checks and the callback consistency check, indexes the definition's type names (see Logical Type Names), then every contributed
 `WorkflowDefinitionValidator`, and only then publishes the definition. The validator step applies to
@@ -455,9 +455,15 @@ of such a version fails with `INVALID_TRANSITION` rather than taking it over.
 The lifecycle and the definition service also add `reinstate(DefinitionKey)`; the store performs it as `transition(key, RETIRED,
 AVAILABLE)` or `transition(key, DEPRECATED, AVAILABLE)`.
 The store also adds `upsertCode` (startup record of deployed code as `AVAILABLE`: rehash only while no live instance is pinned to
-that exact version, decided inside the store transaction) and `resetStalePublishing` (claims older than twice the
+that exact version, decided inside the store transaction) and `upsertDocument`; both take an `activateDefault` flag (the forms
+without it pass `false`) that writes the default scope's activation record in the same transaction as the first insert (see
+Activation records), and `resetStalePublishing` (claims older than twice the
 staleness bound return to CANDIDATE). `WorkflowRegistry.registeredDefinition(key)` is an internal default-empty
 hook that the default registry fills with the source definition it registered; it is empty after `unregister`.
+`WorkflowRegistry.isDeployed(key)` is a second internal hook, `true` by default: the default registry answers `true` for a
+version registered through `register(definition)`, which is how deployed code and packaged documents register, and `false`
+for one registered through `register(scopeKey, definition)`, which publishes at run time. An engine without a durable store
+uses it to compute the default scope's current versions.
 Rows of different scopes and versions of one id coexist and do not conflict: a claim, completion or static reconciliation
 looks only at its own row.
 
@@ -474,6 +480,25 @@ record is accepted, no definition row changes, other scopes' records stay), `fol
 non-default scope's record (`follow` on the default scope fails with `IllegalArgumentException`), and
 `activations(scopeKey)`. Without a durable store the same operations act on the node's in-memory view and are lost on
 restart; there `activate` checks that the target version is registered on the node and not deprecated.
+
+**Auto-activation.** `WorkflowDefinition.activateOnDeploy()` (default `true`) decides whether a version becomes the default
+scope's current version when it is first published at deployment. With a durable store, a code version or packaged document
+version that startup inserts for the first time (the store reports `INSERTED`) is activated in the default scope when it does
+not opt out and is higher than the version the default scope's record already names, or when there is no record. The insert
+and the activation commit in one transaction under the definition id lock, so a failure leaves neither and the next startup
+tries again. Among the versions of one id first published in the same startup the highest that does not opt out wins whatever
+the registration order, and a lower version published later (a backport) never replaces a higher record. A restart reconciles
+the same versions as unchanged, which is not a first publication, so it never activates anything: an operator's `activate`
+and a `deactivateDefault` survive restarts, and a cleared id becomes current again only through a later first publication of
+one of its versions or an operator `activate`. A version published through the definition service is never activated by this
+rule, whatever its document says. Returning `false` from `activateOnDeploy()`, or setting the `activateOnDeploy: false` header
+of a packaged document, publishes the version without activating it, so it can be tried in another scope with `activate` and
+made current later.
+
+**Rolling deploys.** Auto-activation runs on the first node that starts with the new version, and every node then reads the
+activation record. Nodes still running the previous code cannot run the new version, so to roll a new version out across a
+mixed fleet deploy it with `activateOnDeploy` set to `false`, and activate it once every node runs the new code. Rollback is
+roll-forward only: activate the previous version again, or deploy a corrected version.
 
 **Default-current guard.** While the default scope's record of an id names a version, `deprecate` and `retire` of that
 version fail with `INVALID_TRANSITION` naming the key; the check runs in the same store transaction as the status change.
@@ -526,7 +551,7 @@ report invalid arguments through failed Futures.
 | `WorkflowUnavailableException` | `UnavailableException` | 503 |
 | `WorkflowPersistenceException` | extends `WorkflowTechnicalException` (carries a `retryable` flag) | 500 |
 
-`WorkflowNoCurrentVersionException` extends `WorkflowDefinitionMissingException` and is thrown by a start without a version that finds no current version: neither the start scope nor the default scope has an activation record and the default scope holds no startable version of the id. It exposes `scopeKey()` (the start scope) and `definitionId()` and no version, because none is current, and it never selects a version from another scope.
+`WorkflowNoCurrentVersionException` extends `WorkflowDefinitionMissingException` and is thrown by a start without a version that finds no current version: neither the start scope nor the default scope has an activation record (with a durable store) or, without one, the deployment registered no version of the id that is not deprecated and does not opt out. It exposes `scopeKey()` (the start scope) and `definitionId()` and no version, because none is current, and it never selects a version from another scope.
 
 `WorkflowUnknownTypeNameException` (a name no indexed class has) and `WorkflowTypeNameConflictException` (two classes under one name in a namespace) extend `WorkflowDefinitionException`, so they are configuration failures and existing handlers for definition errors keep working.
 

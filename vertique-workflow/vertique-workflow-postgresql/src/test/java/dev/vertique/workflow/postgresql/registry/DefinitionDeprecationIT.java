@@ -163,14 +163,12 @@ public class DefinitionDeprecationIT {
                             tuple(targetVersion, ActivationStatus.DEPRECATED),
                             tuple(otherVersion, ActivationStatus.valueOf(otherStatusBefore.name())));
 
-            // And the registry marks only the target, skips it for current resolution and still serves it pinned
+            // And the registry marks only the target and still serves it pinned
             assertThat(app.workflowRegistry()
                             .isDeprecated(new DefinitionKey(WorkflowScopes.DEFAULT, id, targetVersion)))
                     .isTrue();
             assertThat(app.workflowRegistry().isDeprecated(new DefinitionKey(WorkflowScopes.DEFAULT, id, otherVersion)))
                     .isFalse();
-            assertThat(app.workflowRegistry().resolveCurrent(id).plan().definitionVersion())
-                    .isEqualTo(otherVersion);
             assertThat(app.workflowRegistry()
                             .resolve(new DefinitionKey(WorkflowScopes.DEFAULT, id, targetVersion))
                             .plan()
@@ -503,6 +501,8 @@ public class DefinitionDeprecationIT {
 
         private void deleteRows(String definitionId) {
             await(admin().preparedQuery("DELETE FROM workflow_instances WHERE definition_id = $1")
+                    .execute(Tuple.of(definitionId)));
+            await(admin().preparedQuery("DELETE FROM workflow_definition_activations WHERE definition_id = $1")
                     .execute(Tuple.of(definitionId)));
             await(admin().preparedQuery("DELETE FROM workflow_definitions WHERE definition_id = $1")
                     .execute(Tuple.of(definitionId)));

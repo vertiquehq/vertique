@@ -235,7 +235,7 @@ final class DefaultWorkflowDefinitionLifecycle implements WorkflowDefinitionLife
     public Future<List<DefinitionActivation>> activations(@Nullable String scopeKey) {
         try {
             if (scopeKey != null) new DefinitionKey(scopeKey, WorkflowScopes.DEFAULT, 1);
-            if (store.isEmpty()) return Future.succeededFuture(activations.list(scopeKey));
+            if (store.isEmpty()) return Future.succeededFuture(activations.list(registry.get(), scopeKey));
             return store.orElseThrow().listActivations(scopeKey);
         } catch (RuntimeException e) {
             return Future.failedFuture(e);

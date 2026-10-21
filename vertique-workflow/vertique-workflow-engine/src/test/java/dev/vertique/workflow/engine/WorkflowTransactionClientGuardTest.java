@@ -38,6 +38,7 @@ import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowCallbackRegistry;
 import dev.vertique.workflow.registry.WorkflowRegistry;
 import dev.vertique.workflow.registry.store.DefinitionKey;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.sideeffect.WorkflowSideEffectRecorder;
 import dev.vertique.workflow.tasks.TaskAssignment;
 import dev.vertique.workflow.tasks.TaskStore;
@@ -294,7 +295,9 @@ class WorkflowTransactionClientGuardTest {
 
         RuntimeWorkflow runtime = runtimeWorkflow();
         WorkflowRegistry registry = mock(WorkflowRegistry.class);
-        when(registry.resolveCurrent(DEFINITION_ID)).thenReturn(runtime);
+        DefinitionKey currentKey = new DefinitionKey(WorkflowScopes.DEFAULT, DEFINITION_ID, 1);
+        when(registry.keysFor(DEFINITION_ID)).thenReturn(List.of(currentKey));
+        when(registry.isDeployed(currentKey)).thenReturn(true);
         when(registry.resolve(any(DefinitionKey.class))).thenReturn(runtime);
 
         DefaultContextHolder holder = new DefaultContextHolder();

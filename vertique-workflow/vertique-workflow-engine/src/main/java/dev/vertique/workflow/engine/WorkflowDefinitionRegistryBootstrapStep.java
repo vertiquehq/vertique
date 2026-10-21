@@ -57,6 +57,11 @@ import org.slf4j.LoggerFactory;
  *       scope, and it snapshots the code definitions in the {@link WorkflowCodeDefinitionCatalog}.
  *   <li>It records every packaged document and every code definition in the table as available. Drift, a
  *       conflicting kind, or a stored code definition that the deployed code no longer provides fails startup.
+ *       A version that is inserted here for the first time and does not opt out of activation on deploy also
+ *       becomes the default scope's current version, in the same transaction as its insert, when it is higher than
+ *       the current one. A version that is already recorded is never activated by a restart.
+ *   <li>It restores every durable activation record into the node's view, including the records just written and
+ *       those that name a version this node has no code for.
  *   <li>It restores every live document of every scope, deprecated ones included, and attributes each to its
  *       key.
  *   <li>It applies the deprecation marks, and removes the registrations of retired rows when they are still
@@ -82,6 +87,7 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
     private final ManagedRegistrations registrations;
     private final WorkflowCodeDefinitionCatalog catalog;
     private final DefaultWorkflowDefinitionRegistryView view;
+    private final DefinitionActivations activations;
 
     @Inject
     WorkflowDefinitionRegistryBootstrapStep(
@@ -91,7 +97,9 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
             DefinitionApplyQueue queue,
             ManagedRegistrations registrations,
             WorkflowCodeDefinitionCatalog catalog,
-            DefaultWorkflowDefinitionRegistryView view) {
+            DefaultWorkflowDefinitionRegistryView view,
+            DefinitionActivations activations) {
+        this.activations = activations;
         this.view = view;
         this.store = store;
         this.registry = registry;
@@ -117,8 +125,9 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
         // Registry construction invokes static contributors; keep their parsing off the event loop.
         return work(this::prepare).compose(prepared -> {
             WorkflowRegistry local = prepared.registry();
-            return reconcileOrigins(prepared.origins())
+            return reconcileOrigins(prepared.origins(), prepared.optedOut())
                     .compose(ignored -> reconcileCode(prepared.code()))
+                    .compose(ignored -> restoreActivations())
                     .compose(ignored -> listAll())
                     .compose(reconciled -> requireCode(reconciled)
                             .compose(ignored -> restoreAll(local, reconciled))
@@ -149,7 +158,13 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
                 .map(origin ->
                         new VersionKey(origin.key().definitionId(), origin.key().definitionVersion()))
                 .collect(Collectors.toSet());
-        return new Prepared(local, origins, catalog.capture(local, originKeys));
+        Set<DefinitionKey> optedOut = origins.stream()
+                .map(DocumentOrigin::key)
+                .filter(key -> local.registeredDefinition(key)
+                        .map(definition -> !definition.activateOnDeploy())
+                        .orElse(false))
+                .collect(Collectors.toSet());
+        return new Prepared(local, origins, catalog.capture(local, originKeys), optedOut);
     }
 
     private Future<List<WorkflowDefinitionRecord>> listAll() {
@@ -158,8 +173,11 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
                 .map(records -> records.stream().sorted(LISTING_ORDER).toList());
     }
 
-    /** Records every packaged document, so that a stored row of the same key is compared with it. */
-    private Future<Void> reconcileOrigins(List<DocumentOrigin> origins) {
+    /**
+     * Records every packaged document, so that a stored row of the same key is compared with it. A document that
+     * does not opt out is activated in the default scope when this records it for the first time.
+     */
+    private Future<Void> reconcileOrigins(List<DocumentOrigin> origins, Set<DefinitionKey> optedOut) {
         Future<Void> chain = Future.succeededFuture();
         for (DocumentOrigin origin : origins) {
             chain = chain.compose(ignored -> queue.submit(origin.key().definitionId(), () -> {
@@ -175,14 +193,17 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
                         origin.provenance().loadedAt(),
                         origin.provenance().loadedAt());
                 return store.orElseThrow().find(origin.key()).compose(previous -> store.orElseThrow()
-                        .upsertDocument(source, origin.document())
+                        .upsertDocument(source, origin.document(), !optedOut.contains(origin.key()))
                         .compose(outcome -> reconcileResult(source, previous, outcome)));
             }));
         }
         return chain;
     }
 
-    /** Records every code definition that the deployed code provides. */
+    /**
+     * Records every code definition that the deployed code provides. A definition that does not opt out is activated
+     * in the default scope when this records it for the first time.
+     */
     private Future<Void> reconcileCode(List<CodeDefinition> code) {
         Instant startedAt = Instant.now();
         Future<Void> chain = Future.succeededFuture();
@@ -218,11 +239,22 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
                         startedAt,
                         startedAt);
                 return store.orElseThrow().find(key).compose(previous -> store.orElseThrow()
-                        .upsertCode(source)
+                        .upsertCode(
+                                source,
+                                definition.definition() == null
+                                        || definition.definition().activateOnDeploy())
                         .compose(outcome -> reconcileResult(source, previous, outcome)));
             }));
         }
         return chain;
+    }
+
+    /** Records every durable activation record in the node's view, whether or not this node has the code it names. */
+    private Future<Void> restoreActivations() {
+        return store.orElseThrow().listActivations(null).map(records -> {
+            records.forEach(activations::put);
+            return (Void) null;
+        });
     }
 
     private Future<Void> reconcileResult(
@@ -546,5 +578,9 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
     private record VerifiedDocument(
             PersistedDefinitionLoader loader, WorkflowDefinitionRecord record, WorkflowDefinition<?, ?> definition) {}
 
-    private record Prepared(WorkflowRegistry registry, List<DocumentOrigin> origins, List<CodeDefinition> code) {}
+    private record Prepared(
+            WorkflowRegistry registry,
+            List<DocumentOrigin> origins,
+            List<CodeDefinition> code,
+            Set<DefinitionKey> optedOut) {}
 }

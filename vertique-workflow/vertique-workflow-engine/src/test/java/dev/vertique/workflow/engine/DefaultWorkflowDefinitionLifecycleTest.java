@@ -730,13 +730,13 @@ class DefaultWorkflowDefinitionLifecycleTest {
         }
 
         @Override
-        public Future<ReconcileOutcome> upsertCode(WorkflowDefinitionRecord record) {
+        public Future<ReconcileOutcome> upsertCode(WorkflowDefinitionRecord record, boolean activateDefault) {
             throw new UnsupportedOperationException();
         }
 
         @Override
         public Future<ReconcileOutcome> upsertDocument(
-                WorkflowDefinitionRecord record, WorkflowDefinitionDocument document) {
+                WorkflowDefinitionRecord record, WorkflowDefinitionDocument document, boolean activateDefault) {
             throw new UnsupportedOperationException();
         }
 
@@ -1318,13 +1318,13 @@ class DefaultWorkflowDefinitionLifecycleTest {
         }
 
         @Override
-        public Future<ReconcileOutcome> upsertCode(WorkflowDefinitionRecord record) {
+        public Future<ReconcileOutcome> upsertCode(WorkflowDefinitionRecord record, boolean activateDefault) {
             throw new UnsupportedOperationException();
         }
 
         @Override
         public Future<ReconcileOutcome> upsertDocument(
-                WorkflowDefinitionRecord record, WorkflowDefinitionDocument document) {
+                WorkflowDefinitionRecord record, WorkflowDefinitionDocument document, boolean activateDefault) {
             throw new UnsupportedOperationException();
         }
 
@@ -1378,11 +1378,6 @@ class DefaultWorkflowDefinitionLifecycleTest {
             registrations.put(name, runtime);
             definitions.put(name, def);
             history.add(runtime);
-        }
-
-        @Override
-        public RuntimeWorkflow resolveCurrent(String definitionId) {
-            throw new UnsupportedOperationException();
         }
 
         @Override
@@ -1508,13 +1503,13 @@ class DefaultWorkflowDefinitionLifecycleTest {
         }
 
         @Override
-        public Future<ReconcileOutcome> upsertCode(WorkflowDefinitionRecord record) {
+        public Future<ReconcileOutcome> upsertCode(WorkflowDefinitionRecord record, boolean activateDefault) {
             throw new UnsupportedOperationException();
         }
 
         @Override
         public Future<ReconcileOutcome> upsertDocument(
-                WorkflowDefinitionRecord record, WorkflowDefinitionDocument document) {
+                WorkflowDefinitionRecord record, WorkflowDefinitionDocument document, boolean activateDefault) {
             throw new UnsupportedOperationException();
         }
 
@@ -1564,11 +1559,6 @@ class DefaultWorkflowDefinitionLifecycleTest {
                 throw new WorkflowDefinitionException("definition '" + def.definitionId() + "' v"
                         + def.definitionVersion() + " is already registered");
             registrations.put(name, Mockito.mock(RuntimeWorkflow.class));
-        }
-
-        @Override
-        public RuntimeWorkflow resolveCurrent(String definitionId) {
-            throw new UnsupportedOperationException();
         }
 
         @Override
@@ -1673,13 +1663,13 @@ class DefaultWorkflowDefinitionLifecycleTest {
         }
 
         @Override
-        public Future<ReconcileOutcome> upsertCode(WorkflowDefinitionRecord record) {
+        public Future<ReconcileOutcome> upsertCode(WorkflowDefinitionRecord record, boolean activateDefault) {
             throw new UnsupportedOperationException();
         }
 
         @Override
         public Future<ReconcileOutcome> upsertDocument(
-                WorkflowDefinitionRecord record, WorkflowDefinitionDocument document) {
+                WorkflowDefinitionRecord record, WorkflowDefinitionDocument document, boolean activateDefault) {
             throw new UnsupportedOperationException();
         }
 

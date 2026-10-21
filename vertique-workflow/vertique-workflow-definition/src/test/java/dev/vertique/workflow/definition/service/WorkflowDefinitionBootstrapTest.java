@@ -36,7 +36,7 @@ import dev.vertique.workflow.definition.source.WorkflowDefinitionSource;
 import dev.vertique.workflow.definition.validator.Violation;
 import dev.vertique.workflow.definition.validator.WorkflowDefinitionDocumentValidator;
 import dev.vertique.workflow.definition.validator.WorkflowDefinitionLoadException;
-import dev.vertique.workflow.exception.WorkflowDefinitionMissingException;
+import dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException;
 import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.WorkflowDefinitionRegistryStore;
@@ -180,14 +180,17 @@ class WorkflowDefinitionBootstrapTest {
     class OneGoodResource {
 
         @Test
-        @DisplayName("bootstrap registers the definition; resolveCurrent works")
+        @DisplayName("bootstrap registers the definition and it resolves")
         void bootstrapsOneDefinition() {
             WorkflowDefinitionBootstrap bs =
                     bootstrap(Set.of(() -> List.of(resourceFor("boot-alpha", 1, BootAlphaV1Contract.class))));
             DefaultWorkflowRegistry reg = freshRegistry();
             bs.contribute(reg);
 
-            assertThat(reg.resolveCurrent("boot-alpha").plan().definitionId()).isEqualTo("boot-alpha");
+            assertThat(reg.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "boot-alpha", 1L))
+                            .plan()
+                            .definitionId())
+                    .isEqualTo("boot-alpha");
             assertThat(store.list()).hasSize(1);
             assertThat(store.list().iterator().next().status()).isEqualTo(ActivationStatus.AVAILABLE);
         }
@@ -256,8 +259,14 @@ class WorkflowDefinitionBootstrapTest {
             DefaultWorkflowRegistry reg = freshRegistry();
             bs.contribute(reg);
 
-            assertThat(reg.resolveCurrent("boot-alpha").plan().definitionId()).isEqualTo("boot-alpha");
-            assertThat(reg.resolveCurrent("boot-beta").plan().definitionId()).isEqualTo("boot-beta");
+            assertThat(reg.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "boot-alpha", 1L))
+                            .plan()
+                            .definitionId())
+                    .isEqualTo("boot-alpha");
+            assertThat(reg.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "boot-beta", 1L))
+                            .plan()
+                            .definitionId())
+                    .isEqualTo("boot-beta");
             assertThat(store.list()).hasSize(2);
         }
     }
@@ -376,8 +385,8 @@ class WorkflowDefinitionBootstrapTest {
 
             // Registry must be untouched — the good resource was not registered
             assertThat(reg.allRegistered()).isEmpty();
-            assertThatThrownBy(() -> reg.resolveCurrent("boot-beta"))
-                    .isInstanceOf(WorkflowDefinitionMissingException.class);
+            assertThatThrownBy(() -> reg.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "boot-beta", 1L)))
+                    .isInstanceOf(WorkflowVersionPinUnavailableException.class);
 
             // Store must also be untouched — no candidates persisted from the partial run
             assertThat(store.list()).isEmpty();

@@ -301,7 +301,12 @@ without one, the returned Future fails.
 `activate(scopeKey, definitionId, targetScopeKey, version)` makes a version the one a start without a version runs in a scope,
 replacing the scope's record; the target is the scope itself or the default scope (the default scope may target only itself),
 and it must be available in the target scope, otherwise the Future fails with `INVALID_TRANSITION` naming the target key or,
-for an invalid scope combination, with `IllegalArgumentException`. Publishing never activates anything. `follow(scopeKey,
+for an invalid scope combination, with `IllegalArgumentException`. Publishing through this service never activates anything. A packaged document (a `WorkflowDefinitionSource` contribution
+loaded at startup) is activated in the default scope when it is first published, like code, unless its header sets
+`activateOnDeploy: false`; the optional boolean header is absent (true) by default. A document loaded through the service
+ignores the header: it stays `CANDIDATE` until published and stays inactive until an operator activates it. To roll a new
+packaged version out across a mixed fleet, ship it with `activateOnDeploy: false` and activate it once every node runs the new
+code. `follow(scopeKey,
 definitionId)` removes a non-default scope's record so it follows the default again, `deactivateDefault(definitionId)` clears
 the default scope's record (an absent record is accepted), and `activations(scopeKey)` lists the records of a scope or, with
 `null`, of every scope. The default scope's current version cannot be deprecated or retired until another version is activated

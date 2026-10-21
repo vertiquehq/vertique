@@ -404,17 +404,6 @@ class WorkflowRegistryTest {
         }
 
         @Test
-        @DisplayName("resolveCurrent returns the highest-version RuntimeWorkflow")
-        void shouldReturnHighestVersion() {
-            registry.register(DEF_V1);
-            registry.register(DEF_V2);
-
-            RuntimeWorkflow rw = registry.resolveCurrent("order-saga");
-
-            assertThat(rw.plan().definitionVersion()).isEqualTo(2L);
-        }
-
-        @Test
         @DisplayName("resolve returns exactly the requested version")
         void shouldReturnPinnedVersion() {
             registry.register(DEF_V1);
@@ -739,7 +728,7 @@ class WorkflowRegistryTest {
         }
 
         @Test
-        @DisplayName("registering different versions of the same definitionId succeeds; resolveCurrent returns highest")
+        @DisplayName("registering different versions of the same definitionId succeeds and each resolves")
         void registeringDifferentVersionsOfSameDefinitionWorks() {
             // Versions 1 and 2 of definitionId "multi" share one contract.
             @WorkflowContract
@@ -807,9 +796,13 @@ class WorkflowRegistryTest {
             assertThatCode(() -> registry.register(defV1)).doesNotThrowAnyException();
             assertThatCode(() -> registry.register(defV2)).doesNotThrowAnyException();
 
-            // resolveCurrent must return the v=2 RuntimeWorkflow.
-            RuntimeWorkflow rw = registry.resolveCurrent("multi");
+            // Each version resolves to its own RuntimeWorkflow.
+            RuntimeWorkflow rw = registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "multi", 2L));
             assertThat(rw.plan().definitionVersion()).isEqualTo(2L);
+            assertThat(registry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "multi", 1L))
+                            .plan()
+                            .definitionVersion())
+                    .isEqualTo(1L);
         }
     }
 
@@ -1010,7 +1003,6 @@ class WorkflowRegistryTest {
         List<DefinitionKey> keysBefore = registry.keysFor("purchase-approval");
         RuntimeWorkflow acmeResolved = registry.resolve(acmeV1);
         RuntimeWorkflow defaultResolved = registry.resolve(defaultV1);
-        RuntimeWorkflow currentBefore = registry.resolveCurrent("purchase-approval");
         Throwable globexRefusal = catchThrowable(() -> registry.resolve(globexV1));
         Throwable duplicate =
                 catchThrowable(() -> registry.register("acme", approvalDefinition(1L, "approve", "escalate")));
@@ -1043,11 +1035,9 @@ class WorkflowRegistryTest {
                 .hasMessageContaining("globex")
                 .hasMessageContaining("purchase-approval");
 
-        // and: current resolution considers the default scope only, before and after default v4
-        assertThat(currentBefore.plan().definitionVersion()).isEqualTo(3L);
-        assertThat(currentBefore.definitionScopeKey()).isEqualTo(WorkflowScopes.DEFAULT);
-        assertThat(registry.resolveCurrent("purchase-approval").plan().definitionVersion())
-                .isEqualTo(4L);
+        // and: the default scope's highest version resolves in the default scope, before and after default v4
+        assertThat(registry.resolve(defaultV3).definitionScopeKey()).isEqualTo(WorkflowScopes.DEFAULT);
+        assertThat(registry.resolve(defaultV4).plan().definitionVersion()).isEqualTo(4L);
 
         // and: the second acme v1 is refused naming its scope, id and version, and the first entry is unchanged
         assertNamesKey(duplicate, "acme", "purchase-approval", 1L);

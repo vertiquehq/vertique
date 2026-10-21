@@ -188,8 +188,6 @@ public class DefinitionPropagationIT {
                             .plan()
                             .planHash())
                     .isEqualTo(hash);
-            assertThatThrownBy(() -> bRegistry.resolveCurrent(id))
-                    .isInstanceOf(WorkflowDefinitionMissingException.class);
             assertThat(b.app().definitionRegistryView().applyFailures()).isZero();
 
             // When the deprecation has cooled by the database clock, A retires the document and B reconciles
@@ -589,17 +587,18 @@ public class DefinitionPropagationIT {
             });
             assertThat(scenario.stored(id, 1)).isEqualTo(committed);
 
-            // And current and pinned resolution respect the higher version and the deprecation
+            // And pinned resolution respects the higher version and the deprecation
             assertThat(bRegistry.isDeprecated(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1)))
                     .isEqualTo(peerCase == PeerCase.DEPRECATED_FIRST);
             if (peerCase == PeerCase.AVAILABLE_ALONE) {
-                assertThat(bRegistry.resolveCurrent(id)).isSameAs(restored);
+                assertThat(bRegistry.resolve(new DefinitionKey(WorkflowScopes.DEFAULT, id, 1)))
+                        .isSameAs(restored);
             } else if (peerCase == PeerCase.AVAILABLE_BESIDE_HIGHER) {
-                assertThat(bRegistry.resolveCurrent(id).plan().definitionVersion())
+                assertThat(bRegistry
+                                .resolve(new DefinitionKey(WorkflowScopes.DEFAULT, id, 2))
+                                .plan()
+                                .definitionVersion())
                         .isEqualTo(2);
-            } else {
-                assertThatThrownBy(() -> bRegistry.resolveCurrent(id))
-                        .isInstanceOf(WorkflowDefinitionMissingException.class);
             }
 
             if (peerCase == PeerCase.DEPRECATED_FIRST) {

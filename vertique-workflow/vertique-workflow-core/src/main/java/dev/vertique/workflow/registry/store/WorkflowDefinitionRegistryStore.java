@@ -44,15 +44,48 @@ public interface WorkflowDefinitionRegistryStore {
     Future<List<WorkflowDefinitionRecord>> list(DefinitionFilter filter);
 
     /**
-     * Reconciles a document definition and its source text with the persisted registry. An absent key is
-     * inserted as an available definition. For an existing document definition with a matching plan hash,
-     * provenance is refreshed; hash drift or a kind mismatch is reported by the outcome.
+     * Reconciles a document definition and its source text with the persisted registry, without activating it.
+     * Equivalent to {@link #upsertDocument(WorkflowDefinitionRecord, WorkflowDefinitionDocument, boolean)} with
+     * {@code activateDefault} false.
      *
      * @param record metadata and provenance for the document definition
      * @param document source text associated with the definition
      * @return a future containing the reconciliation outcome after the transaction completes
      */
-    Future<ReconcileOutcome> upsertDocument(WorkflowDefinitionRecord record, WorkflowDefinitionDocument document);
+    default Future<ReconcileOutcome> upsertDocument(
+            WorkflowDefinitionRecord record, WorkflowDefinitionDocument document) {
+        return upsertDocument(record, document, false);
+    }
+
+    /**
+     * Reconciles a document definition and its source text with the persisted registry. An absent key is
+     * inserted as an available definition. For an existing document definition with a matching plan hash,
+     * provenance is refreshed; hash drift or a kind mismatch is reported by the outcome.
+     *
+     * <p>When {@code activateDefault} is true and, only then, the outcome is {@code INSERTED}, the same transaction
+     * and the same definition id lock also write the default scope's activation record of the id to this version,
+     * unless that record already names a higher version. A failure of either write rolls back both, so the version
+     * is never available without the activation its first publication owed. Any other outcome writes no
+     * activation record.
+     *
+     * @param record metadata and provenance for the document definition
+     * @param document source text associated with the definition
+     * @param activateDefault whether a first publication also becomes the default scope's current version
+     * @return a future containing the reconciliation outcome after the transaction completes
+     */
+    Future<ReconcileOutcome> upsertDocument(
+            WorkflowDefinitionRecord record, WorkflowDefinitionDocument document, boolean activateDefault);
+
+    /**
+     * Reconciles a definition that the deployed code provides with the persisted registry, without activating it.
+     * Equivalent to {@link #upsertCode(WorkflowDefinitionRecord, boolean)} with {@code activateDefault} false.
+     *
+     * @param record metadata and provenance for the code definition
+     * @return a future containing the reconciliation outcome after the transaction completes
+     */
+    default Future<ReconcileOutcome> upsertCode(WorkflowDefinitionRecord record) {
+        return upsertCode(record, false);
+    }
 
     /**
      * Reconciles a definition that the deployed code provides with the persisted registry, as startup does. The
@@ -65,10 +98,17 @@ public interface WorkflowDefinitionRegistryStore {
      * caller to force a replacement. A row of the same key that is a document definition is reported as
      * {@code KIND_CONFLICT}. The status of an existing row is never changed.
      *
+     * <p>When {@code activateDefault} is true and, only then, the outcome is {@code INSERTED}, the same transaction
+     * and the same definition id lock also write the default scope's activation record of the id to this version,
+     * unless that record already names a higher version. A failure of either write rolls back both, so the version
+     * is never available without the activation its first publication owed. Any other outcome writes no
+     * activation record.
+     *
      * @param record metadata and provenance for the code definition
+     * @param activateDefault whether a first publication also becomes the default scope's current version
      * @return a future containing the reconciliation outcome after the transaction completes
      */
-    Future<ReconcileOutcome> upsertCode(WorkflowDefinitionRecord record);
+    Future<ReconcileOutcome> upsertCode(WorkflowDefinitionRecord record, boolean activateDefault);
 
     /**
      * Claims an eligible candidate for publication, or reclaims this key's stale publication attempt, and

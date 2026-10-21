@@ -123,7 +123,7 @@ class DefinitionAsyncFallbackTest {
         ServiceTestHelpers.await(service.publish(key));
         assertThat(component
                         .workflowRegistry()
-                        .resolveCurrent("fallback-order")
+                        .resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "fallback-order", 1L))
                         .plan()
                         .definitionVersion())
                 .isEqualTo(1);
@@ -170,7 +170,7 @@ class DefinitionAsyncFallbackTest {
         assertThatThrownBy(() -> ServiceTestHelpers.await(invalidKey)).isInstanceOf(RuntimeException.class);
         assertThat(component
                         .workflowRegistry()
-                        .resolveCurrent("fallback-order")
+                        .resolve(new DefinitionKey(WorkflowScopes.DEFAULT, "fallback-order", 1L))
                         .plan()
                         .definitionVersion())
                 .isEqualTo(1);

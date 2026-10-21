@@ -178,6 +178,10 @@ public class WorkflowDarkModeIT {
         // absence IS the dark-mode fixture (zero registered durable namespaces).
         DarkModeTestComponent component =
                 DaggerWorkflowDarkModeIT_DarkModeTestComponent.factory().create(pool, Clock.systemUTC());
+        DefaultVersionSeed.recordAndActivate(
+                component.pgWorkflowDefinitionRegistryStore(),
+                component.definitionLifecycle(),
+                component.workflowRegistry());
 
         engine = component.workflowOperations();
         recovery = new PgWorkflowBranchRecoveryService(
@@ -246,6 +250,10 @@ public class WorkflowDarkModeIT {
         WorkflowRecoveryBridge recoveryBridge();
 
         dev.vertique.workflow.registry.WorkflowRegistry workflowRegistry();
+
+        dev.vertique.workflow.postgresql.registry.PgWorkflowDefinitionRegistryStore pgWorkflowDefinitionRegistryStore();
+
+        dev.vertique.workflow.registry.store.WorkflowDefinitionLifecycle definitionLifecycle();
 
         @Component.Factory
         interface Factory {

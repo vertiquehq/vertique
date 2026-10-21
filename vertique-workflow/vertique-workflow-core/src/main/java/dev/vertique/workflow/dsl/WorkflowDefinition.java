@@ -77,4 +77,21 @@ public interface WorkflowDefinition<S, C> {
      * @param wf the workflow builder DSL to use; must not be null
      */
     void define(WorkflowBuilder<S> wf);
+
+    /**
+     * Whether this version becomes the default scope's current version when it is first published at deployment.
+     *
+     * <p>With a durable registry, a code version, or a packaged document version, that first becomes available
+     * during a startup becomes the default scope's current version when it is the highest such version of its id
+     * in that startup, is higher than the current version, and this method returns {@code true}. Return
+     * {@code false} to publish the version without activating it, so that it can be tried in another scope and
+     * activated by an operator later. A restart never activates a version again. The answer is read at
+     * deployment; it has no effect on a version published at run time.
+     *
+     * @return {@code true} (the default) to activate the version when it is first published; {@code false} to
+     *     publish it without activating it
+     */
+    default boolean activateOnDeploy() {
+        return true;
+    }
 }

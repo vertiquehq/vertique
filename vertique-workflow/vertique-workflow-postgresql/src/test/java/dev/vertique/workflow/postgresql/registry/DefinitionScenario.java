@@ -275,6 +275,8 @@ final class DefinitionScenario implements AutoCloseable {
         for (String definitionId : definitionIds) {
             await(admin().preparedQuery("DELETE FROM workflow_instances WHERE definition_id = $1")
                     .execute(Tuple.of(definitionId)));
+            await(admin().preparedQuery("DELETE FROM workflow_definition_activations WHERE definition_id = $1")
+                    .execute(Tuple.of(definitionId)));
             await(admin().preparedQuery("DELETE FROM workflow_definitions WHERE definition_id = $1")
                     .execute(Tuple.of(definitionId)));
         }
