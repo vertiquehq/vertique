@@ -32,7 +32,20 @@ class StartCommandTest {
                 Arguments.of("a C1 control character", "ac" + (char) 0x85 + "me"),
                 Arguments.of("a NUL character", "ac" + (char) 0 + "me"),
                 Arguments.of("an unpaired high surrogate", "ac" + (char) 0xD800 + "me"),
-                Arguments.of("an unpaired low surrogate", "ac" + (char) 0xDC00 + "me"));
+                Arguments.of("an unpaired low surrogate", "ac" + (char) 0xDC00 + "me"),
+                Arguments.of("a zero-width space inside", "ac" + codePoint(0x200B) + "me"),
+                Arguments.of("a right-to-left override", "ac" + codePoint(0x202E) + "me"),
+                Arguments.of("a left-to-right mark at the end", "acme" + codePoint(0x200E)),
+                Arguments.of("a byte order mark at the start", codePoint(0xFEFF) + "acme"),
+                Arguments.of("only a zero-width space", codePoint(0x200B)),
+                Arguments.of("spaces around only format characters", " " + codePoint(0x200B) + codePoint(0x2060) + " "),
+                Arguments.of("a leading space", " acme"),
+                Arguments.of("a trailing space", "acme "),
+                Arguments.of("a trailing ideographic space", "acme" + codePoint(0x3000)));
+    }
+
+    private static String codePoint(int codePoint) {
+        return new String(Character.toChars(codePoint));
     }
 
     /** Scope keys that obey the rules, including the longest one. */
@@ -63,6 +76,19 @@ class StartCommandTest {
         assertThatThrownBy(() -> command(null, targetScope))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("requestedTargetScope");
+    }
+
+    @Test
+    @DisplayName("names the field and never repeats a rejected scope key that carries a format character")
+    void doesNotEchoTheRejectedKey() {
+        // When a command is built with a scope key that hides a zero-width space around a marker
+        String hostile = "leak-marker" + codePoint(0x200B);
+
+        // Then it is refused for the field without repeating the key
+        assertThatThrownBy(() -> command(hostile, null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("startScope")
+                .hasMessageNotContaining("leak-marker");
     }
 
     @ParameterizedTest(name = "{0}")

@@ -4,6 +4,7 @@
 package dev.vertique.workflow.ops;
 
 import dev.vertique.workflow.subject.WorkflowSubjectRef;
+import dev.vertique.workflow.types.ScopeKeyRules;
 import jakarta.annotation.Nullable;
 
 /**
@@ -55,13 +56,12 @@ public record StartCommand(
         @Nullable String startScope,
         @Nullable String requestedTargetScope) {
 
-    private static final int MAX_SCOPE_KEY_CODE_POINTS = 255;
-
     /**
      * Validates the contract name and the scope keys.
      *
      * <p>A non-null {@code startScope} or {@code requestedTargetScope} must be nonblank, at most 255 code points
-     * long and free of control characters and unpaired surrogates, the rules of a scope key. The message names
+     * long, free of control, format and unpaired surrogate characters, and without leading or trailing
+     * whitespace, the rules of a scope key. The message names
      * the field and never repeats the value.
      *
      * @throws IllegalArgumentException if {@code contractName} is {@code null} or blank, or a non-null scope key
@@ -76,19 +76,8 @@ public record StartCommand(
     }
 
     private static void requireScopeKey(@Nullable String scopeKey, String name) {
-        if (scopeKey == null) {
-            return;
-        }
-        if (scopeKey.isBlank() || scopeKey.codePointCount(0, scopeKey.length()) > MAX_SCOPE_KEY_CODE_POINTS) {
-            throw new IllegalArgumentException(
-                    name + " must be nonblank and at most " + MAX_SCOPE_KEY_CODE_POINTS + " code points");
-        }
-        boolean unusable = scopeKey.codePoints()
-                .anyMatch(cp ->
-                        Character.isISOControl(cp) || (cp >= Character.MIN_SURROGATE && cp <= Character.MAX_SURROGATE));
-        if (unusable) {
-            throw new IllegalArgumentException(
-                    name + " must not contain control characters or unpaired surrogate characters");
+        if (scopeKey != null) {
+            ScopeKeyRules.require(scopeKey, name);
         }
     }
 }

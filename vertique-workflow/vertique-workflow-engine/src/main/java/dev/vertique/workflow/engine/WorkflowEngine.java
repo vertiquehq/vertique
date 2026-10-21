@@ -861,7 +861,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             initialState = rw.initialState().apply(coercedPayload);
         } catch (Exception e) {
             return Future.failedFuture(new WorkflowDefinitionException(
-                    "initialState function threw for definition '" + cmd.definitionId() + "'", e));
+                    "initialState function threw for definition '" + EchoedNames.bounded(cmd.definitionId()) + "'", e));
         }
         String stateJson = Json.encode(initialState);
 

@@ -9,6 +9,7 @@ import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.postgresql.repository.PgWorkflowInstanceRepository;
 import dev.vertique.workflow.query.WorkflowInstanceQuery;
 import dev.vertique.workflow.query.WorkflowInstanceQueryService;
+import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.state.WorkflowInstance;
 import io.vertx.core.Future;
 import jakarta.inject.Inject;
@@ -69,5 +70,15 @@ public final class PgWorkflowInstanceQueryService implements WorkflowInstanceQue
     @Override
     public Future<Long> countNonTerminal(String definitionId, long version) {
         return repository.countNonTerminal(definitionId, version);
+    }
+
+    /**
+     * Counts the non-terminal instances pinned to one definition version of one scope.
+     *
+     * <p>Delegates directly to {@link PgWorkflowInstanceRepository#countNonTerminal(DefinitionKey)}.
+     */
+    @Override
+    public Future<Long> countNonTerminal(DefinitionKey key) {
+        return repository.countNonTerminal(key);
     }
 }

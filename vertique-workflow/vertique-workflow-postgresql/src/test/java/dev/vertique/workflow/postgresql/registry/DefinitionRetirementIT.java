@@ -92,6 +92,9 @@ public class DefinitionRetirementIT {
     public interface CandidateCaseV1 extends OrderDocumentSignals {}
 
     @WorkflowContract
+    public interface ScopedPinCaseV1 extends OrderDocumentSignals {}
+
+    @WorkflowContract
     public interface OwnerCaseV1 extends OrderDocumentSignals {}
 
     @WorkflowContract
@@ -350,6 +353,70 @@ public class DefinitionRetirementIT {
             // And the refused retirements changed none of the counts
             assertThat(await(instances.countNonTerminal(id, 1))).isEqualTo(4);
             assertThat(await(instances.countNonTerminal(id, 2))).isEqualTo(2);
+        }
+    }
+
+    @Test
+    void countsPinsOfOnlyTheDefinitionsOwnScope(Vertx vertx) {
+        String id = "retirement-it-scoped-pin-doc";
+        DefinitionKey ownerKey = new DefinitionKey("tenant-b", id, 1);
+
+        try (Fixture fixture = new Fixture(vertx)) {
+            fixture.ownRows(id);
+            AppComponent app = fixture.node().app();
+            long coolingSeconds = app.workflowDefinitionsConfig().maxStalenessSeconds();
+
+            // Given tenant-a's candidate and tenant-b's activated document with the same id and version
+            String planHash = seedCandidate(app, "tenant-a", document(id, 1, ScopedPinCaseV1.class), "scoped-a");
+            seedCandidate(app, "tenant-b", document(id, 1, ScopedPinCaseV1.class), "scoped-b");
+            await(app.definitionService().activate(ownerKey));
+
+            // And a live instance pinned to tenant-a's definition only
+            fixture.insertInstance("tenant-a", id, 1, planHash, "RUNNING", false);
+
+            // When tenant-b's version is deprecated, cooled and retired
+            await(app.definitionService().deprecate(ownerKey));
+            fixture.ageStatus(ownerKey, coolingSeconds + 60);
+            Throwable refusal = failureOf(app.definitionService().retire(ownerKey));
+
+            // Then tenant-a's pin neither counts toward nor blocks the retirement of tenant-b's row
+            assertThat(refusal).isNull();
+            assertThat(fixture.stored("tenant-b", id, 1).status()).isEqualTo("RETIRED");
+            assertThat(fixture.stored("tenant-a", id, 1).status()).isEqualTo("CANDIDATE");
+        }
+    }
+
+    @Test
+    void refusesRetirementPinnedInTheDefinitionsOwnScopeOnly(Vertx vertx) {
+        String id = "retirement-it-scoped-own-pin-doc";
+        DefinitionKey ownerKey = new DefinitionKey("tenant-b", id, 1);
+
+        try (Fixture fixture = new Fixture(vertx)) {
+            fixture.ownRows(id);
+            AppComponent app = fixture.node().app();
+            long coolingSeconds = app.workflowDefinitionsConfig().maxStalenessSeconds();
+
+            // Given tenant-a's candidate and tenant-b's activated, then deprecated and cooled, document
+            String planHash = seedCandidate(app, "tenant-a", document(id, 1, ScopedPinCaseV1.class), "scoped-own-a");
+            seedCandidate(app, "tenant-b", document(id, 1, ScopedPinCaseV1.class), "scoped-own-b");
+            await(app.definitionService().activate(ownerKey));
+            await(app.definitionService().deprecate(ownerKey));
+            fixture.ageStatus(ownerKey, coolingSeconds + 60);
+
+            // And one live instance pinned in each scope
+            fixture.insertInstance("tenant-a", id, 1, planHash, "RUNNING", false);
+            fixture.insertInstance("tenant-b", id, 1, planHash, "WAITING", false);
+
+            // When tenant-b's version is retired
+            Throwable refusal = failureOf(app.definitionService().retire(ownerKey));
+
+            // Then it is refused for exactly its own scope's single pin
+            assertThat(refusal).isInstanceOfSatisfying(WorkflowDefinitionLifecycleException.class, failure -> {
+                assertThat(failure.reason()).isEqualTo(Reason.PINNED_INSTANCES);
+                assertThat(failure.key()).isEqualTo(ownerKey);
+                assertThat(failure.getMessage()).contains("pinned by 1 non-terminal");
+            });
+            assertThat(fixture.stored("tenant-b", id, 1).status()).isEqualTo("DEPRECATED");
         }
     }
 
@@ -2354,15 +2421,27 @@ public class DefinitionRetirementIT {
 
         /** Inserts a pinned instance row directly; an archived row carries an archive timestamp. */
         UUID insertInstance(String definitionId, long version, String planHash, String status, boolean archived) {
+            return insertInstance(WorkflowScopes.DEFAULT, definitionId, version, planHash, status, archived);
+        }
+
+        /** Inserts a pinned instance row whose pinned definition belongs to the given scope. */
+        UUID insertInstance(
+                String definitionScopeKey,
+                String definitionId,
+                long version,
+                String planHash,
+                String status,
+                boolean archived) {
             UUID instanceId = UUID.randomUUID();
             await(admin().preparedQuery("""
                             INSERT INTO workflow_instances
                                 (id, definition_id, definition_version, plan_hash, version, status,
-                                 current_step_id, state_json, archived_at)
+                                 current_step_id, state_json, archived_at, definition_scope_key)
                             VALUES ($1, $2, $3, $4, 0, $5, 'start', '{}'::jsonb,
-                                    CASE WHEN $6::boolean THEN clock_timestamp() ELSE NULL END)
+                                    CASE WHEN $6::boolean THEN clock_timestamp() ELSE NULL END, $7)
                             """)
-                    .execute(Tuple.of(instanceId, definitionId, version, planHash, status, archived)));
+                    .execute(Tuple.of(
+                            instanceId, definitionId, version, planHash, status, archived, definitionScopeKey)));
             return instanceId;
         }
 

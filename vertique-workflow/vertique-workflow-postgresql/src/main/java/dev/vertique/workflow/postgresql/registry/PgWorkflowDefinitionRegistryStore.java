@@ -181,7 +181,7 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
                         + definitions + " WHERE " + KEY;
 
         this.sqlCountNonTerminal = "SELECT count(*) AS total FROM " + instances
-                + " WHERE definition_id = $1 AND definition_version = $2 AND status IN ('RUNNING','WAITING','COMPENSATING')";
+                + " WHERE definition_id = $1 AND definition_version = $2 AND definition_scope_key = $3 AND status IN ('RUNNING','WAITING','COMPENSATING')";
 
         this.sqlLockRows = "SELECT " + LOCKED_COLUMNS
                 + ", activation_token, extract(epoch from (clock_timestamp() - status_changed_at)) >= ($2::numeric * 2) AS stale FROM "
@@ -509,13 +509,13 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
     }
 
     /**
-     * Counts the instances pinned to exactly this definition id and version that are still running, waiting or
+     * Counts the instances pinned to exactly this definition scope, id and version that are still running, waiting or
      * compensating, archived ones included. It runs on the caller's locked transaction, after the lock was
      * granted, so it sees every pin committed while the lock was awaited.
      */
     private Future<Long> countNonTerminal(SqlConnection tx, DefinitionKey key) {
         return tx.preparedQuery(sqlCountNonTerminal)
-                .execute(Tuple.of(key.definitionId(), key.definitionVersion()))
+                .execute(Tuple.of(key.definitionId(), key.definitionVersion(), key.scopeKey()))
                 .map(result -> result.iterator().next().getLong("total"));
     }
 

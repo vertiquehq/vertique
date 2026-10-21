@@ -15,6 +15,7 @@ import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.postgresql.registry.DefinitionPinAdmission;
 import dev.vertique.workflow.query.WorkflowInstanceQuery;
 import dev.vertique.workflow.registry.store.DefinitionKey;
+import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.state.WorkflowInstance;
 import dev.vertique.workflow.state.WorkflowStatus;
 import dev.vertique.workflow.subject.WorkflowSubjectRef;
@@ -166,7 +167,7 @@ public final class PgWorkflowInstanceRepository extends PgSqlRepository
 
         this.sqlCountNonTerminal = "SELECT count(*) AS total FROM " + instances
                 + " WHERE definition_id = $1 AND definition_version = $2"
-                + " AND status IN ('RUNNING','WAITING','COMPENSATING')";
+                + " AND definition_scope_key = $3 AND status IN ('RUNNING','WAITING','COMPENSATING')";
 
         this.sqlFindByBusinessKey =
                 sqlSelectAllColumns + " WHERE scope_key = $1 AND definition_id = $2 AND business_key = $3";
@@ -409,16 +410,27 @@ public final class PgWorkflowInstanceRepository extends PgSqlRepository
     }
 
     /**
-     * Counts the instances pinned to exactly one definition version that are running, waiting or
-     * compensating, archived instances included. Uses the pool directly without row locking.
+     * Counts the instances pinned to exactly one definition version of the default scope that are running,
+     * waiting or compensating, archived instances included.
      *
      * @param definitionId the workflow definition id
      * @param version the exact definition version
      * @return a {@link Future} containing the number of non-terminal instances
      */
     public Future<Long> countNonTerminal(String definitionId, long version) {
+        return countNonTerminal(new DefinitionKey(WorkflowScopes.DEFAULT, definitionId, version));
+    }
+
+    /**
+     * Counts the instances pinned to exactly one definition version of one scope that are running, waiting or
+     * compensating, archived instances included. Uses the pool directly without row locking.
+     *
+     * @param key the scope, definition id and exact version of the pinned definition
+     * @return a {@link Future} containing the number of non-terminal instances
+     */
+    public Future<Long> countNonTerminal(DefinitionKey key) {
         return pool.preparedQuery(sqlCountNonTerminal)
-                .execute(Tuple.of(definitionId, version))
+                .execute(Tuple.of(key.definitionId(), key.definitionVersion(), key.scopeKey()))
                 .<Long>map(rs -> rs.iterator().next().getLong("total"))
                 .recover(t -> Future.failedFuture(exceptionMapper.translate(t, "workflow_instances countNonTerminal")));
     }

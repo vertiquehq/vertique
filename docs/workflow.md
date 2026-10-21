@@ -246,13 +246,13 @@ steps:
 
 Document definitions are not currently no-code object schemas. They still reference Java classes and named callbacks.
 
-Runtime management uses Futures. Load a global candidate, then activate its durable key:
+Runtime management uses Futures. Load a candidate into a scope, then activate its durable key:
 
 ```java
 Future<CompiledDefinitionRef> activated = definitionService
-        .load(content, DocumentFormat.YAML, sourceMetadata, null)
+        .load("acme", content, DocumentFormat.YAML, sourceMetadata)
         .compose(ref -> definitionService.activate(new DefinitionKey(
-                null, ref.definitionId(), ref.definitionVersion())).map(ref));
+                "acme", ref.definitionId(), ref.definitionVersion())).map(ref));
 ```
 
 With PostgreSQL installed, every definition, code-first or document-authored, is also a row in a durable
@@ -275,13 +275,12 @@ definitions, their lifecycle status and their document sources survive restarts 
   and no timer is scheduled. `deprecate`, `retire` and `reinstate` need the store and fail without one.
 - **Identity.** A row is identified by `DefinitionKey(scopeKey, definitionId, definitionVersion)`. The scope key is
   required; `WorkflowScopes.DEFAULT` is the default scope, which code definitions always use. One owner at a time holds a definition id; a second owner's claim fails with `OWNER_CONFLICT`.
-- **Tenant ids.** With the store bound, `load` for a tenant accepts only a document whose id is `<tenantKey>:<name>`
-  (a non-blank name), and a tenant key must not contain `:`; anything else fails with `WorkflowDefinitionException`
-  naming the tenant key and the id, and nothing is stored. The namespaced id is the definition id everywhere it is used:
-  `StartCommand.definitionId`, pinned resolution and migration targets. This keeps a tenant from holding an id that a later
-  code release needs. Global loads and code definitions are not restricted, but avoid `:` in global ids: a global id equal
-  to a tenant's namespaced id still fails with `OWNER_CONFLICT`. The rule binds `load`, not the registry store SPI, and
-  rows written before it keep every lifecycle operation.
+- **Definition ids.** Ids are unprefixed: the document id is the definition id everywhere it is used
+  (`StartCommand.definitionId`, pinned resolution, migration targets). One owner scope holds an id at a time. A document
+  whose id a code definition or another scope already holds is refused with `OWNER_CONFLICT`; a code definition that
+  collides with a stored document id fails startup. Cross-scope ownership is enforced only with a registry store; in
+  memory the local registry shadows instead. `load` and `activate` take any scope key, so restrict them to trusted
+  callers and never forward their refusal messages to tenants: a refusal can name other scopes and plan hashes.
 
 ### Code and document definitions
 
@@ -358,7 +357,7 @@ Future<Void> retired = definitionService.retire(v1)
 Future<Void> restored = definitionService.reinstate(v1);
 
 Future<List<WorkflowDefinitionRecord>> live = definitionService.list(new DefinitionFilter(
-        DefinitionFilter.TenantScope.GLOBAL, null, Set.of(DefinitionStatus.ACTIVE, DefinitionStatus.SUPERSEDED)));
+        WorkflowScopes.DEFAULT, null, Set.of(DefinitionStatus.ACTIVE, DefinitionStatus.SUPERSEDED)));
 ```
 
 `list` returns immutable metadata rows without source text. `sourceMetadata(key)` returns the source attribution
@@ -368,7 +367,7 @@ without reading the source body.
 
 Before any `BOOTSTRAP` verticle deploys, the engine records and restores the registry, in this order:
 
-1. It records every code definition as a global `CODE` row and every packaged document as a `DOCUMENT` row.
+1. It records every code definition as a default-scope `CODE` row and every packaged document as a `DOCUMENT` row.
 2. It restores every live `DOCUMENT` row of every owner (`ACTIVE`, `SUPERSEDED`, `DEPRECATED`) from its stored text,
    checking the compiled plan hash and the stored text digest.
 3. It recomputes the active version per owner and id, applies deprecation marks, removes runtimes of `RETIRED` rows
@@ -559,17 +558,17 @@ cycle. Eight old declarations are removed; constructors and all other members st
 
 Every PostgreSQL application, including code-first ones that never touch documents:
 
-- **First boot writes `CODE` rows.** Each code definition is recorded as a global row. The `V002__` migration must have run.
+- **First boot writes `CODE` rows.** Each code definition is recorded as a default-scope row. The `V002__` migration must have run.
 - **Code drift can fail startup.** If a version's compiled shape changed and instances are pinned to that exact version
   (`RUNNING`, `WAITING` or `COMPENSATING`), startup fails with `DRIFT` naming both hashes. Keep the code of a version unchanged
   until its instances finish, or bump the version. With no pinned instance the stored hash is replaced and a WARN logs it.
 - **Key rules.** A code definition with a blank, over-long or control-character id, or a non-positive version, fails
   startup with a message naming the definition. Definition ids and scope keys are at most 255 code points.
 - **Kind and owner conflicts** fail startup naming both rows or owners.
-- **Tenant ids are namespaced.** With the store bound, `load` for a tenant now requires the document id to be
-  `<tenantKey>:<name>` and the tenant key to contain no `:`. Existing tenant rows are unaffected; rename and reload a
-  document that used an unprefixed id, start it under the new id, and `retire` the old unprefixed versions: until they are
-  retired they keep holding the id, and reinstating one takes it back.
+- **Definition ids are unprefixed.** One owner scope holds an id; a document whose id a code definition or another
+  scope already holds is refused with `OWNER_CONFLICT`, and a code definition that collides with a stored document id
+  fails startup. Rename and reload a colliding document, then `retire` the old versions: until they are retired they
+  keep holding the id.
 
 Applications that combine the automatically bound PostgreSQL store with static document sources gain extra startup
 prerequisites. Each packaged document now must:

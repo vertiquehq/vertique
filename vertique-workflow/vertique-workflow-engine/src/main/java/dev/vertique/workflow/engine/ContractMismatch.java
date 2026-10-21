@@ -6,7 +6,6 @@ package dev.vertique.workflow.engine;
 import dev.vertique.workflow.exception.WorkflowDefinitionContractMismatchException;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.store.DefinitionKey;
-import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.state.WorkflowInstance;
 import dev.vertique.workflow.types.EchoedNames;
 import jakarta.annotation.Nullable;
@@ -40,7 +39,7 @@ final class ContractMismatch {
         String definitionId = pinned.plan().definitionId();
         long version = pinned.plan().definitionVersion();
         return new WorkflowDefinitionContractMismatchException(
-                new DefinitionKey(WorkflowScopes.DEFAULT, definitionId, version),
+                new DefinitionKey(inst.definitionScopeKey(), definitionId, version),
                 "Instance '" + inst.id().value() + "' is pinned to '" + definitionId + "' v" + version
                         + ", which implements contract '" + pinned.contractName() + "'; a client of contract '"
                         + EchoedNames.bounded(callerContractName) + "' cannot " + operation + " it");

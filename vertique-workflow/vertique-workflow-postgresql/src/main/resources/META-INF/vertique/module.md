@@ -182,8 +182,13 @@ DEPRECATED row the cooling age and then the exact-version count of RUNNING, WAIT
 rows included), in that order; a CANDIDATE row is retired without the pin check because a candidate is not admitted for
 pinning (a runtime registered directly for the same version is outside the guard). ACTIVE and SUPERSEDED rows cannot retire. The count scans `workflow_instances` by definition id and version while
 retirement holds the exclusive id lock and no index covers that predicate, so on a very large live instance table a
-retirement can delay new starts of that id. `PgWorkflowInstanceQueryService.countNonTerminal(definitionId, version)` exposes the same
-informational count; it is not the retirement guard.
+retirement can delay new starts of that id. `PgWorkflowInstanceQueryService.countNonTerminal(DefinitionKey)` exposes the same
+scope-aware informational count (`countNonTerminal(definitionId, version)` counts the default scope); it is not the
+retirement guard. The count and the retirement guard include only instances pinned to the definition's own scope.
+
+Registry refusal messages can name other scopes, owners and plan hashes: do not forward them to tenants. Cross-scope
+ownership of a definition id is enforced only with this registry store; without it (in-memory mode) the local registry
+shadows instead.
 
 Pin admission: before `insert` creates an instance pin, `migratePinAndState` changes one, or `updateOptimistic`
 resurrects a terminal instance (FAILED retry or FAILED to COMPENSATING), the repository takes

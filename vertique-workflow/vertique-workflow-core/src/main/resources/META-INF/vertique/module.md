@@ -437,7 +437,8 @@ versions and fails with the same unknown-definition exception when all are depre
 `unregister` clears the mark. Marking an unregistered version is a no-op. The store SPI adds the
 conditional `transition(key, from, to)` operation and the lifecycle adds `deprecate(DefinitionKey)`.
 The store adds `retire(DefinitionKey)` and the lifecycle adds `retire(DefinitionKey)` (CANDIDATE, or DEPRECATED after the
-cooling window with no live pinned instance); `WorkflowInstanceQueryService.countNonTerminal(definitionId, version)` is an
+cooling window with no live pinned instance); `WorkflowInstanceQueryService.countNonTerminal(DefinitionKey)` (and the default-scope
+`countNonTerminal(definitionId, version)`) is an
 optional informational count whose default fails with `UnsupportedOperationException`. `TransactionalWorkflowOperations`
 implementations backed by the Vert.x SQL engine receive a `SqlConnection` with a pending Vert.x transaction. Publishing
 a runtime directly through `WorkflowRegistry` is not seen as managed by the durable lifecycle: a managed deprecate or retire
