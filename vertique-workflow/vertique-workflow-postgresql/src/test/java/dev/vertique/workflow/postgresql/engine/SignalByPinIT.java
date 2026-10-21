@@ -335,8 +335,8 @@ public class SignalByPinIT {
         assertThat(failure)
                 .isInstanceOf(WorkflowDefinitionContractMismatchException.class)
                 .hasMessageContaining("'purchase-approval' v1")
-                .hasMessageContaining("approval")
-                .hasMessageContaining("other");
+                .hasMessageContaining("contract 'approval'")
+                .hasMessageContaining("contract 'other'");
         WorkflowDefinitionContractMismatchException mismatch = (WorkflowDefinitionContractMismatchException) failure;
         assertThat(mismatch.definitionKey().definitionId()).isEqualTo("purchase-approval");
         assertThat(mismatch.definitionKey().definitionVersion()).isEqualTo(1L);

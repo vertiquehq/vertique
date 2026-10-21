@@ -69,7 +69,7 @@ public final class ContractShapeValidator {
 
         boolean ok = true;
 
-        // --- Contract-level: a non-empty logical name must be neither blank nor too long ---
+        // --- Contract-level: a non-empty logical name must be neither blank, too long nor hold a control character ---
         String nameProblem = contractNameProblem(model);
         if (nameProblem != null) {
             ctx.diagnostics().error(model.contractType(), Diagnostics.workflowContractNameInvalid(fqn, nameProblem));
@@ -161,7 +161,8 @@ public final class ContractShapeValidator {
      * is absent (the binary name applies) or valid. The name itself is never part of the result.
      *
      * @param model the contract model
-     * @return {@code "blank"}, {@code "longer than 255 code points"}, or {@code null}
+     * @return {@code "blank"}, {@code "longer than 255 code points"}, {@code "not free of control
+     *     characters"}, or {@code null}
      */
     private String contractNameProblem(ContractModel model) {
         String name = AnnotationMirrors.findByFqn(model.contractType(), WORKFLOW_CONTRACT_FQN)
@@ -175,6 +176,9 @@ public final class ContractShapeValidator {
         }
         if (name.codePointCount(0, name.length()) > MAX_CONTRACT_NAME_CODE_POINTS) {
             return "longer than " + MAX_CONTRACT_NAME_CODE_POINTS + " code points";
+        }
+        if (name.codePoints().anyMatch(Character::isISOControl)) {
+            return "not free of control characters";
         }
         return null;
     }

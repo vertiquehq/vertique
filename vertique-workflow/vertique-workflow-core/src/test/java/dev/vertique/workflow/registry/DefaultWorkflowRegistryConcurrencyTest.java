@@ -16,6 +16,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -96,6 +97,13 @@ class DefaultWorkflowRegistryConcurrencyTest {
             }
         };
     }
+
+    // Two contracts that race for one definition id
+    @WorkflowContract("race-a")
+    interface RaceAContract {}
+
+    @WorkflowContract("race-b")
+    interface RaceBContract {}
 
     // Contracts for the 10-definition concurrent-activation test
     @WorkflowContract
@@ -270,11 +278,11 @@ class DefaultWorkflowRegistryConcurrencyTest {
         }
     }
 
-    // --- Test 3: Rollback atomicity ---
+    // --- Test 3: A refused contract ---
 
     @Nested
-    @DisplayName("rollback atomicity on a refused contract")
-    class RollbackAtomicity {
+    @DisplayName("registrations refused for naming another contract")
+    class RefusedContract {
 
         @Test
         @DisplayName("a refused contract leaves no half-committed state")
@@ -390,6 +398,76 @@ class DefaultWorkflowRegistryConcurrencyTest {
             assertThat(registry.allRegistered()).hasSize(1);
             assertThat(registry.resolveCurrent("task-foo").plan().definitionVersion())
                     .isEqualTo(1L);
+        }
+    }
+
+    // --- Test 3b: Two contracts race for one id ---
+
+    @Nested
+    @DisplayName("concurrent registrations of one definition id under different contracts")
+    class ContractRace {
+
+        private static final int ROUNDS = 300;
+
+        @Test
+        @DisplayName("exactly one wins; the other is refused and its contract name is released")
+        void exactlyOneContractWins() throws Exception {
+            ExecutorService pool = Executors.newFixedThreadPool(2);
+            try {
+                for (int round = 0; round < ROUNDS; round++) {
+                    // Given: an empty registry and two definitions of one id, each naming another contract
+                    DefaultWorkflowRegistry racing = new DefaultWorkflowRegistry();
+                    WorkflowDefinition<TaskState, ?> a = minimalDef("race-id", 1, RaceAContract.class);
+                    WorkflowDefinition<TaskState, ?> b = minimalDef("race-id", 2, RaceBContract.class);
+                    CyclicBarrier start = new CyclicBarrier(2);
+
+                    // When: both register at the same moment from two threads
+                    Future<Throwable> first = pool.submit(() -> registerAfter(start, racing, a));
+                    Future<Throwable> second = pool.submit(() -> registerAfter(start, racing, b));
+                    Throwable aOutcome = first.get(10, TimeUnit.SECONDS);
+                    Throwable bOutcome = second.get(10, TimeUnit.SECONDS);
+
+                    // Then: exactly one registration failed, with the registry's definition exception
+                    boolean aWins = aOutcome == null;
+                    Throwable refused = aWins ? bOutcome : aOutcome;
+                    assertThat(aWins ? aOutcome : bOutcome)
+                            .as("round %d: the winner", round)
+                            .isNull();
+                    assertThat(refused)
+                            .as("round %d: the loser", round)
+                            .isInstanceOf(WorkflowDefinitionException.class);
+
+                    // and: only the winner is registered, and only the winner's contract name is indexed
+                    String winnerContract = aWins ? "race-a" : "race-b";
+                    String loserContract = aWins ? "race-b" : "race-a";
+                    assertThat(racing.allRegistered())
+                            .as("round %d: registered", round)
+                            .hasSize(1);
+                    assertThat(racing.allRegistered().iterator().next().contractName())
+                            .as("round %d: registered contract", round)
+                            .isEqualTo(winnerContract);
+                    assertThat(racing.typeNames().findContract(winnerContract))
+                            .as("round %d: winner's contract name", round)
+                            .isPresent();
+                    assertThat(racing.typeNames().findContract(loserContract))
+                            .as("round %d: loser's contract name", round)
+                            .isEmpty();
+                }
+            } finally {
+                pool.shutdownNow();
+            }
+        }
+
+        private Throwable registerAfter(
+                CyclicBarrier start, DefaultWorkflowRegistry target, WorkflowDefinition<TaskState, ?> definition)
+                throws Exception {
+            start.await(10, TimeUnit.SECONDS);
+            try {
+                target.register(definition);
+                return null;
+            } catch (RuntimeException e) {
+                return e;
+            }
         }
     }
 

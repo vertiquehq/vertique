@@ -25,6 +25,7 @@ import dev.vertique.workflow.state.WorkflowHistoryEntry;
 import dev.vertique.workflow.state.WorkflowInstance;
 import dev.vertique.workflow.state.WorkflowStatus;
 import dev.vertique.workflow.timer.TimerStore;
+import dev.vertique.workflow.types.EchoedNames;
 import io.vertx.core.Future;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.json.Json;
@@ -156,7 +157,7 @@ final class SignalHandler {
         if (!(node instanceof WaitSignalNode wsn) || !signalName.equals(wsn.signalName())) {
             return Future.failedFuture(new WorkflowDefinitionException("Branch '" + waiting.branchId()
                     + "' currentStepId '" + waiting.currentStepId() + "' is not a WaitSignalNode for signal '"
-                    + signalName + "'"));
+                    + EchoedNames.bounded(signalName) + "'"));
         }
         // Coerce the payload to the declared type.
         Class<?> payloadClass = rw.signalPayloadTypes().get(signalName);
@@ -288,18 +289,20 @@ final class SignalHandler {
         if (!waitsForSignal(rw, ctx.signalName())) {
             return Future.failedFuture(
                     new WorkflowSignalRejectedException("Instance '" + inst.id().value()
-                            + "' cannot receive signal '" + ctx.signalName() + "': '"
+                            + "' cannot receive signal '" + EchoedNames.bounded(ctx.signalName()) + "': '"
                             + rw.plan().definitionId() + "' v"
-                            + rw.plan().definitionVersion() + " does not wait for signal '" + ctx.signalName() + "'"));
+                            + rw.plan().definitionVersion() + " does not wait for signal '"
+                            + EchoedNames.bounded(ctx.signalName()) + "'"));
         }
 
         // Validate instance is in WAITING status for this signal.
         if (inst.status() != WorkflowStatus.WAITING
                 || inst.waitType() != WaitType.SIGNAL
                 || !ctx.signalName().equals(inst.waitKey())) {
-            return Future.failedFuture(new WorkflowSignalRejectedException(
-                    "Instance '" + inst.id().value() + "' cannot receive signal '" + ctx.signalName()
-                            + "': status=" + inst.status() + ", waitType=" + inst.waitType()
+            return Future.failedFuture(
+                    new WorkflowSignalRejectedException("Instance '" + inst.id().value() + "' cannot receive signal '"
+                            + EchoedNames.bounded(ctx.signalName()) + "': status=" + inst.status() + ", waitType="
+                            + inst.waitType()
                             + ", waitKey=" + inst.waitKey()));
         }
 

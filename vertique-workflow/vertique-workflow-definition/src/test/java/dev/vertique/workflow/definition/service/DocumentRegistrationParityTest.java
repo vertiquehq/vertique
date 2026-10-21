@@ -48,6 +48,7 @@ import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
 import dev.vertique.workflow.exception.WorkflowUnknownTypeNameException;
+import dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.plan.WorkflowPlan;
 import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
@@ -457,14 +458,14 @@ class DocumentRegistrationParityTest {
 
         /** Runs one bootstrap over one packaged source holding the given documents. */
         void bootstrap(DefinitionResource... resources) {
+            bootstrap(new WorkflowDefinitionStore(), resources);
+        }
+
+        /** Runs one bootstrap over one packaged source, keeping its candidates in the given store. */
+        void bootstrap(WorkflowDefinitionStore store, DefinitionResource... resources) {
             WorkflowDefinitionSource source = () -> List.of(resources);
             new WorkflowDefinitionBootstrap(
-                            pipeline,
-                            new WorkflowDefinitionStore(),
-                            Set.of(source),
-                            Optional.empty(),
-                            Optional.empty(),
-                            typeNames)
+                            pipeline, store, Set.of(source), Optional.empty(), Optional.empty(), typeNames)
                     .contribute(registry);
         }
     }
@@ -585,6 +586,41 @@ class DocumentRegistrationParityTest {
         assertThat(documentRefusal.getMessage().replace(DOCUMENT_DEFINITION_BAD, "<id>"))
                 .isEqualTo(codeRefusal.getMessage().replace(CODE_DEFINITION_BAD, "<id>"));
         assertThat(registration.recorder.seen).containsExactly("parity-code v1", "parity-doc v1");
+    }
+
+    @Test
+    @DisplayName("a bootstrap run whose second document is refused by the registry keeps the first one")
+    void secondDocumentRefusedByRegistryLeavesFirstCommitted() {
+        // Given: one packaged source listing a good document and then a document that waits for a signal its
+        // contract does not declare; document validation does not know the contract's signals
+        Registration registration = new Registration();
+        DefaultWorkflowRegistry registry = registration.registry;
+        WorkflowDefinitionStore store = new WorkflowDefinitionStore();
+        DefinitionResource good = resource(fixtureBytes("parity-doc.yaml"), "test://parity/good");
+        DefinitionResource bad = resource(fixtureBytes("parity-doc-bad.yaml"), "test://parity/bad");
+
+        // When: both are bootstrapped in one run
+        Throwable refusal = catchThrowable(() -> registration.bootstrap(store, good, bad));
+
+        // Then: the run fails with the registry's exception for the second document, not a load exception
+        assertThat(refusal)
+                .isExactlyInstanceOf(WorkflowDefinitionException.class)
+                .hasMessageContaining(DOCUMENT_DEFINITION_BAD + "' v1")
+                .hasMessageContaining(REFUSAL_FRAGMENT);
+
+        // and: the first document stays registered and active, and reached the contributed validators
+        assertThat(registry.allRegistered())
+                .extracting(registered -> registered.plan().definitionId())
+                .containsExactly(DOCUMENT_DEFINITION);
+        assertThat(registry.resolvePinned(DOCUMENT_DEFINITION, 1L).contractName())
+                .isEqualTo(CONTRACT_NAME);
+        assertThat(store.currentStatus(DOCUMENT_DEFINITION, 1L)).isEqualTo(ActivationStatus.ACTIVE);
+        assertThat(registration.recorder.seen).containsExactly("parity-doc v1");
+
+        // and: the second document is neither registered nor active; its claim was released to candidate
+        assertThatThrownBy(() -> registry.resolvePinned(DOCUMENT_DEFINITION_BAD, 1L))
+                .isInstanceOf(WorkflowVersionPinUnavailableException.class);
+        assertThat(store.currentStatus(DOCUMENT_DEFINITION_BAD, 1L)).isEqualTo(ActivationStatus.CANDIDATE);
     }
 
     @Test

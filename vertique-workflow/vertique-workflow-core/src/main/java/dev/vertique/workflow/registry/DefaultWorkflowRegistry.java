@@ -19,6 +19,7 @@ import dev.vertique.workflow.plan.WorkflowNode;
 import dev.vertique.workflow.plan.WorkflowPlan;
 import dev.vertique.workflow.plan.WorkflowPlanValidator;
 import dev.vertique.workflow.types.DefaultWorkflowTypeNames;
+import dev.vertique.workflow.types.EchoedNames;
 import dev.vertique.workflow.types.WorkflowTypeNames;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
@@ -31,10 +32,12 @@ import java.util.NavigableMap;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.SortedSet;
 import java.util.TreeSet;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentSkipListMap;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
+import java.util.stream.Collectors;
 
 /**
  * Default concrete implementation of {@link WorkflowRegistry}.
@@ -88,6 +91,9 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
  * the common steady-state.
  */
 public final class DefaultWorkflowRegistry implements WorkflowRegistry {
+
+    /** The most undeclared signal names a refusal message repeats. */
+    private static final int MAX_REPORTED_SIGNALS = 5;
 
     // --- Internal storage ---
 
@@ -568,6 +574,19 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
     }
 
     /**
+     * Describes the undeclared signals for an error message: the first {@value #MAX_REPORTED_SIGNALS} names in
+     * sorted order, each cut and sanitized because document authors supply them, and a count of the rest.
+     */
+    private static String describeMissing(SortedSet<String> missing) {
+        String named = missing.stream()
+                .limit(MAX_REPORTED_SIGNALS)
+                .map(EchoedNames::bounded)
+                .collect(Collectors.joining(", "));
+        int rest = missing.size() - MAX_REPORTED_SIGNALS;
+        return rest > 0 ? named + ", and " + rest + " more" : named;
+    }
+
+    /**
      * Validates that every signal the plan waits for is declared by a {@link WorkflowSignal} method of the
      * contract interface, including methods the contract inherits from other interfaces. Forward, branch and
      * timeout-guarded waits are all {@link WaitSignalNode}s of the plan.
@@ -587,7 +606,7 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
                 declared.add(signal.value());
             }
         }
-        TreeSet<String> missing = new TreeSet<>();
+        SortedSet<String> missing = new TreeSet<>();
         for (WorkflowNode node : plan.nodes()) {
             if (node instanceof WaitSignalNode wait && !declared.contains(wait.signalName())) {
                 missing.add(wait.signalName());
@@ -596,7 +615,7 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
         if (!missing.isEmpty()) {
             throw new WorkflowDefinitionException("definition '" + definitionId + "' v" + definitionVersion
                     + " waits for signals that contract " + contract.getName() + " does not declare: "
-                    + String.join(", ", missing)
+                    + describeMissing(missing)
                     + "; declare each awaited signal as a @WorkflowSignal method on the contract");
         }
     }

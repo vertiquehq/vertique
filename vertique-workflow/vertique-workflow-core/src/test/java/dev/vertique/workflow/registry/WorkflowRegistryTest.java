@@ -6,6 +6,7 @@ package dev.vertique.workflow.registry;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.catchThrowable;
 
 import dev.vertique.workflow.contract.SignalDedupKey;
 import dev.vertique.workflow.contract.WorkflowContract;
@@ -30,6 +31,8 @@ import org.junit.jupiter.api.Test;
  * pin-unavailable error contract, and plan-validation rules enforced at registration time.
  */
 class WorkflowRegistryTest {
+
+    private static final int GRINNING_FACE = 0x1F600;
 
     // --- Fixture types ---
 
@@ -853,8 +856,8 @@ class WorkflowRegistryTest {
                 // Then: the registration is refused naming the version and both contract names
                 .isInstanceOf(WorkflowDefinitionException.class)
                 .hasMessageContaining("'purchase-approval' v2")
-                .hasMessageContaining("approval")
-                .hasMessageContaining("other");
+                .hasMessageContaining("contract 'approval'")
+                .hasMessageContaining("contract 'other'");
 
         // and: the refused version is not resolvable while v1 is still registered
         assertThatThrownBy(() -> registry.resolvePinned("purchase-approval", 2L))
@@ -862,6 +865,13 @@ class WorkflowRegistryTest {
         assertThat(registry.resolvePinned("purchase-approval", 1L).plan().definitionVersion())
                 .isEqualTo(1L);
         assertThat(registry.allRegistered()).hasSize(1);
+
+        // and: the refused contract's name is released from the shared index, while the names v1 holds stay
+        assertThat(registry.typeNames().findContract("other")).isEmpty();
+        assertThat(registry.typeNames().findContract(OtherContract.class.getName()))
+                .isEmpty();
+        assertThat(registry.typeNames().findContract("approval")).contains(ApprovalContract.class);
+        assertThat(registry.typeNames().find(ApprovalState.class.getName())).contains(ApprovalState.class);
     }
 
     @Test
@@ -884,6 +894,61 @@ class WorkflowRegistryTest {
         assertThatThrownBy(() -> registry.resolvePinned("undeclared-waits", 1L))
                 .isInstanceOf(WorkflowVersionPinUnavailableException.class);
         assertThat(registry.definitionClass(WaitsForUndeclaredSignals.class)).isEmpty();
+    }
+
+    @Test
+    @DisplayName("the refusal for undeclared signals names at most the first five, in sorted order")
+    void refusalNamesAtMostFiveUndeclaredSignals() {
+        // Given: a definition waiting for eight signals the contract does not declare
+        WorkflowDefinition<ApprovalState, ApprovalContract> manyUndeclared =
+                new ManyUndeclaredWaits("sig-8", "sig-3", "sig-1", "sig-7", "sig-5", "sig-2", "sig-6", "sig-4");
+
+        // When: it registers
+        assertThatThrownBy(() -> registry.register(manyUndeclared))
+                // Then: the refusal names the version and the first five signals in sorted order, and no more
+                .isInstanceOf(WorkflowDefinitionException.class)
+                .hasMessageContaining("'many-undeclared' v1")
+                .hasMessageContaining("sig-1, sig-2, sig-3, sig-4, sig-5")
+                .message()
+                .doesNotContain("sig-6")
+                .doesNotContain("sig-7")
+                .doesNotContain("sig-8");
+
+        // and: nothing is registered
+        assertThat(registry.allRegistered()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("the refusal repeats a document-supplied signal name cut and without control characters")
+    void refusalCutsAndSanitizesHostileSignalNames() {
+        // Given: definitions waiting for undeclared signals whose names carry a line break, a control
+        // character and 10000 supplementary code points, and one name of exactly 64 plain code points
+        String hostile = "audit" + "\r\n" + "FORGED-LOG-LINE" + (char) 7
+                + Character.toString(GRINNING_FACE).repeat(10_000);
+        String plain64 = "p".repeat(64);
+        String plain65 = plain64 + "q";
+
+        // When: each registers
+        Throwable hostileRefusal = catchThrowable(() -> registry.register(new ManyUndeclaredWaits(hostile)));
+        Throwable plain64Refusal = catchThrowable(() -> registry.register(new ManyUndeclaredWaits(plain64)));
+        Throwable plain65Refusal = catchThrowable(() -> registry.register(new ManyUndeclaredWaits(plain65)));
+
+        // Then: the hostile name is cut, holds no control character and no lone surrogate, and is still
+        // recognizable by its start; the message stays short
+        assertThat(hostileRefusal).isInstanceOf(WorkflowDefinitionException.class);
+        String message = hostileRefusal.getMessage();
+        assertThat(message.codePoints().noneMatch(Character::isISOControl))
+                .as("no control characters in the refusal")
+                .isTrue();
+        assertThat(message.codePoints().noneMatch(cp -> cp >= 0xD800 && cp <= 0xDFFF))
+                .as("no unpaired surrogate")
+                .isTrue();
+        assertThat(message).hasSizeLessThan(1_000).contains("audit??FORGED-LOG-LINE?");
+        assertThat(message).doesNotContain(Character.toString(GRINNING_FACE).repeat(100));
+
+        // and: a name of 64 code points is repeated whole, one of 65 is cut at 64
+        assertThat(plain64Refusal.getMessage()).contains(plain64).doesNotContain(plain65);
+        assertThat(plain65Refusal.getMessage()).contains(plain64).doesNotContain(plain65);
     }
 
     @Test
@@ -1027,6 +1092,13 @@ class WorkflowRegistryTest {
     static final class PurchaseApprovalV2OtherContract extends SequentialWaitDefinition<OtherContract> {
         PurchaseApprovalV2OtherContract() {
             super(OtherContract.class, "purchase-approval", 2L, "approve");
+        }
+    }
+
+    /** Waits, one after the other, for signals that {@link ApprovalContract} does not declare. */
+    static final class ManyUndeclaredWaits extends SequentialWaitDefinition<ApprovalContract> {
+        ManyUndeclaredWaits(String... signals) {
+            super(ApprovalContract.class, "many-undeclared", 1L, signals);
         }
     }
 

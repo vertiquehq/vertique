@@ -56,7 +56,7 @@ Enforces contract-level and per-method structural shape rules. Only acts on the 
 | Check | Scope | Level |
 |-------|-------|-------|
 | Annotated type must be an `interface` | Contract | ERROR |
-| An explicit `@WorkflowContract.value()` is neither blank nor longer than 255 code points | Contract | ERROR |
+| An explicit `@WorkflowContract.value()` is neither blank, nor longer than 255 code points, nor holds a control character | Contract | ERROR |
 | Exactly one `@WorkflowStart` method | Contract | ERROR |
 | Signal names unique across clean `@WorkflowSignal` methods | Contract | ERROR |
 | No `default` methods | Per-method | ERROR |
@@ -157,7 +157,7 @@ static WorkflowTypeCatalog workflowTypeCatalog() {
 | Violation | Level | Example message |
 |-----------|-------|----------------|
 | `@WorkflowContract` not on an interface | ERROR | `OrderWorkflow must be an interface` |
-| Blank or over-long `@WorkflowContract.value()` | ERROR | `The contract name of com.acme.OrderWorkflow is invalid: it is blank` (an over-long name is reported as `longer than 255 code points`, never echoed) |
+| Blank, over-long or control-character `@WorkflowContract.value()` | ERROR | `The contract name of com.acme.OrderWorkflow is invalid: it is blank` (an over-long name is reported as `longer than 255 code points` and one with a control character as `not free of control characters`; the name is never echoed) |
 | Zero or more than one `@WorkflowStart` method | ERROR | `OrderWorkflow must declare exactly one @WorkflowStart method; found 0` |
 | Duplicate signal name across clean `@WorkflowSignal` methods | ERROR | `OrderWorkflow: duplicate @WorkflowSignal name "cancel"` |
 | `default` method on contract | ERROR | `OrderWorkflow.helper() is a default method — @WorkflowContract methods must be abstract` |
@@ -194,7 +194,7 @@ paths. See `docs/packaging.md`.
 
 ### Step 2 — Create clients from the factory
 
-Typed clients are not provided by Dagger. Inject `WorkflowClientFactory` and create a client from the class of a registered definition, `factory.create(OrderDefinition.class)`, or from a contract and a definition id, `factory.create(OrderWorkflow.class, "orders")`. Either form returns the generated proxy when the processor is on the build path and falls back to the reflective proxy otherwise; removing the processor is safe. `WorkflowClientFactory` and `WorkflowProxyValidator` are retained and not deprecated.
+Typed clients are not provided by Dagger. Inject `WorkflowClientFactory` and create a client from the class of a registered definition, `factory.create(OrderDefinition.class)`, or from a contract and a definition id, `factory.create(OrderWorkflow.class, "orders")`. Either form returns the generated proxy when the processor is on the build path and falls back to the reflective proxy otherwise; removing the processor is safe. `WorkflowClientFactory` is retained and not deprecated. `WorkflowProxyValidator` is an internal framework seam that the factory calls; applications do not depend on it.
 
 Also add `GeneratedWorkflowTypeCatalogModule` when the application loads documents at runtime or ships packaged documents that name annotated types by logical name.
 

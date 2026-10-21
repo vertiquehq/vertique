@@ -871,11 +871,12 @@ public final class Diagnostics {
 
     /**
      * Returns the compile-time error message when the logical name of a {@code @WorkflowContract}
-     * interface is blank or longer than the allowed number of code points. The message never repeats the
-     * name, which may be arbitrarily long.
+     * interface is blank, longer than the allowed number of code points or holds a control character. The
+     * message never repeats the name, which may be arbitrarily long or hold characters that forge log lines.
      *
      * @param contractFqn the fully-qualified contract interface name
-     * @param problem     the violated rule, such as {@code blank} or {@code longer than 255 code points}
+     * @param problem     the violated rule, such as {@code blank}, {@code longer than 255 code points} or
+     *                    {@code not free of control characters}
      * @return the formatted error message
      */
     public static String workflowContractNameInvalid(String contractFqn, String problem) {

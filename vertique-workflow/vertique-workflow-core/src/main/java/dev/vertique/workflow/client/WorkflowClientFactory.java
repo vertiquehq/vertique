@@ -8,7 +8,6 @@ import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.exception.WorkflowClientProxyLinkageException;
 import dev.vertique.workflow.exception.WorkflowProxyContractException;
 import dev.vertique.workflow.ops.WorkflowOperations;
-import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
 import dev.vertique.workflow.registry.RegisteredDefinitionClass;
 import dev.vertique.workflow.registry.WorkflowRegistry;
 import dev.vertique.workflow.types.DefaultWorkflowTypeNames;
@@ -78,9 +77,7 @@ public final class WorkflowClientFactory {
     public WorkflowClientFactory(WorkflowOperations ops, WorkflowRegistry registry) {
         this.ops = ops;
         this.registry = registry;
-        this.typeNames = registry instanceof DefaultWorkflowRegistry defaultRegistry
-                ? defaultRegistry.typeNames()
-                : new DefaultWorkflowTypeNames();
+        this.typeNames = new DefaultWorkflowTypeNames();
     }
 
     /**
