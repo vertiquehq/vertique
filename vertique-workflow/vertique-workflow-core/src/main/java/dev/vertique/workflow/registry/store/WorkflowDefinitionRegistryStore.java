@@ -157,6 +157,20 @@ public interface WorkflowDefinitionRegistryStore {
     Future<Void> resetStaleActivating(String definitionId);
 
     /**
+     * Resets the stale publication attempts of one definition id to candidate status, as startup does. Under the
+     * definition id lock, every row of the id that is being published and whose last status change is older than
+     * twice the configured staleness bound, measured by the database clock after the lock is held, becomes
+     * {@code CANDIDATE} with its claim token cleared and its status change time refreshed. Younger attempts and
+     * rows in other statuses are not touched.
+     *
+     * @param definitionId the definition id whose stale publication attempts are reset
+     * @return a future completed after the store-owned transaction commits
+     */
+    default Future<Void> resetStalePublishing(String definitionId) {
+        return resetStaleActivating(definitionId);
+    }
+
+    /**
      * Recomputes active membership for one exact scope and definition id. Only ACTIVE and
      * SUPERSEDED rows participate; the highest version becomes ACTIVE and lower eligible versions
      * become SUPERSEDED. Other statuses, scopes, and definition ids are left unchanged. The

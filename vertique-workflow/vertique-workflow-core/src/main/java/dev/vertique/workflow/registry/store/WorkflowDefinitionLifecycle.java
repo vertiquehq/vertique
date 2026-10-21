@@ -7,8 +7,16 @@ import io.vertx.core.Future;
 
 /** Durable lifecycle operations, supplied by the workflow engine. */
 public interface WorkflowDefinitionLifecycle {
-    /** Compiles the stored candidate, verifies its hash and publishes a fenced activation. */
+    /** Compiles the stored candidate, verifies its hash and publishes it through a fenced claim. */
     Future<Void> activate(DefinitionKey key);
+
+    /**
+     * Compiles the stored candidate, verifies its hash and publishes it through a fenced claim, so that the
+     * version becomes available. A version that is already available is accepted without a change.
+     */
+    default Future<Void> publish(DefinitionKey key) {
+        return activate(key);
+    }
 
     /**
      * Deprecates an active or superseded definition. The durable status is committed first; only after that
