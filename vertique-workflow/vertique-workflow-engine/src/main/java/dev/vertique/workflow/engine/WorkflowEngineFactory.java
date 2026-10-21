@@ -13,6 +13,7 @@ import dev.vertique.workflow.engine.spi.WorkflowHistoryRepository;
 import dev.vertique.workflow.engine.spi.WorkflowInstanceRepository;
 import dev.vertique.workflow.engine.spi.WorkflowTransactionRunner;
 import dev.vertique.workflow.migration.WorkflowMigrationRegistry;
+import dev.vertique.workflow.migration.WorkflowStateCompatibility;
 import dev.vertique.workflow.registry.DefaultWorkflowRegistry;
 import dev.vertique.workflow.registry.WorkflowRegistry;
 import dev.vertique.workflow.sideeffect.IntentKind;
@@ -362,6 +363,83 @@ public final class WorkflowEngineFactory {
             Set<InboundContextInitializer> inboundContextInitializers,
             Optional<BeanValidator> beanValidator,
             WorkflowTypeNames typeNames) {
+        return create(
+                txRunner,
+                registry,
+                instances,
+                history,
+                dedup,
+                branchTokens,
+                joinStates,
+                timerStore,
+                taskStore,
+                clock,
+                recorders,
+                optionalIntentKinds,
+                migrationRegistryOpt,
+                propagator,
+                inboundContextInitializers,
+                beanValidator,
+                typeNames,
+                Optional.empty());
+    }
+
+    /**
+     * Assembles a fully wired workflow engine over the supplied dependencies, additionally threading the
+     * comparison that decides whether a migration may move an instance to a definition whose state class differs
+     * from the one it is pinned to.
+     *
+     * <p>The overload without the comparison delegates here with an empty one, so the engine refuses a migration
+     * between differing state classes. Pass the comparison the registry was built with, which is what Dagger wiring
+     * injects.
+     *
+     * @param txRunner the transaction runner SPI that owns the transaction boundary and the layered
+     *     DB-to-workflow exception mapping
+     * @param registry the workflow registry used to resolve pinned runtime workflows
+     * @param instances the instance repository SPI
+     * @param history the history repository SPI
+     * @param dedup the dedup repository SPI
+     * @param branchTokens the branch-token repository SPI
+     * @param joinStates the join-state repository SPI
+     * @param timerStore the timer store
+     * @param taskStore the task store
+     * @param clock the clock used to timestamp entries and state transitions
+     * @param recorders the set of side-effect recorders contributed by the application
+     * @param optionalIntentKinds the set of intent kinds the recorder router treats as optional
+     *     (use {@link #DEFAULT_OPTIONAL_INTENT_KINDS} for the engine default)
+     * @param migrationRegistryOpt the optional migration registry; when empty, {@code migrate} fails
+     *     with {@link UnsupportedOperationException}
+     * @param propagator the durable-context propagator used to capture branch metadata; may be
+     *     {@code null} for callers that do not exercise the branch durable-capture path
+     * @param inboundContextInitializers the set of {@link InboundContextInitializer}s to run on
+     *     every bound drive (binder-row and branch-owned)
+     * @param beanValidator the bean validator that checks coerced decision and start payloads; when
+     *     empty, payload constraints are not enforced
+     * @param typeNames the type-name index the engine resolves a decision payload's declared type name
+     *     through; pass the one index the registry fills, which is what Dagger wiring injects
+     * @param stateCompatibility the comparison a migration applies to differing state classes; when empty, a
+     *     migration between differing state classes is refused
+     * @return the assembled engine as a {@link WorkflowEngineHandle}
+     */
+    public static WorkflowEngineHandle create(
+            WorkflowTransactionRunner<SqlClient> txRunner,
+            WorkflowRegistry registry,
+            WorkflowInstanceRepository<SqlClient> instances,
+            WorkflowHistoryRepository<SqlClient> history,
+            WorkflowDedupRepository<SqlClient> dedup,
+            BranchTokenRepository<SqlClient> branchTokens,
+            JoinStateRepository<SqlClient> joinStates,
+            TimerStore<SqlClient> timerStore,
+            TaskStore<SqlClient> taskStore,
+            Clock clock,
+            Set<WorkflowSideEffectRecorder<SqlClient>> recorders,
+            Set<IntentKind> optionalIntentKinds,
+            Optional<WorkflowMigrationRegistry> migrationRegistryOpt,
+            @Nullable DurableContextPropagator propagator,
+            Set<InboundContextInitializer> inboundContextInitializers,
+            Optional<BeanValidator> beanValidator,
+            WorkflowTypeNames typeNames,
+            Optional<WorkflowStateCompatibility> stateCompatibility) {
         PayloadConstraintCheck payloadConstraintCheck = new PayloadConstraintCheck(beanValidator);
         WorkflowReminderComposeValidator complianceCheck = new WorkflowReminderComposeValidator(registry, recorders);
         RecorderRouter recorderRouter = new RecorderRouter(recorders, optionalIntentKinds, complianceCheck);
@@ -416,6 +494,7 @@ public final class WorkflowEngineFactory {
                 inboundExecScope,
                 payloadConstraintCheck,
                 typeNames,
-                new DefinitionActivations());
+                new DefinitionActivations(),
+                stateCompatibility);
     }
 }

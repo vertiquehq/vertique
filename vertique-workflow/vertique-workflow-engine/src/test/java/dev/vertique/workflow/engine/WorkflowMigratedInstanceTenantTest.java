@@ -142,7 +142,8 @@ class WorkflowMigratedInstanceTenantTest {
     /** Migrates the instance from version 1 to version 2 through a {@link MigrationExecutor}. */
     private static Migrated migrate(WorkflowInstance source) {
         WorkflowMigrationRegistry migrations = mock();
-        when(migrations.find(DEFINITION_ID, 1L, 2L)).thenReturn(Optional.<WorkflowMigrationHandler<?, ?>>of(HANDLER));
+        when(migrations.find(source.definitionScopeKey(), DEFINITION_ID, 1L, source.definitionScopeKey(), 2L))
+                .thenReturn(Optional.<WorkflowMigrationHandler<?, ?>>of(HANDLER));
         WorkflowRegistry registry = mock();
         when(registry.resolve(new DefinitionKey(source.definitionScopeKey(), DEFINITION_ID, 1L)))
                 .thenReturn(runtimeWorkflow(1L, SOURCE_HASH, "source-step"));

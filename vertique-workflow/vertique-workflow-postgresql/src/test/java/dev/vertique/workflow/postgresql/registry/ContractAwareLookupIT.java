@@ -12,6 +12,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
 import dev.vertique.workflow.contract.WorkflowContract;
+import dev.vertique.workflow.definition.it.fixture.OrderDocState;
 import dev.vertique.workflow.definition.it.fixture.OrderDocumentSignals;
 import dev.vertique.workflow.definition.it.fixture.PlaceOrderDoc;
 import dev.vertique.workflow.definition.parser.DocumentFormat;
@@ -439,10 +440,8 @@ public class ContractAwareLookupIT {
         return new BootObservation("lookup-unused", 1, "unused", false);
     }
 
-    private record CodeState(String value) {}
-
     /** A code definition whose only step is its end step. */
-    private static final class CodeWorkflow implements WorkflowDefinition<CodeState, Object> {
+    private static final class CodeWorkflow implements WorkflowDefinition<OrderDocState, Object> {
 
         private final String definitionId;
         private final long version;
@@ -461,8 +460,8 @@ public class ContractAwareLookupIT {
         }
 
         @Override
-        public Class<CodeState> stateType() {
-            return CodeState.class;
+        public Class<OrderDocState> stateType() {
+            return OrderDocState.class;
         }
 
         @Override
@@ -476,8 +475,8 @@ public class ContractAwareLookupIT {
         }
 
         @Override
-        public void define(WorkflowBuilder<CodeState> workflow) {
-            workflow.init(PlaceOrderDoc.class, start -> new CodeState(start.orderId()))
+        public void define(WorkflowBuilder<OrderDocState> workflow) {
+            workflow.init(PlaceOrderDoc.class, start -> OrderDocState.fromPayload(start))
                     .initialStep("done")
                     .complete("done");
         }

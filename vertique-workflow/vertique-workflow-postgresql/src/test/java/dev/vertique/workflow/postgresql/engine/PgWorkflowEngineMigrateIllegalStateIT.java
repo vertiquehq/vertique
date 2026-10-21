@@ -99,18 +99,11 @@ public class PgWorkflowEngineMigrateIllegalStateIT {
     // --- Types ---
 
     /**
-     * Simple state record.
+     * Simple state record, used by every version of a definition id.
      *
      * @param value an arbitrary value
      */
     record SimpleState(String value) {}
-
-    /**
-     * Target state for migration.
-     *
-     * @param value carried value
-     */
-    record TargetState(String value) {}
 
     /** Marker contract for v1. */
     interface IllegalStateContract {
@@ -165,15 +158,15 @@ public class PgWorkflowEngineMigrateIllegalStateIT {
         }
     };
 
-    static final WorkflowDefinition<TargetState, IllegalStateContract> SIMPLE_DEF_V2 = new WorkflowDefinition<>() {
+    static final WorkflowDefinition<SimpleState, IllegalStateContract> SIMPLE_DEF_V2 = new WorkflowDefinition<>() {
         @Override
         public Class<IllegalStateContract> contract() {
             return IllegalStateContract.class;
         }
 
         @Override
-        public Class<TargetState> stateType() {
-            return TargetState.class;
+        public Class<SimpleState> stateType() {
+            return SimpleState.class;
         }
 
         @Override
@@ -187,8 +180,8 @@ public class PgWorkflowEngineMigrateIllegalStateIT {
         }
 
         @Override
-        public void define(WorkflowBuilder<TargetState> wf) {
-            wf.init(TargetState.class, s -> s).initialStep("done-v2").complete("done-v2");
+        public void define(WorkflowBuilder<SimpleState> wf) {
+            wf.init(SimpleState.class, s -> s).initialStep("done-v2").complete("done-v2");
         }
     };
 
@@ -243,15 +236,15 @@ public class PgWorkflowEngineMigrateIllegalStateIT {
         }
     };
 
-    static final WorkflowDefinition<TargetState, ForkContract> FORK_DEF_V2 = new WorkflowDefinition<>() {
+    static final WorkflowDefinition<SimpleState, ForkContract> FORK_DEF_V2 = new WorkflowDefinition<>() {
         @Override
         public Class<ForkContract> contract() {
             return ForkContract.class;
         }
 
         @Override
-        public Class<TargetState> stateType() {
-            return TargetState.class;
+        public Class<SimpleState> stateType() {
+            return SimpleState.class;
         }
 
         @Override
@@ -265,14 +258,14 @@ public class PgWorkflowEngineMigrateIllegalStateIT {
         }
 
         @Override
-        public void define(WorkflowBuilder<TargetState> wf) {
-            wf.init(TargetState.class, s -> s).initialStep("done-fork-v2").complete("done-fork-v2");
+        public void define(WorkflowBuilder<SimpleState> wf) {
+            wf.init(SimpleState.class, s -> s).initialStep("done-fork-v2").complete("done-fork-v2");
         }
     };
 
     // --- Migration handlers ---
 
-    static final WorkflowMigrationHandler<SimpleState, TargetState> SIMPLE_HANDLER = new WorkflowMigrationHandler<>() {
+    static final WorkflowMigrationHandler<SimpleState, SimpleState> SIMPLE_HANDLER = new WorkflowMigrationHandler<>() {
         @Override
         public String definitionId() {
             return SIMPLE_DEF_ID;
@@ -294,17 +287,17 @@ public class PgWorkflowEngineMigrateIllegalStateIT {
         }
 
         @Override
-        public Class<TargetState> targetStateType() {
-            return TargetState.class;
+        public Class<SimpleState> targetStateType() {
+            return SimpleState.class;
         }
 
         @Override
-        public MigrationResult<TargetState> migrate(SimpleState sourceState, MigrationContext ctx) {
-            return MigrationResult.anchorAtInitial(new TargetState(sourceState.value()));
+        public MigrationResult<SimpleState> migrate(SimpleState sourceState, MigrationContext ctx) {
+            return MigrationResult.anchorAtInitial(sourceState);
         }
     };
 
-    static final WorkflowMigrationHandler<SimpleState, TargetState> FORK_HANDLER = new WorkflowMigrationHandler<>() {
+    static final WorkflowMigrationHandler<SimpleState, SimpleState> FORK_HANDLER = new WorkflowMigrationHandler<>() {
         @Override
         public String definitionId() {
             return FORK_DEF_ID;
@@ -326,13 +319,13 @@ public class PgWorkflowEngineMigrateIllegalStateIT {
         }
 
         @Override
-        public Class<TargetState> targetStateType() {
-            return TargetState.class;
+        public Class<SimpleState> targetStateType() {
+            return SimpleState.class;
         }
 
         @Override
-        public MigrationResult<TargetState> migrate(SimpleState sourceState, MigrationContext ctx) {
-            return MigrationResult.anchorAtInitial(new TargetState(sourceState.value()));
+        public MigrationResult<SimpleState> migrate(SimpleState sourceState, MigrationContext ctx) {
+            return MigrationResult.anchorAtInitial(sourceState);
         }
     };
 

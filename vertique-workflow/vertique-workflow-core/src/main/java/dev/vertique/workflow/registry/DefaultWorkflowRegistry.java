@@ -8,6 +8,7 @@ import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
 import dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException;
+import dev.vertique.workflow.migration.WorkflowStateCompatibility;
 import dev.vertique.workflow.plan.CompensationNode;
 import dev.vertique.workflow.plan.HumanTaskNode;
 import dev.vertique.workflow.plan.ServiceDispatchNode;
@@ -54,6 +55,12 @@ import java.util.stream.Collectors;
  * same contract as every earlier version of its id in the same scope, and every signal its plan
  * waits for must be declared on that contract. Another scope may hold the same id under another
  * contract.
+ *
+ * <p>All versions of one scope and id use one state class. When a scope-owned definition and the default
+ * scope's definition of the same id name the same contract and different state classes, the scope-owned
+ * state class must extend the default's, as a {@link WorkflowStateCompatibility} decides; the rule is
+ * checked when the second of the two registers. Without a comparison, differing state classes are
+ * refused. Definitions of different contracts are never compared.
  *
  * <p>Internal storage, each map keyed by the scope and the definition id:
  * <ul>
@@ -150,6 +157,9 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
     /** The type-name index shared with the engine, the schema module and the document compiler. */
     private final WorkflowTypeNames typeNames;
 
+    /** Decides whether a scope-owned state class extends the default scope's; empty refuses differing classes. */
+    private final Optional<WorkflowStateCompatibility> stateCompatibility;
+
     /**
      * Creates a new empty {@code DefaultWorkflowRegistry} with no fork/join validator.
      *
@@ -215,10 +225,36 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
             WorkflowPlanValidator forkJoinValidator,
             Set<WorkflowDefinitionValidator> definitionValidators,
             WorkflowTypeNames typeNames) {
+        this(forkJoinValidator, definitionValidators, typeNames, Optional.empty());
+    }
+
+    /**
+     * INTERNAL framework seam — the framework implementation behind a contract this module
+     * documents; not an application contract and outside the maturity promise.
+     *
+     * <p>Creates a new empty {@code DefaultWorkflowRegistry} that, in addition to the behavior of
+     * {@link #DefaultWorkflowRegistry(WorkflowPlanValidator, Set, WorkflowTypeNames)}, decides through
+     * {@code stateCompatibility} whether the state class of a scope-owned definition extends the state class
+     * of the default scope's definition of the same id and contract. When it is empty, differing state
+     * classes of such a pair are refused.
+     *
+     * @param forkJoinValidator validator to invoke on each registered plan; may be null only in
+     *     test contexts that intentionally skip fork/join semantic checks
+     * @param definitionValidators validators to invoke on each candidate definition; copied
+     *     defensively, must not be {@code null}
+     * @param typeNames the shared type-name index; must not be {@code null}
+     * @param stateCompatibility the state comparison; must not be {@code null}, may be empty
+     */
+    public DefaultWorkflowRegistry(
+            WorkflowPlanValidator forkJoinValidator,
+            Set<WorkflowDefinitionValidator> definitionValidators,
+            WorkflowTypeNames typeNames,
+            Optional<WorkflowStateCompatibility> stateCompatibility) {
         Objects.requireNonNull(definitionValidators, "definitionValidators");
         this.forkJoinValidator = forkJoinValidator;
         this.definitionValidators = Set.copyOf(definitionValidators);
         this.typeNames = Objects.requireNonNull(typeNames, "typeNames");
+        this.stateCompatibility = Objects.requireNonNull(stateCompatibility, "stateCompatibility");
     }
 
     /**
@@ -271,6 +307,13 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
      *   <li>Throws if an earlier version of the same definition id in the same scope names another
      *       contract; any number of definition ids and versions may name one contract, and another
      *       scope may hold the id under another contract.</li>
+     *   <li>Throws if an earlier version of the same definition id in the same scope has another state
+     *       class.</li>
+     *   <li>Throws if the scope is not the default scope, the default scope holds the same id under the same
+     *       contract with another state class, and the scope's state class does not extend the default's;
+     *       registering the default definition second applies the same rule to each scope-owned
+     *       definition of the id. The refusal names the scope-owned key and the first incompatible
+     *       property path. Without a state comparison, differing state classes are refused.</li>
      *   <li>Stores the {@link RuntimeWorkflow} keyed by {@code (scopeKey, definitionId,
      *       definitionVersion)} — no half-committed state is visible to concurrent readers.</li>
      * </ol>
@@ -492,7 +535,16 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
                             + "' in that scope name contract '" + earlierContract
                             + "'; every version of a definition in a scope must name the same contract");
                 }
+                Class<?> earlierState = registered.firstEntry().getValue().stateType();
+                if (!earlierState.equals(rw.stateType())) {
+                    throw new WorkflowDefinitionException("definition "
+                            + describe(scopeKey, definitionId, definitionVersion)
+                            + " has state type " + rw.stateType().getSimpleName() + " but earlier versions of '"
+                            + definitionId + "' in that scope have state type " + earlierState.getSimpleName()
+                            + "; every version of a definition in a scope must have the same state type");
+                }
             }
+            requireStateExtension(scopeKey, definitionId, definitionVersion, rw);
             byDefinition
                     .computeIfAbsent(scopedId, k -> new ConcurrentSkipListMap<>())
                     .put(definitionVersion, rw);
@@ -502,6 +554,65 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
                 deployed.computeIfAbsent(scopedId, k -> new HashSet<>()).add(definitionVersion);
         } finally {
             rwLock.writeLock().unlock();
+        }
+    }
+
+    /**
+     * Applies the scope-versus-default state rule to a candidate whose scope-and-id rules passed: a scope-owned
+     * candidate is compared with the default scope's definition of the id, a default candidate with each
+     * scope-owned definition of the id. Only definitions of one contract are compared. Called under the write
+     * lock.
+     */
+    private void requireStateExtension(
+            String scopeKey, String definitionId, long definitionVersion, RuntimeWorkflow rw) {
+        if (WorkflowScopes.DEFAULT.equals(scopeKey)) {
+            for (var entry : byDefinition.entrySet()) {
+                ScopedId other = entry.getKey();
+                if (!other.definitionId().equals(definitionId)
+                        || WorkflowScopes.DEFAULT.equals(other.scopeKey())
+                        || entry.getValue().isEmpty()) {
+                    continue;
+                }
+                var scopeOwned = entry.getValue().firstEntry();
+                requireExtension(rw, scopeOwned.getValue(), other.scopeKey(), definitionId, scopeOwned.getKey());
+            }
+            return;
+        }
+        var defaults = byDefinition.get(new ScopedId(WorkflowScopes.DEFAULT, definitionId));
+        if (defaults == null || defaults.isEmpty()) {
+            return;
+        }
+        requireExtension(defaults.firstEntry().getValue(), rw, scopeKey, definitionId, definitionVersion);
+    }
+
+    /**
+     * Refuses a scope-owned definition whose state class differs from the default scope's definition of the
+     * same contract and does not extend it. Definitions of other contracts and of equal state classes pass.
+     */
+    private void requireExtension(
+            RuntimeWorkflow defaultRw,
+            RuntimeWorkflow scopeOwned,
+            String scopeKey,
+            String definitionId,
+            long scopeOwnedVersion) {
+        if (!defaultRw.contractName().equals(scopeOwned.contractName())
+                || defaultRw.stateType().equals(scopeOwned.stateType())) {
+            return;
+        }
+        String subject = "definition " + describe(scopeKey, definitionId, scopeOwnedVersion) + " has state type "
+                + scopeOwned.stateType().getSimpleName() + " but the default scope's '" + definitionId
+                + "' of the same contract has state type "
+                + defaultRw.stateType().getSimpleName();
+        if (stateCompatibility.isEmpty()) {
+            throw new WorkflowDefinitionException(subject
+                    + "; the state comparison is unavailable (no WorkflowStateCompatibility is bound), so"
+                    + " differing state types are refused");
+        }
+        Optional<String> incompatible =
+                stateCompatibility.orElseThrow().firstIncompatibility(defaultRw.stateType(), scopeOwned.stateType());
+        if (incompatible.isPresent()) {
+            throw new WorkflowDefinitionException(subject + "; the state type must extend the default scope's, but"
+                    + " property '" + incompatible.orElseThrow() + "' is removed or has another type");
         }
     }
 

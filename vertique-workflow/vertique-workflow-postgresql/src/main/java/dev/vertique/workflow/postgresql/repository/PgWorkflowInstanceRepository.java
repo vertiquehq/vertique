@@ -188,7 +188,7 @@ public final class PgWorkflowInstanceRepository extends PgSqlRepository
 
         this.sqlMigratePinAndState = "UPDATE " + instances
                 + " SET definition_version = $2, plan_hash = $3, version = $4,"
-                + " status = 'RUNNING', current_step_id = $5,"
+                + " status = 'RUNNING', current_step_id = $5, definition_scope_key = $8,"
                 + " wait_type = NULL, wait_key = NULL, wait_aux_id = NULL,"
                 + " state_json = $6::jsonb,"
                 + " error_type = NULL, error_message = NULL,"
@@ -344,15 +344,15 @@ public final class PgWorkflowInstanceRepository extends PgSqlRepository
      * and plan hash, clears all wait and error fields, forces {@code status = 'RUNNING'} and
      * {@code completed_at = NULL}, and writes the migrated state JSON.
      *
-     * <p>Unlike {@link #updateOptimistic}, this method also updates {@code definition_version},
-     * {@code plan_hash}, and unconditionally nulls the wait columns and {@code completed_at},
+     * <p>Unlike {@link #updateOptimistic}, this method also updates {@code definition_scope_key},
+     * {@code definition_version}, {@code plan_hash}, and unconditionally nulls the wait columns and {@code completed_at},
      * because a post-migration instance is by definition non-terminal and in a clean RUNNING
      * state regardless of what the source instance held.
      *
      * <p>The target version is admitted before the update (see {@link DefinitionPinAdmission}).
      *
      * @param updated         the post-migration workflow instance snapshot; must carry the new
-     *                        {@code definitionVersion}, {@code planHash}, {@code version},
+     *                        {@code definitionScopeKey}, {@code definitionVersion}, {@code planHash}, {@code version},
      *                        {@code currentStepId}, and {@code stateJson}
      * @param expectedVersion the version value that must be present in the DB row for the update
      *                        to succeed (optimistic concurrency guard)
@@ -372,7 +372,8 @@ public final class PgWorkflowInstanceRepository extends PgSqlRepository
                 updated.version(),
                 updated.currentStepId(),
                 updated.stateJson(),
-                expectedVersion);
+                expectedVersion,
+                updated.definitionScopeKey());
 
         return DefinitionPinAdmission.admitPin(
                         tx,

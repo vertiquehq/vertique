@@ -144,38 +144,50 @@ final class ScopedApprovalFixture {
         };
     }
 
-    /** Migrates version 1 of {@link #MIGRATION_ID} to version 2, continuing at step {@code review}. */
-    static final WorkflowMigrationHandler<ApprovalState, ApprovalState> MIGRATION = new WorkflowMigrationHandler<>() {
-        @Override
-        public String definitionId() {
-            return MIGRATION_ID;
-        }
+    /** Migrates version 1 of {@link #MIGRATION_ID} to version 2 in the default scope, continuing at step {@code review}. */
+    static final WorkflowMigrationHandler<ApprovalState, ApprovalState> MIGRATION = migration("default");
 
-        @Override
-        public long fromDefinitionVersion() {
-            return 1L;
-        }
+    /** Migrates version 1 of {@link #MIGRATION_ID} to version 2 in {@link #ACME}, continuing at step {@code review}. */
+    static final WorkflowMigrationHandler<ApprovalState, ApprovalState> ACME_MIGRATION = migration(ACME);
 
-        @Override
-        public long targetDefinitionVersion() {
-            return 2L;
-        }
+    private static WorkflowMigrationHandler<ApprovalState, ApprovalState> migration(String scope) {
+        return new WorkflowMigrationHandler<>() {
+            @Override
+            public String sourceScope() {
+                return scope;
+            }
 
-        @Override
-        public Class<ApprovalState> sourceStateType() {
-            return ApprovalState.class;
-        }
+            @Override
+            public String definitionId() {
+                return MIGRATION_ID;
+            }
 
-        @Override
-        public Class<ApprovalState> targetStateType() {
-            return ApprovalState.class;
-        }
+            @Override
+            public long fromDefinitionVersion() {
+                return 1L;
+            }
 
-        @Override
-        public MigrationResult<ApprovalState> migrate(ApprovalState sourceState, MigrationContext ctx) {
-            return MigrationResult.continueAt(sourceState.with("migrated"), "review");
-        }
-    };
+            @Override
+            public long targetDefinitionVersion() {
+                return 2L;
+            }
+
+            @Override
+            public Class<ApprovalState> sourceStateType() {
+                return ApprovalState.class;
+            }
+
+            @Override
+            public Class<ApprovalState> targetStateType() {
+                return ApprovalState.class;
+            }
+
+            @Override
+            public MigrationResult<ApprovalState> migrate(ApprovalState sourceState, MigrationContext ctx) {
+                return MigrationResult.continueAt(sourceState.with("migrated"), "review");
+            }
+        };
+    }
 
     /**
      * Stamps an instance row as pinned to a plan of another scope, the way a scoped start will leave it: the row

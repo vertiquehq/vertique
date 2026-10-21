@@ -310,7 +310,11 @@ class WorkflowTransactionClientGuardTest {
         WorkflowMigrationRegistry migrations = new WorkflowMigrationRegistry() {
             @Override
             public Optional<WorkflowMigrationHandler<?, ?>> find(
-                    String definitionId, long sourceVersion, long targetVersion) {
+                    String sourceScope,
+                    String definitionId,
+                    long sourceVersion,
+                    String targetScope,
+                    long targetVersion) {
                 return Optional.empty();
             }
 

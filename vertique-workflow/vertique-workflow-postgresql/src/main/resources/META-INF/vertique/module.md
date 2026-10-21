@@ -194,6 +194,8 @@ time. Records are durable and restored into the node's view at startup; a start 
 
 Registry refusal messages can name other scopes and plan hashes: do not forward them to tenants.
 
+`migratePinAndState` writes the definition scope, the definition version and the plan hash of the re-pinned instance, so a migration to another scope's definition changes the stored definition scope. Run the cross-scope migration with `vertique-workflow-schema` installed when the two definitions use different state classes.
+
 Pin admission: before `insert` creates an instance pin, `migratePinAndState` changes one, or `updateOptimistic`
 resurrects a terminal instance (FAILED retry or FAILED to COMPENSATING), the repository takes
 `pg_advisory_xact_lock_shared` on the definition id in its own statement, then reads the id's definition rows in a second

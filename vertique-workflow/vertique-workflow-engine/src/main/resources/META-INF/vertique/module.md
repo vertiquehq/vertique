@@ -212,7 +212,9 @@ enforcement stays off. When the registry is a `DefaultWorkflowRegistry`, the fac
 `WorkflowTypeNames` index with the engine; any other registry, such as one that wraps the default registry,
 gets an empty index unless you pass the index through the 17-argument overload, whose last parameter is the
 `WorkflowTypeNames` the registry fills. With an empty index, decision payload names resolve as binary class
-names only.
+names only. The 18-argument overload adds a last `Optional<WorkflowStateCompatibility>`, the comparison a
+migration applies when the source and target state classes differ; the shorter overloads pass an empty one, so
+the engine then refuses a migration between differing state classes.
 
 Key members:
 
@@ -247,7 +249,9 @@ Dagger module owning the engine-internal bindings:
   `WorkflowDefinitionPropagationPoller`, which keeps the node's registry in step with the durable table.
 - Declares the `@WorkflowRecorders`-qualified `Set<WorkflowSideEffectRecorder<SqlClient>>` multibinding.
 - Provides the `@OptionalIntentKinds Set<IntentKind>` (delegates to `WorkflowEngineFactory.DEFAULT_OPTIONAL_INTENT_KINDS`).
-- Declares `WorkflowMigrationRegistry` as `@BindsOptionalOf` (opt-in migration support).
+- Declares `WorkflowMigrationRegistry` as `@BindsOptionalOf` (opt-in migration support). The migration executor also
+  injects the optional `WorkflowStateCompatibility` that `WorkflowCoreModule` declares; install
+  `vertique-workflow-schema` to bind it.
 - Declares `BeanValidator` as `@BindsOptionalOf` (opt-in payload constraint enforcement; bound by installing the validation module).
 - Includes `WorkflowCoreModule` and `ContextRuntimeModule`. The task-lifecycle service takes the singleton
   `WorkflowTypeNames` index that `WorkflowCoreModule` provides.
@@ -273,6 +277,8 @@ public interface AppComponent {
 ### Instance Scopes
 
 `WorkflowEngine.start` resolves a null `StartCommand.startScope` to the default scope (`WorkflowScopes.DEFAULT`) and `doCreateInstance` stamps that start scope and the scope of the resolved definition version on the new instance; the engine takes no scope source of its own. The order of a start is: look up the start dedup row of `(start scope, definition id, idempotency key)` (`WorkflowDedupRepository.findStart`), then resolve the definition, then compare the command contract with the definition contract, then claim the dedup row and create the instance. A replay that names a version or target scope other than the existing pin fails with `WorkflowIdempotencyConflictException`; the stored fingerprint stays `definitionVersion=N` and is not used for the comparison. `MigrationExecutor` carries both scopes of the instance into the re-pinned snapshot, and resurrection keeps them, so a scope written by another writer stays with the instance. The scopes are information and a filter, not an isolation boundary.
+
+`migrate(id, targetScope, targetVersion)` (and the transactional form with a trailing transaction) resolves the target in `targetScope`, which must be the instance's start scope or the default scope. Before it looks up the handler it refuses a target of another contract with `WorkflowDefinitionContractMismatchException`, and a target whose state class differs from the source's and does not extend it (or any differing state class when no `WorkflowStateCompatibility` is bound) with `WorkflowDefinitionException`; it then finds the handler by both scopes and re-pins the instance's definition scope to the target. `migrate(id, targetVersion)` keeps meaning the instance's definition scope.
 
 Every lookup of an instance's plan (signals, tasks, timers, retries, branch and join recovery, queries and migration) resolves the instance's full pin: its definition scope, definition id and definition version. An instance pinned to a definition scope never runs the plan that another scope holds under the same id and version, and migration resolves its target version in the instance's definition scope. The lifecycle, the startup restoration and the propagation pass register, mark and remove a runtime under the scope of the stored row they apply.
 
@@ -644,7 +650,7 @@ parameterized over `<TX>` (typically `SqlClient`):
 
 | SPI | Responsibility |
 |---|---|
-| `WorkflowInstanceRepository<TX>` | Instance insert, optimistic update, migration update, and reads (by id without lock, with tx, with `FOR UPDATE`, by start scope, definition id and business key, filtered+paginated) |
+| `WorkflowInstanceRepository<TX>` | Instance insert, optimistic update, migration update (which re-pins the definition scope, version and plan hash), and reads (by id without lock, with tx, with `FOR UPDATE`, by start scope, definition id and business key, filtered+paginated) |
 | `WorkflowHistoryRepository<TX>` | History append, next-sequence generation, and two list variants (recent, all) |
 | `WorkflowDedupRepository<TX>` | Start lookup and race-safe claim/resolve by start scope for start, race-safe claim/resolve for signal (scoped and unscoped), task completion/reassignment, and service dispatch |
 | `BranchTokenRepository<TX>` | Fork/join branch token CRUD, status queries, and recovery queries |

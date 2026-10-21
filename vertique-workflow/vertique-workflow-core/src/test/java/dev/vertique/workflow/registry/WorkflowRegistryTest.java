@@ -763,15 +763,15 @@ class WorkflowRegistryTest {
                 }
             };
 
-            WorkflowDefinition<StateB, MultiContract> defV2 = new WorkflowDefinition<>() {
+            WorkflowDefinition<StateA, MultiContract> defV2 = new WorkflowDefinition<>() {
                 @Override
                 public Class<MultiContract> contract() {
                     return MultiContract.class;
                 }
 
                 @Override
-                public Class<StateB> stateType() {
-                    return StateB.class;
+                public Class<StateA> stateType() {
+                    return StateA.class;
                 }
 
                 @Override
@@ -785,8 +785,8 @@ class WorkflowRegistryTest {
                 }
 
                 @Override
-                public void define(WorkflowBuilder<StateB> wf) {
-                    wf.init(PayloadB.class, p -> new StateB(p.id()))
+                public void define(WorkflowBuilder<StateA> wf) {
+                    wf.init(PayloadB.class, p -> new StateA(p.id()))
                             .initialStep("done")
                             .complete("done");
                 }
@@ -1125,6 +1125,124 @@ class WorkflowRegistryTest {
         assertThat(registry.contractOf(WorkflowScopes.DEFAULT, "Y")).contains("scope-d");
         assertThat(registry.contractOf("globex", "X")).isEmpty();
         assertThat(registry.find(acmeV1)).isPresent();
+    }
+
+    // --- State types per scope and id ---
+
+    record StateA(String id) {}
+
+    record StateAPlus(String id, String note) {}
+
+    record StateB(int count) {}
+
+    /** A definition that completes at once, with the given state type, contract, id and version. */
+    private static <S, C> WorkflowDefinition<S, C> stated(
+            Class<S> stateType,
+            Class<C> contract,
+            String definitionId,
+            long version,
+            java.util.function.Function<String, S> initialState) {
+        return new WorkflowDefinition<>() {
+            @Override
+            public Class<C> contract() {
+                return contract;
+            }
+
+            @Override
+            public Class<S> stateType() {
+                return stateType;
+            }
+
+            @Override
+            public String definitionId() {
+                return definitionId;
+            }
+
+            @Override
+            public long definitionVersion() {
+                return version;
+            }
+
+            @Override
+            public void define(WorkflowBuilder<S> wf) {
+                wf.init(ApprovalStart.class, start -> initialState.apply(start.id()))
+                        .initialStep("done")
+                        .complete("done");
+            }
+        };
+    }
+
+    private static WorkflowDefinition<StateA, ScopeContractC> stateA(String id, long version) {
+        return stated(StateA.class, ScopeContractC.class, id, version, StateA::new);
+    }
+
+    @Test
+    @DisplayName("a version with another state type than its scope and id is refused, another scope may differ")
+    void versionWithAnotherStateTypeInSameScopeIsRefused() {
+        // Given: (default, s-x, 1) with state StateA registered
+        registry.register(stateA("s-x", 1L));
+
+        // When: (default, s-x, 2) with state StateB registers, then (acme, s-x, 1) with StateA
+        Throwable anotherState = catchThrowable(() -> registry.register(
+                stated(StateB.class, ScopeContractC.class, "s-x", 2L, id -> new StateB(id.length()))));
+        Throwable otherScope = catchThrowable(() -> registry.register("acme", stateA("s-x", 1L)));
+
+        // Then: the first is refused naming the key and both state types
+        assertNamesKey(anotherState, WorkflowScopes.DEFAULT, "s-x", 2L);
+        assertThat(anotherState.getMessage()).contains("StateA").contains("StateB");
+
+        // and: the refused version is not registered
+        assertThat(registry.find(new DefinitionKey(WorkflowScopes.DEFAULT, "s-x", 2L)))
+                .isEmpty();
+
+        // and: the second is accepted
+        assertThat(otherScope).isNull();
+        assertThat(registry.find(new DefinitionKey("acme", "s-x", 1L))).isPresent();
+    }
+
+    @Test
+    @DisplayName("a scope state type that differs from the default is refused when no comparison is available")
+    void scopeStateTypeDifferingFromDefaultIsRefusedWithoutComparison() {
+        // Given: a registry with no comparison hook and (default, s-y, 1) with StateA
+        registry.register(stateA("s-y", 1L));
+
+        // When: (acme, s-y, 1) with StateAPlus of the same contract registers
+        Throwable refusal = catchThrowable(() -> registry.register(
+                "acme", stated(StateAPlus.class, ScopeContractC.class, "s-y", 1L, id -> new StateAPlus(id, null))));
+
+        // Then: it is refused naming the scope, the id and that the comparison is unavailable
+        assertNamesKey(refusal, "acme", "s-y", 1L);
+        assertThat(refusal.getMessage())
+                .containsIgnoringCase("comparison")
+                .containsPattern("(?i)(unavailable|not available)");
+        assertThat(registry.find(new DefinitionKey("acme", "s-y", 1L))).isEmpty();
+    }
+
+    @Test
+    @DisplayName("the scope against default state comparison runs only between definitions of one contract")
+    void stateComparisonAppliesOnlyBetweenDefinitionsOfOneContract() {
+        // Given: a registry with no comparison hook and (default, s-c, 1) with StateA under contract C
+        registry.register(stateA("s-c", 1L));
+
+        // When: (acme, s-c, 1) with StateB under D, (acme, s-c, 2) with StateB under D and (globex, s-c, 1)
+        // with StateB under C register
+        Throwable acmeV1 = catchThrowable(() ->
+                registry.register("acme", stated(StateB.class, ScopeContractD.class, "s-c", 1L, id -> new StateB(1))));
+        Throwable acmeV2 = catchThrowable(() ->
+                registry.register("acme", stated(StateB.class, ScopeContractD.class, "s-c", 2L, id -> new StateB(1))));
+        Throwable globexV1 = catchThrowable(() -> registry.register(
+                "globex", stated(StateB.class, ScopeContractC.class, "s-c", 1L, id -> new StateB(1))));
+
+        // Then: the two acme registrations are accepted, the rule is not id-wide
+        assertThat(acmeV1).isNull();
+        assertThat(acmeV2).isNull();
+
+        // and: globex, which shares contract C with the default and differs in state type, is refused
+        assertNamesKey(globexV1, "globex", "s-c", 1L);
+        assertThat(globexV1.getMessage())
+                .containsIgnoringCase("comparison")
+                .containsPattern("(?i)(unavailable|not available)");
+        assertThat(registry.find(new DefinitionKey("globex", "s-c", 1L))).isEmpty();
     }
 
     private static void assertNamesKey(Throwable refusal, String scopeKey, String definitionId, long version) {

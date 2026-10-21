@@ -108,16 +108,9 @@ public class PgWorkflowEngineMigrateIT {
     record StartPayload(String name) {}
 
     /**
-     * V1 workflow state.
+     * Workflow state of both versions; every version of one definition id uses one state class.
      *
-     * @param name the name from the start payload
-     */
-    record V1State(String name) {}
-
-    /**
-     * V2 workflow state — adds a {@code migrated} flag.
-     *
-     * @param name    the name carried over from V1
+     * @param name     the name from the start payload
      * @param migrated flag indicating this state was produced by the migration handler
      */
     record V2State(String name, boolean migrated) {}
@@ -132,15 +125,15 @@ public class PgWorkflowEngineMigrateIT {
 
     // --- V1 definition: init → waitForSignal("pause") → complete ---
 
-    static final WorkflowDefinition<V1State, MigrateTestContract> DEF_V1 = new WorkflowDefinition<>() {
+    static final WorkflowDefinition<V2State, MigrateTestContract> DEF_V1 = new WorkflowDefinition<>() {
         @Override
         public Class<MigrateTestContract> contract() {
             return MigrateTestContract.class;
         }
 
         @Override
-        public Class<V1State> stateType() {
-            return V1State.class;
+        public Class<V2State> stateType() {
+            return V2State.class;
         }
 
         @Override
@@ -154,8 +147,8 @@ public class PgWorkflowEngineMigrateIT {
         }
 
         @Override
-        public void define(WorkflowBuilder<V1State> wf) {
-            wf.init(StartPayload.class, p -> new V1State(p.name()))
+        public void define(WorkflowBuilder<V2State> wf) {
+            wf.init(StartPayload.class, p -> new V2State(p.name(), false))
                     .initialStep("wait-v1")
                     .waitForSignal("wait-v1", "pause", String.class)
                     .onSignal((s, p) -> s)
@@ -196,9 +189,9 @@ public class PgWorkflowEngineMigrateIT {
         }
     };
 
-    // --- Migration handler: V1State → V2State, AnchorAtInitial ---
+    // --- Migration handler: V2State → V2State, AnchorAtInitial ---
 
-    static final WorkflowMigrationHandler<V1State, V2State> HANDLER = new WorkflowMigrationHandler<>() {
+    static final WorkflowMigrationHandler<V2State, V2State> HANDLER = new WorkflowMigrationHandler<>() {
         @Override
         public String definitionId() {
             return DEF_ID;
@@ -215,8 +208,8 @@ public class PgWorkflowEngineMigrateIT {
         }
 
         @Override
-        public Class<V1State> sourceStateType() {
-            return V1State.class;
+        public Class<V2State> sourceStateType() {
+            return V2State.class;
         }
 
         @Override
@@ -225,7 +218,7 @@ public class PgWorkflowEngineMigrateIT {
         }
 
         @Override
-        public MigrationResult<V2State> migrate(V1State sourceState, MigrationContext ctx) {
+        public MigrationResult<V2State> migrate(V2State sourceState, MigrationContext ctx) {
             return MigrationResult.anchorAtInitial(new V2State(sourceState.name(), true));
         }
     };

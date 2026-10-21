@@ -140,7 +140,8 @@ public interface WorkflowOperations {
      *   <li>The instance must be in a non-terminal status and must not have active
      *       fork-branch state.</li>
      *   <li>A {@link dev.vertique.workflow.migration.WorkflowMigrationHandler} matching
-     *       {@code (definitionId, currentVersion, targetVersion)} must be registered.</li>
+     *       {@code (definitionId, currentVersion, targetVersion)} within the instance's definition scope must be
+     *       registered.</li>
      *   <li>The handler's source state type must match the resolved source plan's state type;
      *       same for target.</li>
      *   <li>On success a {@code WORKFLOW_MIGRATED} history entry is appended.</li>
@@ -167,6 +168,34 @@ public interface WorkflowOperations {
      *     registered plan's runtime state type
      */
     default Future<Void> migrate(WorkflowInstanceId id, long targetVersion) {
+        return Future.failedFuture(
+                new UnsupportedOperationException("migrate() is not implemented by this WorkflowOperations binding;"
+                        + " install vertique-workflow-postgresql + WorkflowMigrationModule"
+                        + " (or another binding that implements migrate)"));
+    }
+
+    /**
+     * Migrates a workflow instance to {@code targetVersion} of the definition of the same id in {@code targetScope}.
+     *
+     * <p>The rules of {@link #migrate(WorkflowInstanceId, long)} apply, with these differences: the target
+     * definition is the one of {@code targetScope}, which must be the instance's start scope or the default scope;
+     * it must name the same contract as the definition the instance is pinned to; and when the two definitions use
+     * different state classes, the target's must extend the source's. A matching
+     * {@link dev.vertique.workflow.migration.WorkflowMigrationHandler} is keyed by the scope and version of the
+     * source and of the target.
+     *
+     * <p>This default implementation throws {@link UnsupportedOperationException}, as the two-argument form does.
+     *
+     * @param id workflow instance to migrate
+     * @param targetScope the scope of the definition to migrate to; the instance's start scope or the default scope
+     * @param targetVersion the definition version to migrate to; must be registered in {@code targetScope}
+     * @return a {@link Future} that completes when the instance has been re-pinned and advanced; it fails with
+     *     {@link dev.vertique.workflow.exception.WorkflowDefinitionException} when the scope is not visible from the
+     *     instance or the state classes are not compatible, and with
+     *     {@link dev.vertique.workflow.exception.WorkflowDefinitionContractMismatchException} when the target names
+     *     another contract
+     */
+    default Future<Void> migrate(WorkflowInstanceId id, String targetScope, long targetVersion) {
         return Future.failedFuture(
                 new UnsupportedOperationException("migrate() is not implemented by this WorkflowOperations binding;"
                         + " install vertique-workflow-postgresql + WorkflowMigrationModule"

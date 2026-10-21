@@ -124,7 +124,9 @@ class WorkflowMigrationModuleWiringTest {
 
         WorkflowMigrationRegistry registry = new DefaultWorkflowMigrationRegistry(Set.of(handler), wfReg);
 
-        assertThat(registry.find("wiring-saga", 1L, 2L)).isPresent().containsSame(handler);
+        assertThat(registry.find("default", "wiring-saga", 1L, "default", 2L))
+                .isPresent()
+                .containsSame(handler);
         assertThat(registry.all()).containsExactly(handler);
     }
 }

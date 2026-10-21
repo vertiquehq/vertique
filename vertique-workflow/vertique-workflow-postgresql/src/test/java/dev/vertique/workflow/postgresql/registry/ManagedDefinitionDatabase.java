@@ -476,8 +476,6 @@ public final class ManagedDefinitionDatabase {
         }
     }
 
-    private record RegistryProbeState(String value) {}
-
     private record RegistryProbeStart(String value) {}
 
     /**
@@ -488,7 +486,7 @@ public final class ManagedDefinitionDatabase {
     private interface RegistryProbeContract extends OrderDocumentSignals {}
 
     private static final class RegistryProbeWorkflow
-            implements WorkflowDefinition<RegistryProbeState, RegistryProbeContract> {
+            implements WorkflowDefinition<OrderDocState, RegistryProbeContract> {
 
         @Override
         public Class<RegistryProbeContract> contract() {
@@ -496,8 +494,8 @@ public final class ManagedDefinitionDatabase {
         }
 
         @Override
-        public Class<RegistryProbeState> stateType() {
-            return RegistryProbeState.class;
+        public Class<OrderDocState> stateType() {
+            return OrderDocState.class;
         }
 
         @Override
@@ -511,8 +509,8 @@ public final class ManagedDefinitionDatabase {
         }
 
         @Override
-        public void define(WorkflowBuilder<RegistryProbeState> workflow) {
-            workflow.init(RegistryProbeStart.class, start -> new RegistryProbeState(start.value()))
+        public void define(WorkflowBuilder<OrderDocState> workflow) {
+            workflow.init(RegistryProbeStart.class, start -> new OrderDocState(start.value(), null, null, null))
                     .initialStep("done")
                     .complete("done");
         }

@@ -50,7 +50,7 @@ modules it builds on:
 | Module | Required | Why |
 |---|---|---|
 | `WorkflowCoreModule` | yes | Owns the registry that collects definition validators |
-| `WorkflowSchemaModule` | yes | Contributes the payload validator to the registry and binds `WorkflowPayloadSchemas` |
+| `WorkflowSchemaModule` | yes | Contributes the payload validator to the registry and binds `WorkflowPayloadSchemas` and `WorkflowStateCompatibility` |
 | `JsonRuntimeModule` | yes | Binds `JsonMapperProfileRegistry` and `JsonConfig`, which the validator injects |
 | `ValidationModule` | optional | Binds a `jakarta.validation.Validator` so schemas reflect bean-validation constraints |
 
@@ -72,6 +72,25 @@ The constraint supplement is off unless a `jakarta.validation.Validator` is boun
 `ValidationModule` alongside so that the generated schema and the engine's bean-validation
 enforcement agree; wiring only one of them makes the schema looser than the engine. The module logs
 once whether the supplement is enabled.
+
+---
+
+## State Type Comparison
+
+`WorkflowSchemaModule` also binds `WorkflowStateCompatibility`, which the workflow registry and the engine use to decide
+whether one state class extends another. It compares the canonical JSON Schemas of the two classes under the process JSON
+profile (the same generator as the payload check, without the bean-validation supplement): every property of the source
+class must exist in the target class with the same type, and the target may add properties. Nested objects compare
+property by property by the same rule, collection items and map values compare their item type, and an enum target must
+contain every constant of the source. `firstIncompatibility(source, target)` answers the first incompatible schema path,
+such as `amount`, `address.city` or `items[].sku`, or an empty `Optional`; a path never carries a value.
+
+The registry applies it when a scope-owned definition and the default scope's definition of the same id and contract name
+different state classes, and the engine applies it before a migration to a definition whose state class differs. Without
+this module those cases are refused rather than accepted, so install it when a scope may define a state class that differs
+from the default scope's. A state class evolves by adding properties only; the comparison does not check that a property
+added to a class tolerates stored state JSON that lacks it, so give an added property a default (a nullable component or a
+default value).
 
 ---
 
@@ -381,7 +400,8 @@ profile override; the original exception is chained as the cause. The start payl
 ## Common Mistakes
 
 - **Not installing `WorkflowSchemaModule`.** Registration then succeeds without any payload check,
-  and an unsuitable type surfaces only when a decision is submitted.
+  and an unsuitable type surfaces only when a decision is submitted. A scope-owned definition whose state class
+  differs from the default scope's is refused, because no state comparison is available.
 - **Installing it without the JSON runtime module.** The validator needs `JsonMapperProfileRegistry`
   and `JsonConfig`; the component fails to build without them.
 - **Reading descriptors without the module in the registry's component.** `describe` and the

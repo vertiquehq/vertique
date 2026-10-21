@@ -107,7 +107,6 @@ CONSTRUCTOR|dev.vertique.workflow.exception.WorkflowUnavailableException|public|
 CONSTRUCTOR|dev.vertique.workflow.exception.WorkflowUnavailableException|public|[]|[java.lang.String]|[]|false
 CONSTRUCTOR|dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException|public|[]|[java.lang.String,long,dev.vertique.workflow.ops.WorkflowInstanceId]|[]|false
 CONSTRUCTOR|dev.vertique.workflow.migration.DefaultWorkflowMigrationRegistry|public|[]|[java.util.Set<dev.vertique.workflow.migration.WorkflowMigrationHandler<?, ?>>,dev.vertique.workflow.registry.WorkflowRegistry]|[]|false
-CONSTRUCTOR|dev.vertique.workflow.migration.MigrationContext|public|[]|[dev.vertique.workflow.ops.WorkflowInstanceId,java.lang.String,long,long,java.lang.String,java.lang.String,java.util.List<dev.vertique.workflow.state.WorkflowHistoryEntrySummary>]|[]|false
 CONSTRUCTOR|dev.vertique.workflow.migration.MigrationResult$AnchorAtInitial|public|[]|[T]|[]|false
 CONSTRUCTOR|dev.vertique.workflow.migration.MigrationResult$ContinueAt|public|[]|[T,java.lang.String]|[]|false
 CONSTRUCTOR|dev.vertique.workflow.migration.WorkflowMigrationHandlerMissingException|public|[]|[dev.vertique.workflow.ops.WorkflowInstanceId,java.lang.String,long,long]|[]|false
@@ -983,7 +982,6 @@ METHOD|dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException|de
 METHOD|dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException|instanceId|public|[]|[]|dev.vertique.workflow.ops.WorkflowInstanceId|[]|false
 METHOD|dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException|version|public|[]|[]|long|[]|false
 METHOD|dev.vertique.workflow.migration.DefaultWorkflowMigrationRegistry|all|public|[]|[]|java.util.Collection<dev.vertique.workflow.migration.WorkflowMigrationHandler<?, ?>>|[]|false
-METHOD|dev.vertique.workflow.migration.DefaultWorkflowMigrationRegistry|find|public|[]|[java.lang.String,long,long]|java.util.Optional<dev.vertique.workflow.migration.WorkflowMigrationHandler<?, ?>>|[]|false
 METHOD|dev.vertique.workflow.migration.MigrationContext|currentStepId|public|[]|[]|java.lang.String|[]|false
 METHOD|dev.vertique.workflow.migration.MigrationContext|equals|public final|[]|[java.lang.Object]|boolean|[]|false
 METHOD|dev.vertique.workflow.migration.MigrationContext|hashCode|public final|[]|[]|int|[]|false
@@ -1019,7 +1017,6 @@ METHOD|dev.vertique.workflow.migration.WorkflowMigrationHandler|targetStateType|
 METHOD|dev.vertique.workflow.migration.WorkflowMigrationIllegalStateException|reason|public|[]|[]|java.lang.String|[]|false
 METHOD|dev.vertique.workflow.migration.WorkflowMigrationIllegalStateException|workflowId|public|[]|[]|dev.vertique.workflow.ops.WorkflowInstanceId|[]|false
 METHOD|dev.vertique.workflow.migration.WorkflowMigrationRegistry|all|public abstract|[]|[]|java.util.Collection<dev.vertique.workflow.migration.WorkflowMigrationHandler<?, ?>>|[]|false
-METHOD|dev.vertique.workflow.migration.WorkflowMigrationRegistry|find|public abstract|[]|[java.lang.String,long,long]|java.util.Optional<dev.vertique.workflow.migration.WorkflowMigrationHandler<?, ?>>|[]|false
 METHOD|dev.vertique.workflow.ops.StartCommand|businessKey|public|[]|[]|java.lang.String|[]|false
 METHOD|dev.vertique.workflow.ops.StartCommand|definitionId|public|[]|[]|java.lang.String|[]|false
 METHOD|dev.vertique.workflow.ops.StartCommand|equals|public final|[]|[java.lang.Object]|boolean|[]|false

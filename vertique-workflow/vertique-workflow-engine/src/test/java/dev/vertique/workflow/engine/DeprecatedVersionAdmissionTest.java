@@ -246,7 +246,11 @@ class DeprecatedVersionAdmissionTest {
         WorkflowMigrationRegistry migrations = new WorkflowMigrationRegistry() {
             @Override
             public Optional<WorkflowMigrationHandler<?, ?>> find(
-                    String definitionId, long sourceVersion, long targetVersion) {
+                    String sourceScope,
+                    String definitionId,
+                    long sourceVersion,
+                    String targetScope,
+                    long targetVersion) {
                 if (!definitionId.equals(DEFINITION_ID) || sourceVersion != 1) return Optional.empty();
                 if (targetVersion == 2) return Optional.of(handlerToVersion2);
                 if (targetVersion == 3) return Optional.of(handlerToVersion3);

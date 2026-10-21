@@ -126,6 +126,12 @@ public class ScopedPinLookupIT {
 
         @Provides
         @IntoSet
+        static WorkflowMigrationHandler<?, ?> acmeMigration() {
+            return ScopedApprovalFixture.ACME_MIGRATION;
+        }
+
+        @Provides
+        @IntoSet
         @WorkflowRecorders
         static WorkflowSideEffectRecorder<SqlClient> timerRecorder(PgTimerStore timerStore) {
             return new WorkflowSideEffectRecorder<>() {

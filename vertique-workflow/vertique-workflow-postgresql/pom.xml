@@ -166,6 +166,15 @@ SPDX-License-Identifier: EUPL-1.2
             <artifactId>vertique-workflow-events</artifactId>
             <scope>test</scope>
         </dependency>
+        <!--
+          Test scope only: the cross-scope migration proofs compare state types through the schema
+          module's WorkflowStateCompatibility. No production code in this module depends on it.
+        -->
+        <dependency>
+            <groupId>dev.vertique</groupId>
+            <artifactId>vertique-workflow-schema</artifactId>
+            <scope>test</scope>
+        </dependency>
         <dependency>
             <groupId>ch.qos.logback</groupId>
             <artifactId>logback-classic</artifactId>

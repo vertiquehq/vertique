@@ -432,7 +432,8 @@ class HistoryPayloadCorrelationStitchingTest {
         when(handler.sourceStateType()).thenReturn((Class) Object.class);
         when(handler.migrate(any(), any()))
                 .thenReturn(dev.vertique.workflow.migration.MigrationResult.anchorAtInitial(Map.of()));
-        when(migrationRegistry.find(DEFINITION_ID, 1L, 2L)).thenReturn(Optional.of(handler));
+        when(migrationRegistry.find("default", DEFINITION_ID, 1L, "default", 2L))
+                .thenReturn(Optional.of(handler));
 
         WorkflowEngineHandle handle = WorkflowEngineFactory.create(
                 txRunner,

@@ -53,12 +53,12 @@ public interface WorkflowInstanceRepository<TX> {
     Future<Integer> updateOptimistic(WorkflowInstance updated, long expectedVersion, TX tx);
 
     /**
-     * Migration-specific optimistic update that re-pins the instance to a new definition version and
-     * plan hash, clears all wait and error fields, forces a non-terminal {@code RUNNING} state, and
+     * Migration-specific optimistic update that re-pins the instance to a new definition scope, version
+     * and plan hash, clears all wait and error fields, forces a non-terminal {@code RUNNING} state, and
      * writes the migrated state.
      *
      * @param updated         the post-migration workflow instance snapshot; must carry the new
-     *                        definition version, plan hash, version, current step id, and state
+     *                        definition scope key, definition version, plan hash, version, current step id, and state
      * @param expectedVersion the version value that must be present in the DB row for the update to
      *                        succeed (optimistic concurrency guard)
      * @param tx              the active transaction to use

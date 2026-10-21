@@ -120,8 +120,6 @@ public class WorkflowTenantKeyIT {
 
     record FlowState(String key) {}
 
-    record SourceState(String name) {}
-
     record TargetState(String name, boolean migrated) {}
 
     interface SingleContract {
@@ -251,9 +249,9 @@ public class WorkflowTenantKeyIT {
             });
 
     /** Version 1 of the migrated definition: hold (signal) -> review-v1 (task) -> done-v1. */
-    static final WorkflowDefinition<SourceState, MigrateContract> MIGRATE_V1 =
-            new FlowDefinition<>(MigrateContract.class, SourceState.class, MIGRATE_ID, 1L, wf -> wf.init(
-                            StartFlow.class, p -> new SourceState(p.key()))
+    static final WorkflowDefinition<TargetState, MigrateContract> MIGRATE_V1 =
+            new FlowDefinition<>(MigrateContract.class, TargetState.class, MIGRATE_ID, 1L, wf -> wf.init(
+                            StartFlow.class, p -> new TargetState(p.key(), false))
                     .initialStep("hold-v1")
                     .waitForSignal("hold-v1", "go", String.class)
                     .onSignal((s, p) -> s)
@@ -281,7 +279,7 @@ public class WorkflowTenantKeyIT {
                     .complete("done-v2"));
 
     /** Migrates version 1 to version 2, continuing at the version 2 task. */
-    static final WorkflowMigrationHandler<SourceState, TargetState> MIGRATION = new WorkflowMigrationHandler<>() {
+    static final WorkflowMigrationHandler<TargetState, TargetState> MIGRATION = new WorkflowMigrationHandler<>() {
         @Override
         public String definitionId() {
             return MIGRATE_ID;
@@ -298,8 +296,8 @@ public class WorkflowTenantKeyIT {
         }
 
         @Override
-        public Class<SourceState> sourceStateType() {
-            return SourceState.class;
+        public Class<TargetState> sourceStateType() {
+            return TargetState.class;
         }
 
         @Override
@@ -308,7 +306,7 @@ public class WorkflowTenantKeyIT {
         }
 
         @Override
-        public MigrationResult<TargetState> migrate(SourceState sourceState, MigrationContext ctx) {
+        public MigrationResult<TargetState> migrate(TargetState sourceState, MigrationContext ctx) {
             return MigrationResult.continueAt(new TargetState(sourceState.name(), true), "review-v2");
         }
     };

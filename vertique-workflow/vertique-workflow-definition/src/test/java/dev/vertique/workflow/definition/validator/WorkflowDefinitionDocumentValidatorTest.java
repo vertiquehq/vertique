@@ -1345,6 +1345,62 @@ class WorkflowDefinitionDocumentValidatorTest {
         assertThat(v.message()).contains(STATE_FQN).contains(WrongState.class.getName());
     }
 
+    /** A state type that schema-extends {@link BaseState} by adding a property. */
+    record AddedState(String id, int amount, String note) {}
+
+    /** The state type {@link AddedState} extends. */
+    record BaseState(String id, int amount) {}
+
+    @Test
+    @DisplayName("a callback registered for the base state type is refused for an extending state type")
+    void callbackRegisteredForBaseStateIsRefusedForExtendingStateType() {
+        // Given: reducer r-base registered for BaseState, r-added for AddedState, and a document whose state type
+        // names AddedState
+        RegisteredIdentifierLookup lookup = new RegisteredIdentifierLookup(
+                new DefaultPayloadMapperRegistry(Set.of()),
+                new DefaultStartStateMapperRegistry(Set.of(b -> b.register(new NamedStartStateMapper<>(
+                        INIT_MAPPER_ID, TestPayload.class, AddedState.class, p -> new AddedState(p.raw(), 0, null))))),
+                new DefaultStateReducerRegistry(Set.of(b -> {
+                    b.register(new NamedStateReducer<>("r-base", BaseState.class, (s, e) -> s));
+                    b.register(new NamedStateReducer<>("r-added", AddedState.class, (s, e) -> s));
+                })),
+                new DefaultStateMutatorRegistry(Set.of()),
+                new DefaultTimerResolverRegistry(Set.of()),
+                new DefaultFailMessageFactoryRegistry(Set.of()),
+                new DefaultSubjectResolverRegistry(Set.of()),
+                new DefaultTaskAssignmentResolverRegistry(Set.of()),
+                new DefaultBranchResultReducerRegistry(Set.of()),
+                new DefaultNamedConditionRegistry(Set.of()));
+        String addedFqn = AddedState.class.getName();
+        java.util.function.Function<String, WorkflowDefinitionDocument> documentReferencing =
+                reducerId -> new WorkflowDefinitionDocument(
+                        DEF_ID,
+                        DEF_VER,
+                        addedFqn,
+                        CONTRACT_FQN,
+                        PAYLOAD_FQN,
+                        INIT_MAPPER_ID,
+                        null,
+                        "wait",
+                        List.of(
+                                new WaitSignalStep("wait", "sig", PAYLOAD_FQN, reducerId, "done", null),
+                                new CompleteStep("done")));
+
+        // When: the document references r-base, then r-added
+        WorkflowDefinitionViolations withBase =
+                new WorkflowDefinitionDocumentValidator(lookup).validate(documentReferencing.apply("r-base"));
+        WorkflowDefinitionViolations withAdded =
+                new WorkflowDefinitionDocumentValidator(lookup).validate(documentReferencing.apply("r-added"));
+
+        // Then: r-base is refused naming both state types
+        Violation mismatch = findFirstByCode(withBase, "STATE_REDUCER_STATE_TYPE_MISMATCH");
+        assertThat(mismatch.stepId()).isEqualTo("wait");
+        assertThat(mismatch.message()).contains(addedFqn).contains(BaseState.class.getName());
+
+        // and: r-added draws no such violation
+        assertThat(withAdded.toList()).extracting(Violation::code).doesNotContain("STATE_REDUCER_STATE_TYPE_MISMATCH");
+    }
+
     @Test
     @DisplayName("FAIL_MESSAGE_FACTORY_STATE_TYPE_MISMATCH — factory stateType != document stateType")
     void typeCompat_failMessageFactoryStateMismatch() {

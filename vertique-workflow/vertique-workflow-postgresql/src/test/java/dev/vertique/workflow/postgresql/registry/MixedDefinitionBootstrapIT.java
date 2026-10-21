@@ -19,6 +19,7 @@ import dev.vertique.db.test.DatabaseExtension;
 import dev.vertique.db.test.PostgresContainer;
 import dev.vertique.workflow.contract.WorkflowContract;
 import dev.vertique.workflow.definition.it.fixture.InventoryReservedDoc;
+import dev.vertique.workflow.definition.it.fixture.OrderDocState;
 import dev.vertique.workflow.definition.it.fixture.OrderDocumentSignals;
 import dev.vertique.workflow.definition.it.fixture.PlaceOrderDoc;
 import dev.vertique.workflow.definition.parser.DocumentFormat;
@@ -1699,12 +1700,10 @@ public class MixedDefinitionBootstrapIT {
         }
     }
 
-    private record CodeState(String value) {}
-
     private record CodeStart(String value) {}
 
     /** A code-first definition whose only step is its end step, so the end step's id decides the plan hash. */
-    private static final class CodeWorkflow implements WorkflowDefinition<CodeState, Object> {
+    private static final class CodeWorkflow implements WorkflowDefinition<OrderDocState, Object> {
 
         private final String definitionId;
         private final long version;
@@ -1725,8 +1724,8 @@ public class MixedDefinitionBootstrapIT {
         }
 
         @Override
-        public Class<CodeState> stateType() {
-            return CodeState.class;
+        public Class<OrderDocState> stateType() {
+            return OrderDocState.class;
         }
 
         @Override
@@ -1740,8 +1739,8 @@ public class MixedDefinitionBootstrapIT {
         }
 
         @Override
-        public void define(WorkflowBuilder<CodeState> workflow) {
-            workflow.init(CodeStart.class, start -> new CodeState(start.value()))
+        public void define(WorkflowBuilder<OrderDocState> workflow) {
+            workflow.init(CodeStart.class, start -> new OrderDocState(start.value(), null, null, null))
                     .initialStep(endStep)
                     .complete(endStep);
         }

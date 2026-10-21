@@ -315,7 +315,8 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                 inboundExecScope,
                 payloadConstraintCheck,
                 WorkflowEngineFactory.registryTypeNames(registry),
-                new DefinitionActivations());
+                new DefinitionActivations(),
+                Optional.empty());
     }
 
     /**
@@ -363,7 +364,8 @@ final class WorkflowEngine implements WorkflowEngineHandle {
      *
      * <p>The {@code typeNames} parameter is the type-name index a decision payload's declared type
      * name resolves through; the factory passes the one index the registry fills. The {@code activations}
-     * parameter is this engine's view of the activation records, which the factory builds empty.
+     * parameter is this engine's view of the activation records, which the factory builds empty. The
+     * {@code stateCompatibility} parameter is the comparison a migration applies to differing state classes.
      *
      * <p>Package-visible (not {@code private}) so the factory in the same package can invoke it; it
      * is not part of any production API.
@@ -392,7 +394,8 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             @Nullable dev.vertique.context.InboundExecutionContextScope inboundExecScope,
             PayloadConstraintCheck payloadConstraintCheck,
             WorkflowTypeNames typeNames,
-            DefinitionActivations activations) {
+            DefinitionActivations activations,
+            Optional<dev.vertique.workflow.migration.WorkflowStateCompatibility> stateCompatibility) {
         this.payloadConstraintCheck = payloadConstraintCheck;
         this.activations = activations;
         this.txRunner = txRunner;
@@ -517,7 +520,8 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                 branchTokens,
                 this.driver,
                 clock,
-                builtContextBinder);
+                builtContextBinder,
+                stateCompatibility);
     }
 
     // --- WorkflowOperations ---
@@ -1673,6 +1677,22 @@ final class WorkflowEngine implements WorkflowEngineHandle {
     /**
      * {@inheritDoc}
      *
+     * <p>Opens a new database transaction, then delegates to
+     * {@link #migrate(WorkflowInstanceId, String, long, SqlClient)}.
+     *
+     * @param id            the workflow instance id; must not be null
+     * @param targetScope   the scope of the definition to migrate to; must not be null
+     * @param targetVersion the definition version to migrate to
+     * @return a {@link Future} that completes when the instance has been re-pinned and advanced
+     */
+    @Override
+    public Future<Void> migrate(WorkflowInstanceId id, String targetScope, long targetVersion) {
+        return txRunner.inTransaction(null, tx -> migrate(id, targetScope, targetVersion, tx));
+    }
+
+    /**
+     * {@inheritDoc}
+     *
      * <p>Delegates the migration algorithm to {@link MigrationExecutor#migrate}. The executor owns
      * the opt-in {@link dev.vertique.workflow.migration.WorkflowMigrationRegistry} and the
      * null-registry {@link UnsupportedOperationException} fail-fast guard: if no registry was
@@ -1692,6 +1712,27 @@ final class WorkflowEngine implements WorkflowEngineHandle {
         }
 
         return migrationExecutor.migrate(id, targetVersion, tx);
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Delegates to {@link MigrationExecutor#migrate}, which resolves the target in {@code targetScope}.
+     *
+     * @param id            the workflow instance id; must not be null
+     * @param targetScope   the scope of the definition to migrate to; must not be null
+     * @param targetVersion the definition version to migrate to
+     * @param tx            the active SQL transaction; must not be null
+     * @return a {@link Future} that completes when the instance has been re-pinned and advanced
+     */
+    @Override
+    public Future<Void> migrate(WorkflowInstanceId id, String targetScope, long targetVersion, SqlClient tx) {
+        Future<Void> invalidClient = WorkflowTransactionClientGuard.reject("migrate", tx);
+        if (invalidClient != null) {
+            return invalidClient;
+        }
+        Objects.requireNonNull(targetScope, "targetScope");
+        return migrationExecutor.migrate(id, targetScope, targetVersion, tx);
     }
 
     // --- State machine driver — extracted to WorkflowTransitionDriver (slice C5) ---

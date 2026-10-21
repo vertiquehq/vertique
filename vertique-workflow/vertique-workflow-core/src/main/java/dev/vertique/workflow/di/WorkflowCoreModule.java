@@ -10,6 +10,7 @@ import dagger.Provides;
 import dagger.multibindings.Multibinds;
 import dev.vertique.workflow.actor.DefaultWorkflowActorMapper;
 import dev.vertique.workflow.actor.WorkflowActorMapper;
+import dev.vertique.workflow.migration.WorkflowStateCompatibility;
 import dev.vertique.workflow.plan.DefaultRaceSafetyTargetRegistry;
 import dev.vertique.workflow.plan.RaceSafetyTargetContributor;
 import dev.vertique.workflow.plan.RaceSafetyTargetRegistry;
@@ -26,6 +27,7 @@ import dev.vertique.workflow.types.DefaultWorkflowTypeNames;
 import dev.vertique.workflow.types.WorkflowTypeCatalog;
 import dev.vertique.workflow.types.WorkflowTypeNames;
 import jakarta.inject.Singleton;
+import java.util.Optional;
 import java.util.Set;
 
 /**
@@ -56,6 +58,13 @@ public abstract class WorkflowCoreModule {
     @BindsOptionalOf
     abstract WorkflowDefinitionLifecycle definitionLifecycle();
 
+    /**
+     * Declares the optional state comparison; the schema module binds it. Without it the registry refuses
+     * differing state classes of a scope-owned and a default definition of one id and contract.
+     */
+    @BindsOptionalOf
+    abstract WorkflowStateCompatibility stateCompatibility();
+
     @BindsOptionalOf
     abstract WorkflowDefinitionsConfig definitionsConfig();
 
@@ -74,6 +83,7 @@ public abstract class WorkflowCoreModule {
      * @param definitionValidators the contributed registration-time definition validators; may be
      *     empty
      * @param typeNames the shared type-name index the registry fills as definitions register
+     * @param stateCompatibility the state comparison when the application installs one; empty otherwise
      * @return a fully-populated, immutable-after-build registry
      */
     @Provides
@@ -82,8 +92,10 @@ public abstract class WorkflowCoreModule {
             Set<WorkflowContributor> contributors,
             WorkflowPlanValidator forkJoinValidator,
             Set<WorkflowDefinitionValidator> definitionValidators,
-            DefaultWorkflowTypeNames typeNames) {
-        DefaultWorkflowRegistry reg = new DefaultWorkflowRegistry(forkJoinValidator, definitionValidators, typeNames);
+            DefaultWorkflowTypeNames typeNames,
+            Optional<WorkflowStateCompatibility> stateCompatibility) {
+        DefaultWorkflowRegistry reg =
+                new DefaultWorkflowRegistry(forkJoinValidator, definitionValidators, typeNames, stateCompatibility);
         contributors.forEach(c -> c.contribute(reg));
         return reg;
     }
