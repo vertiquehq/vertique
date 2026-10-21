@@ -38,6 +38,7 @@ import java.util.UUID;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.function.Function;
 
 /**
  * Owns the application graphs, pools and test rows of one scenario against a migrated database.
@@ -284,6 +285,36 @@ final class DefinitionScenario implements AutoCloseable {
         PendingBoot pending = new PendingBoot(pool, app, starting);
         onClose(() -> pending.await().close());
         return pending;
+    }
+
+    /**
+     * Starts a graph that must start, built by the factory over a pool of its own, for tests whose graph differs from
+     * the shared one in its modules.
+     */
+    Boot nodeOf(Function<Pool, AppComponent> graph) {
+        Boot boot = attemptOf(graph);
+        if (boot.failure() != null) {
+            boot.close();
+            throw new AssertionError("The application graph was expected to start", boot.failure());
+        }
+        return boot;
+    }
+
+    /** Starts a graph built by the factory over a pool of its own and reports its startup failure, if any. */
+    Boot attemptOf(Function<Pool, AppComponent> graph) {
+        Pool pool = ManagedDefinitionDatabase.openPool(vertx, db, 10);
+        AppComponent app;
+        try {
+            app = graph.apply(pool);
+        } catch (RuntimeException | Error failure) {
+            await(pool.close());
+            throw failure;
+        }
+        Future<VertiqueApplicationHandle<AppComponent>> starting =
+                VertiqueApplicationBootstrap.start(VertiqueRuntime.of(vertx, new JsonObject()), ignored -> app);
+        PendingBoot pending = new PendingBoot(pool, app, starting);
+        onClose(() -> pending.await().close());
+        return pending.await();
     }
 
     /** Counts the backends that hold or await the definition id's advisory lock in the given mode. */

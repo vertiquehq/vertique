@@ -20,6 +20,7 @@ import dev.vertique.workflow.types.WorkflowTypeNames;
 import jakarta.annotation.Nullable;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -138,6 +139,36 @@ final class DefinitionPublication {
             Map<String, String> nameBinding) {
         if (nameBinding.isEmpty()) local.register(key.scopeKey(), definition);
         else local.register(key.scopeKey(), definition, nameBinding);
+        return attribute(local, registrations, key);
+    }
+
+    /**
+     * Registers the definition of a failing scope row, which skips only the comparison of the scope's state type with
+     * the default scope's, and attributes the exact registered runtime to the key. The plan is then rebuilt under the
+     * names the row's plan hash used when that gives the stored hash.
+     *
+     * @param nameBinding the names the row's plan hash used; an empty binding keeps the current names
+     * @param planHash the plan hash stored for the row
+     * @return the runtime the registry now holds for the key
+     */
+    static RuntimeWorkflow publishFailing(
+            WorkflowRegistry local,
+            ManagedRegistrations registrations,
+            DefinitionKey key,
+            WorkflowDefinition<?, ?> definition,
+            Map<String, String> nameBinding,
+            String planHash) {
+        local.registerFailing(key.scopeKey(), definition);
+        RuntimeWorkflow published = attribute(local, registrations, key);
+        if (nameBinding.isEmpty() || planHash.equals(published.plan().planHash())) return published;
+        Optional<RuntimeWorkflow> rebound = local.rebind(key, nameBinding, planHash);
+        if (rebound.isEmpty()) return published;
+        registrations.attribute(key.scopeKey(), key.definitionId(), key.definitionVersion(), rebound.get());
+        return rebound.get();
+    }
+
+    private static RuntimeWorkflow attribute(
+            WorkflowRegistry local, ManagedRegistrations registrations, DefinitionKey key) {
         RuntimeWorkflow published = null;
         try {
             published = local.resolve(key);

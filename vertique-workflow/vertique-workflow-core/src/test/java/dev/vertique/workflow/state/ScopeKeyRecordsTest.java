@@ -261,7 +261,8 @@ class ScopeKeyRecordsTest {
                 documentFormat,
                 T0,
                 T0,
-                Map.of());
+                Map.of(),
+                null);
     }
 
     private static WorkflowInstance instanceWithoutScopes() {

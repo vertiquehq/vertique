@@ -357,7 +357,9 @@ through the shared per-definition queue, and fails startup (nothing deploys) on 
    in AVAILABLE or DEPRECATED state whose code is no longer deployed fails with `CODE_UNAVAILABLE`. Rows of other
    scopes for the same id and version never conflict.
 3. It restores every live DOCUMENT row of every scope (AVAILABLE and DEPRECATED)
-   through its loader, verifying the compiled hash and the stored text digest, before traffic.
+   through its loader, verifying the compiled hash and the stored text digest, before traffic. A row of a scope
+   other than the default one that newly deployed code conflicts with does not fail startup: it is marked failing
+   (see Failing scope rows below). A default scope row, and every CODE row, that conflicts still fails startup.
 4. It marks DEPRECATED rows (CODE and DOCUMENT, including packaged documents deprecated in the database) and
    removes RETIRED runtimes only when the runtime is attributed to that row's own key; another scope's runtime, or
    a replacement, is never removed because id, version and hash match, and an unattributed runtime fails startup.
@@ -366,6 +368,29 @@ through the shared per-definition queue, and fails startup (nothing deploys) on 
    persisted state.
 Required rows with no unique loader fail startup with the key and diagnostic. Callback failures remain fatal.
 Compose validators ran in VALIDATE and do not re-run for restored definitions.
+
+**Failing scope rows.** Restoring a live DOCUMENT row of a scope other than the default one can find that the
+code this node ships conflicts with the stored row. Two conflicts mark the row failing instead of failing startup:
+the row's state class no longer extends the default scope's definition of the same id and contract
+(`STATE_TYPE_NOT_EXTENDED`), and a type name in the row's recorded name binding no longer resolves
+(`NAME_BINDING_UNRESOLVED`). A default scope row that conflicts fails startup with `WorkflowDefinitionException` for the state
+rule or `WorkflowUnknownTypeNameException` for an unresolved binding, each naming the scope `default` and the
+definition id. A RETIRED row is not registered and is never evaluated, and a contract overlap between a scope row and
+default scope code is not a conflict. A CANDIDATE row is not evaluated at startup either: an unresolved binding is refused
+when it is published, with `WorkflowUnknownTypeNameException`, and the row stays a candidate.
+- **State rule.** The plan is registered through `WorkflowRegistry.registerFailing`, which skips only the comparison with the
+  default scope's state class, so the instances pinned to the row keep resuming, receiving signals and completing tasks.
+- **Binding rule.** Nothing is compiled or registered, and no class is loaded by a name that no longer resolves; the row's
+  plan is absent from the registry, so its instances are not resumed on this node until the class is back.
+- **Refusal.** A new start that selects the row, by an activation record or by an explicit version, fails with
+  `WorkflowDefinitionFailingException` naming the scope, the definition key and the rule. The check runs after the replay
+  check, so a repeat of an earlier start still returns its instance, and before the version is resolved from the
+  registry. Other scopes, and the default scope's versions, are not affected.
+- **Evaluation per node.** Every startup evaluates every live scope row against the code that node ships and writes the
+  result with `recordFailure`, which clears the mark when no conflict remains; the node refuses starts from its own
+  evaluation, not from the stored mark. The stored mark feeds the definition listing (`WorkflowDefinitionRecord.failure()`).
+  During a rolling deploy, nodes that ship different code may rewrite the mark in turn, so the listing shows the most
+  recent node's evaluation while each node keeps refusing by its own.
 
 `WorkflowDefinitionLifecycle.reinstate` brings a RETIRED or DEPRECATED version back to `AVAILABLE`. A RETIRED version is accepted
 only when the executable source is available (a code definition from the code deployed with the node, captured before startup

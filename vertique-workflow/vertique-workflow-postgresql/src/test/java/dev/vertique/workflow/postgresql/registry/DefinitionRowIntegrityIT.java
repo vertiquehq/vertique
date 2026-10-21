@@ -251,7 +251,8 @@ public class DefinitionRowIntegrityIT {
                 "JSON",
                 now,
                 now,
-                Map.of());
+                Map.of(),
+                null);
     }
 
     private static WorkflowDefinitionDocument tenantText() {
@@ -271,7 +272,8 @@ public class DefinitionRowIntegrityIT {
                 null,
                 now,
                 now,
-                Map.of());
+                Map.of(),
+                null);
     }
 
     private static void insertActivation(Connection connection, String scopeKey, String definitionId)

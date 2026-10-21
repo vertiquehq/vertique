@@ -507,7 +507,8 @@ public class DefinitionPropagationIT {
                                 null,
                                 now,
                                 now,
-                                Map.of())));
+                                Map.of(),
+                                null)));
                 assertThat(outcome).isEqualTo(ReconcileOutcome.REHASHED);
                 assertThat(scenario.stored(id, 1).status()).isEqualTo("RETIRED");
                 assertThat(scenario.stored(id, 1).planHash()).isEqualTo(hash);

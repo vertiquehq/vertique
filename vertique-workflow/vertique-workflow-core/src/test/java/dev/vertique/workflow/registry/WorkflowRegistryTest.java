@@ -16,13 +16,17 @@ import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
 import dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException;
+import dev.vertique.workflow.migration.WorkflowStateCompatibility;
 import dev.vertique.workflow.ops.WorkflowInstanceId;
 import dev.vertique.workflow.plan.RaceSafety;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.WorkflowScopes;
+import dev.vertique.workflow.types.DefaultWorkflowTypeNames;
 import io.vertx.core.Future;
 import java.time.Duration;
 import java.util.List;
+import java.util.Optional;
+import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -1243,6 +1247,100 @@ class WorkflowRegistryTest {
                 .containsIgnoringCase("comparison")
                 .containsPattern("(?i)(unavailable|not available)");
         assertThat(registry.find(new DefinitionKey("globex", "s-c", 1L))).isEmpty();
+    }
+
+    record StateRemoved(String note) {}
+
+    /** A comparison that accepts {@link StateAPlus} over {@link StateA} and refuses every other pair. */
+    private static final WorkflowStateCompatibility ADDED_PROPERTIES_ONLY = (source, target) ->
+            source == StateA.class && target == StateAPlus.class ? Optional.empty() : Optional.of("id");
+
+    /** A definition of the given state type and contract that waits for the one signal. */
+    private static <S, C> WorkflowDefinition<S, C> waiting(
+            Class<S> stateType,
+            Class<C> contract,
+            String definitionId,
+            long version,
+            String signal,
+            java.util.function.Function<String, S> initialState) {
+        return new WorkflowDefinition<>() {
+            @Override
+            public Class<C> contract() {
+                return contract;
+            }
+
+            @Override
+            public Class<S> stateType() {
+                return stateType;
+            }
+
+            @Override
+            public String definitionId() {
+                return definitionId;
+            }
+
+            @Override
+            public long definitionVersion() {
+                return version;
+            }
+
+            @Override
+            public void define(WorkflowBuilder<S> wf) {
+                wf.init(ApprovalStart.class, start -> initialState.apply(start.id()))
+                        .initialStep("wait")
+                        .waitForSignal("wait", signal, ApprovalSignal.class)
+                        .onSignal((state, payload) -> state)
+                        .toStepOnSignal("done")
+                        .build()
+                        .complete("done");
+            }
+        };
+    }
+
+    @Test
+    @DisplayName("registering a failing row's plan skips only the cross-scope state comparison")
+    void registerFailingSkipsOnlyTheCrossScopeStateComparison() {
+        // Given: a registry with the comparison bound and (default, f-x, 1) with StateA under contract C
+        DefaultWorkflowRegistry withComparison = new DefaultWorkflowRegistry(
+                null, Set.of(), new DefaultWorkflowTypeNames(), Optional.of(ADDED_PROPERTIES_ONLY));
+        withComparison.register(stateA("f-x", 1L));
+        DefinitionKey acmeV1 = new DefinitionKey("acme", "f-x", 1L);
+
+        // When: acme's version 1 with StateRemoved, which does not extend StateA, registers as failing
+        Throwable removedState = catchThrowable(() -> withComparison.registerFailing(
+                "acme", stated(StateRemoved.class, ScopeContractC.class, "f-x", 1L, StateRemoved::new)));
+
+        // and: acme's version 2 with another state class than version 1, and acme's version 3 waiting for a signal
+        // its contract does not declare, register as failing
+        Throwable anotherStateInScope = catchThrowable(() -> withComparison.registerFailing(
+                "acme", stated(StateAPlus.class, ScopeContractC.class, "f-x", 2L, id -> new StateAPlus(id, null))));
+        Throwable undeclaredSignal = catchThrowable(() -> withComparison.registerFailing(
+                "acme", waiting(StateRemoved.class, ScopeContractC.class, "f-x", 3L, "undeclared", StateRemoved::new)));
+
+        // and: the same first definition registers plainly in a fresh registry with the same default
+        DefaultWorkflowRegistry fresh = new DefaultWorkflowRegistry(
+                null, Set.of(), new DefaultWorkflowTypeNames(), Optional.of(ADDED_PROPERTIES_ONLY));
+        fresh.register(stateA("f-x", 1L));
+        Throwable plainRegistration = catchThrowable(() ->
+                fresh.register("acme", stated(StateRemoved.class, ScopeContractC.class, "f-x", 1L, StateRemoved::new)));
+
+        // Then: the first call succeeds and the plan resolves
+        assertThat(removedState).isNull();
+        assertThat(withComparison.resolve(acmeV1).plan().definitionVersion()).isEqualTo(1L);
+
+        // and: the same-scope state rule still applies
+        assertNamesKey(anotherStateInScope, "acme", "f-x", 2L);
+        assertThat(withComparison.find(new DefinitionKey("acme", "f-x", 2L))).isEmpty();
+
+        // and: the signal rule still applies
+        assertNamesKey(undeclaredSignal, "acme", "f-x", 3L);
+        assertThat(undeclaredSignal.getMessage()).contains("undeclared");
+        assertThat(withComparison.find(new DefinitionKey("acme", "f-x", 3L))).isEmpty();
+
+        // and: the plain registration is refused with the state extension refusal
+        assertNamesKey(plainRegistration, "acme", "f-x", 1L);
+        assertThat(plainRegistration.getMessage()).contains("extend");
+        assertThat(fresh.find(acmeV1)).isEmpty();
     }
 
     private static void assertNamesKey(Throwable refusal, String scopeKey, String definitionId, long version) {

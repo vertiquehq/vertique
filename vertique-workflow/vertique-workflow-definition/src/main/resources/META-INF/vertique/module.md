@@ -339,6 +339,11 @@ not compile) reports the persisted status instead of returning `null`; it return
 packaged document whose text differs (even by a comment, whitespace or line endings) from the stored text of the
 same id and version fails startup, so bump the version of a changed document; a retired row of that id and version blocks it too.
 
+A listed `WorkflowDefinitionRecord` of a scope row that newly deployed code conflicts with carries `failure()`, a
+`DefinitionFailure` naming the rule (`STATE_TYPE_NOT_EXTENDED` or `NAME_BINDING_UNRESOLVED`); `list(new DefinitionFilter(scope,
+id, null))` shows it in every status, and it is `null` for a row that is not failing. New starts on such a version are
+refused with `WorkflowDefinitionFailingException` (see the engine reference); the in-memory store only carries the field.
+
 `sourceMetadata(DefinitionKey)` reads attribution without fetching source text. Lists contain immutable,
 key-bearing metadata. With a store bound, `list` and `sourceMetadata` read the durable table and have no
 in-memory fallback, so metadata of packaged documents and code definitions appears only after the managed

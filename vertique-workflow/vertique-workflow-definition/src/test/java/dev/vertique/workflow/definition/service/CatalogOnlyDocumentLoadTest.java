@@ -225,7 +225,8 @@ class CatalogOnlyDocumentLoadTest {
                 "YAML",
                 now,
                 now,
-                Map.of());
+                Map.of(),
+                null);
         WorkflowDefinitionDocument document =
                 new WorkflowDefinitionDocument(key, documentNamingAnUncataloguedState(), "YAML");
 

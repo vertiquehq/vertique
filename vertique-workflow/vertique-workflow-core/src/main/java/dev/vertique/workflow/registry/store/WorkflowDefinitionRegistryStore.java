@@ -221,4 +221,16 @@ public interface WorkflowDefinitionRegistryStore {
      * @return a future containing the matching records
      */
     Future<List<DefinitionActivation>> listActivations(@Nullable String scopeKey);
+
+    /**
+     * Records that a document definition of a scope other than the default one is failing, or clears the mark, under
+     * the definition id lock. Only the rule is stored; the row's other columns and its status do not change. The row
+     * must exist, otherwise the returned future fails with a
+     * {@link dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException} naming the key.
+     *
+     * @param key scoped definition key to mark
+     * @param failure the failure to record, or {@code null} to clear the mark
+     * @return a future completed after the store-owned transaction commits
+     */
+    Future<Void> recordFailure(DefinitionKey key, @Nullable DefinitionFailure failure);
 }

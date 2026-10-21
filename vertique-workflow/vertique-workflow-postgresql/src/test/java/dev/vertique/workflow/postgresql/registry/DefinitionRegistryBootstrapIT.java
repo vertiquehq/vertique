@@ -740,7 +740,8 @@ public class DefinitionRegistryBootstrapIT {
                 "YAML",
                 now,
                 now,
-                Map.of());
+                Map.of(),
+                null);
     }
 
     private static WorkflowDefinitionDocument mutationDocument(DefinitionKey key) {

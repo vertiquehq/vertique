@@ -71,6 +71,11 @@ final class DefinitionActivations {
         this.computed = store.isEmpty();
     }
 
+    /** The scope's own record of the id, if the view holds one. */
+    Optional<DefinitionActivation> recordOf(String scopeKey, String definitionId) {
+        return Optional.ofNullable(records.get(new Slot(scopeKey, definitionId)));
+    }
+
     /** Stores the record, replacing the scope's earlier record of the id. */
     void put(DefinitionActivation activation) {
         // The change is recorded before the map is mutated, so a refresh that reads the map after the mutation

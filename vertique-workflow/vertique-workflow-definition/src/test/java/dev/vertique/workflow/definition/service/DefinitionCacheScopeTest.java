@@ -238,7 +238,8 @@ class DefinitionCacheScopeTest {
                 "YAML",
                 LOADED,
                 LOADED,
-                Map.of()));
+                Map.of(),
+                null));
         assertThat(cache.currentStatus(TENANT_B_V1)).isEqualTo(ActivationStatus.DEPRECATED);
         assertThat(cache.sourceMetadata(TENANT_B_V1))
                 .contains(new SourceMetadata("tenant-b-reloaded", "uri:tenant-b-2", "rev-b-2", null, null, LOADED));
@@ -344,7 +345,8 @@ class DefinitionCacheScopeTest {
                 "YAML",
                 LOADED,
                 LOADED,
-                Map.of());
+                Map.of(),
+                null);
     }
 
     private static CompiledDefinition compiled(

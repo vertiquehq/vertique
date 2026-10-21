@@ -395,6 +395,39 @@ public class PgWorkflowDefinitionRegistrySchemaIT {
         }
     }
 
+    @Test
+    @DisplayName("the failure reason column is a nullable varchar of 64 characters that is null unless set")
+    void failureReasonColumnIsNullable() throws Exception {
+        // Given: a migrated database
+        Flyway.configure()
+                .dataSource(db.jdbcUrl(), db.username(), db.password())
+                .locations(WORKFLOW_LOCATION)
+                .load()
+                .migrate();
+
+        try (Connection connection = connection()) {
+            // Then: the column is a varchar of 64 characters and nullable
+            assertEquals(
+                    List.of("character varying|64|YES"),
+                    queryStrings(
+                            connection,
+                            "SELECT data_type || '|' || character_maximum_length || '|' || is_nullable"
+                                    + " FROM information_schema.columns"
+                                    + " WHERE table_name = 'workflow_definitions' AND column_name = 'failure_reason'"));
+
+            // When: a row is inserted without it
+            insertStatusRow(connection, "failure-reason-case", 1, "AVAILABLE", false);
+
+            // Then: it reads back as null
+            assertEquals(
+                    List.of("null"),
+                    queryStrings(
+                            connection,
+                            "SELECT COALESCE(failure_reason, 'null') FROM workflow_definitions"
+                                    + " WHERE definition_id = 'failure-reason-case'"));
+        }
+    }
+
     private record BindingInsert(String label, String bindingColumn, String bindingValue, String expectedSqlState) {}
 
     @Test
@@ -555,7 +588,8 @@ public class PgWorkflowDefinitionRegistrySchemaIT {
                 null,
                 now,
                 now,
-                Map.of());
+                Map.of(),
+                null);
     }
 
     private static WorkflowInstance instance(String planHash, WorkflowStatus status, long version) {
@@ -632,7 +666,8 @@ public class PgWorkflowDefinitionRegistrySchemaIT {
                 "JSON",
                 now,
                 now,
-                Map.of());
+                Map.of(),
+                null);
     }
 
     private static WorkflowDefinitionDocument document(long version) {

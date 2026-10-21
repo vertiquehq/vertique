@@ -702,7 +702,8 @@ public class DefinitionOwnershipIT {
                 "YAML",
                 now,
                 now,
-                Map.of());
+                Map.of(),
+                null);
     }
 
     private static WorkflowDefinitionDocument staticDocument(DefinitionKey key, byte[] document) {
@@ -726,7 +727,8 @@ public class DefinitionOwnershipIT {
                 "YAML",
                 now,
                 now,
-                Map.of());
+                Map.of(),
+                null);
     }
 
     private static WorkflowDefinitionDocument documentCarrier(DefinitionKey key) {

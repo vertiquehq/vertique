@@ -340,18 +340,35 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
     @Override
     public void register(String scopeKey, WorkflowDefinition<?, ?> def, Map<String, String> nameBinding) {
         Objects.requireNonNull(nameBinding, "nameBinding");
-        register(scopeKey, def, false, DefaultWorkflowTypeNames.bound(typeNames, nameBinding));
+        register(scopeKey, def, false, DefaultWorkflowTypeNames.bound(typeNames, nameBinding), true);
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Every rule of {@link #register(String, WorkflowDefinition)} applies except the comparison of the scope's
+     * state class with the default scope's: the per-scope contract and state class rules, the signal declarations
+     * and the plan validation still refuse the definition.
+     */
+    @Override
+    public void registerFailing(String scopeKey, WorkflowDefinition<?, ?> def) {
+        register(scopeKey, def, false, typeNames, false);
     }
 
     private void register(String scopeKey, WorkflowDefinition<?, ?> def, boolean deployment) {
-        register(scopeKey, def, deployment, typeNames);
+        register(scopeKey, def, deployment, typeNames, true);
     }
 
     /** A definition built into the plan and runtime that a registration or a rebinding publishes. */
     private record Compiled(WorkflowBuilder<?> builder, RuntimeWorkflow runtime, Map<String, String> binding) {}
 
     @SuppressWarnings({"rawtypes", "unchecked"})
-    private void register(String scopeKey, WorkflowDefinition<?, ?> def, boolean deployment, WorkflowTypeNames names) {
+    private void register(
+            String scopeKey,
+            WorkflowDefinition<?, ?> def,
+            boolean deployment,
+            WorkflowTypeNames names,
+            boolean compareWithDefault) {
         Objects.requireNonNull(scopeKey, "scopeKey");
         // --- Pre-publish validation (no lock needed — produces only immutable local values) ---
 
@@ -373,7 +390,15 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
             for (WorkflowDefinitionValidator validator : definitionValidators) {
                 validator.validate(candidate);
             }
-            publish(def, scopeKey, definitionId, definitionVersion, rw, compiled.binding(), deployment);
+            publish(
+                    def,
+                    scopeKey,
+                    definitionId,
+                    definitionVersion,
+                    rw,
+                    compiled.binding(),
+                    deployment,
+                    compareWithDefault);
         } catch (RuntimeException | Error e) {
             undoIndexing.run();
             throw e;
@@ -514,7 +539,8 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
             long definitionVersion,
             RuntimeWorkflow rw,
             Map<String, String> nameBinding,
-            boolean deployment) {
+            boolean deployment,
+            boolean compareWithDefault) {
         ScopedId scopedId = new ScopedId(scopeKey, definitionId);
         rwLock.writeLock().lock();
         try {
@@ -544,7 +570,7 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
                             + "; every version of a definition in a scope must have the same state type");
                 }
             }
-            requireStateExtension(scopeKey, definitionId, definitionVersion, rw);
+            if (compareWithDefault) requireStateExtension(scopeKey, definitionId, definitionVersion, rw);
             byDefinition
                     .computeIfAbsent(scopedId, k -> new ConcurrentSkipListMap<>())
                     .put(definitionVersion, rw);

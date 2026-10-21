@@ -185,6 +185,10 @@ public class ScopeMigrationIT {
                             """)).containsExactly("jsonb|NO|'{}'::jsonb");
             assertThat(catalog.columnNames("workflow_definitions")).contains("name_binding");
 
+            // And a definition stores the rule it fails, when it does, in a nullable column of at most 64 characters
+            assertThat(catalog.columnShape("workflow_definitions", "failure_reason"))
+                    .isEqualTo("character varying|64|YES|null");
+
             // And activation records are keyed by scope and definition id, and name a version of the default scope or
             // of their own scope
             assertThat(catalog.columnNames("workflow_definition_activations"))

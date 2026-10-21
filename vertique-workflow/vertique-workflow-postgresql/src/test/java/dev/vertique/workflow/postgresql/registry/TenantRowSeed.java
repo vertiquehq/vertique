@@ -65,7 +65,8 @@ final class TenantRowSeed {
                 format.name(),
                 now,
                 now,
-                Map.of());
+                Map.of(),
+                null);
         WorkflowDefinitionDocument text =
                 new WorkflowDefinitionDocument(key, new String(document, StandardCharsets.UTF_8), format.name());
         return app.definitionRegistryStore().insertCandidate(record, text).map(key);

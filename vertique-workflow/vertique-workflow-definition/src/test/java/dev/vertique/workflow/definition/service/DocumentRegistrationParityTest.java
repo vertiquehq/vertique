@@ -508,7 +508,8 @@ class DocumentRegistrationParityTest {
                 "YAML",
                 now,
                 now,
-                Map.of());
+                Map.of(),
+                null);
         WorkflowDefinitionDocument decoded = DefinitionSourceText.decode(
                 KEY, bytes(document), DocumentFormat.YAML, WorkflowDefinitionsConfig.defaults());
 

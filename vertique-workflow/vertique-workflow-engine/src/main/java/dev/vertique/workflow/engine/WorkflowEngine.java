@@ -20,6 +20,7 @@ import dev.vertique.workflow.events.WorkflowEventType;
 import dev.vertique.workflow.exception.WorkflowConflictException;
 import dev.vertique.workflow.exception.WorkflowDefinitionContractMismatchException;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
+import dev.vertique.workflow.exception.WorkflowDefinitionFailingException;
 import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException;
 import dev.vertique.workflow.exception.WorkflowDefinitionMissingException;
 import dev.vertique.workflow.exception.WorkflowIdempotencyConflictException;
@@ -42,6 +43,8 @@ import dev.vertique.workflow.registry.CallbackId;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowCallbackRegistry;
 import dev.vertique.workflow.registry.WorkflowRegistry;
+import dev.vertique.workflow.registry.store.DefinitionActivation;
+import dev.vertique.workflow.registry.store.DefinitionFailure;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.WorkflowScopes;
 import dev.vertique.workflow.state.BranchStatus;
@@ -214,6 +217,9 @@ final class WorkflowEngine implements WorkflowEngineHandle {
     /** This node's view of the activation records, which chooses the version of a start without one. */
     private final DefinitionActivations activations;
 
+    /** This node's own evaluation of the scope rows that newly deployed code conflicts with. */
+    private final FailingDefinitions failing;
+
     @Inject
     WorkflowEngine(
             WorkflowTransactionRunner<SqlClient> txRunner,
@@ -238,8 +244,10 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             DurableContextPropagator propagator,
             WorkflowContextBinder contextBinder,
             PayloadConstraintCheck payloadConstraintCheck,
-            DefinitionActivations activations) {
+            DefinitionActivations activations,
+            FailingDefinitions failing) {
         this.activations = activations;
+        this.failing = failing;
         this.txRunner = txRunner;
         this.registry = registry;
         this.instances = instances;
@@ -316,7 +324,8 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                 payloadConstraintCheck,
                 WorkflowEngineFactory.registryTypeNames(registry),
                 new DefinitionActivations(),
-                Optional.empty());
+                Optional.empty(),
+                new FailingDefinitions());
     }
 
     /**
@@ -395,9 +404,11 @@ final class WorkflowEngine implements WorkflowEngineHandle {
             PayloadConstraintCheck payloadConstraintCheck,
             WorkflowTypeNames typeNames,
             DefinitionActivations activations,
-            Optional<dev.vertique.workflow.migration.WorkflowStateCompatibility> stateCompatibility) {
+            Optional<dev.vertique.workflow.migration.WorkflowStateCompatibility> stateCompatibility,
+            FailingDefinitions failing) {
         this.payloadConstraintCheck = payloadConstraintCheck;
         this.activations = activations;
+        this.failing = failing;
         this.txRunner = txRunner;
         this.registry = registry;
         this.instances = instances;
@@ -778,6 +789,7 @@ final class WorkflowEngine implements WorkflowEngineHandle {
     private Future<WorkflowInstanceId> firstStart(StartCommand cmd, String startScope, SqlClient tx) {
         RuntimeWorkflow rw;
         try {
+            requireNotFailing(cmd, startScope);
             rw = resolveForStart(cmd, startScope);
             DefinitionKey resolved = new DefinitionKey(
                     rw.definitionScopeKey(), rw.plan().definitionId(), rw.plan().definitionVersion());
@@ -809,6 +821,35 @@ final class WorkflowEngine implements WorkflowEngineHandle {
                     // Winner: proceed with instance creation.
                     return doCreateInstance(cmd, startScope, rw, proposedId, tx);
                 });
+    }
+
+    /**
+     * Refuses a start that selects a version this node evaluated as failing, for a version that was named and for one
+     * an activation record selects. It runs before the version is resolved from the registry, because a failing row
+     * whose name binding no longer resolves has no registered plan to resolve. Only the start scope's own versions can
+     * fail, and they apply to the client when they implement its contract.
+     *
+     * @throws WorkflowDefinitionFailingException when the selected version is failing
+     */
+    private void requireNotFailing(StartCommand cmd, String startScope) {
+        if (failing.isEmpty() || WorkflowScopes.DEFAULT.equals(startScope)) return;
+        String id = cmd.definitionId();
+        boolean owns = ownsId(registry, startScope, id, cmd.contractName())
+                || failing.holds(startScope, id, cmd.contractName());
+        Long version = cmd.requestedDefinitionVersion();
+        DefinitionKey selected;
+        if (version != null) {
+            String targetScope = cmd.requestedTargetScope();
+            selected = new DefinitionKey(
+                    targetScope != null ? targetScope : owns ? startScope : WorkflowScopes.DEFAULT, id, version);
+        } else {
+            Optional<DefinitionActivation> own = owns ? activations.recordOf(startScope, id) : Optional.empty();
+            if (own.isEmpty()) return;
+            selected =
+                    new DefinitionKey(own.get().targetScopeKey(), id, own.get().version());
+        }
+        Optional<DefinitionFailure> failure = failing.find(selected);
+        if (failure.isPresent()) throw new WorkflowDefinitionFailingException(selected, failure.get());
     }
 
     /**

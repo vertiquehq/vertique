@@ -16,6 +16,8 @@ import dev.vertique.workflow.exception.WorkflowUnknownTypeNameException;
 import dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException;
 import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowRegistry;
+import dev.vertique.workflow.registry.store.DefinitionFailure;
+import dev.vertique.workflow.registry.store.DefinitionFailure.Rule;
 import dev.vertique.workflow.registry.store.DefinitionFilter;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.DefinitionKind;
@@ -95,6 +97,7 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
     private final DefaultWorkflowDefinitionRegistryView view;
     private final DefinitionActivations activations;
     private final WorkflowTypeNames typeNames;
+    private final FailingDefinitions failing;
 
     @Inject
     WorkflowDefinitionRegistryBootstrapStep(
@@ -106,7 +109,9 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
             WorkflowCodeDefinitionCatalog catalog,
             DefaultWorkflowDefinitionRegistryView view,
             DefinitionActivations activations,
-            WorkflowTypeNames typeNames) {
+            WorkflowTypeNames typeNames,
+            FailingDefinitions failing) {
+        this.failing = failing;
         this.typeNames = typeNames;
         this.activations = activations;
         this.view = view;
@@ -201,7 +206,8 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
                         origin.document().documentFormat(),
                         origin.provenance().loadedAt(),
                         origin.provenance().loadedAt(),
-                        registry.get().nameBinding(origin.key()));
+                        registry.get().nameBinding(origin.key()),
+                        null);
                 return store.orElseThrow().find(origin.key()).compose(previous -> {
                     WorkflowDefinitionRecord bound = applyStoredBinding(source, previous);
                     return store.orElseThrow()
@@ -251,7 +257,8 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
                         null,
                         startedAt,
                         startedAt,
-                        definition.nameBinding());
+                        definition.nameBinding(),
+                        null);
                 return store.orElseThrow().find(key).compose(previous -> {
                     WorkflowDefinitionRecord bound = applyStoredBinding(source, previous);
                     return store.orElseThrow()
@@ -303,7 +310,8 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
                 source.documentFormat(),
                 source.createdAt(),
                 source.statusChangedAt(),
-                stored.nameBinding());
+                stored.nameBinding(),
+                null);
     }
 
     private void requireBoundNamesResolve(WorkflowDefinitionRecord row) {
@@ -412,7 +420,14 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
         List<VerifiedDocument> verified = new ArrayList<>();
         Future<Void> chain = Future.succeededFuture();
         for (WorkflowDefinitionRecord row : rows) {
-            if (row.kind() != DefinitionKind.DOCUMENT || !LIVE.contains(row.status())) continue;
+            if (row.kind() != DefinitionKind.DOCUMENT) continue;
+            if (!LIVE.contains(row.status())) {
+                // A row that is not evaluated any more keeps no mark of an earlier startup.
+                if (row.failure() != null)
+                    chain = chain.compose(ignored -> queue.submit(
+                            row.key().definitionId(), () -> store.orElseThrow().recordFailure(row.key(), null)));
+                continue;
+            }
             chain = chain.compose(ignored -> queue.submit(row.key().definitionId(), () -> restore(local, row.key()))
                     .map(restored -> {
                         restored.ifPresent(verified::add);
@@ -526,11 +541,16 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
                         });
                     })));
         }
+        Set<DefinitionKey> restoredKeys =
+                verified.stream().map(restored -> restored.record().key()).collect(Collectors.toSet());
         return chain.compose(ignored -> listAll()).map(rows -> {
             for (WorkflowDefinitionRecord row : rows) {
-                if (row.kind() != DefinitionKind.DOCUMENT
-                        || (row.status() != DefinitionStatus.CANDIDATE && row.status() != DefinitionStatus.RETIRED))
-                    continue;
+                // A failing row whose plan could not be compiled has no restored definition and is handed over as
+                // metadata.
+                boolean metadataOnly = row.status() == DefinitionStatus.CANDIDATE
+                        || row.status() == DefinitionStatus.RETIRED
+                        || (row.failure() != null && !restoredKeys.contains(row.key()));
+                if (row.kind() != DefinitionKind.DOCUMENT || !metadataOnly) continue;
                 for (PersistedDefinitionLoader loader : loaders)
                     if (loader.supports(row.documentFormat())) loader.onMetadata(row);
             }
@@ -558,43 +578,113 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
             PersistedDefinitionLoader loader = matches.getFirst();
             return store.orElseThrow()
                     .findDocument(key)
-                    .compose(document -> work(() -> {
-                        WorkflowDefinitionDocument source = document.orElseThrow(
-                                () -> failure(Reason.LOADER_MISSING, key, "DOCUMENT source is missing"));
-                        requireBoundNamesResolve(record);
-                        WorkflowDefinition<?, ?> definition;
-                        String hash;
-                        try {
-                            definition = loader.load(record, source);
-                            hash = DefinitionPublication.planHash(loader, definition, record);
-                        } catch (RuntimeException failure) {
-                            throw new WorkflowDefinitionException(
-                                    "Cannot restore DOCUMENT " + key + " from stored source", failure);
-                        }
-                        if (!key.definitionId().equals(definition.definitionId())
-                                || key.definitionVersion() != definition.definitionVersion()
-                                || !record.planHash().equals(hash))
-                            throw failure(
-                                    Reason.DRIFT,
-                                    key,
-                                    "DOCUMENT stored hash " + record.planHash() + " differs from compiled hash "
-                                            + hash);
-                        Optional<RuntimeWorkflow> existing = Optional.ofNullable(held(local, key));
-                        if (existing.isPresent()) {
-                            if (!record.planHash()
-                                    .equals(existing.orElseThrow().plan().planHash()))
-                                throw failure(
-                                        Reason.DRIFT,
-                                        key,
-                                        "DOCUMENT stored hash " + record.planHash() + " differs from registered hash "
-                                                + existing.orElseThrow().plan().planHash());
-                        } else {
-                            DefinitionPublication.publish(local, registrations, key, definition, record.nameBinding());
-                        }
-                        loader.onRestored(record, definition);
-                        return Optional.of(new VerifiedDocument(loader, record, definition));
-                    }));
+                    .compose(document -> work(() -> restored(local, loader, record, document)))
+                    .compose(restored -> recordEvaluation(record, restored.failure())
+                            .map(ignored -> Optional.ofNullable(restored.verified())));
         });
+    }
+
+    /**
+     * Compiles and registers one live document row. A row of a scope other than the default one that newly deployed
+     * code conflicts with does not fail the start: it is evaluated as failing, see {@link Restored}. Any other
+     * conflict, and every conflict of a default scope row, fails the start. It runs on a worker thread.
+     */
+    private Restored restored(
+            WorkflowRegistry local,
+            PersistedDefinitionLoader loader,
+            WorkflowDefinitionRecord record,
+            Optional<WorkflowDefinitionDocument> document) {
+        DefinitionKey key = record.key();
+        boolean scoped = !WorkflowScopes.DEFAULT.equals(key.scopeKey());
+        WorkflowDefinitionDocument source =
+                document.orElseThrow(() -> failure(Reason.LOADER_MISSING, key, "DOCUMENT source is missing"));
+        if (scoped) {
+            try {
+                requireBoundNamesResolve(record);
+            } catch (WorkflowUnknownTypeNameException unresolved) {
+                // Nothing is compiled or registered: no class is loaded by a name that no longer resolves.
+                log.warn(
+                        "Definition {} is marked failing: a type name in its recorded name binding no longer"
+                                + " resolves",
+                        key);
+                return new Restored(null, DefinitionFailure.of(Rule.NAME_BINDING_UNRESOLVED));
+            }
+        } else {
+            requireBoundNamesResolve(record);
+        }
+        WorkflowDefinition<?, ?> definition;
+        String hash;
+        try {
+            definition = loader.load(record, source);
+            hash = DefinitionPublication.planHash(loader, definition, record);
+        } catch (RuntimeException failure) {
+            throw new WorkflowDefinitionException("Cannot restore DOCUMENT " + key + " from stored source", failure);
+        }
+        if (!key.definitionId().equals(definition.definitionId())
+                || key.definitionVersion() != definition.definitionVersion()
+                || !record.planHash().equals(hash))
+            throw failure(
+                    Reason.DRIFT,
+                    key,
+                    "DOCUMENT stored hash " + record.planHash() + " differs from compiled hash " + hash);
+        DefinitionFailure marked = null;
+        Optional<RuntimeWorkflow> existing = Optional.ofNullable(held(local, key));
+        if (existing.isPresent()) {
+            if (!record.planHash().equals(existing.orElseThrow().plan().planHash()))
+                throw failure(
+                        Reason.DRIFT,
+                        key,
+                        "DOCUMENT stored hash " + record.planHash() + " differs from registered hash "
+                                + existing.orElseThrow().plan().planHash());
+        } else {
+            marked = publishRestored(local, record, definition, scoped);
+        }
+        loader.onRestored(record, definition);
+        return new Restored(new VerifiedDocument(loader, record, definition), marked);
+    }
+
+    /**
+     * Registers the restored plan. A scope row whose state type no longer extends the default scope's registers
+     * without that comparison and is returned as failing; every other refusal, and every refusal of a default scope
+     * row, propagates.
+     */
+    private @Nullable DefinitionFailure publishRestored(
+            WorkflowRegistry local,
+            WorkflowDefinitionRecord record,
+            WorkflowDefinition<?, ?> definition,
+            boolean scoped) {
+        DefinitionKey key = record.key();
+        try {
+            DefinitionPublication.publish(local, registrations, key, definition, record.nameBinding());
+            return null;
+        } catch (WorkflowDefinitionException refusal) {
+            if (!scoped) throw refusal;
+            // Only the comparison with the default scope's state type differs between the two registrations, so a
+            // registration that succeeds now was refused by it.
+            try {
+                DefinitionPublication.publishFailing(
+                        local, registrations, key, definition, record.nameBinding(), record.planHash());
+            } catch (RuntimeException notTheComparison) {
+                refusal.addSuppressed(notTheComparison);
+                throw refusal;
+            }
+            log.warn("Definition {} is marked failing: its state type does not extend the default scope's", key);
+            return DefinitionFailure.of(Rule.STATE_TYPE_NOT_EXTENDED);
+        }
+    }
+
+    /**
+     * Keeps this node's evaluation of the row and writes it to the table when it differs from the stored mark, which
+     * clears a mark whose conflict is gone.
+     */
+    private Future<Void> recordEvaluation(WorkflowDefinitionRecord record, @Nullable DefinitionFailure evaluated) {
+        DefinitionKey key = record.key();
+        if (WorkflowScopes.DEFAULT.equals(key.scopeKey())) return Future.succeededFuture();
+        if (evaluated == null) failing.clear(key);
+        else failing.mark(key, evaluated, record.contractName());
+        DefinitionFailure stored = record.failure();
+        boolean unchanged = evaluated == null ? stored == null : stored != null && stored.rule() == evaluated.rule();
+        return unchanged ? Future.succeededFuture() : store.orElseThrow().recordFailure(key, evaluated);
     }
 
     private static <T> Future<T> work(Supplier<T> action) {
@@ -639,6 +729,13 @@ final class WorkflowDefinitionRegistryBootstrapStep implements ApplicationStartu
 
     private record VerifiedDocument(
             PersistedDefinitionLoader loader, WorkflowDefinitionRecord record, WorkflowDefinition<?, ?> definition) {}
+
+    /**
+     * What restoring one row produced: the verified document, absent when nothing was compiled, and the failure the
+     * row is evaluated with, absent when the row does not conflict with the deployed code.
+     */
+    private record Restored(
+            @Nullable VerifiedDocument verified, @Nullable DefinitionFailure failure) {}
 
     private record Prepared(
             WorkflowRegistry registry,

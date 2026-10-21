@@ -14,6 +14,7 @@ import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException;
 import dev.vertique.workflow.exception.WorkflowDefinitionLifecycleException.Reason;
 import dev.vertique.workflow.registry.store.ActivationClaim;
 import dev.vertique.workflow.registry.store.DefinitionActivation;
+import dev.vertique.workflow.registry.store.DefinitionFailure;
 import dev.vertique.workflow.registry.store.DefinitionFilter;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.DefinitionKind;
@@ -69,7 +70,7 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
 
     private static final String COLUMNS =
             "scope_key, definition_id, definition_version, kind, contract_name, state_type_name, plan_hash, name_binding, status, document_format, "
-                    + "source_type, source_uri, source_revision, source_author, source_upload_id, loaded_at, created_at, status_changed_at";
+                    + "source_type, source_uri, source_revision, source_author, source_upload_id, loaded_at, created_at, status_changed_at, failure_reason";
     private static final String LOCKED_COLUMNS = COLUMNS + ", document_digest";
     private static final String KEY = "scope_key = $1 AND definition_id = $2 AND definition_version = $3";
 
@@ -83,6 +84,7 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
     private final String sqlInsertCode;
     private final String sqlUpdateCodeProvenance;
     private final String sqlRehashCode;
+    private final String sqlRecordFailure;
     private final String sqlResetStale;
     private final String sqlUpdateProvenance;
     private final String sqlClaim;
@@ -167,6 +169,8 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
         this.sqlRehashCode = "UPDATE " + definitions
                 + " SET plan_hash=$4, name_binding=$5::jsonb, source_type=$6, source_uri=$7, source_revision=$8, source_author=$9, source_upload_id=$10, loaded_at=$11, contract_name=$12, state_type_name=$13 WHERE "
                 + KEY + " AND kind='CODE'";
+
+        this.sqlRecordFailure = "UPDATE " + definitions + " SET failure_reason=$4 WHERE " + KEY;
 
         this.sqlResetStale = "UPDATE " + definitions
                 + " SET status='CANDIDATE', publish_token=NULL, status_changed_at=clock_timestamp() WHERE definition_id=$1 AND status='PUBLISHING' AND extract(epoch from (clock_timestamp() - status_changed_at)) >= ($2::numeric * 2)";
@@ -558,6 +562,20 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
     }
 
     @Override
+    public Future<Void> recordFailure(DefinitionKey key, @Nullable DefinitionFailure failure) {
+        return attempt(() -> {
+            Objects.requireNonNull(key, "key");
+            String reason = failure == null ? null : failure.rule().name();
+            return mutate(key, (tx, rows) -> {
+                row(rows, key).orElseThrow(() -> invalid(key, "definition not found"));
+                return tx.preparedQuery(sqlRecordFailure)
+                        .execute(parameters(key).addString(reason))
+                        .mapEmpty();
+            });
+        });
+    }
+
+    @Override
     public Future<List<DefinitionActivation>> listActivations(@Nullable String scopeKey) {
         return attempt(() -> {
             if (scopeKey != null) new DefinitionKey(scopeKey, WorkflowScopes.DEFAULT, 1);
@@ -888,7 +906,19 @@ public final class PgWorkflowDefinitionRegistryStore extends PgSqlRepository
                 r.getString("document_format"),
                 r.getOffsetDateTime("created_at").toInstant(),
                 r.getOffsetDateTime("status_changed_at").toInstant(),
-                storedBinding(r));
+                storedBinding(r),
+                storedFailure(r));
+    }
+
+    /** The failure the row is marked with; a reason this release does not know reads as no failure. */
+    private static @Nullable DefinitionFailure storedFailure(Row r) {
+        String reason = r.getString("failure_reason");
+        if (reason == null) return null;
+        try {
+            return DefinitionFailure.of(DefinitionFailure.Rule.valueOf(reason));
+        } catch (IllegalArgumentException unknown) {
+            return null;
+        }
     }
 
     private static DefinitionActivation activation(Row r) {

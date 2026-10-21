@@ -20,6 +20,7 @@ import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowRegistry;
 import dev.vertique.workflow.registry.store.ActivationClaim;
 import dev.vertique.workflow.registry.store.DefinitionActivation;
+import dev.vertique.workflow.registry.store.DefinitionFailure;
 import dev.vertique.workflow.registry.store.DefinitionFilter;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.DefinitionKind;
@@ -798,7 +799,8 @@ class DefinitionPropagationPassTest {
                 "YAML",
                 T0,
                 changedAt,
-                Map.of());
+                Map.of(),
+                null);
     }
 
     private static WorkflowDefinitionRecord code(String id, DefinitionStatus status, Instant changedAt) {
@@ -813,7 +815,8 @@ class DefinitionPropagationPassTest {
                 null,
                 T0,
                 changedAt,
-                Map.of());
+                Map.of(),
+                null);
     }
 
     /** The pass under test together with its fakes. */
@@ -974,6 +977,11 @@ class DefinitionPropagationPassTest {
         @Override
         public Future<List<DefinitionActivation>> listActivations(String scopeKey) {
             return Future.succeededFuture(List.of());
+        }
+
+        @Override
+        public Future<Void> recordFailure(DefinitionKey key, DefinitionFailure failure) {
+            return Future.succeededFuture();
         }
 
         @Override

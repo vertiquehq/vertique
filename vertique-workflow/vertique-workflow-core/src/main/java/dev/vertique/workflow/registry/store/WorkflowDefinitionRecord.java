@@ -29,6 +29,8 @@ import java.util.Objects;
  * @param statusChangedAt when the status last changed
  * @param nameBinding the binary name of each state and payload class the version's plan names, mapped to the name its
  *     plan hash used; copied defensively; empty when no binding is kept
+ * @param failure why the version is marked failing, or {@code null} when it is not; only a document definition of a
+ *     scope other than the default one is ever marked
  */
 public record WorkflowDefinitionRecord(
         DefinitionKey key,
@@ -41,7 +43,8 @@ public record WorkflowDefinitionRecord(
         @Nullable String documentFormat,
         Instant createdAt,
         Instant statusChangedAt,
-        Map<String, String> nameBinding) {
+        Map<String, String> nameBinding,
+        @Nullable DefinitionFailure failure) {
     public WorkflowDefinitionRecord {
         Objects.requireNonNull(key, "key");
         Objects.requireNonNull(kind, "kind");

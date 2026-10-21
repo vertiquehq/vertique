@@ -379,7 +379,8 @@ public final class WorkflowDefinitionStore {
                             previous.documentFormat(),
                             previous.createdAt(),
                             Instant.now(),
-                            previous.nameBinding());
+                            previous.nameBinding(),
+                            previous.failure());
         });
     }
 
@@ -401,7 +402,8 @@ public final class WorkflowDefinitionStore {
                                 r.documentFormat(),
                                 r.createdAt(),
                                 r.statusChangedAt(),
-                                r.nameBinding()))
+                                r.nameBinding(),
+                                r.failure()))
                         .orElse(r))
                 .filter(r -> filter.statuses() == null || filter.statuses().contains(r.status()))
                 .sorted(java.util.Comparator.comparing(

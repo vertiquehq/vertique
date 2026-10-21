@@ -62,7 +62,8 @@ final class DefaultVersionSeed {
                             null,
                             now,
                             now,
-                            Map.of())));
+                            Map.of(),
+                            null)));
                     await(lifecycle.activate(WorkflowScopes.DEFAULT, id, WorkflowScopes.DEFAULT, version));
                 });
     }

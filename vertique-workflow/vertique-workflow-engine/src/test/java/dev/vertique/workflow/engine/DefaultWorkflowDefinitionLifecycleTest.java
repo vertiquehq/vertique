@@ -16,6 +16,7 @@ import dev.vertique.workflow.registry.RuntimeWorkflow;
 import dev.vertique.workflow.registry.WorkflowRegistry;
 import dev.vertique.workflow.registry.store.ActivationClaim;
 import dev.vertique.workflow.registry.store.DefinitionActivation;
+import dev.vertique.workflow.registry.store.DefinitionFailure;
 import dev.vertique.workflow.registry.store.DefinitionFilter;
 import dev.vertique.workflow.registry.store.DefinitionKey;
 import dev.vertique.workflow.registry.store.DefinitionKind;
@@ -598,7 +599,8 @@ class DefaultWorkflowDefinitionLifecycleTest {
                 "YAML",
                 now,
                 now,
-                Map.of());
+                Map.of(),
+                null);
     }
 
     private static WorkflowDefinitionRecord row(DefinitionStatus status, String planHash) {
@@ -614,7 +616,8 @@ class DefaultWorkflowDefinitionLifecycleTest {
                 "YAML",
                 now,
                 now,
-                Map.of());
+                Map.of(),
+                null);
     }
 
     /** A registry that logs every deprecation mark into the shared event log. */
@@ -759,6 +762,11 @@ class DefaultWorkflowDefinitionLifecycleTest {
 
         @Override
         public Future<List<DefinitionActivation>> listActivations(String scopeKey) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public Future<Void> recordFailure(DefinitionKey key, DefinitionFailure failure) {
             throw new UnsupportedOperationException();
         }
 
@@ -1351,6 +1359,11 @@ class DefaultWorkflowDefinitionLifecycleTest {
         }
 
         @Override
+        public Future<Void> recordFailure(DefinitionKey key, DefinitionFailure failure) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
         public Future<Void> retire(DefinitionKey key) {
             throw new UnsupportedOperationException();
         }
@@ -1536,6 +1549,11 @@ class DefaultWorkflowDefinitionLifecycleTest {
         }
 
         @Override
+        public Future<Void> recordFailure(DefinitionKey key, DefinitionFailure failure) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
         public Future<Void> retire(DefinitionKey key) {
             throw new UnsupportedOperationException();
         }
@@ -1625,7 +1643,8 @@ class DefaultWorkflowDefinitionLifecycleTest {
                     "YAML",
                     now,
                     now,
-                    Map.of());
+                    Map.of(),
+                    null);
         }
 
         @Override
@@ -1693,6 +1712,11 @@ class DefaultWorkflowDefinitionLifecycleTest {
 
         @Override
         public Future<List<DefinitionActivation>> listActivations(String scopeKey) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public Future<Void> recordFailure(DefinitionKey key, DefinitionFailure failure) {
             throw new UnsupportedOperationException();
         }
 

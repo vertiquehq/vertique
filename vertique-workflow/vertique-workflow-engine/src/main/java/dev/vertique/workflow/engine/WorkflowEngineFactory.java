@@ -495,6 +495,7 @@ public final class WorkflowEngineFactory {
                 payloadConstraintCheck,
                 typeNames,
                 new DefinitionActivations(),
-                stateCompatibility);
+                stateCompatibility,
+                new FailingDefinitions());
     }
 }

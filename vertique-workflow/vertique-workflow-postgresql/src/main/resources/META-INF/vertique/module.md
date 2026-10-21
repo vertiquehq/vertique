@@ -220,6 +220,13 @@ UTF-8 byte length and code-point count in the same SQL statement that conditiona
 Oversized rows return identity/counts with no body transfer, then fail with a sanitized key/limit
 message; they are not treated as absent. Metadata listing never selects the source body.
 
+`failure_reason` (`VARCHAR(64)`, nullable, no check constraint) holds the name of the rule a failing scope row breaks,
+`STATE_TYPE_NOT_EXTENDED` or `NAME_BINDING_UNRESOLVED`, and is null for every other row. Only `recordFailure(key, failure)`
+writes it, in one `UPDATE` under the definition id lock, and a startup that finds no conflict clears it. `find` and
+`list` read it into `WorkflowDefinitionRecord.failure()` with the rule's fixed description as the detail; a reason this
+release does not know reads as no failure. A node refuses starts from its own startup evaluation, not from this column, so
+nodes that ship different code can rewrite it during a rolling deploy.
+
 The stored plan hash covers the compiled plan structure, not callback bodies. `name_binding` holds, as a JSON
 object, the binary name of each state and payload class the plan names, mapped to the name the hash used. The
 adapter writes it in the same statement as the plan hash and never alone: when a version is first recorded (a code

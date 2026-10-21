@@ -43,6 +43,7 @@ CREATE TABLE IF NOT EXISTS workflow_definitions (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     status_changed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     publish_token UUID,
+    failure_reason VARCHAR(64),
     CONSTRAINT pk_workflow_definitions PRIMARY KEY (scope_key, definition_id, definition_version),
     CONSTRAINT ck_workflow_definitions_version CHECK (definition_version > 0),
     CONSTRAINT ck_workflow_definitions_keys CHECK (scope_key !~ '[[:cntrl:]]' AND definition_id !~ '[[:cntrl:]]'),

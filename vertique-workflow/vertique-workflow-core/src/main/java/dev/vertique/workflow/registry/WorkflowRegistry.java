@@ -140,6 +140,19 @@ public interface WorkflowRegistry {
      */
     Collection<RuntimeWorkflow> allRegistered();
 
+    /**
+     * Registers the plan of a failing scope row: every registration rule of
+     * {@link #register(String, WorkflowDefinition)} applies except the comparison of the scope's state type with the
+     * default scope's, so the instances of a row that newly deployed code conflicts with keep running. Unsupported
+     * registries fail explicitly.
+     *
+     * @param scopeKey the scope that owns the definition
+     * @param definition the definition to register
+     */
+    default void registerFailing(String scopeKey, WorkflowDefinition<?, ?> definition) {
+        throw new UnsupportedOperationException("registerFailing is not supported");
+    }
+
     /** Removes a version. Unsupported registries fail explicitly. */
     default void unregister(DefinitionKey key) {
         throw new UnsupportedOperationException("unregister is not supported");

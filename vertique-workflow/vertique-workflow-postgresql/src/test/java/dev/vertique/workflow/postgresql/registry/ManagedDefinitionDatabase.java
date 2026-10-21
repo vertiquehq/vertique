@@ -869,7 +869,8 @@ public final class ManagedDefinitionDatabase {
                     row.getString("document_format"),
                     row.getOffsetDateTime("created_at").toInstant(),
                     row.getOffsetDateTime("status_changed_at").toInstant(),
-                    Map.of());
+                    Map.of(),
+                    null);
         }
 
         private static void verifyMetadata(

@@ -758,7 +758,8 @@ public class DefinitionDocumentPolicyIT {
                 "JSON",
                 Instant.now(),
                 Instant.now(),
-                Map.of());
+                Map.of(),
+                null);
         WorkflowDefinitionDocument document = new WorkflowDefinitionDocument(documentKey, "{}", "JSON");
         var noSources = (dev.vertique.workflow.definition.source.WorkflowDefinitionSource) List::of;
         AppComponent app = ManagedDefinitionDatabase.app(

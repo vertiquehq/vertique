@@ -303,7 +303,8 @@ public final class DefaultWorkflowDefinitionService implements WorkflowDefinitio
                 format,
                 now,
                 now,
-                nameBinding);
+                nameBinding,
+                null);
     }
 
     private static CompiledDefinitionRef reference(CompiledDefinition compiled) {

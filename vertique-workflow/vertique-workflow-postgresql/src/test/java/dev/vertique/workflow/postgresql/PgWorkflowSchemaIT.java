@@ -1226,7 +1226,8 @@ public class PgWorkflowSchemaIT {
                 "JSON",
                 now,
                 now,
-                Map.of());
+                Map.of(),
+                null);
     }
 
     private static WorkflowDefinitionDocument registryDocument(DefinitionKey key) {

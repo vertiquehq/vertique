@@ -134,7 +134,8 @@ class DocumentRestorePlanHashTest {
                 "YAML",
                 now,
                 now,
-                Map.of());
+                Map.of(),
+                null);
     }
 
     // --- Tests ---
