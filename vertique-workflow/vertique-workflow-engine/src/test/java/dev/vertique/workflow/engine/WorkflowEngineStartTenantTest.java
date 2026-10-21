@@ -92,7 +92,8 @@ class WorkflowEngineStartTenantTest {
                 List.of(new CompleteNode(INITIAL_STEP_ID)),
                 null);
         WorkflowCallbackRegistry callbacks = mock();
-        return RuntimeWorkflow.of(plan, Object.class, Object.class, payload -> Map.of(), Map.of(), callbacks);
+        return RuntimeWorkflow.of(
+                plan, "test-contract", Object.class, Object.class, payload -> Map.of(), Map.of(), callbacks);
     }
 
     /**

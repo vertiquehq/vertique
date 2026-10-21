@@ -164,7 +164,8 @@ class WorkflowEngineBinderWiringTest {
         List<WorkflowNode> nodes = List.of(waitSignal, humanTask, timerNode, complete);
         WorkflowPlan plan = new WorkflowPlan(
                 DEFINITION_ID, 1L, "plan-hash", Object.class.getName(), waitSignal.stepId(), nodes, null);
-        return RuntimeWorkflow.of(plan, Object.class, Object.class, payload -> Map.of(), Map.of(), callbacks);
+        return RuntimeWorkflow.of(
+                plan, "test-contract", Object.class, Object.class, payload -> Map.of(), Map.of(), callbacks);
     }
 
     /**
@@ -184,7 +185,8 @@ class WorkflowEngineBinderWiringTest {
         List<WorkflowNode> nodes = List.of(waitSignal, branchTimerNode, complete);
         WorkflowPlan plan = new WorkflowPlan(
                 DEFINITION_ID, 1L, "plan-hash", Object.class.getName(), waitSignal.stepId(), nodes, null);
-        return RuntimeWorkflow.of(plan, Object.class, Object.class, payload -> Map.of(), Map.of(), callbacks);
+        return RuntimeWorkflow.of(
+                plan, "test-contract", Object.class, Object.class, payload -> Map.of(), Map.of(), callbacks);
     }
 
     /**
@@ -607,7 +609,13 @@ class WorkflowEngineBinderWiringTest {
                 List.of(new CompleteNode(COMPLETE_STEP)),
                 null);
         RuntimeWorkflow targetRw = RuntimeWorkflow.of(
-                targetPlan, Object.class, Object.class, payload -> Map.of(), Map.of(), stubCallbacks());
+                targetPlan,
+                "test-contract",
+                Object.class,
+                Object.class,
+                payload -> Map.of(),
+                Map.of(),
+                stubCallbacks());
         when(registry.resolvePinned(DEFINITION_ID, 1L)).thenReturn(sourceRw);
         when(registry.resolvePinned(DEFINITION_ID, 2L)).thenReturn(targetRw);
 
@@ -1561,7 +1569,13 @@ class WorkflowEngineBinderWiringTest {
                 List.of(new CompleteNode(COMPLETE_STEP)),
                 null);
         RuntimeWorkflow targetRw = RuntimeWorkflow.of(
-                targetPlan, Object.class, Object.class, payload -> Map.of(), Map.of(), stubCallbacks());
+                targetPlan,
+                "test-contract",
+                Object.class,
+                Object.class,
+                payload -> Map.of(),
+                Map.of(),
+                stubCallbacks());
         when(h.registry().resolvePinned(DEFINITION_ID, 1L)).thenReturn(sourceRw);
         when(h.registry().resolvePinned(DEFINITION_ID, 2L)).thenReturn(targetRw);
 
@@ -1771,7 +1785,8 @@ class WorkflowEngineBinderWiringTest {
         List<WorkflowNode> nodes = List.of(humanTaskDue, complete);
         WorkflowPlan plan = new WorkflowPlan(
                 DEFINITION_ID, 1L, "plan-hash", Object.class.getName(), humanTaskDue.stepId(), nodes, null);
-        return RuntimeWorkflow.of(plan, Object.class, Object.class, payload -> Map.of(), Map.of(), callbacks);
+        return RuntimeWorkflow.of(
+                plan, "test-contract", Object.class, Object.class, payload -> Map.of(), Map.of(), callbacks);
     }
 
     /**
@@ -1794,7 +1809,8 @@ class WorkflowEngineBinderWiringTest {
         List<WorkflowNode> nodes = List.of(humanTaskReminder, complete);
         WorkflowPlan plan = new WorkflowPlan(
                 DEFINITION_ID, 1L, "plan-hash", Object.class.getName(), humanTaskReminder.stepId(), nodes, null);
-        return RuntimeWorkflow.of(plan, Object.class, Object.class, payload -> Map.of(), Map.of(), callbacks);
+        return RuntimeWorkflow.of(
+                plan, "test-contract", Object.class, Object.class, payload -> Map.of(), Map.of(), callbacks);
     }
 
     /**

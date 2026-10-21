@@ -166,7 +166,8 @@ class HistoryPayloadCorrelationStitchingTest {
         List<WorkflowNode> nodes = List.of(waitSignal, humanTask, timerNode, complete);
         WorkflowPlan plan = new WorkflowPlan(
                 DEFINITION_ID, 1L, "plan-hash", Object.class.getName(), waitSignal.stepId(), nodes, null);
-        return RuntimeWorkflow.of(plan, Object.class, Object.class, payload -> Map.of(), Map.of(), callbacks);
+        return RuntimeWorkflow.of(
+                plan, "test-contract", Object.class, Object.class, payload -> Map.of(), Map.of(), callbacks);
     }
 
     /**
@@ -194,7 +195,8 @@ class HistoryPayloadCorrelationStitchingTest {
         List<WorkflowNode> nodes = List.of(branchHumanTask, branchWaitSignal);
         WorkflowPlan plan = new WorkflowPlan(
                 DEFINITION_ID, 1L, "plan-hash", Object.class.getName(), branchHumanTask.stepId(), nodes, null);
-        return RuntimeWorkflow.of(plan, Object.class, Object.class, payload -> Map.of(), Map.of(), callbacks);
+        return RuntimeWorkflow.of(
+                plan, "test-contract", Object.class, Object.class, payload -> Map.of(), Map.of(), callbacks);
     }
 
     private static WorkflowCallbackRegistry stubCallbacks() {
@@ -402,7 +404,13 @@ class HistoryPayloadCorrelationStitchingTest {
                 List.of(new CompleteNode(COMPLETE_STEP)),
                 null);
         RuntimeWorkflow targetRw = RuntimeWorkflow.of(
-                targetPlan, Object.class, Object.class, payload -> Map.of(), Map.of(), stubCallbacks());
+                targetPlan,
+                "test-contract",
+                Object.class,
+                Object.class,
+                payload -> Map.of(),
+                Map.of(),
+                stubCallbacks());
         when(registry.resolvePinned(DEFINITION_ID, 1L)).thenReturn(sourceRw);
         when(registry.resolvePinned(DEFINITION_ID, 2L)).thenReturn(targetRw);
 

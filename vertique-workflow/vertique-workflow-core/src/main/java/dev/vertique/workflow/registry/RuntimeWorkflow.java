@@ -31,6 +31,8 @@ import java.util.function.Function;
  * testing.
  *
  * @param plan the serialization-friendly plan produced by the {@link WorkflowBuilder}
+ * @param contractName the logical name of the contract the definition implements, as reported by
+ *     {@code WorkflowTypeNames.contractNameOf}; a contract may be implemented by many definitions
  * @param stateType runtime {@code Class} object for the workflow state; used for JSON
  *     deserialization
  * @param startPayloadType runtime {@code Class} object for the start payload; the engine coerces
@@ -51,6 +53,7 @@ import java.util.function.Function;
  */
 public record RuntimeWorkflow(
         WorkflowPlan plan,
+        String contractName,
         Class<?> stateType,
         Class<?> startPayloadType,
         Function<Object, Object> initialState,
@@ -66,6 +69,7 @@ public record RuntimeWorkflow(
      * {@code plan.nodes()}.
      *
      * @param plan the serialization-friendly workflow plan
+     * @param contractName logical name of the contract the definition implements
      * @param stateType runtime {@code Class} for the workflow state
      * @param startPayloadType runtime {@code Class} for the start payload
      * @param initialState function that maps start payload to initial state
@@ -75,6 +79,7 @@ public record RuntimeWorkflow(
      */
     public static RuntimeWorkflow of(
             WorkflowPlan plan,
+            String contractName,
             Class<?> stateType,
             Class<?> startPayloadType,
             Function<Object, Object> initialState,
@@ -90,6 +95,7 @@ public record RuntimeWorkflow(
         }
         return new RuntimeWorkflow(
                 plan,
+                contractName,
                 stateType,
                 startPayloadType,
                 initialState,

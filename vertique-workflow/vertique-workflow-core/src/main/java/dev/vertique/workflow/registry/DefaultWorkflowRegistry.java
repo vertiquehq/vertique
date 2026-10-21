@@ -266,6 +266,7 @@ public final class DefaultWorkflowRegistry implements WorkflowRegistry {
         validateCallbackConsistency(plan, perDefCallbacks, definitionId, definitionVersion);
         RuntimeWorkflow rw = RuntimeWorkflow.of(
                 plan,
+                typeNames.contractNameOf(def.contract()),
                 def.stateType(),
                 builder.startPayloadType(),
                 builder.initialState(),

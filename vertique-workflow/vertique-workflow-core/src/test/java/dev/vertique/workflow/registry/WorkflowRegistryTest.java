@@ -7,11 +7,19 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import dev.vertique.workflow.contract.SignalDedupKey;
 import dev.vertique.workflow.contract.WorkflowContract;
+import dev.vertique.workflow.contract.WorkflowSignal;
+import dev.vertique.workflow.contract.WorkflowStart;
 import dev.vertique.workflow.dsl.WorkflowBuilder;
 import dev.vertique.workflow.dsl.WorkflowDefinition;
 import dev.vertique.workflow.exception.WorkflowDefinitionException;
 import dev.vertique.workflow.exception.WorkflowVersionPinUnavailableException;
+import dev.vertique.workflow.ops.WorkflowInstanceId;
+import dev.vertique.workflow.plan.RaceSafety;
+import io.vertx.core.Future;
+import java.time.Duration;
+import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -799,6 +807,217 @@ class WorkflowRegistryTest {
             // resolveCurrent must return the v=2 RuntimeWorkflow.
             RuntimeWorkflow rw = registry.resolveCurrent("multi");
             assertThat(rw.plan().definitionVersion()).isEqualTo(2L);
+        }
+    }
+
+    // --- Many definitions per contract: tests ---
+
+    @Test
+    @DisplayName("registration reads identity from the definition, not from the contract annotation")
+    void registrationReadsIdentityFromTheDefinitionNotTheContractAnnotation() {
+        // Given: a contract still carrying the legacy attributes definitionId "unused" and
+        // definitionVersion 99, and a definition whose own identity differs from them
+
+        // When: the definition registers
+        registry.register(new PurchaseApprovalV3());
+
+        // Then: the registry holds it under the identity the definition reports
+        RuntimeWorkflow rw = registry.resolvePinned("purchase-approval", 3L);
+        assertThat(rw.plan().definitionId()).as("definition id").isEqualTo("purchase-approval");
+        assertThat(rw.plan().definitionVersion()).as("definition version").isEqualTo(3L);
+        assertThat(rw.stateType()).as("state type").isEqualTo(ApprovalState.class);
+        assertThat(rw.contractName()).as("contract name").isEqualTo("approval");
+        assertThat(registry.definitionClass(PurchaseApprovalV3.class))
+                .as("definition class")
+                .hasValueSatisfying(
+                        registered -> assertThat(registered.definitionId()).isEqualTo("purchase-approval"));
+
+        // and: nothing is registered under the annotation's legacy values
+        assertThatThrownBy(() -> registry.resolvePinned("unused", 99L))
+                .isInstanceOf(WorkflowVersionPinUnavailableException.class);
+        assertThat(registry.allRegistered())
+                .extracting(registered -> registered.plan().definitionId() + " v"
+                        + registered.plan().definitionVersion())
+                .containsExactly("purchase-approval v3");
+    }
+
+    // --- Many definitions per contract: fixtures ---
+
+    record ApprovalState(String id) {}
+
+    record ApprovalStart(String id) {}
+
+    record ApprovalSignal(String note) {}
+
+    /** Contract named {@code approval}; the legacy attributes name an id and version no definition has. */
+    @WorkflowContract(value = "approval", definitionId = "unused", definitionVersion = 99)
+    interface ApprovalContract {
+
+        @WorkflowStart
+        Future<WorkflowInstanceId> start(ApprovalStart payload);
+
+        @WorkflowSignal("approve")
+        Future<Void> approve(WorkflowInstanceId id, ApprovalSignal payload, @SignalDedupKey String dedupKey);
+
+        @WorkflowSignal("escalate")
+        Future<Void> escalate(WorkflowInstanceId id, ApprovalSignal payload, @SignalDedupKey String dedupKey);
+    }
+
+    /** A second contract, named {@code other}, that also declares {@code approve}. */
+    @WorkflowContract(value = "other", definitionId = "unused-other", definitionVersion = 98)
+    interface OtherContract {
+
+        @WorkflowStart
+        Future<WorkflowInstanceId> start(ApprovalStart payload);
+
+        @WorkflowSignal("approve")
+        Future<Void> approve(WorkflowInstanceId id, ApprovalSignal payload, @SignalDedupKey String dedupKey);
+    }
+
+    /**
+     * Definition that waits, one after the other, for each signal it is constructed with. Each
+     * concrete subclass is a distinct definition class.
+     */
+    abstract static class SequentialWaitDefinition<C> implements WorkflowDefinition<ApprovalState, C> {
+
+        private final Class<C> contract;
+        private final String id;
+        private final long version;
+        private final List<String> signals;
+
+        SequentialWaitDefinition(Class<C> contract, String id, long version, String... signals) {
+            this.contract = contract;
+            this.id = id;
+            this.version = version;
+            this.signals = List.of(signals);
+        }
+
+        @Override
+        public Class<C> contract() {
+            return contract;
+        }
+
+        @Override
+        public Class<ApprovalState> stateType() {
+            return ApprovalState.class;
+        }
+
+        @Override
+        public String definitionId() {
+            return id;
+        }
+
+        @Override
+        public long definitionVersion() {
+            return version;
+        }
+
+        @Override
+        public void define(WorkflowBuilder<ApprovalState> wf) {
+            wf.init(ApprovalStart.class, start -> new ApprovalState(start.id())).initialStep("wait-0");
+            for (int i = 0; i < signals.size(); i++) {
+                String next = i + 1 < signals.size() ? "wait-" + (i + 1) : "done";
+                wf.waitForSignal("wait-" + i, signals.get(i), ApprovalSignal.class)
+                        .onSignal((state, payload) -> state)
+                        .toStepOnSignal(next)
+                        .build();
+            }
+            wf.complete("done");
+        }
+    }
+
+    static final class PurchaseApprovalV1 extends SequentialWaitDefinition<ApprovalContract> {
+        PurchaseApprovalV1() {
+            super(ApprovalContract.class, "purchase-approval", 1L, "approve");
+        }
+    }
+
+    static final class PurchaseApprovalV2 extends SequentialWaitDefinition<ApprovalContract> {
+        PurchaseApprovalV2() {
+            super(ApprovalContract.class, "purchase-approval", 2L, "escalate");
+        }
+    }
+
+    static final class PurchaseApprovalV3 extends SequentialWaitDefinition<ApprovalContract> {
+        PurchaseApprovalV3() {
+            super(ApprovalContract.class, "purchase-approval", 3L, "approve", "escalate");
+        }
+    }
+
+    static final class TravelApprovalV1 extends SequentialWaitDefinition<ApprovalContract> {
+        TravelApprovalV1() {
+            super(ApprovalContract.class, "travel-approval", 1L, "approve", "escalate");
+        }
+    }
+
+    static final class PurchaseApprovalV2OtherContract extends SequentialWaitDefinition<OtherContract> {
+        PurchaseApprovalV2OtherContract() {
+            super(OtherContract.class, "purchase-approval", 2L, "approve");
+        }
+    }
+
+    /**
+     * Waits for {@code approve}, then for {@code remind} with a timeout, then forks into a branch
+     * waiting for {@code audit} and a branch waiting for {@code escalate}. Of the four signals only
+     * {@code audit} and {@code remind} are not declared by {@link ApprovalContract}.
+     */
+    static final class WaitsForUndeclaredSignals implements WorkflowDefinition<ApprovalState, ApprovalContract> {
+
+        @Override
+        public Class<ApprovalContract> contract() {
+            return ApprovalContract.class;
+        }
+
+        @Override
+        public Class<ApprovalState> stateType() {
+            return ApprovalState.class;
+        }
+
+        @Override
+        public String definitionId() {
+            return "undeclared-waits";
+        }
+
+        @Override
+        public long definitionVersion() {
+            return 1L;
+        }
+
+        @Override
+        public void define(WorkflowBuilder<ApprovalState> wf) {
+            wf.init(ApprovalStart.class, start -> new ApprovalState(start.id()))
+                    .initialStep("wait-approve")
+                    .waitForSignal("wait-approve", "approve", ApprovalSignal.class)
+                    .onSignal((state, payload) -> state)
+                    .toStepOnSignal("wait-remind")
+                    .build()
+                    .waitForSignal("wait-remind", "remind", ApprovalSignal.class)
+                    .onSignal((state, payload) -> state)
+                    .toStepOnSignal("fork-step")
+                    .timeoutAfter(Duration.ofHours(1))
+                    .onTimeout(state -> state)
+                    .toStepOnTimeout("timed-out")
+                    .complete("timed-out")
+                    .fork("fork-step")
+                    .branch("branch-audit", "wait-audit", RaceSafety.IGNORE_LATE_RESULT_SAFE)
+                    .branch("branch-escalate", "wait-escalate", RaceSafety.IGNORE_LATE_RESULT_SAFE)
+                    .join("join")
+                    .waitForSignal("wait-audit", "audit", ApprovalSignal.class)
+                    .onSignal((state, payload) -> state)
+                    .toStepOnSignal("audited")
+                    .build()
+                    .complete("audited")
+                    .waitForSignal("wait-escalate", "escalate", ApprovalSignal.class)
+                    .onSignal((state, payload) -> state)
+                    .toStepOnSignal("escalated")
+                    .build()
+                    .complete("escalated")
+                    .join("join")
+                    .allRequired((state, results) -> state)
+                    .toStep("done")
+                    .onFailure("done")
+                    .endJoin()
+                    .complete("done");
         }
     }
 }

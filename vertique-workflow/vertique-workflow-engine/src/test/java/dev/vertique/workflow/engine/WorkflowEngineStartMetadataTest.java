@@ -96,7 +96,8 @@ class WorkflowEngineStartMetadataTest {
         WorkflowPlan plan =
                 new WorkflowPlan(DEFINITION_ID, 1L, "plan-hash", Object.class.getName(), INITIAL_STEP_ID, nodes, null);
         WorkflowCallbackRegistry callbacks = org.mockito.Mockito.mock();
-        return RuntimeWorkflow.of(plan, Object.class, Object.class, payload -> Map.of(), Map.of(), callbacks);
+        return RuntimeWorkflow.of(
+                plan, "test-contract", Object.class, Object.class, payload -> Map.of(), Map.of(), callbacks);
     }
 
     /** Test harness bundling the assembled engine handle plus its mocked SPI collaborators. */

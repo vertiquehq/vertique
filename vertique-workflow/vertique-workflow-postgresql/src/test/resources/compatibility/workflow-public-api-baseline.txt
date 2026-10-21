@@ -175,7 +175,6 @@ CONSTRUCTOR|dev.vertique.workflow.query.WorkflowInstanceQuery|public|[]|[dev.ver
 CONSTRUCTOR|dev.vertique.workflow.registry.CallbackId|public|[]|[java.lang.String]|[]|false
 CONSTRUCTOR|dev.vertique.workflow.registry.DefaultWorkflowRegistry|public|[]|[]|[]|false
 CONSTRUCTOR|dev.vertique.workflow.registry.DefaultWorkflowRegistry|public|[]|[dev.vertique.workflow.plan.WorkflowPlanValidator]|[]|false
-CONSTRUCTOR|dev.vertique.workflow.registry.RuntimeWorkflow|public|[]|[dev.vertique.workflow.plan.WorkflowPlan,java.lang.Class<?>,java.lang.Class<?>,java.util.function.Function<java.lang.Object, java.lang.Object>,java.util.Map<java.lang.String, java.lang.Class<?>>,dev.vertique.workflow.registry.WorkflowCallbackRegistry,java.util.Map<java.lang.String, dev.vertique.workflow.plan.WorkflowNode>,java.util.Map<java.lang.String, dev.vertique.workflow.plan.CompensationNode>]|[]|false
 CONSTRUCTOR|dev.vertique.workflow.retention.WorkflowRetentionService$PurgeResult|public|[]|[int,boolean]|[]|false
 CONSTRUCTOR|dev.vertique.workflow.retention.WorkflowRetentionService$RetentionResult|public|[]|[int,boolean]|[]|false
 CONSTRUCTOR|dev.vertique.workflow.sideeffect.RecorderResult$Empty|public|[]|[]|[]|false
@@ -1402,7 +1401,6 @@ METHOD|dev.vertique.workflow.registry.RuntimeWorkflow|equals|public final|[]|[ja
 METHOD|dev.vertique.workflow.registry.RuntimeWorkflow|hashCode|public final|[]|[]|int|[]|false
 METHOD|dev.vertique.workflow.registry.RuntimeWorkflow|initialState|public|[]|[]|java.util.function.Function<java.lang.Object, java.lang.Object>|[]|false
 METHOD|dev.vertique.workflow.registry.RuntimeWorkflow|nodeById|public|[]|[]|java.util.Map<java.lang.String, dev.vertique.workflow.plan.WorkflowNode>|[]|false
-METHOD|dev.vertique.workflow.registry.RuntimeWorkflow|of|public static|[]|[dev.vertique.workflow.plan.WorkflowPlan,java.lang.Class<?>,java.lang.Class<?>,java.util.function.Function<java.lang.Object, java.lang.Object>,java.util.Map<java.lang.String, java.lang.Class<?>>,dev.vertique.workflow.registry.WorkflowCallbackRegistry]|dev.vertique.workflow.registry.RuntimeWorkflow|[]|false
 METHOD|dev.vertique.workflow.registry.RuntimeWorkflow|plan|public|[]|[]|dev.vertique.workflow.plan.WorkflowPlan|[]|false
 METHOD|dev.vertique.workflow.registry.RuntimeWorkflow|signalPayloadTypes|public|[]|[]|java.util.Map<java.lang.String, java.lang.Class<?>>|[]|false
 METHOD|dev.vertique.workflow.registry.RuntimeWorkflow|startPayloadType|public|[]|[]|java.lang.Class<?>|[]|false

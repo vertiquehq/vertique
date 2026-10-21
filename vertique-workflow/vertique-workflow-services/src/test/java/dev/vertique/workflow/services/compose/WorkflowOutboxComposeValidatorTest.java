@@ -284,7 +284,15 @@ class WorkflowOutboxComposeValidatorTest {
 
     private static WorkflowRegistry registryWith(WorkflowPlan plan) {
         RuntimeWorkflow rw = new RuntimeWorkflow(
-                plan, String.class, String.class, Function.identity(), Map.of(), emptyCallbacks(), Map.of(), Map.of());
+                plan,
+                "test-contract",
+                String.class,
+                String.class,
+                Function.identity(),
+                Map.of(),
+                emptyCallbacks(),
+                Map.of(),
+                Map.of());
         return new StaticRegistry(List.of(rw));
     }
 

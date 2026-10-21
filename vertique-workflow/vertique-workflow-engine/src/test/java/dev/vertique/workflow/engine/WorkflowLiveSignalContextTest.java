@@ -120,7 +120,8 @@ class WorkflowLiveSignalContextTest {
                 WorkflowCallbackRegistry.class,
                 org.mockito.Mockito.withSettings().lenient());
         when(callbacks.stateUpdater(new CallbackId("state-updater"))).thenReturn((a, b) -> Map.of());
-        return RuntimeWorkflow.of(plan, Object.class, Object.class, payload -> Map.of(), Map.of(), callbacks);
+        return RuntimeWorkflow.of(
+                plan, "test-contract", Object.class, Object.class, payload -> Map.of(), Map.of(), callbacks);
     }
 
     /** Builds a {@link WorkflowInstance} waiting on {@code approve}, carrying the given metadata. */

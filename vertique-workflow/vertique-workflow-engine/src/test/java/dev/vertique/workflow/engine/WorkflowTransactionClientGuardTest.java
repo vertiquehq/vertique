@@ -356,7 +356,8 @@ class WorkflowTransactionClientGuardTest {
                 DEFINITION_ID, 1, "plan-hash", Object.class.getName(), waitSignal.stepId(), nodes, null);
         WorkflowCallbackRegistry callbacks = mock(WorkflowCallbackRegistry.class);
         when(callbacks.stateUpdater(new CallbackId("state-updater"))).thenReturn((state, payload) -> Map.of());
-        return RuntimeWorkflow.of(plan, Object.class, Object.class, payload -> Map.of(), Map.of(), callbacks);
+        return RuntimeWorkflow.of(
+                plan, "test-contract", Object.class, Object.class, payload -> Map.of(), Map.of(), callbacks);
     }
 
     /** Returns the failure of the future, or {@code null} when it succeeded; never waits unboundedly. */

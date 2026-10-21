@@ -73,7 +73,8 @@ class WorkflowMigratedInstanceTenantTest {
                 List.of(new CompleteNode(stepId)),
                 null);
         WorkflowCallbackRegistry callbacks = mock();
-        return RuntimeWorkflow.of(plan, Object.class, Object.class, payload -> Map.of(), Map.of(), callbacks);
+        return RuntimeWorkflow.of(
+                plan, "test-contract", Object.class, Object.class, payload -> Map.of(), Map.of(), callbacks);
     }
 
     private static WorkflowInstance waitingInstance(String tenantKey) {

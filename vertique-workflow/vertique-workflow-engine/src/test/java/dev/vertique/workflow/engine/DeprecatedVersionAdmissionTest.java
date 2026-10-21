@@ -105,7 +105,8 @@ class DeprecatedVersionAdmissionTest {
                 DEFINITION_ID, version, planHash, Object.class.getName(), waitSignal.stepId(), nodes, null);
         WorkflowCallbackRegistry callbacks = mock(WorkflowCallbackRegistry.class);
         when(callbacks.stateUpdater(new CallbackId("state-updater"))).thenReturn((state, payload) -> Map.of());
-        return RuntimeWorkflow.of(plan, Object.class, Object.class, payload -> Map.of(), Map.of(), callbacks);
+        return RuntimeWorkflow.of(
+                plan, "test-contract", Object.class, Object.class, payload -> Map.of(), Map.of(), callbacks);
     }
 
     /** Builds an instance pinned to the given version and waiting for {@code approve}. */
